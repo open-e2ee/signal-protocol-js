@@ -1,0 +1,177 @@
+// ML-KEM Braid protobuf wire definitions.
+//
+
+syntax = "proto3";
+
+package pqratchet;
+
+// =============================================================================
+// Wire Message Format
+// =============================================================================
+
+// ML-KEM Braid protocol message (V1)
+message V1Msg {
+  // Current negotiation epoch
+  uint64 epoch = 1;
+  // Chunk index for out-of-order delivery
+  uint32 index = 2;
+  // Message payload (oneof for type discrimination)
+  oneof inner_msg {
+    Chunk hdr = 3;         // Header chunk
+    Chunk ek = 4;          // Encapsulation key vector chunk
+    Chunk ek_ct1_ack = 5;  // Ek chunk with ct1 acknowledgment
+    bool ct1_ack = 6;      // CT1 acknowledgment only
+    Chunk ct1 = 7;         // First ciphertext chunk
+    Chunk ct2 = 8;         // Second ciphertext chunk
+  }
+  // Optional version capability (only sent during negotiation)
+  VersionCapability version_capability = 9;
+}
+
+// Erasure-coded data chunk
+message Chunk {
+  // Chunk index (evaluation point)
+  uint32 index = 1;
+  // Chunk data (32 bytes)
+  bytes data = 2;
+}
+
+// =============================================================================
+// Authenticator State
+// =============================================================================
+
+// Ratcheted authenticator state
+message Authenticator {
+  // Root key for ratcheting (32 bytes)
+  bytes root_key = 1;
+  // Current MAC key (32 bytes)
+  bytes mac_key = 2;
+}
+
+// =============================================================================
+// Encoder/Decoder State (for persistence)
+// =============================================================================
+
+// Polynomial encoder state
+message PolynomialEncoder {
+  // Current chunk index
+  uint32 idx = 1;
+  // Evaluation points (x values)
+  repeated bytes pts = 2;
+  // Polynomial coefficients (serialized)
+  repeated bytes polys = 3;
+  // Original message size
+  uint32 message_size = 4;
+}
+
+// Polynomial decoder state
+message PolynomialDecoder {
+  // Number of chunks needed for reconstruction
+  uint32 pts_needed = 1;
+  // Number of polynomials (always 16)
+  uint32 polys = 2;
+  // Received chunks as index:data pairs
+  repeated ChunkEntry chunks = 3;
+  // Whether decoding is complete
+  bool is_complete = 4;
+  // Expected message size
+  uint32 message_size = 5;
+}
+
+// Chunk entry for decoder state
+message ChunkEntry {
+  uint32 index = 1;
+  bytes data = 2;
+}
+
+// =============================================================================
+// Protocol State Machine
+// =============================================================================
+
+// Direction of communication
+enum Direction {
+  A_2_B = 0;  // Alice to Bob
+  B_2_A = 1;  // Bob to Alice
+}
+
+// Protocol version
+enum Version {
+  V_0 = 0;  // Reserved; runtime requires V_1
+  V_1 = 1;  // ML-KEM Braid (post-quantum)
+}
+
+// Version capability advertisement (sent in first message(s) during negotiation)
+message VersionCapability {
+  // Maximum version we support
+  Version max_version = 1;
+  // Minimum version we accept
+  Version min_version = 2;
+}
+
+// Chain parameters
+message ChainParams {
+  // Maximum epoch jump allowed
+  uint32 max_jump = 1;
+  // Maximum out-of-order keys to cache
+  uint32 max_ooo_keys = 2;
+}
+
+// Epoch state in the chain
+message Epoch {
+  uint64 epoch = 1;
+  bytes key = 2;
+}
+
+// Main chain state
+message Chain {
+  Direction direction = 1;
+  uint64 current_epoch = 2;
+  repeated Epoch links = 3;
+  bytes next_root = 4;
+  uint64 send_epoch = 5;
+  ChainParams params = 6;
+}
+
+// Version negotiation state
+message VersionNegotiation {
+  Version version = 1;
+}
+
+// Complete PQ Ratchet state (for persistence)
+message PqRatchetState {
+  VersionNegotiation version_negotiation = 1;
+  Chain chain = 2;
+  oneof inner {
+    V1State v1 = 3;
+  }
+}
+
+// V1 protocol state (Alice or Bob)
+message V1State {
+  // Current state machine state (string name)
+  string state = 2;
+  // Current epoch
+  uint64 epoch = 3;
+  // Authenticator state
+  Authenticator auth = 4;
+  // KEM material (Alice only)
+  bytes dk = 5;
+  bytes ek_seed = 6;
+  bytes ek_vector = 7;
+  bytes hek = 8;
+  // Encapsulation state (Bob only)
+  bytes encaps_secret = 9;
+  bytes ct1 = 10;
+  bytes ct2 = 11;
+  bytes shared_secret = 12;
+  // Encoder states
+  PolynomialEncoder header_encoder = 13;
+  PolynomialEncoder ek_encoder = 14;
+  PolynomialEncoder ct1_encoder = 15;
+  PolynomialEncoder ct2_encoder = 16;
+  // Decoder states
+  PolynomialDecoder header_decoder = 17;
+  PolynomialDecoder ek_decoder = 18;
+  PolynomialDecoder ct1_decoder = 19;
+  PolynomialDecoder ct2_decoder = 20;
+}

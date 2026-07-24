@@ -1,0 +1,27 @@
+OpenE2EE (`@open-e2ee/signal-protocol-sdk`)
+
+Copyright (C) 2026 OpenE2EE contributors
+
+This is an independently maintained OpenE2EE project. It implements its own
+versioned messaging profile using public Signal Protocol specifications,
+including X3DH/PQXDH, Double Ratchet, and ML-KEM Braid materials.
+
+This project is not Signal Messenger. It is not affiliated with, endorsed by,
+sponsored by, or maintained by Signal Messenger LLC or Signal Technology
+Foundation. References to "Signal Protocol" mean the public protocol
+specifications, not the Signal Messenger product or service. Signal, the Signal
+logo, and all related names, designs, and slogans are registered trademarks of
+Signal Technology Foundation.
+
+Licensed under AGPL-3.0-or-later. See the LICENSE file for the complete terms.
+
+The incremental ML-KEM implementation includes code adapted from
+@noble/post-quantum. See THIRD_PARTY_NOTICES.md for attribution and the
+applicable license notice.
+
+This software is provided as is, without warranty, and is subject to the
+limitation of liability in the LICENSE file. This notice does not modify the
+license.
+
+For commercial licensing options that do not require AGPL compliance, contact
+licensing@open-e2ee.dev.

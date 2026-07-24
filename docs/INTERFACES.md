@@ -1,0 +1,187 @@
+# Integration Interfaces
+
+> [README](../README.md) | [Architecture](../ARCHITECTURE.md) |
+> [Adapters](../ADAPTERS.md)
+
+The Signal Protocol SDK keeps platform and backend infrastructure behind
+explicit TypeScript interfaces. The client owns protocol coordination; the host
+application owns persistence, authentication, authorization, and product
+policy.
+
+## Boundary map
+
+```text
+SignalProtocolClient
+├── ISignalLocalStore        device-local protocol state
+├── ISignalRelayServer       authenticated device, prekey, and envelope service
+├── SignalRemoteObjectStore  brokered encrypted-object operations (optional)
+├── media callbacks          application-owned attachment bytes and caches
+└── lifecycle hooks          application reactions and observability
+
+Local-store bootstrap
+└── ISignalLocalSecretVault  small platform-managed bootstrap secrets
+```
+
+The interfaces are public contracts, but they do not make an implementation
+secure by themselves. Each adapter must preserve the ownership and atomicity
+requirements described below.
+
+## `ISignalLocalStore`
+
+`ISignalLocalStore` persists the current device's identities, prekeys, sessions,
+sender keys, contact trust, retry records, and operational metadata.
+
+```ts
+import type { ISignalLocalStore } from "@open-e2ee/signal-protocol-sdk/local/store";
+import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
+
+const storage: ISignalLocalStore = appProtocolStore;
+
+const client = await createSignalProtocolClient({
+  identity: { userId },
+  adapters: { storage, relay },
+});
+```
+
+A production implementation must:
+
+- preserve compare-and-swap and transaction semantics for trust and session
+  transitions;
+- consume one-time prekeys atomically with the corresponding session commit;
+- persist exact device/session ownership metadata;
+- treat account reset as a coordinated lifecycle across protocol records,
+  bootstrap secrets, backups, and application state; and
+- avoid placing decrypted application messages in the protocol store.
+
+Available adapters and their status are documented in the
+[local-store guide](../local/store/README.md).
+
+## `ISignalLocalSecretVault`
+
+`ISignalLocalSecretVault` is a deliberately small interface for bootstrap
+secrets that must live outside the main local store, such as a database
+encryption key.
+
+```ts
+import type { ISignalLocalSecretVault } from "@open-e2ee/signal-protocol-sdk";
+
+const vault: ISignalLocalSecretVault = {
+  getSecret: (name) => platformSecrets.getBytes(name),
+  setSecret: (name, value) => platformSecrets.setBytes(name, value),
+  deleteSecret: (name) => platformSecrets.delete(name),
+};
+```
+
+It is not a second general-purpose protocol database. Backup, biometric access,
+device migration, uninstall persistence, and deletion behavior depend on the
+selected platform service and host configuration. See the
+[secret-vault guide](../local/vault/README.md).
+
+## `ISignalRelayServer`
+
+`ISignalRelayServer` represents the authenticated application backend used for
+device registration, account identity state, public prekeys, encrypted-envelope
+delivery, provisioning, key rotation, and encrypted group coordination.
+
+```ts
+import type { ISignalRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
+import {
+  convexRelay,
+  type ConvexSignalRelayApi,
+} from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
+import { api } from "../convex/_generated/api";
+
+const signalApi = api.signal satisfies ConvexSignalRelayApi;
+
+const relay: ISignalRelayServer = convexRelay({
+  convex,
+  api: signalApi,
+  currentUserId: userId,
+});
+```
+
+The application backend must authenticate every caller, derive ownership from
+trusted server context, authorize reads and writes, atomically consume one-time
+prekeys, allocate linked-device identifiers, and apply retention and abuse
+controls. Client-supplied user identifiers are routing inputs, not proof of
+identity.
+
+The relay stores public protocol material, ciphertext, and required routing
+metadata. It must not require device private keys or decrypted message content.
+See the [relay guide](../remote/relay/README.md).
+
+## `SignalRemoteObjectStore`
+
+`SignalRemoteObjectStore` supplies short-lived upload and download operations
+for already encrypted objects. It is provider-neutral and optional.
+
+```ts
+import type {
+  SignalRemoteObjectStore,
+} from "@open-e2ee/signal-protocol-sdk/remote/object-store";
+
+const remoteObjectStore: SignalRemoteObjectStore = {
+  createUpload: (request) => appObjectBroker.createUpload(request),
+  createDownload: (request) => appObjectBroker.createDownload(request),
+  completeUpload: (request) => appObjectBroker.completeUpload(request),
+  deleteObject: (request) => appObjectBroker.deleteObject(request),
+};
+```
+
+The broker owns the mapping:
+
+```text
+authenticated principal + retry requestId
+  -> canonical objectId
+  -> private provider key
+```
+
+It must keep provider credentials and keys off the client, enforce ciphertext
+size and content-type policy, make upload completion idempotent, and authorize
+every download and deletion. See the
+[remote object-store guide](../remote/object-store/README.md).
+
+## Application callbacks
+
+Application content remains outside the infrastructure adapters. Configure
+media lifecycle callbacks and client hooks at the client boundary:
+
+```ts
+const client = await createSignalProtocolClient({
+  identity: { userId },
+  adapters: { storage, relay, remoteObjectStore },
+  media: {
+    loadLocalAttachment: ({ localMediaId }) =>
+      appDrafts.readBytes(localMediaId),
+    saveUploadedAttachment: ({ localMediaId, attachment }) =>
+      appPointers.save(localMediaId, attachment),
+    saveDownloadedAttachment: ({ attachmentId, downloaded }) =>
+      appMediaCache.save(attachmentId, downloaded.data),
+    deleteLocalAttachment: ({ attachmentId }) =>
+      appMediaCache.delete(attachmentId),
+  },
+  hooks: {
+    onMessageDecrypted: (message) => appMessages.accept(message),
+    onDecryptionError: (sessionId, error) =>
+      appObservability.recordDecryptionFailure(sessionId, error),
+  },
+});
+```
+
+Callbacks may update application databases, caches, UI state, and telemetry.
+They must not be treated as a transactional extension of a completed protocol
+state update unless the specific API says so.
+
+## Choosing an integration
+
+- Use an included adapter when its platform and ownership model match the
+  application.
+- Implement the public interface when infrastructure requirements differ.
+- Import provider and platform adapters from explicit package subpaths so
+  unrelated dependencies stay out of client bundles.
+- Keep authentication and product authorization in the application backend,
+  even when an SDK helper supplies generic broker mechanics.
+
+See [client composition](./CLIENT_COMPOSITION.md) for the complete client
+configuration shape and [documentation standards](./DOCUMENTATION_STANDARDS.md)
+for comment and guide conventions.

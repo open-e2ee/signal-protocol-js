@@ -1,0 +1,424 @@
+{
+  "name": "@open-e2ee/signal-protocol-sdk",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "description": "Independent TypeScript E2EE SDK implementing a versioned profile based on public Signal Protocol specifications",
+  "keywords": [
+    "open-e2ee",
+    "opene2ee",
+    "signal-protocol",
+    "encryption",
+    "end-to-end-encryption",
+    "e2ee",
+    "double-ratchet",
+    "x3dh",
+    "pqxdh",
+    "post-quantum",
+    "kyber",
+    "ml-kem",
+    "cryptography"
+  ],
+  "license": "AGPL-3.0-or-later",
+  "author": {
+    "name": "OpenE2EE",
+    "url": "https://github.com/open-e2ee"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/open-e2ee/signal-protocol-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/open-e2ee/signal-protocol-js/issues"
+  },
+  "homepage": "https://open-e2ee.dev",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./remote/relay": {
+      "types": "./dist/remote/relay/index.d.ts",
+      "default": "./dist/remote/relay/index.js"
+    },
+    "./remote/relay/convex": {
+      "types": "./dist/remote/relay/convex/index.d.ts",
+      "default": "./dist/remote/relay/convex/index.js"
+    },
+    "./remote/relay/convex/relay": {
+      "types": "./dist/remote/relay/convex/relay.d.ts",
+      "default": "./dist/remote/relay/convex/relay.js"
+    },
+    "./remote/relay/mock": {
+      "types": "./dist/remote/relay/mock/index.d.ts",
+      "default": "./dist/remote/relay/mock/index.js"
+    },
+    "./remote/relay/types": {
+      "types": "./dist/remote/relay/types.d.ts",
+      "default": "./dist/remote/relay/types.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./client/config": {
+      "types": "./dist/client/config.d.ts",
+      "default": "./dist/client/config.js"
+    },
+    "./client/compose": {
+      "types": "./dist/client/compose.d.ts",
+      "default": "./dist/client/compose.js"
+    },
+    "./client/constants": {
+      "types": "./dist/client/constants.d.ts",
+      "default": "./dist/client/constants.js"
+    },
+    "./client/endorsement-manager": {
+      "types": "./dist/client/endorsement-manager.d.ts",
+      "default": "./dist/client/endorsement-manager.js"
+    },
+    "./client/headless": {
+      "types": "./dist/client/headless.d.ts",
+      "default": "./dist/client/headless.js"
+    },
+    "./client/types": {
+      "types": "./dist/client/types.d.ts",
+      "default": "./dist/client/types.js"
+    },
+    "./device": {
+      "types": "./dist/device/index.d.ts",
+      "default": "./dist/device/index.js"
+    },
+    "./device/constants": {
+      "types": "./dist/device/constants.d.ts",
+      "default": "./dist/device/constants.js"
+    },
+    "./device/device-id": {
+      "types": "./dist/device/device-id.d.ts",
+      "default": "./dist/device/device-id.js"
+    },
+    "./device/lifecycle": {
+      "types": "./dist/device/lifecycle/index.d.ts",
+      "default": "./dist/device/lifecycle/index.js"
+    },
+    "./device/provisioning": {
+      "types": "./dist/device/provisioning.d.ts",
+      "default": "./dist/device/provisioning.js"
+    },
+    "./encoding": {
+      "types": "./dist/encoding/index.d.ts",
+      "default": "./dist/encoding/index.js"
+    },
+    "./encoding/hex": {
+      "types": "./dist/encoding/hex.d.ts",
+      "default": "./dist/encoding/hex.js"
+    },
+    "./files": {
+      "types": "./dist/files/index.d.ts",
+      "default": "./dist/files/index.js"
+    },
+    "./groups": {
+      "types": "./dist/groups/index.d.ts",
+      "default": "./dist/groups/index.js"
+    },
+    "./hooks": {
+      "types": "./dist/hooks/index.d.ts",
+      "default": "./dist/hooks/index.js"
+    },
+    "./hooks/use-connection-presence": {
+      "types": "./dist/hooks/use-connection-presence.d.ts",
+      "default": "./dist/hooks/use-connection-presence.js"
+    },
+    "./keys": {
+      "types": "./dist/keys/index.d.ts",
+      "default": "./dist/keys/index.js"
+    },
+    "./keys/generation": {
+      "types": "./dist/keys/generation.d.ts",
+      "default": "./dist/keys/generation.js"
+    },
+    "./keys/types": {
+      "types": "./dist/keys/types.d.ts",
+      "default": "./dist/keys/types.js"
+    },
+    "./logger": {
+      "types": "./dist/logger.d.ts",
+      "default": "./dist/logger.js"
+    },
+    "./media": {
+      "types": "./dist/media/index.d.ts",
+      "default": "./dist/media/index.js"
+    },
+    "./blocking": {
+      "types": "./dist/blocking/index.d.ts",
+      "default": "./dist/blocking/index.js"
+    },
+    "./profile": {
+      "types": "./dist/profile/index.d.ts",
+      "default": "./dist/profile/index.js"
+    },
+    "./safety": {
+      "types": "./dist/safety/index.d.ts",
+      "default": "./dist/safety/index.js"
+    },
+    "./sealed-sender": {
+      "types": "./dist/sealed-sender/index.d.ts",
+      "default": "./dist/sealed-sender/index.js"
+    },
+    "./server-clock": {
+      "types": "./dist/server-clock.d.ts",
+      "default": "./dist/server-clock.js"
+    },
+    "./local/store": {
+      "types": "./dist/local/store/index.d.ts",
+      "default": "./dist/local/store/index.js"
+    },
+    "./local/store/expo": {
+      "types": "./dist/local/store/expo/index.d.ts",
+      "default": "./dist/local/store/expo/index.js"
+    },
+    "./local/store/expo/db": {
+      "types": "./dist/local/store/expo/db.d.ts",
+      "default": "./dist/local/store/expo/db.js"
+    },
+    "./local/store/expo/schema": {
+      "types": "./dist/local/store/expo/schema.d.ts",
+      "default": "./dist/local/store/expo/schema.js"
+    },
+    "./local/store/mock": {
+      "types": "./dist/local/store/mock/index.d.ts",
+      "default": "./dist/local/store/mock/index.js"
+    },
+    "./local/store/node": {
+      "types": "./dist/local/store/node/index.d.ts",
+      "default": "./dist/local/store/node/index.js"
+    },
+    "./local/store/react-native": {
+      "types": "./dist/local/store/react-native/index.d.ts",
+      "default": "./dist/local/store/react-native/index.js"
+    },
+    "./local/store/web": {
+      "types": "./dist/local/store/web/index.d.ts",
+      "default": "./dist/local/store/web/index.js"
+    },
+    "./local/vault": {
+      "types": "./dist/local/vault/index.d.ts",
+      "default": "./dist/local/vault/index.js"
+    },
+    "./local/vault/expo-secure-store": {
+      "types": "./dist/local/vault/expo-secure-store.d.ts",
+      "default": "./dist/local/vault/expo-secure-store.js"
+    },
+    "./remote/object-store": {
+      "types": "./dist/remote/object-store/index.d.ts",
+      "default": "./dist/remote/object-store/index.js"
+    },
+    "./remote/object-store/convex-r2": {
+      "types": "./dist/remote/object-store/convex-r2/index.d.ts",
+      "default": "./dist/remote/object-store/convex-r2/index.js"
+    },
+    "./remote/object-store/convex-r2/server": {
+      "types": "./dist/remote/object-store/convex-r2/server/index.d.ts",
+      "default": "./dist/remote/object-store/convex-r2/server/index.js"
+    },
+    "./remote/object-store/s3": {
+      "types": "./dist/remote/object-store/s3/index.d.ts",
+      "default": "./dist/remote/object-store/s3/index.js"
+    },
+    "./types": {
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/types/index.js"
+    },
+    "./types/address": {
+      "types": "./dist/types/address.d.ts",
+      "default": "./dist/types/address.js"
+    },
+    "./types/messages": {
+      "types": "./dist/types/messages.d.ts",
+      "default": "./dist/types/messages.js"
+    },
+    "./types/utils": {
+      "types": "./dist/types/utils.d.ts",
+      "default": "./dist/types/utils.js"
+    },
+    "./username": {
+      "types": "./dist/username/index.d.ts",
+      "default": "./dist/username/index.js"
+    },
+    "./username/link": {
+      "types": "./dist/username/link.d.ts",
+      "default": "./dist/username/link.js"
+    },
+    "./utils/retry": {
+      "types": "./dist/utils/retry.d.ts",
+      "default": "./dist/utils/retry.js"
+    },
+    "./zk/groups": {
+      "types": "./dist/zk/groups.d.ts",
+      "default": "./dist/zk/groups.js"
+    },
+    "./zk/credentials": {
+      "types": "./dist/zk/credentials.d.ts",
+      "default": "./dist/zk/credentials.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "ADAPTERS.md",
+    "ARCHITECTURE.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_NOTICES.md",
+    "README.md",
+    "SECURITY.md",
+    "TROUBLESHOOTING.md",
+    "blocking/README.md",
+    "client/README.md",
+    "device/README.md",
+    "dist",
+    "docs/CLIENT_COMPOSITION.md",
+    "docs/DOCUMENTATION_STANDARDS.md",
+    "docs/E2EE.md",
+    "docs/ERROR_HANDLING.md",
+    "docs/GETTING_STARTED.md",
+    "docs/INTERFACES.md",
+    "docs/PROTOCOL_POLICY.md",
+    "docs/SECURITY.md",
+    "docs/api",
+    "encoding/README.md",
+    "files/README.md",
+    "groups/README.md",
+    "hooks/README.md",
+    "keys/README.md",
+    "local/store/README.md",
+    "local/store/expo/README.md",
+    "local/store/mock/README.md",
+    "local/store/node/README.md",
+    "local/store/react-native/README.md",
+    "local/store/web/README.md",
+    "local/vault/README.md",
+    "media/README.md",
+    "profile/README.md",
+    "remote/README.md",
+    "remote/object-store/README.md",
+    "remote/object-store/convex-r2/README.md",
+    "remote/object-store/s3/README.md",
+    "remote/relay/README.md",
+    "remote/relay/convex/README.md",
+    "remote/relay/mock/README.md",
+    "safety/README.md",
+    "sealed-sender/README.md",
+    "types/README.md",
+    "username/README.md",
+    "utils/README.md",
+    "zk/README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "audit:dependencies": "npm audit --omit=dev --audit-level=moderate && npm audit --audit-level=moderate",
+    "build": "npm run clean && npm run build:dist && npm run build:fix-esm",
+    "build:dist": "tsc -p tsconfig.build.json",
+    "build:fix-esm": "node ./scripts/fix-esm-specifiers.mjs ./dist",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit -p tsconfig.build.json",
+    "docs:api": "npx -y -p typedoc@0.28 -p typedoc-plugin-markdown@4 -p typescript@5.8 typedoc && node ./scripts/normalize-api-doc-paths.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@convex-dev/r2": "^0.10.2",
+    "convex": "^1.42.1",
+    "drizzle-orm": "^0.45.1",
+    "expo": "~55.0.27",
+    "expo-constants": "~55.0.7",
+    "expo-crypto": "~55.0.16",
+    "expo-device": "~55.0.15",
+    "expo-secure-store": "~55.0.15",
+    "expo-sqlite": "~55.0.17",
+    "idb": "^8.0.3",
+    "react": "19.2.0",
+    "react-native": "^0.83.6",
+    "react-native-device-info": "^15.0.1"
+  },
+  "peerDependenciesMeta": {
+    "@convex-dev/r2": {
+      "optional": true
+    },
+    "convex": {
+      "optional": true
+    },
+    "drizzle-orm": {
+      "optional": true
+    },
+    "expo": {
+      "optional": true
+    },
+    "expo-constants": {
+      "optional": true
+    },
+    "expo-crypto": {
+      "optional": true
+    },
+    "expo-device": {
+      "optional": true
+    },
+    "expo-secure-store": {
+      "optional": true
+    },
+    "expo-sqlite": {
+      "optional": true
+    },
+    "idb": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-native": {
+      "optional": true
+    },
+    "react-native-device-info": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@noble/ciphers": "^2.2.0",
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "2.2.0",
+    "@noble/post-quantum": "^0.6.1",
+    "async-lock": "^1.4.0",
+    "protobufjs": "^8.6.5",
+    "unique-names-generator": "^4.7.1"
+  },
+  "overrides": {
+    "xcode": {
+      "uuid": "11.1.1"
+    }
+  },
+  "devDependencies": {
+    "@convex-dev/r2": "^0.10.2",
+    "@types/async-lock": "^1.4.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "convex": "^1.42.3",
+    "drizzle-orm": "^0.45.1",
+    "esbuild": "^0.27.0",
+    "expo": "~55.0.27",
+    "expo-constants": "~55.0.17",
+    "expo-crypto": "~55.0.17",
+    "expo-device": "~55.0.19",
+    "expo-secure-store": "~55.0.16",
+    "expo-sqlite": "~55.0.18",
+    "idb": "^8.0.3",
+    "react": "19.2.0",
+    "react-native": "0.83.10",
+    "react-native-device-info": "^15.0.1",
+    "typescript": "^7.0.2"
+  }
+}

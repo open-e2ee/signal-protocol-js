@@ -1,0 +1,109 @@
+# Protocol Policy Guide
+
+> Navigation: [README](../README.md) | [ARCHITECTURE](../ARCHITECTURE.md) | [Security](./SECURITY.md) | [Getting Started](./GETTING_STARTED.md) | **Protocol Policy**
+
+The public Signal Protocol client policy is:
+
+```ts
+protocol: {
+  postQuantum: 'required',
+  braid: 'required',
+}
+```
+
+Both values are the defaults.
+
+`createSignalProtocolClient()` is the canonical application entry point from
+`@open-e2ee/signal-protocol-sdk`. `storage` and `relay` are the adapters for
+the current app.
+
+## Required
+
+```ts
+await createSignalProtocolClient({
+  identity: { userId },
+  adapters: { storage, relay },
+  protocol: { postQuantum: 'required', braid: 'required' },
+});
+```
+
+Required mode means post-quantum session establishment and the post-quantum
+message ratchet are mandatory. A peer that has no post-quantum material fails
+closed.
+
+## Compatible
+
+```ts
+await createSignalProtocolClient({
+  identity: { userId },
+  adapters: { storage, relay },
+  protocol: { postQuantum: 'compatible', braid: 'required' },
+});
+```
+
+Compatible mode still uses post-quantum behavior whenever the peer supports it.
+It only allows classical compatibility when the peer advertises no
+post-quantum material at all.
+
+Compatible mode does not allow downgrade recovery:
+
+- malformed post-quantum metadata fails closed
+- cryptographic failure after post-quantum selection fails closed
+- missing referenced local post-quantum prekey material fails closed
+- successful post-quantum establishment keeps the post-quantum message ratchet
+  mandatory
+
+## Braid Policy
+
+```ts
+await createSignalProtocolClient({
+  identity: { userId },
+  adapters: { storage, relay },
+  protocol: { postQuantum: 'required', braid: 'required' },
+});
+```
+
+`braid: 'required'` uses the specification-defined ML-KEM Braid SPQR profile
+and is the default. HEK is `SHA3-256(ek_seed || ek_vector)`; that operand order
+is part of the public compatibility boundary.
+
+```ts
+await createSignalProtocolClient({
+  identity: { userId },
+  adapters: { storage, relay },
+  protocol: { postQuantum: 'required', braid: 'disabled' },
+});
+```
+
+`braid: 'disabled'` keeps post-quantum session establishment required but uses
+the local direct ML-KEM SPQR mode. This is an explicit escape hatch for
+product-reviewed constraints, not downgrade recovery.
+
+## Constants
+
+Use string literals directly or the exported constant object:
+
+```ts
+import { BraidPolicy, PostQuantumPolicy, createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
+
+await createSignalProtocolClient({
+  identity: { userId },
+  adapters: { storage, relay },
+  protocol: {
+    postQuantum: PostQuantumPolicy.Required,
+    braid: BraidPolicy.Required,
+  },
+});
+```
+
+There is no public `postQuantum: 'disabled'` mode.
+
+## Advanced Telemetry
+
+The advanced `protocolStrategy.onProtocolSelected` callback remains available
+for diagnostics. It distinguishes post-quantum success from explicit classical
+compatibility fallback. Do not set `protocolStrategy.allowClassicalFallback`
+when `protocol.postQuantum` is present.
+
+Do not set `protocolStrategy.sckaMode` when `protocol` is present. Use
+`protocol.braid` so the public product policy owns the direct-vs-Braid choice.

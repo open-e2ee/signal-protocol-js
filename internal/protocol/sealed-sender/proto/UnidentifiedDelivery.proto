@@ -1,0 +1,104 @@
+/**
+ * Signal Protocol - Sealed Sender (Unidentified Delivery) Wire Format
+ *
+ * Protocol Buffer definitions for sealed sender message serialization.
+ * These definitions are the sealed-sender protobuf wire schema.
+ *
+ */
+
+syntax = "proto2";
+
+package signal;
+
+/**
+ * Server certificate used to sign sender certificates.
+ *
+ * Nested Certificate message contains the actual certificate data,
+ * which is signed separately to allow signature verification.
+ */
+message ServerCertificate {
+  message Certificate {
+    /** Server key identifier */
+    optional uint32 id = 1;
+    /** Ed25519 public key (32 bytes) */
+    optional bytes key = 2;
+  }
+
+  /** Serialized Certificate message */
+  optional bytes certificate = 1;
+  /** Ed25519 signature over certificate bytes (64 bytes) */
+  optional bytes signature = 2;
+}
+
+/**
+ * Sender certificate proving sender identity.
+ *
+ * Short-lived credential (24 hours) issued by the server.
+ * Included inside sealed sender envelopes.
+ */
+message SenderCertificate {
+  message Certificate {
+    /** Sender's phone number (E.164 format, optional) */
+    optional string senderE164 = 1;
+    /** Sender's UUID (required) */
+    optional string senderUuid = 2;
+    /** Sender's device ID (1-5) */
+    optional uint32 senderDevice = 3;
+    /** Certificate expiration (Unix timestamp milliseconds) */
+    optional fixed64 expires = 4;
+    /** Sender's X25519 identity public key (32 bytes) */
+    optional bytes identityKey = 5;
+    /** Server certificate that signed this certificate */
+    optional ServerCertificate signer = 6;
+  }
+
+  /** Serialized Certificate message */
+  optional bytes certificate = 1;
+  /** Ed25519 signature from server over certificate bytes (64 bytes) */
+  optional bytes signature = 2;
+}
+
+/**
+ * Unidentified Sender Message (Sealed Sender envelope).
+ *
+ * This is the outer envelope that hides sender identity from the server.
+ * Contains encrypted sender certificate and Signal Protocol message.
+ */
+message UnidentifiedSenderMessage {
+  /**
+   * Message type (matches Signal Protocol message types).
+   */
+  enum Type {
+    /** Signal Protocol PreKey message (initial message) */
+    PREKEY_MESSAGE = 1;
+    /** Signal Protocol regular message */
+    MESSAGE = 2;
+    /** Sender key distribution message for groups */
+    SENDERKEY_MESSAGE = 7;
+    /** Plaintext content (no encryption) */
+    PLAINTEXT_CONTENT = 8;
+  }
+
+  /**
+   * Inner message structure (decrypted from sealed envelope).
+   */
+  message Message {
+    /** Message type */
+    optional Type type = 1;
+    /** Sender's certificate */
+    optional SenderCertificate senderCertificate = 2;
+    /** Encrypted Signal Protocol message content */
+    optional bytes content = 3;
+    /** Content hint for processing */
+    optional uint32 contentHint = 4;
+    /** Group ID for group messages (optional) */
+    optional bytes groupId = 5;
+  }
+
+  /** Ephemeral X25519 public key (32 bytes) */
+  optional bytes ephemeralPublic = 1;
+  /** Encrypted static data (stage 1 ciphertext) */
+  optional bytes encryptedStatic = 2;
+  /** Encrypted message (stage 2 ciphertext including MAC) */
+  optional bytes encryptedMessage = 3;
+}
