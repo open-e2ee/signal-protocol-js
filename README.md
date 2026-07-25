@@ -6,15 +6,9 @@
 
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-2f6f5e)](https://github.com/open-e2ee/signal-protocol-js/blob/main/LICENSE)
 [![Types: TypeScript](https://img.shields.io/badge/types-TypeScript-3178c6)](https://www.typescriptlang.org/)
-[![npm: publication pending](https://img.shields.io/badge/npm-publication%20pending-9a7b4f)](https://github.com/open-e2ee/signal-protocol-js#install)
-[![Checks](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml/badge.svg)](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml)
-
-<!--
-Swap the pending-publication badge for these three at first npm publish:
 [![npm version](https://img.shields.io/npm/v/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
 [![npm downloads](https://img.shields.io/npm/dw/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
-[![provenance](https://img.shields.io/badge/npm-provenance-2f6f5e)](https://docs.npmjs.com/generating-provenance-statements)
--->
+[![Checks](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml/badge.svg)](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml)
 
 *Not affiliated with Signal Messenger.* This is an independent implementation of the public Signal Protocol specifications — full notice in [NOTICE](https://github.com/open-e2ee/signal-protocol-js/blob/main/NOTICE).
 
@@ -37,16 +31,14 @@ Swap the pending-publication badge for these three at first npm publish:
 
 ## Install
 
-The package is not on npm yet — publication is pending. Until then, install straight from the public repository. The package compiles itself during install, so TypeScript is the only build requirement:
+```bash
+npm install @open-e2ee/signal-protocol-sdk
+```
+
+Installing straight from the repository also works — the package compiles itself during install, so TypeScript is the only build requirement:
 
 ```bash
 npm install github:open-e2ee/signal-protocol-js
-```
-
-When publication lands, this becomes:
-
-```bash
-npm install @open-e2ee/signal-protocol-sdk
 ```
 
 Adapters declare their runtime requirements as optional peer dependencies, so install the ones your chosen adapters need (for example `expo-sqlite` and `expo-secure-store`, or `convex`).
