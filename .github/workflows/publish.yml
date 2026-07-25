@@ -58,7 +58,18 @@ jobs:
           TAG=latest
           case "$VERSION" in
             *-*)
-              CURRENT_LATEST=$(npm view "$NAME" dist-tags.latest 2>/dev/null || echo "")
+              # Fail closed: only an explicit E404 (package never published) may
+              # be read as "no stable release exists". Any other lookup failure
+              # aborts the publish rather than risking a prerelease overwriting
+              # a stable `latest` on the strength of a transient registry error.
+              if CURRENT_LATEST=$(npm view "$NAME" dist-tags.latest 2>&1); then
+                :
+              elif printf '%s' "$CURRENT_LATEST" | grep -q "E404"; then
+                CURRENT_LATEST=""
+              else
+                echo "::error::registry dist-tags lookup failed; refusing to guess. Output: $CURRENT_LATEST"
+                exit 1
+              fi
               case "$CURRENT_LATEST" in
                 ""|*-*) TAG=latest;;
                 *) TAG="${VERSION#*-}"; TAG="${TAG%%.*}";;
