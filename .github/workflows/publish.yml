@@ -45,6 +45,16 @@ jobs:
 
       - name: Publish
         if: ${{ !inputs.dry-run }}
-        run: npm publish --provenance --access public
+        # Prerelease versions publish under their prerelease identifier as the
+        # dist-tag (0.1.0-alpha.1 -> alpha) so `latest` is never a prerelease;
+        # npm also refuses to publish a prerelease without an explicit --tag.
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG=latest
+          case "$VERSION" in
+            *-*) TAG="${VERSION#*-}"; TAG="${TAG%%.*}";;
+          esac
+          echo "Publishing $VERSION with dist-tag $TAG"
+          npm publish --provenance --access public --tag "$TAG"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
