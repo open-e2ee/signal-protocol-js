@@ -12,13 +12,14 @@
 [![Checks](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml/badge.svg)](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/open-e2ee/signal-protocol-js/badge)](https://scorecard.dev/viewer/?uri=github.com/open-e2ee/signal-protocol-js)
 
-*Not affiliated with Signal Messenger.* This is an independent implementation of the public Signal Protocol specifications — full notice in [NOTICE](https://github.com/open-e2ee/signal-protocol-js/blob/main/NOTICE).
+*Not affiliated with Signal Messenger.* This is an independent implementation of the public Signal Protocol specifications — full notice in [NOTICE](https://github.com/open-e2ee/signal-protocol-js/blob/main/NOTICE). It is **not wire-compatible with Signal Messenger or libsignal**: messages, identities, and safety numbers do not interoperate, and every deliberate difference is documented in [DEVIATIONS](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/DEVIATIONS.md).
 
 [Docs](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/GETTING_STARTED.md) ·
 [Quick Start](#quick-start) ·
 [Architecture](https://github.com/open-e2ee/signal-protocol-js/blob/main/ARCHITECTURE.md) ·
 [Security Model](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/SECURITY.md) ·
-[Protocol Policy](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/PROTOCOL_POLICY.md)
+[Protocol Policy](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/PROTOCOL_POLICY.md) ·
+[Deviations](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/DEVIATIONS.md)
 
 ---
 
@@ -117,7 +118,7 @@ Cryptography deserves evidence rather than adjectives, so here is what there is 
 | [FIPS 203 (ML-KEM)](https://csrc.nist.gov/pubs/fips/203/final) | Final, 2024-08-13 |
 | [RFC 8032 (Ed25519)](https://www.rfc-editor.org/rfc/rfc8032.html) | — |
 
-The profile diverges from Signal Messenger deployments deliberately and says so: ML-KEM-1024 keys and ciphertexts are tagged `0x0A`, distinct from the round-3 Kyber1024 `0x08` tag, and the Ed25519 identity component performs ordinary RFC 8032 signatures rather than XEdDSA. General wire compatibility with Signal Messenger is not claimed. The exact boundary is in the [security model](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/SECURITY.md).
+**Not wire-compatible, and specific about why.** This SDK cannot exchange messages with Signal Messenger or `libsignal`, cannot exchange identities with them, and its safety numbers will never match the ones a Signal client displays for the same two users. The cryptographic core is the same; the wire profile is deliberately its own. Identities are a versioned composite of separate X25519 and Ed25519 keys rather than one Curve25519 key, so signatures are ordinary RFC 8032 Ed25519 rather than XEdDSA; ML-KEM-1024 keys and ciphertexts are tagged `0x0A`, distinct from the round-3 Kyber1024 `0x08` tag. [DEVIATIONS](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/DEVIATIONS.md) is the complete account — every difference from the specifications and from `libsignal`, with the reason, the cost, and the file that implements it. The threat model boundary is in the [security model](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/SECURITY.md).
 
 **Dependencies: 7.** Seven direct production dependencies — `@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`, `async-lock`, `protobufjs`, `unique-names-generator` — resolving to 8 packages in total, the eighth being `long` by way of `protobufjs`. Everything else in the tree is a development or optional peer dependency.
 
@@ -137,6 +138,7 @@ The profile diverges from Signal Messenger deployments deliberately and says so:
 - [Integration Interfaces](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/INTERFACES.md) — the interfaces to implement for custom storage, vaults, relays, and object stores.
 - [Error Handling](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/ERROR_HANDLING.md) and [Troubleshooting](https://github.com/open-e2ee/signal-protocol-js/blob/main/TROUBLESHOOTING.md).
 - [E2EE concepts](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/E2EE.md) — what changes about your architecture when the relay cannot read.
+- [Deviations](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/DEVIATIONS.md) — every difference from the Signal Protocol specifications and from `libsignal`, with reasons and costs.
 - [API Reference](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/api/README.md) — generated from the exported declarations.
 
 ## License and warranty

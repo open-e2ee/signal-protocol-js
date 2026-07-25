@@ -1,6 +1,12 @@
 # Protocol Policy Guide
 
-> Navigation: [README](../README.md) | [ARCHITECTURE](../ARCHITECTURE.md) | [Security](./SECURITY.md) | [Getting Started](./GETTING_STARTED.md) | **Protocol Policy**
+> Navigation: [README](../README.md) | [ARCHITECTURE](../ARCHITECTURE.md) | [Security](./SECURITY.md) | [Getting Started](./GETTING_STARTED.md) | **Protocol Policy** | [Deviations](./DEVIATIONS.md)
+
+This document covers **which protocol modes run** and which fail closed. For
+**how the profile differs from the published specifications and from
+`libsignal`** — the composite identity, the Ed25519-instead-of-XEdDSA signature
+scheme, the ML-KEM Braid `hek` operand order, and the rest — see
+[Deviations](./DEVIATIONS.md).
 
 The public Signal Protocol client policy is:
 
@@ -65,7 +71,10 @@ await createSignalProtocolClient({
 
 `braid: 'required'` uses the specification-defined ML-KEM Braid SPQR profile
 and is the default. HEK is `SHA3-256(ek_seed || ek_vector)`; that operand order
-is part of the public compatibility boundary.
+is part of the public compatibility boundary. It follows the ML-KEM Braid
+specification text and is the reverse of Signal's implementation, which means
+braid sessions do not interoperate with Signal's and the KEM in this mode is not
+stock FIPS 203 — see [Deviations §4.1](./DEVIATIONS.md#41-the-hek-operand-order-diverges).
 
 ```ts
 await createSignalProtocolClient({

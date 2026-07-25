@@ -1277,6 +1277,17 @@ export class SessionCipher {
                 const oldNr = session.Nr;
                 let currentChainKey = CryptoUtils.base64ToBytes(session.CKr);
 
+                // DoS protection: previousCounter is an unauthenticated header field, and
+                // the message key that would authenticate this sender is only derived by
+                // the loop below. Bound the catch-up the same way the current-chain path
+                // is bounded in storeSkippedMessageKeys, before deriving anything.
+                const maxOldChainSkip = getMaxSkipForSession(session, this.maxSkip);
+                if (oldNr + maxOldChainSkip < counters.previousCounter) {
+                  throw new Error(
+                    `Too many skipped messages (gap of ${counters.previousCounter - oldNr} exceeds limit of ${maxOldChainSkip})`
+                  );
+                }
+
                 this.logger.debug('Skipping keys from old receiving chain before DH ratchet', {
                   category: 'E2EE',
                   data: {

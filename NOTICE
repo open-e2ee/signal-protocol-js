@@ -4,7 +4,9 @@ Copyright (C) 2026 OpenE2EE contributors
 
 This is an independently maintained OpenE2EE project. It implements its own
 versioned messaging profile using public Signal Protocol specifications,
-including X3DH/PQXDH, Double Ratchet, and ML-KEM Braid materials.
+including X3DH/PQXDH, Double Ratchet, and ML-KEM Braid materials. That profile
+is not wire-compatible with Signal Messenger or libsignal; every deliberate
+difference from the specifications is documented in docs/DEVIATIONS.md.
 
 This project is not Signal Messenger. It is not affiliated with, endorsed by,
 sponsored by, or maintained by Signal Messenger LLC or Signal Technology

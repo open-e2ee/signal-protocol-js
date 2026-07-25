@@ -1,3 +1,31 @@
+# Changelog
+
+## 0.1.0-alpha.4
+
+- **Security: a forged message header could force unbounded key derivation
+  before authentication.** When an inbound message triggered a DH ratchet, the
+  loop that drains the previous receiving chain ran once per message claimed by
+  the header's `previousCounter` field — an attacker-controlled value that is
+  not authenticated, and cannot be, because the message key that would
+  authenticate it is what the loop derives. A single forged header could
+  therefore pin a CPU and grow the session record without bound, from an
+  unauthenticated sender. The catch-up is now bounded by the same skip limit
+  that already governed the current chain, and rejects before deriving or
+  storing anything.
+- **Fixed: registration IDs could be generated as `16384`,** one past the 14
+  bits the wire format reserves. Multi-recipient sealed sender masks with
+  `0x3FFF` rather than rejecting, so such an ID was written to the wire as `0`,
+  affecting roughly 1 install in 16,384. The range is now `[1, 16383]`.
+- Fixed: the `AuthCredentialPresentation` documentation stated its privacy
+  property backwards, describing the server as able to decrypt the ACI and PNI
+  ciphertexts to learn which member is authenticating. The server verifies the
+  proof without learning the member; only holders of the group's secret params
+  can decrypt. The comment ships in the public package.
+- Docs: `docs/DEVIATIONS.md` records where this profile follows, deliberately
+  departs from, and extends the Signal Protocol specifications, and states
+  plainly that the SDK is not wire-compatible with Signal Messenger or
+  `libsignal`.
+
 ## 0.1.0-alpha.3
 
 - Fix: the first inbound responder session is no longer archived into itself
@@ -9,8 +37,6 @@
   SesameManager end to end (previously a file-local mock), covering active-
   session receive, responder synchronization, delayed and out-of-order
   delivery, transactional PreKey persistence, and identity replacement.
-
-# Changelog
 
 ## 0.1.0-alpha.2
 

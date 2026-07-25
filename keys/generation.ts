@@ -33,8 +33,9 @@ import {
 /**
  * Generate random registration ID
  *
- * Per Signal Protocol spec, registration IDs are random 16-bit values.
- * Range: 1 to 16384 (2^14)
+ * Range: 1 to 16383, the largest value that survives the 14-bit `0x3FFF` mask
+ * the multi-recipient sealed sender format applies to registration IDs. A
+ * generated 16384 would mask to 0 on the wire, so the range excludes it.
  *
  * Uses CSPRNG (generateRandomBytes) instead of Math.random() for
  * cryptographic security.
@@ -42,7 +43,7 @@ import {
 export {};
 export async function generateRegistrationId(): Promise<number> {
   const bytes = await generateRandomBytes(2);
-  return (((bytes[0]! << 8) | bytes[1]!) % 16384) + 1;
+  return (((bytes[0]! << 8) | bytes[1]!) % 16383) + 1;
 }
 
 /**

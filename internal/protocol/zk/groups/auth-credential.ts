@@ -116,10 +116,11 @@ export interface AuthCredentialWithPni {
  * A presentation proof demonstrating possession of an AuthCredentialWithPni,
  * with ACI and PNI encrypted under the group's UID encryption key.
  *
- * Sent to the server for anonymous group authentication. The server can
- * decrypt the ciphertexts using the group's public params to learn which
- * member is authenticating, while the ZK proof ensures the credential
- * was validly issued.
+ * Sent to the server for anonymous group authentication. The server verifies
+ * the ZK proof — establishing that the credential was validly issued and that
+ * the ciphertexts encrypt the identifiers it was issued over — without learning
+ * which member is authenticating. The ACI and PNI ciphertexts are decryptable
+ * only with the group's secret params, which the server does not hold.
  */
 export interface AuthCredentialPresentation {
   /** ZK presentation proof. */
