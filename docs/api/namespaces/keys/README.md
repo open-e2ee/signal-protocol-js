@@ -38,11 +38,14 @@ const signedPreKey = await keys.generateEcSignedPreKey(signingKey);
 - [PREKEY\_ALGORITHM\_ML\_KEM\_1024](variables/PREKEY_ALGORITHM_ML_KEM_1024.md)
 - [PREKEY\_ALGORITHM\_X25519](variables/PREKEY_ALGORITHM_X25519.md)
 - [PREKEY\_SIGNATURE\_V1\_DOMAIN](variables/PREKEY_SIGNATURE_V1_DOMAIN.md)
+- [UNPINNED\_DEVICE\_IDENTITY\_KEY](variables/UNPINNED_DEVICE_IDENTITY_KEY.md)
 
 ## Functions
 
 - [acceptContactIdentityRotation](functions/acceptContactIdentityRotation.md)
 - [assertIdentityCommitment](functions/assertIdentityCommitment.md)
+- [canonicalizeDeviceIdentityKey](functions/canonicalizeDeviceIdentityKey.md)
+- [compareDeviceIdentityKeys](functions/compareDeviceIdentityKeys.md)
 - [compositeIdentitiesEqual](functions/compositeIdentitiesEqual.md)
 - [createCompositeIdentityV1](functions/createCompositeIdentityV1.md)
 - [createPreKeySignatureContext](functions/createPreKeySignatureContext.md)
@@ -58,6 +61,7 @@ const signedPreKey = await keys.generateEcSignedPreKey(signingKey);
 - [generateKemOneTimePreKeys](functions/generateKemOneTimePreKeys.md)
 - [generateKyberLastResortPreKey](functions/generateKyberLastResortPreKey.md)
 - [generateRegistrationId](functions/generateRegistrationId.md)
+- [isValidDeviceIdentityKey](functions/isValidDeviceIdentityKey.md)
 - [signMlKem1024PreKey](functions/signMlKem1024PreKey.md)
 - [signPreKey](functions/signPreKey.md)
 - [validateContactIdentityRecord](functions/validateContactIdentityRecord.md)

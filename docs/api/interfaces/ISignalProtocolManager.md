@@ -181,7 +181,7 @@ Identity types to generate keys for (defaults to ['aci', 'pni'])
 
 > **rotateEcSignedPreKey**(`userId`): `Promise`\<`void`\>
 
-Rotate EC signed prekey (weekly)
+Rotate EC signed prekey (on the configured refresh interval, 2 days by default)
 
 #### Parameters
 
@@ -199,7 +199,7 @@ Rotate EC signed prekey (weekly)
 
 > **rotateKyberPreKey**(`userId`): `Promise`\<`void`\>
 
-Rotate Kyber prekey (post-quantum security, weekly)
+Rotate Kyber prekey (post-quantum security, same interval as the signed prekey)
 
 #### Parameters
 

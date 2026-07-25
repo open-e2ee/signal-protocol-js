@@ -30,6 +30,8 @@ import type { CompositeIdentityV1, ContactIdentityRecord, IdentityType } from '.
 import {
   acceptContactIdentityRotation as acceptRotation,
   createUnverifiedContactIdentityRecord,
+  encodeCompositeIdentityV1,
+  UNPINNED_DEVICE_IDENTITY_KEY,
   evaluateContactIdentityCandidate,
   verifyContactIdentityRecord,
   validateContactIdentityRecord,
@@ -40,7 +42,6 @@ import { IdentityKeyChange, TrustDirection } from '../../../types/trust';
 import type { UserRecord, DeviceRecord } from '../../../types';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { generateRandomBytes } from '../../../internal/crypto/random';
-import { base64ToBytes } from '../../../internal/crypto/utils';
 
 /**
  * Mock storage adapter for local development
@@ -542,18 +543,29 @@ export class MockSignalStore implements ISignalLocalStore {
     // This mirrors ExpoKeyStorageAdapter.getDeviceRecord which builds from getSessionRecord()
     const address = { userId, deviceId };
     const sessionRecord = await this.getSessionRecord(address);
+    const stored = this.sesameUserRecords.get(userId)?.devices.get(deviceId);
 
     if (sessionRecord) {
       const now = Date.now();
       return {
         userId,
         deviceId,
+        // Session state is re-read from the live session record, but the
+        // identity pin and its verification flag are trust decisions: they come
+        // from what was persisted, not from whichever session happens to be
+        // current. Re-deriving them would silently unpin a device as soon as its
+        // session is archived.
+        //
         // Generic SESAME session records are permitted to omit this SDK's
-        // composite profile. DeviceRecord identity bytes never mutate the
-        // account-scoped composite trust store.
-        identityKey: sessionRecord.currentSession?.remoteIdentity
-          ? base64ToBytes(sessionRecord.currentSession.remoteIdentity.x25519PublicKey)
-          : new Uint8Array(),
+        // composite profile, in which case the device is left unpinned rather
+        // than pinned to a partial key. DeviceRecord identity bytes never
+        // mutate the account-scoped composite trust store.
+        identityKey: stored?.identityKey.length
+          ? stored.identityKey
+          : sessionRecord.currentSession?.remoteIdentity
+            ? encodeCompositeIdentityV1(sessionRecord.currentSession.remoteIdentity)
+            : UNPINNED_DEVICE_IDENTITY_KEY,
+        pendingVerification: stored?.pendingVerification,
         session: sessionRecord,
         createdAt: sessionRecord.metadata?.createdAt ?? now,
         updatedAt: now,

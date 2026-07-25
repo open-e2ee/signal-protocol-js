@@ -56,7 +56,7 @@ import type { IMessageRecordStore } from '../../local/store';
 import { validateSesameConfig } from './validation';
 import type { SessionState, SessionRecord } from '../../types/session';
 import { ProtocolAddress } from '../../types/address';
-import { constantTimeEqual, base64ToBytes, bytesToBase64 } from '../crypto/utils';
+import { base64ToBytes, bytesToBase64 } from '../crypto/utils';
 import { type Base64 } from '../../types/utils';
 import { deserializePublicKey } from '../crypto/key-prefix';
 import {
@@ -68,7 +68,13 @@ import {
 import { SessionResolver } from '../session/session-resolver';
 import type { Ciphertext } from '../../keys';
 import { EncryptionError } from '../../types/errors';
-import { decodeCompositeIdentityV1, encodeCompositeIdentityV1 } from '../../keys/identity';
+import {
+  canonicalizeDeviceIdentityKey,
+  compareDeviceIdentityKeys,
+  decodeCompositeIdentityV1,
+  encodeCompositeIdentityV1,
+  UNPINNED_DEVICE_IDENTITY_KEY,
+} from '../../keys/identity';
 
 /**
  * Maximum number of retry attempts for the SESAME sending loop.
@@ -304,11 +310,15 @@ export class SesameManager implements ISesameManager {
       };
     }
 
-    // Create device record
+    // Create device record. Identity bytes are canonicalized here so that a
+    // single encoding reaches storage regardless of which caller supplied them.
     const deviceRecord: DeviceRecord = {
       userId,
       deviceId,
-      identityKey,
+      identityKey: canonicalizeDeviceIdentityKey(
+        identityKey,
+        `Identity key for ${userId}:${deviceId}`
+      ),
       session: null, // SessionRecord, not SesameSessionRecord
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -481,9 +491,16 @@ export class SesameManager implements ISesameManager {
     // Ensure device record exists
     let deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
     if (!deviceRecord) {
-      // Auto-create device record if it doesn't exist
-      // Use empty identity key - will be updated when we have the actual key
-      await this.addDevice(userId, deviceId, new Uint8Array(32));
+      // Auto-create device record if it doesn't exist. Pin the peer identity the
+      // session was actually negotiated against; a placeholder here would later
+      // compare unequal to that same identity and forge an identity-change event.
+      await this.addDevice(
+        userId,
+        deviceId,
+        sessionState.remoteIdentity
+          ? encodeCompositeIdentityV1(sessionState.remoteIdentity)
+          : UNPINNED_DEVICE_IDENTITY_KEY
+      );
       deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
     }
 
@@ -1636,10 +1653,27 @@ export class SesameManager implements ISesameManager {
         data: { userId: message.senderUserId, deviceId: message.senderDeviceId },
       });
     } else {
-      // Existing sender - check if identity key changed (device reinstall scenario)
-      const identityKeyChanged = !constantTimeEqual(deviceRecord.identityKey, incomingIdentityKey);
+      // Existing device record - compare the pinned identity against the one
+      // this PreKeyMessage was authenticated with. Both sides are canonical
+      // composite tuples, so a difference is a real identity change and not an
+      // encoding artifact. A record that carries no pinned identity yet (session
+      // bookkeeping created it before any identity was observed) is first
+      // contact: TOFU-pin it silently rather than reporting a change.
+      const comparison = compareDeviceIdentityKeys(deviceRecord.identityKey, incomingIdentityKey);
 
-      if (identityKeyChanged) {
+      if (comparison === 'unpinned') {
+        deviceRecord.identityKey = incomingIdentityKey;
+
+        this.logger.debug('SESAME: Pinned identity key on first contact (TOFU)', {
+          category: 'E2EE',
+          data: {
+            userId: message.senderUserId,
+            deviceId: message.senderDeviceId,
+          },
+        });
+      }
+
+      if (comparison === 'changed') {
         // CRITICAL: Identity key changed - this is either a device reinstall
         // or a potential security issue (man-in-the-middle attack)
         this.logger.warn('SESAME: Identity key changed detected in PreKeyMessage', {
@@ -2025,11 +2059,16 @@ export class SesameManager implements ISesameManager {
       },
     });
 
-    // Convert deviceIds to devices array, using identity keys from response when available
+    // Convert deviceIds to devices array, using identity keys from response when
+    // available. A device the server listed without an identity key stays
+    // unpinned rather than being pinned to placeholder bytes.
     const { identityKeys } = deviceListResponse;
     const devices = deviceIds.map((deviceId: DeviceID) => ({
       deviceId,
-      identityKey: identityKeys?.get(deviceId) ?? new Uint8Array(),
+      identityKey: canonicalizeDeviceIdentityKey(
+        identityKeys?.get(deviceId) ?? UNPINNED_DEVICE_IDENTITY_KEY,
+        `Device list identity key for ${userId}:${deviceId}`
+      ),
       isActive: true,
     }));
 
@@ -2067,14 +2106,23 @@ export class SesameManager implements ISesameManager {
 
       if (!existingDevice) {
         await this.addDevice(userId, device.deviceId, device.identityKey);
-      } else {
-        // Check if identity key changed
-        const identityKeyChanged = !constantTimeEqual(
+      } else if (device.identityKey.length > 0) {
+        // Only a device list that actually carries an identity key can tell us
+        // the identity changed. A response that omits it carries no information
+        // about identity, and must not be read as a change: doing so would drop
+        // every live session and raise a security event on each sync.
+        const comparison = compareDeviceIdentityKeys(
           existingDevice.identityKey,
           device.identityKey
         );
 
-        if (identityKeyChanged) {
+        if (comparison === 'unpinned') {
+          // Device was tracked before its identity was known - TOFU-pin it.
+          existingDevice.identityKey = device.identityKey;
+          await this.storage.setDeviceRecord(userId, device.deviceId, existingDevice);
+        }
+
+        if (comparison === 'changed') {
           // Identity key changed - security event
           // Remove old device and add new one (clears sessions)
           await this.removeDevice(userId, device.deviceId);

@@ -699,7 +699,8 @@ Explicit compare-and-swap rotation of the account-level relay identity.
 
 Rotate EC signed prekey
 
-Should be called weekly to maintain forward secrecy.
+Rotates only once the current prekey is older than the configured refresh
+interval ([KEY\_REFRESH\_INTERVAL\_MS\_DEFAULT](../variables/KEY_REFRESH_INTERVAL_MS_DEFAULT.md), 2 days by default).
 Returns false if rotation is not needed yet.
 
 #### Returns
@@ -736,7 +737,8 @@ New sender key ID and distribution message
 
 Rotate Kyber prekey (post-quantum)
 
-Should be called weekly alongside signed prekey rotation.
+Shares the signed prekey's refresh interval
+([KEY\_REFRESH\_INTERVAL\_MS\_DEFAULT](../variables/KEY_REFRESH_INTERVAL_MS_DEFAULT.md), 2 days by default).
 Returns false if rotation is not needed yet.
 
 #### Returns

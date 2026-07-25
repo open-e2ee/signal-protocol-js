@@ -2278,8 +2278,10 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Rotate EC signed prekey
    *
-   * Should be called weekly to maintain forward secrecy.
-   * Generates a new EC signed prekey and uploads it to the relay if configured.
+   * Rotates only once the current prekey is older than the configured refresh
+   * interval ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default), so
+   * it is safe to call more often than that. Generates a new EC signed prekey
+   * and uploads it to the relay if configured.
    *
    * @returns True if rotation was performed, false if not needed yet
    */
@@ -2290,9 +2292,10 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Rotate the post-quantum KEM last-resort prekey.
    *
-   * Should be called weekly alongside signed prekey rotation.
-   * Generates fresh ML-KEM/Kyber-compatible key material and uploads it to the
-   * relay if configured.
+   * Shares the signed prekey's refresh interval
+   * ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default) and rotates
+   * only once that interval has elapsed. Generates fresh ML-KEM/Kyber-compatible
+   * key material and uploads it to the relay if configured.
    *
    * @returns True if rotation was performed, false if not needed yet
    */

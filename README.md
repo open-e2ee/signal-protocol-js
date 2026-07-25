@@ -27,7 +27,7 @@
 - **Pluggable storage and relay.** Device-local storage is required and yours; the relay is an interface, not a hosted service.
 - **AGPL-3.0-or-later, or a commercial license.** Building something closed-source? Email licensing@open-e2ee.dev.
 
-`0.1.0-alpha.1` — public APIs and persisted formats may change before `1.0`.
+`0.1.0-alpha.2` — public APIs and persisted formats may change before `1.0`.
 
 ## Install
 
@@ -77,7 +77,7 @@ await alice.send("bob", "hello");   // the relay now holds ciphertext and metada
 bob.startRelaySubscription();       // delivery and local decryption start here
 ```
 
-Every identifier above is a real export. This exact block is extracted from this README and executed against the packed package by [this repository's CI](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml) on every change, and the same sequence runs in the engineering repository's test suite.
+Every identifier above is a real export. This exact block is extracted from this README and executed against the packed package by [this repository's CI](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml) on every change, and the same sequence runs in the engineering repository's automated checks.
 
 Next: [inspect what the relay actually stored](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/GETTING_STARTED.md), then compose the [Expo + Convex production client](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/CLIENT_COMPOSITION.md).
 

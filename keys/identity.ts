@@ -117,6 +117,63 @@ export function compositeIdentitiesEqual(
   return constantTimeEqual(encodeCompositeIdentityV1(left), encodeCompositeIdentityV1(right));
 }
 
+/**
+ * SESAME `DeviceRecord.identityKey` bytes for a device whose composite identity
+ * has not been observed yet.
+ *
+ * Zero length is the only representation of "not pinned". It must stay distinct
+ * from a pinned tuple so that first contact performs a TOFU pin rather than
+ * reporting an identity change, and it must never be a partial key: pinning
+ * only the X25519 half would silently accept a peer that kept its DH key and
+ * swapped its Ed25519 signing key.
+ */
+export const UNPINNED_DEVICE_IDENTITY_KEY: Uint8Array = new Uint8Array(0);
+
+/**
+ * Whether `bytes` is a well-formed `DeviceRecord.identityKey`: either unpinned
+ * or exactly one canonical composite tuple.
+ */
+export function isValidDeviceIdentityKey(bytes: Uint8Array): boolean {
+  if (bytes.length === 0) return true;
+  try {
+    decodeCompositeIdentityV1(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reduce `DeviceRecord.identityKey` bytes to their canonical form, rejecting
+ * any other encoding at the storage boundary.
+ *
+ * Every producer of device identity bytes goes through here so that a single
+ * encoding reaches storage and comparison. Without it, two producers using two
+ * encodings of the same key compare unequal and forge an identity-change event.
+ */
+export function canonicalizeDeviceIdentityKey(bytes: Uint8Array, label: string): Uint8Array {
+  if (bytes.length === 0) return UNPINNED_DEVICE_IDENTITY_KEY;
+  try {
+    return encodeCompositeIdentityV1(decodeCompositeIdentityV1(bytes));
+  } catch (error) {
+    throw new Error(`${label} is not a canonical composite identity tuple`, { cause: error });
+  }
+}
+
+/**
+ * Compare two `DeviceRecord.identityKey` values.
+ *
+ * Returns `'unpinned'` when no identity has been observed for the device yet,
+ * which is first contact (a TOFU pin) and not a change.
+ */
+export function compareDeviceIdentityKeys(
+  pinned: Uint8Array,
+  incoming: Uint8Array
+): 'unpinned' | 'same' | 'changed' {
+  if (pinned.length === 0) return 'unpinned';
+  return constantTimeEqual(pinned, incoming) ? 'same' : 'changed';
+}
+
 function cloneIdentity(identity: CompositeIdentityV1): CompositeIdentityV1 {
   return decodeCompositeIdentityV1(encodeCompositeIdentityV1(identity));
 }

@@ -153,7 +153,8 @@ export interface ISignalProtocolClient {
   /**
    * Rotate EC signed prekey
    *
-   * Should be called weekly to maintain forward secrecy.
+   * Rotates only once the current prekey is older than the configured refresh
+   * interval ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default).
    * Returns false if rotation is not needed yet.
    */
   rotateEcSignedPreKey(): Promise<boolean>;
@@ -161,7 +162,8 @@ export interface ISignalProtocolClient {
   /**
    * Rotate Kyber prekey (post-quantum)
    *
-   * Should be called weekly alongside signed prekey rotation.
+   * Shares the signed prekey's refresh interval
+   * ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default).
    * Returns false if rotation is not needed yet.
    */
   rotateKyberPreKey(): Promise<boolean>;
@@ -697,12 +699,12 @@ export interface ISignalProtocolManager {
   getSession(remoteAddress: ProtocolAddress): Promise<SessionRecord | null>;
 
   /**
-   * Rotate EC signed prekey (weekly)
+   * Rotate EC signed prekey (on the configured refresh interval, 2 days by default)
    */
   rotateEcSignedPreKey(userId: string): Promise<void>;
 
   /**
-   * Rotate Kyber prekey (post-quantum security, weekly)
+   * Rotate Kyber prekey (post-quantum security, same interval as the signed prekey)
    */
   rotateKyberPreKey(userId: string): Promise<void>;
 
@@ -890,8 +892,9 @@ export interface IEcOneTimePreKeyStore {
  * EC Signed PreKey store with an SDK-oriented API.
  *
  * Manages rotating EC signed prekeys for medium-term forward secrecy.
- * EC signed prekeys should be rotated weekly, but OLD prekeys must be kept
- * for a grace period (~30 days) to handle in-flight messages.
+ * EC signed prekeys are rotated on the configured refresh interval (2 days by
+ * default), but OLD prekeys must be kept for a grace period (~30 days) to
+ * handle in-flight messages.
  *
  * Per X3DH Spec Section 4.4:
  * "After uploading a new signed prekey, Bob may keep the private key
@@ -943,7 +946,8 @@ export interface IEcSignedPreKeyStore {
  * Kyber Last-Resort PreKey store interface (post-quantum security).
  *
  * Manages the ML-KEM-1024 (Kyber) last-resort prekey for post-quantum forward secrecy.
- * This is a reusable fallback key (like EC signed prekeys) that should rotate weekly.
+ * This is a reusable fallback key (like EC signed prekeys) that rotates on the
+ * configured refresh interval (2 days by default).
  *
  * Naming convention matches EC prekeys:
  * - `IEcOneTimePreKeyStore` → one-time EC prekeys (`ecPreKeys`)

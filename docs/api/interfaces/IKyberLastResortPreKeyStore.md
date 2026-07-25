@@ -9,7 +9,8 @@
 Kyber Last-Resort PreKey store interface (post-quantum security).
 
 Manages the ML-KEM-1024 (Kyber) last-resort prekey for post-quantum forward secrecy.
-This is a reusable fallback key (like EC signed prekeys) that should rotate weekly.
+This is a reusable fallback key (like EC signed prekeys) that rotates on the
+configured refresh interval (2 days by default).
 
 Naming convention matches EC prekeys:
 - `IEcOneTimePreKeyStore` → one-time EC prekeys (`ecPreKeys`)

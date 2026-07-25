@@ -368,7 +368,14 @@ if (isIdentityKeyChangedError(error)) {
   // Don't silently accept - show security dialog
   const accepted = await showSecurityWarningDialog(error);
   if (accepted) {
-    await signal.trustIdentity(error.changedAddress, error.newIdentityKey);
+    // acceptIdentityRotation() takes the peer's new composite identity tuple,
+    // not the bare key carried on the error, and resets the sessions bound to
+    // the retired identity.
+    const userId = error.changedAddress.userId;
+    const identity = await relay.getIdentityKey(userId);
+    if (identity) {
+      await signal.acceptIdentityRotation(userId, identity);
+    }
   }
 }
 ```

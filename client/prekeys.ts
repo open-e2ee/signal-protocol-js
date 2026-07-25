@@ -352,7 +352,7 @@ export async function syncIdentityToServer(
 
   // Build prekey batch for upload
   const preKeyUploads: PreKeyUpload[] = [
-    // Signed prekey (rotated weekly)
+    // Signed prekey (rotated on the configured refresh interval, 2 days by default)
     {
       type: 'ecSignedPreKey',
       keyId: signedPreKey.keyId,

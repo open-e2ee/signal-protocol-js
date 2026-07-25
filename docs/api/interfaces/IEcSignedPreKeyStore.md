@@ -9,8 +9,9 @@
 EC Signed PreKey store with an SDK-oriented API.
 
 Manages rotating EC signed prekeys for medium-term forward secrecy.
-EC signed prekeys should be rotated weekly, but OLD prekeys must be kept
-for a grace period (~30 days) to handle in-flight messages.
+EC signed prekeys are rotated on the configured refresh interval (2 days by
+default), but OLD prekeys must be kept for a grace period (~30 days) to
+handle in-flight messages.
 
 Per X3DH Spec Section 4.4:
 "After uploading a new signed prekey, Bob may keep the private key

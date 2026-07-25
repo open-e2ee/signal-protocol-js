@@ -20,6 +20,10 @@ import type {
   CompositeIdentityV1,
   ContactIdentityRecord,
 } from '../../../keys';
+import {
+  encodeCompositeIdentityV1,
+  UNPINNED_DEVICE_IDENTITY_KEY,
+} from '../../../keys/identity';
 import type {
   ISignalLocalStore,
   MessageRecord,
@@ -381,12 +385,16 @@ export class ExpoSignalStore implements ISignalLocalStore {
   // The server only stores device registry, prekeys, and message mailbox.
 
   /**
-   * Helper to get contact identity key as Uint8Array
+   * Helper to get a contact's pinned identity as canonical DeviceRecord bytes.
+   *
+   * Returns the whole composite tuple, not the X25519 half: a device pinned to
+   * the DH key alone would accept a peer that swapped its Ed25519 signing key,
+   * and would compare unequal against every other producer of these bytes.
    */
   private async getContactIdentityBytes(address: ProtocolAddress): Promise<Uint8Array | null> {
     const record = await this.getContactIdentity(address);
     if (!record) return null;
-    return new Uint8Array(Buffer.from(record.identity.x25519PublicKey, 'base64'));
+    return encodeCompositeIdentityV1(record.identity);
   }
 
   /**
@@ -439,7 +447,7 @@ export class ExpoSignalStore implements ISignalLocalStore {
       devices.set(deviceId, {
         userId,
         deviceId,
-        identityKey: identityKey ?? new Uint8Array(),
+        identityKey: identityKey ?? UNPINNED_DEVICE_IDENTITY_KEY,
         session,
         createdAt: session.metadata?.createdAt ?? now,
         updatedAt: now,
@@ -472,7 +480,7 @@ export class ExpoSignalStore implements ISignalLocalStore {
     return {
       userId,
       deviceId,
-      identityKey: identityKey ?? new Uint8Array(),
+      identityKey: identityKey ?? UNPINNED_DEVICE_IDENTITY_KEY,
       session: sessionRecord,
       createdAt: sessionRecord.metadata?.createdAt ?? now,
       updatedAt: now,
