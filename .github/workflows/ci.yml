@@ -22,7 +22,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Must match the npm major used by the release-export pipeline, which
+          # regenerates package-lock.json for the transformed manifest; a
+          # different npm major computes a different tree and `npm ci` fails.
+          node-version: 26
           cache: npm
 
       - name: Install from the committed lockfile
@@ -36,3 +39,36 @@ jobs:
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=moderate
+
+  quickstart:
+    name: README quickstart runs as printed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install from the committed lockfile
+        run: npm ci --ignore-scripts
+
+      - name: Build and pack
+        run: |
+          npm run build
+          npm pack --pack-destination "$RUNNER_TEMP"
+
+      - name: Extract the Quick Start block from README.md
+        run: |
+          awk '/^## Quick Start$/{flag=1} flag && /^```ts$/{code=1; next} code && /^```$/{exit} code{print}' README.md > "$RUNNER_TEMP/quickstart.mjs"
+          test -s "$RUNNER_TEMP/quickstart.mjs"
+
+      - name: Run the quickstart against the packed package
+        run: |
+          mkdir -p "$RUNNER_TEMP/qs" && cd "$RUNNER_TEMP/qs"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz
+          cp "$RUNNER_TEMP/quickstart.mjs" .
+          timeout 120 node quickstart.mjs | tee output.txt || true
+          grep -q "alice: hello" output.txt

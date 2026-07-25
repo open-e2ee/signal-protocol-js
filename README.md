@@ -85,7 +85,7 @@ await alice.send("bob", "hello");   // the relay now holds ciphertext and metada
 bob.startRelaySubscription();       // delivery and local decryption start here
 ```
 
-Every identifier above is a real export, and this exact sequence is exercised by an automated check in the engineering repository on every change.
+Every identifier above is a real export. This exact block is extracted from this README and executed against the packed package by [this repository's CI](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml) on every change, and the same sequence runs in the engineering repository's test suite.
 
 Next: [inspect what the relay actually stored](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/GETTING_STARTED.md), then compose the [Expo + Convex production client](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/CLIENT_COMPOSITION.md).
 
