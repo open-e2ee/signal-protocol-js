@@ -10,6 +10,7 @@
 [![npm downloads](https://img.shields.io/npm/dw/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
 [![npm provenance](https://img.shields.io/badge/npm-provenance-2f6f5e)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk#provenance)
 [![Checks](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml/badge.svg)](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/open-e2ee/signal-protocol-js/badge)](https://scorecard.dev/viewer/?uri=github.com/open-e2ee/signal-protocol-js)
 
 *Not affiliated with Signal Messenger.* This is an independent implementation of the public Signal Protocol specifications — full notice in [NOTICE](https://github.com/open-e2ee/signal-protocol-js/blob/main/NOTICE).
 

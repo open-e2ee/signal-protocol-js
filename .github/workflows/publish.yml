@@ -91,3 +91,29 @@ jobs:
         # No token: authentication is npm Trusted Publishing (OIDC) via this
         # workflow's id-token permission and the npm-publish environment, which
         # must both match the trusted-publisher configuration on npmjs.com.
+
+  sbom:
+    name: Attach SBOM to the release
+    needs: publish
+    if: ${{ github.event_name == 'release' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install from the committed lockfile
+        run: npm ci --ignore-scripts
+
+      - name: Generate CycloneDX SBOM
+        run: npm sbom --sbom-format cyclonedx --omit dev > sbom.cdx.json
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" sbom.cdx.json --clobber
