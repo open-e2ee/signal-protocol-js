@@ -56,5 +56,6 @@ jobs:
           esac
           echo "Publishing $VERSION with dist-tag $TAG"
           npm publish --provenance --access public --tag "$TAG"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # No token: authentication is npm Trusted Publishing (OIDC) via this
+        # workflow's id-token permission and the npm-publish environment, which
+        # must both match the trusted-publisher configuration on npmjs.com.
