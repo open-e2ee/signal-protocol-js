@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/open-e2ee/design/v0.2.1/brand/generated/open-e2ee-mark-adaptive.svg" alt="OpenE2EE" width="72" height="72">
+<img src="https://raw.githubusercontent.com/open-e2ee/design/v0.2.2/brand/generated/open-e2ee-mark-adaptive.svg" alt="OpenE2EE" width="72" height="72">
 
 # OpenE2EE Signal Protocol SDK
 
