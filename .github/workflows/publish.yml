@@ -45,17 +45,38 @@ jobs:
 
       - name: Publish
         if: ${{ !inputs.dry-run }}
-        # Prerelease versions publish under their prerelease identifier as the
-        # dist-tag (0.1.0-alpha.1 -> alpha) so `latest` is never a prerelease;
-        # npm also refuses to publish a prerelease without an explicit --tag.
+        # Dist-tag policy, applied at publish time because OIDC trusted-publishing
+        # credentials cover the publish operation only (no post-hoc dist-tag moves):
+        #   - stable versions publish to `latest`;
+        #   - prereleases publish to `latest` while NO stable release exists on the
+        #     registry (the newest alpha is the best available build), and to their
+        #     prerelease identifier (0.1.0-alpha.4 -> alpha) once a stable exists,
+        #     so `latest` is never downgraded to a prerelease after 1.0.
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          NAME=$(node -p "require('./package.json').name")
           TAG=latest
           case "$VERSION" in
-            *-*) TAG="${VERSION#*-}"; TAG="${TAG%%.*}";;
+            *-*)
+              CURRENT_LATEST=$(npm view "$NAME" dist-tags.latest 2>/dev/null || echo "")
+              case "$CURRENT_LATEST" in
+                ""|*-*) TAG=latest;;
+                *) TAG="${VERSION#*-}"; TAG="${TAG%%.*}";;
+              esac
+              ;;
           esac
-          echo "Publishing $VERSION with dist-tag $TAG"
+          echo "Publishing $VERSION with dist-tag $TAG (registry latest: ${CURRENT_LATEST:-n/a})"
           npm publish --provenance --access public --tag "$TAG"
+          # Best-effort: keep the prerelease channel tag current when a prerelease
+          # ships to latest. May be refused under OIDC scoping; never fails the job.
+          case "$VERSION" in
+            *-*)
+              if [ "$TAG" = "latest" ]; then
+                CHANNEL="${VERSION#*-}"; CHANNEL="${CHANNEL%%.*}"
+                npm dist-tag add "$NAME@$VERSION" "$CHANNEL" || echo "::warning::could not update '$CHANNEL' dist-tag (OIDC scope); harmless"
+              fi
+              ;;
+          esac
         # No token: authentication is npm Trusted Publishing (OIDC) via this
         # workflow's id-token permission and the npm-publish environment, which
         # must both match the trusted-publisher configuration on npmjs.com.
