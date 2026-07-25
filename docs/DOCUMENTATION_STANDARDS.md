@@ -6,8 +6,15 @@ application.
 
 ## Documentation hierarchy
 
-- The root [`README.md`](../README.md) explains the package, its security
-  boundary, installation, primary composition path, and public subpaths.
+- The root [`README.md`](../README.md) introduces the package: what it is, how
+  it compares to the alternatives, how to install it, one working example, and
+  the evidence behind its security claims. It links onward rather than
+  documenting the full surface itself.
+- [`PACKAGE_SURFACE.md`](./PACKAGE_SURFACE.md) is the complete public surface:
+  root exports, every subpath, adapter implementations, and core vocabulary.
+- [`RECIPES.md`](./RECIPES.md) holds the working shapes for common operations.
+- [`ASSURANCE.md`](./ASSURANCE.md) states what is verified, where, and what is
+  not published.
 - A module README explains a meaningful exported domain or integration
   boundary. It answers what the module does, why it exists, and how to use it.
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) describes dependency direction and

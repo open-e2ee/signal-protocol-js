@@ -1,76 +1,59 @@
+<img src="https://raw.githubusercontent.com/open-e2ee/design/v0.2.0/brand/generated/open-e2ee-mark-adaptive.svg" alt="OpenE2EE" width="72" height="72">
+
 # OpenE2EE Signal Protocol SDK
 
-> **Not affiliated with Signal Messenger.** OpenE2EE
-> (`@open-e2ee/signal-protocol-sdk`) is an independently maintained TypeScript
-> SDK with its own versioned messaging profile, based on the public
-> [Signal Protocol specifications](https://signal.org/docs/).
->
-> In this repository, **Signal Protocol** means the published protocol
-> specification family. **Signal Messenger** means the separate messaging
-> product and service. This project is not Signal Messenger and is not
-> affiliated with, endorsed by, sponsored by, or maintained by Signal Messenger
-> LLC or Signal Technology Foundation. It does not claim general wire
-> compatibility with Signal Messenger. See the public
-> [security model](./docs/SECURITY.md) and
-> [protocol policy](./docs/PROTOCOL_POLICY.md) for supported behavior. See
-> [NOTICE](./NOTICE) and [THIRD_PARTY_NOTICES](./THIRD_PARTY_NOTICES.md) for
-> legal notices.
+**End-to-end encrypted messaging for TypeScript apps. Signal Protocol, post-quantum by default, runs in Expo.**
 
-> Navigation: **README** | [ARCHITECTURE](./ARCHITECTURE.md) | [ADAPTERS](./ADAPTERS.md) | [SECURITY MODEL](./docs/SECURITY.md) | [API Reference](./docs/api/README.md)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-2f6f5e)](https://github.com/open-e2ee/signal-protocol-js/blob/main/LICENSE)
+[![Types: TypeScript](https://img.shields.io/badge/types-TypeScript-3178c6)](https://www.typescriptlang.org/)
+[![npm: publication pending](https://img.shields.io/badge/npm-publication%20pending-9a7b4f)](https://github.com/open-e2ee/signal-protocol-js#install)
+[![Checks](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml/badge.svg)](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml)
 
-`@open-e2ee/signal-protocol-sdk` is a reusable encrypted messaging package for TypeScript apps.
-It gives app code a small client API for encrypted messaging, devices,
-attachments, groups, safety numbers, and explicit storage/relay composition.
+<!--
+Swap the pending-publication badge for these three at first npm publish:
+[![npm version](https://img.shields.io/npm/v/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
+[![npm downloads](https://img.shields.io/npm/dw/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
+[![provenance](https://img.shields.io/badge/npm-provenance-2f6f5e)](https://docs.npmjs.com/generating-provenance-statements)
+-->
 
-The current release line is `0.1.0-alpha.x`. Public APIs and persisted formats
-may change before `1.0`.
+*Not affiliated with Signal Messenger.* This is an independent implementation of the public Signal Protocol specifications — full notice in [NOTICE](https://github.com/open-e2ee/signal-protocol-js/blob/main/NOTICE).
 
-OpenE2EE is the project and package namespace; it is not the name of a single
-protocol client. The protocol-specific package and client names leave that
-namespace clear for other E2EE protocol implementations, such as a future
-[Messaging Layer Security (MLS)](https://www.rfc-editor.org/rfc/rfc9420.html)
-package, without implying that one client spans multiple protocols.
+[Docs](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/GETTING_STARTED.md) ·
+[Quick Start](#quick-start) ·
+[Architecture](https://github.com/open-e2ee/signal-protocol-js/blob/main/ARCHITECTURE.md) ·
+[Security Model](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/SECURITY.md) ·
+[Protocol Policy](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/PROTOCOL_POLICY.md)
 
-## Core Model
+---
 
-- `createSignalProtocolClient()` is the recommended app-facing entry point.
-- `SignalProtocolClient` is the primary class returned by the factory.
-- `storage` is required and owns local encryption state for one user/device.
-- `relay` is optional for local development, but real messaging apps use it for key
-  sync, message delivery, device fanout, and linked-device workflows.
-- Secure post-quantum defaults are enabled without extra configuration.
-- Identity trust is pinned to one versioned X25519 + Ed25519 composite tuple
-  per `(userId, identityType)`; first contact remains unverified TOFU.
-- The root package is intentionally core-only. Platform and backend adapters
-  live on explicit subpaths.
+- **Pure TypeScript.** No native modules, no prebuild step, no platform binaries to ship.
+- **Runs where your app runs.** Expo, React Native, modern browsers, and Node from one package.
+- **Post-quantum by default.** PQXDH and ML-KEM session establishment are on without configuration, and fail closed.
+- **Real messaging features.** Multi-device, groups, sealed sender, encrypted attachments, safety numbers.
+- **Pluggable storage and relay.** Device-local storage is required and yours; the relay is an interface, not a hosted service.
+- **AGPL-3.0-or-later, or a commercial license.** Building something closed-source? Email licensing@open-e2ee.dev.
+
+`0.1.0-alpha.1` — public APIs and persisted formats may change before `1.0`.
 
 ## Install
+
+The package is not on npm yet — publication is pending. Until then, install straight from the public repository. The package compiles itself during install, so TypeScript is the only build requirement:
+
+```bash
+npm install github:open-e2ee/signal-protocol-js
+```
+
+When publication lands, this becomes:
 
 ```bash
 npm install @open-e2ee/signal-protocol-sdk
 ```
 
-App consumers should also install any runtime dependencies their chosen adapters
-need, such as Expo or Convex client packages (declared as optional peer
-dependencies).
-
-## Setup Sequence
-
-For a production app, the normal startup shape is:
-
-1. Choose device-local storage for the current user/device.
-2. Choose a relay for device discovery, public prekeys, and encrypted delivery.
-3. Register or provision the current device with the relay during app bootstrap.
-4. Create the Signal Protocol client with `createSignalProtocolClient()`.
-5. Call `syncToServer()` so other devices can start encrypted sessions.
-6. Register receive hooks and start relay subscription delivery.
+Adapters declare their runtime requirements as optional peer dependencies, so install the ones your chosen adapters need (for example `expo-sqlite` and `expo-secure-store`, or `convex`).
 
 ## Quick Start
 
-### Two Local Clients
-
-This local demo sends while Bob is offline so you can see the relay's encrypted
-envelope and Bob's decrypted plaintext in the same workflow.
+Two clients, one process, no account and no server. The relay holds the envelope; only Bob's device turns it back into text.
 
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
@@ -78,19 +61,13 @@ import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
 import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
 
 const relay = mockRelay();
-
-// The relay knows which devices exist, but it does not get plaintext.
-await relay.registerDevice("alice", {
-  encryptedDeviceName: new ArrayBuffer(0),
-});
+await relay.registerDevice("alice", { encryptedDeviceName: new ArrayBuffer(0) });
 await relay.registerDevice("bob", { encryptedDeviceName: new ArrayBuffer(0) });
 
-// Each client represents one device. Its storage is local to that device.
 const alice = await createSignalProtocolClient({
   identity: { userId: "alice" },
   adapters: { storage: mockStore(), relay },
 });
-
 const bob = await createSignalProtocolClient({
   identity: { userId: "bob" },
   adapters: { storage: mockStore(), relay },
@@ -99,561 +76,77 @@ const bob = await createSignalProtocolClient({
 await alice.syncToServer();
 await bob.syncToServer();
 
-// Send while Bob is offline so we can inspect what the relay stores.
-const sent = await alice.send("bob", "hello");
-console.log("alice sent:", sent.messageId);
-
-// The relay-visible envelope contains metadata plus ciphertext, not plaintext.
-const [queuedEnvelope] = relay.getPendingMessages("bob", 1);
-const ciphertextLength =
-  typeof queuedEnvelope.ciphertext === "string"
-    ? queuedEnvelope.ciphertext.length
-    : queuedEnvelope.ciphertext.byteLength;
-const ciphertextPreview =
-  typeof queuedEnvelope.ciphertext === "string"
-    ? `${queuedEnvelope.ciphertext.slice(0, 32)}...`
-    : `${queuedEnvelope.ciphertext.byteLength} encrypted bytes`;
-
-console.log("relay sees encrypted envelope:", {
-  messageType: queuedEnvelope.messageType,
-  ciphertextLength,
-  ciphertextPreview,
+// Decrypted content reaches your app here, and nowhere else.
+bob.registerHook("onMessageDecrypted", async (message) => {
+  console.log(`${message.senderId}: ${message.content}`); // alice: hello
 });
 
-const decrypted = new Promise<void>((resolve) => {
-  // Plaintext enters your app only after Bob's Signal Protocol client decrypts it.
-  bob.registerHook("onMessageDecrypted", async (message) => {
-    console.log("bob decrypted:", `${message.senderId}: ${message.content}`);
-    resolve();
-  });
-});
-
-// Starting the subscription delivers Bob's queued encrypted envelope.
-bob.startRelaySubscription();
-await decrypted;
+await alice.send("bob", "hello");   // the relay now holds ciphertext and metadata
+bob.startRelaySubscription();       // delivery and local decryption start here
 ```
 
-Example output:
+Every identifier above is a real export, and this exact sequence is exercised by an automated check in the engineering repository on every change.
 
-```text
-alice sent: msg-1
-relay sees encrypted envelope: {
-  messageType: 'prekey_bundle',
-  ciphertextLength: 3464,
-  ciphertextPreview: '<base64 ciphertext preview>...'
-}
-bob decrypted: alice: hello
-```
+Next: [inspect what the relay actually stored](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/GETTING_STARTED.md), then compose the [Expo + Convex production client](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/CLIENT_COMPOSITION.md).
 
-The first message usually uses a `prekey_bundle` envelope because it establishes
-the session. Later messages on the same session use `ciphertext`. In both cases
-the relay sees encrypted envelope bytes; decrypted content is only surfaced to
-Bob through the `onMessageDecrypted` hook.
+## How it compares
 
-### Production composition with Convex + Expo
+Measured from the GitHub and npm registry APIs on 2026-07-24. Every alternative is a real project doing a real job; the axes below are the ones this SDK was built to change, not a general quality ranking.
 
-```ts
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import {
-  convexRelay,
-  type ConvexSignalRelayApi,
-} from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
-import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
-import { api } from "../convex/_generated/api";
+| | Expo / React Native | Browser | Maintained | Post-quantum | TypeScript-native | Commercial license |
+|---|---|---|---|---|---|---|
+| **`@open-e2ee/signal-protocol-sdk`** | Yes | Yes (browser store is experimental) | Yes — `0.1.0-alpha`, active | Yes — PQXDH + ML-KEM, default and fails closed | Yes | Yes |
+| [`@signalapp/libsignal-client`](https://github.com/signalapp/libsignal) | No — prebuilt native binaries for Windows, macOS, and Linux only | No | Yes — very active | Yes | No — Rust core with TypeScript bindings | No (AGPL-3.0 only) |
+| [`libsignal-protocol-javascript`](https://github.com/signalapp/libsignal-protocol-javascript) | No | Yes | No — archived, last push 2021-08-04 | No | No — JavaScript | No (GPL-3.0) |
+| [`@privacyresearch/libsignal-protocol-typescript`](https://github.com/privacyresearchgroup/libsignal-protocol-typescript) | No documented React Native path | Yes | No — last npm publish 2023-05-06, last repo push 2023-07-18 | No | Yes | No (GPL-3.0) |
+| [`ts-mls`](https://github.com/LukaJCB/ts-mls) | Yes | Yes | Yes — very active | Yes | Yes | No (MIT) |
 
-const signalApi = api.signal satisfies ConvexSignalRelayApi;
+`ts-mls` implements [MLS (RFC 9420)](https://www.rfc-editor.org/rfc/rfc9420.html), a different protocol with different properties — if MLS suits your product, it is a good library and this table is not an argument against it. `@signalapp/libsignal-client` is the implementation Signal Messenger itself uses; its README states that use outside Signal is unsupported.
 
-// The relay handles server-side public keys, devices, and encrypted envelopes.
-const relay = convexRelay({
-  convex,
-  api: signalApi,
-  currentUserId: userId,
-});
+## Trust and verification
 
-// Initialize the application-owned Expo/SQLCipher database bindings first.
-const signal = await createSignalProtocolClient({
-  identity: { userId },
-  adapters: {
-    // Storage owns this device's private keys and session state.
-    storage: expoStore({ relay }),
-    relay,
-  },
-});
+Cryptography deserves evidence rather than adjectives, so here is what there is and what there is not.
 
-// Publish this device's public prekeys so other devices can start sessions.
-await signal.syncToServer();
-```
+**Audit status.** Not yet audited. An independent review is planned; no firm is engaged and no date is set. Nothing here should be read as a third-party assurance claim.
 
-Production bootstrapping must register or provision the current device with the
-relay before other clients rely on user-level send discovery. In Signal Protocol
-that belongs in the device lifecycle and authentication bootstrap. Expo apps
-must also complete the [database bootstrap](./local/store/expo/README.md) before
-creating the client.
+**Security model and protocol policy.** The [security model](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/SECURITY.md) states the threat model, what is in and out of scope, the storage boundary, and the resource limits. The [protocol policy](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/PROTOCOL_POLICY.md) states which protocol modes are supported and which fail closed.
 
-### Local development
+**Specifications, pinned by revision.** The implementation follows its own versioned profile based on these published specifications:
 
-```ts
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
-import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
+| Specification | Revision |
+|---|---|
+| [X3DH](https://signal.org/docs/specifications/x3dh/) | Revision 1, 2016-11-04 |
+| [PQXDH](https://signal.org/docs/specifications/pqxdh/) | Revision 3, 2023-05-24 (last updated 2024-01-23) |
+| [Double Ratchet](https://signal.org/docs/specifications/doubleratchet/) | Revision 4, 2025-11-04 |
+| [Sesame](https://signal.org/docs/specifications/sesame/) | Revision 2, 2017-04-14 |
+| [ML-KEM Braid](https://signal.org/docs/specifications/mlkembraid/) | Revision 1, 2025-02-21 (last updated 2025-09-26) |
+| [FIPS 203 (ML-KEM)](https://csrc.nist.gov/pubs/fips/203/final) | Final, 2024-08-13 |
+| [RFC 8032 (Ed25519)](https://www.rfc-editor.org/rfc/rfc8032.html) | — |
 
-const relay = mockRelay();
+The profile diverges from Signal Messenger deployments deliberately and says so: ML-KEM-1024 keys and ciphertexts are tagged `0x0A`, distinct from the round-3 Kyber1024 `0x08` tag, and the Ed25519 identity component performs ordinary RFC 8032 signatures rather than XEdDSA. General wire compatibility with Signal Messenger is not claimed. The exact boundary is in the [security model](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/SECURITY.md).
 
-const alice = await createSignalProtocolClient({
-  // `identity` is the app account/device being represented.
-  identity: { userId: "alice" },
-  // `adapters` are the concrete storage/relay implementation for this run.
-  adapters: { storage: mockStore(), relay },
-});
+**Dependencies: 7.** Seven direct production dependencies — `@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`, `async-lock`, `protobufjs`, `unique-names-generator` — resolving to 8 packages in total, the eighth being `long` by way of `protobufjs`. Everything else in the tree is a development or optional peer dependency.
 
-const bob = await createSignalProtocolClient({
-  identity: { userId: "bob" },
-  adapters: { storage: mockStore(), relay },
-});
-```
+**Automated checks.** The published repository is a mechanized export of a private engineering repository, filtered by an allowlist; the automated checks live there and have to pass before an export is cut. The most recent full run, on 2026-07-24, was 351 modules and 5,875 assertions, all passing (1 skipped). The [assurance summary](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/ASSURANCE.md) explains what those cover, what is not published, and why. The published repository runs its own build, typecheck, and production dependency audit in [CI](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml) on every change.
 
-## Public Surface
+**Constant-time posture, honestly.** JavaScript engines offer no machine-level constant-time contract, and this SDK cannot invent one. What exists is best-effort source-level work on selected paths: full-scan comparison for equal-length MACs and identity bytes, fixed-work derivation of both decapsulation candidates before masked selection, and equal-work rejection padding on selected replay and authentication paths. These are not timing-equivalence proofs. Secret-influenced remainder and compression arithmetic remains, and JIT compilation, allocation, garbage collection, and cache effects stay observable. `secureZeroBytes()` overwrites the exact typed array it is handed and nothing more — not copies, not strings, not engine temporaries. The threat model does not cover hostile same-process code or a high-assurance co-resident timing adversary, and it says so.
 
-### Root package
+**Reporting a vulnerability.** Email security@open-e2ee.dev rather than opening an issue. Acknowledgment within 48 hours, initial assessment within 7 days; the full policy is in [SECURITY.md](https://github.com/open-e2ee/signal-protocol-js/blob/main/SECURITY.md).
 
-Use the root package for core portable APIs:
+## Documentation
 
-```ts
-import {
-  SignalProtocolClient,
-  createSignalProtocolClient,
-  ProtocolAddress,
-  BraidPolicy,
-  PostQuantumPolicy,
-  keys,
-  safety,
-  encoding,
-} from "@open-e2ee/signal-protocol-sdk";
-```
+- [Getting Started](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/GETTING_STARTED.md) — installation, mental model, first working client.
+- [Package Surface](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/PACKAGE_SURFACE.md) — root exports, every subpath, adapter implementations, core concepts.
+- [Recipes](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/RECIPES.md) — message flow, protocol policy, multi-device, attachments, usernames.
+- [Client Composition](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/CLIENT_COMPOSITION.md) — production composition with Expo and Convex.
+- [Architecture](https://github.com/open-e2ee/signal-protocol-js/blob/main/ARCHITECTURE.md) and [Adapters](https://github.com/open-e2ee/signal-protocol-js/blob/main/ADAPTERS.md) — layer model and composition boundaries.
+- [Integration Interfaces](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/INTERFACES.md) — the interfaces to implement for custom storage, vaults, relays, and object stores.
+- [Error Handling](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/ERROR_HANDLING.md) and [Troubleshooting](https://github.com/open-e2ee/signal-protocol-js/blob/main/TROUBLESHOOTING.md).
+- [E2EE concepts](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/E2EE.md) — what changes about your architecture when the relay cannot read.
+- [API Reference](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/api/README.md) — generated from the exported declarations.
 
-The root package intentionally does not re-export platform-bound adapters like Expo storage or Convex helpers.
+## License and warranty
 
-### Integration subpaths
+Licensed under `AGPL-3.0-or-later`; see [LICENSE](https://github.com/open-e2ee/signal-protocol-js/blob/main/LICENSE). For proprietary products that cannot meet AGPL obligations, commercial licensing is available at licensing@open-e2ee.dev.
 
-- `@open-e2ee/signal-protocol-sdk/remote/relay`
-- `@open-e2ee/signal-protocol-sdk/remote/relay/convex`
-- `@open-e2ee/signal-protocol-sdk/remote/relay/convex/relay`
-- `@open-e2ee/signal-protocol-sdk/remote/relay/mock`
-- `@open-e2ee/signal-protocol-sdk/remote/relay/types`
-- `@open-e2ee/signal-protocol-sdk/remote/object-store`
-- `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`
-- `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2/server`
-- `@open-e2ee/signal-protocol-sdk/remote/object-store/s3`
-- `@open-e2ee/signal-protocol-sdk/client`
-- `@open-e2ee/signal-protocol-sdk/client/config`
-- `@open-e2ee/signal-protocol-sdk/client/compose`
-- `@open-e2ee/signal-protocol-sdk/client/constants`
-- `@open-e2ee/signal-protocol-sdk/client/endorsement-manager`
-- `@open-e2ee/signal-protocol-sdk/client/headless`
-- `@open-e2ee/signal-protocol-sdk/client/types`
-- `@open-e2ee/signal-protocol-sdk/device`
-- `@open-e2ee/signal-protocol-sdk/device/constants`
-- `@open-e2ee/signal-protocol-sdk/device/device-id`
-- `@open-e2ee/signal-protocol-sdk/device/lifecycle`
-- `@open-e2ee/signal-protocol-sdk/device/provisioning`
-- `@open-e2ee/signal-protocol-sdk/encoding`
-- `@open-e2ee/signal-protocol-sdk/encoding/hex`
-- `@open-e2ee/signal-protocol-sdk/files`
-- `@open-e2ee/signal-protocol-sdk/groups`
-- `@open-e2ee/signal-protocol-sdk/hooks`
-- `@open-e2ee/signal-protocol-sdk/hooks/use-connection-presence`
-- `@open-e2ee/signal-protocol-sdk/keys`
-- `@open-e2ee/signal-protocol-sdk/keys/generation`
-- `@open-e2ee/signal-protocol-sdk/keys/types`
-- `@open-e2ee/signal-protocol-sdk/logger`
-- `@open-e2ee/signal-protocol-sdk/media`
-- `@open-e2ee/signal-protocol-sdk/blocking`
-- `@open-e2ee/signal-protocol-sdk/profile`
-- `@open-e2ee/signal-protocol-sdk/safety`
-- `@open-e2ee/signal-protocol-sdk/sealed-sender`
-- `@open-e2ee/signal-protocol-sdk/server-clock`
-- `@open-e2ee/signal-protocol-sdk/local/store`
-- `@open-e2ee/signal-protocol-sdk/local/store/expo`
-- `@open-e2ee/signal-protocol-sdk/local/store/expo/db`
-- `@open-e2ee/signal-protocol-sdk/local/store/expo/schema`
-- `@open-e2ee/signal-protocol-sdk/local/store/mock`
-- `@open-e2ee/signal-protocol-sdk/local/store/node`
-- `@open-e2ee/signal-protocol-sdk/local/store/react-native`
-- `@open-e2ee/signal-protocol-sdk/local/store/web`
-- `@open-e2ee/signal-protocol-sdk/local/vault`
-- `@open-e2ee/signal-protocol-sdk/local/vault/expo-secure-store`
-- `@open-e2ee/signal-protocol-sdk/types`
-- `@open-e2ee/signal-protocol-sdk/types/address`
-- `@open-e2ee/signal-protocol-sdk/types/messages`
-- `@open-e2ee/signal-protocol-sdk/types/utils`
-- `@open-e2ee/signal-protocol-sdk/username`
-- `@open-e2ee/signal-protocol-sdk/username/link`
-- `@open-e2ee/signal-protocol-sdk/utils/retry`
-- `@open-e2ee/signal-protocol-sdk/zk/groups`
-- `@open-e2ee/signal-protocol-sdk/zk/credentials`
-
-### Development adapters
-
-- `@open-e2ee/signal-protocol-sdk/remote/relay/mock`
-- `@open-e2ee/signal-protocol-sdk/local/store/mock`
-
-`internal/**` is implementation-only and not part of the supported external API.
-
-### Module guides
-
-- [Client](./client/README.md)
-- [Device lifecycle, linking, and transfer](./device/README.md)
-- [Keys and identity](./keys/README.md)
-- [Local stores](./local/store/README.md)
-- [Local secret vault](./local/vault/README.md)
-- [Remote relay and object storage](./remote/README.md)
-- [Encrypted media](./media/README.md)
-- [Encrypted files](./files/README.md)
-- [Groups](./groups/README.md)
-- [Safety numbers](./safety/README.md)
-- [Encrypted profiles](./profile/README.md)
-- [Usernames](./username/README.md)
-- [Blocking](./blocking/README.md)
-- [React hooks](./hooks/README.md)
-- [Encoding](./encoding/README.md)
-- [Public types](./types/README.md)
-- [Zero-knowledge credentials and groups](./zk/README.md)
-- [Documentation and comment standards](./docs/DOCUMENTATION_STANDARDS.md)
-
-## Basic Concepts
-
-- **Client**: one running app instance for one account and one device.
-- **User ID**: your app's stable account identifier.
-- **Device ID**: `1` for the primary device; linked devices use `2-5`.
-- **Storage**: local encrypted state needed to keep conversations working across
-  restarts.
-- **Relay**: server-side public keys, device lists, encrypted envelope delivery,
-  and linked-device coordination.
-- **Object store**: optional remote storage for encrypted attachments.
-- **Hooks**: callbacks where your app receives decrypted messages and stores them
-  in its own database or UI state.
-
-## Supported Implementations
-
-### Relay implementations
-
-- `ConvexSignalRelayServer` for Convex-backed apps
-- `convexRelay()` for Convex-backed composition
-- `MockSignalRelayServer` / `mockRelay()` for local development
-- custom implementations via `ISignalRelayServer`
-
-### Storage implementations
-
-- `ExpoSignalStore` for Expo / React Native
-- `expoStore()` for Expo / React Native composition
-- `@open-e2ee/signal-protocol-sdk/local/store/expo` also exports the Expo helpers Signal Protocol composes directly:
-  `getKeyStorage`, `getDatabaseKeyManager`, `clearDatabaseKeyCache`, and
-  `createPreKeyMaintenanceStore`
-- `IndexedDbSignalStore` / `indexedDbStore()` for browsers (experimental)
-- `ReactNativeSignalStore` / `reactNativeStore()` for bare React Native (experimental; provide your own key-value backend)
-- `NodeSignalStore` / `nodeStore()` for Node environments
-- `MockSignalStore` / `mockStore()` for local development
-- custom implementations via `ISignalLocalStore`
-
-### Remote object storage
-
-- `ConvexR2ObjectStore` via `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`
-- `convexR2ObjectStore()` for Cloudflare R2 composition
-- `defineConvexR2ObjectStore()` via the server-only
-  `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2/server` entry point
-- `S3ObjectStore` via `@open-e2ee/signal-protocol-sdk/remote/object-store/s3`
-- `s3ObjectStore()` for brokered Amazon S3 or S3-compatible storage
-- custom implementations via `SignalRemoteObjectStore`
-
-`ConvexR2ObjectStore` is a client adapter for authenticated app-owned Convex
-functions that wrap `@convex-dev/r2`; it is not the Convex component itself.
-The application continues to own component installation, mounting,
-configuration, authentication, authorization, persistence, credentials, and
-the R2 bucket. The optional server helper owns only generic broker mechanics.
-Both concrete adapters keep provider credentials in the application backend.
-
-Remote object storage is a normal first-class integration point for encrypted
-attachments and files, not a niche or internal-only adapter.
-Use `attachment.transfer` when your app has a foreground, background,
-resumable, or platform-native byte transfer implementation. The Signal package
-still owns encryption, digest verification, retry decisions, and pointer
-metadata.
-Object stores can return signed upload headers, and stores that return
-`protocol: 'tus'` automatically use the built-in resumable TUS transfer
-helper. You can also pass `media.createTusMediaAttachmentTransfer()` explicitly
-when your app wants to tune the TUS fetch implementation or chunk size.
-Download credentials can also return signed headers. For JavaScript runtimes
-that need resumable downloads, `media.createByteRangeMediaAttachmentTransfer()`
-performs strict HTTP range requests, validates `Content-Range`, persists
-checkpoints, and resumes only when your app provides a partial-byte store for the
-previous ciphertext prefix. Native background download integrations should
-implement the same `MediaAttachmentTransfer` seam.
-
-```ts
-import { media } from "@open-e2ee/signal-protocol-sdk";
-
-await signal.send(recipientUserId, photoBytes, {
-  isBinary: true,
-  mimeType: "image/jpeg",
-  width: 1200,
-  height: 800,
-  thumbnail: thumbnailBase64,
-  attachment: {
-    transfer: media.createTusMediaAttachmentTransfer({
-      chunkSizeBytes: 1024 * 1024,
-    }),
-    policy: media.MEDIA_ATTACHMENT_POLICY_PRESETS.Image,
-    onProgress: (event) => {
-      console.log(
-        event.operation,
-        event.phase,
-        event.bytesTransferred,
-        event.totalBytes,
-      );
-    },
-  },
-});
-
-const attachment = await signal.uploadAttachment(photoBytes, {
-  mimeType: "image/jpeg",
-  fileName: "photo.jpg",
-  width: 1200,
-  height: 800,
-  thumbnail: thumbnailBase64,
-  attachment: {
-    transfer: media.createTusMediaAttachmentTransfer({
-      chunkSizeBytes: 1024 * 1024,
-    }),
-    policy: media.MEDIA_ATTACHMENT_POLICY_PRESETS.Image,
-  },
-});
-
-const mediaWork = media.planMediaAttachmentProcessing({
-  attachment,
-  senderUserId,
-  timestamp: messageTimestamp,
-  processedDeliveryIds: await appMessages.processedMediaDeliveryIds(),
-  cachedAttachmentIds: await appMediaCache.attachmentIds(),
-  openedViewOnceDeliveryIds: await appMediaCache.openedViewOnceDeliveryIds(),
-});
-
-if (mediaWork.downloadJob) {
-  await signal.media.download(
-    {
-      attachment,
-      senderUserId,
-      timestamp: messageTimestamp,
-      processedDeliveryIds: await appMessages.processedMediaDeliveryIds(),
-      cachedAttachmentIds: await appMediaCache.attachmentIds(),
-      openedViewOnceDeliveryIds:
-        await appMediaCache.openedViewOnceDeliveryIds(),
-    },
-    {
-      transfer: appMediaTransferAdapter,
-      onCheckpoint: appMediaTransfers.save,
-    },
-  );
-}
-
-const downloaded = await signal.downloadAttachment(attachment, {
-  transfer: media.createByteRangeMediaAttachmentTransfer({
-    chunkSizeBytes: 1024 * 1024,
-    partialStore: appMediaTransfers.partialStore(),
-  }),
-  resume: await appMediaTransfers.resumeState(mediaWork.attachmentId),
-  onCheckpoint: (checkpoint) => appMediaTransfers.save(checkpoint),
-});
-
-const opened = media.planMediaAttachmentOpen({
-  attachment,
-  senderUserId,
-  timestamp: messageTimestamp,
-});
-
-if (opened.viewOnceOpenSync) {
-  await signal.syncViewOnceOpenToLinkedDevices(opened.viewOnceOpenSync);
-}
-
-if (opened.cleanup?.deleteLocalCache) {
-  await appMediaCache.delete(opened.cleanup.storageId);
-}
-
-const deleteSync = media.planMediaAttachmentDeleteSync({
-  attachment,
-  reason: media.MediaAttachmentCleanupReason.MessageDeleted,
-  deletedAt: Date.now(),
-});
-
-await appMediaCache.delete(deleteSync.storageId);
-await signal.syncMediaAttachmentDeleteToLinkedDevices(deleteSync);
-
-await signal.media.cleanup(
-  {
-    cleanup: media.planMediaAttachmentCleanup(
-      attachment,
-      media.MediaAttachmentCleanupReason.MessageExpired,
-    ),
-    includeLocal: true,
-    includeRemote: true,
-    includeSync: true,
-  },
-  {
-    transfer: appMediaTransferAdapter,
-  },
-);
-```
-
-## Common Patterns
-
-### App Message Flow
-
-```ts
-const signal = await createSignalProtocolClient({
-  identity: { userId },
-  adapters: { storage, relay },
-});
-
-// Upload public prekeys before other devices need to message this device.
-await signal.syncToServer();
-
-signal.registerHook("onMessageDecrypted", async (message) => {
-  // Decrypted content belongs in your app database, not in the relay.
-  await appMessages.insert({
-    conversationId: message.conversationId,
-    senderId: message.senderId,
-    body: message.content,
-    receivedAt: message.receivedAt,
-  });
-});
-
-// Subscribing starts encrypted envelope delivery and local decryption.
-signal.startRelaySubscription();
-
-await signal.send(recipientUserId, "hello");
-```
-
-The relay only handles encrypted envelopes. Your application owns decrypted
-message storage through hooks.
-
-### Protocol policy
-
-```ts
-await createSignalProtocolClient({
-  identity: { userId },
-  adapters: { storage, relay },
-  protocol: {
-    postQuantum: "required",
-    braid: "required",
-  },
-});
-```
-
-`postQuantum: 'required'` and `braid: 'required'` are the defaults. Peers
-without post-quantum material fail closed, and PQ sessions use the SDK's
-ML-KEM Braid SPQR profile. See the
-[protocol policy](./docs/PROTOCOL_POLICY.md) for supported choices.
-
-```ts
-await createSignalProtocolClient({
-  identity: { userId },
-  adapters: { storage, relay },
-  protocol: {
-    postQuantum: "compatible",
-    braid: "required",
-  },
-});
-```
-
-`postQuantum: 'compatible'` still uses post-quantum sessions whenever the peer
-supports them. It only allows classical compatibility for peers that advertise
-no post-quantum material at all.
-
-```ts
-await createSignalProtocolClient({
-  identity: { userId },
-  adapters: { storage, relay },
-  protocol: {
-    postQuantum: "required",
-    braid: "disabled",
-  },
-});
-```
-
-`braid: 'disabled'` is an explicit direct-SPQR escape hatch for
-product-reviewed constraints. It is not downgrade recovery and does not relax
-PQXDH strictness.
-
-### Multi-device send
-
-```ts
-const result = await signal.send(recipientUserId, "hello");
-await appMessages.insertOutgoing({
-  messageId: result.messageId,
-  conversationId,
-  body: "hello",
-  sentAt: result.clientTimestamp ?? result.timestamp,
-  recipientDeviceCount: result.recipientDeviceCount,
-});
-```
-
-### Direct device session
-
-```ts
-import { ProtocolAddress } from "@open-e2ee/signal-protocol-sdk";
-
-const bob = ProtocolAddress.create("bob", 2);
-await signal.establishSession(bob, bundle);
-await signal.encryptMessage(bob, "linked-device hello");
-```
-
-### Username and ZK helpers
-
-```ts
-import {
-  hashUsername,
-  parseUsername,
-} from "@open-e2ee/signal-protocol-sdk/username";
-import { computeProfileKeyVersion } from "@open-e2ee/signal-protocol-sdk/zk/groups";
-
-const parsed = parseUsername("alice.42");
-const usernameHash = hashUsername(parsed.nickname, parsed.discriminator);
-const version = computeProfileKeyVersion(profileKeyBytes, userIdBytes);
-```
-
-## Design Notes
-
-- `SignalProtocolClient.create()` requires `storage`. There are no hidden default adapters.
-- `createSignalProtocolClient()` is the preferred composition helper when app code owns
-  multiple adapters.
-- Linked devices must already contain provisioned identity material before `SignalProtocolClient.create(..., { deviceId: 2 })`.
-- Username-only apps typically run ACI-only. Phone-capable apps can enable both ACI and PNI with `enablePniKeys: true`.
-- `protocol.postQuantum` and `protocol.braid` are product-facing policy.
-  Advanced protocol strategy knobs remain available for diagnostics, telemetry,
-  and protocol-level tuning.
-- The package is workspace-friendly in this repo and dist-first for packed consumers.
-
-## Further Reading
-
-- [ARCHITECTURE](./ARCHITECTURE.md)
-- [ADAPTERS](./ADAPTERS.md)
-- [Getting Started](./docs/GETTING_STARTED.md)
-- [Client Composition Guide](./docs/CLIENT_COMPOSITION.md)
-- [Protocol Policy Guide](./docs/PROTOCOL_POLICY.md)
-- [Security Model](./docs/SECURITY.md)
-- [Documentation and Comment Standards](./docs/DOCUMENTATION_STANDARDS.md)
-- [Remote Guide](./remote/README.md)
-- [Storage Guide](./local/store/README.md)
-- [API Reference](./docs/api/README.md)
-
-## License and Warranty
-
-This project is licensed under `AGPL-3.0-or-later`; see [LICENSE](./LICENSE).
-The software is provided **as is**, without warranties or conditions of any
-kind. To the extent permitted by applicable law, copyright holders and
-contributors are not liable for damages arising from its use. Applications are
-responsible for evaluating the SDK for their requirements and for securing
-their own deployment, storage, authentication, authorization, and operations.
-
-This summary does not modify the license. The complete warranty disclaimer and
-limitation of liability are in sections 15 and 16 of the GNU Affero General
-Public License.
+The software is provided **as is**, without warranties or conditions of any kind. To the extent permitted by applicable law, copyright holders and contributors are not liable for damages arising from its use. Applications remain responsible for evaluating this SDK against their own requirements and for securing their deployment, storage, authentication, authorization, and operations. This summary does not modify the license; the complete warranty disclaimer and limitation of liability are in sections 15 and 16 of the GNU Affero General Public License.

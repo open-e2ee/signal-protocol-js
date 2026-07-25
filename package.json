@@ -1,8 +1,7 @@
 {
   "name": "@open-e2ee/signal-protocol-sdk",
   "version": "0.1.0-alpha.1",
-  "private": true,
-  "description": "Independent TypeScript E2EE SDK implementing a versioned profile based on public Signal Protocol specifications",
+  "description": "Signal Protocol E2EE SDK for TypeScript — Expo, React Native, browser, and Node. Post-quantum PQXDH and Double Ratchet.",
   "keywords": [
     "open-e2ee",
     "opene2ee",
@@ -16,7 +15,16 @@
     "post-quantum",
     "kyber",
     "ml-kem",
-    "cryptography"
+    "cryptography",
+    "typescript",
+    "react-native",
+    "expo",
+    "nodejs",
+    "secure-messaging",
+    "messaging",
+    "sealed-sender",
+    "sdk",
+    "forward-secrecy"
   ],
   "license": "AGPL-3.0-or-later",
   "author": {
@@ -280,13 +288,16 @@
     "client/README.md",
     "device/README.md",
     "dist",
+    "docs/ASSURANCE.md",
     "docs/CLIENT_COMPOSITION.md",
     "docs/DOCUMENTATION_STANDARDS.md",
     "docs/E2EE.md",
     "docs/ERROR_HANDLING.md",
     "docs/GETTING_STARTED.md",
     "docs/INTERFACES.md",
+    "docs/PACKAGE_SURFACE.md",
     "docs/PROTOCOL_POLICY.md",
+    "docs/RECIPES.md",
     "docs/SECURITY.md",
     "docs/api",
     "encoding/README.md",
@@ -329,6 +340,7 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit -p tsconfig.build.json",
     "docs:api": "npx -y -p typedoc@0.28 -p typedoc-plugin-markdown@4 -p typescript@5.8 typedoc && node ./scripts/normalize-api-doc-paths.mjs",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
@@ -342,7 +354,7 @@
     "expo-secure-store": "~55.0.15",
     "expo-sqlite": "~55.0.17",
     "idb": "^8.0.3",
-    "react": "19.2.0",
+    "react": "^19.0.0",
     "react-native": "^0.83.6",
     "react-native-device-info": "^15.0.1"
   },
