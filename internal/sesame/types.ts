@@ -389,12 +389,17 @@ export function updateSessionRecordAfterSend(record: SessionRecord): SessionReco
  * @returns Updated SessionRecord
  */
 export function updateSessionRecordAfterReceive(record: SessionRecord): SessionRecord {
+  const now = Date.now();
   return {
     ...record,
     metadata: {
+      createdAt: record.metadata?.createdAt ?? now,
+      lastSentAt: record.metadata?.lastSentAt ?? null,
+      isInitiator: record.metadata?.isInitiator ?? false,
+      isActive: record.metadata?.isActive ?? true,
       ...record.metadata,
-      lastReceivedAt: Date.now(),
-      lastUsedAt: Date.now(),
+      lastReceivedAt: now,
+      lastUsedAt: now,
       messagesReceived: (record.metadata?.messagesReceived ?? 0) + 1,
     },
   };

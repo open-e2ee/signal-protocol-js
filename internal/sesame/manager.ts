@@ -1578,6 +1578,15 @@ export class SesameManager implements ISesameManager {
       },
     });
 
+    // Snapshot SESAME state before protocol.decrypt() establishes a responder
+    // session. Some storage adapters synthesize DeviceRecord from live protocol
+    // state, so looking this up only after decrypt makes a brand-new session
+    // appear pre-existing and archives it into itself.
+    let deviceRecord = await this.getDeviceRecord(
+      message.senderUserId,
+      message.senderDeviceId
+    );
+
     // Note: this.protocol is guaranteed non-null because receive() checks it before calling this method
     const plaintextString = await this.protocol!.decrypt(senderAddress, ciphertext);
     const decryptedPlaintext = new TextEncoder().encode(plaintextString);
@@ -1613,9 +1622,6 @@ export class SesameManager implements ISesameManager {
       if (e instanceof DecryptionFailedError) throw e;
       throw new DecryptionFailedError(message.sessionId, 0);
     }
-
-    // Get existing DeviceRecord for this sender (if any)
-    let deviceRecord = await this.getDeviceRecord(message.senderUserId, message.senderDeviceId);
 
     // Track if we need to create/update UserRecord (for new senders only)
     let pendingUserRecord: UserRecord | undefined;

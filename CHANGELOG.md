@@ -1,3 +1,15 @@
+## 0.1.0-alpha.3
+
+- Fix: the first inbound responder session is no longer archived into itself
+  when a storage adapter surfaces device records synthesized from live protocol
+  state; SESAME device state is snapshotted before protocol decryption, so a
+  brand-new session can never appear pre-existing. Receiving on that session
+  now records responder metadata correctly.
+- Tests: the SESAME "Receiving Messages" spec suite now exercises the real
+  SesameManager end to end (previously a file-local mock), covering active-
+  session receive, responder synchronization, delayed and out-of-order
+  delivery, transactional PreKey persistence, and identity replacement.
+
 # Changelog
 
 ## 0.1.0-alpha.2
