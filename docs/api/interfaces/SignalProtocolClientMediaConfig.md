@@ -46,8 +46,8 @@ Delete app-owned local cache state for a cleanup job.
 
 Load app-owned local bytes for a queued upload.
 
-The Signal package owns encryption and upload execution. The app owns draft
-files, cache paths, and file permissions, so bytes enter the queue through
+The Signal Protocol package owns encryption and upload execution. The app owns
+draft files, cache paths, and file permissions, so bytes enter the queue through
 this callback instead of hidden package storage.
 
 #### Parameters
@@ -80,7 +80,7 @@ Maximum attempts before a failing job is removed.
 
 > `optional` **maxJobs?**: `number`
 
-Bound the queue kept in the Signal local store metadata.
+Bound the queue kept in the Signal Protocol local store metadata.
 
 #### Default
 

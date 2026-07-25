@@ -8,7 +8,7 @@
  *
  * ## Component API Access Pattern
  *
- * This file consumes typed, app-injected API references for the Signal
+ * This file consumes typed, app-injected API references for the Signal Protocol
  * component's functions. The app-level wrappers are defined in:
  * - convex/signal/keys.ts
  * - convex/signal/devices.ts
@@ -199,7 +199,7 @@ export class ConvexSignalRelayServer implements ISignalRelayServer {
    * Create a new ConvexSignalRelayServer.
    *
    * @param convex - Convex client (React or HTTP)
-   * @param api - Generated Convex Signal API map for queries and mutations
+   * @param api - Generated Convex Signal Protocol API map for queries and mutations
    * @param options.currentUserId - Current user's ID for ownership-scoped relay operations
    * @param options.getAuthToken - Optional auth token getter for push-based subscriptions.
    *   When provided, creates an internal ConvexClient with WebSocket push.

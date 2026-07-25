@@ -72,3 +72,27 @@ jobs:
           cp "$RUNNER_TEMP/quickstart.mjs" .
           timeout 120 node quickstart.mjs | tee output.txt || true
           grep -q "alice: hello" output.txt
+
+  mock-snippets:
+    name: Shipped mock snippets run as printed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install from the committed lockfile
+        run: npm ci --ignore-scripts
+
+      - name: Build and pack
+        run: |
+          npm run build
+          npm pack --pack-destination "$RUNNER_TEMP"
+
+      - name: Execute every classified mock snippet
+        run: >-
+          node scripts/run-mock-snippets.mjs
+          "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz

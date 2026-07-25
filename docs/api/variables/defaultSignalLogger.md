@@ -10,8 +10,8 @@
 
 Logging utilities for app composition
 
-Pass a logger into `createSignalProtocolClient()` to route Signal logs through your
-app logger or custom diagnostics pipeline.
+Pass a logger into `createSignalProtocolClient()` to route Signal Protocol logs
+through your app logger or custom diagnostics pipeline.
 
 ## Example
 

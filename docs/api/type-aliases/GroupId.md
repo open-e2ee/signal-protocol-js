@@ -11,7 +11,7 @@
 Branded type for prefixed group IDs
 
 Ensures compile-time safety for group ID handling.
-A GroupId is always a string with the Signal V2 prefix.
+A GroupId is always a string with the Signal Protocol V2 prefix.
 
 ## Type Declaration
 

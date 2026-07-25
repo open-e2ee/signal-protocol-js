@@ -88,7 +88,7 @@ export type ChainKey = Base64 & {
  * - 16 bytes: AES-CBC IV
  *
  * Security: MUST be deleted after use. Storage for out-of-order messages
- * MUST implement expiration (Signal recommends 1 week max).
+ * MUST implement expiration (the reference implementation recommends 1 week max).
  *
  * Size: 32 bytes (256 bits), stored as Base64
  */

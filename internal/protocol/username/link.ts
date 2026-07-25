@@ -1,5 +1,5 @@
 /**
- * Signal-Compliant Username Link Encryption/Decryption
+ * Username link encryption/decryption, compatible with the reference implementation
  *
  * Uses:
  * - AES-256-CBC for encryption

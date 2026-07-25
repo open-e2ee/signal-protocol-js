@@ -75,7 +75,9 @@ subscription startup.
 
 ## Local Client
 
+<!-- mock-snippet:run client-composition-local-client -->
 ```ts
+// Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
 
@@ -136,9 +138,9 @@ const signal = await createSignalProtocolClient({
     }),
   },
   media: {
-    // The existing Signal storage adapter persists queue metadata. These
-    // callbacks keep app-owned files, plaintext cache, and UI state outside the
-    // protocol package.
+    // The existing Signal Protocol storage adapter persists queue metadata.
+    // These callbacks keep app-owned files, plaintext cache, and UI state
+    // outside the protocol package.
     loadLocalAttachment: async ({ localMediaId }) =>
       appDraftMedia.readBytes(localMediaId),
     saveUploadedAttachment: async ({ localMediaId, attachment }) =>

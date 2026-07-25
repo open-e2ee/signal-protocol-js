@@ -6,7 +6,7 @@
 
 # Interface: ILogger
 
-Signal package logging primitives.
+Signal Protocol package logging primitives.
 
 The package resolves a logger once at composition time and passes it through
 explicit dependencies. This keeps logging package-local without relying on

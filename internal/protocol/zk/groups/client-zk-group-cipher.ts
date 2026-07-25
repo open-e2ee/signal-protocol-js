@@ -5,7 +5,7 @@
  * This is a convenience wrapper that provides named encrypt/decrypt operations
  * for UIDs and profile keys using GroupSecretParams. Each method delegates to
  * the corresponding function in group-params.ts and handles serialization of
- * the ciphertext into the wire format expected by the Signal server.
+ * the ciphertext into the wire format expected by the relay server.
  *
  * Wire formats:
  *  - UuidCiphertext:       65 bytes = 1 byte ServiceIdKind + 32 bytes E_A1 + 32 bytes E_A2
@@ -130,7 +130,7 @@ function deserializeProfileKeyCiphertext(data: ProfileKeyCiphertext): ProfileKey
  * Encrypt a ServiceId (UUID) under the group's UID encryption key.
  *
  * Produces a serialized 65-byte UuidCiphertext suitable for sending to the
- * Signal server or storing in the group state.
+ * relay server or storing in the group state.
  *
  * @param groupSecretParams - The group's secret parameters
  * @param serviceId - The ServiceId to encrypt (ACI or PNI)

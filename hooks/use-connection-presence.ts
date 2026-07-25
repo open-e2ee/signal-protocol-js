@@ -4,7 +4,7 @@
  * Handles both WebSocket connection state and app lifecycle state
  * to provide accurate, immediate presence updates with no duplicate calls.
  *
- * Routes presence operations through the Signal relay for architectural
+ * Routes presence operations through the Signal Protocol relay for architectural
  * consistency with other device operations.
  *
  * Behavior:
@@ -55,7 +55,7 @@ export {};
 const HEARTBEAT_INTERVAL_MS = 10 * 1000;
 
 export interface UseConnectionPresenceOptions {
-  /** Signal relay server instance */
+  /** Signal Protocol relay server instance */
   relay: ISignalRelayServer;
   /** Current device ID (1-5) */
   deviceId: number | null;

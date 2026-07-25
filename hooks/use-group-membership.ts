@@ -34,7 +34,7 @@ export interface UseGroupMembershipResult {
    * Handle member removal from a group.
    * Rotates sender key and distributes to remaining members.
    *
-   * @param groupId - Signal group ID (from createGroupId)
+   * @param groupId - Group ID (from createGroupId)
    * @param remainingMemberIds - ACIs of members still in the group
    */
   handleMemberRemoved: (groupId: string, remainingMemberIds: string[]) => Promise<void>;
@@ -43,7 +43,7 @@ export interface UseGroupMembershipResult {
    * Handle member added to a group.
    * Distributes existing sender key to the new member.
    *
-   * @param groupId - Signal group ID (from createGroupId)
+   * @param groupId - Group ID (from createGroupId)
    * @param newMemberId - ACI of the new member
    */
   handleMemberAdded: (groupId: string, newMemberId: string) => Promise<void>;

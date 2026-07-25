@@ -4,7 +4,7 @@
  * Pure cryptographic functions for profile key operations.
  * No database or storage dependencies - fully testable.
  *
- * Blob Format (Signal Pattern):
+ * Blob format (reference pattern):
  * ```
  * [nonce (12 bytes) || ciphertext || auth_tag (16 bytes)]
  * ```

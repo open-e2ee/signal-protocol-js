@@ -5,7 +5,7 @@
  * GCM-SIV is nonce-misuse resistant (RFC 8452), making it safe
  * to use with a constant zero nonce when keys are single-use.
  *
- * Signal uses this in V2 sealed sender because:
+ * The reference implementation uses this in V2 sealed sender because:
  * 1. Each message derives a unique symmetric key from random M
  * 2. Zero nonce is safe since key is never reused
  * 3. Provides authenticated encryption in a single pass

@@ -1,7 +1,7 @@
 /**
- * Expo Signal Store
+ * Expo Signal Protocol Store
  *
- * Local Signal state store for Expo/React Native applications.
+ * Local Signal Protocol state store for Expo/React Native applications.
  * Uses:
  * - a local secret vault for the database encryption key
  * - an application-configured Expo SQLite/SQLCipher database
@@ -42,7 +42,7 @@ import { KeyStorage } from './key-storage';
 import { resolveSignalLogger, type ILogger } from '../../../logger';
 
 /**
- * Expo Signal Store
+ * Expo Signal Protocol Store
  *
  * Provides secure storage for Signal Protocol keys using Expo's native modules.
  *

@@ -11,7 +11,7 @@ import {
  * SDK-managed SQLite schema fragment for Expo local storage.
  *
  * The app's unified Drizzle schema composes these tables, but the table
- * definitions themselves live with the Signal storage implementation.
+ * definitions themselves live with the Signal Protocol storage implementation.
  */
 
 export const profileKeys = sqliteTable(

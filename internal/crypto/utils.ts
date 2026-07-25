@@ -136,8 +136,8 @@ export function bytesToBase64(bytes: Uint8Array): Base64 {
  * - `_` instead of `/`
  * - No padding (`=`)
  *
- * Used for R2 storage keys (attachments, profiles) following the Signal
- * Messenger storage-key pattern.
+ * Used for R2 storage keys (attachments, profiles), which must survive being
+ * placed in a URL path without escaping.
  *
  * @see RFC 4648 Section 5 - Base 64 Encoding with URL and Filename Safe Alphabet
  */

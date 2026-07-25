@@ -16,7 +16,7 @@ A client represents one app install for one account and one device.
 
 > `optional` **deviceId?**: `number`
 
-Signal device identifier. Defaults to primary device 1.
+Signal Protocol device identifier. Defaults to primary device 1.
 
 ***
 

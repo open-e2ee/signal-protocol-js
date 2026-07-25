@@ -79,6 +79,9 @@ export async function establishSession(
     // Call hook: session established
     await callHook(ctx.hooks, 'onSessionEstablished', sessionId, remoteAddress.userId);
   } catch (error) {
+    if (error instanceof EncryptionError) {
+      throw error;
+    }
     throw new EncryptionError(
       `Failed to establish session for ${ProtocolAddress.toString(remoteAddress)}`,
       EncryptionErrorCode.SESSION_CORRUPTED,

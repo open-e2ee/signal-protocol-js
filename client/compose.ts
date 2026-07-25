@@ -12,7 +12,7 @@ import type { ISignalLocalStore, ISignalProtocolManager } from '../types/api';
 export interface SignalProtocolClientIdentityConfig {
   /** Canonical account/user identifier. */
   userId: string;
-  /** Signal device identifier. Defaults to primary device 1. */
+  /** Signal Protocol device identifier. Defaults to primary device 1. */
   deviceId?: number;
   /** Generate and sync both ACI and PNI key material when true. */
   enablePniKeys?: boolean;

@@ -25,16 +25,16 @@ import {
 // Core Constants
 // =============================================================================
 
-/** Chunk size for erasure coding (Signal protocol default) */
+/** Chunk size for erasure coding (ML-KEM Braid protocol default) */
 export {};
 export const CHUNK_SIZE = 32;
 
 // =============================================================================
-// Streaming Encoder/Decoder Interfaces (Signal: Encoder/Decoder traits)
+// Streaming Encoder/Decoder Interfaces (reference: Encoder/Decoder)
 // =============================================================================
 
 /**
- * Erasure encoder interface (Signal: Encoder trait)
+ * Erasure encoder interface (reference: Encoder)
  *
  * Generates chunks on-demand for transmission. First k calls return
  * systematic (data) chunks, subsequent calls generate parity chunks
@@ -55,7 +55,7 @@ export interface Encoder {
 }
 
 /**
- * Erasure decoder interface (Signal: Decoder trait)
+ * Erasure decoder interface (reference: Decoder)
  *
  * Accepts chunks in any order and reconstructs the original message
  * once k chunks (data or parity) have been received.
@@ -144,7 +144,7 @@ export const POLYNOMIAL_LIMITS = {
 } as const;
 
 // =============================================================================
-// 16-Parallel Polynomial Types (Signal Compliance)
+// 16-Parallel Polynomial Types (reference compliance)
 // =============================================================================
 
 /**

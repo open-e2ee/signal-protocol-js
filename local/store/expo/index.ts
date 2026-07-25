@@ -1,5 +1,5 @@
 /**
- * Expo Signal Store Package
+ * Expo Signal Protocol Store Package
  *
  * Encrypted local-store implementation for Signal Protocol state.
  * Uses SQLCipher for full-database encryption with a separate local secret vault.

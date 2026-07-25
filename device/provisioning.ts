@@ -48,7 +48,7 @@ export interface UserProfile {
 /**
  * Optional local group-state store used to sync group master keys during provisioning.
  *
- * Signal owns the provisioning semantics; the host app owns the concrete SQLite store.
+ * The Signal Protocol SDK owns the provisioning semantics; the host app owns the concrete SQLite store.
  */
 export interface ProvisioningGroupStateStore {
   getAllMasterKeys(): Promise<Array<{ groupId: string; masterKey: string }>>;
@@ -59,7 +59,7 @@ export interface ProvisioningGroupStateStore {
 /**
  * Identity-key storage used during provisioning.
  *
- * Signal owns the provisioning semantics; callers provide their concrete
+ * The Signal Protocol SDK owns the provisioning semantics; callers provide their concrete
  * storage adapter so provisioning writes into the same key store used by the
  * runtime client.
  */
@@ -479,7 +479,7 @@ export async function connectToProvisioningSession(
  *
  * Polls for and decrypts provisioning message from primary device.
  * Finalizes the server-side device link, then stores the received bootstrap
- * state in the caller-provided Signal key store.
+ * state in the caller-provided Signal Protocol key store.
  *
  * @param relay - Provisioning service interface
  * @param sessionId - Provisioning session ID
@@ -568,7 +568,7 @@ export async function receiveProvisioningMessage(
       asBase64(aciIdentityKey.dhPublicKey)
     );
 
-    // Finalize the server-side link before mutating local Signal state.
+    // Finalize the server-side link before mutating local Signal Protocol state.
     const completion = await relay.completeProvisioning(sessionId, {
       encryptedDeviceName,
       platform: options.deviceMetadata.platform,

@@ -6,7 +6,7 @@
 
 # Interface: SignalProtocolConfig
 
-Public Signal protocol configuration.
+Public Signal Protocol configuration.
 
 This keeps application code in product/security terms. Internal protocol
 strategy details such as X3DH fallback remain below the SignalProtocolClient seam.

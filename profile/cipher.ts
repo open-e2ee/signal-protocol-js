@@ -29,7 +29,7 @@ export const PROFILE_EMOJI_PADDED_LENGTHS = [32] as const;
 /**
  * Pad data to the first bucket size >= data.length.
  *
- * Signal pads profile fields to fixed bucket sizes to prevent the server
+ * The reference implementation pads profile fields to fixed bucket sizes to prevent the server
  * from inferring field length from ciphertext size.
  *
  * @param data - Raw data to pad

@@ -1,5 +1,5 @@
 /**
- * Sender Keys Protocol Implementation (Signal Group V2)
+ * Sender Keys Protocol Implementation (Signal Protocol Group V2)
  *
  * Implements the package's Sender Keys construction for efficient group messaging.
  * Each group member has a sender key that encrypts messages for all members.
@@ -609,7 +609,7 @@ export class SenderKeyManager {
       }
 
       // Advance chain key to match message, storing skipped keys for out-of-order delivery
-      // (Signal uses capacity-only limits, no time-based expiration)
+      // (the reference implementation uses capacity-only limits, no time-based expiration)
       for (let i = state.chainIndex; i < message.chainIndex; i++) {
         // Derive and store the skipped message key
         const { cipherKey, iv } = await this.deriveMessageKey(state.chainKey);
@@ -865,7 +865,7 @@ export class SenderKeyManager {
    * Store skipped key with enforcement of maxSkippedKeys limit.
    *
    * If the limit is reached, deletes oldest keys to make room.
-   * Signal uses capacity-only limits (no time-based expiration).
+   * The reference implementation uses capacity-only limits (no time-based expiration).
    */
   private async storeSkippedKeyWithLimit(
     groupId: string,

@@ -104,7 +104,7 @@ function requireBinding<K extends keyof SignalExpoDbBindings>(
   const value = bindings[key];
   if (!value) {
     throw new Error(
-      'Signal Expo storage DB bindings not configured. Configure them from the host app before using Expo storage.'
+      'Expo storage DB bindings not configured. Configure them from the host app before using Expo storage.'
     );
   }
 

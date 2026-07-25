@@ -1,7 +1,7 @@
 /**
  * Local Identity Model
  *
- * Own-device Signal identity material only. Recipient trust lives in
+ * Own-device Signal Protocol identity material only. Recipient trust lives in
  * `recipient_identities`, not here.
  */
 

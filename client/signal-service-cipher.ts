@@ -182,6 +182,7 @@ export type SealedSenderProvider = () => Promise<{
 export type SessionEstablisher = (recipientUserId: string) => Promise<{
   establishedDevices: number[];
   failedDevices: number[];
+  failedDeviceErrors?: Array<{ deviceId: number; error: Error }>;
 }>;
 
 /**
@@ -663,7 +664,7 @@ export class SignalServiceCipher {
    * - Binary content with mimeType → encryptBlob (two-layer encryption)
    * - User ID → encryptToUser (SESAME)
    *
-   * @param recipientId - User ID or group ID (groups use Signal V2 prefix)
+   * @param recipientId - User ID or group ID (groups use the V2 group ID prefix)
    * @param content - Uint8Array bytes to encrypt and send
    * @param options - Optional send options (mimeType for binary content, etc.)
    * @returns SendResult with messageId, timestamp, and device count
@@ -880,29 +881,13 @@ export class SignalServiceCipher {
       );
     }
 
+    let result: Awaited<ReturnType<SessionEstablisher>>;
     try {
       // Use retry logic for transient network failures
-      const result = await withRetry(() => this.sessionEstablisher!(recipientUserId), {
+      result = await withRetry(() => this.sessionEstablisher!(recipientUserId), {
         operationName: 'establishSession',
         maxRetries: 2,
         baseDelay: 500,
-      });
-
-      if (result.establishedDevices.length === 0) {
-        throw new EncryptionError(
-          `Recipient ${recipientUserId} has no available prekey bundles - they may not have registered encryption keys`,
-          EncryptionErrorCode.RECIPIENT_NOT_REGISTERED,
-          { recipientUserId, failedDevices: result.failedDevices }
-        );
-      }
-
-      this.logger.info('Auto-established sessions', {
-        category: 'E2EE',
-        data: {
-          recipientUserId,
-          establishedDevices: result.establishedDevices,
-          failedDevices: result.failedDevices,
-        },
       });
     } catch (error) {
       // Re-throw EncryptionErrors, wrap others
@@ -926,6 +911,27 @@ export class SignalServiceCipher {
         { originalError: error as Error, recipientUserId }
       );
     }
+
+    if (result.establishedDevices.length === 0) {
+      const firstDeviceError = result.failedDeviceErrors?.[0]?.error;
+      if (firstDeviceError) {
+        throw firstDeviceError;
+      }
+      throw new EncryptionError(
+        `Recipient ${recipientUserId} has no available prekey bundles - they may not have registered encryption keys`,
+        EncryptionErrorCode.RECIPIENT_NOT_REGISTERED,
+        { recipientUserId, failedDevices: result.failedDevices }
+      );
+    }
+
+    this.logger.info('Auto-established sessions', {
+      category: 'E2EE',
+      data: {
+        recipientUserId,
+        establishedDevices: result.establishedDevices,
+        failedDevices: result.failedDevices,
+      },
+    });
   }
 
   /**
@@ -991,7 +997,7 @@ export class SignalServiceCipher {
             : CryptoUtils.bytesToBase64(msg.ciphertext);
 
         // For PreKeyMessages, get session metadata for server-side validation
-        // Signal only validates registrationId server-side (device reinstall detection)
+        // The reference implementation only validates registrationId server-side (device reinstall detection)
         // Stale prekey detection is handled client-side via MAC failure + retry
         let recipientRegistrationId: number | undefined;
 

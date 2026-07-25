@@ -13,7 +13,7 @@ Encrypt and upload media bytes, returning a SDK attachment pointer.
 The encrypted object digest and object ID are computed once. Upload
 retries request fresh presigned URLs for that same key, which handles expired
 upload URLs without changing the pointer metadata that will be encrypted into
-the Signal message.
+the Signal Protocol message.
 
 ## Parameters
 

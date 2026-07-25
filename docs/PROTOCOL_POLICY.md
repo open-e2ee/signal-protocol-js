@@ -72,8 +72,8 @@ await createSignalProtocolClient({
 `braid: 'required'` uses the specification-defined ML-KEM Braid SPQR profile
 and is the default. HEK is `SHA3-256(ek_seed || ek_vector)`; that operand order
 is part of the public compatibility boundary. It follows the ML-KEM Braid
-specification text and is the reverse of Signal's implementation, which means
-braid sessions do not interoperate with Signal's and the KEM in this mode is not
+specification text and is the reverse of `libsignal`'s implementation, which means
+braid sessions do not interoperate with `libsignal`'s and the KEM in this mode is not
 stock FIPS 203 — see [Deviations §4.1](./DEVIATIONS.md#41-the-hek-operand-order-diverges).
 
 ```ts

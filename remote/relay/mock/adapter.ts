@@ -1,5 +1,5 @@
 /**
- * Mock Signal Relay Server
+ * Mock Signal Protocol Relay Server
  *
  * In-memory implementation of ISignalRelayServer for local development.
  * Simulates a backend server without any network calls.
@@ -61,9 +61,29 @@ import {
 import { UidEncryptionDomain } from '../../../internal/protocol/zk/groups/uid-encryption';
 import { Ciphertext } from '../../../internal/protocol/zk/credentials/attributes';
 import { ristretto255 } from '@noble/curves/ed25519.js';
+import { MAX_DEVICES } from '../../../device/constants';
+import { SealedSenderAuthError } from '../../../types/errors';
+import {
+  MockRelayFailureController,
+  type MockRelayFailureOptions,
+} from './failures';
+
+export interface MockSignalRelayServerOptions {
+  failures?: MockRelayFailureOptions;
+}
 
 /**
- * Mock Signal Relay Server for local development
+ * Simulate the serialization boundary of a real relay.
+ *
+ * Values entering or leaving the in-memory server must never share mutable
+ * references with caller-owned objects.
+ */
+function cloneRelayValue<T>(value: T): T {
+  return structuredClone(value);
+}
+
+/**
+ * Mock Signal Protocol Relay Server for local development
  *
  * Provides in-memory backend simulation with the same interface as production adapters.
  * Useful when a real backend is intentionally unnecessary.
@@ -86,6 +106,8 @@ import { ristretto255 } from '@noble/curves/ed25519.js';
 export {};
 
 export class MockSignalRelayServer implements ISignalRelayServer {
+  readonly failures: MockRelayFailureController;
+
   // Device registry
   private devices = new Map<string, DeviceInfo[]>(); // key: userId
 
@@ -97,8 +119,10 @@ export class MockSignalRelayServer implements ISignalRelayServer {
 
   // Prekeys per device
   private ecPreKeys = new Map<string, PreKeyUpload[]>(); // key: `${userId}:${deviceId}:${identityType}`
+  private consumedEcPreKeyIds = new Map<string, Set<number>>(); // key: `${userId}:${deviceId}:${identityType}`
   private ecSignedPreKeys = new Map<string, PreKeyUpload>(); // key: `${userId}:${deviceId}:${identityType}`
   private kemOneTimePreKeys = new Map<string, PreKeyUpload[]>(); // key: `${userId}:${deviceId}:${identityType}`
+  private consumedKemOneTimePreKeyIds = new Map<string, Set<number>>(); // key: `${userId}:${deviceId}:${identityType}`
   private kemLastResortPreKeys = new Map<string, PreKeyUpload>(); // key: `${userId}:${deviceId}:${identityType}`
 
   // Messages/envelopes
@@ -163,6 +187,14 @@ export class MockSignalRelayServer implements ISignalRelayServer {
   // Server secret params for signing and ZK auth (deterministic local seed)
   private serverSecretParams: ServerSecretParams = generateServerSecretParams(new Uint8Array(32));
 
+  constructor(options: MockSignalRelayServerOptions = {}) {
+    this.failures = new MockRelayFailureController(
+      options.failures,
+      (targetKey, envelope) => this.deliverEnvelope(targetKey, envelope),
+      (targetKey) => this.deliverPending(targetKey)
+    );
+  }
+
   /** Build a storage key with explicit identity-type separation. */
   private storageKey(userId: string, deviceId: number, identityType: IdentityType = 'aci'): string {
     return `${userId}:${deviceId}:${identityType}`;
@@ -181,7 +213,9 @@ export class MockSignalRelayServer implements ISignalRelayServer {
       this.ecSignedPreKeys,
       this.kemLastResortPreKeys,
       this.ecPreKeys,
+      this.consumedEcPreKeyIds,
       this.kemOneTimePreKeys,
+      this.consumedKemOneTimePreKeyIds,
       this.ecSignedPreKeyMetadata,
       this.kemLastResortPreKeyMetadata,
     ];
@@ -202,12 +236,13 @@ export class MockSignalRelayServer implements ISignalRelayServer {
   // ============================================================================
 
   async send(envelope: Envelope): Promise<{ messageId: string; serverTimestamp: number }> {
+    await this.failures.waitForLatency();
     const targetKey = `${envelope.targetUserId}:${envelope.targetDeviceId}`;
     const receiptKey = envelope.clientMessageId ? `${targetKey}:${envelope.clientMessageId}` : null;
     if (receiptKey) {
       const existing = this.clientMessageReceipts.get(receiptKey);
       if (existing) {
-        return existing;
+        return cloneRelayValue(existing);
       }
     }
 
@@ -215,7 +250,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     const serverTimestamp = Date.now();
 
     const storedEnvelope: Envelope = {
-      ...envelope,
+      ...cloneRelayValue(envelope),
       id,
       serverTimestamp,
     };
@@ -225,17 +260,17 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     pending.push(storedEnvelope);
     this.pendingMessages.set(targetKey, pending);
 
-    // Notify subscribers
-    const subscribers = this.subscriptions.get(targetKey) || [];
-    for (const callback of subscribers) {
-      callback(storedEnvelope);
+    // Notify live subscribers through the deterministic failure controller.
+    // With no subscriber, the pending mailbox alone owns the envelope.
+    if ((this.subscriptions.get(targetKey)?.length ?? 0) > 0) {
+      this.failures.deliver(targetKey, storedEnvelope);
     }
 
     if (receiptKey) {
       this.clientMessageReceipts.set(receiptKey, { messageId: id, serverTimestamp });
     }
 
-    return { messageId: id, serverTimestamp };
+    return cloneRelayValue({ messageId: id, serverTimestamp });
   }
 
   subscribe(
@@ -248,10 +283,13 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     subscribers.push(onEnvelope);
     this.subscriptions.set(key, subscribers);
 
-    // Deliver any pending messages
-    const pending = this.pendingMessages.get(key) || [];
-    for (const envelope of pending) {
-      onEnvelope(envelope);
+    // Deliver any pending messages only to the newly added subscriber.
+    if (!this.failures.isDisconnected(key)) {
+      this.failures.discardReordered(key);
+      const pending = this.pendingMessages.get(key) || [];
+      for (const envelope of pending) {
+        onEnvelope(cloneRelayValue(envelope));
+      }
     }
 
     return () => {
@@ -282,20 +320,42 @@ export class MockSignalRelayServer implements ISignalRelayServer {
   // ============================================================================
 
   async getDevices(userId: string): Promise<DeviceInfo[]> {
-    return this.devices.get(userId) || [];
+    return cloneRelayValue(this.devices.get(userId) || []);
   }
 
   async registerDevice(userId: string, device: DeviceRegistration): Promise<number> {
     const existing = this.devices.get(userId) || [];
+    const occupiedIds = new Set(
+      existing
+        .filter((candidate) => candidate.registered)
+        .map((candidate) => candidate.deviceId)
+    );
+    const requestedDeviceId = device.deviceId;
+    if (
+      requestedDeviceId !== undefined &&
+      (!Number.isInteger(requestedDeviceId) ||
+        requestedDeviceId < 1 ||
+        requestedDeviceId > MAX_DEVICES)
+    ) {
+      throw new Error(`Device ID must be between 1 and ${MAX_DEVICES}`);
+    }
 
-    // Assign device ID
-    const deviceId = existing.length === 0 ? 1 : Math.max(...existing.map((d) => d.deviceId)) + 1;
+    const deviceId =
+      requestedDeviceId ??
+      Array.from({ length: MAX_DEVICES }, (_, index) => index + 1).find(
+        (candidate) => !occupiedIds.has(candidate)
+      );
+    if (deviceId === undefined || occupiedIds.has(deviceId)) {
+      throw new Error('Maximum devices limit reached');
+    }
     const isPrimary = deviceId === 1;
 
     const now = Date.now();
     const deviceInfo: DeviceInfo = {
       deviceId,
-      encryptedDeviceName: device.encryptedDeviceName,
+      encryptedDeviceName: device.encryptedDeviceName
+        ? cloneRelayValue(device.encryptedDeviceName)
+        : undefined,
       deviceType: device.deviceType,
       registered: true, // Setup complete
       linked: isPrimary ? false : true, // Primary is never "linked", secondary is linked
@@ -306,7 +366,12 @@ export class MockSignalRelayServer implements ISignalRelayServer {
       linkedAt: isPrimary ? undefined : now,
     };
 
-    existing.push(deviceInfo);
+    const reusableIndex = existing.findIndex((candidate) => candidate.deviceId === deviceId);
+    if (reusableIndex >= 0) {
+      existing[reusableIndex] = deviceInfo;
+    } else {
+      existing.push(deviceInfo);
+    }
     this.devices.set(userId, existing);
 
     return deviceId;
@@ -328,8 +393,10 @@ export class MockSignalRelayServer implements ISignalRelayServer {
       const deviceKey = this.storageKey(userId, deviceId, idType);
       this.registrationIds.delete(deviceKey);
       this.ecPreKeys.delete(deviceKey);
+      this.consumedEcPreKeyIds.delete(deviceKey);
       this.ecSignedPreKeys.delete(deviceKey);
       this.kemOneTimePreKeys.delete(deviceKey);
+      this.consumedKemOneTimePreKeyIds.delete(deviceKey);
       this.kemLastResortPreKeys.delete(deviceKey);
       this.ecSignedPreKeyMetadata.delete(deviceKey);
       this.kemLastResortPreKeyMetadata.delete(deviceKey);
@@ -436,7 +503,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
   ): Promise<CompositeIdentityV1 | null> {
     const key = this.identityStorageKey(userId, identityType);
     const encoded = this.identityKeys.get(key);
-    return encoded ? decodeCompositeIdentityV1(encoded) : null;
+    return encoded ? cloneRelayValue(decodeCompositeIdentityV1(encoded)) : null;
   }
 
   // ============================================================================
@@ -456,13 +523,18 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     for (const preKey of keys) {
       switch (preKey.type) {
         case 'ecPreKey': {
+          if (this.failures.shouldExhaustOneTimePreKeys()) break;
+          if (this.consumedEcPreKeyIds.get(key)?.has(preKey.keyId)) break;
           const existing = this.ecPreKeys.get(key) || [];
-          existing.push(preKey);
+          const stored = cloneRelayValue(preKey);
+          const index = existing.findIndex((candidate) => candidate.keyId === stored.keyId);
+          if (index >= 0) existing[index] = stored;
+          else existing.push(stored);
           this.ecPreKeys.set(key, existing);
           break;
         }
         case 'ecSignedPreKey': {
-          this.ecSignedPreKeys.set(key, preKey);
+          this.ecSignedPreKeys.set(key, cloneRelayValue(preKey));
           // Auto-populate metadata for server key verification
           this.ecSignedPreKeyMetadata.set(key, {
             keyId: preKey.keyId,
@@ -473,13 +545,18 @@ export class MockSignalRelayServer implements ISignalRelayServer {
           break;
         }
         case 'kemOneTimePreKey': {
+          if (this.failures.shouldExhaustOneTimePreKeys()) break;
+          if (this.consumedKemOneTimePreKeyIds.get(key)?.has(preKey.keyId)) break;
           const existing = this.kemOneTimePreKeys.get(key) || [];
-          existing.push(preKey);
+          const stored = cloneRelayValue(preKey);
+          const index = existing.findIndex((candidate) => candidate.keyId === stored.keyId);
+          if (index >= 0) existing[index] = stored;
+          else existing.push(stored);
           this.kemOneTimePreKeys.set(key, existing);
           break;
         }
         case 'kemLastResortPreKey': {
-          this.kemLastResortPreKeys.set(key, preKey);
+          this.kemLastResortPreKeys.set(key, cloneRelayValue(preKey));
           // Auto-populate metadata for server key verification
           this.kemLastResortPreKeyMetadata.set(key, {
             keyId: preKey.keyId,
@@ -517,7 +594,26 @@ export class MockSignalRelayServer implements ISignalRelayServer {
 
     // Get and consume one-time prekey (optional)
     const ecPreKeys = this.ecPreKeys.get(deviceKey) || [];
-    const ecOneTimePreKey = ecPreKeys.length > 0 ? ecPreKeys.shift()! : null;
+    const exhaustOneTimePreKeys = this.failures.shouldExhaustOneTimePreKeys();
+    if (exhaustOneTimePreKeys) {
+      this.recordConsumedPreKeyIds(this.consumedEcPreKeyIds, deviceKey, ecPreKeys);
+      this.recordConsumedPreKeyIds(
+        this.consumedKemOneTimePreKeyIds,
+        deviceKey,
+        this.kemOneTimePreKeys.get(deviceKey) || []
+      );
+      this.ecPreKeys.delete(deviceKey);
+      this.kemOneTimePreKeys.delete(deviceKey);
+    }
+    const ecOneTimePreKey =
+      !exhaustOneTimePreKeys && ecPreKeys.length > 0 ? ecPreKeys.shift()! : null;
+    if (ecOneTimePreKey) {
+      this.recordConsumedPreKeyIds(
+        this.consumedEcPreKeyIds,
+        deviceKey,
+        [ecOneTimePreKey]
+      );
+    }
     if (ecPreKeys.length === 0) {
       this.ecPreKeys.delete(deviceKey);
     }
@@ -525,7 +621,17 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     // Get KEM one-time prekey (consumed like EC one-time prekeys)
     // Per PQXDH spec Section 3.2: one-time KEM prekeys provide per-session PQ forward secrecy
     const kemOneTimePreKeys = this.kemOneTimePreKeys.get(deviceKey) || [];
-    const kemOneTimePreKey = kemOneTimePreKeys.length > 0 ? kemOneTimePreKeys.shift()! : null;
+    const kemOneTimePreKey =
+      !exhaustOneTimePreKeys && kemOneTimePreKeys.length > 0
+        ? kemOneTimePreKeys.shift()!
+        : null;
+    if (kemOneTimePreKey) {
+      this.recordConsumedPreKeyIds(
+        this.consumedKemOneTimePreKeyIds,
+        deviceKey,
+        [kemOneTimePreKey]
+      );
+    }
     if (kemOneTimePreKeys.length === 0) {
       this.kemOneTimePreKeys.delete(deviceKey);
     }
@@ -536,7 +642,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
 
     // Cast to branded types - ISignalRelayServer returns PreKeyBundle with branded types
     // Adapters handle the casting internally so callers don't need to
-    return {
+    return cloneRelayValue({
       registrationId,
       deviceId,
       identity: decodeCompositeIdentityV1(encodedIdentity),
@@ -565,7 +671,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
             signature: kemOneTimePreKey.signature! as Signature,
           }
         : null,
-    };
+    });
   }
 
   async getPreKeyCount(
@@ -639,16 +745,14 @@ export class MockSignalRelayServer implements ISignalRelayServer {
   }
 
   async getGroupMembers(groupId: string): Promise<GroupMemberDevice[]> {
-    return this.groupMembers.get(groupId) || [];
+    return cloneRelayValue(this.groupMembers.get(groupId) || []);
   }
 
   async getActiveDevices(userId: string): Promise<GroupMemberDevice[]> {
     const deviceInfos = this.devices.get(userId) || [];
-    if (deviceInfos.length > 0) {
-      return deviceInfos.map((d) => ({ userId, deviceId: d.deviceId }));
-    }
-    // Default to device 1 if no devices registered
-    return [{ userId, deviceId: 1 }];
+    return deviceInfos
+      .filter((device) => device.registered && device.enabled)
+      .map((device) => ({ userId, deviceId: device.deviceId }));
   }
 
   // ============================================================================
@@ -715,7 +819,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     }
 
     session.newDeviceEphemeralPublicKey = ephemeralPublicKey;
-    session.deviceMetadata = deviceMetadata;
+    session.deviceMetadata = cloneRelayValue(deviceMetadata);
     session.status = 'connected';
   }
 
@@ -805,7 +909,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     );
     const nextState: DeviceInfo = {
       deviceId: session.assignedDeviceId,
-      encryptedDeviceName: deviceMetadata.encryptedDeviceName,
+      encryptedDeviceName: cloneRelayValue(deviceMetadata.encryptedDeviceName),
       deviceType: 'mobile',
       registered: true,
       linked: true,
@@ -873,7 +977,8 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     identityType?: IdentityType
   ): Promise<{ keyId: number; createdAt: number; expiresAt: number; publicKey: string } | null> {
     const key = this.storageKey(userId, deviceId, identityType);
-    return this.ecSignedPreKeyMetadata.get(key) || null;
+    const metadata = this.ecSignedPreKeyMetadata.get(key);
+    return metadata ? cloneRelayValue(metadata) : null;
   }
 
   async getKemLastResortPreKeyMetadata(
@@ -882,7 +987,8 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     identityType?: IdentityType
   ): Promise<{ keyId: number; createdAt: number; expiresAt: number; publicKey: string } | null> {
     const key = this.storageKey(userId, deviceId, identityType);
-    return this.kemLastResortPreKeyMetadata.get(key) || null;
+    const metadata = this.kemLastResortPreKeyMetadata.get(key);
+    return metadata ? cloneRelayValue(metadata) : null;
   }
 
   // ============================================================================
@@ -910,6 +1016,9 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     envelope: Envelope,
     auth: SealedSenderAuth
   ): Promise<{ messageId: string; serverTimestamp: number }> {
+    if (this.failures.shouldRejectAuthorization()) {
+      throw new SealedSenderAuthError();
+    }
     // Mock: pass through without validation; callers can override if needed.
     void auth; // Accept but don't validate in mock
     return this.send({
@@ -995,13 +1104,13 @@ export class MockSignalRelayServer implements ISignalRelayServer {
   async sendRetryRequest(request: RetryRequest): Promise<void> {
     const key = `${request.originalSenderUserId}:${request.originalSenderDeviceId}`;
     const existing = this.retryRequests.get(key) || [];
-    existing.push(request);
+    existing.push(cloneRelayValue(request));
     this.retryRequests.set(key, existing);
 
     // Notify subscribers
     const subscribers = this.retryRequestSubscriptions.get(key) || [];
     for (const handler of subscribers) {
-      await handler(request);
+      await handler(cloneRelayValue(request));
     }
   }
 
@@ -1018,7 +1127,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     // Deliver any pending retry requests
     const pending = this.retryRequests.get(key) || [];
     for (const request of pending) {
-      handler(request);
+      handler(cloneRelayValue(request));
     }
 
     return () => {
@@ -1040,7 +1149,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     _authorization: GroupAuthorization
   ): Promise<void> {
     const key = this.groupIdToHex(groupId);
-    this.groupStates.set(key, { encryptedState, version: 0 });
+    this.groupStates.set(key, { encryptedState: cloneRelayValue(encryptedState), version: 0 });
     this.groupChangeLogs.set(key, []);
   }
 
@@ -1052,7 +1161,8 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     version: number;
   } | null> {
     const key = this.groupIdToHex(groupId);
-    return this.groupStates.get(key) ?? null;
+    const state = this.groupStates.get(key);
+    return state ? cloneRelayValue(state) : null;
   }
 
   async getGroupChanges(
@@ -1062,7 +1172,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
   ): Promise<GroupChangeEntry[]> {
     const key = this.groupIdToHex(groupId);
     const changes = this.groupChangeLogs.get(key) ?? [];
-    return changes.filter((c) => c.version > fromVersion);
+    return cloneRelayValue(changes.filter((c) => c.version > fromVersion));
   }
 
   async submitGroupChange(
@@ -1086,19 +1196,19 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     const serverSignature = serverSign(this.serverSecretParams, randomness, encryptedChange);
     const entry: GroupChangeEntry = {
       version: newVersion,
-      encryptedChange,
+      encryptedChange: cloneRelayValue(encryptedChange),
       serverSignature,
       timestamp: Date.now(),
     };
 
-    current.encryptedState = updatedEncryptedState;
+    current.encryptedState = cloneRelayValue(updatedEncryptedState);
     current.version = newVersion;
 
     const changes = this.groupChangeLogs.get(key) ?? [];
-    changes.push(entry);
+    changes.push(cloneRelayValue(entry));
     this.groupChangeLogs.set(key, changes);
 
-    return { serverSignature };
+    return cloneRelayValue({ serverSignature });
   }
 
   // ============================================================================
@@ -1219,10 +1329,13 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     this.identityKeys.clear();
     this.registrationIds.clear();
     this.ecPreKeys.clear();
+    this.consumedEcPreKeyIds.clear();
     this.ecSignedPreKeys.clear();
     this.kemOneTimePreKeys.clear();
+    this.consumedKemOneTimePreKeyIds.clear();
     this.kemLastResortPreKeys.clear();
     this.pendingMessages.clear();
+    this.clientMessageReceipts.clear();
     this.subscriptions.clear();
     this.groupMembers.clear();
     this.provisioningSessions.clear();
@@ -1234,6 +1347,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     this.groupChangeLogs.clear();
     this.userIdentities.clear();
     this.senderCertificates.clear();
+    this.failures.reset();
     this.messageCounter = 0;
     this.provisioningCounter = 0;
   }
@@ -1242,7 +1356,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
    * Set group members for deterministic local setup.
    */
   setGroupMembers(groupId: string, members: GroupMemberDevice[]): void {
-    this.groupMembers.set(groupId, members);
+    this.groupMembers.set(groupId, cloneRelayValue(members));
   }
 
   /**
@@ -1250,7 +1364,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
    */
   getPendingMessages(userId: string, deviceId: number): Envelope[] {
     const key = `${userId}:${deviceId}`;
-    return this.pendingMessages.get(key) || [];
+    return cloneRelayValue(this.pendingMessages.get(key) || []);
   }
 
   /**
@@ -1258,7 +1372,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
    */
   getPendingRetryRequests(userId: string, deviceId: number): RetryRequest[] {
     const key = `${userId}:${deviceId}`;
-    return this.retryRequests.get(key) || [];
+    return cloneRelayValue(this.retryRequests.get(key) || []);
   }
 
   /**
@@ -1286,7 +1400,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     identityType: IdentityType = 'aci'
   ): void {
     const key = this.storageKey(userId, deviceId, identityType);
-    this.ecSignedPreKeyMetadata.set(key, metadata);
+    this.ecSignedPreKeyMetadata.set(key, cloneRelayValue(metadata));
   }
 
   /**
@@ -1299,7 +1413,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     identityType: IdentityType = 'aci'
   ): void {
     const key = this.storageKey(userId, deviceId, identityType);
-    this.kemLastResortPreKeyMetadata.set(key, metadata);
+    this.kemLastResortPreKeyMetadata.set(key, cloneRelayValue(metadata));
   }
 
   /**
@@ -1328,8 +1442,10 @@ export class MockSignalRelayServer implements ISignalRelayServer {
       publicKey: `placeholder-${i}`,
     }));
     if (type === 'ec') {
+      this.consumedEcPreKeyIds.delete(key);
       this.ecPreKeys.set(key, placeholderKeys);
     } else {
+      this.consumedKemOneTimePreKeyIds.delete(key);
       this.kemOneTimePreKeys.set(key, placeholderKeys);
     }
   }
@@ -1338,10 +1454,39 @@ export class MockSignalRelayServer implements ISignalRelayServer {
   // Utility Methods
   // ============================================================================
 
+  private recordConsumedPreKeyIds(
+    consumed: Map<string, Set<number>>,
+    storageKey: string,
+    preKeys: PreKeyUpload[]
+  ): void {
+    if (preKeys.length === 0) return;
+    const keyIds = consumed.get(storageKey) || new Set<number>();
+    for (const preKey of preKeys) {
+      keyIds.add(preKey.keyId);
+    }
+    consumed.set(storageKey, keyIds);
+  }
+
   private groupIdToHex(groupId: Uint8Array): string {
     return Array.from(groupId)
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
+  }
+
+  private deliverEnvelope(targetKey: string, envelope: Envelope): void {
+    const subscribers = this.subscriptions.get(targetKey) || [];
+    for (const callback of subscribers) {
+      callback(cloneRelayValue(envelope));
+    }
+  }
+
+  private deliverPending(targetKey: string): void {
+    if (this.failures.isDisconnected(targetKey)) return;
+    this.failures.discardReordered(targetKey);
+    const pending = this.pendingMessages.get(targetKey) || [];
+    for (const envelope of pending) {
+      this.failures.deliver(targetKey, envelope);
+    }
   }
 
   private uint8ArrayToBase64(data: Uint8Array): string {

@@ -24,7 +24,7 @@ import {
 // ============================================================================
 export {};
 export interface CombinedFingerprints {
-  /** Protocol version (currently 2 for Signal) */
+  /** Protocol version (currently 2) */
   version: number;
   /** Local user's fingerprint (32 bytes) */
   localFingerprint: Uint8Array;

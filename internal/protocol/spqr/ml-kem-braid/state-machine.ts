@@ -353,7 +353,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
 
           if (this.isDecoderComplete(state.ct1Decoder)) {
             // CT1 complete (NO MAC verification here - combined MAC verified with CT2)
-            // Signal authenticates ct1||ct2 together with a single MAC attached to CT2
+            // The reference implementation authenticates ct1||ct2 together with a single MAC attached to CT2
             const ct1 = await this.getDecodedMessage(state.ct1Decoder);
 
             // Store CT1 for combined MAC verification when CT2 arrives
@@ -553,7 +553,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
   }
 
   private async bobSendFromEkReceivedCt1Sampled(state: MLKEMBraidAgentState): Promise<SendResult> {
-    // EK is complete, but Signal waits for CT1 acknowledgement before CT2.
+    // EK is complete, but the reference implementation waits for CT1 acknowledgement before CT2.
     // Continue sending CT1 chunks, including parity, until the peer ACK arrives.
     return this.bobSendCt1Chunk(state);
   }
@@ -611,7 +611,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
     }
 
     // Ct2Sampled: next-epoch message triggers role swap
-    // Signal does NOT re-process the message — just transitions and returns
+    // The reference implementation does NOT re-process the message — just transitions and returns
     if (state.state === 'Ct2Sampled' && message.epoch === state.epoch + 1n) {
       this.transition(state, 'BOB_NEW_EPOCH');
       state.epoch += 1n;
@@ -752,7 +752,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
     state.ct2 = ct2;
 
     // Create CT2 encoder with COMBINED MAC on ct1||ct2
-    // Signal authenticates both ciphertext components together
+    // The reference implementation authenticates both ciphertext components together
     if (!state.ct1_for_mac) {
       throw new Error('CT1 not stored for combined MAC - state corruption');
     }
@@ -851,7 +851,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
   // ===========================================================================
 
   private async createEncoderState(data: Uint8Array): Promise<EncoderState> {
-    // Use Signal-compliant polynomial encoder (PolyEncoder)
+    // Use SPQR-compliant polynomial encoder (PolyEncoder)
     // PolyEncoder validates message size internally (max 1152 bytes)
     const encoder = await createEncoder(data);
 

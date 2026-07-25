@@ -1,5 +1,5 @@
 /**
- * Signal-Compliant Username Hashing (Ristretto25519 + Discriminators)
+ * Username hashing (Ristretto25519 + discriminators), compatible with the reference implementation
  *
  * Uses Ristretto25519.
  * multiscalar multiplication.

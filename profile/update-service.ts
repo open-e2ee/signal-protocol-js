@@ -37,9 +37,9 @@ export interface UpdateEncryptedProfileParams {
   convex: ConvexReactClient;
   /** App-owned Convex function references for encrypted profile writes */
   api: UpdateEncryptedProfileApi;
-  /** Signal ACI UUID string (e.g., '550e8400-e29b-41d4-a716-446655440000') */
+  /** Signal Protocol ACI UUID string (e.g., '550e8400-e29b-41d4-a716-446655440000') */
   uuid: string;
-  /** Required profile name (Signal wire name) */
+  /** Required profile name (Signal Protocol wire name) */
   name: string;
   /** Optional about/bio text */
   about?: string;

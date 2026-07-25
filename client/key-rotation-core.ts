@@ -225,7 +225,7 @@ export function isPreKeyExpired(
  * Generates a new signed prekey and uploads to server.
  * Works without React context.
  *
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - User identifier
  * @param deviceId - Device identifier
  * @param providedStorage - Local store instance for the current runtime
@@ -241,9 +241,9 @@ export async function rotateEcSignedPreKeyCore(
   identityTypes: readonly IdentityType[] = ['aci', 'pni'],
   logger: Required<ILogger> = defaultSignalLogger
 ): Promise<boolean> {
-  // Rotate for active identity types (Signal rotates PNI on the same schedule as ACI)
+  // Rotate for active identity types (the reference implementation rotates PNI on the same schedule as ACI)
   // Use && so the function only returns true when ALL identities succeed.
-  // Signal uses exception propagation — if any identity fails, the entire job
+  // The reference implementation uses exception propagation — if any identity fails, the entire job
   // fails and is retried on the next rotation cycle.
   let allRotated = true;
   for (const type of identityTypes) {
@@ -264,7 +264,7 @@ export async function rotateEcSignedPreKeyCore(
 /**
  * Rotate signed prekey for a specific identity type.
  *
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - User identifier
  * @param deviceId - Device identifier
  * @param identityType - 'aci' or 'pni'
@@ -346,7 +346,7 @@ async function rotateEcSignedPreKeyForIdentity(
  * relay.
  * Works without React context.
  *
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - User identifier
  * @param deviceId - Device identifier
  * @param providedStorage - Local store instance for the current runtime
@@ -362,9 +362,9 @@ export async function rotateKyberPreKeyCore(
   identityTypes: readonly IdentityType[] = ['aci', 'pni'],
   logger: Required<ILogger> = defaultSignalLogger
 ): Promise<boolean> {
-  // Rotate for active identity types (Signal rotates PNI on the same schedule as ACI)
+  // Rotate for active identity types (the reference implementation rotates PNI on the same schedule as ACI)
   // Use && so the function only returns true when ALL identities succeed.
-  // Signal uses exception propagation — if any identity fails, the entire job
+  // The reference implementation uses exception propagation — if any identity fails, the entire job
   // fails and is retried on the next rotation cycle.
   let allRotated = true;
   for (const type of identityTypes) {
@@ -385,7 +385,7 @@ export async function rotateKyberPreKeyCore(
 /**
  * Rotate Kyber prekey for a specific identity type.
  *
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - User identifier
  * @param deviceId - Device identifier
  * @param identityType - 'aci' or 'pni'
@@ -471,7 +471,7 @@ async function rotateKyberPreKeyForIdentity(
  * Iterates both ACI and PNI identity types for consistency with
  * rotateEcSignedPreKeyCore and rotateKyberPreKeyCore.
  *
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - User identifier
  * @param deviceId - Device identifier
  * @param storage - Key storage for local persistence
@@ -509,7 +509,7 @@ export async function replenishOneTimePreKeysCore(
 /**
  * Replenish one-time prekeys for a specific identity type.
  *
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - User identifier
  * @param deviceId - Device identifier
  * @param storage - Key storage for local persistence
@@ -606,7 +606,7 @@ export interface PreKeySendCheckResult {
  * If prekeys exceed MAX_PREKEY_AGE_MS (14 days), rotation is attempted.
  * If rotation fails, sending should be blocked to maintain security.
  *
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - User identifier
  * @param deviceId - Device identifier
  * @param storage - Optional storage instance

@@ -200,8 +200,8 @@ export { ProtocolAddress } from './types/address';
 /**
  * Logging utilities for app composition
  *
- * Pass a logger into `createSignalProtocolClient()` to route Signal logs through your
- * app logger or custom diagnostics pipeline.
+ * Pass a logger into `createSignalProtocolClient()` to route Signal Protocol logs through
+ * your app logger or custom diagnostics pipeline.
  *
  * @example Using custom logger with SignalProtocolClient
  * ```typescript
@@ -350,7 +350,7 @@ export type {
   TusMediaAttachmentTransferOptions,
 } from './media';
 
-// Group ID utilities (Signal V2 prefix format)
+// Group ID utilities (Signal Protocol V2 prefix format)
 //
 // Full GroupsV2 contracts and managers live on `@open-e2ee/signal-protocol-sdk/groups`.
 export { GROUP_V2_PREFIX, isGroupId, createGroupId, extractGroupId } from './internal/groups';

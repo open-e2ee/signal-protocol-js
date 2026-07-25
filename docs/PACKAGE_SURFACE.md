@@ -183,8 +183,8 @@ Both concrete adapters keep provider credentials in the application backend.
 Remote object storage is a normal first-class integration point for encrypted
 attachments and files, not a niche or internal-only adapter. Use
 `attachment.transfer` when your app has a foreground, background, resumable, or
-platform-native byte transfer implementation. The Signal package still owns
-encryption, digest verification, retry decisions, and pointer metadata.
+platform-native byte transfer implementation. The Signal Protocol package still
+owns encryption, digest verification, retry decisions, and pointer metadata.
 
 Object stores can return signed upload headers, and stores that return
 `protocol: 'tus'` automatically use the built-in resumable TUS transfer helper.

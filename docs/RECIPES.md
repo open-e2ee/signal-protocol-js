@@ -13,7 +13,9 @@ uses public exports only.
 This local demo sends while Bob is offline so you can see the relay's encrypted
 envelope and Bob's decrypted plaintext in the same workflow.
 
+<!-- mock-snippet:run recipes-two-local-clients -->
 ```ts
+// Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
 import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
@@ -133,7 +135,9 @@ before creating the client.
 
 ## Local development
 
+<!-- mock-snippet:run recipes-local-development -->
 ```ts
+// Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
 import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";

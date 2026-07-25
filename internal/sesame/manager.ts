@@ -1396,7 +1396,7 @@ export class SesameManager implements ISesameManager {
         const activeSession = await this.getActiveSession(requesterUserId, requesterDeviceId);
         const currentRatchetKey = activeSession?.DHs?.publicKey as string | undefined;
 
-        // Signal behavior (Android/iOS): only reset session on retry if the ratchet
+        // Reference implementation behavior (Android/iOS): only reset session on retry if the ratchet
         // key from DecryptionErrorMessage matches the current active session.
         if (
           !retryRequest.ratchetKey ||

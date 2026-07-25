@@ -107,7 +107,7 @@ export interface SealedSenderConfig {
   /**
    * Optional host-provided contact profile state store.
    *
-   * When present, Signal can use per-contact profile keys and
+   * When present, the Signal Protocol client can use per-contact profile keys and
    * unidentified-access mode for direct-message sealed sender sends
    * without importing the host app's persistence layer.
    */
@@ -298,7 +298,7 @@ export interface SignalProtocolClientConfig {
   /**
    * App-owned media lifecycle callbacks for the SignalProtocolClient media queue.
    *
-   * The queue itself is persisted through the existing Signal local storage
+   * The queue itself is persisted through the existing Signal Protocol local storage
    * adapter. These callbacks keep local bytes, plaintext caches, and product
    * state in the app layer where they can share file permissions, UI state, and
    * app database ownership.

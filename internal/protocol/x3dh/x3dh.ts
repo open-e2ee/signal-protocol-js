@@ -222,7 +222,7 @@ export async function performX3DH(
   const dhOutputs = dh4 ? [dh1, dh2, dh3, dh4] : [dh1, dh2, dh3];
 
   // Per Signal Protocol X3DH spec: Prepend F || (32 bytes of 0xFF)
-  // 32 bytes is correct for X25519 (the only curve Signal uses).
+  // 32 bytes is correct for X25519 (the only curve the reference implementation uses).
   const F = new Uint8Array(32).fill(0xff);
   const ikm = trackSecret(concatBytes(F, ...dhOutputs));
 
@@ -353,7 +353,7 @@ export async function performX3DHResponder(
   const dhOutputs = dh4 ? [dh1, dh2, dh3, dh4] : [dh1, dh2, dh3];
 
   // Per Signal Protocol X3DH spec: Prepend F || (32 bytes of 0xFF)
-  // 32 bytes is correct for X25519 (the only curve Signal uses).
+  // 32 bytes is correct for X25519 (the only curve the reference implementation uses).
   const F = new Uint8Array(32).fill(0xff);
   const ikm = trackSecret(concatBytes(F, ...dhOutputs));
 
@@ -418,7 +418,7 @@ export async function calculateX3DHSharedSecret(
   const dhOutputs = dh4 ? [dh1, dh2, dh3, dh4] : [dh1, dh2, dh3];
 
   // Per Signal Protocol X3DH spec: Prepend F || (32 bytes of 0xFF)
-  // 32 bytes is correct for X25519 (the only curve Signal uses).
+  // 32 bytes is correct for X25519 (the only curve the reference implementation uses).
   const F = new Uint8Array(32).fill(0xff);
   const ikm = concatBytes(F, ...dhOutputs);
 

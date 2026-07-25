@@ -105,7 +105,7 @@ export interface SignalProtocolClientMediaConfig {
   /**
    * Load app-owned local bytes for a queued upload.
    *
-   * The Signal package owns encryption and upload execution. The app owns draft
+   * The Signal Protocol package owns encryption and upload execution. The app owns draft
    * files, cache paths, and file permissions, so bytes enter the queue through
    * this callback instead of hidden package storage.
    */
@@ -138,7 +138,7 @@ export interface SignalProtocolClientMediaConfig {
   syncDelete?: (input: SignalProtocolClientSyncDeleteInput) => Promise<void>;
 
   /**
-   * Bound the queue kept in the Signal local store metadata.
+   * Bound the queue kept in the Signal Protocol local store metadata.
    *
    * @default 200
    */
@@ -294,13 +294,13 @@ export interface SignalProtocolClientMedia {
 
 const localOnlyObjectStore: SignalRemoteObjectStore = {
   async createUpload() {
-    throw new Error('Signal media operation requires remoteObjectStore for upload');
+    throw new Error('Signal Protocol media operation requires remoteObjectStore for upload');
   },
   async createDownload() {
-    throw new Error('Signal media operation requires remoteObjectStore for download');
+    throw new Error('Signal Protocol media operation requires remoteObjectStore for download');
   },
   async deleteObject() {
-    throw new Error('Signal media operation requires remoteObjectStore for remote delete');
+    throw new Error('Signal Protocol media operation requires remoteObjectStore for remote delete');
   },
 };
 
@@ -737,8 +737,8 @@ export class StorageBackedSignalProtocolClientMedia implements SignalProtocolCli
         job.operation === MediaAttachmentJobOperation.DeleteRemote)
     ) {
       throw new Error(
-        'Cannot process Signal media operation: remoteObjectStore is not configured ' +
-          'on SignalProtocolClient.'
+        'Cannot process Signal Protocol media operation: remoteObjectStore is not ' +
+          'configured on SignalProtocolClient.'
       );
     }
 

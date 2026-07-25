@@ -202,7 +202,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   private readonly cipher: SignalServiceCipher;
 
   /**
-   * Durable media job facade backed by the configured Signal local store.
+   * Durable media job facade backed by the configured Signal Protocol local store.
    *
    * Use this for background-safe attachment uploads, downloads, and cleanup
    * when the app provides media lifecycle callbacks in `config.media`.
@@ -795,7 +795,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
       await client.hydratePersistedState();
 
       // Cleanup expired sessions and message records on startup.
-      // Signal relies on event-driven cleanup (identity change, retry, end-session);
+      // The reference implementation relies on event-driven cleanup (identity change, retry, end-session);
       // we additionally enforce our maxRecv TTL here to prevent unbounded session growth.
       try {
         await client.sesameManager.cleanupExpiredSessions();
@@ -1513,7 +1513,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    *
    * All inputs are normalized to Uint8Array before reaching the cipher layer.
    *
-   * @param recipientId - User ID or group ID (groups use Signal V2 prefix)
+   * @param recipientId - User ID or group ID (groups use the V2 group ID prefix)
    * @param content - DataMessageInput, string, or Uint8Array to encrypt and send
    * @param options - Optional send options (isBinary for blob encryption, etc.)
    * @returns SendResult with messageId, timestamp, and device count
@@ -2452,7 +2452,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * | Member ADDED | Distribute current key to new member (no rotation needed) |
    * | Group metadata changed | Rotate recommended |
    *
-   * **Important**: Signal does NOT use periodic or message-count-based rotation.
+   * **Important**: The reference implementation does NOT use periodic or message-count-based rotation.
    * Only rotate when membership changes to maintain forward secrecy.
    *
    * ## Why Rotate on Member Removal?

@@ -6,11 +6,11 @@
 
 # Interface: ISignalLocalSecretVault
 
-Small local secret vault used to bootstrap a local Signal store.
+Small local secret vault used to bootstrap a local Signal Protocol store.
 
 This interface is intentionally narrow: it exists for secrets that must
 remain outside the main local store, such as a database encryption key.
-It is not a second general-purpose Signal data store.
+It is not a second general-purpose Signal Protocol data store.
 
 ## Methods
 

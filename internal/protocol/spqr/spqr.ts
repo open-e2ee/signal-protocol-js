@@ -10,7 +10,7 @@
  *
  * ## Tiered ML-KEM Security Model
  *
- * Signal uses different ML-KEM variants for different protocols:
+ * The reference implementation uses different ML-KEM variants for different protocols:
  *
  * | Protocol | ML-KEM Variant | NIST Level | Usage                |
  * |----------|----------------|------------|----------------------|
@@ -85,7 +85,7 @@
  *
  * ## Specification References
  *
- * @see https://signal.org/blog/spqr/ - Signal SPQR specification
+ * @see https://signal.org/blog/spqr/ - SPQR specification
  * @see https://csrc.nist.gov/pubs/fips/203/final - NIST FIPS 203 (ML-KEM)
  *
  * @example Initialize SPQR state
@@ -246,7 +246,7 @@ export interface SPQRState {
   sendEpoch?: number;
   /** KDF chains indexed by epoch */
   kdfChains: Record<number, EpochChains>;
-  /** Skipped message keys indexed by "epoch:index" (per Signal SPQR naming) */
+  /** Skipped message keys indexed by "epoch:index" (per SPQR naming) */
   MKSKIPPED: Record<string, SkippedSPQRKey>;
   /** Communication direction */
   direction: 'A2B' | 'B2A';
@@ -310,7 +310,7 @@ export interface SPQRState {
    * These strings provide domain separation for SPQR key derivation.
    * The default CHAIN_START byte sequence includes a pinned double space.
    *
-   * Customizable via SignalProtocolClient config for non-Signal deployments.
+   * Customizable via SignalProtocolClient config for independent deployments.
    *
    * @see ResolvedSPQRInfoStrings
    */
@@ -389,7 +389,7 @@ export interface SPQRChunkResult {
 export interface SPQRKeyResult {
   /** Derived message key (32 bytes) */
   messageKey: Uint8Array;
-  /** Message index within this epoch (per Signal SPQR naming) */
+  /** Message index within this epoch (per SPQR naming) */
   index: number;
   /** Epoch number */
   epoch: number;
@@ -409,7 +409,7 @@ export interface SPQRKeyResult {
 /**
  * Epochs to retain prior to send epoch.
  *
- * This is a protocol constant, not configurable. Signal hardcodes this value
+ * This is a protocol constant, not configurable. The reference implementation hardcodes this value
  * as `EPOCHS_TO_KEEP_PRIOR_TO_SEND_EPOCH: usize = 1` in the profile.
  * Keeping 1 previous epoch means current epoch + 1 previous = 2 total epochs
  * in memory, providing fast forward secrecy while allowing in-flight messages
@@ -537,7 +537,7 @@ export async function initializeSPQRState(
   // Resolve info strings (use provided or pinned-reference defaults)
   const resolvedInfoStrings = infoStrings ?? resolveSPQRInfoStrings();
 
-  // Per Signal SPQR spec: Initialize chains using profile KDF
+  // Per the SPQR specification: Initialize chains using profile KDF
   // Uses info string "Signal PQ Ratchet V1 Chain  Start" (TWO spaces) with 96-byte output:
   // [0:32] = new root key, [32:64] = A2B chain, [64:96] = B2A chain
   const {
@@ -1087,7 +1087,7 @@ export async function deriveSPQRSendKey(
  * that will be combined with the EC message key via KDF_HYBRID.
  *
  * @param spqrState - Current SPQR state
- * @param index - Message index from header (per Signal SPQR naming)
+ * @param index - Message index from header (per SPQR naming)
  * @param epoch - Epoch from header
  * @returns Message key (32 bytes)
  */
@@ -1194,7 +1194,7 @@ export async function deriveSPQRReceiveKey(
   const receiveChain = spqrState.kdfChains[epoch].receive;
   const indexGap = index - receiveChain.N;
 
-  // Prevent message jump attacks (Signal max_jump pattern)
+  // Prevent message jump attacks (reference max_jump pattern)
   const maxMessageJump = spqrState.limits?.maxMessageJump ?? SPQR_CONFIG.MAX_MESSAGE_JUMP;
   if (indexGap > maxMessageJump) {
     throw new EncryptionError(
@@ -1277,7 +1277,7 @@ export async function deriveSPQRReceiveKey(
  *
  * @param spqrState - Current SPQR state
  * @param epoch - Epoch from message header
- * @param index - Message index from header (per Signal SPQR naming)
+ * @param index - Message index from header (per SPQR naming)
  * @returns Message key if found, null otherwise
  */
 export async function tryGetSkippedSPQRKey(
@@ -1381,7 +1381,7 @@ export interface SPQRRecvResult {
 /**
  * Black-box SPQR send: produce opaque pq_ratchet bytes + message key.
  *
- * This is the Signal `pq_ratchet_send()` pattern.
+ * This is the reference `pq_ratchet_send()` pattern.
  * The cipher layer calls this to get opaque bytes for the wire and an optional
  * PQ message key to combine with the EC key via KDF_HYBRID.
  *
@@ -1496,7 +1496,7 @@ export async function spqrSend(
 /**
  * Black-box SPQR receive: decode opaque pq_ratchet bytes → message key.
  *
- * This is the Signal `pq_ratchet_recv()` pattern.
+ * This is the reference `pq_ratchet_recv()` pattern.
  * Called AFTER the DH ratchet step.
  *
  * Internally handles ALL PQ operations:

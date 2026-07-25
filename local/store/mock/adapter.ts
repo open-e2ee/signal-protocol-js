@@ -42,6 +42,25 @@ import { IdentityKeyChange, TrustDirection } from '../../../types/trust';
 import type { UserRecord, DeviceRecord } from '../../../types';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { generateRandomBytes } from '../../../internal/crypto/random';
+import {
+  MockStoreFailureController,
+  type MockStoreFailureOptions,
+} from './failures';
+
+export interface MockSignalStoreOptions {
+  failures?: MockStoreFailureOptions;
+}
+
+/**
+ * Cross the same ownership boundary as a durable adapter.
+ *
+ * Real stores serialize values before persistence and deserialize fresh values
+ * on read. Keeping that behavior here prevents tests and examples from
+ * accidentally mutating persisted protocol state through an object reference.
+ */
+function cloneStored<T>(value: T): T {
+  return structuredClone(value);
+}
 
 /**
  * Mock storage adapter for local development
@@ -60,6 +79,8 @@ import { generateRandomBytes } from '../../../internal/crypto/random';
  */
 export {};
 export class MockSignalStore implements ISignalLocalStore {
+  readonly failures: MockStoreFailureController;
+
   // Identity keys and registration IDs keyed by identityType
   private identityKeys = new Map<IdentityType, IdentityKeyPair>();
   private registrationIds = new Map<IdentityType, number>();
@@ -86,7 +107,7 @@ export class MockSignalStore implements ISignalLocalStore {
   private senderKeyRecords = new Map<string, SenderKeyState[]>();
 
   // Skipped sender keys for out-of-order messages (composite key -> messageKey)
-  // Signal uses capacity-only limits (no time-based expiration)
+  // The reference implementation uses capacity-only limits (no time-based expiration)
   private skippedSenderKeys = new Map<string, SkippedSenderMessageKey>();
 
   // Message records for SESAME retry request support
@@ -97,18 +118,24 @@ export class MockSignalStore implements ISignalLocalStore {
   // Metadata storage
   private readonly _metadata = new Map<string, string>();
 
+  constructor(options: MockSignalStoreOptions = {}) {
+    this.failures = new MockStoreFailureController(options.failures);
+  }
+
   // ============================================================================
   // Identity Key Management (Own Keys)
   // ============================================================================
 
   async storeIdentityKey(keyPair: IdentityKeyPair, identityType?: IdentityType): Promise<void> {
+    this.failures.beforeWrite('storeIdentityKey');
     const it = identityType ?? 'aci';
-    this.identityKeys.set(it, keyPair);
+    this.identityKeys.set(it, cloneStored(keyPair));
   }
 
   async getIdentityKey(identityType?: IdentityType): Promise<IdentityKeyPair | null> {
     const it = identityType ?? 'aci';
-    return this.identityKeys.get(it) ?? null;
+    const keyPair = this.identityKeys.get(it);
+    return keyPair ? cloneStored(keyPair) : null;
   }
 
   async hasIdentityKey(identityType?: IdentityType): Promise<boolean> {
@@ -122,6 +149,7 @@ export class MockSignalStore implements ISignalLocalStore {
   }
 
   async setLocalRegistrationId(id: number, identityType?: IdentityType): Promise<void> {
+    this.failures.beforeWrite('setLocalRegistrationId');
     const it = identityType ?? 'aci';
     this.registrationIds.set(it, id);
   }
@@ -136,11 +164,15 @@ export class MockSignalStore implements ISignalLocalStore {
     identityType?: IdentityType,
     suppliedCommitment?: Uint8Array
   ): Promise<IdentityKeyChange> {
+    this.failures.beforeWrite('saveContactIdentity');
     const key = this.getContactIdentityKey(address, identityType);
     const existing = this.contactIdentities.get(key) ?? null;
     const status = evaluateContactIdentityCandidate(existing, identity, suppliedCommitment);
     if (status === 'NEW') {
-      this.contactIdentities.set(key, createUnverifiedContactIdentityRecord(identity, Date.now()));
+      this.contactIdentities.set(
+        key,
+        cloneStored(createUnverifiedContactIdentityRecord(identity, Date.now()))
+      );
       return IdentityKeyChange.NEW_IDENTITY;
     }
     if (status === 'MATCH') return IdentityKeyChange.UNCHANGED;
@@ -178,6 +210,7 @@ export class MockSignalStore implements ISignalLocalStore {
     identityType?: IdentityType,
     suppliedCommitment?: Uint8Array
   ): Promise<ContactIdentityRecord> {
+    this.failures.beforeWrite('acceptContactIdentityRotationAndDeleteSessions');
     const key = this.getContactIdentityKey(address, identityType);
     const existing = this.contactIdentities.get(key);
     if (!existing) throw new Error('Cannot rotate an unseen identity');
@@ -191,7 +224,7 @@ export class MockSignalStore implements ISignalLocalStore {
       })
       .map(([sessionKey]) => sessionKey);
 
-    this.contactIdentities.set(key, replacement);
+    this.contactIdentities.set(key, cloneStored(replacement));
     for (const sessionKey of sessionKeys) this.sessionRecords.delete(sessionKey);
     return structuredClone(replacement);
   }
@@ -202,6 +235,7 @@ export class MockSignalStore implements ISignalLocalStore {
     identityType?: IdentityType,
     suppliedCommitment?: Uint8Array
   ): Promise<ContactIdentityRecord> {
+    this.failures.beforeWrite('verifyContactIdentity');
     const key = this.getContactIdentityKey(address, identityType);
     const existing = this.contactIdentities.get(key);
     if (!existing) throw new Error('Cannot verify an unseen identity');
@@ -211,7 +245,7 @@ export class MockSignalStore implements ISignalLocalStore {
       Date.now(),
       suppliedCommitment
     );
-    this.contactIdentities.set(key, verified);
+    this.contactIdentities.set(key, cloneStored(verified));
     return structuredClone(verified);
   }
 
@@ -234,9 +268,10 @@ export class MockSignalStore implements ISignalLocalStore {
     signedPreKey: EcSignedPreKey,
     identityType?: IdentityType
   ): Promise<void> {
+    this.failures.beforeWrite('storeEcSignedPreKey');
     const it = identityType ?? 'aci';
     // Store by identityType:keyId (supports multiple prekeys for grace period handling)
-    this.ecSignedPreKeys.set(`${it}:${signedPreKey.keyId}`, signedPreKey);
+    this.ecSignedPreKeys.set(`${it}:${signedPreKey.keyId}`, cloneStored(signedPreKey));
   }
 
   async getEcSignedPreKey(
@@ -248,7 +283,8 @@ export class MockSignalStore implements ISignalLocalStore {
 
     if (keyId !== undefined) {
       // Look up by specific keyId
-      return this.ecSignedPreKeys.get(`${prefix}${keyId}`) ?? null;
+      const preKey = this.ecSignedPreKeys.get(`${prefix}${keyId}`);
+      return preKey ? cloneStored(preKey) : null;
     }
     // Return the most recent EC signed prekey (highest keyId) for this identityType
     let maxKeyId = -1;
@@ -262,7 +298,7 @@ export class MockSignalStore implements ISignalLocalStore {
         }
       }
     }
-    return result;
+    return result ? cloneStored(result) : null;
   }
 
   async getAllEcSignedPreKeys(identityType?: IdentityType): Promise<EcSignedPreKey[]> {
@@ -271,13 +307,14 @@ export class MockSignalStore implements ISignalLocalStore {
     const result: EcSignedPreKey[] = [];
     for (const [key, value] of this.ecSignedPreKeys.entries()) {
       if (key.startsWith(prefix)) {
-        result.push(value);
+        result.push(cloneStored(value));
       }
     }
     return result;
   }
 
   async removeEcSignedPreKey(keyId: number, identityType?: IdentityType): Promise<void> {
+    this.failures.beforeWrite('removeEcSignedPreKey');
     const it = identityType ?? 'aci';
     this.ecSignedPreKeys.delete(`${it}:${keyId}`);
   }
@@ -286,9 +323,10 @@ export class MockSignalStore implements ISignalLocalStore {
     prekeys: EcOneTimePreKey[],
     identityType?: IdentityType
   ): Promise<void> {
+    this.failures.beforeWrite('storeEcOneTimePreKeys');
     const it = identityType ?? 'aci';
     for (const pk of prekeys) {
-      this.ecOneTimePreKeys.set(`${it}:${pk.keyId}`, pk);
+      this.ecOneTimePreKeys.set(`${it}:${pk.keyId}`, cloneStored(pk));
     }
   }
 
@@ -298,25 +336,28 @@ export class MockSignalStore implements ISignalLocalStore {
     const result: EcOneTimePreKey[] = [];
     for (const [key, value] of this.ecOneTimePreKeys.entries()) {
       if (key.startsWith(prefix)) {
-        result.push(value);
+        result.push(cloneStored(value));
       }
     }
     return result;
   }
 
   async removeEcOneTimePreKey(preKeyId: number, identityType?: IdentityType): Promise<void> {
+    this.failures.beforeWrite('removeEcOneTimePreKey');
     const it = identityType ?? 'aci';
     this.ecOneTimePreKeys.delete(`${it}:${preKeyId}`);
   }
 
   async storeKyberPreKey(kyberPreKey: KyberPreKey, identityType?: IdentityType): Promise<void> {
+    this.failures.beforeWrite('storeKyberPreKey');
     const it = identityType ?? 'aci';
-    this.kyberPreKeys.set(it, kyberPreKey);
+    this.kyberPreKeys.set(it, cloneStored(kyberPreKey));
   }
 
   async getKyberPreKey(identityType?: IdentityType): Promise<KyberPreKey | null> {
     const it = identityType ?? 'aci';
-    return this.kyberPreKeys.get(it) ?? null;
+    const preKey = this.kyberPreKeys.get(it);
+    return preKey ? cloneStored(preKey) : null;
   }
 
   async markKyberPreKeyUsed(
@@ -325,8 +366,12 @@ export class MockSignalStore implements ISignalLocalStore {
     baseKeyBytes: Uint8Array,
     identityType?: IdentityType
   ): Promise<void> {
+    this.failures.beforeWrite('markKyberPreKeyUsed');
     const it = identityType ?? 'aci';
-    this.kyberUsage.set(`${it}:${kyberPreKeyId}`, { signedPreKeyId, baseKeyBytes });
+    this.kyberUsage.set(
+      `${it}:${kyberPreKeyId}`,
+      cloneStored({ signedPreKeyId, baseKeyBytes })
+    );
   }
 
   // ============================================================================
@@ -337,9 +382,10 @@ export class MockSignalStore implements ISignalLocalStore {
     prekeys: KemOneTimePreKey[],
     identityType?: IdentityType
   ): Promise<void> {
+    this.failures.beforeWrite('storeKemOneTimePreKeys');
     const it = identityType ?? 'aci';
     for (const pk of prekeys) {
-      this.kemOneTimePreKeys.set(`${it}:${pk.keyId}`, pk);
+      this.kemOneTimePreKeys.set(`${it}:${pk.keyId}`, cloneStored(pk));
     }
   }
 
@@ -349,7 +395,7 @@ export class MockSignalStore implements ISignalLocalStore {
     const result: KemOneTimePreKey[] = [];
     for (const [key, value] of this.kemOneTimePreKeys.entries()) {
       if (key.startsWith(prefix)) {
-        result.push(value);
+        result.push(cloneStored(value));
       }
     }
     return result;
@@ -360,10 +406,12 @@ export class MockSignalStore implements ISignalLocalStore {
     identityType?: IdentityType
   ): Promise<KemOneTimePreKey | null> {
     const it = identityType ?? 'aci';
-    return this.kemOneTimePreKeys.get(`${it}:${keyId}`) ?? null;
+    const preKey = this.kemOneTimePreKeys.get(`${it}:${keyId}`);
+    return preKey ? cloneStored(preKey) : null;
   }
 
   async removeKemOneTimePreKey(keyId: number, identityType?: IdentityType): Promise<void> {
+    this.failures.beforeWrite('removeKemOneTimePreKey');
     const it = identityType ?? 'aci';
     this.kemOneTimePreKeys.delete(`${it}:${keyId}`);
   }
@@ -388,12 +436,14 @@ export class MockSignalStore implements ISignalLocalStore {
    * Store session record
    */
   async storeSessionRecord(address: ProtocolAddress, record: SessionRecord): Promise<void> {
+    this.failures.beforeWrite('storeSessionRecord');
     assertCurrentSessionRecord(record);
     const key = this.getAddressKey(address);
-    this.sessionRecords.set(key, record);
+    this.sessionRecords.set(key, cloneStored(record));
   }
 
   async commitSessionTrust(commit: SessionTrustCommit): Promise<void> {
+    this.failures.beforeWrite('commitSessionTrust');
     assertCurrentSessionRecord(commit.record);
     const sessionKey = this.getAddressKey(commit.address);
     const contactKey = this.getContactIdentityKey(
@@ -428,8 +478,8 @@ export class MockSignalStore implements ISignalLocalStore {
     }
 
     // Map mutations cannot fail after validation; this is one synchronous commit point.
-    if (newContact) this.contactIdentities.set(contactKey, newContact);
-    this.sessionRecords.set(sessionKey, commit.record);
+    if (newContact) this.contactIdentities.set(contactKey, cloneStored(newContact));
+    this.sessionRecords.set(sessionKey, cloneStored(commit.record));
     if (ecKey) this.ecOneTimePreKeys.delete(ecKey);
     if (kemKey) this.kemOneTimePreKeys.delete(kemKey);
   }
@@ -444,7 +494,7 @@ export class MockSignalStore implements ISignalLocalStore {
     if (!record) return null;
     try {
       assertCurrentSessionRecord(record);
-      return record;
+      return cloneStored(record);
     } catch {
       this.sessionRecords.delete(key);
       return null;
@@ -452,6 +502,7 @@ export class MockSignalStore implements ISignalLocalStore {
   }
 
   async deleteSessionRecord(address: ProtocolAddress): Promise<void> {
+    this.failures.beforeWrite('deleteSessionRecord');
     const key = this.getAddressKey(address);
     this.sessionRecords.delete(key);
   }
@@ -460,6 +511,7 @@ export class MockSignalStore implements ISignalLocalStore {
     address: ProtocolAddress,
     newSession?: SessionState | null
   ): Promise<void> {
+    this.failures.beforeWrite('archiveCurrentSession');
     // Per SESAME §3.2: "previously active session is moved to the head of the inactive sessions list"
     // This preserves the old session for potential delayed message decryption
     const key = this.getAddressKey(address);
@@ -470,18 +522,18 @@ export class MockSignalStore implements ISignalLocalStore {
       if (!record.archivedSessions) {
         record.archivedSessions = {};
       }
-      record.archivedSessions[record.currentSession.baseKey] = record.currentSession;
+      record.archivedSessions[record.currentSession.baseKey] = cloneStored(record.currentSession);
     }
 
     if (record) {
       // Set new current session (may be null/undefined to clear)
-      record.currentSession = newSession ?? null;
+      record.currentSession = newSession ? cloneStored(newSession) : null;
       if (record.metadata) record.metadata.lastSentAt = Date.now();
       this.sessionRecords.set(key, record);
     } else if (newSession) {
       // Create new record with just the new session
       this.sessionRecords.set(key, {
-        currentSession: newSession,
+        currentSession: cloneStored(newSession),
         archivedSessions: {},
         version: CURRENT_SESSION_RECORD_VERSION,
       });
@@ -496,7 +548,7 @@ export class MockSignalStore implements ISignalLocalStore {
       if (key.startsWith(`${userId}.`) || key === userId) {
         try {
           assertCurrentSessionRecord(record);
-          sessions.push(record);
+          sessions.push(cloneStored(record));
         } catch {
           this.sessionRecords.delete(key);
         }
@@ -521,9 +573,10 @@ export class MockSignalStore implements ISignalLocalStore {
 
   async getDatabaseKey(): Promise<Uint8Array> {
     if (!this.databaseKey) {
+      this.failures.beforeWrite('getDatabaseKey');
       this.databaseKey = await generateRandomBytes(32);
     }
-    return this.databaseKey;
+    return cloneStored(this.databaseKey);
   }
 
   // ============================================================================
@@ -531,11 +584,13 @@ export class MockSignalStore implements ISignalLocalStore {
   // ============================================================================
 
   async getUserRecord(userId: string): Promise<UserRecord | null> {
-    return this.sesameUserRecords.get(userId) ?? null;
+    const record = this.sesameUserRecords.get(userId);
+    return record ? cloneStored(record) : null;
   }
 
   async setUserRecord(userId: string, record: UserRecord): Promise<void> {
-    this.sesameUserRecords.set(userId, record);
+    this.failures.beforeWrite('setUserRecord');
+    this.sesameUserRecords.set(userId, cloneStored(record));
   }
 
   async getDeviceRecord(userId: string, deviceId: number): Promise<DeviceRecord | null> {
@@ -547,7 +602,7 @@ export class MockSignalStore implements ISignalLocalStore {
 
     if (sessionRecord) {
       const now = Date.now();
-      return {
+      return cloneStored({
         userId,
         deviceId,
         // Session state is re-read from the live session record, but the
@@ -569,23 +624,26 @@ export class MockSignalStore implements ISignalLocalStore {
         session: sessionRecord,
         createdAt: sessionRecord.metadata?.createdAt ?? now,
         updatedAt: now,
-      };
+      });
     }
 
     // Fall back to sesameUserRecords for device records without active sessions
     const userRecord = this.sesameUserRecords.get(userId);
     if (!userRecord) return null;
-    return userRecord.devices.get(deviceId) ?? null;
+    const record = userRecord.devices.get(deviceId);
+    return record ? cloneStored(record) : null;
   }
 
   async setDeviceRecord(userId: string, deviceId: number, record: DeviceRecord): Promise<void> {
+    this.failures.beforeWrite('setDeviceRecord');
     const address = { userId, deviceId };
+    const storedRecord = cloneStored(record);
 
     // Store session directly to sessionRecords (preserving exact data including metadata state)
     // We write directly instead of through storeSessionRecord() to avoid metadata auto-generation
-    if (record.session) {
+    if (storedRecord.session) {
       const key = this.getAddressKey(address);
-      this.sessionRecords.set(key, record.session);
+      this.sessionRecords.set(key, cloneStored(storedRecord.session));
     }
 
     // Also keep sesameUserRecords in sync for getUserRecord()
@@ -599,14 +657,15 @@ export class MockSignalStore implements ISignalLocalStore {
       };
       this.sesameUserRecords.set(userId, userRecord);
     }
-    userRecord.devices.set(deviceId, record);
+    userRecord.devices.set(deviceId, storedRecord);
     userRecord.updatedAt = Date.now();
   }
 
   async deleteDeviceRecord(userId: string, deviceId: number): Promise<void> {
+    this.failures.beforeWrite('deleteDeviceRecord');
     // Delete session via canonical path (mirrors ExpoKeyStorageAdapter.deleteDeviceRecord)
     const address = { userId, deviceId };
-    await this.deleteSessionRecord(address);
+    this.sessionRecords.delete(this.getAddressKey(address));
 
     // Also clean up sesameUserRecords
     const userRecord = this.sesameUserRecords.get(userId);
@@ -639,6 +698,7 @@ export class MockSignalStore implements ISignalLocalStore {
   }
 
   async deleteStaleRecords(maxLatency: number): Promise<number> {
+    this.failures.beforeWrite('deleteStaleRecords');
     let deleted = 0;
     const now = Date.now();
 
@@ -678,6 +738,7 @@ export class MockSignalStore implements ISignalLocalStore {
   }
 
   async cleanupExpiredSessions(maxRecv: number): Promise<number> {
+    this.failures.beforeWrite('cleanupExpiredSessions');
     let deleted = 0;
     const now = Date.now();
 
@@ -752,6 +813,7 @@ export class MockSignalStore implements ISignalLocalStore {
     deviceId: number,
     state: SenderKeyState
   ): Promise<void> {
+    this.failures.beforeWrite('storeSenderKey');
     if (!this.senderKeys.has(groupId)) {
       this.senderKeys.set(groupId, new Map());
     }
@@ -762,7 +824,7 @@ export class MockSignalStore implements ISignalLocalStore {
     }
     const userMap = groupMap.get(userId)!;
 
-    userMap.set(deviceId, state);
+    userMap.set(deviceId, cloneStored(state));
   }
 
   async getSenderKey(
@@ -776,10 +838,12 @@ export class MockSignalStore implements ISignalLocalStore {
     const userMap = groupMap.get(userId);
     if (!userMap) return null;
 
-    return userMap.get(deviceId) ?? null;
+    const state = userMap.get(deviceId);
+    return state ? cloneStored(state) : null;
   }
 
   async deleteSenderKey(groupId: string, userId: string, deviceId: number): Promise<void> {
+    this.failures.beforeWrite('deleteSenderKey');
     const groupMap = this.senderKeys.get(groupId);
     if (!groupMap) return;
 
@@ -807,7 +871,7 @@ export class MockSignalStore implements ISignalLocalStore {
     const allKeys: SenderKeyState[] = [];
     for (const userMap of groupMap.values()) {
       for (const state of userMap.values()) {
-        allKeys.push(state);
+        allKeys.push(cloneStored(state));
       }
     }
 
@@ -815,6 +879,7 @@ export class MockSignalStore implements ISignalLocalStore {
   }
 
   async deleteAllSenderKeysForGroup(groupId: string): Promise<number> {
+    this.failures.beforeWrite('deleteAllSenderKeysForGroup');
     const groupMap = this.senderKeys.get(groupId);
     if (!groupMap) return 0;
 
@@ -844,14 +909,22 @@ export class MockSignalStore implements ISignalLocalStore {
     deviceId: number,
     states: SenderKeyState[]
   ): Promise<void> {
+    this.failures.beforeWrite('storeSenderKeyRecord');
     if (states.length === 0) return;
 
-    // Store current state via existing storeSenderKey
-    await this.storeSenderKey(groupId, userId, deviceId, states[0]);
+    // Store current state without a second injected write boundary.
+    if (!this.senderKeys.has(groupId)) {
+      this.senderKeys.set(groupId, new Map());
+    }
+    const groupMap = this.senderKeys.get(groupId)!;
+    if (!groupMap.has(userId)) {
+      groupMap.set(userId, new Map());
+    }
+    groupMap.get(userId)!.set(deviceId, cloneStored(states[0]));
 
     // Store the full record
     const key = this.getSenderKeyRecordKey(groupId, userId, deviceId);
-    this.senderKeyRecords.set(key, [...states]);
+    this.senderKeyRecords.set(key, cloneStored(states));
   }
 
   async getSenderKeyRecord(
@@ -861,7 +934,7 @@ export class MockSignalStore implements ISignalLocalStore {
   ): Promise<SenderKeyState[] | null> {
     const key = this.getSenderKeyRecordKey(groupId, userId, deviceId);
     const record = this.senderKeyRecords.get(key);
-    if (record) return [...record];
+    if (record) return cloneStored(record);
 
     // Fall back to current state only
     const currentState = await this.getSenderKey(groupId, userId, deviceId);
@@ -889,8 +962,9 @@ export class MockSignalStore implements ISignalLocalStore {
     chainIndex: number,
     messageKey: SkippedSenderMessageKey
   ): Promise<void> {
+    this.failures.beforeWrite('storeSkippedSenderKey');
     const key = this.getSkippedKeyId(groupId, senderId, senderDeviceId, chainIndex);
-    this.skippedSenderKeys.set(key, messageKey);
+    this.skippedSenderKeys.set(key, cloneStored(messageKey));
   }
 
   async getSkippedSenderKey(
@@ -900,7 +974,8 @@ export class MockSignalStore implements ISignalLocalStore {
     chainIndex: number
   ): Promise<SkippedSenderMessageKey | null> {
     const key = this.getSkippedKeyId(groupId, senderId, senderDeviceId, chainIndex);
-    return this.skippedSenderKeys.get(key) ?? null;
+    const messageKey = this.skippedSenderKeys.get(key);
+    return messageKey ? cloneStored(messageKey) : null;
   }
 
   async deleteSkippedSenderKey(
@@ -909,6 +984,7 @@ export class MockSignalStore implements ISignalLocalStore {
     senderDeviceId: number,
     chainIndex: number
   ): Promise<void> {
+    this.failures.beforeWrite('deleteSkippedSenderKey');
     const key = this.getSkippedKeyId(groupId, senderId, senderDeviceId, chainIndex);
     this.skippedSenderKeys.delete(key);
   }
@@ -918,6 +994,7 @@ export class MockSignalStore implements ISignalLocalStore {
     senderId: string,
     senderDeviceId: number
   ): Promise<number> {
+    this.failures.beforeWrite('deleteOldestSkippedSenderKeys');
     const prefix = `${groupId}:${senderId}:${senderDeviceId}:`;
     let count = 0;
 
@@ -971,8 +1048,9 @@ export class MockSignalStore implements ISignalLocalStore {
   }
 
   async storeMessageRecord(record: MessageRecord): Promise<void> {
+    this.failures.beforeWrite('storeMessageRecord');
     const key = this.getMessageRecordKey(record.sessionId, record.timestamp);
-    this.messageRecords.set(key, { ...record });
+    this.messageRecords.set(key, cloneStored(record));
   }
 
   /**
@@ -982,18 +1060,20 @@ export class MockSignalStore implements ISignalLocalStore {
   async getMessageRecord(sessionId: string, timestamp: number): Promise<MessageRecord | null> {
     const key = this.getMessageRecordKey(sessionId, timestamp);
     const record = this.messageRecords.get(key);
-    return record ? { ...record } : null;
+    return record ? cloneStored(record) : null;
   }
 
   /**
    * Delete a message record by session and timestamp (PRIMARY method).
    */
   async deleteMessageRecord(sessionId: string, timestamp: number): Promise<void> {
+    this.failures.beforeWrite('deleteMessageRecord');
     const key = this.getMessageRecordKey(sessionId, timestamp);
     this.messageRecords.delete(key);
   }
 
   async deleteExpiredMessageRecords(maxAgeMs: number): Promise<number> {
+    this.failures.beforeWrite('deleteExpiredMessageRecords');
     const cutoff = Date.now() - maxAgeMs;
     let deleted = 0;
 
@@ -1008,12 +1088,14 @@ export class MockSignalStore implements ISignalLocalStore {
   }
 
   async clearAllMessageRecords(): Promise<number> {
+    this.failures.beforeWrite('clearAllMessageRecords');
     const count = this.messageRecords.size;
     this.messageRecords.clear();
     return count;
   }
 
   async deleteMessageRecordsForSession(sessionId: string): Promise<number> {
+    this.failures.beforeWrite('deleteMessageRecordsForSession');
     let deleted = 0;
 
     for (const [key, record] of this.messageRecords.entries()) {
@@ -1031,6 +1113,7 @@ export class MockSignalStore implements ISignalLocalStore {
   // ============================================================================
 
   async clearAllKeys(): Promise<void> {
+    this.failures.beforeWrite('clearAllKeys');
     this.identityKeys.clear();
     this.registrationIds.clear();
     this.contactIdentities.clear();
@@ -1058,6 +1141,7 @@ export class MockSignalStore implements ISignalLocalStore {
   }
 
   async setMetadata(key: string, value: string): Promise<void> {
+    this.failures.beforeWrite('setMetadata');
     this._metadata.set(key, value);
   }
 
@@ -1111,6 +1195,7 @@ export class MockSignalStore implements ISignalLocalStore {
     kyberPreKeys: number;
     kemOneTimePreKeys: number;
   }> {
+    this.failures.beforeWrite('deleteAllPreKeys');
     const it = identityType ?? 'aci';
     const prefix = `${it}:`;
 
@@ -1161,6 +1246,7 @@ export class MockSignalStore implements ISignalLocalStore {
    * Used during force key reset.
    */
   async clearAllSessions(): Promise<void> {
+    this.failures.beforeWrite('clearAllSessions');
     this.sessionRecords.clear();
     this.sesameUserRecords.clear();
   }

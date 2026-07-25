@@ -195,7 +195,7 @@ async function sendNullMessageForRetryReset(
   await callbacks.send(retryRequest.requesterUserId, ctx.contentAdapter.serializeNullMessage(), {
     // Reuse failed timestamp for correlation with the retry request.
     timestamp: retryRequest.failedTimestamp,
-    // Signal treats null-message reset responses as implicit/protocol content.
+    // The reference implementation treats null-message reset responses as implicit/protocol content.
     contentHint: ContentHint.Implicit,
   });
 }

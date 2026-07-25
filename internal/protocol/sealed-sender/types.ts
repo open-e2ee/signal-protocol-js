@@ -512,7 +512,7 @@ export const V2_AUTH_TAG_LEN = 16;
 /**
  * Protocol version for sealed sender messages.
  *
- * Signal uses a compound version byte format: (requiredVersion << 4) | currentVersion
+ * The reference implementation uses a compound version byte format: (requiredVersion << 4) | currentVersion
  * This allows forward compatibility - a v3 client can decrypt v4 messages if requiredVersion <= 3
  *
  * @see https://signal.org/blog/sealed-sender/

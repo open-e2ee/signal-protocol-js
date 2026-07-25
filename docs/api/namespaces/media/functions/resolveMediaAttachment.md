@@ -8,7 +8,7 @@
 
 > **resolveMediaAttachment**(`attachment`, `options`): `Promise`\<[`ResolvedMediaAttachment`](../interfaces/ResolvedMediaAttachment.md)\>
 
-Download, verify, and decrypt a Signal media attachment pointer.
+Download, verify, and decrypt a Signal Protocol media attachment pointer.
 
 This is the safe receive-side counterpart to attachment upload. It validates
 pointer metadata, downloads opaque ciphertext from the object store, verifies

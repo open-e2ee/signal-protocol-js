@@ -4,7 +4,8 @@
  * Provides retry logic with exponential backoff for transient failures.
  * Distinguishes between retryable (network, timeout) and non-retryable (crypto) errors.
  *
- * This module is package-local on purpose. Signal must not depend on the app retry layer.
+ * This module is package-local on purpose. The Signal Protocol package must not
+ * depend on the app retry layer.
  */
 
 import { EncryptionErrorCode } from '../types';
@@ -45,6 +46,7 @@ const NON_RETRYABLE_ERROR_CODES = new Set([
   EncryptionErrorCode.ENCRYPTION_FAILED,
   EncryptionErrorCode.TOO_MANY_SKIPPED_MESSAGES,
   EncryptionErrorCode.IDENTITY_KEY_CHANGED,
+  EncryptionErrorCode.KEY_STORAGE_ERROR,
 ]);
 
 function sleep(ms: number): Promise<void> {

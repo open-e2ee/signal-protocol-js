@@ -48,13 +48,13 @@ export type {
 // For protocol constants, use PROTOCOL_CONSTANTS from '../types'.
 
 // =============================================================================
-// Encoder (Signal: PolyEncoder)
+// Encoder (reference: PolyEncoder)
 // =============================================================================
 
 export { CHUNK_COUNTS, CHUNK_SIZE, createEncoder, PolyEncoder, POLYNOMIAL_LIMITS } from './codec';
 
 // =============================================================================
-// Decoder (Signal: PolyDecoder)
+// Decoder (reference: PolyDecoder)
 // =============================================================================
 
 export { createDecoder, PolyDecoder } from './codec';

@@ -6,7 +6,7 @@
 
 # Interface: BlockedRecipientEntry
 
-Signal blocking contracts.
+Signal Protocol blocking contracts.
 
 Blocking is account/contact state, not message content. The core package owns
 the local blocking workflow and lets each app choose whether blocked state is

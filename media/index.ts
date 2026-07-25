@@ -2930,7 +2930,7 @@ async function assertDigestMatches(ciphertext: Uint8Array, expectedDigest: strin
  * The encrypted object digest and object ID are computed once. Upload
  * retries request fresh presigned URLs for that same key, which handles expired
  * upload URLs without changing the pointer metadata that will be encrypted into
- * the Signal message.
+ * the Signal Protocol message.
  */
 export async function prepareMediaAttachmentUpload(
   data: Uint8Array,
@@ -3030,7 +3030,7 @@ export async function prepareMediaAttachmentUpload(
 }
 
 /**
- * Download, verify, and decrypt a Signal media attachment pointer.
+ * Download, verify, and decrypt a Signal Protocol media attachment pointer.
  *
  * This is the safe receive-side counterpart to attachment upload. It validates
  * pointer metadata, downloads opaque ciphertext from the object store, verifies

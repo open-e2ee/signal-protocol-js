@@ -52,8 +52,8 @@ Base64-encoded serialized SenderCertificate
 
 Optional host-provided contact profile state store.
 
-When present, Signal can use per-contact profile keys and
-unidentified-access mode for direct-message sealed sender sends
+When present, the Signal Protocol client can use per-contact profile keys
+and unidentified-access mode for direct-message sealed sender sends
 without importing the host app's persistence layer.
 
 ***

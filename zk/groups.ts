@@ -2,7 +2,7 @@
  * Public zkgroup API.
  *
  * Server-side wrappers and advanced app integrations should use this module
- * rather than importing Signal protocol internals directly.
+ * rather than importing Signal Protocol internals directly.
  */
 
 export {};

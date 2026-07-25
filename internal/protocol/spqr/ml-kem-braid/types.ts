@@ -264,7 +264,7 @@ export interface MLKEMBraidAgentState extends MLKEMBraidBaseState {
   ct1?: Uint8Array;
   /** Second ciphertext component (128 bytes) */
   ct2?: Uint8Array;
-  /** CT1 copy stored for combined MAC computation with CT2 (Signal authenticates ct1||ct2) */
+  /** CT1 copy stored for combined MAC computation with CT2 (the reference implementation authenticates ct1||ct2) */
   ct1_for_mac?: Uint8Array;
 
   // ----- Encoders/Decoders (populated based on current state) -----

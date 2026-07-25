@@ -50,7 +50,9 @@ Adapters declare their runtime requirements as optional peer dependencies, so in
 
 Two clients, one process, no account and no server. The relay holds the envelope; only Bob's device turns it back into text.
 
+<!-- mock-snippet:run readme-quick-start -->
 ```ts
+// Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
 import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
@@ -96,7 +98,7 @@ Measured from the GitHub and npm registry APIs on 2026-07-24. Every alternative 
 | [`@privacyresearch/libsignal-protocol-typescript`](https://github.com/privacyresearchgroup/libsignal-protocol-typescript) | No documented React Native path | Yes | No — last npm publish 2023-05-06, last repo push 2023-07-18 | No | Yes | No (GPL-3.0) |
 | [`ts-mls`](https://github.com/LukaJCB/ts-mls) | Yes | Yes | Yes — very active | Yes | Yes | No (MIT) |
 
-`ts-mls` implements [MLS (RFC 9420)](https://www.rfc-editor.org/rfc/rfc9420.html), a different protocol with different properties — if MLS suits your product, it is a good library and this table is not an argument against it. `@signalapp/libsignal-client` is the implementation Signal Messenger itself uses; its README states that use outside Signal is unsupported.
+`ts-mls` implements [MLS (RFC 9420)](https://www.rfc-editor.org/rfc/rfc9420.html), a different protocol with different properties — if MLS suits your product, it is a good library and this table is not an argument against it. `@signalapp/libsignal-client` is the implementation Signal Messenger itself uses; its README states that use outside Signal Messenger is unsupported.
 
 ## Trust and verification
 
@@ -118,7 +120,7 @@ Cryptography deserves evidence rather than adjectives, so here is what there is 
 | [FIPS 203 (ML-KEM)](https://csrc.nist.gov/pubs/fips/203/final) | Final, 2024-08-13 |
 | [RFC 8032 (Ed25519)](https://www.rfc-editor.org/rfc/rfc8032.html) | — |
 
-**Not wire-compatible, and specific about why.** This SDK cannot exchange messages with Signal Messenger or `libsignal`, cannot exchange identities with them, and its safety numbers will never match the ones a Signal client displays for the same two users. The cryptographic core is the same; the wire profile is deliberately its own. Identities are a versioned composite of separate X25519 and Ed25519 keys rather than one Curve25519 key, so signatures are ordinary RFC 8032 Ed25519 rather than XEdDSA; ML-KEM-1024 keys and ciphertexts are tagged `0x0A`, distinct from the round-3 Kyber1024 `0x08` tag. [DEVIATIONS](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/DEVIATIONS.md) is the complete account — every difference from the specifications and from `libsignal`, with the reason, the cost, and the file that implements it. The threat model boundary is in the [security model](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/SECURITY.md).
+**Not wire-compatible, and specific about why.** This SDK cannot exchange messages with Signal Messenger or `libsignal`, cannot exchange identities with them, and its safety numbers will never match the ones a Signal Messenger client displays for the same two users. The cryptographic core is the same; the wire profile is deliberately its own. Identities are a versioned composite of separate X25519 and Ed25519 keys rather than one Curve25519 key, so signatures are ordinary RFC 8032 Ed25519 rather than XEdDSA; ML-KEM-1024 keys and ciphertexts are tagged `0x0A`, distinct from the round-3 Kyber1024 `0x08` tag. [DEVIATIONS](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/DEVIATIONS.md) is the complete account — every difference from the specifications and from `libsignal`, with the reason, the cost, and the file that implements it. The threat model boundary is in the [security model](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/SECURITY.md).
 
 **Dependencies: 7.** Seven direct production dependencies — `@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`, `async-lock`, `protobufjs`, `unique-names-generator` — resolving to 8 packages in total, the eighth being `long` by way of `protobufjs`. Everything else in the tree is a development or optional peer dependency.
 

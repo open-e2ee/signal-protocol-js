@@ -1,7 +1,7 @@
 /**
- * Signal-local error helpers.
+ * SDK-local error helpers.
  *
- * The Signal package should not depend on app-owned error utilities.
+ * The Signal Protocol package should not depend on app-owned error utilities.
  */
 
 export {};

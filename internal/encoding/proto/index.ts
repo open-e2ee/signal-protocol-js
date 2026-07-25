@@ -42,7 +42,7 @@ export {
   decodeSenderKeyDistributionMessage,
 } from './sender-key-message';
 
-// Signal Messages (1:1 session messages)
+// Signal Protocol Messages (1:1 session messages)
 export {
   type SignalMessageFields,
   encodeSignalMessage,

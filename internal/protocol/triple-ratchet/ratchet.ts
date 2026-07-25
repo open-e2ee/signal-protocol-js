@@ -279,7 +279,7 @@ export async function deriveTripleRatchetSendKey(
  * @param ecState EC Double Ratchet state
  * @param spqrState SPQR state
  * @param pqEpoch SPQR epoch from message header
- * @param pqIndex SPQR message index from message header (per Signal SPQR naming)
+ * @param pqIndex SPQR message index from message header (per the SPQR specification naming)
  * @param versionNegotiation Version lock-in state
  * @returns Combined message key and metadata
  */

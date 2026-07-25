@@ -6,9 +6,9 @@
 
 # Interface: ISignalLocalStore
 
-Signal local store interface.
+Signal Protocol local store interface.
 
-Canonical device/browser-local persistence for Signal protocol state:
+Canonical device/browser-local persistence for Signal Protocol state:
 - identity keys and registrations
 - sessions and sender keys
 - SESAME multi-device state

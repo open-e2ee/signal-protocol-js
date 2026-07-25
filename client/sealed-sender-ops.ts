@@ -53,7 +53,7 @@ export async function sealMessage(
     signalProtocolMessage,
   });
 
-  // Serialize: version byte + protobuf-encoded message (Signal wire format)
+  // Serialize: version byte + protobuf-encoded message (Sealed Sender wire format)
   const protoBytes = encodeUnidentifiedSenderMessage({
     ephemeralPublic: base64ToBytes(sealed.ephemeralPublic as Base64),
     encryptedStatic: base64ToBytes(sealed.encryptedStatic as Base64),

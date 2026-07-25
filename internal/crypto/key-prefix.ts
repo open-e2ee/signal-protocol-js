@@ -1,7 +1,7 @@
 /**
  * Signal Protocol Key Type Prefix
  *
- * Signal uses 0x05 (DJB = Daniel J. Bernstein / Curve25519) as a type identifier
+ * The reference implementation uses 0x05 (DJB = Daniel J. Bernstein / Curve25519) as a type identifier
  * in serialized keys. Internal storage uses raw 32-byte keys; the prefix is added
  * only for wire format and safety number computation.
  *

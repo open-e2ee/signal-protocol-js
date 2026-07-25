@@ -2,7 +2,7 @@
  * Convex database type definitions for Signal Protocol key distribution
  *
  * These types are used by the client adapter (relay.ts) for type-safe
- * communication with the Signal component at the application backend
+ * communication with the Signal Protocol component at the application backend
  *
  * Component Tables (9 total):
  * - devices
@@ -17,7 +17,7 @@
  */
 
 /**
- * Identity key record from Signal component
+ * Identity key record from the Signal Protocol component
  * Component table: identityKeys
  */
 export {};
@@ -30,7 +30,7 @@ export interface ConvexIdentityKey {
 }
 
 /**
- * EC signed prekey record from Signal component
+ * EC signed prekey record from the Signal Protocol component
  * Component table: ecSignedPreKeys
  *
  * Note: Old keys are DELETED when rotated, not marked deprecated
@@ -46,7 +46,7 @@ export interface ConvexEcSignedPreKey {
 }
 
 /**
- * EC one-time prekey record from Signal component
+ * EC one-time prekey record from the Signal Protocol component
  * Component table: ecPreKeys
  *
  * Note: Keys are DELETED when consumed, not marked
@@ -61,7 +61,7 @@ export interface ConvexEcPreKey {
 }
 
 /**
- * KEM one-time prekey record from Signal component (post-quantum)
+ * KEM one-time prekey record from the Signal Protocol component (post-quantum)
  * Component table: kemOneTimePreKeys
  *
  * Note: Keys are DELETED when consumed, not marked
@@ -77,7 +77,7 @@ export interface ConvexKemPreKey {
 }
 
 /**
- * KEM last-resort prekey record from Signal component (post-quantum fallback)
+ * KEM last-resort prekey record from the Signal Protocol component (post-quantum fallback)
  * Component table: kemLastResortPreKeys
  *
  * Reusable when one-time KEM keys exhausted
@@ -93,7 +93,7 @@ export interface ConvexKemLastResortPreKey {
 }
 
 /**
- * Prekey bundle response from Signal component
+ * Prekey bundle response from the Signal Protocol component
  * Returned by fetchPreKeyBundle query
  */
 export interface FetchedPreKeyBundle {

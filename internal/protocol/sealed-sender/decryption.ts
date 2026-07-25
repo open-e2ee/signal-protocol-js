@@ -170,7 +170,7 @@ export async function unseal(options: UnsealOptions): Promise<UnidentifiedSender
   const toZero: Uint8Array[] = [];
 
   // Step 1: Verify version
-  // Signal version format: (requiredVersion << 4) | currentVersion
+  // Signal Protocol version format: (requiredVersion << 4) | currentVersion
   const requiredVersion = (sealedMessage.version >> 4) & 0x0f;
   const currentVersion = sealedMessage.version & 0x0f;
 
@@ -224,7 +224,7 @@ export async function unseal(options: UnsealOptions): Promise<UnidentifiedSender
     const saltPrefix = stringToBytes(SEALED_SENDER_SALT);
 
     // Derive recipient's public key from private key for salt computation.
-    // Signal uses the recipient's stored public key; we derive it from the private key.
+    // The reference implementation uses the recipient's stored public key; we derive it from the private key.
     const recipientIdentityPublic = x25519.getPublicKey(recipientIdentityPrivate);
 
     const e_salt = concatBytes(saltPrefix, recipientIdentityPublic, ephemeralPublicBytes);

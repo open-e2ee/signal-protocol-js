@@ -209,7 +209,7 @@ export async function generateKyberLastResortPreKey(
  * Per PQXDH spec Section 3.2, these are signed one-time pqkem prekeys
  * that the server prefers over the last-resort KEM prekey.
  *
- * Uses the same batch size as EC one-time prekeys (Signal uses 100 for both).
+ * Uses the same batch size as EC one-time prekeys (the reference implementation uses 100 for both).
  *
  * @param identityKeyPair Complete composite identity key pair for contextual signing
  * @param count Number of prekeys to generate

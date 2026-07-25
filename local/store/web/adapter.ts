@@ -183,8 +183,12 @@ interface SignalDBSchema extends DBSchema {
   };
 }
 
+type SerializedDeviceRecord = Omit<DeviceRecord, 'identityKey'> & {
+  identityKey: number[];
+};
+
 type SerializedUserRecord = Omit<UserRecord, 'devices'> & {
-  devices: Array<[DeviceID, DeviceRecord]>;
+  devices: Array<[DeviceID, SerializedDeviceRecord]>;
 };
 
 /**
@@ -1081,7 +1085,13 @@ export class IndexedDbSignalStore implements ISignalLocalStore {
   private serializeUserRecord(record: UserRecord): SerializedUserRecord {
     return {
       ...record,
-      devices: Array.from(record.devices.entries()),
+      devices: Array.from(record.devices.entries(), ([deviceId, device]) => [
+        deviceId,
+        {
+          ...device,
+          identityKey: Array.from(device.identityKey),
+        },
+      ]),
     };
   }
 
@@ -1092,7 +1102,15 @@ export class IndexedDbSignalStore implements ISignalLocalStore {
   private deserializeUserRecord(data: SerializedUserRecord): UserRecord {
     return {
       ...data,
-      devices: new Map(data.devices),
+      devices: new Map(
+        data.devices.map(([deviceId, device]) => [
+          deviceId,
+          {
+            ...device,
+            identityKey: new Uint8Array(device.identityKey),
+          },
+        ])
+      ),
     };
   }
 

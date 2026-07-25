@@ -10,7 +10,7 @@
 
 import type { PublicKey, PrivateKey, Signature, KeyPair } from './branded';
 
-/** Signal identity type — ACI (account) or PNI (discoverable identifier). */
+/** Signal Protocol identity type — ACI (account) or PNI (discoverable identifier). */
 export {};
 export type IdentityType = 'aci' | 'pni';
 

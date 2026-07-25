@@ -62,14 +62,26 @@ jobs:
               # be read as "no stable release exists". Any other lookup failure
               # aborts the publish rather than risking a prerelease overwriting
               # a stable `latest` on the strength of a transient registry error.
-              if CURRENT_LATEST=$(npm view "$NAME" dist-tags.latest 2>&1); then
+              #
+              # stderr must be kept OUT of the captured value. npm writes config
+              # warnings there unconditionally -- the runner's own npmrc triggers
+              # `Unknown user config "always-auth"` -- and that text contains a
+              # hyphen, so folding it into CURRENT_LATEST makes the `*-*`
+              # prerelease test below match the warning rather than the version.
+              # That would silently republish `latest` from a prerelease once a
+              # stable exists, which is exactly what this block exists to prevent.
+              NPM_VIEW_ERR=$(mktemp)
+              if CURRENT_LATEST=$(npm view "$NAME" dist-tags.latest 2>"$NPM_VIEW_ERR"); then
                 :
-              elif printf '%s' "$CURRENT_LATEST" | grep -q "E404"; then
+              elif grep -q "E404" "$NPM_VIEW_ERR"; then
                 CURRENT_LATEST=""
               else
-                echo "::error::registry dist-tags lookup failed; refusing to guess. Output: $CURRENT_LATEST"
+                echo "::error::registry dist-tags lookup failed; refusing to guess."
+                cat "$NPM_VIEW_ERR"
                 exit 1
               fi
+              # Trim stray whitespace/newlines so the glob tests below see a bare version.
+              CURRENT_LATEST=$(printf '%s' "$CURRENT_LATEST" | tr -d '[:space:]')
               case "$CURRENT_LATEST" in
                 ""|*-*) TAG=latest;;
                 *) TAG="${VERSION#*-}"; TAG="${TAG%%.*}";;

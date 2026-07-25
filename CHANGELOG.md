@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.1.0-alpha.5
+
+- **Breaking (wording and one error message): "Signal" is no longer used as a
+  loose shorthand.** Prose names the specifications "the Signal Protocol", the
+  product "Signal Messenger", and the reference implementation `libsignal`;
+  shipped source comments say "the reference implementation". Compatibility
+  shorthand such as "Signal-style", "Signal-aligned", and "Signal-grade" is
+  gone. Protocol domain-separation strings are untouched and remain
+  byte-identical. The Expo storage error message no longer carries a "Signal
+  Protocol " prefix; it now reads `Expo storage DB bindings not configured.
+  Configure them from the host app before using Expo storage.` Anything
+  matching on that text must be updated.
+- Corrected GroupsV2 source comments that described the permission model as
+  server-enforced. The checks in `access-control.ts` run on the client over
+  already-decrypted state and bind an honest client, not a hostile one — the
+  server sees only opaque state and a version number. Change application order
+  is this SDK's own choice, taken from the proto field numbering for
+  determinism, not an order the specifications define; and the SDK does not
+  encrypt avatar content.
+- Changed the exported in-memory relay to upsert EC and KEM one-time prekeys by
+  `keyId`. Re-uploading a batch is now idempotent; consumers that relied on
+  duplicate uploads inflating prekey counts will observe the corrected count.
+- Changed the exported in-memory relay to enforce device IDs 1-5 and the
+  production-contract `Maximum devices limit reached` error. Removed and
+  disabled devices are excluded from active fanout, and unknown users now have
+  no invented device.
+- Fixed `MockSignalRelayServer.clear()` retaining idempotency receipts, which
+  made a reused `clientMessageId` look already accepted after reset.
+- Fixed the exported mock store and relay to structured-clone mutable values at
+  every persistence/API boundary, matching serialization ownership in durable
+  adapters for sessions, users, devices, prekeys, sender keys, and envelopes.
+- Added opt-in, seeded mock failure controls for latency, disconnect/reconnect,
+  duplicate and reordered delivery, storage writes, authorization rejection,
+  and one-time-prekey exhaustion. Default construction is unchanged.
+- Fixed duplicate relay delivery requesting a SESAME resend after the session
+  layer had already rejected the replay, which could surface plaintext twice.
+  Duplicate envelopes are now acknowledged without a retry request.
+- Fixed session-establishment persistence failures being misreported as a
+  problem with the peer. An adapter failure at the atomic commit seam now
+  surfaces as `KEY_STORAGE_ERROR` with the adapter failure retained as the
+  cause, instead of `RECIPIENT_NOT_REGISTERED` or `INVALID_PREKEY_BUNDLE`, so
+  applications retry their own storage rather than refetching a bundle.
+- Added shared storage contracts for Mock, Node, Web/IndexedDB, and Expo
+  adapters, plus an extensible relay contract. Fixed Web/IndexedDB `UserRecord`
+  decoding so `DeviceRecord.identityKey` remains an owned `Uint8Array`.
+- Documentation now labels mock examples as real protocol and cryptography over
+  simulated in-memory infrastructure. CI executes every classified mock snippet
+  from the shipped onboarding, recipe, composition, and pricing docs against
+  the packed package.
+- Fixed the npm publish workflow folding registry warnings into the value it
+  read as the current `latest` version. A warning containing a hyphen parsed as
+  a prerelease, which after a stable release would have routed a prerelease to
+  the `latest` dist-tag.
+
 ## 0.1.0-alpha.4
 
 - **Security: a forged message header could force unbounded key derivation

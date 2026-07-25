@@ -266,7 +266,7 @@ function assertV1VersionCapability(
 // =============================================================================
 
 /**
- * Binary shard format (Signal RS layer):
+ * Binary shard format (ML-KEM Braid RS layer):
  * SHARD = INDEX (uint16_le) || DATA (32 bytes)
  */
 export function serializeShardBinary(index: number, data: Uint8Array): Uint8Array {

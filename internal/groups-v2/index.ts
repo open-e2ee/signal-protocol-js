@@ -1,8 +1,13 @@
 /**
  * GroupsV2 State Management
  *
- * Signal Private Group System — group state, changes, access control,
- * invite links, and orchestration manager.
+ * Group state, changes, access control, invite links, and the orchestration
+ * manager.
+ *
+ * The anonymous-credential layer beneath this follows "The Signal Private
+ * Group System" (Chase, Perrin, Zaverucha, eprint 2019/1416). The group state
+ * and change formats above it are this SDK's own and are not interoperable
+ * with other implementations. See docs/DEVIATIONS.md.
  */
 export {};
 export {

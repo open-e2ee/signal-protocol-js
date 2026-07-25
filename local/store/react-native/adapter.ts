@@ -914,7 +914,7 @@ export class ReactNativeSignalStore implements ISignalLocalStore {
     key: Uint8Array,
     iv: Uint8Array
   ): Promise<Uint8Array> {
-    // Use the Signal crypto module's AES-GCM implementation
+    // Use the Signal Protocol crypto module's AES-GCM implementation
     const result = await SignalCrypto.aesGcmEncryptWithIV(key, data, iv);
 
     // Combine ciphertext + authTag into single buffer
@@ -956,7 +956,7 @@ export class ReactNativeSignalStore implements ISignalLocalStore {
     const ciphertextOnly = ciphertext.slice(0, -AES_GCM_TAG_BYTES);
     const authTag = ciphertext.slice(-AES_GCM_TAG_BYTES);
 
-    // Use the Signal crypto module's AES-GCM implementation
+    // Use the Signal Protocol crypto module's AES-GCM implementation
     return await SignalCrypto.aesGcmDecrypt(
       key,
       SignalCrypto.bytesToBase64(ciphertextOnly),

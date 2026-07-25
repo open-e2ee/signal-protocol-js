@@ -82,7 +82,7 @@ export interface HeadlessRotationOptions {
  * - Handles errors gracefully (returns partial success)
  * - Logs all operations for debugging
  *
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - User identifier
  * @param deviceId - Device identifier
  * @param options - Optional configuration (storage, identityTypes)
@@ -216,7 +216,7 @@ export async function rotateKeysHeadless(
  * Lightweight check that doesn't perform rotation.
  * Useful for deciding whether to run the full rotation.
  *
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - User identifier
  * @param deviceId - Device identifier
  * @returns Object indicating which keys need rotation

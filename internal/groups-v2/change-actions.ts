@@ -2,7 +2,11 @@
  * Group Change Application
  *
  * Pure functions for applying DecryptedGroupChange operations to DecryptedGroup state.
- * Implements the exact application order specified in the Signal Protocol.
+ *
+ * Operations are applied in ascending DecryptedGroupChange field-number order.
+ * That ordering is this SDK's choice, taken from the proto field numbering for
+ * determinism; the Signal Protocol group specifications do not define a
+ * normative application order.
  *
  * @module change-actions
  */
@@ -36,8 +40,9 @@ function cloneGroup(group: DecryptedGroup): DecryptedGroup {
  * Apply a DecryptedGroupChange to a DecryptedGroup state.
  *
  * This is a pure function that returns a new state object without mutating the input.
- * Changes are applied in the exact order specified by the Signal Protocol
- * (matching DecryptedGroupChange proto field numbers).
+ * Changes are applied in ascending DecryptedGroupChange proto field-number
+ * order. See the module header: this ordering is chosen for determinism, not
+ * mandated by a specification.
  *
  * @param state - Current group state
  * @param change - Change to apply

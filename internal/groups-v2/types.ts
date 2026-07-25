@@ -98,7 +98,7 @@ export interface EncryptedGroup {
   title: Uint8Array;
   /** Encrypted blob (description). */
   description: Uint8Array;
-  /** URL for group avatar (content encrypted as GroupAttributeBlob). */
+  /** URL for the group avatar. The SDK does not encrypt avatar content. */
   avatarUrl: string;
   /** Encrypted blob (disappearing messages timer). */
   disappearingMessagesTimer: Uint8Array;
@@ -360,8 +360,15 @@ export interface EncryptedChangeModifyMemberLabel {
  * fields (ACI, PNI, profileKey) encrypted as ciphertext.
  *
  * Non-identity fields (role, revision, timestamps, labels, access control)
- * remain as plaintext since the server needs them for authorization checks
- * or they contain no PII.
+ * remain plaintext because they carry no PII.
+ *
+ * This type has no counterpart in the Signal Protocol group system, where the
+ * encrypted change is a set of per-action messages each carrying a
+ * zero-knowledge presentation that lets the server authorize the action
+ * without decrypting it. Nothing here carries a presentation, so a server
+ * cannot tie a plaintext `role` to an authenticated actor. Authorization is
+ * enforced client-side (see access-control.ts) and is therefore only as
+ * trustworthy as the submitting client.
  */
 export interface EncryptedGroupChange {
   /** Encrypted ServiceId of the editor (65-byte UuidCiphertext). */

@@ -6,7 +6,7 @@
  *
  * ## Wire Format
  *
- * Signal V1Msg structure:
+ * SPQR V1Msg structure:
  * ```
  * V1Msg {
  *   epoch: uint64

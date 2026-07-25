@@ -24,7 +24,7 @@
  * - PQXDH (session setup): ML-KEM-1024 for maximum security
  * - SPQR (continuous ratchet): ML-KEM-768 for bandwidth efficiency
  *
- * @see https://signal.org/blog/spqr/ - Signal SPQR specification
+ * @see https://signal.org/blog/spqr/ - the SPQR specification
  * @see https://signal.org/docs/specifications/mlkembraid/ - ML-KEM Braid spec
  */
 

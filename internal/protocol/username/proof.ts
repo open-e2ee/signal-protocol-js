@@ -1,5 +1,5 @@
 /**
- * Signal-Compliant Username ZK Proof (Schnorr/Sigma Protocol)
+ * Username zero-knowledge proof (Schnorr/sigma protocol), compatible with the reference implementation
  *
  * Proves knowledge of a username's preimage (nickname + discriminator) without
  * revealing the username itself. The server can verify the proof against the

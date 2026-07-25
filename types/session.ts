@@ -275,7 +275,7 @@ export interface SessionState {
   hasReceivedMessage?: boolean;
 
   // Post-Quantum Sparse Refresh (SPQR / Triple Ratchet)
-  // Per Signal SPQR: ML-KEM keys refreshed ~every 50 messages (or within 1 week)
+  // Per the SPQR specification: ML-KEM keys refreshed ~every 50 messages (or within 1 week)
   // @see https://signal.org/blog/spqr/
   // @see DEFAULT_RATCHET_CONFIG.kyberRefreshInterval
   kyberKeys?: {

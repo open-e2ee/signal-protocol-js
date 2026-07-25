@@ -42,7 +42,7 @@ export const MAX_REGISTRATION_ID = 16380;
 /**
  * Batch size for one-time prekeys (both EC and KEM)
  *
- * Signal uses 100 for both EC and KEM one-time prekeys to maintain
+ * The reference implementation uses 100 for both EC and KEM one-time prekeys to maintain
  * protocol symmetry. This balances key availability with storage/upload costs.
  *
  * Per PQXDH specification, KEM one-time prekeys follow the same

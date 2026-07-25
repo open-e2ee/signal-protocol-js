@@ -1,7 +1,7 @@
 /**
  * SDK-managed contact profile state contracts and logic.
  *
- * The host app provides persistence; Signal owns the protocol semantics.
+ * The host app provides persistence; the Signal Protocol SDK owns the protocol semantics.
  */
 
 import type { ConvexReactClient } from 'convex/react';

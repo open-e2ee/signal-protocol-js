@@ -87,7 +87,7 @@ export interface SPQRWireMessage {
   // Braid mode fields
   /** `SPQR` MessageType enum value (0x01-0x06: Hdr..Ct2) */
   braidMsgType?: number;
-  /** Chunk evaluation point index (varint-encoded, Signal decoder accepts uint16 range) */
+  /** Chunk evaluation point index (varint-encoded, the reference decoder accepts uint16 range) */
   braidChunkIndex?: number;
   /** Chunk data (32 bytes) */
   braidChunkData?: Uint8Array;
@@ -235,7 +235,7 @@ export function spqrInternalEpochToWireEpoch(epoch: number): number {
 /**
  * Convert the reference format's one-based SPQR wire epoch to the internal KDF epoch.
  *
- * The public wire format accepts u64 epochs per the current Signal SPQR
+ * The public wire format accepts u64 epochs per the current SPQR specification
  * reference. This package's direct SPQR state still stores epochs as JS
  * numbers, so direct-mode callers must stay within the safe integer range.
  */
@@ -406,7 +406,7 @@ export function decodeSPQRWire(bytes: Uint8Array): SPQRWireMessage {
   const modeByte = bytes[cursor.value++];
 
   // Direct mode (0x80, 0x81, 0x82 only)
-  // Signal uses strict enum validation (TryFrom<u8>) — reject unknown values
+  // The reference implementation validates this enum strictly — reject unknown values
   if (
     modeByte === DIRECT_CIPHERTEXT ||
     modeByte === DIRECT_PUBLIC_KEY ||

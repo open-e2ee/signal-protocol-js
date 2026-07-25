@@ -2,7 +2,7 @@
  * Minimal persistent key-value backend required by ReactNativeSignalStore.
  *
  * Bare React Native consumers must provide their own implementation so the
- * Signal package does not hard-code a specific storage library.
+ * Signal Protocol package does not hard-code a specific storage library.
  */
 export interface ReactNativeKeyValueStorage {
   getItem(key: string): Promise<string | null>;

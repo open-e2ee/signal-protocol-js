@@ -407,8 +407,8 @@ https://signal.org/docs/specifications/pqxdh/#publishing-keys
 
 App-owned media lifecycle callbacks for the SignalProtocolClient media queue.
 
-The queue itself is persisted through the existing Signal local storage
-adapter. These callbacks keep local bytes, plaintext caches, and product
+The queue itself is persisted through the existing Signal Protocol local
+storage adapter. These callbacks keep local bytes, plaintext caches, and product
 state in the app layer where they can share file permissions, UI state, and
 app database ownership.
 

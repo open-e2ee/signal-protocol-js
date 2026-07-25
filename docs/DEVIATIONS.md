@@ -9,24 +9,24 @@
 This SDK implements the same cryptographic core as the published Signal Protocol
 specifications — X3DH/PQXDH key agreement, the Double Ratchet, the ML-KEM Braid
 post-quantum ratchet, Sesame multi-device session management, sealed sender, and
-Signal's zero-knowledge group credential system. In many places it is faithful
+the Signal Protocol's zero-knowledge group credential system. In many places it is faithful
 down to the byte: the same KDF labels, the same chain-key constants, the same
 protobuf field numbers, the same iteration counts.
 
 It is **not wire-compatible with Signal Messenger or with `libsignal`**, and it
 is not intended to be. Messages produced by this SDK cannot be decrypted by a
-Signal client, identities cannot be exchanged, safety numbers computed here
-cannot be compared against safety numbers shown in Signal, and sessions cannot be
+Signal Messenger client, identities cannot be exchanged, safety numbers computed here
+cannot be compared against safety numbers shown in Signal Messenger, and sessions cannot be
 migrated in either direction. This is a distinct wire profile —
-`IndependentProfileV1` — that shares Signal's cryptographic design and
+`IndependentProfileV1` — that shares the Signal Protocol's cryptographic design and
 deliberately does not share its encoding.
 
 That distinction matters in a specific way. Reading "implements X3DH and the
 Double Ratchet" reasonably leads someone to expect interoperability. There is
-none. Reading "Signal-compatible safety numbers" would reasonably lead someone to
-expect that a user could verify a contact by comparing a number shown in this SDK
-against the same contact's number in Signal. They cannot; the numbers are
-computed over different inputs and will never match.
+none. Reading "safety numbers compatible with Signal Messenger" would reasonably
+lead someone to expect that a user could verify a contact by comparing a number
+shown in this SDK against the same contact's number in Signal Messenger. They
+cannot; the numbers are computed over different inputs and will never match.
 
 This document is the complete, honest account of where and why the profile
 differs. Each entry names the implementing file, the specification section or
@@ -39,8 +39,8 @@ Deviations fall into three kinds:
 - **Deviation** — does something different from the specification or from
   `libsignal`, deliberately.
 - **Extension** — adds a mechanism the specification does not describe.
-- **Independent design** — shares a name and a goal with a Signal system, but is
-  the SDK's own construction rather than a port of Signal's.
+- **Independent design** — shares a name and a goal with a Signal Protocol system, but is
+  the SDK's own construction rather than a port of the corresponding `libsignal` system.
 
 A fourth label, **faithful**, appears in the table where an area follows the
 specification closely enough that its presence in this document is only to
@@ -58,23 +58,23 @@ model and what is out of scope.
 | Area | Specification followed | Deviation or extension | Why | Consequence |
 |---|---|---|---|---|
 | **Identity keys** | X3DH §2.2; `libsignal` `identity_key.rs` | **Deviation.** A 67-byte composite of separate X25519 and Ed25519 keys replaces the single 33-byte Curve25519 identity key | Avoids XEdDSA, a non-standard signature scheme with no vetted JavaScript implementation; standard Ed25519 is independently verifiable | Two keys to store and rotate; larger identity; **no wire compatibility for any identity-bearing material** |
-| **Prekey signatures** | X3DH §2.2, §4.5 | **Deviation.** RFC 8032 Ed25519 over a domain-separated context binding the identity commitment, algorithm tag, and key ID — not XEdDSA over the bare key | Defeats cross-algorithm and cross-key-ID substitution that a bare-key signature does not cover | Strictly stronger binding; signatures are unverifiable by Signal clients and vice versa |
-| **Safety numbers** | `libsignal` `fingerprint.rs` | **Deviation.** Iteration and digit encoding are byte-identical, but the input is a composite-identity commitment under an SDK domain string, the QR version is `3`, and the two halves are ordered by user ID rather than by digit string | Follows from the composite identity; a single-key fingerprint cannot authenticate both components | **Safety numbers are not comparable to Signal's.** The ordering rule also differs from `libsignal` even on the single-key path |
+| **Prekey signatures** | X3DH §2.2, §4.5 | **Deviation.** RFC 8032 Ed25519 over a domain-separated context binding the identity commitment, algorithm tag, and key ID — not XEdDSA over the bare key | Defeats cross-algorithm and cross-key-ID substitution that a bare-key signature does not cover | Strictly stronger binding; signatures are unverifiable by Signal Messenger clients and vice versa |
+| **Safety numbers** | `libsignal` `fingerprint.rs` | **Deviation.** Iteration and digit encoding are byte-identical, but the input is a composite-identity commitment under an SDK domain string, the QR version is `3`, and the two halves are ordered by user ID rather than by digit string | Follows from the composite identity; a single-key fingerprint cannot authenticate both components | **Safety numbers are not comparable to Signal Messenger's.** The ordering rule also differs from `libsignal` even on the single-key path |
 | **X3DH / PQXDH** | X3DH rev. 1; PQXDH rev. 3 | **Faithful** on DH order, the `0xFF`×32 prefix, zero-salt HKDF, and KEM-secret position. **Deviation:** ML-KEM-1024 (FIPS 203) runs under an info string naming `CRYSTALS-KYBER-1024` | Standardized ML-KEM preferred over round-3 Kyber; the label was inherited from `libsignal` and not updated | Identical label with a different KEM means the same transcript derives a **different** shared secret, with no domain separation signalling it. Violates PQXDH §2.2 |
 | **Associated data** | X3DH §3.3 | **Deviation.** `AD` is a domain-separated HMAC input over SHA-256 commitments to both composite identities, not `IK_A ‖ IK_B` | Binds the Ed25519 component, which a raw-key `AD` would leave uncovered | Stronger binding; wire-incompatible |
-| **Double Ratchet** | Double Ratchet rev. 4 | **Faithful** on `WhisperRatchet`, `WhisperMessageKeys`, the `0x01`/`0x02` seeds, the 80-byte split, AES-256-CBC, the `0x44` version byte, and 8-byte MAC truncation | — | The ratchet core is Signal's |
-| **Message wire format** | `libsignal` `wire.proto` | **Faithful** field numbers 1–8. **Extension:** fields at 100+ carry identity type and ML-KEM one-time prekey material. **Deviation:** address binding uses variable-length UTF-8 user IDs and 4-byte device IDs instead of 17-byte ServiceIds and 1-byte device IDs | The SDK binds application-defined identifiers, not Signal ACIs | Wire-incompatible; a Signal client would silently ignore the added fields |
+| **Double Ratchet** | Double Ratchet rev. 4 | **Faithful** on `WhisperRatchet`, `WhisperMessageKeys`, the `0x01`/`0x02` seeds, the 80-byte split, AES-256-CBC, the `0x44` version byte, and 8-byte MAC truncation | — | The ratchet core follows the Double Ratchet specification |
+| **Message wire format** | `libsignal` `wire.proto` | **Faithful** field numbers 1–8. **Extension:** fields at 100+ carry identity type and ML-KEM one-time prekey material. **Deviation:** address binding uses variable-length UTF-8 user IDs and 4-byte device IDs instead of 17-byte ServiceIds and 1-byte device IDs | The SDK binds application-defined identifiers, not Signal Messenger ACIs | Wire-incompatible; a Signal Messenger client would silently ignore the added fields |
 | **Skipped keys and archiving** | Double Ratchet §2.6; `libsignal` `consts.rs` | **Deviation.** The 2000-key cap is global rather than per-chain, eviction is by wall-clock timestamp, and skipped keys expire after 7 days. Session records serialize as JSON, not protobuf | Simpler storage accounting and bounded growth | **Legitimate messages can become undecryptable** where `libsignal` would still decrypt them: a 5× smaller effective cap, cross-chain eviction, and a hard 7-day limit for offline recipients |
-| **Padding** | — | **Extension.** ISO 7816-4 bit padding to 160-byte buckets inside the library | Length hiding by default rather than left to the application | `libsignal` does not pad at this layer; Signal's apps do. PKCS#7 then adds a block, so ciphertext lands 16 bytes past each boundary |
-| **SPQR / ML-KEM Braid** | ML-KEM Braid rev. 1 | **Deviation.** Same protocol, same KDF labels, same Reed–Solomon parameters, byte-identical message framing — except `hek = SHA3-256(ek_seed ‖ ek_vector)`, the operand order the specification states, which is the reverse of Signal's implementation | The normative text was followed over the executable reference | Wire-visible. Headers, ciphertexts, and shared secrets diverge; a braid session cannot complete a single epoch against Signal's implementation. Also means the KEM is not FIPS 203 in braid mode |
-| **Triple Ratchet** | `libsignal` `triple_ratchet.rs` | **Faithful.** The PQ secret enters as the HKDF salt at message-key expansion, same label, same order | — | The braiding construction is Signal's |
+| **Padding** | — | **Extension.** ISO 7816-4 bit padding to 160-byte buckets inside the library | Length hiding by default rather than left to the application | `libsignal` does not pad at this layer; Signal Messenger's apps do. PKCS#7 then adds a block, so ciphertext lands 16 bytes past each boundary |
+| **SPQR / ML-KEM Braid** | ML-KEM Braid rev. 1 | **Deviation.** Same protocol, same KDF labels, same Reed–Solomon parameters, byte-identical message framing — except `hek = SHA3-256(ek_seed ‖ ek_vector)`, the operand order the specification states, which is the reverse of `libsignal`'s implementation | The normative text was followed over the executable reference | Wire-visible. Headers, ciphertexts, and shared secrets diverge; a braid session cannot complete a single epoch against `libsignal`'s implementation. Also means the KEM is not FIPS 203 in braid mode |
+| **Triple Ratchet** | `libsignal` `triple_ratchet.rs` | **Faithful.** The PQ secret enters as the HKDF salt at message-key expansion, same label, same order | — | The braiding construction follows the ML-KEM Braid specification |
 | **Sesame** | Sesame rev. 2 | **Deviation** on session expiry (§4.2 applies only to unacknowledged sessions) and on deleted devices (hard-removed rather than marked stale). **Extensions:** QR provisioning, device transfer, encrypted device names, identity-change gating, a 5-device cap | Product requirements the specification does not address | Hard deletion **drops the MAXLATENCY window, so in-flight messages from a just-removed device become permanently undecryptable**. Device transfer clones ratchet state, which weakens the forward-secrecy bound |
 | **Sealed sender v1** | `libsignal` `sealed_sender.rs` | **Deviation.** Correct labels, cipher, and MAC length, but the 96-byte HKDF output is split `(cipher, mac, chain)` where `libsignal` splits `(chain, cipher, mac)`; keys in the salt omit the `0x05` type byte; the inner envelope is a hand-rolled varint format rather than the `UnidentifiedSenderMessage.Message` protobuf | The slice order and the missing prefix are unintentional; the envelope is a deliberate simplification | Self-consistent and secure, but every v1 key sits in a different slot than `libsignal`'s. The envelope also drops the message-type field |
-| **Sealed sender v2** | `libsignal` `sealed_sender.rs` | **Faithful** on all four labels, the KEM, AES-256-GCM-SIV, the multi-recipient binary format, and the `0x3FFF` registration-ID mask | — | The v2 construction is Signal's |
-| **Delivery token** | `libsignal` `profile_key.rs` | **Faithful.** `deriveAccessKey` is Signal's `ProfileKey::derive_access_key`, and reproduces `libsignal`'s published known-answer values | — | Not an SDK invention, despite what the module name suggests |
+| **Sealed sender v2** | `libsignal` `sealed_sender.rs` | **Faithful** on all four labels, the KEM, AES-256-GCM-SIV, the multi-recipient binary format, and the `0x3FFF` registration-ID mask | — | The v2 construction follows `libsignal` |
+| **Delivery token** | `libsignal` `profile_key.rs` | **Faithful.** `deriveAccessKey` follows `libsignal`'s `ProfileKey::derive_access_key`, and reproduces `libsignal`'s published known-answer values | — | Not an SDK invention, despite what the module name suggests |
 | **Sender keys** | `libsignal` `sender_keys.rs` | **Deviation.** Protobuf field numbers and `0x33` framing match, and the `0x01`/`0x02` seeds match, but message-key derivation **omits HKDF-Extract**, signatures are Ed25519 not XEdDSA, and `distributionUuid` carries a UTF-8 string rather than 16 UUID bytes | The Ed25519 choice follows the identity profile; the missing Extract appears unintentional | Group message keys differ from `libsignal`'s for the same chain key. Confirmed numerically, not merely by inspection |
-| **Groups v2** | Signal Private Group System | **Independent design.** Real zkgroup primitives underneath, but the client is the state authority: it re-encrypts and uploads whole group state, and server signatures are not verified | Ships a working group system without a validating server | The relay **cannot validate group changes**, so it cannot enforce roles or membership. This is a materially weaker trust model than Signal's, where the server validates every change against zero-knowledge presentations |
-| **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation uses SDK-specific labels | Server keys are the SDK's own trust root, not Signal's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal's |
+| **Groups v2** | Signal Private Group System | **Independent design.** Real zkgroup primitives underneath, but the client is the state authority: it re-encrypts and uploads whole group state, and server signatures are not verified | Ships a working group system without a validating server | The relay **cannot validate group changes**, so it cannot enforce roles or membership. This is a materially weaker trust model than the Signal Private Group System, where the server validates every change against zero-knowledge presentations |
+| **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation uses SDK-specific labels | Server keys are the SDK's own trust root, not Signal Messenger's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal Messenger's |
 | **Registration IDs** | `libsignal` `sealed_sender.rs` | **Faithful** as of 0.1.0-alpha.4. Generated in `[1, 16383]`, strictly inside the 14 bits the wire format reserves | — | Through alpha.3 the range ran to 16384, which masked to `0` on the wire in multi-recipient sealed sender for roughly 1 install in 16,384 |
 
 ---
@@ -157,7 +157,7 @@ or which identity it belongs to. Binding all three defeats cross-algorithm
 substitution (presenting an X25519 signature as an ML-KEM one) and cross-key-ID
 substitution. This is strictly stronger than the specification requires.
 
-**Cost.** Wire incompatibility, and a signature format that no Signal
+**Cost.** Wire incompatibility, and a signature format that no Signal Messenger
 implementation can verify.
 
 The same Ed25519-instead-of-XEdDSA choice applies to sealed sender certificates
@@ -169,10 +169,10 @@ this codebase. Where the frozen upstream specification snapshots mention them,
 that is upstream text; the SDK's own documentation consistently states that
 ordinary Ed25519 is used instead.
 
-### 1.3 Safety numbers are not comparable to Signal's
+### 1.3 Safety numbers are not comparable to Signal Messenger's
 
 State this without hedging: **a safety number produced by this SDK will never
-match the safety number Signal shows for the same two users.** A user cannot
+match the safety number Signal Messenger shows for the same two users.** A user cannot
 verify a contact by reading a number out of one application and comparing it
 against the other.
 
@@ -193,7 +193,7 @@ SDK's low-level single-key path, which is otherwise byte-identical to
 `libsignal`. The SDK orders by user identifier — `localId.localeCompare(remoteId)`
 (`safety/core.ts:177`) — where `libsignal` orders by the encoded digit strings
 themselves ([`fingerprint.rs:32-40`][fp]). Both rules are symmetric, so the two
-parties always agree with each other; they simply do not agree with Signal, and
+parties always agree with each other; they simply do not agree with Signal Messenger, and
 roughly half the time the halves come out in the opposite order. `localeCompare`
 is additionally locale-sensitive, so two devices with different default locales
 can in principle disagree with each other on the ordering of the same pair of
@@ -209,7 +209,7 @@ cross-verification swap and constant-time comparison match as well.
 The QR format version is the SDK's own: `3` for the composite path
 (`safety/core.ts:46`), where `libsignal` knows only versions 1 and 2 and returns
 `VersionMismatch` for anything else. Using a distinct version in the same
-protobuf namespace is the correct fail-closed choice — a Signal client rejects
+protobuf namespace is the correct fail-closed choice — a Signal Messenger client rejects
 the code rather than misreading it.
 
 The SDK also offers an emoji fingerprint (`safety/core.ts:308-392`) and
@@ -223,7 +223,7 @@ number and should not be presented to users as an equal-strength alternative.
 Registration IDs are generated in the closed range `[1, 16383]`
 (`keys/generation.ts:43-46`). The wire format reserves exactly 14 bits, and
 `libsignal` rejects any ID where `id & 0x3FFF != id`
-([`sealed_sender.rs:1508-1515`][ss]); Signal's own helper generates `[1, 16380]`.
+([`sealed_sender.rs:1508-1515`][ss]); `libsignal`'s own helper generates `[1, 16380]`.
 
 Through 0.1.0-alpha.3 the range was `[1, 16384]`, an off-by-one: 16384 is
 `0x4000` and does not fit in 14 bits, and the SDK's multi-recipient sealed sender
@@ -309,8 +309,8 @@ Ed25519 signing component unbound — the component that authenticates every pre
 the peer will ever publish. Hashing the commitment covers both.
 
 **Cost.** This is the single largest wire deviation in the message path. The
-truncation to 8 bytes matches Signal's convention, and the construction is sound
-and domain-separated, but a Signal client and this SDK cannot exchange a single
+truncation to 8 bytes matches `libsignal`'s convention, and the construction is sound
+and domain-separated, but a Signal Messenger client and this SDK cannot exchange a single
 message.
 
 ### 2.3 One-time prekey deletion is deferred
@@ -380,7 +380,7 @@ field 6.
 have: `recipientIdentityType` on both message types, and `kemOneTimePreKeyId` /
 `kemOneTimeCiphertext` on prekey messages
 (`internal/encoding/proto/signal-message.ts:80`, `:226-228`). High numbering
-avoids collision with future upstream fields. A Signal client would parse the
+avoids collision with future upstream fields. A Signal Messenger client would parse the
 message and silently ignore them, losing the identity-type binding.
 
 **Deviation.** `libsignal` binds addresses as a 17-byte fixed-width ServiceId plus
@@ -388,7 +388,7 @@ a 1-byte device ID ([`protocol.rs:246-260`][proto]). The SDK binds a
 format-version byte, a varint-length-prefixed UTF-8 user ID, and a 4-byte
 big-endian device ID (`internal/encoding/proto/signal-message.ts:84-92`). The
 encoding is unambiguous, but it authenticates an application-defined identifier
-rather than a Signal ACI or PNI — which is the correct thing for this SDK to bind
+rather than a Signal Messenger ACI or PNI — which is the correct thing for this SDK to bind
 and an incompatible thing to put on the wire.
 
 The SDK is also stricter than `libsignal` on decode, requiring fields that
@@ -446,7 +446,7 @@ storage.
 
 **Session records serialize as JSON, not protobuf** (`types/session.ts:1002-1028`).
 This is acknowledged in the source as a simplicity and debuggability choice.
-Consequences worth naming: stored sessions are not portable to or from any Signal
+Consequences worth naming: stored sessions are not portable to or from any Signal Messenger
 client, and key material sits in immutable JavaScript strings that cannot be
 zeroed, where `libsignal`'s byte vectors can be.
 
@@ -458,7 +458,7 @@ padding — a `0x80` terminator followed by zeros
 rejects malformed padding with a deliberately generic error to avoid a padding
 oracle.
 
-`libsignal` does not bucket-pad at this layer; in Signal, that lives in the client
+`libsignal` does not bucket-pad at this layer; in Signal Messenger, that lives in the client
 applications. Doing it in the library means length hiding is on by default rather
 than a thing each integrator must remember.
 
@@ -472,7 +472,7 @@ past each boundary rather than on it.
 
 ## 4. SPQR and the ML-KEM Braid
 
-This is the same protocol as Signal's SparsePostQuantumRatchet v1, implemented
+This is the same protocol as the SparsePostQuantumRatchet v1 protocol, implemented
 independently and pinned against `SparsePostQuantumRatchet v1.5.1` (commit
 `f2589fef`). The fidelity is high and specific:
 
@@ -483,10 +483,10 @@ independently and pinned against `SparsePostQuantumRatchet v1.5.1` (commit
   (`internal/protocol/spqr/ml-kem-braid/kdf.ts:32-92`).
 - **The Reed–Solomon erasure layer matches**: GF(2^16) with primitive polynomial
   `0x1100b`, 32-byte chunks, 16 polynomials, degree bound 35. Reed–Solomon is
-  present in Signal's implementation; it is not an SDK addition.
+  present in `libsignal`; it is not an SDK addition.
 - **The production wire framing is byte-compatible**:
   `VERSION ‖ LEB128(epoch) ‖ LEB128(chain_index) ‖ MSG_TYPE ‖ [LEB128(chunk_index) ‖ CHUNK]`
-  (`internal/encoding/proto/pq-ratchet-serialize.ts`), matching Signal's
+  (`internal/encoding/proto/pq-ratchet-serialize.ts`), matching `libsignal`'s
   `serialize.rs`, with the same message-type values and the same epoch offset.
 - **ML-KEM-768 with the same incremental split** (32-byte seed, 1152-byte vector,
   960/128-byte ciphertext parts).
@@ -500,18 +500,18 @@ One divergence breaks interoperability completely. The SDK computes
 hek = SHA3-256(ek_seed || ek_vector)
 ```
 
-Signal's implementation, via libcrux, builds the encapsulation key as
+`libsignal`, via libcrux, builds the encapsulation key as
 `t̂ ‖ ρ` before hashing — the reverse order.
 
 The SDK follows the **normative text of the published ML-KEM Braid
-specification**, which states seed-first ordering. Signal's code follows FIPS 203,
+specification**, which states seed-first ordering. `libsignal` follows FIPS 203,
 which serializes vector-first. The specification and the reference implementation
 disagree, and the SDK chose the specification.
 
 The value feeds the Fujisaki–Okamoto transform, so the consequences cascade:
-different header bytes, so Signal's header validation rejects the SDK's output;
+different header bytes, so `libsignal`'s header validation rejects the SDK's output;
 different ciphertext; different shared secret; different epoch secret; different
-authenticator ratchet. **A braid session between this SDK and Signal's
+authenticator ratchet. **A braid session between this SDK and Signal Messenger's
 implementation cannot complete a single epoch.**
 
 Two further consequences a reader should not have to infer:
@@ -521,7 +521,7 @@ Two further consequences a reader should not have to infer:
   is a permutation of the same material — but a FIPS conformance claim would not
   hold for this path. Direct (non-braid) mode uses stock ML-KEM-768.
 - The SDK resolves the same spec-versus-code conflict in the *opposite* direction
-  elsewhere: for `KDF_AUTH`, it follows Signal's Rust reference rather than the
+  elsewhere: for `KDF_AUTH`, it follows the `libsignal` Rust reference rather than the
   written specification. The two choices are individually defensible and
   collectively inconsistent about which artifact is authoritative.
 
@@ -533,17 +533,17 @@ braid session persisted under the former ordering.
 
 **Extension.** An opt-in direct mode (`protocol.braid: 'disabled'`) uses stock
 ML-KEM-768 and adds wire message types `0x80`–`0x82`
-(`internal/encoding/proto/pq-ratchet-serialize.ts:38-45`). Signal's parser rejects
+(`internal/encoding/proto/pq-ratchet-serialize.ts:38-45`). `libsignal`'s parser rejects
 anything above `6`, so these are visible only within the SDK; they occupy a byte
-range Signal has not claimed. This mode has no Signal analogue.
+range `libsignal` has not claimed. This mode has no Signal Protocol analogue.
 
 **Independent design.** Persisted SPQR state uses a flat message with 20 fields
-where Signal uses an 11-variant `oneof` over nested structures. Serialized SPQR
+where `libsignal` uses an 11-variant `oneof` over nested structures. Serialized SPQR
 state is not portable in either direction.
 
 **Deviation.** Skipped-key eviction in the SPQR chain triggers at the cap and
-evicts by wall-clock timestamp, where Signal triggers at `max_ooo × 11/10 + 1` and
-evicts by message index. Signal's rule is deterministic and index-anchored; the
+evicts by wall-clock timestamp, where `libsignal` triggers at `max_ooo × 11/10 + 1` and
+evicts by message index. `libsignal`'s rule is deterministic and index-anchored; the
 SDK's introduces a clock dependency into ratchet state.
 
 ### 4.3 The Triple Ratchet is faithful
@@ -564,7 +564,7 @@ wire. It is documented in the PR that accompanied this file as cleanup work.
 ## 5. Sesame
 
 Sesame has no reference implementation to compare against — `libsignal` does not
-implement it; device and session management lives in the Signal service and its
+implement it; device and session management lives in the Signal Messenger service and its
 clients. Everything below is measured against the pinned specification text
 (revision 2) alone.
 
@@ -689,13 +689,14 @@ internally inconsistent about this.
 ([`sealed_sender.rs:2055-2075`][ss]); the unseal path reconstructs the envelope
 with a fixed type instead.
 
-### 6.3 The delivery token is Signal's, not the SDK's
+### 6.3 The delivery token follows `libsignal`, not an SDK invention
 
 Despite the module name, `deriveAccessKey`
 (`internal/protocol/sealed-sender/delivery-token.ts:52-91`) is `libsignal`'s
 `ProfileKey::derive_access_key` — AES-256-GCM over 16 zero bytes with a zero
-nonce, truncated to 16 bytes — and it reproduces `libsignal`'s published test
-vectors exactly. It is a 16-byte value derived from the recipient's profile key
+nonce, truncated to 16 bytes — and it reproduces the values `libsignal`
+publishes for that derivation. It is a 16-byte value derived from the
+recipient's profile key
 that proves to the relay that the sender knows that profile key, gating anonymous
 delivery to contacts. It never enters the sealed-sender wire format; it is
 presented out of band.
@@ -705,7 +706,7 @@ construction that no code implements. That description is wrong and is corrected
 in the PR accompanying this file.
 
 Certificate signatures use Ed25519 rather than XEdDSA, per §1.2, so SDK
-certificates cannot validate against a Signal trust root or vice versa. The
+certificates cannot validate against a Signal Messenger trust root or vice versa. The
 revocation list is empty where `libsignal` revokes one key ID, which is
 appropriate for a different trust root but worth noting.
 
@@ -760,11 +761,11 @@ is incorrect. Flagged for correction.
 ### 7.3 Groups v2 is an independent design
 
 The zero-knowledge primitives underneath are real and faithful (§7.4). The group
-system built on them is not Signal's.
+system built on them is not the Signal Private Group System.
 
-What is faithful: role and access-control enum values match Signal's exactly,
+What is faithful: role and access-control enum values match `libsignal`'s exactly,
 group ID derivation from the master key is correct, the `__signal_group__v2__!`
-identifier encoding is Signal's, authentication genuinely uses zkgroup
+identifier encoding follows `libsignal`, authentication genuinely uses zkgroup
 credentials, and member identifiers and profile keys are encrypted with real
 `UidCiphertext` and `ProfileKeyCiphertext`.
 
@@ -772,7 +773,7 @@ What differs, and it is structural:
 
 **The client is the state authority.** The SDK's client applies a change,
 re-encrypts the entire group state, and uploads it
-(`internal/groups-v2/manager.ts:1176-1193`). Signal's client submits only a set of
+(`internal/groups-v2/manager.ts:1176-1193`). Signal Messenger's client submits only a set of
 change actions, each carrying zero-knowledge presentations, and the **server**
 validates every action and signs the result.
 
@@ -783,21 +784,21 @@ no zero-knowledge presentations for it to check. Any authenticated member can
 rewrite roles, membership, and the ban list. Server signatures are returned but
 never verified on receipt.
 
-This is a materially weaker trust model than Signal's Private Group System, and
+This is a materially weaker trust model than the Signal Private Group System, and
 anyone deploying group messaging on this SDK needs to know it: group membership
 and roles are enforced by cooperating clients, not by the server, and not
 cryptographically against a malicious member. It is a reasonable position for an
 SDK that ships without a validating server component, and it is not what a reader
-of Signal's group documentation would assume.
+of the Signal Private Group System documentation would assume.
 
 **Serialization is JSON**, not protobuf, both for group state
 (`internal/groups-v2/manager.ts:1229-1236`) and for the blob payloads inside the
 AES-256-GCM-SIV envelope (`internal/groups-v2/encrypted-state.ts:70-81`). Every
-encrypted group title and description is undecryptable by Signal even with the
+encrypted group title and description is undecryptable by Signal Messenger even with the
 correct master key.
 
 **Invite links** use `https://join.open-e2ee.dev/#` with a 49-byte raw payload
-(`internal/groups-v2/invite-link.ts:36`, `:78-85`), where Signal uses
+(`internal/groups-v2/invite-link.ts:36`, `:78-85`), where `libsignal` uses
 `https://signal.group/#` with a protobuf. This is labelled accurately in source as
 the package's own format.
 
@@ -820,7 +821,7 @@ One deviation: server secret parameters are derived under four SDK-specific labe
 rather than `libsignal`'s single seeded derivation
 (`internal/protocol/zk/groups/server-params.ts:43-54`). The same randomness
 therefore yields different server keys, and credentials are not interchangeable
-with Signal's. That follows from the SDK being its own trust root.
+with Signal Messenger's. That follows from the SDK being its own trust root.
 
 Credential serialization is also ad hoc and carries no version byte, where
 `libsignal` uses a leading version byte. That is a forward-compatibility gap
@@ -851,9 +852,9 @@ within this review.
   are correct and unit tests exist, but the outputs were not diffed against
   `libsignal`'s. A subtle error here would silently corrupt every `UidStruct`.
 - **SPQR state-machine transition equivalence.** State names, message types, and
-  chunk counts match Signal's; the eleven-state transition table was not diffed
+  chunk counts match `libsignal`'s; the eleven-state transition table was not diffed
   transition by transition.
-- **Whether the SPQR decoder enforces a bound on stored points.** Signal caps
+- **Whether the SPQR decoder enforces a bound on stored points.** `libsignal` caps
   stored points per polynomial; no equivalent bound was located in the SDK's
   decoder.
 - **Whether SPQR state mutations are rolled back when message authentication

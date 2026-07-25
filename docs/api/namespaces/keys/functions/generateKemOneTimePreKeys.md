@@ -16,7 +16,7 @@ Each key can only be used once for per-session post-quantum forward secrecy.
 Per PQXDH spec Section 3.2, these are signed one-time pqkem prekeys
 that the server prefers over the last-resort KEM prekey.
 
-Uses the same batch size as EC one-time prekeys (Signal uses 100 for both).
+Uses the same batch size as EC one-time prekeys (libsignal uses 100 for both).
 
 ## Parameters
 

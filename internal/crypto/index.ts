@@ -234,7 +234,7 @@ export {
 } from './utils';
 
 // ============================================================================
-// Key Prefix Utilities (Signal key serialization format)
+// Key Prefix Utilities (Signal Protocol key serialization format)
 // ============================================================================
 export {
   X25519_RAW_KEY_BYTES,

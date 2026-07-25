@@ -13,7 +13,7 @@ declare const __brand_groupId: unique symbol;
  * Branded type for prefixed group IDs
  *
  * Ensures compile-time safety for group ID handling.
- * A GroupId is always a string with the Signal V2 prefix.
+ * A GroupId is always a string with the Signal Protocol V2 prefix.
  *
  * @example
  * ```typescript
@@ -81,7 +81,7 @@ export function createGroupId(rawId: string): GroupId {
  * ```
  */
 export function extractGroupId(groupId: GroupId | string): string {
-  // Handle Signal V2 prefix
+  // Handle Signal Protocol V2 prefix
   if (groupId.startsWith(GROUP_V2_PREFIX)) {
     return groupId.slice(GROUP_V2_PREFIX.length);
   }

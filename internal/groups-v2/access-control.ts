@@ -2,7 +2,14 @@
  * GroupsV2 Access Control
  *
  * Authorization checks for group operations based on member roles and
- * access control settings. Implements Signal Protocol Groups V2 permission model.
+ * access control settings.
+ *
+ * These are client-local checks over already-decrypted group state. They use
+ * the role and access-required vocabulary of the Signal Protocol group system,
+ * but they are not that system's enforcement model: there, the server
+ * validates each change against embedded zero-knowledge presentations. Here
+ * the server sees only opaque state and a version number, so these checks
+ * bind an honest client, not a hostile one.
  *
  * @module groups-v2/access-control
  */

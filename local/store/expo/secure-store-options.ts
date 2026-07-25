@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 /**
  * SecureStore accessibility used by SDK-managed background-safe secrets.
  *
- * Signal keys and device metadata must be readable after first unlock so
+ * Signal Protocol keys and device metadata must be readable after first unlock so
  * background delivery and recovery flows can function while the device is locked.
  */
 export {};

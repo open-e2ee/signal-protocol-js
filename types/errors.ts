@@ -16,7 +16,7 @@
  * Error Hierarchy:
  * ```
  * Error
- *   └── EncryptionError (base for all Signal errors)
+ *   └── EncryptionError (base for all Signal Protocol errors)
  *         ├── CryptoError (Layer 1)
  *         ├── SessionError (Layer 5)
  *         ├── ProtocolError (Layer 6)
@@ -533,7 +533,7 @@ export class SessionConflictError extends EncryptionError {
  */
 export class DuplicatedMessageError extends EncryptionError {
   public readonly duplicatedAddress: ProtocolAddress;
-  /** Message counter that was duplicated (if known) - matches Signal proto field name */
+  /** Message counter that was duplicated (if known) - matches the reference implementation's proto field name */
   public readonly counter?: number;
   /** Epoch (for Triple Ratchet) where duplicate was detected */
   public readonly epoch?: number;

@@ -1,5 +1,5 @@
 /**
- * Signal-local binary upload/download helpers.
+ * SDK-local binary upload/download helpers.
  *
  * Uses the platform's global `fetch` by default (Node 18+, modern React Native,
  * browsers), so the profile subpath works without an Expo runtime. Consumers may

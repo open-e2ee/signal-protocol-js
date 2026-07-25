@@ -259,7 +259,7 @@ export async function rotateOwnProfileKey(
 /**
  * Re-encrypt current avatar with new profile key
  *
- * Signal Pattern: Must re-upload avatar immediately during rotation
+ * Reference pattern: Must re-upload avatar immediately during rotation
  * so blocked user can't decrypt any future profile fetches.
  *
  * If user has no avatar, this is a no-op.

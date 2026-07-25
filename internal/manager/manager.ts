@@ -281,7 +281,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
    */
   async initialize(identityTypes: readonly IdentityType[] = ['aci', 'pni']): Promise<void> {
     try {
-      // Generate identity keys for active identity types (Signal dual-identity architecture)
+      // Generate identity keys for active identity types (Signal Protocol dual-identity architecture)
       for (const type of identityTypes) {
         await this.initializeIdentity(type);
       }
@@ -578,7 +578,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
               spqrLimits: this.protocolStrategy?.spqrLimits,
             });
 
-            // SPQR Bootstrap: Signal that first spqrSend() should generate keypair
+            // SPQR Bootstrap: flag that first spqrSend() should generate keypair
             // spqrSend() handles lazy KEM — no pending fields needed
             spqrState.needsSendRatchet = true;
 
@@ -620,17 +620,28 @@ export class SignalProtocolManager implements ISignalProtocolManager {
         // Steps 4-5: Pin/match the remote TOFU identity and persist the new
         // session at one durable commit point. A racing identity rotation must
         // fail closed without leaving either half of the state visible.
-        await this.keyStorage.commitSessionTrust({
-          address: remoteAddress,
-          record: {
-            currentSession: sessionState,
-            archivedSessions: {},
-            version: CURRENT_SESSION_RECORD_VERSION,
-          },
-          contactIdentity: prekeyBundle.identity,
-          contactIdentityType: recipientIdentityType,
-          localIdentityType: sessionState.localIdentityType,
-        });
+        try {
+          await this.keyStorage.commitSessionTrust({
+            address: remoteAddress,
+            record: {
+              currentSession: sessionState,
+              archivedSessions: {},
+              version: CURRENT_SESSION_RECORD_VERSION,
+            },
+            contactIdentity: prekeyBundle.identity,
+            contactIdentityType: recipientIdentityType,
+            localIdentityType: sessionState.localIdentityType,
+          });
+        } catch (storageError) {
+          if (storageError instanceof EncryptionError) {
+            throw storageError;
+          }
+          throw new EncryptionError(
+            `Failed to persist session trust for ${ProtocolAddress.toString(remoteAddress)}`,
+            EncryptionErrorCode.KEY_STORAGE_ERROR,
+            { originalError: storageError as Error }
+          );
+        }
 
         this.logger.breadcrumb('Session established', {
           category: 'E2EE',
@@ -642,6 +653,9 @@ export class SignalProtocolManager implements ISignalProtocolManager {
           category: 'E2EE',
           data: { sessionId },
         });
+        if (error instanceof EncryptionError) {
+          throw error;
+        }
         throw new EncryptionError(
           `Failed to start session for ${ProtocolAddress.toString(remoteAddress)}`,
           EncryptionErrorCode.INVALID_PREKEY_BUNDLE,
@@ -1024,7 +1038,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
           spqrLimits: this.protocolStrategy?.spqrLimits,
         });
 
-        // SPQR Bootstrap: Signal that first spqrSend() should generate keypair
+        // SPQR Bootstrap: flag that first spqrSend() should generate keypair
         // spqrSend() handles lazy KEM — no pending fields needed
         spqrState.needsSendRatchet = true;
 

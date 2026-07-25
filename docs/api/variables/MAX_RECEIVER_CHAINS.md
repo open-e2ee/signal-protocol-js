@@ -10,5 +10,5 @@
 
 Maximum number of receiver chains to store.
 
-Signal maintains up to 5 receiver chains for handling out-of-order
+libsignal maintains up to 5 receiver chains for handling out-of-order
 DH ratchets. When a 6th chain would be added, the oldest is evicted.

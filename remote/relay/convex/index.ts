@@ -1,7 +1,7 @@
 /**
  * Convex Relay Package
  *
- * Convex integration for Signal relay state, prekeys, devices, and encrypted
+ * Convex integration for Signal Protocol relay state, prekeys, devices, and encrypted
  * envelope delivery.
  *
  * ```typescript

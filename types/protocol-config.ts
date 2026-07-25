@@ -29,7 +29,7 @@ export const BraidPolicy = {
 export type BraidPolicy = (typeof BraidPolicy)[keyof typeof BraidPolicy];
 
 /**
- * Public Signal protocol configuration.
+ * Public Signal Protocol configuration.
  *
  * This keeps application code in product/security terms. Internal protocol
  * strategy details such as X3DH fallback remain below the SignalProtocolClient seam.
@@ -307,7 +307,8 @@ export interface ReplacedOneTimePreKeyCullResult {
 /**
  * App-provided persistence helpers for prekey replacement bookkeeping.
  *
- * Signal owns rotation semantics; concrete storage adapters own persistence.
+ * The Signal Protocol SDK owns rotation semantics; concrete storage adapters own
+ * persistence.
  */
 export interface PreKeyMaintenanceStore {
   /**

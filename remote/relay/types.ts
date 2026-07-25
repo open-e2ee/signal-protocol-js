@@ -1,5 +1,5 @@
 /**
- * Signal relay interfaces for remote infrastructure.
+ * Signal Protocol relay interfaces for remote infrastructure.
  *
  * These are the DI contracts for relay-oriented remote services:
  * - ISignalRelayServer: Envelope delivery, device registry, prekey management

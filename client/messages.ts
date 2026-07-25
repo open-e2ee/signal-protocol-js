@@ -329,9 +329,9 @@ export async function sendTypingIndicator(
       return;
     }
 
-    // Wrap in Content proto (Signal wire format: {typingMessage: {timestamp, action, groupId}})
+    // Wrap in Content proto (Signal Protocol wire format: {typingMessage: {timestamp, action, groupId}})
     // DM conversationId dropped from wire — receiver derives from envelope sender
-    // Group conversationId passed as groupId — Signal proto requires it for group routing
+    // Group conversationId passed as groupId — the Signal Protocol proto requires it for group routing
     const effectiveGroupId =
       groupId ?? (conversationId.startsWith('group:') ? conversationId : undefined);
     const encrypted = await encryptMessage(

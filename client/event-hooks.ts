@@ -148,7 +148,7 @@ export interface SignalProtocolClientHooks {
    * Useful for analytics, monitoring, or cache warming.
    *
    * @param sessionId - The session used for encryption
-   * @param counter - The message counter (Ns) - matches Signal proto field name
+   * @param counter - The message counter (Ns) - matches the reference implementation's proto field name
    *
    * @example
    * ```typescript

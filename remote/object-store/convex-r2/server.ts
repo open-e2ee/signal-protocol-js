@@ -136,7 +136,7 @@ export interface ConvexR2ObjectStoreLimits {
   /**
    * Explicit allowlist for encrypted-object MIME types.
    *
-   * Signal media integrations should allow only `application/octet-stream`.
+   * Signal Protocol media integrations should allow only `application/octet-stream`.
    */
   allowedContentTypes: readonly string[];
   /** Requested lifetime for download URLs. Upload expiry comes from R2. */

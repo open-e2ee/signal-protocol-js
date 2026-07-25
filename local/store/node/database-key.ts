@@ -30,7 +30,7 @@ export {};
 const DB_KEY_SIZE = 32; // 256 bits
 
 /**
- * Default directory for Signal storage
+ * Default directory for Signal Protocol storage
  */
 const DEFAULT_DATA_DIR = join(homedir(), '.config', 'open-e2ee', 'signal-protocol');
 

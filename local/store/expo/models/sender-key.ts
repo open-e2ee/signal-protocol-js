@@ -46,7 +46,7 @@ export interface StoredSenderKey {
 /**
  * Get sender key by distribution, sender, and device.
  *
- * @param distributionId - Distribution identifier (UUID, distinct from group ID per Signal convention)
+ * @param distributionId - Distribution identifier (UUID, distinct from group ID per reference convention)
  * @param senderId - Sender identifier
  * @param deviceId - Device identifier
  * @returns SenderKey instance or null if not found
@@ -267,7 +267,7 @@ export async function deleteAllSenderKeys(): Promise<void> {
  * Create a new sender key.
  *
  * @param params - Sender key parameters
- * @param params.distributionId - Distribution identifier (UUID, distinct from group ID per Signal convention)
+ * @param params.distributionId - Distribution identifier (UUID, distinct from group ID per reference convention)
  * @param params.senderId - Sender identifier
  * @param params.deviceId - Device identifier
  * @param params.chainKey - Chain key (base64 or Uint8Array)
@@ -348,7 +348,7 @@ export class SenderKey {
     return this.data.id;
   }
 
-  /** Distribution identifier (UUID, distinct from group ID per Signal convention) */
+  /** Distribution identifier (UUID, distinct from group ID per reference convention) */
   get distributionId(): string {
     return this.data.distributionId;
   }

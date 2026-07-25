@@ -43,7 +43,7 @@ Device ID for this client instance (1 = primary, 2-5 = linked)
 
 Resolved logger for this client instance.
 
-This is the client-scoped logger used throughout the Signal runtime.
+This is the client-scoped logger used throughout the Signal Protocol runtime.
 
 #### Implementation of
 
@@ -55,7 +55,7 @@ This is the client-scoped logger used throughout the Signal runtime.
 
 > `readonly` **media**: [`SignalProtocolClientMedia`](../interfaces/SignalProtocolClientMedia.md)
 
-Durable media job facade backed by the configured Signal local store.
+Durable media job facade backed by the configured Signal Protocol local store.
 
 Use this for background-safe attachment uploads, downloads, and cleanup
 when the app provides media lifecycle callbacks in `config.media`.
@@ -1785,7 +1785,7 @@ Per Signal Protocol specification, rotate sender keys on **membership changes**:
 | Member ADDED | Distribute current key to new member (no rotation needed) |
 | Group metadata changed | Rotate recommended |
 
-**Important**: Signal does NOT use periodic or message-count-based rotation.
+**Important**: The Signal Protocol does NOT use periodic or message-count-based rotation.
 Only rotate when membership changes to maintain forward secrecy.
 
 ## Why Rotate on Member Removal?
@@ -1919,7 +1919,7 @@ All inputs are normalized to Uint8Array before reaching the cipher layer.
 
 `string`
 
-User ID or group ID (groups use Signal V2 prefix)
+User ID or group ID (groups use the Signal Protocol V2 prefix)
 
 ##### content
 

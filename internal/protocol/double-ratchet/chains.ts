@@ -137,7 +137,7 @@ export async function deriveReceivingKey(
  * Uses the nested receiverChains structure (v3 format) for protobuf compatibility.
  *
  * @param state Current ratchet state
- * @param untilCounter Counter value to advance to (per Signal wire.proto naming)
+ * @param untilCounter Counter value to advance to (per the reference wire.proto naming)
  * @param config Double Ratchet configuration
  *
  * @see https://signal.org/docs/specifications/doubleratchet/#out-of-order-messages

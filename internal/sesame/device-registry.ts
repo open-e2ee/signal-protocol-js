@@ -82,6 +82,8 @@ export interface MultiDeviceSessionResult {
   userId: string;
   establishedDevices: number[]; // Device IDs that were successfully established
   failedDevices: number[]; // Device IDs that failed
+  /** Underlying per-device failures, omitted when a relay simply has no bundle. */
+  failedDeviceErrors: Array<{ deviceId: number; error: Error }>;
   totalDevices: number;
 }
 
@@ -127,7 +129,7 @@ export function createDeviceAddress(userId: string, deviceId: number): ProtocolA
  * Fetches device information from the backend to determine which devices
  * should receive messages.
  *
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - Target user ID
  * @returns Array of active device information
  */
@@ -161,7 +163,7 @@ export async function getActiveDevices(
  * they link a new device.
  *
  * @param signal - SignalProtocolClient instance
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - Target user ID
  * @returns Result containing successful and failed device IDs
  *
@@ -185,6 +187,7 @@ export async function establishMultiDeviceSessions(
     const fetcherUserId = signal.userId;
     const establishedDevices: number[] = [];
     const failedDevices: number[] = [];
+    const failedDeviceErrors: Array<{ deviceId: number; error: Error }> = [];
 
     // Establish session for each device - check session BEFORE fetching bundle
     // This avoids unnecessary prekey fetches for devices that already have sessions
@@ -222,12 +225,15 @@ export async function establishMultiDeviceSessions(
           deviceId: device.deviceId,
         });
       } catch (error) {
+        const normalizedError =
+          error instanceof Error ? error : new Error(String(error));
         logger.error('[MultiDevice] Failed to establish session', {
           category: 'MultiDevice',
-          error: error as Error,
+          error: normalizedError,
           data: { userId, deviceId: device.deviceId },
         });
         failedDevices.push(device.deviceId);
+        failedDeviceErrors.push({ deviceId: device.deviceId, error: normalizedError });
       }
     }
 
@@ -235,6 +241,7 @@ export async function establishMultiDeviceSessions(
       userId,
       establishedDevices,
       failedDevices,
+      failedDeviceErrors,
       totalDevices: devices.length,
     };
   } catch (error) {
@@ -254,7 +261,7 @@ export async function establishMultiDeviceSessions(
  * Useful when a new device is linked or when re-establishing a failed session.
  *
  * @param signal - SignalProtocolClient instance
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - Target user ID
  * @param deviceId - Target device ID
  * @returns True if session was established, false if it already existed
@@ -318,7 +325,7 @@ export async function establishDeviceSession(
  * the message will still be encrypted for successful devices.
  *
  * @param signal - SignalProtocolClient instance
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - Target user ID
  * @param plaintext - Message to encrypt
  * @returns Result containing encrypted messages per device
@@ -459,7 +466,7 @@ export async function encryptForDevice(
  * Check if sessions exist for all active devices
  *
  * @param signal - SignalProtocolClient instance
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - Target user ID
  * @returns Map of device ID to session existence
  */
@@ -487,7 +494,7 @@ export async function checkDeviceSessions(
  * Use this when resetting encryption or removing a user from a relationship.
  *
  * @param signal - SignalProtocolClient instance
- * @param relay - Signal relay server interface
+ * @param relay - Signal Protocol relay server interface
  * @param userId - Target user ID
  */
 export async function deleteAllDeviceSessions(

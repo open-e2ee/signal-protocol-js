@@ -107,7 +107,9 @@ This is the target DX the package is moving toward. It is shown here so app
 developers can understand the intended mental model while the current stable API
 still uses `storage`, `remoteObjectStore`, hooks, and transition-only media helpers.
 
+<!-- mock-snippet:skip target-message-api-not-yet-shipped -->
 ```ts
+// Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { createInMemoryDeviceStorage } from "@open-e2ee/signal-protocol-sdk/device/storage/memory";
 import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
@@ -180,8 +182,8 @@ const signal = await createSignalProtocolClient({
 ```
 
 Attachments use the same message API. On Expo, pass the picker URI; the Signal
-client copies or persists the bytes through `deviceStorage.files` before upload
-so retry can continue after restart:
+Protocol client copies or persists the bytes through `deviceStorage.files`
+before upload so retry can continue after restart:
 
 ```ts
 await signal.messages.send({
@@ -226,7 +228,9 @@ Use mock adapters for local examples and development:
 the demo sends while Bob is offline, inspects the relay-visible ciphertext, and
 then starts Bob's subscription to show the decrypted plaintext entering the app.
 
+<!-- mock-snippet:run getting-started-stable-local-clients -->
 ```ts
+// Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
 import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
@@ -522,8 +526,8 @@ partial-byte store. Native background download code should implement the same
 `MediaAttachmentTransfer` interface.
 
 For background-safe uploads, use the durable client operation. The current API
-persists bounded recovery metadata through the existing Signal storage adapter;
-the target message-first API moves that responsibility behind
+persists bounded recovery metadata through the existing Signal Protocol storage
+adapter; the target message-first API moves that responsibility behind
 `deviceStorage.messages`. The operation tries the upload when it is due and
 returns either a completed pointer or a pending job id for later recovery:
 
@@ -560,8 +564,8 @@ await signal.media.processPending({
 ```
 
 On receive, ask the media planner what work this device should do. Your app
-supplies the IDs it has already processed or cached; the Signal package returns
-the safe next step without taking ownership of your app database:
+supplies the IDs it has already processed or cached; the Signal Protocol package
+returns the safe next step without taking ownership of your app database:
 
 ```ts
 const mediaWork = media.planMediaAttachmentProcessing({

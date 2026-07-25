@@ -1,7 +1,7 @@
 /**
  * ML-KEM Post-Quantum Cryptography (Tiered Security Model)
  *
- * Signal uses different ML-KEM variants for different protocols:
+ * The reference implementation uses different ML-KEM variants for different protocols:
  *
  * | Protocol | Variant      | NIST Level | Usage              |
  * |----------|--------------|------------|--------------------|

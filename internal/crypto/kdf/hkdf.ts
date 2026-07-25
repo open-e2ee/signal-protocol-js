@@ -359,7 +359,7 @@ export const SPQR_INFO_STRINGS = {
   SUFFIX_ADD_EPOCH: 'Add Epoch',
   SUFFIX_NEXT: 'Next',
 
-  /** Initial chain setup from root key (96 bytes output) - TWO spaces before Start (Signal quirk) */
+  /** Initial chain setup from root key (96 bytes output) - TWO spaces before Start (reference-implementation quirk) */
   CHAIN_START: 'Signal PQ Ratchet V1 Chain  Start',
   /** Epoch advancement after PQ ratchet (96 bytes output) */
   CHAIN_ADD_EPOCH: 'Signal PQ Ratchet V1 Chain Add Epoch',
@@ -536,7 +536,7 @@ export async function kdfSpqrEpoch(
   }
 
   const info = stringToBytes(infoString);
-  // Use Kyber secret as IKM, current root key as salt (matches Signal)
+  // Use Kyber secret as IKM, current root key as salt (matches the reference implementation)
   const derived = await hkdf(kyberSharedSecret, currentRootKey, info, 96);
 
   try {

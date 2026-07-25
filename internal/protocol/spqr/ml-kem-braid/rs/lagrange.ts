@@ -19,7 +19,7 @@ import type { GaloisField } from './galois';
 // =============================================================================
 
 /**
- * Common chunk counts for ML-KEM Braid protocol (Signal SPQR V1)
+ * Common chunk counts for ML-KEM Braid protocol (SPQR V1)
  *
  * These sizes are precomputed for O(1) lookup of Lagrange denominators:
  * - 1: Single chunk (32 bytes)
@@ -338,7 +338,7 @@ export function recoverMissingShards(
   // Create interpolator
   const interpolator = new LagrangeInterpolator(field);
 
-  // Signal uses consecutive integers as evaluation points (not α^i)
+  // The reference implementation uses consecutive integers as evaluation points (not α^i)
   // Use the deterministic evaluation points defined by the codec.
   const evalPoint = (idx: number) => idx;
 

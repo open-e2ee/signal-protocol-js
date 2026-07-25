@@ -373,7 +373,9 @@ export class GroupsV2Manager {
    * Execute a group server operation with one credential-refresh retry.
    * On `UNAUTHORIZED`, clears the credential cache and retries once.
    *
-   * @see Signal Private Group System (eprint 2019/1416) Section 4.3
+   * This is an SDK transport convenience, not specified behaviour: day-aligned
+   * auth credentials can expire mid-flight, and one refresh is cheaper than
+   * surfacing a spurious authorization failure.
    */
   private async withAuthRetry<T>(
     rawGroupId: string,
@@ -1096,7 +1098,7 @@ export class GroupsV2Manager {
       },
     ];
 
-    // Get self-presentation for the new member entry (Signal always includes
+    // Get self-presentation for the new member entry (The reference implementation always includes
     // a presentation when adding a full member)
     const presentationCtx = await this.getPresentationContext();
     let memberContexts: Map<string, PresentationContext> | undefined;
@@ -1150,7 +1152,7 @@ export class GroupsV2Manager {
    * Submit a change to the server and update local state.
    *
    * @param memberPresentationContexts - Optional presentation contexts for members
-   *   being added. Keyed by ACI hex. Signal always includes a presentation when
+   *   being added. Keyed by ACI hex. The reference implementation always includes a presentation when
    *   adding a full member (AddMemberAction, PromotePending, etc.).
    */
   private async submitChange(

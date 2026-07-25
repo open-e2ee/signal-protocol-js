@@ -4,10 +4,17 @@
  * In-memory backend for local development - DO NOT use in production!
  */
 export {};
-import { MockSignalRelayServer } from './adapter';
+import { MockSignalRelayServer, type MockSignalRelayServerOptions } from './adapter';
 
-export { MockSignalRelayServer } from './adapter';
+export {
+  MockSignalRelayServer,
+  type MockSignalRelayServerOptions,
+} from './adapter';
+export {
+  MockRelayFailureController,
+  type MockRelayFailureOptions,
+} from './failures';
 
-export function mockRelay(): MockSignalRelayServer {
-  return new MockSignalRelayServer();
+export function mockRelay(options?: MockSignalRelayServerOptions): MockSignalRelayServer {
+  return new MockSignalRelayServer(options);
 }

@@ -8,7 +8,8 @@
 
 App-provided persistence helpers for prekey replacement bookkeeping.
 
-Signal owns rotation semantics; concrete storage adapters own persistence.
+The Signal Protocol client owns rotation semantics; concrete storage adapters
+own persistence.
 
 ## Methods
 

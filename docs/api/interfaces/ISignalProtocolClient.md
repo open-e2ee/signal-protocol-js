@@ -36,7 +36,7 @@ Device ID for this client instance (1 = primary, 2-5 = linked)
 
 Resolved logger for this client instance.
 
-This is the client-scoped logger used throughout the Signal runtime.
+This is the client-scoped logger used throughout the Signal Protocol runtime.
 
 ***
 
@@ -778,7 +778,7 @@ Send content to a recipient
 
 This is the primary API for sending encrypted content.
 Automatically handles:
-- Group vs user detection (Signal V2 prefix)
+- Group vs user detection (Signal Protocol V2 prefix)
 - Content type routing (DataMessageInput, string, Uint8Array)
 - Multi-device fan-out
 - Sender key distribution for groups

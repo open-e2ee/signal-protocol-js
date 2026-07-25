@@ -79,7 +79,7 @@ export interface ISignalProtocolClient {
   /**
    * Resolved logger for this client instance.
    *
-   * This is the client-scoped logger used throughout the Signal runtime.
+   * This is the client-scoped logger used throughout the Signal Protocol runtime.
    */
   readonly logger: Required<ILogger>;
 
@@ -183,7 +183,7 @@ export interface ISignalProtocolClient {
    *
    * This is the primary API for sending encrypted content.
    * Automatically handles:
-   * - Group vs user detection (Signal V2 prefix)
+   * - Group vs user detection (Signal Protocol V2 prefix)
    * - Content type routing (DataMessageInput, string, Uint8Array)
    * - Multi-device fan-out
    * - Sender key distribution for groups
@@ -1389,9 +1389,9 @@ export interface IProtocolStore
 }
 
 /**
- * Signal local store interface.
+ * Signal Protocol local store interface.
  *
- * Canonical device/browser-local persistence for Signal protocol state:
+ * Canonical device/browser-local persistence for Signal Protocol state:
  * - identity keys and registrations
  * - sessions and sender keys
  * - SESAME multi-device state
@@ -1484,11 +1484,11 @@ export interface ISignalLocalStore
 }
 
 /**
- * Small local secret vault used to bootstrap a local Signal store.
+ * Small local secret vault used to bootstrap a local Signal Protocol store.
  *
  * This interface is intentionally narrow: it exists for secrets that must
  * remain outside the main local store, such as a database encryption key.
- * It is not a second general-purpose Signal data store.
+ * It is not a second general-purpose Signal Protocol data store.
  */
 export interface ISignalLocalSecretVault {
   /**

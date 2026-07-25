@@ -269,6 +269,26 @@ async function handleDecryptionError(
   callbacks: RelaySubscriptionCallbacks,
   config: RelaySubscriptionConfig
 ): Promise<void> {
+  // An at-least-once relay may redeliver the same envelope. The session layer
+  // has already rejected the replay, so acknowledge it without asking the
+  // sender to create a fresh ciphertext for plaintext already delivered.
+  if (
+    error instanceof EncryptionError &&
+    error.code === EncryptionErrorCode.MESSAGE_DUPLICATE
+  ) {
+    ctx.logger.debug('Discarding duplicate relay envelope without retry', {
+      category: 'E2EE',
+      data: {
+        envelopeId: envelope.id,
+        senderUserId: envelope.senderUserId,
+        senderDeviceId: envelope.senderDeviceId,
+        behavior: 'DUPLICATE_DISCARD',
+      },
+    });
+    await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+    return;
+  }
+
   // Early exit: Implicit messages (typing indicators, receipts) should be
   // silently discarded without ERROR-level logs. This prevents log spam
   // for expected failures on messages that won't be retried anyway.
