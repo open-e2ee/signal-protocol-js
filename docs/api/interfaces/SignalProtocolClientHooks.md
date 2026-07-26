@@ -263,7 +263,7 @@ The session used for encryption
 
 `number`
 
-The message counter (Ns) - matches the libsignal proto field name
+The message counter (Ns) - matches the reference implementation's proto field name
 
 #### Returns
 

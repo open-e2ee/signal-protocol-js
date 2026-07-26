@@ -15,7 +15,7 @@ import type { SignalProtocolClientContext } from './types';
 import type { SesameMessage } from '../internal/sesame/types';
 import { base64ToBytes } from '../internal/crypto';
 import { isImplicitContentType } from './constants';
-import type { SignalServiceCipher } from './signal-service-cipher';
+import type { SignalProtocolServiceCipher } from './signal-service-cipher';
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -26,7 +26,7 @@ import type { SignalServiceCipher } from './signal-service-cipher';
  */
 export {};
 export interface RelaySubscriptionContext extends SignalProtocolClientContext {
-  cipher: SignalServiceCipher;
+  cipher: SignalProtocolServiceCipher;
 }
 
 /** Accumulates delivery receipt timestamps per sender for batching */
@@ -134,7 +134,7 @@ export async function handleRelayMessage(
   config: RelaySubscriptionConfig
 ): Promise<void> {
   try {
-    // Delegate decryption to SignalServiceCipher
+    // Delegate decryption to SignalProtocolServiceCipher
     // Pass sealed sender config for unidentified_sender envelope handling
     const decryptedEnvelope = await ctx.cipher.decrypt(envelope, ctx.config.sealedSender);
 

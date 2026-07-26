@@ -75,7 +75,7 @@ subscription startup.
 
 ## Local Client
 
-<!-- mock-snippet:run client-composition-local-client -->
+<!-- mock-snippet:run client-composition-local-client expect="" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
@@ -96,11 +96,11 @@ import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
 import {
   convexRelay,
-  type ConvexSignalRelayApi,
+  type ConvexSignalProtocolRelayApi,
 } from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
 import { api } from "../convex/_generated/api";
 
-const signalApi = api.signal satisfies ConvexSignalRelayApi;
+const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
 
 // Convex owns relay-side device lists, public prekeys, and encrypted envelopes.
 const relay = convexRelay({

@@ -101,7 +101,7 @@ export interface ParsedSyncContent {
   reason?: string;
 }
 
-export interface InspectedSignalContent {
+export interface InspectedSignalProtocolContent {
   timestamp?: number;
   conversationId?: string;
   receipt: ParsedReceiptContent | null;
@@ -110,7 +110,7 @@ export interface InspectedSignalContent {
   shouldSendDeliveryReceipt: boolean;
 }
 
-export interface SignalContentAdapter {
+export interface SignalProtocolContentAdapter {
   serializeDataMessage(content: DataMessageInput): Uint8Array;
   serializeSentTranscript(input: SentSyncTranscriptInput): Uint8Array;
   serializeReadSync(entries: ReadSyncEntryInput[]): Uint8Array;
@@ -133,7 +133,7 @@ export interface SignalContentAdapter {
     groupId: string,
     distribution: SenderKeyDistributionMessage
   ): Uint8Array;
-  inspectContent(plaintext: string): InspectedSignalContent;
+  inspectContent(plaintext: string): InspectedSignalProtocolContent;
   areReadReceiptsEnabled(): Promise<boolean>;
   areTypingIndicatorsEnabled(): Promise<boolean>;
   setRelayBatching(active: boolean): void;
@@ -172,7 +172,7 @@ function isMediaAttachmentCleanupReason(value: unknown): value is MediaAttachmen
   );
 }
 
-function inspectPayload(payload: JsonObject): InspectedSignalContent {
+function inspectPayload(payload: JsonObject): InspectedSignalProtocolContent {
   const dataMessage = getDataMessage(payload);
   const timestamp = dataMessage?.timestamp;
   const mediaTimestamp =
@@ -418,7 +418,7 @@ function inspectPayload(payload: JsonObject): InspectedSignalContent {
   };
 }
 
-export function createDefaultSignalContentAdapter(): SignalContentAdapter {
+export function createDefaultSignalProtocolContentAdapter(): SignalProtocolContentAdapter {
   return {
     serializeDataMessage(content) {
       return new TextEncoder().encode(

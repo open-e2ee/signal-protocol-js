@@ -27,8 +27,8 @@ import Constants from 'expo-constants';
 import type { IProvisioningService } from '../remote/relay/types';
 import * as crypto from '../internal/crypto';
 import type { IdentityKeyPair, IdentityType } from '../keys';
-import { resolveSignalLogger, type ILogger } from '../logger';
-import type { ISignalLocalStore } from '../types';
+import { resolveSignalProtocolLogger, type ILogger } from '../logger';
+import type { ISignalProtocolLocalStore } from '../types';
 import { asBase64 } from '../types/utils';
 import { DEVICE_ID_KEY, LOCAL_IDENTITY_KEY } from './constants';
 import { encryptDeviceName } from './device-name-crypto';
@@ -64,7 +64,7 @@ export interface ProvisioningGroupStateStore {
  * runtime client.
  */
 export interface ProvisioningIdentityStore extends Pick<
-  ISignalLocalStore,
+  ISignalProtocolLocalStore,
   'getIdentityKey' | 'storeIdentityKey'
 > {
   deleteIdentityKey(identityType: IdentityType): Promise<void>;
@@ -266,7 +266,7 @@ export async function generateProvisioningQR(
   sessionId: string;
   ephemeralKeyPair: ProvisioningKeyPair;
 }> {
-  const logger = resolveSignalLogger(providedLogger);
+  const logger = resolveSignalProtocolLogger(providedLogger);
   try {
     // Generate ephemeral ECDH key pair
     const ephemeralKeyPair = await crypto.generateECDHKeyPair();
@@ -313,7 +313,7 @@ export async function provisionDevice(
   userId: string,
   options: ProvisioningSendOptions
 ): Promise<void> {
-  const logger = resolveSignalLogger(options.logger);
+  const logger = resolveSignalProtocolLogger(options.logger);
   try {
     const identityKeys = await collectProvisioningIdentityKeys(
       options.identityStore,
@@ -393,7 +393,7 @@ export function parseProvisioningQR(
   sessionId: string;
   primaryEphemeralPublicKey: string;
 } {
-  const logger = resolveSignalLogger(providedLogger);
+  const logger = resolveSignalProtocolLogger(providedLogger);
   try {
     // Parse URL: signalprotocol://link-device?session=xxx&key=xxx
     const url = new URL(qrCodeData);
@@ -453,7 +453,7 @@ export async function connectToProvisioningSession(
   deviceMetadata: LocalDeviceMetadata,
   providedLogger?: ILogger
 ): Promise<ProvisioningKeyPair> {
-  const logger = resolveSignalLogger(providedLogger);
+  const logger = resolveSignalProtocolLogger(providedLogger);
   try {
     // Generate ephemeral key pair
     const ephemeralKeyPair = await crypto.generateECDHKeyPair();
@@ -494,7 +494,7 @@ export async function receiveProvisioningMessage(
   primaryEphemeralPublicKey: string,
   options: ProvisioningReceiveOptions
 ): Promise<ProvisioningMessage> {
-  const logger = resolveSignalLogger(options.logger);
+  const logger = resolveSignalProtocolLogger(options.logger);
   const storedIdentityTypes: IdentityType[] = [];
   const storedGroupIds: string[] = [];
   let storedDeviceId = false;
@@ -710,7 +710,7 @@ export async function cancelProvisioning(
   userId: string,
   providedLogger?: ILogger
 ): Promise<void> {
-  const logger = resolveSignalLogger(providedLogger);
+  const logger = resolveSignalProtocolLogger(providedLogger);
   try {
     await relay.deleteProvisioningSession(sessionId, userId);
 

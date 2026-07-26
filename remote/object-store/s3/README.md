@@ -1,6 +1,6 @@
 # S3 Object Store
 
-The S3 adapter connects `SignalRemoteObjectStore` to an application-owned
+The S3 adapter connects `SignalProtocolRemoteObjectStore` to an application-owned
 broker for Amazon S3 or a compatible object-storage service.
 
 ## Why it exists

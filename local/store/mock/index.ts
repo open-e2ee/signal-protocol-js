@@ -4,15 +4,15 @@
  * In-memory storage for local development - DO NOT use in production!
  */
 export {};
-import { MockSignalStore, type MockSignalStoreOptions } from './adapter';
+import { MockSignalProtocolStore, type MockSignalProtocolStoreOptions } from './adapter';
 
-export { MockSignalStore, type MockSignalStoreOptions } from './adapter';
+export { MockSignalProtocolStore, type MockSignalProtocolStoreOptions } from './adapter';
 export {
   MockStorageWriteError,
   MockStoreFailureController,
   type MockStoreFailureOptions,
 } from './failures';
 
-export function mockStore(options?: MockSignalStoreOptions): MockSignalStore {
-  return new MockSignalStore(options);
+export function mockStore(options?: MockSignalProtocolStoreOptions): MockSignalProtocolStore {
+  return new MockSignalProtocolStore(options);
 }

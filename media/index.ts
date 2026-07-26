@@ -18,7 +18,7 @@ import {
   streamingDecrypt,
   streamingEncrypt,
 } from '../internal/crypto';
-import type { SignalRemoteObjectStore } from '../remote/object-store';
+import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import { toBase64 } from '../types/utils';
 
 export {};
@@ -322,7 +322,7 @@ export const MEDIA_ATTACHMENT_POLICY_PRESETS = {
 } as const satisfies Record<string, MediaAttachmentPolicy>;
 
 export interface PrepareMediaAttachmentUploadOptions {
-  remoteObjectStore: SignalRemoteObjectStore;
+  remoteObjectStore: SignalProtocolRemoteObjectStore;
   /**
    * Stable idempotency key for this logical upload.
    *
@@ -353,7 +353,7 @@ export interface PrepareMediaAttachmentUploadOptions {
 }
 
 export interface ResolveMediaAttachmentOptions {
-  remoteObjectStore: SignalRemoteObjectStore;
+  remoteObjectStore: SignalProtocolRemoteObjectStore;
   transfer?: MediaAttachmentTransfer;
   retry?: MediaAttachmentRetryOptions;
   policy?: MediaAttachmentPolicy;
@@ -575,7 +575,7 @@ export interface MediaAttachmentUploadJobData {
 }
 
 export interface ExecuteMediaAttachmentJobOptions {
-  remoteObjectStore: SignalRemoteObjectStore;
+  remoteObjectStore: SignalProtocolRemoteObjectStore;
   transfer?: MediaAttachmentTransfer;
   retry?: MediaAttachmentRetryOptions;
   policy?: MediaAttachmentPolicy;
@@ -615,7 +615,7 @@ export interface MediaAttachmentJobExecutionResult {
 }
 
 export interface DeleteMediaAttachmentOptions {
-  remoteObjectStore: SignalRemoteObjectStore;
+  remoteObjectStore: SignalProtocolRemoteObjectStore;
   signal?: AbortSignal;
   onProgress?: MediaAttachmentProgressCallback;
 }
@@ -2605,7 +2605,7 @@ function getRetryReason(
 }
 
 async function uploadCiphertextWithRetry(input: {
-  remoteObjectStore: SignalRemoteObjectStore;
+  remoteObjectStore: SignalProtocolRemoteObjectStore;
   transfer?: MediaAttachmentTransfer;
   retry?: MediaAttachmentRetryOptions;
   signal?: AbortSignal;
@@ -2759,7 +2759,7 @@ async function uploadCiphertextWithRetry(input: {
 }
 
 async function downloadCiphertextWithRetry(input: {
-  remoteObjectStore: SignalRemoteObjectStore;
+  remoteObjectStore: SignalProtocolRemoteObjectStore;
   transfer?: MediaAttachmentTransfer;
   retry?: MediaAttachmentRetryOptions;
   signal?: AbortSignal;

@@ -1,8 +1,8 @@
 import { SignalProtocolClient } from './client';
 import type { SignalProtocolClientConfig, SignalProtocolConfig } from './config';
-import type { SignalRemoteObjectStore } from '../remote/object-store';
-import type { ISignalRelayServer } from '../remote/relay/types';
-import type { ISignalLocalStore, ISignalProtocolManager } from '../types/api';
+import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
+import type { ISignalProtocolRelayServer } from '../remote/relay/types';
+import type { ISignalProtocolLocalStore, ISignalProtocolManager } from '../types/api';
 
 /**
  * Stable identity inputs for one Signal Protocol client instance.
@@ -26,11 +26,11 @@ export interface SignalProtocolClientIdentityConfig {
  */
 export interface SignalProtocolClientAdapterConfig {
   /** Required local protocol store for the current runtime. */
-  storage: ISignalLocalStore;
+  storage: ISignalProtocolLocalStore;
   /** Optional relay for server sync, prekeys, fanout, and subscriptions. */
-  relay?: ISignalRelayServer;
+  relay?: ISignalProtocolRelayServer;
   /** Optional brokered remote object store for encrypted attachments. */
-  remoteObjectStore?: SignalRemoteObjectStore;
+  remoteObjectStore?: SignalProtocolRemoteObjectStore;
   /** Advanced protocol manager override for tests and specialized integrations. */
   protocolManager?: ISignalProtocolManager;
 }

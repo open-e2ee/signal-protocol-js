@@ -68,7 +68,7 @@ export type RemoteObjectDeleteRequest = {
  * authenticated application backend. Cloud credentials and unrestricted
  * storage clients must not be placed in an app runtime.
  */
-export interface SignalRemoteObjectStore {
+export interface SignalProtocolRemoteObjectStore {
   /** Create a short-lived direct upload operation. */
   createUpload(input: RemoteObjectUploadRequest): Promise<RemoteObjectUpload>;
 

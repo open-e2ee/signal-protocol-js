@@ -36,7 +36,7 @@
 import type React from 'react';
 import { useRef, useEffect, useCallback } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
-import { defaultSignalLogger } from '../logger';
+import { defaultSignalProtocolLogger } from '../logger';
 import type { ISignalProtocolClient } from '../types';
 
 /**
@@ -106,7 +106,7 @@ function useKeyRotationInternal(options: UseKeyRotationOptions): UseKeyRotationI
   const lastRotationCheckRef = useRef<number>(0);
   const isRotatingRef = useRef<boolean>(false);
   const isMountedRef = useRef<boolean>(true);
-  const logger = signal?.logger ?? defaultSignalLogger;
+  const logger = signal?.logger ?? defaultSignalProtocolLogger;
 
   const triggerRotation = useCallback(async () => {
     if (!signal) {

@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / ISignalRelayServer
+[@open-e2ee/signal-protocol-sdk](../README.md) / ISignalProtocolRelayServer
 
-# Interface: ISignalRelayServer
+# Interface: ISignalProtocolRelayServer
 
 Server-side relay for encrypted envelope push delivery.
 
@@ -18,7 +18,7 @@ Maps to 17 Convex tables.
 ## Example
 
 ```typescript
-const relay: ISignalRelayServer = new ConvexSignalRelayServer(convex, signalApi, {
+const relay: ISignalProtocolRelayServer = new ConvexSignalProtocolRelayServer(convex, signalApi, {
   currentUserId: userId,
 });
 

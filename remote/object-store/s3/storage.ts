@@ -5,7 +5,7 @@ import type {
   RemoteObjectDownloadRequest,
   RemoteObjectUpload,
   RemoteObjectUploadRequest,
-  SignalRemoteObjectStore,
+  SignalProtocolRemoteObjectStore,
 } from '../types';
 import {
   normalizeDownload,
@@ -48,10 +48,10 @@ const DEFAULT_MAX_SIZE_BYTES = 50 * 1024 * 1024;
  * Framework-neutral client adapter for brokered, presigned S3 operations.
  *
  * The adapter validates broker responses and exposes the provider-neutral
- * `SignalRemoteObjectStore` contract. AWS SDKs and AWS credentials belong in
+ * `SignalProtocolRemoteObjectStore` contract. AWS SDKs and AWS credentials belong in
  * the authenticated backend that implements `S3ObjectStoreBroker`.
  */
-export class S3ObjectStore implements SignalRemoteObjectStore {
+export class S3ObjectStore implements SignalProtocolRemoteObjectStore {
   private readonly broker: S3ObjectStoreBroker;
   private readonly maxSizeBytes: number;
 

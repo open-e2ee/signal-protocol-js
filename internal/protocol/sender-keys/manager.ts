@@ -18,10 +18,10 @@
  */
 
 import * as crypto from '../../crypto';
-import type { ISignalLocalStore } from '../../../types/api';
+import type { ISignalProtocolLocalStore } from '../../../types/api';
 import type { Signature, PublicKey, PrivateKey } from '../../../keys';
 import { SENDER_KEY_FORMAT, SENDER_KEY_MESSAGE_VERSION } from '../../../versions';
-import { defaultSignalLogger, type ILogger } from '../../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
 import { asBase64, type Base64 } from '../../../types/utils';
 import {
   type SenderKeysConfig,
@@ -139,9 +139,9 @@ export class SenderKeyManager {
   private readonly logger: Required<ILogger>;
 
   constructor(
-    private storage: ISignalLocalStore,
+    private storage: ISignalProtocolLocalStore,
     config?: SenderKeysConfig,
-    logger: Required<ILogger> = defaultSignalLogger
+    logger: Required<ILogger> = defaultSignalProtocolLogger
   ) {
     this.logger = logger;
     // Resolve config with defaults

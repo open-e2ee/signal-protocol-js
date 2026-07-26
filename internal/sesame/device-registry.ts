@@ -55,9 +55,9 @@
 
 import type { SignalProtocolClient } from '../../client';
 import type { Ciphertext } from '../../keys';
-import type { ISignalRelayServer, DeviceInfo, PreKeyBundle } from '../../remote/relay/types';
+import type { ISignalProtocolRelayServer, DeviceInfo, PreKeyBundle } from '../../remote/relay/types';
 import { ProtocolAddress } from '../../types/address';
-import { defaultSignalLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
 
 /**
  * Device-specific prekey bundle
@@ -134,9 +134,9 @@ export function createDeviceAddress(userId: string, deviceId: number): ProtocolA
  * @returns Array of active device information
  */
 export async function getActiveDevices(
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<DeviceInfo[]> {
   try {
     const devices = await relay.getDevices(userId);
@@ -175,7 +175,7 @@ export async function getActiveDevices(
  */
 export async function establishMultiDeviceSessions(
   signal: SignalProtocolClient,
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string
 ): Promise<MultiDeviceSessionResult> {
   const logger = signal.logger;
@@ -268,7 +268,7 @@ export async function establishMultiDeviceSessions(
  */
 export async function establishDeviceSession(
   signal: SignalProtocolClient,
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string,
   deviceId: number
 ): Promise<boolean> {
@@ -343,7 +343,7 @@ export async function establishDeviceSession(
  */
 export async function encryptForAllDevices(
   signal: SignalProtocolClient,
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string,
   plaintext: string
 ): Promise<MultiDeviceEncryptionResult> {
@@ -472,7 +472,7 @@ export async function encryptForDevice(
  */
 export async function checkDeviceSessions(
   signal: SignalProtocolClient,
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string
 ): Promise<Map<number, boolean>> {
   const logger = signal.logger;
@@ -499,7 +499,7 @@ export async function checkDeviceSessions(
  */
 export async function deleteAllDeviceSessions(
   signal: SignalProtocolClient,
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string
 ): Promise<void> {
   const logger = signal.logger;

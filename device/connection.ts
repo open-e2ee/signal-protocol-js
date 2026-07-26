@@ -7,7 +7,7 @@
  */
 
 import { getErrorMessage } from '../utils/errors';
-import { resolveSignalLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../logger';
 import type {
   LocalConnection,
   ConnectionStatus,
@@ -95,7 +95,7 @@ export class RelayConnection implements LocalConnection {
   constructor(config: RelayConfig) {
     this.role = config.role;
     this.config = config;
-    this.logger = resolveSignalLogger(config.logger);
+    this.logger = resolveSignalProtocolLogger(config.logger);
   }
 
   async connect(): Promise<void> {

@@ -9,7 +9,7 @@
  *
  * @example Usage
  * ```typescript
- * const storage = new NodeSignalStore({
+ * const storage = new NodeSignalProtocolStore({
  *   dataDir: '~/.signal-protocol/signal'
  * });
  * await storage.initialize();
@@ -51,7 +51,7 @@ import { deserializeSessionRecord, serializeSessionRecord } from '../session-cod
  * Node.js storage adapter configuration
  */
 export {};
-export interface NodeSignalStoreConfig {
+export interface NodeSignalProtocolStoreConfig {
   dataDir?: string;
 }
 
@@ -60,12 +60,12 @@ export interface NodeSignalStoreConfig {
  *
  * Provides encrypted filesystem storage for Signal Protocol keys.
  */
-export class NodeSignalStore {
+export class NodeSignalProtocolStore {
   private db: NodeEncryptedDatabase;
   private registrationIds = new Map<IdentityType, number>();
   private kyberUsage = new Map<string, { signedPreKeyId: number; baseKeyBytes: Uint8Array }>();
 
-  constructor(config?: NodeSignalStoreConfig) {
+  constructor(config?: NodeSignalProtocolStoreConfig) {
     this.db = getNodeEncryptedDatabase(config?.dataDir);
   }
 

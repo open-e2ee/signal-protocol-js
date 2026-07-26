@@ -52,6 +52,21 @@ function isMockSnippet(code) {
   );
 }
 
+function parseDirective(source, mode, value) {
+  const directive = value.trim();
+  if (mode === 'skip') {
+    return { id: directive, expectedOutput: null };
+  }
+
+  const parsed = /^(\S+)\s+expect="([^"]*)"$/.exec(directive);
+  if (!parsed) {
+    throw new Error(
+      `${source} runnable mock snippet must declare: mock-snippet:run <id> expect="<stdout>"`
+    );
+  }
+  return { id: parsed[1], expectedOutput: parsed[2] };
+}
+
 function parseMarkdown(relativePath) {
   const source = readFileSync(join(repoRoot, relativePath), 'utf8');
   const snippets = [];
@@ -63,10 +78,11 @@ function parseMarkdown(relativePath) {
     if (!marker) {
       throw new Error(`${relativePath} contains an unclassified mock snippet`);
     }
+    const directive = parseDirective(relativePath, mode, idOrReason);
     snippets.push({
       source: relativePath,
       mode,
-      id: idOrReason.trim(),
+      ...directive,
       code,
     });
   }
@@ -97,10 +113,11 @@ function parsePricingPreview() {
     if (!marker) {
       throw new Error(`${pricingSource} contains an unclassified mock snippet`);
     }
+    const directive = parseDirective(pricingSource, mode, idOrReason);
     snippets.push({
       source: pricingSource,
       mode,
-      id: idOrReason.trim(),
+      ...directive,
       code,
     });
   }
@@ -175,6 +192,18 @@ try {
       cwd: fixtureDir,
       timeout: 120_000,
     });
+    const actualOutput = result.stdout.trim();
+    const outputMatches =
+      snippet.expectedOutput === ''
+        ? actualOutput === ''
+        : actualOutput.includes(snippet.expectedOutput);
+    if (!outputMatches) {
+      throw new Error(
+        `${snippet.source}:${snippet.id} expected stdout containing ${JSON.stringify(
+          snippet.expectedOutput
+        )}, received ${JSON.stringify(actualOutput)}`
+      );
+    }
     process.stdout.write(
       `mock-snippet:ok ${snippet.source}:${snippet.id}${result.stdout ? `\n${result.stdout.trim()}` : ''}\n`
     );

@@ -7,6 +7,6 @@ import * as SecureStore from 'expo-secure-store';
  * background delivery and recovery flows can function while the device is locked.
  */
 export {};
-export const SIGNAL_SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
+export const SIGNAL_PROTOCOL_SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
 };

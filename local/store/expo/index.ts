@@ -5,11 +5,11 @@
  * Uses SQLCipher for full-database encryption with a separate local secret vault.
  */
 export {};
-import { ExpoSignalStore } from './adapter';
+import { ExpoSignalProtocolStore } from './adapter';
 import type { ILogger } from '../../../logger';
-import type { ISignalRemoteSenderStateStore } from '../../../remote/relay/types';
+import type { ISignalProtocolRemoteSenderStateStore } from '../../../remote/relay/types';
 
-export { ExpoSignalStore } from './adapter';
+export { ExpoSignalProtocolStore } from './adapter';
 export { getKeyStorage, resetKeyStorage } from './key-storage';
 export {
   getDatabaseKeyManager,
@@ -22,11 +22,11 @@ export { createPreKeyMaintenanceStore } from './maintenance';
 // MessageRecord types for SESAME retry request support
 export type { MessageRecord, IMessageRecordStore } from '../../../types';
 
-export interface ExpoSignalStoreFactoryOptions {
-  relay?: ISignalRemoteSenderStateStore;
+export interface ExpoSignalProtocolStoreFactoryOptions {
+  relay?: ISignalProtocolRemoteSenderStateStore;
   logger?: ILogger;
 }
 
-export function expoStore(options: ExpoSignalStoreFactoryOptions = {}): ExpoSignalStore {
-  return new ExpoSignalStore(options.relay, options.logger);
+export function expoStore(options: ExpoSignalProtocolStoreFactoryOptions = {}): ExpoSignalProtocolStore {
+  return new ExpoSignalProtocolStore(options.relay, options.logger);
 }

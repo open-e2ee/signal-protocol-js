@@ -76,7 +76,7 @@
 
 ### remoteObjectStore
 
-> **remoteObjectStore**: [`SignalRemoteObjectStore`](../../../interfaces/SignalRemoteObjectStore.md)
+> **remoteObjectStore**: [`SignalProtocolRemoteObjectStore`](../../../interfaces/SignalProtocolRemoteObjectStore.md)
 
 ***
 

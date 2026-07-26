@@ -1785,7 +1785,7 @@ Per Signal Protocol specification, rotate sender keys on **membership changes**:
 | Member ADDED | Distribute current key to new member (no rotation needed) |
 | Group metadata changed | Rotate recommended |
 
-**Important**: The Signal Protocol does NOT use periodic or message-count-based rotation.
+**Important**: The reference implementation does NOT use periodic or message-count-based rotation.
 Only rotate when membership changes to maintain forward secrecy.
 
 ## Why Rotate on Member Removal?
@@ -1919,7 +1919,7 @@ All inputs are normalized to Uint8Array before reaching the cipher layer.
 
 `string`
 
-User ID or group ID (groups use the Signal Protocol V2 prefix)
+User ID or group ID (groups use the V2 group ID prefix)
 
 ##### content
 

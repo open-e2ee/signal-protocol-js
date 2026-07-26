@@ -1,5 +1,5 @@
 /**
- * SignalServiceCipher - Cipher coordination for Signal Protocol
+ * SignalProtocolServiceCipher - Cipher coordination for Signal Protocol
  *
  * @layer 1 - API
  *
@@ -15,14 +15,14 @@
 
 import AsyncLock from 'async-lock';
 import type {
-  ISignalRelayServer,
+  ISignalProtocolRelayServer,
   Envelope,
   StaleSessionErrorData,
   SealedSenderAuth,
   GroupMemberDevice,
 } from '../remote/relay/types';
-import type { SignalRemoteObjectStore } from '../remote/object-store';
-import type { ISignalLocalStore, Base64 } from '../types';
+import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
+import type { ISignalProtocolLocalStore, Base64 } from '../types';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { SealedSenderAuthError } from '../types/errors';
 import { base64ToBytes } from '../internal/crypto';
@@ -30,7 +30,7 @@ import type { DecryptedEnvelope } from './event-hooks';
 import { recordServerClockSample } from '../server-clock';
 import { ProtocolAddress } from '../types/address';
 import type { ISesameManager, SesameMessage, OutgoingMessageBatch } from '../internal/sesame/types';
-import { defaultSignalLogger, type ILogger } from '../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../logger';
 import { SenderKeyManager } from '../internal/protocol/sender-keys';
 import { isGroupId, extractGroupId } from '../internal/groups';
 import type { EndorsementManager } from './endorsement-manager';
@@ -38,12 +38,12 @@ import type { PreparedAttachmentUpload, SendOptions, SendResult } from './types'
 import { ContentHint } from '../types/messages';
 import {
   type BlockedRecipientsSyncInput,
-  createDefaultSignalContentAdapter,
+  createDefaultSignalProtocolContentAdapter,
   type ConfigurationSyncInput,
   type MediaAttachmentDeleteSyncInput,
   type ReadSyncEntryInput,
   type RecipientUsernameSyncInput,
-  type SignalContentAdapter,
+  type SignalProtocolContentAdapter,
   type TaskNotificationAckSyncInput,
   type UsernameStateSyncInput,
   type VerificationStateSyncInput,
@@ -100,7 +100,7 @@ function getEnvelopeMessageType(ciphertext: string | Uint8Array): 'prekey_bundle
     const bytes = CryptoUtils.base64ToBytes(text as Base64);
     if (bytes.length >= 2) {
       const firstTag = bytes[1];
-      // PreKeySignalMessage: first tag is 0x08 (field 1 uint32) or 0x12 (field 2 bytes)
+      // PreKeySignalProtocolMessage: first tag is 0x08 (field 1 uint32) or 0x12 (field 2 bytes)
       if (firstTag === 0x08 || firstTag === 0x12) {
         return 'prekey_bundle';
       }
@@ -182,7 +182,7 @@ export type SealedSenderProvider = () => Promise<{
 export type SessionEstablisher = (recipientUserId: string) => Promise<{
   establishedDevices: number[];
   failedDevices: number[];
-  failedDeviceErrors?: Array<{ deviceId: number; error: Error }>;
+  failedDeviceErrors: Array<{ deviceId: number; error: Error }>;
 }>;
 
 /**
@@ -216,7 +216,7 @@ export type StaleSessionRefresher = (
 export type EndorsementRefresher = (groupId: string, memberUserIds: string[]) => Promise<boolean>;
 
 /**
- * SignalServiceCipher - Routes encryption and decryption to appropriate ciphers
+ * SignalProtocolServiceCipher - Routes encryption and decryption to appropriate ciphers
  *
  * Handles:
  * - Pairwise messages via SESAME/Double Ratchet
@@ -226,7 +226,7 @@ export type EndorsementRefresher = (groupId: string, memberUserIds: string[]) =>
  * @example
  * ```typescript
  * // Created by SignalProtocolClient - not instantiated directly
- * const cipher = new SignalServiceCipher(userId, deviceId, sesameManager, ...);
+ * const cipher = new SignalProtocolServiceCipher(userId, deviceId, sesameManager, ...);
  *
  * // Decrypt incoming envelope
  * const decrypted = await cipher.decrypt(envelope);
@@ -235,7 +235,7 @@ export type EndorsementRefresher = (groupId: string, memberUserIds: string[]) =>
  * const result = await cipher.encrypt('bob', 'Hello!');
  * ```
  */
-export class SignalServiceCipher {
+export class SignalProtocolServiceCipher {
   private readonly lock = new AsyncLock();
   private sessionEstablisher?: SessionEstablisher;
   private staleSessionRefresher?: StaleSessionRefresher;
@@ -252,15 +252,15 @@ export class SignalServiceCipher {
     private readonly deviceId: number,
     private readonly sesameManager: ISesameManager,
     private readonly senderKeyManager: SenderKeyManager,
-    private readonly storage: ISignalLocalStore,
-    private readonly relay?: ISignalRelayServer,
-    private readonly remoteObjectStore?: SignalRemoteObjectStore,
-    private readonly contentAdapter?: SignalContentAdapter,
-    private readonly logger: Required<ILogger> = defaultSignalLogger
+    private readonly storage: ISignalProtocolLocalStore,
+    private readonly relay?: ISignalProtocolRelayServer,
+    private readonly remoteObjectStore?: SignalProtocolRemoteObjectStore,
+    private readonly contentAdapter?: SignalProtocolContentAdapter,
+    private readonly logger: Required<ILogger> = defaultSignalProtocolLogger
   ) {}
 
-  private getResolvedContentAdapter(): SignalContentAdapter {
-    return this.contentAdapter ?? createDefaultSignalContentAdapter();
+  private getResolvedContentAdapter(): SignalProtocolContentAdapter {
+    return this.contentAdapter ?? createDefaultSignalProtocolContentAdapter();
   }
 
   private getDirectConversationId(recipientUserId: string): string {
@@ -884,11 +884,23 @@ export class SignalServiceCipher {
     let result: Awaited<ReturnType<SessionEstablisher>>;
     try {
       // Use retry logic for transient network failures
-      result = await withRetry(() => this.sessionEstablisher!(recipientUserId), {
-        operationName: 'establishSession',
-        maxRetries: 2,
-        baseDelay: 500,
-      });
+      result = await withRetry(
+        async () => {
+          const attempt = await this.sessionEstablisher!(recipientUserId);
+          if (
+            attempt.establishedDevices.length === 0 &&
+            attempt.failedDeviceErrors.length > 0
+          ) {
+            throw attempt.failedDeviceErrors[0]!.error;
+          }
+          return attempt;
+        },
+        {
+          operationName: 'establishSession',
+          maxRetries: 2,
+          baseDelay: 500,
+        }
+      );
     } catch (error) {
       // Re-throw EncryptionErrors, wrap others
       if (error instanceof EncryptionError) {
@@ -913,10 +925,6 @@ export class SignalServiceCipher {
     }
 
     if (result.establishedDevices.length === 0) {
-      const firstDeviceError = result.failedDeviceErrors?.[0]?.error;
-      if (firstDeviceError) {
-        throw firstDeviceError;
-      }
       throw new EncryptionError(
         `Recipient ${recipientUserId} has no available prekey bundles - they may not have registered encryption keys`,
         EncryptionErrorCode.RECIPIENT_NOT_REGISTERED,
@@ -1350,7 +1358,7 @@ export class SignalServiceCipher {
     messageType: 'prekey_bundle' | 'ciphertext',
     recipientRegistrationId: number | undefined,
     sealedSender: Awaited<
-      ReturnType<typeof SignalServiceCipher.prototype.resolveSealedSenderContext>
+      ReturnType<typeof SignalProtocolServiceCipher.prototype.resolveSealedSenderContext>
     >,
     contentHint?: ContentHint,
     clientMessageId?: string

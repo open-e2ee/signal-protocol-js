@@ -14,7 +14,7 @@ export interface BlockedRecipientEntry {
 /**
  * Durable local store for blocked recipients.
  */
-export interface SignalBlockingStore {
+export interface SignalProtocolBlockingStore {
   isBlocked(recipientId: string): Promise<boolean>;
   listBlockedRecipients(): Promise<BlockedRecipientEntry[]>;
   upsertBlockedRecipient(entry: BlockedRecipientEntry): Promise<void>;
@@ -30,7 +30,7 @@ export interface SignalBlockingStore {
  * - A platform projection into another local runtime (for example, an NSE cache)
  * - No-op for a fully local-only app
  */
-export interface SignalBlockingMirror {
+export interface SignalProtocolBlockingMirror {
   syncBlockedRecipients(entries: readonly BlockedRecipientEntry[]): Promise<void>;
 }
 
@@ -40,7 +40,7 @@ export interface SignalBlockingMirror {
  * Example:
  * - Rotate the local profile key after a recipient loses profile access
  */
-export interface SignalBlockingHooks {
+export interface SignalProtocolBlockingHooks {
   onRecipientBlocked?(entry: BlockedRecipientEntry): Promise<void>;
   onRecipientUnblocked?(recipientId: string): Promise<void>;
 }

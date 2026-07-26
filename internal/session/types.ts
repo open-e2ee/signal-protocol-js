@@ -22,7 +22,7 @@ import type {
   KemOneTimePreKey,
   IdentityType,
 } from '../../keys';
-import type { ISignalLocalStore, PreKeyMessage, SessionState } from '../../types';
+import type { ISignalProtocolLocalStore, PreKeyMessage, SessionState } from '../../types';
 import type { ProtocolAddress } from '../../types/address';
 import type { ProtocolStrategyConfig } from '../../types';
 import type { ILogger } from '../../logger';
@@ -204,7 +204,7 @@ export type SessionEstablishmentCallback = (
  */
 export interface SessionCipherDependencies {
   /** Key storage for loading/storing sessions */
-  keyStorage: ISignalLocalStore;
+  keyStorage: ISignalProtocolLocalStore;
   /**
    * Callback for establishing sessions from PreKeyMessages.
    * Called when decrypt() receives a PreKeyMessage and no session exists.

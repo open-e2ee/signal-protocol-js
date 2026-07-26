@@ -1,6 +1,6 @@
 # In-Memory Relay
 
-`MockSignalRelayServer` implements `ISignalRelayServer` in memory for examples
+`MockSignalProtocolRelayServer` implements `ISignalProtocolRelayServer` in memory for examples
 and local application development.
 
 Real protocol and cryptography; simulated in-memory infrastructure.

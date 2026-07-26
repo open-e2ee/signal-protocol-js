@@ -1,12 +1,12 @@
 /**
- * SignalMessage / PreKeySignalMessage Protobuf Encoding/Decoding
+ * SignalProtocolMessage / PreKeySignalProtocolMessage Protobuf Encoding/Decoding
  *
- * Encodes and decodes SignalMessage and PreKeySignalMessage with protobufjs.
+ * Encodes and decodes SignalProtocolMessage and PreKeySignalProtocolMessage with protobufjs.
  * These are the core message types of the Signal Protocol's Double Ratchet.
  *
  * Proto schema:
  * ```protobuf
- * message SignalMessage {
+ * message SignalProtocolMessage {
  *   optional bytes  ratchet_key      = 1;
  *   optional uint32 counter          = 2;
  *   optional uint32 previous_counter = 3;
@@ -15,7 +15,7 @@
  *   optional bytes  addresses        = 6;
  * }
  *
- * message PreKeySignalMessage {
+ * message PreKeySignalProtocolMessage {
  *   optional uint32 pre_key_id        = 1;
  *   optional bytes  base_key          = 2;
  *   optional bytes  identity_key      = 3;
@@ -27,13 +27,13 @@
  * }
  * ```
  *
- * We extend PreKeySignalMessage with custom fields at high field numbers
- * (100-102) that do not conflict with the base wire fields. SignalMessage
+ * We extend PreKeySignalProtocolMessage with custom fields at high field numbers
+ * (100-102) that do not conflict with the base wire fields. SignalProtocolMessage
  * field 100 authenticates the
- * recipient identity namespace selected by PreKeySignalMessage field 102.
+ * recipient identity namespace selected by PreKeySignalProtocolMessage field 102.
  *
  * Sender identity belongs to the authenticated transport envelope, not the
- * encrypted PreKeySignalMessage.
+ * encrypted PreKeySignalProtocolMessage.
  *
  * The pq_ratchet field (field 5) carries opaque SPQR binary data encoded
  * via encodeSPQRWire/decodeSPQRWire in pq-ratchet-serialize.ts — NOT protobuf.
@@ -52,16 +52,16 @@ export {};
 const root = new protobuf.Root();
 // Bound adversarial protobuf work without constraining the documented 10 MiB
 // message contract. Larger payloads use the separately bounded attachment path.
-export const MAX_SIGNAL_WIRE_MESSAGE_BYTES = 16 * 1024 * 1024;
+export const MAX_SIGNAL_PROTOCOL_WIRE_MESSAGE_BYTES = 16 * 1024 * 1024;
 
 function assertWireMessageSize(bytes: Uint8Array, label: string): void {
-  if (bytes.length > MAX_SIGNAL_WIRE_MESSAGE_BYTES) {
-    throw new Error(`${label} exceeds ${MAX_SIGNAL_WIRE_MESSAGE_BYTES}-byte input limit`);
+  if (bytes.length > MAX_SIGNAL_PROTOCOL_WIRE_MESSAGE_BYTES) {
+    throw new Error(`${label} exceeds ${MAX_SIGNAL_PROTOCOL_WIRE_MESSAGE_BYTES}-byte input limit`);
   }
 }
 
 /**
- * SignalMessage protobuf type.
+ * SignalProtocolMessage protobuf type.
  *
  * Wire fields:
  * - ratchet_key (1, bytes) - current ratchet public key
@@ -70,7 +70,7 @@ function assertWireMessageSize(bytes: Uint8Array, label: string): void {
  * - ciphertext (4, bytes) - encrypted message content
  * - pq_ratchet (5, bytes) - opaque SPQR binary data (NOT protobuf)
  */
-const SignalMessageType = new protobuf.Type('SignalMessage')
+const SignalProtocolMessageType = new protobuf.Type('SignalProtocolMessage')
   .add(new protobuf.Field('ratchetKey', 1, 'bytes'))
   .add(new protobuf.Field('counter', 2, 'uint32'))
   .add(new protobuf.Field('previousCounter', 3, 'uint32'))
@@ -144,12 +144,12 @@ function decodeAddress(
 }
 
 /**
- * Serialize sender and recipient addresses for SignalMessage field 6.
+ * Serialize sender and recipient addresses for SignalProtocolMessage field 6.
  *
  * ProtocolAddress names are application-defined user IDs, so this package uses
  * a canonical length-delimited UTF-8 representation in the address field.
  */
-export function serializeSignalMessageAddresses(
+export function serializeSignalProtocolMessageAddresses(
   senderAddress: ProtocolAddress,
   recipientAddress: ProtocolAddress
 ): Uint8Array {
@@ -160,15 +160,15 @@ export function serializeSignalMessageAddresses(
   );
 }
 
-export function deserializeSignalMessageAddresses(bytes: Uint8Array): {
+export function deserializeSignalProtocolMessageAddresses(bytes: Uint8Array): {
   senderAddress: ProtocolAddress;
   recipientAddress: ProtocolAddress;
 } {
   if (bytes.length === 0) {
-    throw new Error('SignalMessage address binding is missing');
+    throw new Error('SignalProtocolMessage address binding is missing');
   }
   if (bytes[0] !== ADDRESS_BINDING_FORMAT_VERSION) {
-    throw new Error(`Unsupported SignalMessage address binding version: ${bytes[0]}`);
+    throw new Error(`Unsupported SignalProtocolMessage address binding version: ${bytes[0]}`);
   }
 
   let offset = 1;
@@ -178,7 +178,7 @@ export function deserializeSignalMessageAddresses(bytes: Uint8Array): {
   offset = recipient.offset;
 
   if (offset !== bytes.length) {
-    throw new Error('SignalMessage address binding has trailing bytes');
+    throw new Error('SignalProtocolMessage address binding has trailing bytes');
   }
 
   return {
@@ -187,12 +187,12 @@ export function deserializeSignalMessageAddresses(bytes: Uint8Array): {
   };
 }
 
-export function signalMessageAddressesEqual(
+export function signalProtocolMessageAddressesEqual(
   encoded: Uint8Array,
   senderAddress: ProtocolAddress,
   recipientAddress: ProtocolAddress
 ): boolean {
-  const decoded = deserializeSignalMessageAddresses(encoded);
+  const decoded = deserializeSignalProtocolMessageAddresses(encoded);
   return (
     decoded.senderAddress.userId === senderAddress.userId &&
     decoded.senderAddress.deviceId === senderAddress.deviceId &&
@@ -202,12 +202,12 @@ export function signalMessageAddressesEqual(
 }
 
 /**
- * PreKeySignalMessage protobuf type.
+ * PreKeySignalProtocolMessage protobuf type.
  *
- * Fields 1-8 are the base PreKeySignalMessage fields. Fields 100-102 are SDK
+ * Fields 1-8 are the base PreKeySignalProtocolMessage fields. Fields 100-102 are SDK
  * extensions for KEM one-time prekeys and recipient identity scope.
  */
-const PreKeySignalMessageType = new protobuf.Type('PreKeySignalMessage')
+const PreKeySignalProtocolMessageType = new protobuf.Type('PreKeySignalProtocolMessage')
   // oneTimePreKeyId uses 'optional' rule (proto2 semantics) so that value 0 is
   // distinguished from "not set" using proto2 optional presence.
   // Without this, protobufjs proto3 default behavior omits 0 on encode and
@@ -227,15 +227,15 @@ const PreKeySignalMessageType = new protobuf.Type('PreKeySignalMessage')
   .add(new protobuf.Field('kemOneTimeCiphertext', 101, 'bytes'))
   .add(new protobuf.Field('recipientIdentityType', 102, 'uint32', 'optional'));
 
-root.add(SignalMessageType);
-root.add(PreKeySignalMessageType);
+root.add(SignalProtocolMessageType);
+root.add(PreKeySignalProtocolMessageType);
 
 // ============================================================================
-// SignalMessage
+// SignalProtocolMessage
 // ============================================================================
 
 /**
- * SignalMessage fields for protobuf encoding.
+ * SignalProtocolMessage fields for protobuf encoding.
  *
  * Wire fields:
  * - ratchetKey -> ratchet_key (field 1, bytes)
@@ -245,7 +245,7 @@ root.add(PreKeySignalMessageType);
  * - pqRatchet -> pq_ratchet (field 5, bytes) — opaque SPQR binary
  * - addresses -> addresses (field 6, bytes) — sender/recipient address binding
  */
-export interface SignalMessageFields {
+export interface SignalProtocolMessageFields {
   /** Current ratchet public key (field 1) */
   ratchetKey: Uint8Array;
   /** Message number in current sending chain (field 2) */
@@ -258,27 +258,27 @@ export interface SignalMessageFields {
   pqRatchet?: Uint8Array;
   /** Authenticated sender/recipient ProtocolAddress binding (field 6) */
   addresses: Uint8Array;
-  /** ACI=1 or PNI=2 for an enclosing PreKeySignalMessage (field 100) */
+  /** ACI=1 or PNI=2 for an enclosing PreKeySignalProtocolMessage (field 100) */
   recipientIdentityType?: number;
 }
 
 /**
- * Encode a SignalMessage to protobuf bytes.
+ * Encode a SignalProtocolMessage to protobuf bytes.
  *
  * Output protobuf fields:
  * [field1: ratchet_key] [field2: counter] [field3: previous_counter]
  * [field4: ciphertext] [field5: pq_ratchet] [field6: addresses]
  *
  * This produces the **protobuf bytes only** — no version byte or MAC.
- * Use `frameSignalMessage()` from `envelope.ts` for the complete wire format.
+ * Use `frameSignalProtocolMessage()` from `envelope.ts` for the complete wire format.
  *
  * @param msg - Message fields to encode
  * @returns Protobuf-encoded bytes (no framing)
  *
  */
-export function encodeSignalMessage(msg: SignalMessageFields): Uint8Array {
+export function encodeSignalProtocolMessage(msg: SignalProtocolMessageFields): Uint8Array {
   if (!msg.addresses?.length) {
-    throw new Error('SignalMessage addresses field is required');
+    throw new Error('SignalProtocolMessage addresses field is required');
   }
 
   const payload: Record<string, unknown> = {
@@ -294,29 +294,29 @@ export function encodeSignalMessage(msg: SignalMessageFields): Uint8Array {
   }
   if (msg.recipientIdentityType !== undefined) {
     if (msg.recipientIdentityType !== 1 && msg.recipientIdentityType !== 2) {
-      throw new Error('SignalMessage recipientIdentityType must be ACI=1 or PNI=2');
+      throw new Error('SignalProtocolMessage recipientIdentityType must be ACI=1 or PNI=2');
     }
     payload.recipientIdentityType = msg.recipientIdentityType;
   }
 
-  const message = SignalMessageType.create(payload);
-  return new Uint8Array(SignalMessageType.encode(message).finish());
+  const message = SignalProtocolMessageType.create(payload);
+  return new Uint8Array(SignalProtocolMessageType.encode(message).finish());
 }
 
 /**
- * Decode a SignalMessage from protobuf bytes.
+ * Decode a SignalProtocolMessage from protobuf bytes.
  *
  * Handles unknown fields gracefully (skips them) for forward compatibility.
  * Expects raw protobuf bytes — strip the version byte and MAC first using
- * `parseSignalMessageEnvelope()` from `envelope.ts`.
+ * `parseSignalProtocolMessageEnvelope()` from `envelope.ts`.
  *
  * @param bytes - Protobuf-encoded bytes (no version byte or MAC)
  * @returns Decoded message fields
  */
-export function decodeSignalMessage(bytes: Uint8Array): SignalMessageFields {
-  assertWireMessageSize(bytes, 'SignalMessage');
-  const decoded = SignalMessageType.decode(bytes);
-  const message = SignalMessageType.toObject(decoded, {
+export function decodeSignalProtocolMessage(bytes: Uint8Array): SignalProtocolMessageFields {
+  assertWireMessageSize(bytes, 'SignalProtocolMessage');
+  const decoded = SignalProtocolMessageType.decode(bytes);
+  const message = SignalProtocolMessageType.toObject(decoded, {
     defaults: false,
     bytes: Uint8Array,
   }) as {
@@ -333,10 +333,10 @@ export function decodeSignalMessage(bytes: Uint8Array): SignalMessageFields {
     throw new Error('Missing required field: addresses');
   }
   if (message.ratchetKey?.length !== 33) {
-    throw new Error('SignalMessage ratchetKey must contain exactly 33 bytes');
+    throw new Error('SignalProtocolMessage ratchetKey must contain exactly 33 bytes');
   }
   if (!message.ciphertext?.length) {
-    throw new Error('SignalMessage ciphertext must not be empty');
+    throw new Error('SignalProtocolMessage ciphertext must not be empty');
   }
 
   if (
@@ -344,7 +344,7 @@ export function decodeSignalMessage(bytes: Uint8Array): SignalMessageFields {
     message.recipientIdentityType !== 1 &&
     message.recipientIdentityType !== 2
   ) {
-    throw new Error('SignalMessage recipientIdentityType must be ACI=1 or PNI=2');
+    throw new Error('SignalProtocolMessage recipientIdentityType must be ACI=1 or PNI=2');
   }
 
   return {
@@ -359,15 +359,15 @@ export function decodeSignalMessage(bytes: Uint8Array): SignalMessageFields {
 }
 
 // ============================================================================
-// PreKeySignalMessage
+// PreKeySignalProtocolMessage
 // ============================================================================
 
 /**
- * PreKeySignalMessage fields for protobuf encoding.
+ * PreKeySignalProtocolMessage fields for protobuf encoding.
  *
- * Maps the base PreKeySignalMessage fields plus SDK extension fields 100-102.
+ * Maps the base PreKeySignalProtocolMessage fields plus SDK extension fields 100-102.
  *
- * The `message` field (4) carries the **entire framed SignalMessage** including
+ * The `message` field (4) carries the **entire framed SignalProtocolMessage** including
  * version byte and MAC.
  *
  * NOTE: TS interface field names use ec/kem naming convention, which differs
@@ -377,14 +377,14 @@ export function decodeSignalMessage(bytes: Uint8Array): SignalMessageFields {
  *   kemLastResortPreKeyId  ↔ wire: kyberPreKeyId (field 7)
  *   kemLastResortCiphertext ↔ wire: kyberCiphertext (field 8)
  */
-export interface PreKeySignalMessageFields {
+export interface PreKeySignalProtocolMessageFields {
   /** EC one-time prekey ID used for this session (wire: oneTimePreKeyId, field 1, optional) */
   ecOneTimePreKeyId?: number;
   /** Ephemeral base key from the initiator (field 2) */
   baseKey: Uint8Array;
   /** Sender's canonical 67-byte CompositeIdentityV1 (field 3). */
   identityKey: Uint8Array;
-  /** Entire framed SignalMessage: version_byte + protobuf + MAC (field 4) */
+  /** Entire framed SignalProtocolMessage: version_byte + protobuf + MAC (field 4) */
   message: Uint8Array;
   /** Sender's registration ID (field 5) */
   registrationId: number;
@@ -403,20 +403,20 @@ export interface PreKeySignalMessageFields {
 }
 
 /**
- * Encode a PreKeySignalMessage to protobuf bytes.
+ * Encode a PreKeySignalProtocolMessage to protobuf bytes.
  *
  * Fields 1-8 are the base protobuf fields; 100-102 are SDK extensions.
  *
  * This produces the **protobuf bytes only** — no version byte.
- * Use `framePreKeySignalMessage()` from `envelope.ts` for the complete wire format.
+ * Use `framePreKeySignalProtocolMessage()` from `envelope.ts` for the complete wire format.
  *
  * @param msg - PreKey message fields to encode
  * @returns Protobuf-encoded bytes (no framing)
  *
  */
-export function encodePreKeySignalMessage(msg: PreKeySignalMessageFields): Uint8Array {
+export function encodePreKeySignalProtocolMessage(msg: PreKeySignalProtocolMessageFields): Uint8Array {
   if (msg.recipientIdentityType !== 1 && msg.recipientIdentityType !== 2) {
-    throw new Error('PreKeySignalMessage recipientIdentityType must be ACI=1 or PNI=2');
+    throw new Error('PreKeySignalProtocolMessage recipientIdentityType must be ACI=1 or PNI=2');
   }
   // Map TS interface names → proto wire field names
   const payload: Record<string, unknown> = {
@@ -444,28 +444,28 @@ export function encodePreKeySignalMessage(msg: PreKeySignalMessageFields): Uint8
     payload.kemOneTimeCiphertext = msg.kemOneTimeCiphertext;
   }
 
-  const message = PreKeySignalMessageType.create(payload);
-  return new Uint8Array(PreKeySignalMessageType.encode(message).finish());
+  const message = PreKeySignalProtocolMessageType.create(payload);
+  return new Uint8Array(PreKeySignalProtocolMessageType.encode(message).finish());
 }
 
 /**
- * Decode a PreKeySignalMessage from protobuf bytes.
+ * Decode a PreKeySignalProtocolMessage from protobuf bytes.
  *
  * Handles unknown fields gracefully (skips them) for forward compatibility.
  * Expects raw protobuf bytes — strip the version byte first using
- * `parsePreKeySignalMessageEnvelope()` from `envelope.ts`.
+ * `parsePreKeySignalProtocolMessageEnvelope()` from `envelope.ts`.
  *
  * @param bytes - Protobuf-encoded bytes (no version byte)
  * @returns Decoded PreKey message fields
  */
-export function decodePreKeySignalMessage(bytes: Uint8Array): PreKeySignalMessageFields {
-  assertWireMessageSize(bytes, 'PreKeySignalMessage');
-  const decoded = PreKeySignalMessageType.decode(bytes);
+export function decodePreKeySignalProtocolMessage(bytes: Uint8Array): PreKeySignalProtocolMessageFields {
+  assertWireMessageSize(bytes, 'PreKeySignalProtocolMessage');
+  const decoded = PreKeySignalProtocolMessageType.decode(bytes);
   // Use toObject with defaults:false so that absent optional fields are omitted
   // (undefined) while present fields retain their value — including 0.
   // Proto2 optional presence makes value 0 a valid key ID, distinct
   // from "field not set".
-  const wireMessage = PreKeySignalMessageType.toObject(decoded, {
+  const wireMessage = PreKeySignalProtocolMessageType.toObject(decoded, {
     defaults: false,
     bytes: Uint8Array,
   }) as {
@@ -483,13 +483,13 @@ export function decodePreKeySignalMessage(bytes: Uint8Array): PreKeySignalMessag
   };
 
   if (wireMessage.baseKey?.length !== 33) {
-    throw new Error('PreKeySignalMessage baseKey must contain exactly 33 bytes');
+    throw new Error('PreKeySignalProtocolMessage baseKey must contain exactly 33 bytes');
   }
   if (wireMessage.identityKey?.length !== 67) {
-    throw new Error('PreKeySignalMessage identityKey must contain exactly 67 bytes');
+    throw new Error('PreKeySignalProtocolMessage identityKey must contain exactly 67 bytes');
   }
   if (!wireMessage.message?.length) {
-    throw new Error('PreKeySignalMessage message must not be empty');
+    throw new Error('PreKeySignalProtocolMessage message must not be empty');
   }
   if (wireMessage.registrationId === undefined) {
     throw new Error('Missing required field: registrationId');
@@ -501,11 +501,11 @@ export function decodePreKeySignalMessage(bytes: Uint8Array): PreKeySignalMessag
     wireMessage.recipientIdentityType !== 1 &&
     wireMessage.recipientIdentityType !== 2
   ) {
-    throw new Error('PreKeySignalMessage recipientIdentityType must be ACI=1 or PNI=2');
+    throw new Error('PreKeySignalProtocolMessage recipientIdentityType must be ACI=1 or PNI=2');
   }
 
   // Map proto wire names → TS interface names
-  const result: PreKeySignalMessageFields = {
+  const result: PreKeySignalProtocolMessageFields = {
     baseKey: new Uint8Array(wireMessage.baseKey),
     identityKey: new Uint8Array(wireMessage.identityKey),
     message: new Uint8Array(wireMessage.message),

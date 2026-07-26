@@ -4,7 +4,7 @@
  * This module exposes the stable file-transfer primitives that real app
  * integrations need when they own download, cache, and local file lifecycle.
  *
- * Use this alongside `SignalRemoteObjectStore` implementations for the common
+ * Use this alongside `SignalProtocolRemoteObjectStore` implementations for the common
  * two-layer attachment flow:
  * 1. Encrypt file bytes with streaming AEAD
  * 2. Upload ciphertext through remote object storage

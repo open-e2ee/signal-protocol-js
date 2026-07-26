@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / SignalBlockingMirror
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolBlockingMirror
 
-# Interface: SignalBlockingMirror
+# Interface: SignalProtocolBlockingMirror
 
 Optional app/backend mirror for local block changes.
 

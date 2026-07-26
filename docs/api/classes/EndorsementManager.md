@@ -24,7 +24,7 @@
 
 ##### logger?
 
-`Required`\<[`ILogger`](../interfaces/ILogger.md)\> = `defaultSignalLogger`
+`Required`\<[`ILogger`](../interfaces/ILogger.md)\> = `defaultSignalProtocolLogger`
 
 #### Returns
 

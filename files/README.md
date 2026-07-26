@@ -29,7 +29,7 @@ const plaintext = await streamingDecrypt(
 For a complete attachment workflow with upload brokering, retries, pointer
 validation, and cleanup, use the
 [`media`](../media/README.md) module with a
-[`SignalRemoteObjectStore`](../remote/object-store/README.md).
+[`SignalProtocolRemoteObjectStore`](../remote/object-store/README.md).
 
 Applications remain responsible for file-system permissions, cache lifetime,
 content rendering, and securely disposing of decrypted temporary files.

@@ -57,7 +57,7 @@
  */
 
 import AsyncLock from 'async-lock';
-import { defaultSignalLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
 import type {
   Ciphertext,
   IdentityKeyPair,
@@ -69,7 +69,7 @@ import type {
   EcSignedPreKey,
 } from '../../keys';
 import type {
-  ISignalLocalStore,
+  ISignalProtocolLocalStore,
   ISignalProtocolManager,
   PreKeyMessage,
   SessionState,
@@ -122,7 +122,7 @@ import { SessionBuilder, SessionCipher } from '../session';
  *
  * @example Dependency injection for custom composition
  * ```typescript
- * const mockStorage = new MockSignalStore();
+ * const mockStorage = new MockSignalProtocolStore();
  * const manager = new SignalProtocolManager(mockStorage);
  * await manager.initialize();
  * ```
@@ -132,7 +132,7 @@ import { SessionBuilder, SessionCipher } from '../session';
  */
 export {};
 export class SignalProtocolManager implements ISignalProtocolManager {
-  private keyStorage: ISignalLocalStore;
+  private keyStorage: ISignalProtocolLocalStore;
   private initialized = false;
   private readonly logger: Required<ILogger>;
 
@@ -176,9 +176,9 @@ export class SignalProtocolManager implements ISignalProtocolManager {
    * @param protocolStrategy - Optional protocol strategy for PQXDH/SPQR behavior.
    */
   constructor(
-    storage: ISignalLocalStore,
+    storage: ISignalProtocolLocalStore,
     protocolStrategy?: ProtocolStrategyConfig,
-    logger: Required<ILogger> = defaultSignalLogger
+    logger: Required<ILogger> = defaultSignalProtocolLogger
   ) {
     this.logger = logger;
     this.keyStorage = storage;
@@ -698,7 +698,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
     });
 
     // Step 1: Select the explicit recipient identity namespace. The wire value
-    // is duplicated inside the MAC-authenticated SignalMessage, so key-ID
+    // is duplicated inside the MAC-authenticated SignalProtocolMessage, so key-ID
     // collisions cannot redirect an ACI message into the PNI store or vice versa.
     const usedSignedPreKeyId = prekeyMessage.usedSignedPreKeyId;
     const identityType = prekeyMessage.recipientIdentityType;

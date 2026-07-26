@@ -50,7 +50,7 @@ Adapters declare their runtime requirements as optional peer dependencies, so in
 
 Two clients, one process, no account and no server. The relay holds the envelope; only Bob's device turns it back into text.
 
-<!-- mock-snippet:run readme-quick-start -->
+<!-- mock-snippet:run readme-quick-start expect="alice: hello" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";

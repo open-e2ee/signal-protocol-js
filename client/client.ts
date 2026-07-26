@@ -45,15 +45,15 @@
  */
 
 import AsyncLock from 'async-lock';
-import type { ISignalRelayServer, Envelope, Unsubscribe } from '../remote/relay/types';
-import type { SignalRemoteObjectStore } from '../remote/object-store';
+import type { ISignalProtocolRelayServer, Envelope, Unsubscribe } from '../remote/relay/types';
+import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import { SignalProtocolManager } from '../internal/manager';
 import { SesameManager } from '../internal/sesame';
 import type { Ciphertext, IdentityType, PreKeyBundle, PublicKey } from '../keys';
 import { createCompositeIdentityV1 } from '../keys/identity';
 import type {
   ISignalProtocolClient,
-  ISignalLocalStore,
+  ISignalProtocolLocalStore,
   ISignalProtocolManager,
   Base64,
 } from '../types';
@@ -68,24 +68,24 @@ import {
   type SignalProtocolClientConfig,
 } from './config';
 import type { ISesameManager, SesameMessage, SesameStats } from '../internal/sesame/types';
-import { resolveSignalLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../logger';
 import {
   SenderKeyManager,
   type SenderKeyDistributionMessage,
 } from '../internal/protocol/sender-keys';
 import {
   type BlockedRecipientsSyncInput,
-  createDefaultSignalContentAdapter,
+  createDefaultSignalProtocolContentAdapter,
   type MediaAttachmentDeleteSyncInput,
   type ParsedReceiptContent,
   type ParsedTypingContent,
   type ReadSyncEntryInput,
   type RecipientUsernameSyncInput,
-  type SignalContentAdapter,
+  type SignalProtocolContentAdapter,
   type ViewOnceOpenSyncInput,
 } from './content-adapter';
-// Note: group utilities (isGroupId, extractGroupId, createGroupId) are used by SignalServiceCipher
-import { SignalServiceCipher, sortEnvelopesForDecryption } from './signal-service-cipher';
+// Note: group utilities (isGroupId, extractGroupId, createGroupId) are used by SignalProtocolServiceCipher
+import { SignalProtocolServiceCipher, sortEnvelopesForDecryption } from './signal-service-cipher';
 import { establishMultiDeviceSessions } from '../internal/sesame/device-registry';
 import { isRetryableDecryptionError } from './retry-utils';
 import { MESSAGE_RECORD_TTL_MS } from './constants';
@@ -170,14 +170,14 @@ function isDataMessage(
  */
 export class SignalProtocolClient implements ISignalProtocolClient {
   private readonly manager: ISignalProtocolManager;
-  private readonly _storage: ISignalLocalStore;
-  private readonly relay?: ISignalRelayServer;
-  private readonly remoteObjectStore?: SignalRemoteObjectStore;
+  private readonly _storage: ISignalProtocolLocalStore;
+  private readonly relay?: ISignalProtocolRelayServer;
+  private readonly remoteObjectStore?: SignalProtocolRemoteObjectStore;
   private readonly config: SignalProtocolClientConfig;
   private readonly _userId: string;
   public readonly logger: Required<ILogger>;
   private hooks: SignalProtocolClientHooks;
-  private readonly contentAdapter: SignalContentAdapter;
+  private readonly contentAdapter: SignalProtocolContentAdapter;
 
   // Multi-device support (Phase 2)
   public readonly deviceId: number; // 1 = primary, 2-5 = linked devices
@@ -199,7 +199,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   private groupsV2Manager?: GroupsV2Manager;
 
   // Cipher coordination (encrypts/decrypts, routes to appropriate cipher)
-  private readonly cipher: SignalServiceCipher;
+  private readonly cipher: SignalProtocolServiceCipher;
 
   /**
    * Durable media job facade backed by the configured Signal Protocol local store.
@@ -255,9 +255,9 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     this._userId = userId;
     this.deviceId = deviceId;
     this.config = config;
-    this.logger = resolveSignalLogger(config.logger);
+    this.logger = resolveSignalProtocolLogger(config.logger);
     this.hooks = config.hooks || {};
-    this.contentAdapter = config.contentAdapter ?? createDefaultSignalContentAdapter();
+    this.contentAdapter = config.contentAdapter ?? createDefaultSignalProtocolContentAdapter();
 
     // Dependency injection: use the provided relay adapter when configured.
     this.relay = config.relay;
@@ -271,7 +271,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     }
     this._storage = config.storage;
     (
-      this._storage as ISignalLocalStore & {
+      this._storage as ISignalProtocolLocalStore & {
         setLogger?: (logger?: ILogger) => void;
       }
     ).setLogger?.(this.logger);
@@ -335,7 +335,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     }
 
     // Initialize cipher for encrypt/decrypt coordination
-    this.cipher = new SignalServiceCipher(
+    this.cipher = new SignalProtocolServiceCipher(
       this._userId,
       deviceId,
       this.sesameManager,

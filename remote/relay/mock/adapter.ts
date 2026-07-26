@@ -1,7 +1,7 @@
 /**
  * Mock Signal Protocol Relay Server
  *
- * In-memory implementation of ISignalRelayServer for local development.
+ * In-memory implementation of ISignalProtocolRelayServer for local development.
  * Simulates a backend server without any network calls.
  *
  * WARNING: All data is lost when the adapter is destroyed.
@@ -9,7 +9,7 @@
  */
 
 import type {
-  ISignalRelayServer,
+  ISignalProtocolRelayServer,
   Envelope,
   SealedSenderAuth,
   DeviceInfo,
@@ -68,7 +68,7 @@ import {
   type MockRelayFailureOptions,
 } from './failures';
 
-export interface MockSignalRelayServerOptions {
+export interface MockSignalProtocolRelayServerOptions {
   failures?: MockRelayFailureOptions;
 }
 
@@ -90,7 +90,7 @@ function cloneRelayValue<T>(value: T): T {
  *
  * @example
  * ```typescript
- * const relay = new MockSignalRelayServer();
+ * const relay = new MockSignalProtocolRelayServer();
  *
  * // Register a device
  * const deviceId = await relay.registerDevice('alice', { encryptedDeviceName: new ArrayBuffer(0) });
@@ -105,7 +105,7 @@ function cloneRelayValue<T>(value: T): T {
 /** Canonically encoded account identity. */
 export {};
 
-export class MockSignalRelayServer implements ISignalRelayServer {
+export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer {
   readonly failures: MockRelayFailureController;
 
   // Device registry
@@ -187,7 +187,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
   // Server secret params for signing and ZK auth (deterministic local seed)
   private serverSecretParams: ServerSecretParams = generateServerSecretParams(new Uint8Array(32));
 
-  constructor(options: MockSignalRelayServerOptions = {}) {
+  constructor(options: MockSignalProtocolRelayServerOptions = {}) {
     this.failures = new MockRelayFailureController(
       options.failures,
       (targetKey, envelope) => this.deliverEnvelope(targetKey, envelope),
@@ -280,14 +280,18 @@ export class MockSignalRelayServer implements ISignalRelayServer {
   ): Unsubscribe {
     const key = `${userId}:${deviceId}`;
     const subscribers = this.subscriptions.get(key) || [];
+    const isFirstSubscriber = subscribers.length === 0;
     subscribers.push(onEnvelope);
     this.subscriptions.set(key, subscribers);
 
     // Deliver any pending messages only to the newly added subscriber.
     if (!this.failures.isDisconnected(key)) {
-      this.failures.discardReordered(key);
+      if (isFirstSubscriber) {
+        this.failures.discardReordered(key);
+      }
       const pending = this.pendingMessages.get(key) || [];
       for (const envelope of pending) {
+        if (this.failures.isReorderBuffered(key, envelope.id)) continue;
         onEnvelope(cloneRelayValue(envelope));
       }
     }
@@ -640,7 +644,7 @@ export class MockSignalRelayServer implements ISignalRelayServer {
     // This is SEPARATE from the one-time KEM prekeys
     const kemLastResortPreKey = this.kemLastResortPreKeys.get(deviceKey) || null;
 
-    // Cast to branded types - ISignalRelayServer returns PreKeyBundle with branded types
+    // Cast to branded types - ISignalProtocolRelayServer returns PreKeyBundle with branded types
     // Adapters handle the casting internally so callers don't need to
     return cloneRelayValue({
       registrationId,

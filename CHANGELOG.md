@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.1.0-alpha.6
+
+- **Breaking (key derivation): the X3DH and PQXDH info strings now name this
+  application and this KEM.** `X3DH_INFO_DEFAULT` becomes `OpenE2EE` and
+  `PQXDH_INFO_DEFAULT` becomes `OpenE2EE_X25519_SHA-256_ML-KEM-1024`; they were
+  `WhisperText` and `WhisperText_X25519_SHA-256_CRYSTALS-KYBER-1024`. Both
+  parameters were wrong. PQXDH §2.2 requires the info string to name the
+  `pqkem` actually in use, and the SDK runs ML-KEM-1024 (FIPS 203), not
+  round-3 CRYSTALS-Kyber — so two implementations feeding an identical label
+  derived *different* shared secrets, which is precisely what the info string
+  exists to prevent. And §2.1 defines `info` as an identifier of the
+  application deriving the key; this SDK is not Signal Messenger. **Sessions
+  established under the old labels derive a different `SK` and cannot be
+  continued** — clear session state or re-establish. Nothing else about the
+  derivation changed. An application that needs `libsignal`'s known-answer
+  vectors can still set `protocolStrategy.keyExchangeInfoString` to the old
+  label explicitly. `docs/DEVIATIONS.md` §2.1 recorded this as an open
+  specification violation and now records it as fixed.
+- **Breaking (naming): every remaining exported identifier spelled `Signal`
+  now spells `SignalProtocol`.** "Signal" alone names a product and an
+  organization this project has no affiliation with; the specifications it
+  implements are the Signal Protocol, and the exported names now say so. This
+  renames roughly ninety exports — `MockSignalStore` to
+  `MockSignalProtocolStore`, `ISignalLocalStore` to `ISignalProtocolLocalStore`,
+  `SignalServiceCipher` to `SignalProtocolServiceCipher`, `defaultSignalLogger`
+  to `defaultSignalProtocolLogger`, `SignalMessage` and `PreKeySignalMessage` to
+  `SignalProtocolMessage` and `PreKeySignalProtocolMessage`, and so on
+  throughout. No aliases are provided. Nothing on the wire changes: the message
+  type names were protobuf type labels, which protobuf does not serialize, and
+  every domain-separation and key-derivation constant is untouched — including
+  the `Signal_ZKGroup_*`, `Signal_ZKCredential_*`, and `Signal_PQCKA_*`
+  families, which are byte inputs to key derivation rather than names.
+- The public-surface guard now asserts that each retired name stays absent, and
+  is typechecked in CI. It is entirely type-level, so running it under jest —
+  which transpiles without typechecking — could never have failed; only `tsc`
+  can catch a reintroduced name.
+- **Breaking (`SessionEstablisher`): `failedDeviceErrors` is now required.** The
+  exported `SessionEstablisher` type declared it optional, so an implementation
+  could return a result that said nothing about which devices failed and why.
+  Every implementation must now return the array; return `[]` when nothing
+  failed. Implementations that already populate it need no change.
+- Changed device establishment to surface a failing device's own error instead
+  of a generic wrapper, and to route it through the retry classifier so a
+  transient failure is retried rather than failing the whole send on the first
+  attempt.
+- Fixed the retry classifier treating permanent session-establishment failures
+  as retryable. `UNTRUSTED_IDENTITY`, `SIGNATURE_VERIFICATION_FAILED`,
+  `RECIPIENT_NOT_REGISTERED`, and `PREKEY_FETCH_RATE_LIMITED` now fail
+  immediately. They reach the classifier only because of the change above;
+  retrying a security event delays it reaching the caller, and retrying a
+  prekey-drainage rate limit aggravates the condition it reports.
+- Fixed the exported in-memory relay delivering reorder-buffered envelopes to a
+  first subscriber, which duplicated messages that reordering had already held
+  back, and fixed reorder state being lost when a subscriber was replaced.
+
 ## 0.1.0-alpha.5
 
 - **Breaking (wording and one error message): "Signal" is no longer used as a
@@ -26,7 +81,7 @@
   production-contract `Maximum devices limit reached` error. Removed and
   disabled devices are excluded from active fanout, and unknown users now have
   no invented device.
-- Fixed `MockSignalRelayServer.clear()` retaining idempotency receipts, which
+- Fixed `MockSignalProtocolRelayServer.clear()` retaining idempotency receipts, which
   made a reused `clientMessageId` look already accepted after reset.
 - Fixed the exported mock store and relay to structured-clone mutable values at
   every persistence/API boundary, matching serialization ownership in durable

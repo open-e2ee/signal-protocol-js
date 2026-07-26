@@ -9,7 +9,7 @@
  */
 
 import type {
-  ISignalLocalStore,
+  ISignalProtocolLocalStore,
   MessageRecord,
   SkippedSenderMessageKey,
   SessionTrustCommit,
@@ -47,7 +47,7 @@ import {
   type MockStoreFailureOptions,
 } from './failures';
 
-export interface MockSignalStoreOptions {
+export interface MockSignalProtocolStoreOptions {
   failures?: MockStoreFailureOptions;
 }
 
@@ -70,7 +70,7 @@ function cloneStored<T>(value: T): T {
  *
  * @example
  * ```typescript
- * const storage = new MockSignalStore();
+ * const storage = new MockSignalProtocolStore();
  *
  * // Use like any other storage adapter
  * await storage.storeIdentityKey(keyPair);
@@ -78,7 +78,7 @@ function cloneStored<T>(value: T): T {
  * ```
  */
 export {};
-export class MockSignalStore implements ISignalLocalStore {
+export class MockSignalProtocolStore implements ISignalProtocolLocalStore {
   readonly failures: MockStoreFailureController;
 
   // Identity keys and registration IDs keyed by identityType
@@ -118,7 +118,7 @@ export class MockSignalStore implements ISignalLocalStore {
   // Metadata storage
   private readonly _metadata = new Map<string, string>();
 
-  constructor(options: MockSignalStoreOptions = {}) {
+  constructor(options: MockSignalProtocolStoreOptions = {}) {
     this.failures = new MockStoreFailureController(options.failures);
   }
 
@@ -486,7 +486,7 @@ export class MockSignalStore implements ISignalLocalStore {
 
   /**
    * Get session record
-   * Returns SessionRecord format for ISignalLocalStore interface compatibility
+   * Returns SessionRecord format for ISignalProtocolLocalStore interface compatibility
    */
   async getSessionRecord(address: ProtocolAddress): Promise<SessionRecord | null> {
     const key = this.getAddressKey(address);

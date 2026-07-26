@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / SignalRemoteObjectStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolRemoteObjectStore
 
-# Interface: SignalRemoteObjectStore
+# Interface: SignalProtocolRemoteObjectStore
 
 Brokered remote storage for encrypted byte objects.
 

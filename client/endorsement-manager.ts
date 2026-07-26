@@ -32,7 +32,7 @@ import {
 import type { ServerRootPublicKey } from '../internal/protocol/zk/credentials/endorsements';
 import type { GroupSecretParams } from '../internal/protocol/zk/groups/group-params';
 import type { ServiceId } from '../internal/protocol/zk/groups/uid-struct';
-import { defaultSignalLogger, type ILogger } from '../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../logger';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -64,7 +64,7 @@ export class EndorsementManager {
   constructor(
     private readonly cache: EndorsementCacheStore,
     private readonly endorsementRootPublicKey: ServerRootPublicKey,
-    private readonly logger: Required<ILogger> = defaultSignalLogger
+    private readonly logger: Required<ILogger> = defaultSignalProtocolLogger
   ) {}
 
   /**

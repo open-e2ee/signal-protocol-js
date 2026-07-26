@@ -91,7 +91,7 @@
  * @see https://signal.org/docs/specifications/doubleratchet/#kdf-hybrid - KDF_HYBRID definition
  */
 
-import { defaultSignalLogger, type ILogger } from '../../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
 import { kdfHybrid, secureZeroBytes } from '../../crypto';
 import {
   performDHRatchetStep,
@@ -151,7 +151,7 @@ export interface TripleRatchetKeyResult {
 /**
  * Triple Ratchet encrypt result
  *
- * Field names map directly to SignalMessage wire fields.
+ * Field names map directly to SignalProtocolMessage wire fields.
  */
 export interface TripleRatchetEncryptResult {
   /** Ratchet public key (from EC ratchet, proto: ratchet_key, field 1) */
@@ -176,7 +176,7 @@ export interface TripleRatchetEncryptResult {
  * Triple Ratchet decrypt input
  *
  * Uses Section 3 variant (plaintext headers + MAC authentication).
- * Field names map directly to SignalMessage wire fields.
+ * Field names map directly to SignalProtocolMessage wire fields.
  */
 export interface TripleRatchetDecryptInput {
   /** Ratchet public key from message (proto: ratchet_key, field 1) */
@@ -212,7 +212,7 @@ export async function deriveTripleRatchetSendKey(
   ecState: DoubleRatchetState,
   spqrState: SPQRState,
   versionNegotiation?: VersionNegotiationState,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<TripleRatchetKeyResult> {
   logger.debug('Triple Ratchet: Deriving sending key', {
     category: 'E2EE',
@@ -289,7 +289,7 @@ export async function deriveTripleRatchetReceiveKey(
   pqEpoch: number,
   pqIndex: number,
   versionNegotiation?: VersionNegotiationState,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<TripleRatchetKeyResult> {
   logger.debug('Triple Ratchet: Deriving receiving key', {
     category: 'E2EE',
@@ -361,7 +361,7 @@ export async function performTripleRatchetStep(
   receivedDHPublicKey: string,
   _receivedKyberCiphertext?: Uint8Array,
   _versionNegotiation?: VersionNegotiationState,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<void> {
   logger.breadcrumb('Triple Ratchet step (EC DH ratchet)', {
     category: 'E2EE',

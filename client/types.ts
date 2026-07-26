@@ -5,14 +5,14 @@
  * and the extracted operation modules.
  */
 
-import type { ISignalRelayServer } from '../remote/relay/types';
-import type { SignalRemoteObjectStore } from '../remote/object-store';
-import type { ISignalLocalStore, ISignalProtocolManager } from '../types';
+import type { ISignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
+import type { ISignalProtocolLocalStore, ISignalProtocolManager } from '../types';
 import type { SignalProtocolClientConfig } from './config';
 import type { ISesameManager } from '../internal/sesame/types';
 import type { SignalProtocolClientHooks } from './event-hooks';
 import { ContentHint } from '../types/messages';
-import type { SignalContentAdapter } from './content-adapter';
+import type { SignalProtocolContentAdapter } from './content-adapter';
 import type { ILogger } from '../logger';
 import type {
   MediaAttachmentCheckpointCallback,
@@ -44,13 +44,13 @@ export interface SignalProtocolClientContext {
   readonly manager: ISignalProtocolManager;
 
   /** Key and session storage */
-  readonly storage: ISignalLocalStore;
+  readonly storage: ISignalProtocolLocalStore;
 
   /** Optional relay server for server sync */
-  readonly relay?: ISignalRelayServer;
+  readonly relay?: ISignalProtocolRelayServer;
 
   /** Optional brokered remote object storage for encrypted attachments. */
-  readonly remoteObjectStore?: SignalRemoteObjectStore;
+  readonly remoteObjectStore?: SignalProtocolRemoteObjectStore;
 
   /** Client configuration */
   readonly config: SignalProtocolClientConfig;
@@ -65,7 +65,7 @@ export interface SignalProtocolClientContext {
   readonly sesameManager: ISesameManager;
 
   /** App-provided content adapter */
-  readonly contentAdapter: SignalContentAdapter;
+  readonly contentAdapter: SignalProtocolContentAdapter;
 }
 
 /**

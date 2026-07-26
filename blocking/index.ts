@@ -1,8 +1,8 @@
 export {};
-export { SignalBlockingManager, type SignalBlockingManagerOptions } from './manager';
+export { SignalProtocolBlockingManager, type SignalProtocolBlockingManagerOptions } from './manager';
 export type {
   BlockedRecipientEntry,
-  SignalBlockingStore,
-  SignalBlockingMirror,
-  SignalBlockingHooks,
+  SignalProtocolBlockingStore,
+  SignalProtocolBlockingMirror,
+  SignalProtocolBlockingHooks,
 } from './types';

@@ -8,7 +8,7 @@ import type {
   RemoteObjectDownloadRequest,
   RemoteObjectUpload,
   RemoteObjectUploadRequest,
-  SignalRemoteObjectStore,
+  SignalProtocolRemoteObjectStore,
 } from '../types';
 import {
   normalizeDownload,
@@ -69,7 +69,7 @@ const DEFAULT_MAX_SIZE_BYTES = 50 * 1024 * 1024;
  * application owns the component, authentication, authorization, and the
  * public wrapper functions represented by `ConvexR2ObjectStoreApi`.
  */
-export class ConvexR2ObjectStore implements SignalRemoteObjectStore {
+export class ConvexR2ObjectStore implements SignalProtocolRemoteObjectStore {
   private readonly convex: ConvexObjectStoreClient;
   private readonly api: ConvexR2ObjectStoreApi;
   private readonly maxSizeBytes: number;

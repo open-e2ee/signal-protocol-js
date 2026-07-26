@@ -12,30 +12,30 @@ policy.
 
 ```text
 SignalProtocolClient
-├── ISignalLocalStore        device-local protocol state
-├── ISignalRelayServer       authenticated device, prekey, and envelope service
-├── SignalRemoteObjectStore  brokered encrypted-object operations (optional)
+├── ISignalProtocolLocalStore        device-local protocol state
+├── ISignalProtocolRelayServer       authenticated device, prekey, and envelope service
+├── SignalProtocolRemoteObjectStore  brokered encrypted-object operations (optional)
 ├── media callbacks          application-owned attachment bytes and caches
 └── lifecycle hooks          application reactions and observability
 
 Local-store bootstrap
-└── ISignalLocalSecretVault  small platform-managed bootstrap secrets
+└── ISignalProtocolLocalSecretVault  small platform-managed bootstrap secrets
 ```
 
 The interfaces are public contracts, but they do not make an implementation
 secure by themselves. Each adapter must preserve the ownership and atomicity
 requirements described below.
 
-## `ISignalLocalStore`
+## `ISignalProtocolLocalStore`
 
-`ISignalLocalStore` persists the current device's identities, prekeys, sessions,
+`ISignalProtocolLocalStore` persists the current device's identities, prekeys, sessions,
 sender keys, contact trust, retry records, and operational metadata.
 
 ```ts
-import type { ISignalLocalStore } from "@open-e2ee/signal-protocol-sdk/local/store";
+import type { ISignalProtocolLocalStore } from "@open-e2ee/signal-protocol-sdk/local/store";
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 
-const storage: ISignalLocalStore = appProtocolStore;
+const storage: ISignalProtocolLocalStore = appProtocolStore;
 
 const client = await createSignalProtocolClient({
   identity: { userId },
@@ -56,16 +56,16 @@ A production implementation must:
 Available adapters and their status are documented in the
 [local-store guide](../local/store/README.md).
 
-## `ISignalLocalSecretVault`
+## `ISignalProtocolLocalSecretVault`
 
-`ISignalLocalSecretVault` is a deliberately small interface for bootstrap
+`ISignalProtocolLocalSecretVault` is a deliberately small interface for bootstrap
 secrets that must live outside the main local store, such as a database
 encryption key.
 
 ```ts
-import type { ISignalLocalSecretVault } from "@open-e2ee/signal-protocol-sdk";
+import type { ISignalProtocolLocalSecretVault } from "@open-e2ee/signal-protocol-sdk";
 
-const vault: ISignalLocalSecretVault = {
+const vault: ISignalProtocolLocalSecretVault = {
   getSecret: (name) => platformSecrets.getBytes(name),
   setSecret: (name, value) => platformSecrets.setBytes(name, value),
   deleteSecret: (name) => platformSecrets.delete(name),
@@ -77,23 +77,23 @@ device migration, uninstall persistence, and deletion behavior depend on the
 selected platform service and host configuration. See the
 [secret-vault guide](../local/vault/README.md).
 
-## `ISignalRelayServer`
+## `ISignalProtocolRelayServer`
 
-`ISignalRelayServer` represents the authenticated application backend used for
+`ISignalProtocolRelayServer` represents the authenticated application backend used for
 device registration, account identity state, public prekeys, encrypted-envelope
 delivery, provisioning, key rotation, and encrypted group coordination.
 
 ```ts
-import type { ISignalRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
+import type { ISignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
 import {
   convexRelay,
-  type ConvexSignalRelayApi,
+  type ConvexSignalProtocolRelayApi,
 } from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
 import { api } from "../convex/_generated/api";
 
-const signalApi = api.signal satisfies ConvexSignalRelayApi;
+const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
 
-const relay: ISignalRelayServer = convexRelay({
+const relay: ISignalProtocolRelayServer = convexRelay({
   convex,
   api: signalApi,
   currentUserId: userId,
@@ -110,17 +110,17 @@ The relay stores public protocol material, ciphertext, and required routing
 metadata. It must not require device private keys or decrypted message content.
 See the [relay guide](../remote/relay/README.md).
 
-## `SignalRemoteObjectStore`
+## `SignalProtocolRemoteObjectStore`
 
-`SignalRemoteObjectStore` supplies short-lived upload and download operations
+`SignalProtocolRemoteObjectStore` supplies short-lived upload and download operations
 for already encrypted objects. It is provider-neutral and optional.
 
 ```ts
 import type {
-  SignalRemoteObjectStore,
+  SignalProtocolRemoteObjectStore,
 } from "@open-e2ee/signal-protocol-sdk/remote/object-store";
 
-const remoteObjectStore: SignalRemoteObjectStore = {
+const remoteObjectStore: SignalProtocolRemoteObjectStore = {
   createUpload: (request) => appObjectBroker.createUpload(request),
   createDownload: (request) => appObjectBroker.createDownload(request),
   completeUpload: (request) => appObjectBroker.completeUpload(request),

@@ -11,7 +11,7 @@
  *
  * @example
  * ```typescript
- * const storage = new IndexedDbSignalStore();
+ * const storage = new IndexedDbSignalProtocolStore();
  * await storage.initialize();
  *
  * // Store identity key
@@ -22,7 +22,7 @@
 import { openDB, IDBPDatabase, DBSchema } from 'idb';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 import type {
-  ISignalLocalStore,
+  ISignalProtocolLocalStore,
   MessageRecord,
   SkippedSenderMessageKey,
   SessionTrustCommit,
@@ -58,7 +58,7 @@ import { deserializeSessionRecord, serializeSessionRecord } from '../session-cod
  * IndexedDB schema for Signal Protocol storage
  */
 export {};
-interface SignalDBSchema extends DBSchema {
+interface SignalProtocolDBSchema extends DBSchema {
   // Metadata store - contains database key and registration ID
   metadata: {
     key: string;
@@ -194,14 +194,14 @@ type SerializedUserRecord = Omit<UserRecord, 'devices'> & {
 /**
  * Web storage adapter using IndexedDB and Web Crypto API
  *
- * Implements ISignalLocalStore for web browsers with:
+ * Implements ISignalProtocolLocalStore for web browsers with:
  * - IndexedDB for persistent storage
  * - Web Crypto API for AES-256-GCM encryption
  * - All sensitive data encrypted at rest
  * - TOFU (Trust On First Use) for contact verification
  */
-export class IndexedDbSignalStore implements ISignalLocalStore {
-  private db: IDBPDatabase<SignalDBSchema> | null = null;
+export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
+  private db: IDBPDatabase<SignalProtocolDBSchema> | null = null;
   private databaseKey: Uint8Array | null = null;
   private readonly dbName = 'signal-protocol-storage';
   private readonly dbVersion = 5; // v5 adds fail-closed contact revision CAS metadata
@@ -223,7 +223,7 @@ export class IndexedDbSignalStore implements ISignalLocalStore {
     }
 
     // Open database
-    this.db = await openDB<SignalDBSchema>(this.dbName, this.dbVersion, {
+    this.db = await openDB<SignalProtocolDBSchema>(this.dbName, this.dbVersion, {
       upgrade(db, oldVersion) {
         // Create metadata store
         if (!db.objectStoreNames.contains('metadata')) {
@@ -299,7 +299,7 @@ export class IndexedDbSignalStore implements ISignalLocalStore {
 
       // ⚠️ WARNING: Browser storage is vulnerable to XSS attacks
       console.warn(
-        '[IndexedDbSignalStore] Database encryption key stored in IndexedDB. ' +
+        '[IndexedDbSignalProtocolStore] Database encryption key stored in IndexedDB. ' +
           'Ensure Content Security Policy (CSP) is configured to mitigate XSS risks.'
       );
     }
@@ -313,7 +313,7 @@ export class IndexedDbSignalStore implements ISignalLocalStore {
    */
   async getDatabaseKey(): Promise<Uint8Array> {
     if (!this.databaseKey) {
-      throw new Error('IndexedDbSignalStore not initialized - call initialize() first');
+      throw new Error('IndexedDbSignalProtocolStore not initialized - call initialize() first');
     }
     return this.databaseKey;
   }
@@ -670,7 +670,7 @@ export class IndexedDbSignalStore implements ISignalLocalStore {
   // KEM One-Time PreKey Management (Per-Session Post-Quantum Forward Secrecy)
   // ============================================================================
   // NOTE: This adapter is for web browsers (IndexedDB).
-  // Expo apps should still prefer ExpoSignalStore for the native SQLite backend.
+  // Expo apps should still prefer ExpoSignalProtocolStore for the native SQLite backend.
 
   async storeKemOneTimePreKeys(
     prekeys: KemOneTimePreKey[],
@@ -965,7 +965,7 @@ export class IndexedDbSignalStore implements ISignalLocalStore {
    */
   private ensureInitialized(): void {
     if (!this.db || !this.databaseKey) {
-      throw new Error('IndexedDbSignalStore not initialized - call initialize() first');
+      throw new Error('IndexedDbSignalProtocolStore not initialized - call initialize() first');
     }
   }
 

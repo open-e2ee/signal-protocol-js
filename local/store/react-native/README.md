@@ -1,6 +1,6 @@
 # Bare React Native Store
 
-`ReactNativeSignalStore` implements `ISignalLocalStore` for bare React Native
+`ReactNativeSignalProtocolStore` implements `ISignalProtocolLocalStore` for bare React Native
 through an application-provided persistent key-value backend.
 
 ## Why it exists

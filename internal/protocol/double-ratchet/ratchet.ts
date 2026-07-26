@@ -43,7 +43,7 @@
  * ```
  */
 
-import { defaultSignalLogger, type ILogger } from '../../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
 import {
   generateECDHKeyPair,
   computeSharedSecret,
@@ -72,7 +72,7 @@ export interface RatchetKeyPair {
 /**
  * Message header (all plaintext in Section 3 variant)
  *
- * Field names map directly to SignalMessage wire fields:
+ * Field names map directly to SignalProtocolMessage wire fields:
  */
 export interface MessageHeader {
   /** Sender's current ratchet public key (proto: ratchet_key, field 1) */
@@ -241,7 +241,7 @@ export interface EncryptResult {
 /**
  * Input for decrypting a message
  *
- * Field names map directly to SignalMessage wire fields.
+ * Field names map directly to SignalProtocolMessage wire fields.
  */
 export interface DecryptInput {
   /** Sender's current ratchet public key (proto: ratchet_key, field 1) */
@@ -296,7 +296,7 @@ function validateDHPublicKey(dhPublicKeyB64: string): void {
 export async function performDHRatchetStep(
   state: DoubleRatchetState,
   receivedDHPublicKey: string,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<void> {
   // Validate received DH public key before any state changes
   validateDHPublicKey(receivedDHPublicKey);

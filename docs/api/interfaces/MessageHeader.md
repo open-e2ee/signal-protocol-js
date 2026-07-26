@@ -11,7 +11,7 @@ Double Ratchet message header
 Contains metadata needed for DH ratcheting and out-of-order message handling.
 This header is sent with every encrypted message.
 
-Field names reflect the SignalMessage wire fields:
+Field names reflect the SignalProtocolMessage wire fields:
 
 ## Properties
 

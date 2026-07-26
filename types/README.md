@@ -14,7 +14,7 @@ contracts they validate.
 
 ```ts
 import type {
-  ISignalLocalStore,
+  ISignalProtocolLocalStore,
   ISignalProtocolClient,
   SignalProtocolConfig,
 } from "@open-e2ee/signal-protocol-sdk/types";

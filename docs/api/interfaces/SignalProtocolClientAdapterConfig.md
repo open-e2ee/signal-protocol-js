@@ -23,7 +23,7 @@ Advanced protocol manager override for tests and specialized integrations.
 
 ### relay?
 
-> `optional` **relay?**: [`ISignalRelayServer`](ISignalRelayServer.md)
+> `optional` **relay?**: [`ISignalProtocolRelayServer`](ISignalProtocolRelayServer.md)
 
 Optional relay for server sync, prekeys, fanout, and subscriptions.
 
@@ -31,7 +31,7 @@ Optional relay for server sync, prekeys, fanout, and subscriptions.
 
 ### remoteObjectStore?
 
-> `optional` **remoteObjectStore?**: [`SignalRemoteObjectStore`](SignalRemoteObjectStore.md)
+> `optional` **remoteObjectStore?**: [`SignalProtocolRemoteObjectStore`](SignalProtocolRemoteObjectStore.md)
 
 Optional brokered remote object store for encrypted attachments.
 
@@ -39,6 +39,6 @@ Optional brokered remote object store for encrypted attachments.
 
 ### storage
 
-> **storage**: [`ISignalLocalStore`](ISignalLocalStore.md)
+> **storage**: [`ISignalProtocolLocalStore`](ISignalProtocolLocalStore.md)
 
 Required local protocol store for the current runtime.

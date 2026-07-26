@@ -77,7 +77,7 @@
  */
 
 import AsyncLock from 'async-lock';
-import { defaultSignalLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../types/protocol-config';
 import type { Ciphertext, IdentityType, PublicKey } from '../../keys';
 import {
@@ -86,7 +86,7 @@ import {
   encodeCompositeIdentityV1,
 } from '../../keys/identity';
 import type {
-  ISignalLocalStore,
+  ISignalProtocolLocalStore,
   PreKeyMessage,
   RatchetMessage,
   SessionState,
@@ -140,16 +140,16 @@ import {
 import { SessionResolver } from './session-resolver';
 import type { DoubleRatchetState } from '../protocol/double-ratchet';
 import {
-  encodeSignalMessage,
-  decodeSignalMessage,
-  encodePreKeySignalMessage,
-  decodePreKeySignalMessage,
-  frameSignalMessage,
-  parseSignalMessageEnvelope,
-  framePreKeySignalMessage,
-  parsePreKeySignalMessageEnvelope,
+  encodeSignalProtocolMessage,
+  decodeSignalProtocolMessage,
+  encodePreKeySignalProtocolMessage,
+  decodePreKeySignalProtocolMessage,
+  frameSignalProtocolMessage,
+  parseSignalProtocolMessageEnvelope,
+  framePreKeySignalProtocolMessage,
+  parsePreKeySignalProtocolMessageEnvelope,
   makeVersionByte,
-  serializeSignalMessageAddresses,
+  serializeSignalProtocolMessageAddresses,
 } from '../encoding/proto';
 import { computeCompositeIdentityMessageMac } from './identity-binding';
 
@@ -261,7 +261,7 @@ export class SessionCipher {
   private static readonly DEFAULT_MAX_SKIP = 25000;
 
   /** Storage adapter for session state and keys */
-  private readonly keyStorage: ISignalLocalStore;
+  private readonly keyStorage: ISignalProtocolLocalStore;
   private readonly logger: Required<ILogger>;
 
   /** Callback to establish new sessions from PreKeyMessages */
@@ -287,11 +287,11 @@ export class SessionCipher {
    *   Higher values allow more out-of-order messages but increase memory/CPU.
    */
   constructor(
-    keyStorage: ISignalLocalStore,
+    keyStorage: ISignalProtocolLocalStore,
     establishSession: SessionEstablishmentCallback,
     lock: AsyncLock,
     config: SessionCipherConfig = {},
-    logger: Required<ILogger> = defaultSignalLogger
+    logger: Required<ILogger> = defaultSignalProtocolLogger
   ) {
     this.keyStorage = keyStorage;
     this.establishSession = establishSession;
@@ -501,7 +501,7 @@ export class SessionCipher {
         let encryptionKey: Uint8Array | undefined;
         let authKey: Uint8Array | undefined;
         let iv: Uint8Array | undefined;
-        let protobufFramedSignalMsg: Uint8Array | undefined;
+        let protobufFramedSignalProtocolMsg: Uint8Array | undefined;
         let authenticatedRecipientIdentityType: 1 | 2 | undefined;
         try {
           ({ encryptionKey, authKey, iv } = await CryptoUtils.expandMessageKey(
@@ -538,7 +538,7 @@ export class SessionCipher {
           // Per Signal Protocol Section 3 - "associated_data SHOULD contain sender's and receiver's identity public keys"
 
           {
-            // Protobuf wire format: encode SignalMessage, compute the pinned-reference MAC shape.
+            // Protobuf wire format: encode SignalProtocolMessage, compute the pinned-reference MAC shape.
             const ratchetKeyBytes33 = CryptoUtils.ensureSerializedPublicKey(
               CryptoUtils.base64ToBytes(ratchetKey)
             );
@@ -558,14 +558,14 @@ export class SessionCipher {
               );
             }
 
-            // Encode SignalMessage protobuf (no version byte or MAC yet)
-            const protobufBytes = encodeSignalMessage({
+            // Encode SignalProtocolMessage protobuf (no version byte or MAC yet)
+            const protobufBytes = encodeSignalProtocolMessage({
               ratchetKey: ratchetKeyBytes33,
               counter,
               previousCounter,
               ciphertext: ciphertextBytes,
               pqRatchet: pqRatchetBytes,
-              addresses: serializeSignalMessageAddresses(session.localAddress, remoteAddress),
+              addresses: serializeSignalProtocolMessageAddresses(session.localAddress, remoteAddress),
               recipientIdentityType: authenticatedRecipientIdentityType,
             });
 
@@ -583,7 +583,7 @@ export class SessionCipher {
             );
 
             // Frame: [version_byte][protobuf_bytes][MAC(8)]
-            protobufFramedSignalMsg = frameSignalMessage(protobufBytes, macBytes);
+            protobufFramedSignalProtocolMsg = frameSignalProtocolMessage(protobufBytes, macBytes);
           }
         } finally {
           if (pqMessageKeySalt) {
@@ -630,8 +630,8 @@ export class SessionCipher {
         // Step 8: Update session state
         session.lastUsedAt = Date.now();
 
-        // Snapshot PQXDH fields for protobuf PreKeySignalMessage encoding.
-        // Retain the complete PreKeySignalMessage material until the session is
+        // Snapshot PQXDH fields for protobuf PreKeySignalProtocolMessage encoding.
+        // Retain the complete PreKeySignalProtocolMessage material until the session is
         // acknowledged so a lost first message can be retried.
         const kyberCiphertextForPreKey = session.kyberCiphertext;
         const kemOneTimeCiphertextForPreKey = session.kemOneTimePreKeyCiphertext;
@@ -641,21 +641,21 @@ export class SessionCipher {
         // Serialize: protobuf binary transport format
         let encodedCiphertext: Ciphertext;
         if (shouldSendPreKeyMessage) {
-          // Wrap inner framed SignalMessage in PreKeySignalMessage protobuf
+          // Wrap inner framed SignalProtocolMessage in PreKeySignalProtocolMessage protobuf
           const identityKeyForPreKey = await this.keyStorage.getIdentityKey();
           if (!identityKeyForPreKey) {
             throw new EncryptionError(
-              'Identity key not found for PreKeySignalMessage encoding',
+              'Identity key not found for PreKeySignalProtocolMessage encoding',
               EncryptionErrorCode.INITIALIZATION_FAILED
             );
           }
-          const preKeyProtobuf = encodePreKeySignalMessage({
+          const preKeyProtobuf = encodePreKeySignalProtocolMessage({
             ecOneTimePreKeyId: session.usedOneTimePreKeyId,
             baseKey: CryptoUtils.ensureSerializedPublicKey(
               CryptoUtils.base64ToBytes(session.DHs.publicKey)
             ),
             identityKey: encodeCompositeIdentityV1(session.localIdentity),
-            message: protobufFramedSignalMsg!, // field 4 = complete framed inner SignalMessage
+            message: protobufFramedSignalProtocolMsg!, // field 4 = complete framed inner SignalProtocolMessage
             registrationId: session.localRegistrationId,
             ecSignedPreKeyId: session.usedSignedPreKeyId!,
             recipientIdentityType: authenticatedRecipientIdentityType!,
@@ -669,10 +669,10 @@ export class SessionCipher {
               : undefined,
           });
           encodedCiphertext = CryptoUtils.bytesToBase64(
-            framePreKeySignalMessage(preKeyProtobuf)
+            framePreKeySignalProtocolMessage(preKeyProtobuf)
           ) as Ciphertext;
         } else {
-          encodedCiphertext = CryptoUtils.bytesToBase64(protobufFramedSignalMsg!) as Ciphertext;
+          encodedCiphertext = CryptoUtils.bytesToBase64(protobufFramedSignalProtocolMsg!) as Ciphertext;
         }
 
         // Preserve archivedSessions from existing record (same pattern as decrypt)
@@ -770,28 +770,28 @@ export class SessionCipher {
           const framedBytes = CryptoUtils.base64ToBytes(ciphertext as Base64);
 
           // Detect message type from first protobuf tag (after version byte)
-          // SignalMessage field 1 (bytes) -> tag 0x0A
-          // PreKeySignalMessage field 1 (uint32) -> tag 0x08, or field 2 (bytes) -> tag 0x12
+          // SignalProtocolMessage field 1 (bytes) -> tag 0x0A
+          // PreKeySignalProtocolMessage field 1 (uint32) -> tag 0x08, or field 2 (bytes) -> tag 0x12
           const firstProtoTag = framedBytes[1];
           const isBinaryPreKey = firstProtoTag === 0x08 || firstProtoTag === 0x12;
 
           if (isBinaryPreKey) {
-            // PreKeySignalMessage: [version_byte][protobuf] (no MAC)
-            const { protobufBytes: outerProtobuf } = parsePreKeySignalMessageEnvelope(framedBytes);
-            const preKeyFields = decodePreKeySignalMessage(outerProtobuf);
+            // PreKeySignalProtocolMessage: [version_byte][protobuf] (no MAC)
+            const { protobufBytes: outerProtobuf } = parsePreKeySignalProtocolMessageEnvelope(framedBytes);
+            const preKeyFields = decodePreKeySignalProtocolMessage(outerProtobuf);
 
-            // Inner framed SignalMessage from field 4
+            // Inner framed SignalProtocolMessage from field 4
             const innerFramed = preKeyFields.message;
             const { protobufBytes: innerProtobuf, mac: innerMac } =
-              parseSignalMessageEnvelope(innerFramed);
-            const signalFields = decodeSignalMessage(innerProtobuf);
+              parseSignalProtocolMessageEnvelope(innerFramed);
+            const signalFields = decodeSignalProtocolMessage(innerProtobuf);
 
             // The outer field selects the local key namespace before MAC
             // verification. Requiring an identical value inside the MACed
-            // SignalMessage prevents an attacker from switching that choice.
+            // SignalProtocolMessage prevents an attacker from switching that choice.
             if (signalFields.recipientIdentityType !== preKeyFields.recipientIdentityType) {
               throw new EncryptionError(
-                'PreKeySignalMessage recipient identity namespace is not MAC-bound',
+                'PreKeySignalProtocolMessage recipient identity namespace is not MAC-bound',
                 EncryptionErrorCode.INVALID_CIPHERTEXT
               );
             }
@@ -850,9 +850,9 @@ export class SessionCipher {
             // Store raw pqRatchet bytes for opaque processing by spqrRecv
             receivedPqRatchetBytes = pqRatchetRaw;
           } else {
-            // SignalMessage: [version_byte][protobuf][MAC(8)]
-            const { protobufBytes, mac: envelopeMac } = parseSignalMessageEnvelope(framedBytes);
-            const signalFields = decodeSignalMessage(protobufBytes);
+            // SignalProtocolMessage: [version_byte][protobuf][MAC(8)]
+            const { protobufBytes, mac: envelopeMac } = parseSignalProtocolMessageEnvelope(framedBytes);
+            const signalFields = decodeSignalProtocolMessage(protobufBytes);
 
             protobufMacContext = createProtobufMacContext(
               framedBytes,

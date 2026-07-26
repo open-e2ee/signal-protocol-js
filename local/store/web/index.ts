@@ -2,15 +2,15 @@
  * Web Storage Package
  *
  * Experimental storage for web browsers using IndexedDB.
- * This adapter is not yet feature-equivalent with ExpoSignalStore.
+ * This adapter is not yet feature-equivalent with ExpoSignalProtocolStore.
  */
 export {};
-import { IndexedDbSignalStore } from './adapter';
+import { IndexedDbSignalProtocolStore } from './adapter';
 
-export { IndexedDbSignalStore } from './adapter';
+export { IndexedDbSignalProtocolStore } from './adapter';
 
-export async function indexedDbStore(): Promise<IndexedDbSignalStore> {
-  const store = new IndexedDbSignalStore();
+export async function indexedDbStore(): Promise<IndexedDbSignalProtocolStore> {
+  const store = new IndexedDbSignalProtocolStore();
   await store.initialize();
   return store;
 }

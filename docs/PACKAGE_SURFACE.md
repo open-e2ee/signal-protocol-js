@@ -142,24 +142,24 @@ Expo storage or Convex helpers.
 
 ### Relay implementations
 
-- `ConvexSignalRelayServer` for Convex-backed apps
+- `ConvexSignalProtocolRelayServer` for Convex-backed apps
 - `convexRelay()` for Convex-backed composition
-- `MockSignalRelayServer` / `mockRelay()` for local development
-- custom implementations via `ISignalRelayServer`
+- `MockSignalProtocolRelayServer` / `mockRelay()` for local development
+- custom implementations via `ISignalProtocolRelayServer`
 
 ### Storage implementations
 
-- `ExpoSignalStore` for Expo / React Native
+- `ExpoSignalProtocolStore` for Expo / React Native
 - `expoStore()` for Expo / React Native composition
 - `@open-e2ee/signal-protocol-sdk/local/store/expo` also exports the Expo helpers
   Signal Protocol composes directly: `getKeyStorage`, `getDatabaseKeyManager`,
   `clearDatabaseKeyCache`, and `createPreKeyMaintenanceStore`
-- `IndexedDbSignalStore` / `indexedDbStore()` for browsers (experimental)
-- `ReactNativeSignalStore` / `reactNativeStore()` for bare React Native
+- `IndexedDbSignalProtocolStore` / `indexedDbStore()` for browsers (experimental)
+- `ReactNativeSignalProtocolStore` / `reactNativeStore()` for bare React Native
   (experimental; provide your own key-value backend)
-- `NodeSignalStore` / `nodeStore()` for Node environments
-- `MockSignalStore` / `mockStore()` for local development
-- custom implementations via `ISignalLocalStore`
+- `NodeSignalProtocolStore` / `nodeStore()` for Node environments
+- `MockSignalProtocolStore` / `mockStore()` for local development
+- custom implementations via `ISignalProtocolLocalStore`
 
 ### Remote object storage
 
@@ -171,7 +171,7 @@ Expo storage or Convex helpers.
   point
 - `S3ObjectStore` via `@open-e2ee/signal-protocol-sdk/remote/object-store/s3`
 - `s3ObjectStore()` for brokered Amazon S3 or S3-compatible storage
-- custom implementations via `SignalRemoteObjectStore`
+- custom implementations via `SignalProtocolRemoteObjectStore`
 
 `ConvexR2ObjectStore` is a client adapter for authenticated app-owned Convex
 functions that wrap `@convex-dev/r2`; it is not the Convex component itself.

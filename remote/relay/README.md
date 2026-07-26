@@ -1,6 +1,6 @@
 # Relay
 
-The relay module defines `ISignalRelayServer`, the application-backend contract
+The relay module defines `ISignalProtocolRelayServer`, the application-backend contract
 for device discovery, public prekeys, encrypted envelopes, key rotation,
 provisioning, and related synchronization.
 
@@ -28,7 +28,7 @@ const client = await createSignalProtocolClient({
 await client.syncToServer();
 ```
 
-For production, implement `ISignalRelayServer` or use the
+For production, implement `ISignalProtocolRelayServer` or use the
 [Convex adapter](./convex/README.md). The application backend must authenticate
 mutations, allocate linked-device IDs, consume one-time prekeys atomically,
 enforce access policy, and store only encrypted envelopes plus required routing

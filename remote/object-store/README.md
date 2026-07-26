@@ -1,6 +1,6 @@
 # Remote Object Store
 
-`SignalRemoteObjectStore` is the provider-neutral client contract for uploading,
+`SignalProtocolRemoteObjectStore` is the provider-neutral client contract for uploading,
 downloading, completing, and deleting encrypted byte objects through
 short-lived backend-brokered operations.
 
@@ -20,10 +20,10 @@ retry-stable requestId -> canonical objectId -> private provider key
 
 ```ts
 import type {
-  SignalRemoteObjectStore,
+  SignalProtocolRemoteObjectStore,
 } from "@open-e2ee/signal-protocol-sdk/remote/object-store";
 
-const remoteObjectStore: SignalRemoteObjectStore = {
+const remoteObjectStore: SignalProtocolRemoteObjectStore = {
   createUpload: (request) => appStorageApi.createUpload(request),
   createDownload: (request) => appStorageApi.createDownload(request),
   completeUpload: (request) => appStorageApi.completeUpload(request),

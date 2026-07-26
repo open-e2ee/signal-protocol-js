@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / SignalBlockingHooks
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolBlockingHooks
 
-# Interface: SignalBlockingHooks
+# Interface: SignalProtocolBlockingHooks
 
 Optional local side effects that belong to the act of blocking itself.
 

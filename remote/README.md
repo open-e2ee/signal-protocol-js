@@ -1,6 +1,6 @@
 # Remote Guide
 
-> Infrastructure | Implements `ISignalRelayServer` and `SignalRemoteObjectStore` | [Architecture](../ARCHITECTURE.md)
+> Infrastructure | Implements `ISignalProtocolRelayServer` and `SignalProtocolRemoteObjectStore` | [Architecture](../ARCHITECTURE.md)
 
 The backend layer is responsible for server-owned protocol state: public
 prekeys, device registration, encrypted-envelope delivery, and provisioning
@@ -17,32 +17,32 @@ replaceable and prevent them from owning private keys or plaintext.
 
 ### Relay
 
-- `ConvexSignalRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/convex`
-- `MockSignalRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/mock`
-- custom implementations via `ISignalRelayServer`
+- `ConvexSignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/convex`
+- `MockSignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/mock`
+- custom implementations via `ISignalProtocolRelayServer`
 
 ### Remote object storage
 
 - `ConvexR2ObjectStore` from `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`
 - `S3ObjectStore` from `@open-e2ee/signal-protocol-sdk/remote/object-store/s3`
-- custom implementations via `SignalRemoteObjectStore`
+- custom implementations via `SignalProtocolRemoteObjectStore`
 
 ## Composition
 
 ```ts
 import { SignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import {
-  ConvexSignalRelayServer,
-  type ConvexSignalRelayApi,
+  ConvexSignalProtocolRelayServer,
+  type ConvexSignalProtocolRelayApi,
 } from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
-import { ExpoSignalStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
+import { ExpoSignalProtocolStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
 import { api } from "../convex/_generated/api";
 
-const signalApi = api.signal satisfies ConvexSignalRelayApi;
+const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
 
 const signal = await SignalProtocolClient.create(userId, {
-  storage: new ExpoSignalStore(),
-  relay: new ConvexSignalRelayServer(convex, signalApi, {
+  storage: new ExpoSignalProtocolStore(),
+  relay: new ConvexSignalProtocolRelayServer(convex, signalApi, {
     currentUserId: userId,
   }),
 });
@@ -50,7 +50,7 @@ const signal = await SignalProtocolClient.create(userId, {
 
 ## Relay Responsibilities
 
-An `ISignalRelayServer` implementation must preserve the package’s protocol semantics for:
+An `ISignalProtocolRelayServer` implementation must preserve the package’s protocol semantics for:
 
 - identity and prekey upload
 - prekey bundle fetch
@@ -78,7 +78,7 @@ Bundle fetch must preserve one-time-prekey consumption semantics for concurrent 
 
 ## Remote Object Storage
 
-`SignalRemoteObjectStore` is optional and only needed for encrypted attachment/file flows.
+`SignalProtocolRemoteObjectStore` is optional and only needed for encrypted attachment/file flows.
 
 In practice, attachment and encrypted file support is a common consumer path,
 so object-store adapters should be treated as first-class integrations
@@ -190,22 +190,22 @@ needed to authorize and construct short-lived operations.
 
 ## Local development
 
-Use `MockSignalRelayServer` when multiple clients need a shared in-memory relay:
+Use `MockSignalProtocolRelayServer` when multiple clients need a shared in-memory relay:
 
 ```ts
 import { SignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { MockSignalRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
-import { MockSignalStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
+import { MockSignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
+import { MockSignalProtocolStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
 
-const relay = new MockSignalRelayServer();
+const relay = new MockSignalProtocolRelayServer();
 
 const alice = await SignalProtocolClient.create("alice", {
-  storage: new MockSignalStore(),
+  storage: new MockSignalProtocolStore(),
   relay,
 });
 
 const bob = await SignalProtocolClient.create("bob", {
-  storage: new MockSignalStore(),
+  storage: new MockSignalProtocolStore(),
   relay,
 });
 ```

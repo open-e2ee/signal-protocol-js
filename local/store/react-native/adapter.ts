@@ -16,7 +16,7 @@
  * @example
  * ```typescript
  * const keyValueStorage = yourPersistentKeyValueStorage;
- * const storage = await ReactNativeSignalStore.create({ storage: keyValueStorage });
+ * const storage = await ReactNativeSignalProtocolStore.create({ storage: keyValueStorage });
  *
  * // Store identity key
  * await storage.storeIdentityKey(keyPair);
@@ -24,10 +24,10 @@
  */
 
 import * as Crypto from 'expo-crypto';
-import * as SignalCrypto from '../../../internal/crypto';
+import * as SignalProtocolCrypto from '../../../internal/crypto';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 import type {
-  ISignalLocalStore,
+  ISignalProtocolLocalStore,
   MessageRecord,
   UserRecord,
   DeviceRecord,
@@ -115,7 +115,7 @@ interface SecurityEvent {
  * @example
  * ```typescript
  * const keyValueStorage = yourPersistentKeyValueStorage;
- * const storage = await ReactNativeSignalStore.create({ storage: keyValueStorage });
+ * const storage = await ReactNativeSignalProtocolStore.create({ storage: keyValueStorage });
  *
  * // Store identity key
  * await storage.storeIdentityKey(keyPair);
@@ -124,7 +124,7 @@ interface SecurityEvent {
  * const keyPair = await storage.getIdentityKey();
  * ```
  */
-export class ReactNativeSignalStore implements ISignalLocalStore {
+export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore {
   private databaseKey: Uint8Array | null = null;
   private initialized = false;
   private readonly _metadata = new Map<string, string>();
@@ -136,8 +136,8 @@ export class ReactNativeSignalStore implements ISignalLocalStore {
 
   static async create(options: {
     storage: ReactNativeKeyValueStorage;
-  }): Promise<ReactNativeSignalStore> {
-    const store = new ReactNativeSignalStore(options);
+  }): Promise<ReactNativeSignalProtocolStore> {
+    const store = new ReactNativeSignalProtocolStore(options);
     await store.initialize();
     return store;
   }
@@ -172,7 +172,7 @@ export class ReactNativeSignalStore implements ISignalLocalStore {
       );
 
       console.warn(
-        '[ReactNativeSignalStore] Database encryption key stored in the configured React Native storage backend. ' +
+        '[ReactNativeSignalProtocolStore] Database encryption key stored in the configured React Native storage backend. ' +
           'For production apps, configure a platform secret vault for database-key custody.'
       );
     }
@@ -487,7 +487,7 @@ export class ReactNativeSignalStore implements ISignalLocalStore {
   // KEM One-Time PreKey Management (Per-Session Post-Quantum Forward Secrecy)
   // ============================================================================
   // NOTE: This adapter is for bare React Native (non-Expo) apps.
-  // Expo apps should still prefer ExpoSignalStore for the native SQLite backend.
+  // Expo apps should still prefer ExpoSignalProtocolStore for the native SQLite backend.
 
   async storeKemOneTimePreKeys(
     prekeys: KemOneTimePreKey[],
@@ -802,7 +802,7 @@ export class ReactNativeSignalStore implements ISignalLocalStore {
   private ensureInitialized(): void {
     if (!this.initialized || !this.databaseKey) {
       throw new Error(
-        'ReactNativeSignalStore was used before initialization completed. Create it with ReactNativeSignalStore.create(...).'
+        'ReactNativeSignalProtocolStore was used before initialization completed. Create it with ReactNativeSignalProtocolStore.create(...).'
       );
     }
   }
@@ -915,11 +915,11 @@ export class ReactNativeSignalStore implements ISignalLocalStore {
     iv: Uint8Array
   ): Promise<Uint8Array> {
     // Use the Signal Protocol crypto module's AES-GCM implementation
-    const result = await SignalCrypto.aesGcmEncryptWithIV(key, data, iv);
+    const result = await SignalProtocolCrypto.aesGcmEncryptWithIV(key, data, iv);
 
     // Combine ciphertext + authTag into single buffer
-    const ciphertextBytes = SignalCrypto.base64ToBytes(result.ciphertext);
-    const authTagBytes = SignalCrypto.base64ToBytes(result.authTag);
+    const ciphertextBytes = SignalProtocolCrypto.base64ToBytes(result.ciphertext);
+    const authTagBytes = SignalProtocolCrypto.base64ToBytes(result.authTag);
 
     const combined = new Uint8Array(ciphertextBytes.length + authTagBytes.length);
     combined.set(ciphertextBytes, 0);
@@ -957,11 +957,11 @@ export class ReactNativeSignalStore implements ISignalLocalStore {
     const authTag = ciphertext.slice(-AES_GCM_TAG_BYTES);
 
     // Use the Signal Protocol crypto module's AES-GCM implementation
-    return await SignalCrypto.aesGcmDecrypt(
+    return await SignalProtocolCrypto.aesGcmDecrypt(
       key,
-      SignalCrypto.bytesToBase64(ciphertextOnly),
-      SignalCrypto.bytesToBase64(iv),
-      SignalCrypto.bytesToBase64(authTag)
+      SignalProtocolCrypto.bytesToBase64(ciphertextOnly),
+      SignalProtocolCrypto.bytesToBase64(iv),
+      SignalProtocolCrypto.bytesToBase64(authTag)
     );
   }
 

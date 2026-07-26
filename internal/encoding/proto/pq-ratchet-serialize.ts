@@ -3,7 +3,7 @@
  *
  * Uses the compact SPQR binary format. Raw SPQR bytes are stored directly in the
  * pq_ratchet field (field 5)
- * of SignalMessage — no protobuf envelope.
+ * of SignalProtocolMessage — no protobuf envelope.
  *
  * `SPQR` V1 format:
  *   VERSION(1) | VARINT(epoch) | VARINT(chain_index) | MSG_TYPE(1) | [VARINT(chunk_index) | CHUNK_DATA(32)]
@@ -71,7 +71,7 @@ export type SPQRWireEpoch = number | bigint;
 /**
  * Decoded SPQR wire message.
  *
- * Represents the content of SignalMessage field 5 (pq_ratchet) after
+ * Represents the content of SignalProtocolMessage field 5 (pq_ratchet) after
  * decoding from the compact binary format.
  */
 export interface SPQRWireMessage {
@@ -370,7 +370,7 @@ export function encodeSPQRWire(msg: SPQRWireMessage): Uint8Array {
  *
  * Empty input is rejected because this package requires SPQR v1.
  *
- * @param bytes - Wire bytes from SignalMessage field 5
+ * @param bytes - Wire bytes from SignalProtocolMessage field 5
  * @returns Decoded message
  */
 export function decodeSPQRWire(bytes: Uint8Array): SPQRWireMessage {

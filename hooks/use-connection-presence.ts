@@ -27,7 +27,7 @@
  *
  * @example
  * ```typescript
- * const relay = new ConvexSignalRelayServer(convex, signalApi, {
+ * const relay = new ConvexSignalProtocolRelayServer(convex, signalApi, {
  *   currentUserId: userId,
  *   getAuthToken,
  * });
@@ -42,9 +42,9 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import { useConvex } from 'convex/react';
-import type { ISignalRelayServer } from '../remote/relay/types';
+import type { ISignalProtocolRelayServer } from '../remote/relay/types';
 import { useSingleFlight } from './use-single-flight';
-import { resolveSignalLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../logger';
 
 /**
  * Heartbeat interval for presence keep-alive.
@@ -56,7 +56,7 @@ const HEARTBEAT_INTERVAL_MS = 10 * 1000;
 
 export interface UseConnectionPresenceOptions {
   /** Signal Protocol relay server instance */
-  relay: ISignalRelayServer;
+  relay: ISignalProtocolRelayServer;
   /** Current device ID (1-5) */
   deviceId: number | null;
   /** Enable/disable presence tracking (default: true) */
@@ -83,8 +83,8 @@ export function useConnectionPresence({
   const relayRef = useRef(relay);
   relayRef.current = relay;
 
-  const loggerRef = useRef(resolveSignalLogger(providedLogger));
-  loggerRef.current = resolveSignalLogger(providedLogger);
+  const loggerRef = useRef(resolveSignalProtocolLogger(providedLogger));
+  loggerRef.current = resolveSignalProtocolLogger(providedLogger);
 
   // Wrap relay methods with callbacks for single-flight
   const markConnectedRaw = useCallback(

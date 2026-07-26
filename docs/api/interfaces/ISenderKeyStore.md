@@ -13,7 +13,7 @@ Sender Key Distribution Message protocol.
 
 ## Extended by
 
-- [`ISignalLocalStore`](ISignalLocalStore.md)
+- [`ISignalProtocolLocalStore`](ISignalProtocolLocalStore.md)
 
 ## Methods
 

@@ -13,7 +13,7 @@
  * @see https://signal.org/docs/specifications/doubleratchet/
  */
 
-import { defaultSignalLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
 import type { SessionState } from '../../types';
 import { EncryptionError, EncryptionErrorCode } from '../../types';
 import { DEFAULT_RATCHET_CONFIG } from '../protocol/double-ratchet';
@@ -126,7 +126,7 @@ export function assertValidatedSession(
 export async function performDHRatchetStep(
   session: SessionState,
   receivedDHPublicKey: string,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<void> {
   // For lazy initialization (responder's first message), DHr is undefined
   // but DHs must be valid (set to signed prekey during session establishment)
@@ -189,7 +189,7 @@ export async function storeSkippedMessageKeys(
   session: SessionState,
   untilCounter: number,
   config: DoubleRatchetConfig = DEFAULT_RATCHET_CONFIG,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<void> {
   // Validate session - this narrows type to ValidatedSessionState
   assertValidatedSession(session, 'store skipped message keys');
@@ -230,7 +230,7 @@ export async function storeSkippedMessageKeys(
 export function cleanupExpiredMessageKeys(
   session: SessionState,
   config: DoubleRatchetConfig = DEFAULT_RATCHET_CONFIG,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): void {
   // Skip cleanup if session not validated (nothing to clean)
   if (!isValidatedSession(session)) {

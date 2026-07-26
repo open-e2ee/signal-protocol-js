@@ -115,7 +115,7 @@ import {
   resolveSPQRInfoStrings,
   type ResolvedSPQRInfoStrings,
 } from '../../crypto';
-import { defaultSignalLogger, type ILogger } from '../../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
 
 // SPQR limits configuration (profile protocol defaults)
 import { type ResolvedSPQRLimits, SPQR_LIMITS_DEFAULTS } from '../../../types/protocol-config';
@@ -947,7 +947,7 @@ export async function processSPQRReceivedCiphertext(
  */
 export async function deriveSPQRSendKey(
   spqrState: SPQRState,
-  logger: Required<ILogger> = defaultSignalLogger,
+  logger: Required<ILogger> = defaultSignalProtocolLogger,
   epochOverride?: number
 ): Promise<SPQRKeyResult | null> {
   // Validate state before operation
@@ -1095,7 +1095,7 @@ export async function deriveSPQRReceiveKey(
   spqrState: SPQRState,
   index: number,
   epoch: number,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<Uint8Array | null> {
   // Validate state before operation
   validateSPQRState(spqrState, 'deriveSPQRReceiveKey');
@@ -1362,7 +1362,7 @@ let braidStateMachine: IMLKEMBraidStateMachine | undefined;
  * - Active: msgBytes=encoded PqRatchetMessage, messageKey=32 bytes
  */
 export interface SPQRSendResult {
-  /** Opaque bytes for pq_ratchet field 5 in SignalMessage protobuf */
+  /** Opaque bytes for pq_ratchet field 5 in SignalProtocolMessage protobuf */
   msgBytes: Uint8Array;
   /** Combined SPQR message key (null during bootstrap) */
   messageKey: Uint8Array | null;
@@ -1398,7 +1398,7 @@ export interface SPQRRecvResult {
  */
 export async function spqrSend(
   state: SPQRState,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<SPQRSendResult> {
   const emptyResult: SPQRSendResult = { msgBytes: new Uint8Array(0), messageKey: null };
 
@@ -1516,7 +1516,7 @@ export async function spqrSend(
 export async function spqrRecv(
   state: SPQRState,
   msgBytes: Uint8Array | undefined,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<SPQRRecvResult> {
   // No PQ data during bootstrap or malformed transport with no pq_ratchet field.
   if (!msgBytes || msgBytes.length === 0) {

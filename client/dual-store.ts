@@ -14,16 +14,16 @@ import type {
   KyberPreKey,
   KemOneTimePreKey,
 } from '../keys/types';
-import type { ISignalLocalStore } from '../types/api';
+import type { ISignalProtocolLocalStore } from '../types/api';
 
 /**
- * A view of ISignalLocalStore scoped to a specific identity type.
+ * A view of ISignalProtocolLocalStore scoped to a specific identity type.
  * All identity-type-aware methods are pre-filled with the given type.
  */
 export {};
 export class IdentityTypedStore {
   constructor(
-    private readonly store: ISignalLocalStore,
+    private readonly store: ISignalProtocolLocalStore,
     readonly identityType: IdentityType
   ) {}
 
@@ -145,7 +145,7 @@ export class DualProtocolStore {
   private readonly aciStore: IdentityTypedStore;
   private readonly pniStore: IdentityTypedStore;
 
-  constructor(private readonly localStore: ISignalLocalStore) {
+  constructor(private readonly localStore: ISignalProtocolLocalStore) {
     this.aciStore = new IdentityTypedStore(localStore, 'aci');
     this.pniStore = new IdentityTypedStore(localStore, 'pni');
   }
@@ -161,7 +161,7 @@ export class DualProtocolStore {
   }
 
   /** Access the underlying unscoped store (for identity-agnostic operations) */
-  get unscoped(): ISignalLocalStore {
+  get unscoped(): ISignalProtocolLocalStore {
     return this.localStore;
   }
 }

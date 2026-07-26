@@ -16,7 +16,7 @@ import { EncryptionErrorCode } from '../types';
  * Uses the same parameter names as the unified retry module for consistency.
  */
 export {};
-export interface SignalRetryConfig {
+export interface SignalProtocolRetryConfig {
   /** Maximum retries (not including initial attempt). Default: 2 (3 total attempts) */
   maxRetries?: number;
   /** Base delay in ms before first retry. Default: 1000 */
@@ -39,6 +39,19 @@ const SIGNAL_RETRY_CONFIG = {
 
 /**
  * Errors that should not be retried (terminal failures)
+ *
+ * The second group are session-establishment failures. They reach this
+ * classifier because a failed device now surfaces its error from inside the
+ * retry callback, so a code that is permanent for the life of the request must
+ * be listed here or it is attempted three times for no benefit:
+ *
+ * - UNTRUSTED_IDENTITY and SIGNATURE_VERIFICATION_FAILED are security events.
+ *   They want a safety-number check, not another attempt, and retrying only
+ *   delays the signal reaching the caller.
+ * - RECIPIENT_NOT_REGISTERED means the peer published no prekey bundle. That
+ *   cannot become true between two attempts 500 ms apart.
+ * - PREKEY_FETCH_RATE_LIMITED is the server defending against prekey drainage.
+ *   Retrying into it is the one response guaranteed to make it worse.
  */
 const NON_RETRYABLE_ERROR_CODES = new Set([
   EncryptionErrorCode.INVALID_PREKEY_BUNDLE,
@@ -47,6 +60,11 @@ const NON_RETRYABLE_ERROR_CODES = new Set([
   EncryptionErrorCode.TOO_MANY_SKIPPED_MESSAGES,
   EncryptionErrorCode.IDENTITY_KEY_CHANGED,
   EncryptionErrorCode.KEY_STORAGE_ERROR,
+
+  EncryptionErrorCode.UNTRUSTED_IDENTITY,
+  EncryptionErrorCode.SIGNATURE_VERIFICATION_FAILED,
+  EncryptionErrorCode.RECIPIENT_NOT_REGISTERED,
+  EncryptionErrorCode.PREKEY_FETCH_RATE_LIMITED,
 ]);
 
 function sleep(ms: number): Promise<void> {
@@ -156,7 +174,7 @@ export function isRetryableError(error: Error): boolean {
  */
 export async function withRetry<T>(
   fn: () => Promise<T>,
-  config: SignalRetryConfig = {}
+  config: SignalProtocolRetryConfig = {}
 ): Promise<T> {
   const {
     maxRetries = 2,

@@ -7,7 +7,7 @@
  * - an application-configured Expo SQLite/SQLCipher database
  *
  * This class wraps the KeyStorage implementation and provides
- * the ISignalLocalStore interface for dependency injection.
+ * the ISignalProtocolLocalStore interface for dependency injection.
  */
 
 import type {
@@ -25,7 +25,7 @@ import {
   UNPINNED_DEVICE_IDENTITY_KEY,
 } from '../../../keys/identity';
 import type {
-  ISignalLocalStore,
+  ISignalProtocolLocalStore,
   MessageRecord,
   SessionRecord,
   SessionState,
@@ -33,13 +33,13 @@ import type {
 } from '../../../types';
 import type { ProtocolAddress } from '../../../types/address';
 import type { IdentityKeyChange, TrustDirection } from '../../../types/trust';
-import type { ISignalRemoteSenderStateStore } from '../../../remote/relay/types';
+import type { ISignalProtocolRemoteSenderStateStore } from '../../../remote/relay/types';
 import type { DeviceRecord, UserRecord } from '../../../internal/sesame/types';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 
 import { getDatabaseKeyManager } from './database-key';
 import { KeyStorage } from './key-storage';
-import { resolveSignalLogger, type ILogger } from '../../../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
 
 /**
  * Expo Signal Protocol Store
@@ -54,7 +54,7 @@ import { resolveSignalLogger, type ILogger } from '../../../logger';
  *
  * ## Security
  *
- * - Key custody follows the configured `ISignalLocalSecretVault`
+ * - Key custody follows the configured `ISignalProtocolLocalSecretVault`
  * - Protocol records are stored in the encrypted database, not the secret vault
  * - Account reset coordinates logical record and key deletion
  * - TOFU (Trust On First Use) for contact identities
@@ -62,7 +62,7 @@ import { resolveSignalLogger, type ILogger } from '../../../logger';
  * @example
  * ```typescript
  * // Configure the Expo database bindings before creating the store.
- * const store = new ExpoSignalStore();
+ * const store = new ExpoSignalProtocolStore();
  *
  * // Store identity key
  * await store.storeIdentityKey(keyPair);
@@ -72,23 +72,23 @@ import { resolveSignalLogger, type ILogger } from '../../../logger';
  * ```
  *
  * @category Key Storage
- * @see {@link ISignalLocalStore} for interface documentation
+ * @see {@link ISignalProtocolLocalStore} for interface documentation
  */
 export {};
-export class ExpoSignalStore implements ISignalLocalStore {
+export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
   private storage: KeyStorage;
   private logger: Required<ILogger>;
   // Backend for SESAME/SenderKey operations (Convex relay server)
-  private backend?: ISignalRemoteSenderStateStore;
+  private backend?: ISignalProtocolRemoteSenderStateStore;
 
-  constructor(backend?: ISignalRemoteSenderStateStore, providedLogger?: ILogger) {
-    this.logger = resolveSignalLogger(providedLogger);
+  constructor(backend?: ISignalProtocolRemoteSenderStateStore, providedLogger?: ILogger) {
+    this.logger = resolveSignalProtocolLogger(providedLogger);
     this.storage = new KeyStorage(this.logger);
     this.backend = backend;
   }
 
   setLogger(providedLogger?: ILogger): void {
-    this.logger = resolveSignalLogger(providedLogger);
+    this.logger = resolveSignalProtocolLogger(providedLogger);
     this.storage.setLogger(this.logger);
   }
 
@@ -401,21 +401,21 @@ export class ExpoSignalStore implements ISignalLocalStore {
    * Helper to require backend for Sender Key operations.
    * Note: SESAME operations are now local-only and don't require backend.
    */
-  private requireBackend(operation: string): ISignalRemoteSenderStateStore {
+  private requireBackend(operation: string): ISignalProtocolRemoteSenderStateStore {
     if (!this.backend) {
       throw new Error(
         `${operation} requires a backend adapter. ` +
-          `Pass a ConvexSignalRelayServer to the key store constructor: ` +
-          `new ExpoSignalStore(relay)`
+          `Pass a ConvexSignalProtocolRelayServer to the key store constructor: ` +
+          `new ExpoSignalProtocolStore(relay)`
       );
     }
     return this.backend;
   }
 
-  private requireBackendMethod<K extends keyof ISignalRemoteSenderStateStore>(
+  private requireBackendMethod<K extends keyof ISignalProtocolRemoteSenderStateStore>(
     operation: string,
     method: K
-  ): NonNullable<ISignalRemoteSenderStateStore[K]> {
+  ): NonNullable<ISignalProtocolRemoteSenderStateStore[K]> {
     const backend = this.requireBackend(operation);
     const fn = backend[method];
     if (!fn) {
@@ -424,7 +424,7 @@ export class ExpoSignalStore implements ISignalLocalStore {
           `The provided backend does not implement this method.`
       );
     }
-    return fn as NonNullable<ISignalRemoteSenderStateStore[K]>;
+    return fn as NonNullable<ISignalProtocolRemoteSenderStateStore[K]>;
   }
 
   async getUserRecord(userId: string): Promise<UserRecord | null> {

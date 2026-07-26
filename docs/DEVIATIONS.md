@@ -60,7 +60,7 @@ model and what is out of scope.
 | **Identity keys** | X3DH §2.2; `libsignal` `identity_key.rs` | **Deviation.** A 67-byte composite of separate X25519 and Ed25519 keys replaces the single 33-byte Curve25519 identity key | Avoids XEdDSA, a non-standard signature scheme with no vetted JavaScript implementation; standard Ed25519 is independently verifiable | Two keys to store and rotate; larger identity; **no wire compatibility for any identity-bearing material** |
 | **Prekey signatures** | X3DH §2.2, §4.5 | **Deviation.** RFC 8032 Ed25519 over a domain-separated context binding the identity commitment, algorithm tag, and key ID — not XEdDSA over the bare key | Defeats cross-algorithm and cross-key-ID substitution that a bare-key signature does not cover | Strictly stronger binding; signatures are unverifiable by Signal Messenger clients and vice versa |
 | **Safety numbers** | `libsignal` `fingerprint.rs` | **Deviation.** Iteration and digit encoding are byte-identical, but the input is a composite-identity commitment under an SDK domain string, the QR version is `3`, and the two halves are ordered by user ID rather than by digit string | Follows from the composite identity; a single-key fingerprint cannot authenticate both components | **Safety numbers are not comparable to Signal Messenger's.** The ordering rule also differs from `libsignal` even on the single-key path |
-| **X3DH / PQXDH** | X3DH rev. 1; PQXDH rev. 3 | **Faithful** on DH order, the `0xFF`×32 prefix, zero-salt HKDF, and KEM-secret position. **Deviation:** ML-KEM-1024 (FIPS 203) runs under an info string naming `CRYSTALS-KYBER-1024` | Standardized ML-KEM preferred over round-3 Kyber; the label was inherited from `libsignal` and not updated | Identical label with a different KEM means the same transcript derives a **different** shared secret, with no domain separation signalling it. Violates PQXDH §2.2 |
+| **X3DH / PQXDH** | X3DH rev. 1; PQXDH rev. 3 | **Faithful** on DH order, the `0xFF`×32 prefix, zero-salt HKDF, KEM-secret position, and — since `0.1.0-alpha.6` — on PQXDH §2.2's info-string construction. **Deviation:** ML-KEM-1024 (FIPS 203) replaces round-3 Kyber1024 | Standardized ML-KEM preferred over round-3 Kyber. The info string names it, and names this application rather than `libsignal`'s, as §2.1 and §2.2 require | Wire-incompatible with `libsignal` by construction, and the label now says so. Sessions established before `0.1.0-alpha.6` derive a different `SK` and cannot be continued |
 | **Associated data** | X3DH §3.3 | **Deviation.** `AD` is a domain-separated HMAC input over SHA-256 commitments to both composite identities, not `IK_A ‖ IK_B` | Binds the Ed25519 component, which a raw-key `AD` would leave uncovered | Stronger binding; wire-incompatible |
 | **Double Ratchet** | Double Ratchet rev. 4 | **Faithful** on `WhisperRatchet`, `WhisperMessageKeys`, the `0x01`/`0x02` seeds, the 80-byte split, AES-256-CBC, the `0x44` version byte, and 8-byte MAC truncation | — | The ratchet core follows the Double Ratchet specification |
 | **Message wire format** | `libsignal` `wire.proto` | **Faithful** field numbers 1–8. **Extension:** fields at 100+ carry identity type and ML-KEM one-time prekey material. **Deviation:** address binding uses variable-length UTF-8 user IDs and 4-byte device IDs instead of 17-byte ServiceIds and 1-byte device IDs | The SDK binds application-defined identifiers, not Signal Messenger ACIs | Wire-incompatible; a Signal Messenger client would silently ignore the added fields |
@@ -259,33 +259,49 @@ remote X25519 point is validated before any DH is computed
 far more strictly than `libsignal` requires
 (`internal/session/handshake.ts:107-138`).
 
-### 2.1 ML-KEM-1024 runs under an info string naming Kyber
+### 2.1 The info strings name this application and this KEM
 
 The SDK uses ML-KEM-1024 (FIPS 203) where `libsignal` uses round-3 Kyber1024,
 tagged `0x0A` rather than `0x08` (`internal/crypto/pq/kyber.ts:79`). That much is
 deliberate: the standardized algorithm is preferred over the round-3 draft, and a
 single unambiguous tag is preferred over carrying a legacy fallback.
 
-The info string was not updated to match (`types/protocol-config.ts:365`):
+The info strings are the SDK's own (`types/protocol-config.ts:363-386`):
 
 ```text
-WhisperText_X25519_SHA-256_CRYSTALS-KYBER-1024
+OpenE2EE_X25519_SHA-256_ML-KEM-1024   (PQXDH)
+OpenE2EE                              (X3DH)
 ```
 
-This is byte-identical to `libsignal`'s label ([`pqxdh.rs:73-74`][pq]) while
-naming a KEM the SDK does not use. Two consequences:
+Both parameters the specifications leave to the implementer are set to what
+this SDK is and runs. PQXDH §2.2 defines the info string as `info`, `curve`,
+`hash`, and `pqkem` joined by `_`, with each representation implementer-chosen;
+§2.1 defines `info` as an application identifier of at least 8 bytes. X3DH §2.1
+defines the same `info` parameter, and §3.3 uses it as the HKDF info with
+nothing appended.
 
-1. **It violates the SDK's own pinned specification.** PQXDH §2.2 requires the
-   info string to be the concatenation of the four PQXDH parameters *including
-   the actual `pqkem`*. The running `pqkem` is ML-KEM-1024; the string says
-   CRYSTALS-KYBER-1024.
-2. **It removes the domain separation that would make the incompatibility
-   self-evident.** Two implementations feeding the identical label derive
-   different shared secrets, because the KEM underneath differs. A label naming
-   ML-KEM-1024 would make the non-interoperability explicit at the KDF layer.
+Through `0.1.0-alpha.5` these were `libsignal`'s labels — `WhisperText` and
+`WhisperText_X25519_SHA-256_CRYSTALS-KYBER-1024` ([`pqxdh.rs:73-74`][pq]) —
+which was wrong on both parameters:
 
-Changing the label to name ML-KEM-1024 would satisfy §2.2 and improve the
-situation. It is a pre-1.0 format break, and is flagged rather than fixed here.
+1. **`pqkem` named a KEM the SDK does not run**, violating §2.2. Worse than a
+   labelling error: two implementations feeding an identical label derived
+   *different* shared secrets, because the KEM underneath differed, with
+   nothing at the KDF layer to signal it. Domain separation is the one job the
+   info string has.
+2. **`info` named someone else's application.** The specifications ask for an
+   identifier of the application deriving the key. This SDK is not Signal
+   Messenger, and the label saying otherwise was inherited, not chosen.
+
+Both are corrected as of `0.1.0-alpha.6`. This is a
+pre-1.0 format break: sessions established under the old labels derive a
+different `SK` and cannot be continued. Nothing else about the derivation
+changed.
+
+An application that needs `libsignal`'s known-answer vectors can still get them
+by setting `protocolStrategy.keyExchangeInfoString` to the old label
+explicitly, which is what that option is for. Doing so re-adopts the §2.2
+violation knowingly rather than by default.
 
 ### 2.2 Associated data binds identity commitments
 

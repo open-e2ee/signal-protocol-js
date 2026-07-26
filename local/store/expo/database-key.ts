@@ -18,10 +18,10 @@
 
 import * as Crypto from 'expo-crypto';
 import { EncryptionError, EncryptionErrorCode } from '../../../types/errors';
-import { resolveSignalLogger, type ILogger } from '../../../logger';
-import type { ISignalLocalSecretVault } from '../../../types/api';
+import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
+import type { ISignalProtocolLocalSecretVault } from '../../../types/api';
 import { bytesToHex } from '../../../encoding';
-import { ExpoSecureStoreSignalSecretVault } from '../../vault/expo-secure-store';
+import { ExpoSecureStoreSignalProtocolSecretVault } from '../../vault/expo-secure-store';
 
 /**
  * Secret-vault identifier for the database encryption key
@@ -60,18 +60,18 @@ export class DatabaseKeyManager {
   private cachedKey: Uint8Array | null = null;
   private initPromise: Promise<boolean> | null = null;
   private logger: Required<ILogger>;
-  private secretVault: ISignalLocalSecretVault;
+  private secretVault: ISignalProtocolLocalSecretVault;
 
   constructor(
-    secretVault: ISignalLocalSecretVault = new ExpoSecureStoreSignalSecretVault(),
+    secretVault: ISignalProtocolLocalSecretVault = new ExpoSecureStoreSignalProtocolSecretVault(),
     providedLogger?: ILogger
   ) {
     this.secretVault = secretVault;
-    this.logger = resolveSignalLogger(providedLogger);
+    this.logger = resolveSignalProtocolLogger(providedLogger);
   }
 
   setLogger(providedLogger?: ILogger): void {
-    this.logger = resolveSignalLogger(providedLogger);
+    this.logger = resolveSignalProtocolLogger(providedLogger);
   }
 
   /**

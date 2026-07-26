@@ -50,12 +50,12 @@ export type {
   Session,
 } from './schema';
 
-export type SignalExpoDrizzleDB = ExpoSQLiteDatabase<typeof schema>;
-export type SignalExpoRawDatabase = SQLiteDatabase;
+export type SignalProtocolExpoDrizzleDB = ExpoSQLiteDatabase<typeof schema>;
+export type SignalProtocolExpoRawDatabase = SQLiteDatabase;
 
-export interface SignalExpoDbBindings {
-  getDrizzle?: () => Promise<SignalExpoDrizzleDB>;
-  getRawDatabase?: () => SignalExpoRawDatabase;
+export interface SignalProtocolExpoDbBindings {
+  getDrizzle?: () => Promise<SignalProtocolExpoDrizzleDB>;
+  getRawDatabase?: () => SignalProtocolExpoRawDatabase;
   eq?: typeof ormEq;
   and?: typeof ormAnd;
   or?: typeof ormOr;
@@ -88,19 +88,19 @@ export interface SignalExpoDbBindings {
   authCredentialCache?: typeof schema.authCredentialCache;
 }
 
-let bindings: SignalExpoDbBindings = {};
+let bindings: SignalProtocolExpoDbBindings = {};
 
-export function configureSignalExpoDbBindings(next: SignalExpoDbBindings): void {
+export function configureSignalProtocolExpoDbBindings(next: SignalProtocolExpoDbBindings): void {
   bindings = { ...bindings, ...next };
 }
 
-export function resetSignalExpoDbBindings(): void {
+export function resetSignalProtocolExpoDbBindings(): void {
   bindings = {};
 }
 
-function requireBinding<K extends keyof SignalExpoDbBindings>(
+function requireBinding<K extends keyof SignalProtocolExpoDbBindings>(
   key: K
-): NonNullable<SignalExpoDbBindings[K]> {
+): NonNullable<SignalProtocolExpoDbBindings[K]> {
   const value = bindings[key];
   if (!value) {
     throw new Error(
@@ -108,14 +108,14 @@ function requireBinding<K extends keyof SignalExpoDbBindings>(
     );
   }
 
-  return value as NonNullable<SignalExpoDbBindings[K]>;
+  return value as NonNullable<SignalProtocolExpoDbBindings[K]>;
 }
 
-export async function getDrizzle(): Promise<SignalExpoDrizzleDB> {
+export async function getDrizzle(): Promise<SignalProtocolExpoDrizzleDB> {
   return requireBinding('getDrizzle')();
 }
 
-export function getRawDatabase(): SignalExpoRawDatabase {
+export function getRawDatabase(): SignalProtocolExpoRawDatabase {
   return requireBinding('getRawDatabase')();
 }
 

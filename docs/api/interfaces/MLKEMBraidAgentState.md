@@ -52,7 +52,7 @@ Decoded CT1 stored for combined MAC verification with CT2
 
 > `optional` **ct1\_for\_mac?**: `Uint8Array`\<`ArrayBufferLike`\>
 
-CT1 copy stored for combined MAC computation with CT2 (libsignal authenticates ct1||ct2)
+CT1 copy stored for combined MAC computation with CT2 (the reference implementation authenticates ct1||ct2)
 
 ***
 

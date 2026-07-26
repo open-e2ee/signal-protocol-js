@@ -730,7 +730,7 @@ export interface ISignalProtocolManager {
 // FOCUSED STORE INTERFACES
 // ============================================================================
 //
-// Breaking ISignalLocalStore into focused interfaces provides:
+// Breaking ISignalProtocolLocalStore into focused interfaces provides:
 //
 // 1. Interface Segregation: Implementations only need to implement what they use
 // 2. Verifiable seams: substitute individual stores without implementing everything
@@ -1400,7 +1400,7 @@ export interface IProtocolStore
  * This is the interface that local store adapters should implement.
  *
  */
-export interface ISignalLocalStore
+export interface ISignalProtocolLocalStore
   extends IProtocolStore, ISesameStore, ISenderKeyStore, IMessageRecordStore {
   /**
    * Clear all encryption keys (use with caution!).
@@ -1490,7 +1490,7 @@ export interface ISignalLocalStore
  * remain outside the main local store, such as a database encryption key.
  * It is not a second general-purpose Signal Protocol data store.
  */
-export interface ISignalLocalSecretVault {
+export interface ISignalProtocolLocalSecretVault {
   /**
    * Read a named secret from local secure storage.
    */

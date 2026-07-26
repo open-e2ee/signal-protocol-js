@@ -19,7 +19,7 @@ import { access, mkdir, open, readFile, rename, rm, unlink, writeFile } from 'no
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { EncryptionError, EncryptionErrorCode } from '../../../types';
-import { resolveSignalLogger, type ILogger } from '../../../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 import { getErrorMessage } from '../../../utils/errors';
 import { encryptRecord, decryptRecord, type EncryptedRecord } from './database-encryption';
@@ -84,7 +84,7 @@ export class NodeEncryptedDatabase {
     this.dataDir = dataDir;
     this.sessionsDir = join(dataDir, 'sessions');
     this.securityStatePath = join(dataDir, 'protocol_security_state_v1.json');
-    this.logger = resolveSignalLogger(providedLogger);
+    this.logger = resolveSignalProtocolLogger(providedLogger);
   }
 
   /**

@@ -1,6 +1,6 @@
 # IndexedDB Store
 
-`IndexedDbSignalStore` implements the full `ISignalLocalStore` contract for web
+`IndexedDbSignalProtocolStore` implements the full `ISignalProtocolLocalStore` contract for web
 browsers using IndexedDB and Web Crypto.
 
 ## Why it exists

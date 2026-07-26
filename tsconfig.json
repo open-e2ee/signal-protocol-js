@@ -3,7 +3,8 @@
   "extends": "./tsconfig.build.json",
   "compilerOptions": {
     "noEmit": true,
-    "baseUrl": ".",
+    // No `baseUrl`: TypeScript 5.9 removed it. Without it, `paths` resolve
+    // relative to this file, which is what the entries below already assume.
     "paths": {
       "@open-e2ee/signal-protocol-sdk": ["./index.ts"],
       "@open-e2ee/signal-protocol-sdk/*": ["./*"]

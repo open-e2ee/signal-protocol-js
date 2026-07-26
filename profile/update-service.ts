@@ -22,7 +22,7 @@ import {
   type ApplicationProfileData,
 } from './cipher';
 import { uuidToBytes } from '../internal/protocol/zk/groups/uid-struct';
-import { resolveSignalLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../logger';
 
 // ============================================================================
 // Types
@@ -73,7 +73,7 @@ export interface UpdateEncryptedProfileParams {
  */
 export async function updateEncryptedProfile(params: UpdateEncryptedProfileParams): Promise<void> {
   const { convex, api, uuid, name, about, aboutEmoji, avatarStorageId, applicationData } = params;
-  const logger = resolveSignalLogger(params.logger);
+  const logger = resolveSignalProtocolLogger(params.logger);
 
   // 1. Get own profile key
   const profileKey = params.profileKey ?? (await getOrCreateOwnProfileKey());

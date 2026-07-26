@@ -41,7 +41,7 @@ export type {
 } from './types';
 export type {
   BlockedRecipientsSyncInput,
-  InspectedSignalContent,
+  InspectedSignalProtocolContent,
   MediaAttachmentDeleteSyncInput,
   ParsedReceiptContent,
   ParsedTypingContent,
@@ -54,9 +54,9 @@ export type {
   UsernameStateSyncInput,
   VerificationStateSyncInput,
   ViewOnceOpenSyncInput,
-  SignalContentAdapter,
+  SignalProtocolContentAdapter,
 } from './content-adapter';
-export { createDefaultSignalContentAdapter } from './content-adapter';
+export { createDefaultSignalProtocolContentAdapter } from './content-adapter';
 export type { DecryptedEnvelope, SignalProtocolClientHooks } from './event-hooks';
 export type {
   SignalProtocolClientDeleteLocalAttachmentInput,

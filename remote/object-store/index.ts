@@ -11,5 +11,5 @@ export type {
   RemoteObjectDownloadRequest,
   RemoteObjectUpload,
   RemoteObjectUploadRequest,
-  SignalRemoteObjectStore,
+  SignalProtocolRemoteObjectStore,
 } from './types';

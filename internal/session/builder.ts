@@ -17,7 +17,7 @@
  * @see https://signal.org/docs/specifications/doubleratchet/#initialization
  */
 
-import { defaultSignalLogger } from '../../logger';
+import { defaultSignalProtocolLogger } from '../../logger';
 import * as CryptoUtils from '../crypto';
 import type { PublicKey } from '../../keys';
 import { performKeyAgreement, performResponderKeyAgreement } from './handshake';
@@ -94,7 +94,7 @@ export class SessionBuilder {
       prekeyBundle,
       recipientIdentityType,
       protocolStrategy,
-      logger = defaultSignalLogger,
+      logger = defaultSignalProtocolLogger,
     } = input;
 
     logger.breadcrumb('SessionBuilder: Building initiator session', {
@@ -269,7 +269,7 @@ export class SessionBuilder {
       kemLastResortPreKey,
       kemOneTimePreKey,
       protocolStrategy,
-      logger = defaultSignalLogger,
+      logger = defaultSignalProtocolLogger,
     } = input;
 
     logger.breadcrumb('SessionBuilder: Building responder session', {

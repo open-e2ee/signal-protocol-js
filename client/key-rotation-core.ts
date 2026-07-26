@@ -1,7 +1,7 @@
 /**
  * Key Rotation Core
  *
- * Shared rotation logic that works with ISignalRelayServer interface.
+ * Shared rotation logic that works with ISignalProtocolRelayServer interface.
  * Used by both:
  * - SignalProtocolClient (foreground, via key-rotation.ts)
  * - Background tasks (headless, via headless.ts)
@@ -33,13 +33,13 @@
  */
 
 import AsyncLock from 'async-lock';
-import { defaultSignalLogger, type ILogger } from '../logger';
-import type { ISignalLocalStore } from '../types';
+import { defaultSignalProtocolLogger, type ILogger } from '../logger';
+import type { ISignalProtocolLocalStore } from '../types';
 import type { IdentityKeyPair } from '../keys';
 import type { IdentityType } from '../keys/types';
 import type { PublicKey, PrivateKey, Signature } from '../keys/branded';
 import { ONE_TIME_PREKEY_BATCH_SIZE } from '../types';
-import type { ISignalRelayServer } from '../remote/relay/types';
+import type { ISignalProtocolRelayServer } from '../remote/relay/types';
 import {
   KEY_REFRESH_INTERVAL_MS_DEFAULT,
   MAX_PREKEY_AGE_MS_DEFAULT,
@@ -68,9 +68,9 @@ const rotationLock = new AsyncLock({
  * Resolve storage instance or fail fast when the caller forgot to provide one.
  */
 async function resolveStorage(
-  providedStorage?: ISignalLocalStore,
-  logger: Required<ILogger> = defaultSignalLogger
-): Promise<ISignalLocalStore> {
+  providedStorage?: ISignalProtocolLocalStore,
+  logger: Required<ILogger> = defaultSignalProtocolLogger
+): Promise<ISignalProtocolLocalStore> {
   if (providedStorage) {
     return providedStorage;
   }
@@ -78,7 +78,7 @@ async function resolveStorage(
     category: 'E2EE',
   });
   throw new Error(
-    'Key rotation requires an ISignalLocalStore. ' +
+    'Key rotation requires an ISignalProtocolLocalStore. ' +
       'Create the runtime-specific local store in app code and pass it explicitly.'
   );
 }
@@ -87,7 +87,7 @@ async function resolveStorage(
  * Get identity key from storage, throwing if not found
  */
 async function getRequiredIdentityKey(
-  storage: ISignalLocalStore,
+  storage: ISignalProtocolLocalStore,
   identityType: IdentityType = 'aci'
 ): Promise<IdentityKeyPair> {
   const identityKey = await storage.getIdentityKey(identityType);
@@ -233,13 +233,13 @@ export function isPreKeyExpired(
  * @returns true if rotation was performed
  */
 export async function rotateEcSignedPreKeyCore(
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string,
   deviceId: number,
-  providedStorage?: ISignalLocalStore,
+  providedStorage?: ISignalProtocolLocalStore,
   refreshIntervalMs: number = KEY_REFRESH_INTERVAL_MS_DEFAULT,
   identityTypes: readonly IdentityType[] = ['aci', 'pni'],
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<boolean> {
   // Rotate for active identity types (the reference implementation rotates PNI on the same schedule as ACI)
   // Use && so the function only returns true when ALL identities succeed.
@@ -273,13 +273,13 @@ export async function rotateEcSignedPreKeyCore(
  * @returns true if rotation was performed
  */
 async function rotateEcSignedPreKeyForIdentity(
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string,
   deviceId: number,
   identityType: IdentityType,
-  providedStorage?: ISignalLocalStore,
+  providedStorage?: ISignalProtocolLocalStore,
   refreshIntervalMs: number = KEY_REFRESH_INTERVAL_MS_DEFAULT,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<boolean> {
   return withRotationLock(
     userId,
@@ -354,13 +354,13 @@ async function rotateEcSignedPreKeyForIdentity(
  * @returns true if rotation was performed
  */
 export async function rotateKyberPreKeyCore(
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string,
   deviceId: number,
-  providedStorage?: ISignalLocalStore,
+  providedStorage?: ISignalProtocolLocalStore,
   refreshIntervalMs: number = KEY_REFRESH_INTERVAL_MS_DEFAULT,
   identityTypes: readonly IdentityType[] = ['aci', 'pni'],
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<boolean> {
   // Rotate for active identity types (the reference implementation rotates PNI on the same schedule as ACI)
   // Use && so the function only returns true when ALL identities succeed.
@@ -394,13 +394,13 @@ export async function rotateKyberPreKeyCore(
  * @returns true if rotation was performed
  */
 async function rotateKyberPreKeyForIdentity(
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string,
   deviceId: number,
   identityType: IdentityType,
-  providedStorage?: ISignalLocalStore,
+  providedStorage?: ISignalProtocolLocalStore,
   refreshIntervalMs: number = KEY_REFRESH_INTERVAL_MS_DEFAULT,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<boolean> {
   return withRotationLock(
     userId,
@@ -479,14 +479,14 @@ async function rotateKyberPreKeyForIdentity(
  * @returns true if replenishment was performed for both identity types
  */
 export async function replenishOneTimePreKeysCore(
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string,
   deviceId: number,
-  storage: ISignalLocalStore,
+  storage: ISignalProtocolLocalStore,
   threshold: number = MIN_PREKEY_REPLENISHMENT_THRESHOLD,
   identityTypes: readonly IdentityType[] = ['aci', 'pni'],
   preKeyMaintenance?: PreKeyMaintenanceStore,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<boolean> {
   // Replenish for active identity types (consistent with rotateEcSignedPreKeyCore/rotateKyberPreKeyCore)
   let allReplenished = true;
@@ -518,14 +518,14 @@ export async function replenishOneTimePreKeysCore(
  * @returns true if replenishment was performed
  */
 async function replenishOneTimePreKeysForIdentity(
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string,
   deviceId: number,
-  storage: ISignalLocalStore,
+  storage: ISignalProtocolLocalStore,
   threshold: number,
   identityType: IdentityType,
   preKeyMaintenance?: PreKeyMaintenanceStore,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<boolean> {
   return withRotationLock(
     userId,
@@ -628,13 +628,13 @@ export interface PreKeySendCheckResult {
  * @see https://signal.org/docs/specifications/pqxdh/#publishing-keys
  */
 export async function ensurePreKeysValid(
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string,
   deviceId: number,
-  storage?: ISignalLocalStore,
+  storage?: ISignalProtocolLocalStore,
   maxAgeMs: number = MAX_PREKEY_AGE_MS_DEFAULT,
   identityType: IdentityType = 'aci',
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<PreKeySendCheckResult> {
   // Check EC signed prekey metadata for the specified identity type
   const signedMetadata = await relay.getEcSignedPreKeyMetadata(userId, deviceId, identityType);

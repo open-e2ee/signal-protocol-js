@@ -2,8 +2,8 @@
  * Signal Protocol relay interfaces for remote infrastructure.
  *
  * These are the DI contracts for relay-oriented remote services:
- * - ISignalRelayServer: Envelope delivery, device registry, prekey management
- * - ISignalRemoteSenderStateStore: Optional remote sender-key/skipped-key state
+ * - ISignalProtocolRelayServer: Envelope delivery, device registry, prekey management
+ * - ISignalProtocolRemoteSenderStateStore: Optional remote sender-key/skipped-key state
  *
  * @see docs/INTERFACES.md for full documentation
  */
@@ -38,7 +38,7 @@ export interface AccountIdentityRotation extends AccountIdentityProvisioning {
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
- * Optional remote sender-state store for ExpoSignalStore.
+ * Optional remote sender-state store for ExpoSignalProtocolStore.
  *
  * Provides server-side storage for:
  * - Sender Keys (group messaging)
@@ -48,18 +48,18 @@ export interface AccountIdentityRotation extends AccountIdentityProvisioning {
  * Protocol SESAME specification.
  * The server only stores device registry, prekeys, and message mailbox.
  *
- * All methods are optional - ExpoSignalStore checks with `?.` before calling.
- * Pass a ConvexSignalRelayServer or similar backend to enable server-side storage.
+ * All methods are optional - ExpoSignalProtocolStore checks with `?.` before calling.
+ * Pass a ConvexSignalProtocolRelayServer or similar backend to enable server-side storage.
  *
  * @example
  * ```typescript
- * const relay = new ConvexSignalRelayServer(convex, signalApi, {
+ * const relay = new ConvexSignalProtocolRelayServer(convex, signalApi, {
  *   currentUserId: userId,
  * });
- * const keyStore = new ExpoSignalStore(relay);
+ * const keyStore = new ExpoSignalProtocolStore(relay);
  * ```
  */
-export interface ISignalRemoteSenderStateStore {
+export interface ISignalProtocolRemoteSenderStateStore {
   // ════════════════════════════════════════════════════════════
   // SENDER KEYS (GROUP MESSAGING)
   // ════════════════════════════════════════════════════════════
@@ -262,7 +262,7 @@ export interface IProvisioningService {
  *
  * Provides metadata queries for key rotation decisions.
  * Note: The actual key upload methods (uploadEcSignedPreKey, uploadKemLastResortPreKey, getPreKeyCount)
- * are already on ISignalRelayServer.
+ * are already on ISignalProtocolRelayServer.
  *
  */
 export interface IKeyRotationService {
@@ -321,7 +321,7 @@ export interface IKeyRotationService {
  *
  * @example
  * ```typescript
- * const relay: ISignalRelayServer = new ConvexSignalRelayServer(convex, signalApi, {
+ * const relay: ISignalProtocolRelayServer = new ConvexSignalProtocolRelayServer(convex, signalApi, {
  *   currentUserId: userId,
  * });
  *
@@ -341,7 +341,7 @@ export interface IKeyRotationService {
  * });
  * ```
  */
-export interface ISignalRelayServer extends IProvisioningService, IKeyRotationService {
+export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRotationService {
   // ════════════════════════════════════════════════════════════
   // ENVELOPE DELIVERY
   // Maps to: envelopes table

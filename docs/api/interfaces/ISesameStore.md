@@ -19,7 +19,7 @@ https://signal.org/docs/specifications/sesame/
 
 ## Extended by
 
-- [`ISignalLocalStore`](ISignalLocalStore.md)
+- [`ISignalProtocolLocalStore`](ISignalProtocolLocalStore.md)
 
 ## Methods
 

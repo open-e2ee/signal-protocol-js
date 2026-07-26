@@ -44,15 +44,15 @@ export {
 
 // Signal Protocol Messages (1:1 session messages)
 export {
-  type SignalMessageFields,
-  encodeSignalMessage,
-  decodeSignalMessage,
-  serializeSignalMessageAddresses,
-  deserializeSignalMessageAddresses,
-  signalMessageAddressesEqual,
-  type PreKeySignalMessageFields,
-  encodePreKeySignalMessage,
-  decodePreKeySignalMessage,
+  type SignalProtocolMessageFields,
+  encodeSignalProtocolMessage,
+  decodeSignalProtocolMessage,
+  serializeSignalProtocolMessageAddresses,
+  deserializeSignalProtocolMessageAddresses,
+  signalProtocolMessageAddressesEqual,
+  type PreKeySignalProtocolMessageFields,
+  encodePreKeySignalProtocolMessage,
+  decodePreKeySignalProtocolMessage,
 } from './signal-message';
 
 // SPQR Wire Format (compact binary, replaces PqRatchetMessage protobuf)
@@ -73,10 +73,10 @@ export {
   CIPHERTEXT_MESSAGE_CURRENT_VERSION,
   MAC_LENGTH as ENVELOPE_MAC_LENGTH,
   makeVersionByte,
-  frameSignalMessage,
-  framePreKeySignalMessage,
-  parseSignalMessageEnvelope,
-  parsePreKeySignalMessageEnvelope,
+  frameSignalProtocolMessage,
+  framePreKeySignalProtocolMessage,
+  parseSignalProtocolMessageEnvelope,
+  parsePreKeySignalProtocolMessageEnvelope,
   getMessageVersion,
 } from './envelope';
 

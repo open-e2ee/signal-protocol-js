@@ -6,7 +6,7 @@
 
 ## Adapter Roles
 
-### Relay: `ISignalRelayServer`
+### Relay: `ISignalProtocolRelayServer`
 
 The relay interface handles server-owned Signal Protocol state:
 
@@ -17,11 +17,11 @@ The relay interface handles server-owned Signal Protocol state:
 
 Use:
 
-- `ConvexSignalRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/convex`
-- `MockSignalRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/mock`
+- `ConvexSignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/convex`
+- `MockSignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/mock`
 - or a custom implementation
 
-### Storage: `ISignalLocalStore`
+### Storage: `ISignalProtocolLocalStore`
 
 The storage interface handles client-owned Signal Protocol state:
 
@@ -33,15 +33,15 @@ The storage interface handles client-owned Signal Protocol state:
 
 Use:
 
-- `ExpoSignalStore` from `@open-e2ee/signal-protocol-sdk/local/store/expo`
+- `ExpoSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/expo`
 - Expo integration helpers like `getKeyStorage`, `getDatabaseKeyManager`, `clearDatabaseKeyCache`, and `createPreKeyMaintenanceStore` from `@open-e2ee/signal-protocol-sdk/local/store/expo`
-- `IndexedDbSignalStore` from `@open-e2ee/signal-protocol-sdk/local/store/web` (experimental)
-- `ReactNativeSignalStore` from `@open-e2ee/signal-protocol-sdk/local/store/react-native` (experimental; use `await ReactNativeSignalStore.create({ storage })` with a caller-provided key-value backend)
-- `NodeSignalStore` from `@open-e2ee/signal-protocol-sdk/local/store/node`
-- `MockSignalStore` from `@open-e2ee/signal-protocol-sdk/local/store/mock`
+- `IndexedDbSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/web` (experimental)
+- `ReactNativeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/react-native` (experimental; use `await ReactNativeSignalProtocolStore.create({ storage })` with a caller-provided key-value backend)
+- `NodeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/node`
+- `MockSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/mock`
 - or a custom implementation
 
-### Remote object storage: `SignalRemoteObjectStore`
+### Remote object storage: `SignalProtocolRemoteObjectStore`
 
 Optional encrypted file upload/download support for two-layer attachment encryption.
 
@@ -83,12 +83,12 @@ const signal = await createSignalProtocolClient({
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import {
   convexRelay,
-  type ConvexSignalRelayApi,
+  type ConvexSignalProtocolRelayApi,
 } from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
 import { api } from "../convex/_generated/api";
 
-const signalApi = api.signal satisfies ConvexSignalRelayApi;
+const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
 const relay = convexRelay({
   convex,
   api: signalApi,
@@ -162,9 +162,9 @@ Use the public interfaces:
 
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import type { ISignalRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
-import type { SignalRemoteObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store";
-import type { ISignalLocalStore } from "@open-e2ee/signal-protocol-sdk/local/store";
+import type { ISignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
+import type { SignalProtocolRemoteObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store";
+import type { ISignalProtocolLocalStore } from "@open-e2ee/signal-protocol-sdk/local/store";
 ```
 
 Then compose them through `createSignalProtocolClient()`:

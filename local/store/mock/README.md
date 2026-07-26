@@ -1,6 +1,6 @@
 # In-Memory Store
 
-`MockSignalStore` implements `ISignalLocalStore` in memory for examples, local
+`MockSignalProtocolStore` implements `ISignalProtocolLocalStore` in memory for examples, local
 development, and deterministic application prototypes.
 
 Real protocol and cryptography; simulated in-memory infrastructure.

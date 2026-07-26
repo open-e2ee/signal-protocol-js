@@ -1,5 +1,5 @@
 /**
- * Minimal persistent key-value backend required by ReactNativeSignalStore.
+ * Minimal persistent key-value backend required by ReactNativeSignalProtocolStore.
  *
  * Bare React Native consumers must provide their own implementation so the
  * Signal Protocol package does not hard-code a specific storage library.

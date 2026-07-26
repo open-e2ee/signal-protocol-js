@@ -6,9 +6,9 @@
  */
 
 import * as SecureStore from 'expo-secure-store';
-import { resolveSignalLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../logger';
 import { DEVICE_ID_KEY, DEFAULT_DEVICE_ID } from './constants';
-import { SIGNAL_SECURE_STORE_OPTIONS } from '../local/store/expo/secure-store-options';
+import { SIGNAL_PROTOCOL_SECURE_STORE_OPTIONS } from '../local/store/expo/secure-store-options';
 export {};
 let cachedDeviceId: number | null = null;
 
@@ -21,14 +21,14 @@ let cachedDeviceId: number | null = null;
  * @returns Device ID (1-5), or DEFAULT_DEVICE_ID if not yet initialized
  */
 export async function getDeviceId(providedLogger?: ILogger): Promise<number> {
-  const logger = resolveSignalLogger(providedLogger);
+  const logger = resolveSignalProtocolLogger(providedLogger);
   // Return cached value if available
   if (cachedDeviceId !== null) {
     return cachedDeviceId;
   }
 
   try {
-    const storedId = await SecureStore.getItemAsync(DEVICE_ID_KEY, SIGNAL_SECURE_STORE_OPTIONS);
+    const storedId = await SecureStore.getItemAsync(DEVICE_ID_KEY, SIGNAL_PROTOCOL_SECURE_STORE_OPTIONS);
 
     if (storedId) {
       const id = parseInt(storedId, 10);

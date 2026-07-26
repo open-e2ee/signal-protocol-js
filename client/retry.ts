@@ -5,7 +5,7 @@
  * Handles retry request creation, sending, and response handling.
  */
 
-import type { ISignalRelayServer } from '../remote/relay/types';
+import type { ISignalProtocolRelayServer } from '../remote/relay/types';
 import type { PreKeyBundle } from '../keys';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { ContentHint } from '../types/messages';
@@ -161,7 +161,7 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
  */
 async function markMessageDeliveredSilently(
   messageId: string | undefined,
-  relay: ISignalRelayServer | undefined,
+  relay: ISignalProtocolRelayServer | undefined,
   logger: RetryContext['logger'],
   options?: ProcessEnvelopeOptions
 ): Promise<void> {

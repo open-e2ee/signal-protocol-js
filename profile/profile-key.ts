@@ -24,7 +24,7 @@ import { getProfileKeyStorage } from './storage';
 import { bytesToBase64, base64ToBytes } from '../internal/crypto';
 import { asBase64 } from '../types/utils';
 import type { UpdateEncryptedProfileApi } from './update-service';
-import { resolveSignalLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../logger';
 import { deriveAccessKey } from '../internal/protocol/sealed-sender/delivery-token';
 import type { ApplicationProfileData } from './cipher';
 
@@ -189,7 +189,7 @@ export async function rotateOwnProfileKey(
   localStore: OwnEncryptedProfileStateStore,
   providedLogger?: ILogger
 ): Promise<string> {
-  const logger = resolveSignalLogger(providedLogger);
+  const logger = resolveSignalProtocolLogger(providedLogger);
   logger.info('Starting profile key rotation', { category: 'Profile' });
 
   // 1. Get current profile key (needed to decrypt existing avatar)

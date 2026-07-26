@@ -1,22 +1,22 @@
 /**
  * Provider-neutral relay contracts and adapters.
  *
- * `ISignalRelayServer` separates protocol operations from backend transport,
+ * `ISignalProtocolRelayServer` separates protocol operations from backend transport,
  * persistence, authentication, and authorization. Applications can supply
  * their own adapter or use a provider-specific subpath.
  *
  * ## Usage
  *
  * ```typescript
- * import type { ISignalRelayServer } from '@open-e2ee/signal-protocol-sdk/remote/relay';
+ * import type { ISignalProtocolRelayServer } from '@open-e2ee/signal-protocol-sdk/remote/relay';
  * import {
  *   convexRelay,
- *   type ConvexSignalRelayApi,
+ *   type ConvexSignalProtocolRelayApi,
  * } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
  * import { api } from '../convex/_generated/api';
  *
- * const signalApi = api.signal satisfies ConvexSignalRelayApi;
- * const relay: ISignalRelayServer = convexRelay({
+ * const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
+ * const relay: ISignalProtocolRelayServer = convexRelay({
  *   convex,
  *   api: signalApi,
  *   currentUserId: userId,
@@ -31,8 +31,8 @@
  */
 export {};
 export type {
-  ISignalRelayServer,
-  ISignalRemoteSenderStateStore,
+  ISignalProtocolRelayServer,
+  ISignalProtocolRemoteSenderStateStore,
   Envelope,
   DeviceInfo,
   DeviceType,
@@ -45,4 +45,4 @@ export type {
 } from './types';
 
 // Mock adapter is exported here for convenient local composition.
-export { MockSignalRelayServer } from './mock';
+export { MockSignalProtocolRelayServer } from './mock';

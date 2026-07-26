@@ -1,23 +1,23 @@
 /**
  * Signal Protocol Envelope Framing
  *
- * Implements version-byte framing and MAC extraction for SignalMessage and
- * PreKeySignalMessage.
+ * Implements version-byte framing and MAC extraction for SignalProtocolMessage and
+ * PreKeySignalProtocolMessage.
  *
  * ## Wire Formats
  *
- * **SignalMessage** (Double Ratchet message):
+ * **SignalProtocolMessage** (Double Ratchet message):
  * ```
  * [version_byte(1)] [protobuf_bytes(N)] [MAC(8)]
  * ```
  * - version_byte: `(message_version << 4) | CIPHERTEXT_MESSAGE_CURRENT_VERSION`
  * - MAC: trailing 8-byte HMAC-SHA256 truncated tag
  *
- * **PreKeySignalMessage** (initial key exchange + first message):
+ * **PreKeySignalProtocolMessage** (initial key exchange + first message):
  * ```
  * [version_byte(1)] [protobuf_bytes(N)]
  * ```
- * - No trailing MAC (the inner SignalMessage carries its own MAC)
+ * - No trailing MAC (the inner SignalProtocolMessage carries its own MAC)
  *
  * ## Version Byte Layout
  *
@@ -43,7 +43,7 @@ export {};
 export const CIPHERTEXT_MESSAGE_CURRENT_VERSION = 4;
 
 /**
- * Length of the MAC appended to framed SignalMessages.
+ * Length of the MAC appended to framed SignalProtocolMessages.
  *
  * HMAC-SHA256 output truncated to 8 bytes.
  */
@@ -85,23 +85,23 @@ export function getMessageVersion(bytes: Uint8Array): number {
 }
 
 // ============================================================================
-// SignalMessage Framing
+// SignalProtocolMessage Framing
 // ============================================================================
 
 /**
- * Frame a SignalMessage for wire transport.
+ * Frame a SignalProtocolMessage for wire transport.
  *
  * Concatenates: `[version_byte] [protobuf_bytes] [mac]`
  *
  * The version byte defaults to the current protocol version (0x44).
  * The MAC must be exactly `MAC_LENGTH` (8) bytes.
  *
- * @param protobufBytes - Protobuf-encoded SignalMessage (from `encodeSignalMessage()`)
+ * @param protobufBytes - Protobuf-encoded SignalProtocolMessage (from `encodeSignalProtocolMessage()`)
  * @param macBytes - 8-byte HMAC-SHA256 truncated tag
  * @returns Framed message bytes ready for transport
  * @throws Error if macBytes is not exactly MAC_LENGTH bytes
  */
-export function frameSignalMessage(protobufBytes: Uint8Array, macBytes: Uint8Array): Uint8Array {
+export function frameSignalProtocolMessage(protobufBytes: Uint8Array, macBytes: Uint8Array): Uint8Array {
   if (macBytes.length !== MAC_LENGTH) {
     throw new Error(`MAC must be exactly ${MAC_LENGTH} bytes, got ${macBytes.length}`);
   }
@@ -114,18 +114,18 @@ export function frameSignalMessage(protobufBytes: Uint8Array, macBytes: Uint8Arr
 }
 
 /**
- * Parse a framed SignalMessage envelope into its components.
+ * Parse a framed SignalProtocolMessage envelope into its components.
  *
  * Splits: `[version_byte(1)] [protobuf_bytes(N)] [MAC(8)]`
  *
  * The caller should validate the MAC and decode the protobuf bytes
- * separately using `decodeSignalMessage()`.
+ * separately using `decodeSignalProtocolMessage()`.
  *
- * @param bytes - Framed SignalMessage bytes
+ * @param bytes - Framed SignalProtocolMessage bytes
  * @returns Parsed envelope with version, protobuf bytes, and MAC
  * @throws Error if the message is too short to contain version + MAC
  */
-export function parseSignalMessageEnvelope(bytes: Uint8Array): {
+export function parseSignalProtocolMessageEnvelope(bytes: Uint8Array): {
   version: number;
   protobufBytes: Uint8Array;
   mac: Uint8Array;
@@ -134,7 +134,7 @@ export function parseSignalMessageEnvelope(bytes: Uint8Array): {
   const minLength = 1 + MAC_LENGTH;
   if (bytes.length < minLength) {
     throw new Error(
-      `SignalMessage too short: expected at least ${minLength} bytes, got ${bytes.length}`
+      `SignalProtocolMessage too short: expected at least ${minLength} bytes, got ${bytes.length}`
     );
   }
 
@@ -146,21 +146,21 @@ export function parseSignalMessageEnvelope(bytes: Uint8Array): {
 }
 
 // ============================================================================
-// PreKeySignalMessage Framing
+// PreKeySignalProtocolMessage Framing
 // ============================================================================
 
 /**
- * Frame a PreKeySignalMessage for wire transport.
+ * Frame a PreKeySignalProtocolMessage for wire transport.
  *
  * Concatenates: `[version_byte] [protobuf_bytes]`
  *
- * No trailing MAC — the inner SignalMessage (in the `message` field)
+ * No trailing MAC — the inner SignalProtocolMessage (in the `message` field)
  * carries its own MAC.
  *
- * @param protobufBytes - Protobuf-encoded PreKeySignalMessage (from `encodePreKeySignalMessage()`)
+ * @param protobufBytes - Protobuf-encoded PreKeySignalProtocolMessage (from `encodePreKeySignalProtocolMessage()`)
  * @returns Framed message bytes ready for transport
  */
-export function framePreKeySignalMessage(protobufBytes: Uint8Array): Uint8Array {
+export function framePreKeySignalProtocolMessage(protobufBytes: Uint8Array): Uint8Array {
   const result = new Uint8Array(1 + protobufBytes.length);
   result[0] = makeVersionByte();
   result.set(protobufBytes, 1);
@@ -168,23 +168,23 @@ export function framePreKeySignalMessage(protobufBytes: Uint8Array): Uint8Array 
 }
 
 /**
- * Parse a framed PreKeySignalMessage envelope into its components.
+ * Parse a framed PreKeySignalProtocolMessage envelope into its components.
  *
  * Splits: `[version_byte(1)] [protobuf_bytes(N)]`
  *
  * The caller should decode the protobuf bytes separately using
- * `decodePreKeySignalMessage()`.
+ * `decodePreKeySignalProtocolMessage()`.
  *
- * @param bytes - Framed PreKeySignalMessage bytes
+ * @param bytes - Framed PreKeySignalProtocolMessage bytes
  * @returns Parsed envelope with version and protobuf bytes
  * @throws Error if the message is too short to contain a version byte
  */
-export function parsePreKeySignalMessageEnvelope(bytes: Uint8Array): {
+export function parsePreKeySignalProtocolMessageEnvelope(bytes: Uint8Array): {
   version: number;
   protobufBytes: Uint8Array;
 } {
   if (bytes.length < 1) {
-    throw new Error(`PreKeySignalMessage too short: expected at least 1 byte, got ${bytes.length}`);
+    throw new Error(`PreKeySignalProtocolMessage too short: expected at least 1 byte, got ${bytes.length}`);
   }
 
   const version = bytes[0]! >> 4;

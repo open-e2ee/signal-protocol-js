@@ -1,7 +1,7 @@
 /**
- * ConvexSignalRelayServer
+ * ConvexSignalProtocolRelayServer
  *
- * Implementation of ISignalRelayServer using the Signal Protocol Convex component.
+ * Implementation of ISignalProtocolRelayServer using the Signal Protocol Convex component.
  * Zero-knowledge server - all content is opaque ciphertext.
  *
  * Uses the signal component's 17-table schema.
@@ -22,7 +22,7 @@ import type { ConvexHttpClient } from 'convex/browser';
 import { ConvexClient as BrowserConvexClient } from 'convex/browser';
 import type { FunctionReference } from 'convex/server';
 import type {
-  ISignalRelayServer,
+  ISignalProtocolRelayServer,
   Envelope,
   SealedSenderAuth,
   DeviceInfo,
@@ -45,7 +45,7 @@ import type { CompositeIdentityV1, IdentityType } from '../../../keys/types';
 import { decodeCompositeIdentityV1, encodeCompositeIdentityV1 } from '../../../keys/identity';
 import type { GroupAuthorization } from '../../../internal/groups-v2/manager';
 import { SealedSenderAuthError } from '../../../types/errors';
-import { resolveSignalLogger, type ILogger } from '../../../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
 
 /**
  * Polling interval for retry request subscription (in milliseconds).
@@ -93,7 +93,7 @@ interface RetryRequestResult {
  */
 type ConvexClient = ConvexReactClient | ConvexHttpClient;
 
-export interface ConvexSignalRelayApi {
+export interface ConvexSignalProtocolRelayApi {
   messages: {
     send: FunctionReference<'mutation'>;
     getPendingMessages: FunctionReference<'query'>;
@@ -151,24 +151,24 @@ export interface ConvexSignalRelayApi {
   };
 }
 
-export interface ConvexSignalRelayOptions {
+export interface ConvexSignalProtocolRelayOptions {
   currentUserId?: string;
   getAuthToken?: () => Promise<string | null>;
   logger?: ILogger;
 }
 
 /**
- * ConvexSignalRelayServer - Implementation of ISignalRelayServer
+ * ConvexSignalProtocolRelayServer - Implementation of ISignalProtocolRelayServer
  *
  * Uses the Convex Signal Protocol component for the 17-table relay schema.
  *
  * @example
  * ```typescript
  * import { ConvexReactClient } from 'convex/react';
- * import { ConvexSignalRelayServer } from './relay';
+ * import { ConvexSignalProtocolRelayServer } from './relay';
  *
  * const convex = new ConvexReactClient(process.env.CONVEX_URL!);
- * const relay = new ConvexSignalRelayServer(convex, convexSignalRelayApi, {
+ * const relay = new ConvexSignalProtocolRelayServer(convex, convexSignalProtocolRelayApi, {
  *   currentUserId: 'current-user-id',
  * });
  *
@@ -188,7 +188,7 @@ export interface ConvexSignalRelayOptions {
  * });
  * ```
  */
-export class ConvexSignalRelayServer implements ISignalRelayServer {
+export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServer {
   private subscriptions: Map<string, () => void> = new Map();
   private subscriptionClient: BrowserConvexClient | null = null;
   private currentUserId?: string;
@@ -196,7 +196,7 @@ export class ConvexSignalRelayServer implements ISignalRelayServer {
   private readonly logger: Required<ILogger>;
 
   /**
-   * Create a new ConvexSignalRelayServer.
+   * Create a new ConvexSignalProtocolRelayServer.
    *
    * @param convex - Convex client (React or HTTP)
    * @param api - Generated Convex Signal Protocol API map for queries and mutations
@@ -207,12 +207,12 @@ export class ConvexSignalRelayServer implements ISignalRelayServer {
    */
   constructor(
     private convex: ConvexClient,
-    private api: ConvexSignalRelayApi,
-    options: ConvexSignalRelayOptions = {}
+    private api: ConvexSignalProtocolRelayApi,
+    options: ConvexSignalProtocolRelayOptions = {}
   ) {
     this.currentUserId = options.currentUserId;
     this.getAuthToken = options.getAuthToken;
-    this.logger = resolveSignalLogger(options.logger);
+    this.logger = resolveSignalProtocolLogger(options.logger);
   }
 
   /**
@@ -1438,7 +1438,7 @@ export class ConvexSignalRelayServer implements ISignalRelayServer {
   }
 
   async issueAuthCredential(_userId: string): Promise<Uint8Array> {
-    // userId kept for ISignalRelayServer interface compat; server uses auth session
+    // userId kept for ISignalProtocolRelayServer interface compat; server uses auth session
     const result = await this.convex.mutation(this.api.zkAuth.issueAuthCredentialMutation, {});
     return new Uint8Array(result);
   }

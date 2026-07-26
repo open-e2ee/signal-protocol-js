@@ -16,7 +16,7 @@ Combines the five focused local-store responsibilities into one interface.
 
 ## Extended by
 
-- [`ISignalLocalStore`](ISignalLocalStore.md)
+- [`ISignalProtocolLocalStore`](ISignalProtocolLocalStore.md)
 
 ## Methods
 

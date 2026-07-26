@@ -11,7 +11,7 @@
 
 import { ProtocolAddress } from '../../types/address';
 import * as CryptoUtils from '../crypto';
-import { defaultSignalLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
 import type {
   CompositeIdentityV1,
   IdentityKeyPair,
@@ -144,7 +144,7 @@ export function createInitiatorSession(input: InitiatorSessionInput): SessionSta
     kyberCiphertext,
     usedKemOneTimePreKeyId,
     kemOneTimePreKeyCiphertext,
-    logger = defaultSignalLogger,
+    logger = defaultSignalProtocolLogger,
   } = input;
 
   // DIAGNOSTIC: Log session creation with key fingerprints
@@ -267,7 +267,7 @@ export function createResponderSession(input: ResponderSessionInput): SessionSta
     rootKey,
     sendingChainKey,
     receivingChainKey,
-    logger = defaultSignalLogger,
+    logger = defaultSignalProtocolLogger,
   } = input;
 
   // DIAGNOSTIC: Log session creation with key fingerprints

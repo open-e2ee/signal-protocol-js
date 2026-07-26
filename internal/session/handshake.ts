@@ -11,7 +11,7 @@
  * @see https://signal.org/docs/specifications/pqxdh/
  */
 
-import { defaultSignalLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
 import { getErrorMessage } from '../../utils/errors';
 import {
   performPQXDH as pqxdhKeyAgreement,
@@ -160,7 +160,7 @@ export async function performKeyAgreement(
   prekeyBundle: PreKeyBundle,
   options: KeyAgreementOptions = {}
 ): Promise<KeyAgreementResult> {
-  const { protocolStrategy, remoteAddress = 'unknown', logger = defaultSignalLogger } = options;
+  const { protocolStrategy, remoteAddress = 'unknown', logger = defaultSignalProtocolLogger } = options;
   const infoStrings = resolveKeyExchangeInfoStrings(protocolStrategy?.keyExchangeInfoString);
   validatePreKeyBundle(prekeyBundle);
 
@@ -309,7 +309,7 @@ export async function performResponderKeyAgreement(
   aliceEphemeralKey: PublicKey,
   options: KeyAgreementOptions = {}
 ): Promise<ResponderKeyAgreementResult> {
-  const { protocolStrategy, remoteAddress = 'unknown', logger = defaultSignalLogger } = options;
+  const { protocolStrategy, remoteAddress = 'unknown', logger = defaultSignalProtocolLogger } = options;
   const infoStrings = resolveKeyExchangeInfoStrings(protocolStrategy?.keyExchangeInfoString);
 
   // Build base X3DH responder input

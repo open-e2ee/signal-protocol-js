@@ -10,7 +10,7 @@ import { EncryptionError, EncryptionErrorCode } from '../../types/errors';
 import * as CryptoUtils from '../crypto';
 import type { Base64 } from '../../types/utils';
 import type { SessionState } from '../../types';
-import { defaultSignalLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
 import {
   compositeIdentitiesEqual,
   createCompositeIdentityV1,
@@ -119,7 +119,7 @@ export function validateIdentityKey(key: Base64 | undefined, fieldName: string):
 export function validateSessionKeyOwnership(
   session: SessionState,
   mySignedPreKeyPublic: Base64 | undefined,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): void {
   // Skip validation if we don't have a signed prekey to compare
   if (!mySignedPreKeyPublic) {
@@ -210,7 +210,7 @@ export function validateSessionKeyOwnership(
  */
 export function validateSessionStateIntegrity(
   session: SessionState,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): void {
   try {
     encodeCompositeIdentityV1(session.localIdentity);

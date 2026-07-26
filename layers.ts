@@ -135,8 +135,8 @@ export const LAYER_DEFINITIONS: Record<Layer, LayerDefinition> = {
       'ISesameManager',
       'IGroupStateStore',
       'IGroupServer',
-      'ISignalRelayServer',
-      'ISignalLocalStore',
+      'ISignalProtocolRelayServer',
+      'ISignalProtocolLocalStore',
     ],
   },
   [LAYERS.DOMAIN_SESSION]: {
@@ -180,12 +180,12 @@ export const LAYER_DEFINITIONS: Record<Layer, LayerDefinition> = {
 export const INFRASTRUCTURE_MODULES = {
   local: {
     directories: ['local'],
-    implementsPorts: ['ISignalLocalStore'],
+    implementsPorts: ['ISignalProtocolLocalStore'],
     description: 'Local persistence and secret vault adapters: Expo, Node, Mock, Web, React Native',
   },
   remote: {
     directories: ['remote'],
-    implementsPorts: ['ISignalRelayServer', 'SignalRemoteObjectStore'],
+    implementsPorts: ['ISignalProtocolRelayServer', 'SignalProtocolRemoteObjectStore'],
     description: 'Remote relay and object-store adapters: Convex, Mock, R2, S3',
   },
   device: {

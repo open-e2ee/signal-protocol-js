@@ -1,5 +1,5 @@
-import type { SignalRemoteObjectStore } from '../remote/object-store';
-import type { ISignalLocalStore } from '../types/api';
+import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
+import type { ISignalProtocolLocalStore } from '../types/api';
 import {
   createMediaAttachmentId,
   createMediaAttachmentPointer,
@@ -190,8 +190,8 @@ export interface SignalProtocolClientMediaProcessResult {
 }
 
 interface StorageBackedSignalProtocolClientMediaOptions {
-  storage: ISignalLocalStore;
-  remoteObjectStore?: SignalRemoteObjectStore;
+  storage: ISignalProtocolLocalStore;
+  remoteObjectStore?: SignalProtocolRemoteObjectStore;
   config?: SignalProtocolClientMediaConfig;
 }
 
@@ -292,7 +292,7 @@ export interface SignalProtocolClientMedia {
   ): Promise<SignalProtocolClientMediaProcessResult>;
 }
 
-const localOnlyObjectStore: SignalRemoteObjectStore = {
+const localOnlyObjectStore: SignalProtocolRemoteObjectStore = {
   async createUpload() {
     throw new Error('Signal Protocol media operation requires remoteObjectStore for upload');
   },
@@ -470,8 +470,8 @@ function uploadOptionsFromStoredUpload(
 
 /** @internal */
 export class StorageBackedSignalProtocolClientMedia implements SignalProtocolClientMedia {
-  private readonly storage: ISignalLocalStore;
-  private readonly remoteObjectStore?: SignalRemoteObjectStore;
+  private readonly storage: ISignalProtocolLocalStore;
+  private readonly remoteObjectStore?: SignalProtocolRemoteObjectStore;
   private readonly config?: SignalProtocolClientMediaConfig;
   private storeLock: Promise<void> = Promise.resolve();
 

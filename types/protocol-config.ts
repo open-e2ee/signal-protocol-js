@@ -362,13 +362,28 @@ export const ARCHIVED_STATES_MAX_LENGTH = 40;
 
 /**
  * Default HKDF info string for PQXDH session initialization.
+ *
+ * PQXDH section 2.2 defines this as the four PQXDH parameters - `info`,
+ * `curve`, `hash`, and `pqkem` - joined by `_`, with each parameter's string
+ * representation chosen by the implementer. `info` is an application
+ * identifier of at least 8 bytes (section 2.1); the other three must name what
+ * the implementation actually runs, which here is X25519, SHA-256, and
+ * ML-KEM-1024 (FIPS 203).
+ *
+ * Naming a KEM that is not the one in use would derive a different shared
+ * secret from an identical label, which is the one thing the info string
+ * exists to prevent.
  */
-export const PQXDH_INFO_DEFAULT = 'WhisperText_X25519_SHA-256_CRYSTALS-KYBER-1024';
+export const PQXDH_INFO_DEFAULT = 'OpenE2EE_X25519_SHA-256_ML-KEM-1024';
 
 /**
  * Default HKDF info string for X3DH session initialization.
+ *
+ * X3DH section 2.1 defines `info` as an ASCII string identifying the
+ * application, and section 3.3 uses it as the HKDF info directly - unlike
+ * PQXDH, no parameters are appended.
  */
-export const X3DH_INFO_DEFAULT = 'WhisperText';
+export const X3DH_INFO_DEFAULT = 'OpenE2EE';
 
 /**
  * Validation result for protocol strategy configuration.

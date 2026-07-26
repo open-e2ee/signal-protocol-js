@@ -16,7 +16,7 @@
  * @see https://signal.org/docs/specifications/sesame/
  */
 
-import { defaultSignalLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
 import { getErrorMessage } from '../../utils/errors';
 import {
   ISesameManager,
@@ -60,10 +60,10 @@ import { base64ToBytes, bytesToBase64 } from '../crypto/utils';
 import { type Base64 } from '../../types/utils';
 import { deserializePublicKey } from '../crypto/key-prefix';
 import {
-  parsePreKeySignalMessageEnvelope,
-  decodePreKeySignalMessage,
-  parseSignalMessageEnvelope,
-  decodeSignalMessage,
+  parsePreKeySignalProtocolMessageEnvelope,
+  decodePreKeySignalProtocolMessage,
+  parseSignalProtocolMessageEnvelope,
+  decodeSignalProtocolMessage,
 } from '../encoding/proto';
 import { SessionResolver } from '../session/session-resolver';
 import type { Ciphertext } from '../../keys';
@@ -105,9 +105,9 @@ function isPreKeyMessage(ciphertext: string): boolean {
     if (version < 2 || version > 15) return false;
 
     // Detect message type from first protobuf tag:
-    // PreKeySignalMessage wire field 1 (uint32, oneTimePreKeyId/ecOneTimePreKeyId) → wire type 0 → tag 0x08
-    // PreKeySignalMessage wire field 2 (bytes, baseKey) → wire type 2 → tag 0x12
-    // SignalMessage wire field 1 (bytes, ratchetKey) → wire type 2 → tag 0x0A
+    // PreKeySignalProtocolMessage wire field 1 (uint32, oneTimePreKeyId/ecOneTimePreKeyId) → wire type 0 → tag 0x08
+    // PreKeySignalProtocolMessage wire field 2 (bytes, baseKey) → wire type 2 → tag 0x12
+    // SignalProtocolMessage wire field 1 (bytes, ratchetKey) → wire type 2 → tag 0x0A
     const firstTag = bytes[1];
     return firstTag === 0x08 || firstTag === 0x12;
   } catch {
@@ -190,7 +190,7 @@ export class SesameManager implements ISesameManager {
     config?: Partial<SesameConfig>,
     protocol?: IProtocolManager,
     events?: SesameEvents,
-    logger: Required<ILogger> = defaultSignalLogger
+    logger: Required<ILogger> = defaultSignalProtocolLogger
   ) {
     this.logger = logger;
     // Validate configuration per SESAME specification
@@ -1604,9 +1604,9 @@ export class SesameManager implements ISesameManager {
       const bytes = base64ToBytes(ciphertext as Base64);
       if (bytes.length < 2) throw new Error('Too short');
 
-      // Parse PreKeySignalMessage to get identity key
-      const { protobufBytes } = parsePreKeySignalMessageEnvelope(bytes);
-      const preKeyFields = decodePreKeySignalMessage(protobufBytes);
+      // Parse PreKeySignalProtocolMessage to get identity key
+      const { protobufBytes } = parsePreKeySignalProtocolMessageEnvelope(bytes);
+      const preKeyFields = decodePreKeySignalProtocolMessage(protobufBytes);
 
       if (!preKeyFields.identityKey?.length) {
         throw new DecryptionFailedError(message.sessionId, 0);
@@ -1861,7 +1861,7 @@ export class SesameManager implements ISesameManager {
    * Extract sender ratchet key from failed message ciphertext for retry requests.
    *
    * Retry metadata includes the sender ratchet key for one-to-one
-   * SignalMessage/PreKeySignalMessage failures and omits it for
+   * SignalProtocolMessage/PreKeySignalProtocolMessage failures and omits it for
    * sender-key messages.
    */
   private extractRetryRatchetKey(ciphertext: Uint8Array): string | undefined {
@@ -1875,16 +1875,16 @@ export class SesameManager implements ISesameManager {
       const isPreKey = firstTag === 0x08 || firstTag === 0x12;
 
       if (isPreKey) {
-        const { protobufBytes: outerProto } = parsePreKeySignalMessageEnvelope(ciphertext);
-        const preKeyFields = decodePreKeySignalMessage(outerProto);
-        const { protobufBytes: innerProto } = parseSignalMessageEnvelope(preKeyFields.message);
+        const { protobufBytes: outerProto } = parsePreKeySignalProtocolMessageEnvelope(ciphertext);
+        const preKeyFields = decodePreKeySignalProtocolMessage(outerProto);
+        const { protobufBytes: innerProto } = parseSignalProtocolMessageEnvelope(preKeyFields.message);
         signalMessageProtobuf = innerProto;
       } else {
-        const { protobufBytes } = parseSignalMessageEnvelope(ciphertext);
+        const { protobufBytes } = parseSignalProtocolMessageEnvelope(ciphertext);
         signalMessageProtobuf = protobufBytes;
       }
 
-      const signalFields = decodeSignalMessage(signalMessageProtobuf);
+      const signalFields = decodeSignalProtocolMessage(signalMessageProtobuf);
       if (!signalFields.ratchetKey?.length) {
         return undefined;
       }

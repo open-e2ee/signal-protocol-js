@@ -1,6 +1,6 @@
 # Expo Store
 
-`ExpoSignalStore` implements `ISignalLocalStore` for Expo and React Native with
+`ExpoSignalProtocolStore` implements `ISignalProtocolLocalStore` for Expo and React Native with
 an application-owned SQLite/Drizzle database and a database key held through
 the local secret-vault boundary.
 
@@ -20,7 +20,7 @@ the first query:
 
 ```ts
 import {
-  configureSignalExpoDbBindings,
+  configureSignalProtocolExpoDbBindings,
 } from "@open-e2ee/signal-protocol-sdk/local/store/expo/db";
 import {
   getDatabaseKeyManager,
@@ -32,18 +32,18 @@ await keyManager.initialize();
 const sqlCipherPassword = await keyManager.getPassword();
 
 const { rawDatabase, drizzleDatabase } =
-  await appDatabase.openEncryptedSignalDatabase({
+  await appDatabase.openEncryptedSignalProtocolDatabase({
     password: sqlCipherPassword,
     schema: signalSchema,
   });
 
-configureSignalExpoDbBindings({
+configureSignalProtocolExpoDbBindings({
   getDrizzle: async () => drizzleDatabase,
   getRawDatabase: () => rawDatabase,
 });
 ```
 
-`appDatabase.openEncryptedSignalDatabase` represents application-owned database
+`appDatabase.openEncryptedSignalProtocolDatabase` represents application-owned database
 bootstrap. It must enable SQLCipher through the `expo-sqlite` native
 configuration, apply the supplied key before schema access, create or migrate
 the exported tables, and return the matching raw and Drizzle handles. SQLCipher

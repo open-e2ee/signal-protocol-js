@@ -13,7 +13,7 @@
  * @see https://signal.org/docs/specifications/x3dh/
  */
 
-import { defaultSignalLogger, type ILogger } from '../../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
 import {
   generateECDHKeyPair,
   computeSharedSecret,
@@ -132,7 +132,7 @@ export async function performX3DH(
   myIdentityKey: IdentityKeyPair,
   theirBundle: PreKeyBundle,
   infoString: string,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<X3DHResult> {
   logger.breadcrumb('X3DH initiator key agreement', {
     category: 'E2EE',
@@ -297,7 +297,7 @@ export async function performX3DHResponder(
   myOneTimePreKey: EcOneTimePreKey | null,
   input: X3DHResponderInput,
   infoString: string,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<X3DHResponderResult> {
   logger.breadcrumb('X3DH responder key agreement', {
     category: 'E2EE',

@@ -2,14 +2,14 @@
  * Sealed Sender Operations
  *
  * Provides seal/unseal wrapping for the message send/receive pipeline.
- * Called by SignalServiceCipher when sealed sender is enabled.
+ * Called by SignalProtocolServiceCipher when sealed sender is enabled.
  *
  * @see https://signal.org/blog/sealed-sender/
  */
 
 import type { SealedSenderConfig } from './config';
 import type { Envelope } from '../remote/relay/types';
-import { resolveSignalLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../logger';
 import type { Base64 } from '../types';
 
 /**
@@ -94,7 +94,7 @@ export async function unsealMessage(
   senderDeviceId: number;
   innerCiphertextBase64: string;
 }> {
-  const logger = resolveSignalLogger(providedLogger);
+  const logger = resolveSignalProtocolLogger(providedLogger);
   const { base64ToBytes, bytesToBase64 } = await import('../internal/crypto');
 
   // Decode sealed bytes and check version byte for V1 vs V2 dispatch

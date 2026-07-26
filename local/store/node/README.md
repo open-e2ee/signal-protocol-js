@@ -1,6 +1,6 @@
 # Node Store
 
-`NodeSignalStore` implements `ISignalLocalStore` for Node.js using encrypted,
+`NodeSignalProtocolStore` implements `ISignalProtocolLocalStore` for Node.js using encrypted,
 crash-durable filesystem state.
 
 ## Why it exists

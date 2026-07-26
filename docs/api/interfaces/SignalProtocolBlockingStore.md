@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / SignalBlockingStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolBlockingStore
 
-# Interface: SignalBlockingStore
+# Interface: SignalProtocolBlockingStore
 
 Durable local store for blocked recipients.
 

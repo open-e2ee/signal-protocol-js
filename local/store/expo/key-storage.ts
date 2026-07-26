@@ -41,7 +41,7 @@ import {
 import { EncryptionError, EncryptionErrorCode } from '../../../types';
 import { ProtocolAddress } from '../../../types/address';
 import { getDatabaseKeyManager } from './database-key';
-import { resolveSignalLogger, type ILogger } from '../../../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 
 import {
@@ -152,11 +152,11 @@ export class KeyStorage {
   private logger: Required<ILogger>;
 
   constructor(providedLogger?: ILogger) {
-    this.logger = resolveSignalLogger(providedLogger);
+    this.logger = resolveSignalProtocolLogger(providedLogger);
   }
 
   setLogger(providedLogger?: ILogger): void {
-    this.logger = resolveSignalLogger(providedLogger);
+    this.logger = resolveSignalProtocolLogger(providedLogger);
   }
 
   // ============================================================================
@@ -999,7 +999,7 @@ export class KeyStorage {
    * Wipe all Signal Protocol data
    *
    */
-  async wipeAllSignalData(): Promise<{
+  async wipeAllSignalProtocolData(): Promise<{
     sessions: number;
     ecSignedPreKeys: number;
     ecOneTimePreKeys: number;

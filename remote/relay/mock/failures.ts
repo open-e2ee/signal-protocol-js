@@ -126,6 +126,11 @@ export class MockRelayFailureController {
     this.reorderBuffers.delete(targetKey);
   }
 
+  isReorderBuffered(targetKey: string, envelopeId: string | undefined): boolean {
+    if (!envelopeId) return false;
+    return this.reorderBuffers.get(targetKey)?.id === envelopeId;
+  }
+
   flushReordered(): void {
     for (const [targetKey, envelope] of this.reorderBuffers) {
       if (this.isDisconnected(targetKey)) continue;

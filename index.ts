@@ -150,7 +150,7 @@ export type {
 } from './client/types';
 export type {
   BlockedRecipientsSyncInput,
-  InspectedSignalContent,
+  InspectedSignalProtocolContent,
   ParsedReceiptContent,
   ParsedTypingContent,
   ConfigurationSyncInput,
@@ -162,18 +162,18 @@ export type {
   UsernameStateSyncInput,
   VerificationStateSyncInput,
   ViewOnceOpenSyncInput,
-  SignalContentAdapter,
+  SignalProtocolContentAdapter,
 } from './client/content-adapter';
 export type { ForceKeyResetResult, PreKeyStatusResult } from './client/prekeys';
 export { EndorsementManager } from './client/endorsement-manager';
-export { createDefaultSignalContentAdapter } from './client/content-adapter';
+export { createDefaultSignalProtocolContentAdapter } from './client/content-adapter';
 export {
-  SignalBlockingManager,
-  type SignalBlockingManagerOptions,
+  SignalProtocolBlockingManager,
+  type SignalProtocolBlockingManagerOptions,
   type BlockedRecipientEntry,
-  type SignalBlockingStore,
-  type SignalBlockingMirror,
-  type SignalBlockingHooks,
+  type SignalProtocolBlockingStore,
+  type SignalProtocolBlockingMirror,
+  type SignalProtocolBlockingHooks,
 } from './blocking';
 
 /**
@@ -218,7 +218,7 @@ export { ProtocolAddress } from './types/address';
  * });
  * ```
  */
-export { createDefaultSignalLogger, defaultSignalLogger, resolveSignalLogger } from './logger';
+export { createDefaultSignalProtocolLogger, defaultSignalProtocolLogger, resolveSignalProtocolLogger } from './logger';
 
 // ============================================================================
 // NAMESPACED UTILITIES
@@ -360,21 +360,21 @@ export type { GroupId } from './internal/groups';
 /**
  * Remote infrastructure interfaces (DI contracts)
  *
- * - **ISignalRelayServer**: Envelope delivery, device registry, and prekeys
- * - **SignalRemoteObjectStore**: Brokered remote storage for encrypted objects
+ * - **ISignalProtocolRelayServer**: Envelope delivery, device registry, and prekeys
+ * - **SignalProtocolRemoteObjectStore**: Brokered remote storage for encrypted objects
  *
  * @see docs/INTERFACES.md for full documentation
  *
  * @example
  * ```typescript
- * import type { ISignalRelayServer, SignalRemoteObjectStore } from '@open-e2ee/signal-protocol-sdk';
+ * import type { ISignalProtocolRelayServer, SignalProtocolRemoteObjectStore } from '@open-e2ee/signal-protocol-sdk';
  * import { convexRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
  *
- * const relay: ISignalRelayServer = convexRelay({ convex, api: signalApi, currentUserId: userId });
+ * const relay: ISignalProtocolRelayServer = convexRelay({ convex, api: signalApi, currentUserId: userId });
  * ```
  */
 export type {
-  ISignalRelayServer,
+  ISignalProtocolRelayServer,
   Envelope,
   DeviceInfo,
   DeviceType,
@@ -397,7 +397,7 @@ export type {
   RemoteObjectDownloadRequest,
   RemoteObjectUpload,
   RemoteObjectUploadRequest,
-  SignalRemoteObjectStore,
+  SignalProtocolRemoteObjectStore,
 } from './remote/object-store';
 
 // ============================================================================
@@ -438,14 +438,14 @@ export type {
   PreKeyMessage,
 
   // NOTE: EncryptedFile, FileEncryptionKey, EncryptedPhoto, PhotoEncryptionKey
-  // were removed - these are app-domain types that should be defined in the app layer.
-  // See lib/data-access/SignalDataAccess.ts for app-specific encryption wrappers.
+  // were removed - these are app-domain types that should be defined in the app
+  // layer, alongside whatever encryption wrappers the application needs.
 
   // API types
   ISignalProtocolClient,
   ISignalProtocolManager,
-  ISignalLocalStore,
-  ISignalLocalSecretVault,
+  ISignalProtocolLocalStore,
+  ISignalProtocolLocalSecretVault,
   MessageRecord,
   SkippedSenderMessageKey,
 

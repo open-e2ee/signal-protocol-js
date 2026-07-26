@@ -34,11 +34,11 @@ await signal.encryptMessage(bob, 'hello');
 
 ```ts
 import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
-import { convexRelay, type ConvexSignalRelayApi } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
+import { convexRelay, type ConvexSignalProtocolRelayApi } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
 import { expoStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
 import { api } from '../convex/_generated/api';
 
-const signalApi = api.signal satisfies ConvexSignalRelayApi;
+const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
 
 // The relay handles server-side device lists, public prekeys, and envelopes.
 const relay = convexRelay({

@@ -38,13 +38,13 @@ function createDefaultLogger(): ILogger {
   };
 }
 
-export function createDefaultSignalLogger(): ILogger {
+export function createDefaultSignalProtocolLogger(): ILogger {
   return createDefaultLogger();
 }
 
 const baseDefaultLogger = createDefaultLogger();
 
-export const defaultSignalLogger: Required<ILogger> = {
+export const defaultSignalProtocolLogger: Required<ILogger> = {
   debug: (message: string, data?: unknown): void => {
     baseDefaultLogger.debug?.(message, data);
   },
@@ -62,9 +62,9 @@ export const defaultSignalLogger: Required<ILogger> = {
   },
 };
 
-export function resolveSignalLogger(logger?: ILogger): Required<ILogger> {
+export function resolveSignalProtocolLogger(logger?: ILogger): Required<ILogger> {
   if (!logger) {
-    return defaultSignalLogger;
+    return defaultSignalProtocolLogger;
   }
 
   return {

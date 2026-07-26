@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / SignalBlockingManager
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolBlockingManager
 
-# Class: SignalBlockingManager
+# Class: SignalProtocolBlockingManager
 
 SDK blocking orchestration.
 
@@ -15,17 +15,17 @@ project that state elsewhere without becoming a second mutation path.
 
 ### Constructor
 
-> **new SignalBlockingManager**(`options`): `SignalBlockingManager`
+> **new SignalProtocolBlockingManager**(`options`): `SignalProtocolBlockingManager`
 
 #### Parameters
 
 ##### options
 
-[`SignalBlockingManagerOptions`](../interfaces/SignalBlockingManagerOptions.md)
+[`SignalProtocolBlockingManagerOptions`](../interfaces/SignalProtocolBlockingManagerOptions.md)
 
 #### Returns
 
-`SignalBlockingManager`
+`SignalProtocolBlockingManager`
 
 ## Methods
 

@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / SignalContentAdapter
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolContentAdapter
 
-# Interface: SignalContentAdapter
+# Interface: SignalProtocolContentAdapter
 
 ## Methods
 
@@ -30,7 +30,7 @@
 
 ### inspectContent()
 
-> **inspectContent**(`plaintext`): [`InspectedSignalContent`](InspectedSignalContent.md)
+> **inspectContent**(`plaintext`): [`InspectedSignalProtocolContent`](InspectedSignalProtocolContent.md)
 
 #### Parameters
 
@@ -40,7 +40,7 @@
 
 #### Returns
 
-[`InspectedSignalContent`](InspectedSignalContent.md)
+[`InspectedSignalProtocolContent`](InspectedSignalProtocolContent.md)
 
 ***
 

@@ -8,7 +8,7 @@ application's bucket, credentials, schema, authorization, or metadata model.
 
 The Convex client calls generated function references, while `@convex-dev/r2`
 operates inside the application backend. This adapter maps that generated API
-to `SignalRemoteObjectStore` without moving storage policy, provider keys, or
+to `SignalProtocolRemoteObjectStore` without moving storage policy, provider keys, or
 component ownership into the SDK.
 
 ## Client usage

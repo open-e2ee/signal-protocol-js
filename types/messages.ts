@@ -86,7 +86,7 @@ export enum ContentHint {
  * Contains metadata needed for DH ratcheting and out-of-order message handling.
  * This header is sent with every encrypted message.
  *
- * Field names reflect the SignalMessage wire fields:
+ * Field names reflect the SignalProtocolMessage wire fields:
  */
 export interface MessageHeader {
   /**
@@ -157,7 +157,7 @@ export interface RatchetMessage {
   mac: Base64;
 
   // Note: SPQR fields (epoch, messageNumber, kyberCiphertext, kyberPublicKey, versionCapability)
-  // are opaque bytes in SignalMessage protobuf field 5 (pqRatchet). The cipher layer never
+  // are opaque bytes in SignalProtocolMessage protobuf field 5 (pqRatchet). The cipher layer never
   // unpacks them — spqrSend/spqrRecv handle all SPQR internals as a black box.
 
   /**

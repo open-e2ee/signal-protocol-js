@@ -14,30 +14,30 @@ Re-exports [BlockedRecipientEntry](../../interfaces/BlockedRecipientEntry.md)
 
 ***
 
-### SignalBlockingHooks
+### SignalProtocolBlockingHooks
 
-Re-exports [SignalBlockingHooks](../../interfaces/SignalBlockingHooks.md)
-
-***
-
-### SignalBlockingManager
-
-Re-exports [SignalBlockingManager](../../classes/SignalBlockingManager.md)
+Re-exports [SignalProtocolBlockingHooks](../../interfaces/SignalProtocolBlockingHooks.md)
 
 ***
 
-### SignalBlockingManagerOptions
+### SignalProtocolBlockingManager
 
-Re-exports [SignalBlockingManagerOptions](../../interfaces/SignalBlockingManagerOptions.md)
-
-***
-
-### SignalBlockingMirror
-
-Re-exports [SignalBlockingMirror](../../interfaces/SignalBlockingMirror.md)
+Re-exports [SignalProtocolBlockingManager](../../classes/SignalProtocolBlockingManager.md)
 
 ***
 
-### SignalBlockingStore
+### SignalProtocolBlockingManagerOptions
 
-Re-exports [SignalBlockingStore](../../interfaces/SignalBlockingStore.md)
+Re-exports [SignalProtocolBlockingManagerOptions](../../interfaces/SignalProtocolBlockingManagerOptions.md)
+
+***
+
+### SignalProtocolBlockingMirror
+
+Re-exports [SignalProtocolBlockingMirror](../../interfaces/SignalProtocolBlockingMirror.md)
+
+***
+
+### SignalProtocolBlockingStore
+
+Re-exports [SignalProtocolBlockingStore](../../interfaces/SignalProtocolBlockingStore.md)

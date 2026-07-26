@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / ISignalLocalStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / ISignalProtocolLocalStore
 
-# Interface: ISignalLocalStore
+# Interface: ISignalProtocolLocalStore
 
 Signal Protocol local store interface.
 

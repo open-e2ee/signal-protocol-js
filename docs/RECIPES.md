@@ -13,7 +13,7 @@ uses public exports only.
 This local demo sends while Bob is offline so you can see the relay's encrypted
 envelope and Bob's decrypted plaintext in the same workflow.
 
-<!-- mock-snippet:run recipes-two-local-clients -->
+<!-- mock-snippet:run recipes-two-local-clients expect="bob decrypted: alice: hello" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
@@ -99,12 +99,12 @@ Bob through the `onMessageDecrypted` hook.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import {
   convexRelay,
-  type ConvexSignalRelayApi,
+  type ConvexSignalProtocolRelayApi,
 } from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
 import { api } from "../convex/_generated/api";
 
-const signalApi = api.signal satisfies ConvexSignalRelayApi;
+const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
 
 // The relay handles server-side public keys, devices, and encrypted envelopes.
 const relay = convexRelay({
@@ -135,7 +135,7 @@ before creating the client.
 
 ## Local development
 
-<!-- mock-snippet:run recipes-local-development -->
+<!-- mock-snippet:run recipes-local-development expect="" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";

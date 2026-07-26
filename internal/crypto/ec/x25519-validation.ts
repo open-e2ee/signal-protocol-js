@@ -16,7 +16,7 @@ import { EncryptionError, EncryptionErrorCode } from '../../../types/errors';
 import type { Base64 } from '../../../types';
 import { base64ToBytes } from '../utils';
 import type { PublicKey } from '../../../keys/branded';
-import { defaultSignalLogger, type ILogger } from '../../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
 
 /**
  * The prime field for Curve25519: p = 2^255 - 19
@@ -83,7 +83,7 @@ export function scalarIsInRange(keyBytes: Uint8Array): boolean {
  */
 export function isTorsionFree(
   keyBytes: Uint8Array,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): boolean {
   try {
     const u = bytesToNumberLE(keyBytes);
@@ -132,7 +132,7 @@ export function isTorsionFree(
  */
 export function isCanonicalX25519Point(
   keyBytes: Uint8Array,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): boolean {
   if (keyBytes.length !== 32) return false;
   if (!scalarIsInRange(keyBytes)) return false;
@@ -153,7 +153,7 @@ export function isCanonicalX25519Point(
 export function validateX25519PublicKey(
   publicKey: PublicKey,
   context: string,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): void {
   const keyBytes = base64ToBytes(publicKey as Base64);
   if (!isCanonicalX25519Point(keyBytes, logger)) {

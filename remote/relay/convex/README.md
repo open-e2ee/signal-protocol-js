@@ -1,7 +1,7 @@
 # Convex Relay Adapter
 
 The Convex relay adapter maps an application-owned generated Convex API module
-to `ISignalRelayServer`.
+to `ISignalProtocolRelayServer`.
 
 ## Why it exists
 
@@ -24,11 +24,11 @@ pass that namespace directly:
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import {
   convexRelay,
-  type ConvexSignalRelayApi,
+  type ConvexSignalProtocolRelayApi,
 } from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
 import { api } from "../convex/_generated/api";
 
-const signalApi = api.signal satisfies ConvexSignalRelayApi;
+const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
 
 const relay = convexRelay({
   convex,
@@ -43,7 +43,7 @@ const client = await createSignalProtocolClient({
 ```
 
 The generated `api.signal` namespace must expose the nested functions described
-by `ConvexSignalRelayApi`. Use `satisfies` to get a compile-time diagnostic
+by `ConvexSignalProtocolRelayApi`. Use `satisfies` to get a compile-time diagnostic
 without widening the generated references.
 
 Public-key reads may be available to authenticated peers, but every write must

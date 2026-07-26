@@ -7,19 +7,19 @@ and optionally projects a snapshot to an application-owned mirror.
 
 Blocking is a product decision with protocol consequences: blocked recipients
 must be rejected consistently without making a remote mirror a second,
-conflicting source of truth. `SignalBlockingManager` centralizes that ordering.
+conflicting source of truth. `SignalProtocolBlockingManager` centralizes that ordering.
 
 ## Usage
 
 ```ts
 import {
-  SignalBlockingManager,
-  type SignalBlockingStore,
+  SignalProtocolBlockingManager,
+  type SignalProtocolBlockingStore,
 } from "@open-e2ee/signal-protocol-sdk/blocking";
 
-const store: SignalBlockingStore = appBlockingStore;
+const store: SignalProtocolBlockingStore = appBlockingStore;
 
-const blocking = new SignalBlockingManager({
+const blocking = new SignalProtocolBlockingManager({
   store,
   mirror: {
     syncBlockedRecipients: (entries) =>

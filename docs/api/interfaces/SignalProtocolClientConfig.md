@@ -22,11 +22,11 @@ import {
 } from '@open-e2ee/signal-protocol-sdk';
 import {
   convexRelay,
-  type ConvexSignalRelayApi,
+  type ConvexSignalProtocolRelayApi,
 } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
 import { api } from '../convex/_generated/api';
 
-const signalApi = api.signal satisfies ConvexSignalRelayApi;
+const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
 const relay = convexRelay({ convex, api: signalApi, currentUserId: userId });
 
 // Preferred app-facing composition.
@@ -36,7 +36,7 @@ const signal = await createSignalProtocolClient({
 });
 
 // Low-level factory with the same underlying options.
-const advancedSignal = await SignalProtocolClient.create(userId, {
+const advancedSignalProtocol = await SignalProtocolClient.create(userId, {
   storage,
   relay,
   onProgress,
@@ -52,7 +52,7 @@ const advancedSignal = await SignalProtocolClient.create(userId, {
 
 ### contentAdapter?
 
-> `optional` **contentAdapter?**: [`SignalContentAdapter`](SignalContentAdapter.md)
+> `optional` **contentAdapter?**: [`SignalProtocolContentAdapter`](SignalProtocolContentAdapter.md)
 
 Application-provided content adapter.
 
@@ -407,8 +407,8 @@ https://signal.org/docs/specifications/pqxdh/#publishing-keys
 
 App-owned media lifecycle callbacks for the SignalProtocolClient media queue.
 
-The queue itself is persisted through the existing Signal Protocol local
-storage adapter. These callbacks keep local bytes, plaintext caches, and product
+The queue itself is persisted through the existing Signal Protocol local storage
+adapter. These callbacks keep local bytes, plaintext caches, and product
 state in the app layer where they can share file permissions, UI state, and
 app database ownership.
 
@@ -680,7 +680,7 @@ Double Ratchet algorithm configuration
 
 ### relay?
 
-> `optional` **relay?**: [`ISignalRelayServer`](ISignalRelayServer.md)
+> `optional` **relay?**: [`ISignalProtocolRelayServer`](ISignalProtocolRelayServer.md)
 
 Relay adapter for server synchronization.
 
@@ -697,11 +697,11 @@ If omitted, client operates in local-only mode.
 import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 import {
   convexRelay,
-  type ConvexSignalRelayApi,
+  type ConvexSignalProtocolRelayApi,
 } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
 import { api } from '../convex/_generated/api';
 
-const signalApi = api.signal satisfies ConvexSignalRelayApi;
+const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
 const relay = convexRelay({ convex, api: signalApi, currentUserId: userId });
 
 const signal = await createSignalProtocolClient({
@@ -714,7 +714,7 @@ const signal = await createSignalProtocolClient({
 
 ### remoteObjectStore?
 
-> `optional` **remoteObjectStore?**: [`SignalRemoteObjectStore`](SignalRemoteObjectStore.md)
+> `optional` **remoteObjectStore?**: [`SignalProtocolRemoteObjectStore`](SignalProtocolRemoteObjectStore.md)
 
 Remote object storage adapter for encrypted file uploads (two-layer encryption)
 
@@ -823,7 +823,7 @@ const signal = await SignalProtocolClient.create(userId, {
 
 ### storage
 
-> **storage**: [`ISignalLocalStore`](ISignalLocalStore.md)
+> **storage**: [`ISignalProtocolLocalStore`](ISignalProtocolLocalStore.md)
 
 Local store implementation for the current runtime.
 Required by SignalProtocolClient.create().

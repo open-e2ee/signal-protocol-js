@@ -1,15 +1,15 @@
-import { resolveSignalLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../logger';
 import type {
   BlockedRecipientEntry,
-  SignalBlockingHooks,
-  SignalBlockingMirror,
-  SignalBlockingStore,
+  SignalProtocolBlockingHooks,
+  SignalProtocolBlockingMirror,
+  SignalProtocolBlockingStore,
 } from './types';
 
-export interface SignalBlockingManagerOptions {
-  store: SignalBlockingStore;
-  mirror?: SignalBlockingMirror;
-  hooks?: SignalBlockingHooks;
+export interface SignalProtocolBlockingManagerOptions {
+  store: SignalProtocolBlockingStore;
+  mirror?: SignalProtocolBlockingMirror;
+  hooks?: SignalProtocolBlockingHooks;
   logger?: ILogger;
 }
 
@@ -19,17 +19,17 @@ export interface SignalBlockingManagerOptions {
  * The local store is authoritative for the current device. Optional mirrors can
  * project that state elsewhere without becoming a second mutation path.
  */
-export class SignalBlockingManager {
-  private readonly store: SignalBlockingStore;
-  private readonly mirror?: SignalBlockingMirror;
-  private readonly hooks?: SignalBlockingHooks;
+export class SignalProtocolBlockingManager {
+  private readonly store: SignalProtocolBlockingStore;
+  private readonly mirror?: SignalProtocolBlockingMirror;
+  private readonly hooks?: SignalProtocolBlockingHooks;
   private readonly logger: Required<ILogger>;
 
-  constructor(options: SignalBlockingManagerOptions) {
+  constructor(options: SignalProtocolBlockingManagerOptions) {
     this.store = options.store;
     this.mirror = options.mirror;
     this.hooks = options.hooks;
-    this.logger = resolveSignalLogger(options.logger);
+    this.logger = resolveSignalProtocolLogger(options.logger);
   }
 
   async isBlocked(recipientId: string): Promise<boolean> {

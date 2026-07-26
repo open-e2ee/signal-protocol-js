@@ -228,7 +228,7 @@ Use mock adapters for local examples and development:
 the demo sends while Bob is offline, inspects the relay-visible ciphertext, and
 then starts Bob's subscription to show the decrypted plaintext entering the app.
 
-<!-- mock-snippet:run getting-started-stable-local-clients -->
+<!-- mock-snippet:run getting-started-stable-local-clients expect="bob decrypted: alice: hello" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
@@ -319,11 +319,11 @@ import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
 import {
   convexRelay,
-  type ConvexSignalRelayApi,
+  type ConvexSignalProtocolRelayApi,
 } from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
 import { api } from "../convex/_generated/api";
 
-const signalApi = api.signal satisfies ConvexSignalRelayApi;
+const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
 
 // The relay handles server-side public keys, devices, and encrypted envelopes.
 const relay = convexRelay({

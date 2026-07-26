@@ -4,13 +4,13 @@
  * Storage for Node.js applications using filesystem.
  */
 export {};
-import { NodeSignalStore, type NodeSignalStoreConfig } from './adapter';
+import { NodeSignalProtocolStore, type NodeSignalProtocolStoreConfig } from './adapter';
 
-export { NodeSignalStore } from './adapter';
-export type { NodeSignalStoreConfig } from './adapter';
+export { NodeSignalProtocolStore } from './adapter';
+export type { NodeSignalProtocolStoreConfig } from './adapter';
 
-export async function nodeStore(config?: NodeSignalStoreConfig): Promise<NodeSignalStore> {
-  const store = new NodeSignalStore(config);
+export async function nodeStore(config?: NodeSignalProtocolStoreConfig): Promise<NodeSignalProtocolStore> {
+  const store = new NodeSignalProtocolStore(config);
   await store.initialize();
   return store;
 }

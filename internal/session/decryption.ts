@@ -14,7 +14,7 @@
  * @see https://signal.org/docs/specifications/doubleratchet/#decrypting-messages
  */
 
-import { defaultSignalLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
 import type { PreKeyMessage, RatchetMessage, SessionState } from '../../types';
 import { EncryptionError, EncryptionErrorCode } from '../../types';
 import * as CryptoUtils from '../crypto';
@@ -22,7 +22,7 @@ import { asBase64 } from '../../types/utils';
 import { deriveSPQRReceiveKey, tryGetSkippedSPQRKey } from '../protocol/spqr';
 import {
   decodeSPQRWire,
-  signalMessageAddressesEqual,
+  signalProtocolMessageAddressesEqual,
   spqrWireEpochToInternalEpoch,
 } from '../encoding/proto';
 import { tryGetSkippedKey } from '../protocol/double-ratchet/chains';
@@ -36,7 +36,7 @@ export interface ProtobufMacContext {
 }
 
 /**
- * Build the protobuf MAC context from a framed SignalMessage envelope.
+ * Build the protobuf MAC context from a framed SignalProtocolMessage envelope.
  *
  * The session cipher parses envelope shape, but decryption owns the exact bytes
  * that are authenticated. Keeping this construction here prevents call sites
@@ -49,7 +49,7 @@ export function createProtobufMacContext(
 ): ProtobufMacContext {
   if (envelopeMac.length === 0 || framedMessage.length <= envelopeMac.length) {
     throw new EncryptionError(
-      'Invalid protobuf SignalMessage envelope for MAC context',
+      'Invalid protobuf SignalProtocolMessage envelope for MAC context',
       EncryptionErrorCode.INVALID_CIPHERTEXT,
       {
         framedLength: framedMessage.length,
@@ -60,7 +60,7 @@ export function createProtobufMacContext(
 
   if (addresses.length === 0) {
     throw new EncryptionError(
-      'SignalMessage address binding is required for MAC context',
+      'SignalProtocolMessage address binding is required for MAC context',
       EncryptionErrorCode.INVALID_CIPHERTEXT
     );
   }
@@ -131,7 +131,7 @@ export async function trySkippedMessageKeys(
   message: RatchetMessage | PreKeyMessage,
   protobufMacContext?: ProtobufMacContext,
   pqRatchetBytes?: Uint8Array,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<string | null> {
   // Use tryGetSkippedKey which handles both v3 receiverChains and legacy MKSKIPPED
   // Cast session to DoubleRatchetState since tryGetSkippedKey expects that interface
@@ -258,7 +258,7 @@ export async function decryptWithKey(
   session: SessionState,
   protobufMacContext?: ProtobufMacContext,
   optionalPqSalt?: Uint8Array,
-  logger: Required<ILogger> = defaultSignalLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<string> {
   const { encryptionKey, authKey, iv } = await CryptoUtils.expandMessageKey(
     messageKey,
@@ -338,13 +338,13 @@ export async function decryptWithKey(
     if (protobufMacContext) {
       let addressesValid = false;
       try {
-        addressesValid = signalMessageAddressesEqual(
+        addressesValid = signalProtocolMessageAddressesEqual(
           protobufMacContext.addresses,
           session.remoteAddress,
           session.localAddress
         );
       } catch (error) {
-        logger.warn('SignalMessage address binding decode failed', {
+        logger.warn('SignalProtocolMessage address binding decode failed', {
           category: 'E2EE',
           data: {
             operation: 'decrypt',
@@ -356,7 +356,7 @@ export async function decryptWithKey(
       }
 
       if (!addressesValid) {
-        logger.warn('SignalMessage address binding mismatch', {
+        logger.warn('SignalProtocolMessage address binding mismatch', {
           category: 'E2EE',
           data: {
             operation: 'decrypt',

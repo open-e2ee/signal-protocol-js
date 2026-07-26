@@ -10,12 +10,12 @@
  * import { ConvexHttpClient } from 'convex/browser';
  * import { rotateKeysHeadless } from '@open-e2ee/signal-protocol-sdk/client/headless';
  * import { expoStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
- * import { convexRelay, type ConvexSignalRelayApi } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
+ * import { convexRelay, type ConvexSignalProtocolRelayApi } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
  * import { api } from '../convex/_generated/api';
  *
  * const convex = new ConvexHttpClient(CONVEX_URL);
  * convex.setAuth(authToken);
- * const signalApi = api.signal satisfies ConvexSignalRelayApi;
+ * const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
  * const relay = convexRelay({ convex, api: signalApi, currentUserId: userId });
  * const storage = expoStore({ relay });
  *
@@ -24,10 +24,10 @@
  * ```
  */
 
-import { resolveSignalLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type ILogger } from '../logger';
 import { getErrorMessage } from '../utils/errors';
-import type { ISignalLocalStore } from '../types';
-import type { ISignalRelayServer } from '../remote/relay/types';
+import type { ISignalProtocolLocalStore } from '../types';
+import type { ISignalProtocolRelayServer } from '../remote/relay/types';
 import type { IdentityType } from '../keys/types';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS, type PreKeyMaintenanceStore } from './config';
 import {
@@ -57,7 +57,7 @@ export interface HeadlessRotationResult {
  */
 export interface HeadlessRotationOptions {
   /** Local store implementation for the current runtime. */
-  storage?: ISignalLocalStore;
+  storage?: ISignalProtocolLocalStore;
   /** Identity types to rotate (defaults to ['aci', 'pni']) */
   identityTypes?: readonly IdentityType[];
   /** App-provided replaced-prekey maintenance store. */
@@ -74,10 +74,10 @@ export interface HeadlessRotationOptions {
  *
  * This function is designed for background tasks where no React
  * context is available. It uses the same core rotation logic
- * as SignalProtocolClient but works with any ISignalRelayServer implementation.
+ * as SignalProtocolClient but works with any ISignalProtocolRelayServer implementation.
  *
  * Features:
- * - Works with ConvexSignalRelayServer or any ISignalRelayServer implementation
+ * - Works with ConvexSignalProtocolRelayServer or any ISignalProtocolRelayServer implementation
  * - Checks if rotation is needed before performing it
  * - Handles errors gracefully (returns partial success)
  * - Logs all operations for debugging
@@ -91,13 +91,13 @@ export interface HeadlessRotationOptions {
  * @see https://signal.org/docs/specifications/pqxdh/#publishing-keys
  */
 export async function rotateKeysHeadless(
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string,
   deviceId: number,
   options?: HeadlessRotationOptions
 ): Promise<HeadlessRotationResult> {
   const { storage, identityTypes, preKeyMaintenance, logger: providedLogger } = options ?? {};
-  const logger = resolveSignalLogger(providedLogger);
+  const logger = resolveSignalProtocolLogger(providedLogger);
   const errors: string[] = [];
 
   logger.info('Starting headless key rotation', {
@@ -222,7 +222,7 @@ export async function rotateKeysHeadless(
  * @returns Object indicating which keys need rotation
  */
 export async function checkRotationNeeded(
-  relay: ISignalRelayServer,
+  relay: ISignalProtocolRelayServer,
   userId: string,
   deviceId: number
 ): Promise<{

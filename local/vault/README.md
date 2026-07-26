@@ -7,16 +7,16 @@ The local secret vault stores small bootstrap secrets through a minimal
 
 Platform secret managers are appropriate for tiny keys and bootstrap values,
 but not full session databases. Separating the vault from
-`ISignalLocalStore` keeps platform limits explicit and lets a local store use a
+`ISignalProtocolLocalStore` keeps platform limits explicit and lets a local store use a
 vault-held wrapping key without placing every protocol record in the platform
 keychain.
 
 ## Expo usage
 
 ```ts
-import { ExpoSecureStoreSignalSecretVault } from "@open-e2ee/signal-protocol-sdk/local/vault/expo-secure-store";
+import { ExpoSecureStoreSignalProtocolSecretVault } from "@open-e2ee/signal-protocol-sdk/local/vault/expo-secure-store";
 
-const vault = new ExpoSecureStoreSignalSecretVault();
+const vault = new ExpoSecureStoreSignalProtocolSecretVault();
 
 await vault.setSecret("signal-store-wrapping-key", wrappingKey);
 const restored = await vault.getSecret("signal-store-wrapping-key");

@@ -1,6 +1,6 @@
 # Storage Guide
 
-> Infrastructure | Implements `ISignalLocalStore` | [Architecture](../../ARCHITECTURE.md)
+> Infrastructure | Implements `ISignalProtocolLocalStore` | [Architecture](../../ARCHITECTURE.md)
 
 The storage layer owns device-local Signal Protocol state: identity keys,
 contact trust, prekeys, sessions, and retry/message-record metadata.
@@ -8,26 +8,26 @@ contact trust, prekeys, sessions, and retry/message-record metadata.
 ## Why it exists
 
 Protocol state must survive restarts and several security transitions must
-commit atomically. `ISignalLocalStore` makes those requirements explicit
+commit atomically. `ISignalProtocolLocalStore` makes those requirements explicit
 without coupling the client to a database or platform.
 
 ## Current Support
 
 ### Primary supported adapter
 
-- `ExpoSignalStore` from `@open-e2ee/signal-protocol-sdk/local/store/expo`
+- `ExpoSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/expo`
 - Expo integration helpers from `@open-e2ee/signal-protocol-sdk/local/store/expo`, including
   `getKeyStorage`, `getDatabaseKeyManager`, `clearDatabaseKeyCache`, and
   `createPreKeyMaintenanceStore`
 
 ### Local development
 
-- `MockSignalStore` from `@open-e2ee/signal-protocol-sdk/local/store/mock`
+- `MockSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/mock`
 
 ### Experimental
 
-- `IndexedDbSignalStore` from `@open-e2ee/signal-protocol-sdk/local/store/web`
-- `ReactNativeSignalStore` from `@open-e2ee/signal-protocol-sdk/local/store/react-native` (create it with `await ReactNativeSignalStore.create({ storage })` and provide your own key-value backend)
+- `IndexedDbSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/web`
+- `ReactNativeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/react-native` (create it with `await ReactNativeSignalProtocolStore.create({ storage })` and provide your own key-value backend)
 
 These experimental adapters implement the full core store contract, including
 SESAME records, sender-key state, retry message records, and recovery helpers.
@@ -36,7 +36,7 @@ operational behavior require further deployment evidence.
 
 ### Node
 
-- `NodeSignalStore` from `@open-e2ee/signal-protocol-sdk/local/store/node`
+- `NodeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/node`
 
 Use this for non-mobile environments that need a filesystem-backed store.
 
@@ -44,11 +44,11 @@ Use this for non-mobile environments that need a filesystem-backed store.
 
 ```ts
 import { SignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
-import { ExpoSignalStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
+import { ExpoSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
 
 // Configure the application-owned Expo/SQLCipher database bindings first.
 const signal = await SignalProtocolClient.create(userId, {
-  storage: new ExpoSignalStore(),
+  storage: new ExpoSignalProtocolStore(),
 });
 ```
 
@@ -56,7 +56,7 @@ The [Expo guide](./expo/README.md) shows the required database bootstrap.
 
 ## Storage Responsibilities
 
-An `ISignalLocalStore` implementation must preserve:
+An `ISignalProtocolLocalStore` implementation must preserve:
 
 - account identity key storage
 - contact identity trust / TOFU decisions

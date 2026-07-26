@@ -10,7 +10,7 @@
  * - Identity key binding in MAC computation (prevents cross-session replay)
  *
  * Header Serialization:
- * Uses the SignalMessage protobuf field encoding.
+ * Uses the SignalProtocolMessage protobuf field encoding.
  *
  * @see https://signal.org/docs/specifications/doubleratchet/ (Section 3)
  */
@@ -66,7 +66,7 @@ export { DJB_KEY_TYPE };
 /**
  * Serialize a message header using protobuf encoding.
  *
- * SignalMessage header fields:
+ * SignalProtocolMessage header fields:
  * - Field 1 (bytes): ratchet_key (33 bytes: 0x05 prefix + 32-byte X25519 key)
  * - Field 2 (uint32): counter (message number N)
  * - Field 3 (uint32): previous_counter (previous chain length PN)
@@ -136,7 +136,7 @@ export function serializeHeader(
  * Deserialize a protobuf-encoded message header.
  *
  * @param bytes - Protobuf-encoded header bytes
- * @returns Parsed SignalMessage header fields
+ * @returns Parsed SignalProtocolMessage header fields
  */
 export function deserializeHeader(bytes: Uint8Array): {
   ratchetKey: Base64;

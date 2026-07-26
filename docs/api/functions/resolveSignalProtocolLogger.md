@@ -2,16 +2,16 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / resolveSignalLogger
+[@open-e2ee/signal-protocol-sdk](../README.md) / resolveSignalProtocolLogger
 
-# Function: resolveSignalLogger()
+# Function: resolveSignalProtocolLogger()
 
-> **resolveSignalLogger**(`logger?`): `Required`\<[`ILogger`](../interfaces/ILogger.md)\>
+> **resolveSignalProtocolLogger**(`logger?`): `Required`\<[`ILogger`](../interfaces/ILogger.md)\>
 
 Logging utilities for app composition
 
-Pass a logger into `createSignalProtocolClient()` to route Signal Protocol logs
-through your app logger or custom diagnostics pipeline.
+Pass a logger into `createSignalProtocolClient()` to route Signal Protocol logs through
+your app logger or custom diagnostics pipeline.
 
 ## Parameters
 

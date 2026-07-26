@@ -5,13 +5,13 @@
  * applications can compose the client for their own runtime.
  */
 
-import type { ISignalRelayServer } from '../remote/relay/types';
-import type { SignalRemoteObjectStore } from '../remote/object-store';
-import type { ISignalLocalStore, ISignalProtocolManager } from '../types/api';
+import type { ISignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
+import type { ISignalProtocolLocalStore, ISignalProtocolManager } from '../types/api';
 import type { IdentityType } from '../keys/types';
 import type { ILogger } from '../logger';
 import type { SignalProtocolClientHooks } from './event-hooks';
-import type { SignalContentAdapter } from './content-adapter';
+import type { SignalProtocolContentAdapter } from './content-adapter';
 import type { SignalProtocolClientMediaConfig } from './media';
 import type {
   PreKeyMaintenanceStore,
@@ -156,11 +156,11 @@ export interface DoubleRatchetConfig {
  * } from '@open-e2ee/signal-protocol-sdk';
  * import {
  *   convexRelay,
- *   type ConvexSignalRelayApi,
+ *   type ConvexSignalProtocolRelayApi,
  * } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
  * import { api } from '../convex/_generated/api';
  *
- * const signalApi = api.signal satisfies ConvexSignalRelayApi;
+ * const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
  * const relay = convexRelay({ convex, api: signalApi, currentUserId: userId });
  *
  * // Preferred app-facing composition.
@@ -170,7 +170,7 @@ export interface DoubleRatchetConfig {
  * });
  *
  * // Low-level factory with the same underlying options.
- * const advancedSignal = await SignalProtocolClient.create(userId, {
+ * const advancedSignalProtocol = await SignalProtocolClient.create(userId, {
  *   storage,
  *   relay,
  *   onProgress,
@@ -246,11 +246,11 @@ export interface SignalProtocolClientConfig {
    * import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
    * import {
    *   convexRelay,
-   *   type ConvexSignalRelayApi,
+   *   type ConvexSignalProtocolRelayApi,
    * } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
    * import { api } from '../convex/_generated/api';
    *
-   * const signalApi = api.signal satisfies ConvexSignalRelayApi;
+   * const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
    * const relay = convexRelay({ convex, api: signalApi, currentUserId: userId });
    *
    * const signal = await createSignalProtocolClient({
@@ -259,7 +259,7 @@ export interface SignalProtocolClientConfig {
    * });
    * ```
    */
-  relay?: ISignalRelayServer;
+  relay?: ISignalProtocolRelayServer;
 
   /**
    * Remote object storage adapter for encrypted file uploads (two-layer encryption)
@@ -293,7 +293,7 @@ export interface SignalProtocolClientConfig {
    * await signal.send('bob', fileBytes, { mimeType: 'image/jpeg' });
    * ```
    */
-  remoteObjectStore?: SignalRemoteObjectStore;
+  remoteObjectStore?: SignalProtocolRemoteObjectStore;
 
   /**
    * App-owned media lifecycle callbacks for the SignalProtocolClient media queue.
@@ -346,7 +346,7 @@ export interface SignalProtocolClientConfig {
    * Local store implementation for the current runtime.
    * Required by SignalProtocolClient.create().
    */
-  storage: ISignalLocalStore;
+  storage: ISignalProtocolLocalStore;
 
   /**
    * Signal Protocol Manager implementation (for advanced use cases)
@@ -566,7 +566,7 @@ export interface SignalProtocolClientConfig {
    * This is the boundary between the protocol layer and app-specific content,
    * notification batching, and privacy preference policy.
    */
-  contentAdapter?: SignalContentAdapter;
+  contentAdapter?: SignalProtocolContentAdapter;
 
   /**
    * Throw detailed errors instead of generic messages

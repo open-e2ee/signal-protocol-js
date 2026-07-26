@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / InspectedSignalContent
+[@open-e2ee/signal-protocol-sdk](../README.md) / InspectedSignalProtocolContent
 
-# Interface: InspectedSignalContent
+# Interface: InspectedSignalProtocolContent
 
 ## Properties
 

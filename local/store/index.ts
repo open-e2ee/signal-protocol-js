@@ -5,7 +5,7 @@
  *
  * This barrel file exports ONLY platform-agnostic local-store code:
  * - Interfaces and types (DI contracts)
- * - MockSignalStore (for local development)
+ * - MockSignalProtocolStore (for local development)
  *
  * Platform-specific adapters must be imported from their subpaths:
  * - `@open-e2ee/signal-protocol-sdk/local/store/expo` → Expo adapter
@@ -17,16 +17,16 @@
  *
  * ```typescript
  * // Types (any platform)
- * import type { ISignalLocalStore } from '@open-e2ee/signal-protocol-sdk/local/store';
+ * import type { ISignalProtocolLocalStore } from '@open-e2ee/signal-protocol-sdk/local/store';
  *
  * // Local development (any platform)
- * import { MockSignalStore } from '@open-e2ee/signal-protocol-sdk/local/store';
+ * import { MockSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store';
  *
  * // Platform-specific (choose one)
- * import { ExpoSignalStore, getKeyStorage } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
- * import { IndexedDbSignalStore } from '@open-e2ee/signal-protocol-sdk/local/store/web';
- * import { ReactNativeSignalStore } from '@open-e2ee/signal-protocol-sdk/local/store/react-native';
- * import { NodeSignalStore } from '@open-e2ee/signal-protocol-sdk/local/store/node';
+ * import { ExpoSignalProtocolStore, getKeyStorage } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
+ * import { IndexedDbSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store/web';
+ * import { ReactNativeSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store/react-native';
+ * import { NodeSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store/node';
  * ```
  */
 
@@ -36,10 +36,10 @@
  * @see docs/INTERFACES.md
  */
 export {};
-export type { ISignalLocalStore } from '../../types';
+export type { ISignalProtocolLocalStore } from '../../types';
 
 // MessageRecord types for SESAME retry request support
 export type { MessageRecord, IMessageRecordStore } from '../../types';
 
 // Mock local store (for local development on any platform)
-export { MockSignalStore } from './mock';
+export { MockSignalProtocolStore } from './mock';
