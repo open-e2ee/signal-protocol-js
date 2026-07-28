@@ -1316,7 +1316,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   ): Promise<string> {
     // Handle sealed sender envelopes: unseal to reveal sender before decrypting
     if (envelope.messageType === 'unidentified_sender' && this.config.sealedSender) {
-      const { unsealMessage } = await import('./sealed-sender-ops');
+      const { unsealMessage, envelopeTypeForContent } = await import('./sealed-sender-ops');
       const identityKeyPair = await this._storage.getIdentityKey();
       if (!identityKeyPair) {
         throw new EncryptionError(
@@ -1335,27 +1335,42 @@ export class SignalProtocolClient implements ISignalProtocolClient {
         this.logger
       );
 
-      // Process the inner envelope with revealed sender identity
-      // Detect group messages from groupId on the sealed envelope
+      // Process the inner envelope with revealed sender identity. The inner
+      // type travels inside the seal — nothing outside it distinguishes a
+      // group message from a pairwise one. The same mapping serves the other
+      // receive path via `reconstructEnvelope`.
       return this.processIncomingEnvelope(
         {
           ...envelope,
           senderUserId: unsealed.senderUserId,
           senderDeviceId: unsealed.senderDeviceId,
           ciphertext: unsealed.innerCiphertextBase64,
-          messageType: 'ciphertext',
+          messageType: envelopeTypeForContent(unsealed.contentType),
         },
         options
       );
     }
 
-    // Route group messages to sender key decryption
-    // Group messages arrive as 'ciphertext' with groupId set
-    if (envelope.groupId && envelope.messageType === 'ciphertext') {
+    // Route group messages to sender key decryption. `sender_key` says the
+    // payload is a framed SenderKeyMessage; it does not say which group, so
+    // the group comes from the frame's distribution identifier resolved
+    // against the local sender key store.
+    if (envelope.messageType === 'sender_key') {
       // Framed SenderKeyMessage: base64 → bytes (Uint8Array)
       const framedBytes = base64ToBytes(envelope.ciphertext as Base64);
+      const groupId = await this.senderKeyManager.resolveGroupForFramedMessage(
+        framedBytes,
+        envelope.senderUserId,
+        envelope.senderDeviceId
+      );
+      if (groupId === null) {
+        throw new EncryptionError(
+          `No sender key from ${envelope.senderUserId} matches this group message - request key distribution`,
+          EncryptionErrorCode.SESSION_NOT_FOUND
+        );
+      }
       return this.decryptGroupMessage(
-        envelope.groupId,
+        groupId,
         envelope.senderUserId,
         envelope.senderDeviceId,
         framedBytes

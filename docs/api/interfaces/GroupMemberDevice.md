@@ -7,7 +7,7 @@
 # Interface: GroupMemberDevice
 
 Group member device info for message fanout.
-Used by getGroupMembers() for Sender Key distribution.
+Returned by getActiveDevices() for Sender Key distribution.
 
 ## Properties
 

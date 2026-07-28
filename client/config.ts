@@ -714,8 +714,18 @@ export interface SignalProtocolClientConfig {
    * still verify the sender via the embedded certificate.
    *
    * Requires:
-   * - Server-side SEALED_SENDER_SIGNING_KEY environment variable
-   * - Trust root public key distributed to clients
+   * - A relay deployment secret (`OE_GROUPS_SERVER_SECRET`), from which the
+   *   certificate signing keys are derived — there is no separate signing-key
+   *   variable.
+   * - The deployment's Ed25519 sender-certificate root public key pinned in
+   *   `trustRoots` at build time. Print it with `npx oe-groups trust-root`,
+   *   which reports it as `sealed sender trust root` alongside the group trust
+   *   root. Never fetch it from a relay at runtime: a relay that can choose the
+   *   root it is validated against can mint certificates for any sender.
+   *
+   * With `trustRoots` empty, inbound sealed-sender validation stays disabled
+   * and sends fall back to identified delivery, which deanonymizes the sender
+   * to the relay.
    *
    * @see https://signal.org/blog/sealed-sender/
    *

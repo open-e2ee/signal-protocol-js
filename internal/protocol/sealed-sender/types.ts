@@ -186,9 +186,58 @@ export interface UnidentifiedSenderMessage {
   /**
    * Stage 2 encrypted content: certificate + message + MAC.
    * Format: AES-CTR(s_cipherKey, envelope) || HMAC(s_macKey, ciphertext)
-   * Where envelope = varint(certLen) || cert || varint(msgLen) || msg || hint || groupId
+   * Where envelope = contentType(1) || varint(certLen) || cert ||
+   * varint(msgLen) || msg || hint
    */
   encryptedMessage: Base64;
+}
+
+/**
+ * How the recipient should decrypt the payload inside a sealed envelope.
+ *
+ * The outer envelope is `unidentified_sender` for every sealed message, so
+ * this is the only thing that tells the recipient which decryption path to
+ * take. Values match the `Type` enum of the reference implementation's
+ * `UnidentifiedSenderMessage.Message`.
+ */
+export enum SealedSenderContentType {
+  /** Ratchet message that also establishes the session. */
+  PREKEY_MESSAGE = 1,
+  /** Ordinary Double Ratchet message. */
+  MESSAGE = 2,
+  /** Framed SenderKeyMessage: group traffic. */
+  SENDERKEY_MESSAGE = 7,
+  /**
+   * Unencrypted content. Listed to keep the enum a faithful record of the
+   * wire values, but **not supported** — see `isSealedSenderContentType`.
+   */
+  PLAINTEXT_CONTENT = 8,
+}
+
+/**
+ * Whether a byte off the wire names a content type this version can route.
+ *
+ * The envelope is authenticated before it is parsed, so a value outside this
+ * set means a peer running a different version rather than an attacker.
+ * Rejecting at the parse keeps the parse canonical: one byte, one meaning, and
+ * no value that survives to be interpreted by a routing default further
+ * downstream.
+ *
+ * `PLAINTEXT_CONTENT` is deliberately excluded. The reference uses it to carry
+ * a decryption-error receipt when no session exists; this implementation
+ * delivers those over a dedicated relay channel instead (`retryRequests`), so
+ * nothing here produces the type and no decrypt path consumes it. Accepting it
+ * would mean routing an unauthenticated payload — the whole point of the type
+ * is that it is not encrypted — through a path with no handler for it.
+ */
+export function isSealedSenderContentType(
+  value: number
+): value is SealedSenderContentType {
+  return (
+    value === SealedSenderContentType.PREKEY_MESSAGE ||
+    value === SealedSenderContentType.MESSAGE ||
+    value === SealedSenderContentType.SENDERKEY_MESSAGE
+  );
 }
 
 /**
@@ -206,14 +255,20 @@ export interface UnidentifiedSenderMessageContent {
   signalProtocolMessage: Base64;
 
   /**
+   * How to decrypt `signalProtocolMessage`.
+   *
+   * `SENDERKEY_MESSAGE` says the payload is a framed SenderKeyMessage. It
+   * does not say which group: the recipient reads the opaque distribution
+   * identifier out of the frame and resolves the group against its own sender
+   * key store, the same way it does for an unsealed group message. No group
+   * identifier travels in a sealed envelope at all.
+   */
+  contentType: SealedSenderContentType;
+
+  /**
    * Content hint for processing.
    */
   contentHint?: ContentHint;
-
-  /**
-   * Group ID if this is a group message.
-   */
-  groupId?: Base64;
 }
 
 // ContentHint is imported from ../../types/messages
@@ -252,9 +307,14 @@ export interface SealOptions {
   contentHint?: ContentHint;
 
   /**
-   * Optional group ID for group messages.
+   * How the recipient should decrypt `signalProtocolMessage`.
+   *
+   * Defaults to `MESSAGE`. Group traffic must pass `SENDERKEY_MESSAGE`: the
+   * outer envelope is `unidentified_sender` for everything, so this is the
+   * only thing that tells the recipient the payload is a framed
+   * SenderKeyMessage.
    */
-  groupId?: Uint8Array;
+  contentType?: SealedSenderContentType;
 }
 
 /**
@@ -415,9 +475,14 @@ export interface SealMultiRecipientOptions {
   contentHint?: ContentHint;
 
   /**
-   * Optional group ID for group messages.
+   * How the recipient should decrypt `signalProtocolMessage`.
+   *
+   * Defaults to `MESSAGE`. Group traffic must pass `SENDERKEY_MESSAGE`: the
+   * outer envelope is `unidentified_sender` for everything, so this is the
+   * only thing that tells the recipient the payload is a framed
+   * SenderKeyMessage.
    */
-  groupId?: Uint8Array;
+  contentType?: SealedSenderContentType;
 }
 
 /**

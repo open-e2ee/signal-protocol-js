@@ -142,11 +142,23 @@ interface SignalProtocolDBSchema extends DBSchema {
       groupId: string;
       userId: string;
       deviceId: number;
+      /**
+       * Every `senderKeyId` in this record, current and previous, kept in
+       * plaintext so an incoming group message can be routed to a group
+       * without decrypting every record on the device.
+       *
+       * These are the identifiers that already travel unencrypted on the
+       * wire, so storing them in the clear on the local device discloses
+       * nothing a relay could not already see. The key material stays inside
+       * `data`.
+       */
+      senderKeyIds: string[];
       data: Uint8Array;
       updatedAt: number;
     };
     indexes: {
       'by-group': string;
+      'by-sender-key-id': string;
     };
   };
 
@@ -204,7 +216,7 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
   private db: IDBPDatabase<SignalProtocolDBSchema> | null = null;
   private databaseKey: Uint8Array | null = null;
   private readonly dbName = 'signal-protocol-storage';
-  private readonly dbVersion = 5; // v5 adds fail-closed contact revision CAS metadata
+  private readonly dbVersion = 6; // v6 indexes sender key records by senderKeyId
   private readonly _metadata = new Map<string, string>();
 
   /**
@@ -269,9 +281,19 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
           sesameStore.createIndex('by-updated', 'updatedAt');
         }
 
+        // Alpha schema break. A received group message names its sender key
+        // by an opaque `senderKeyId` and nothing else, so records need an
+        // index on that field; rows written before v6 do not carry it and
+        // cannot be indexed retroactively without decrypting each one. The
+        // cost of dropping them is a round of sender key redistribution,
+        // which the protocol already handles.
+        if (oldVersion > 0 && oldVersion < 6 && db.objectStoreNames.contains('senderKeyRecords')) {
+          db.deleteObjectStore('senderKeyRecords');
+        }
         if (!db.objectStoreNames.contains('senderKeyRecords')) {
           const senderKeyStore = db.createObjectStore('senderKeyRecords', { keyPath: 'key' });
           senderKeyStore.createIndex('by-group', 'groupId');
+          senderKeyStore.createIndex('by-sender-key-id', 'senderKeyIds', { multiEntry: true });
         }
 
         if (!db.objectStoreNames.contains('skippedSenderKeys')) {
@@ -1353,6 +1375,30 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     );
   }
 
+  async resolveGroupForSenderKeyId(
+    senderKeyId: string,
+    userId: string,
+    deviceId: number
+  ): Promise<string | null> {
+    this.ensureInitialized();
+    if (!senderKeyId) return null;
+
+    const tx = this.db!.transaction('senderKeyRecords', 'readonly');
+    const index = tx.objectStore('senderKeyRecords').index('by-sender-key-id');
+
+    // An id is unique to one sender key, but the index is not scoped by
+    // sender, so the sender still has to match: another device claiming a
+    // known id must not resolve to that device's group.
+    for await (const cursor of index.iterate(senderKeyId)) {
+      const row = cursor.value;
+      if (row.userId === userId && row.deviceId === deviceId) {
+        return row.groupId;
+      }
+    }
+
+    return null;
+  }
+
   async getAllSenderKeysForGroup(groupId: string): Promise<SenderKeyState[]> {
     this.ensureInitialized();
 
@@ -1403,6 +1449,11 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
       groupId,
       userId,
       deviceId,
+      // Indexed so `resolveGroupForSenderKeyId` is a lookup rather than a
+      // decrypt-everything scan. Previous states are included: a message
+      // encrypted just before a rotation is still in flight when the rotation
+      // lands and names the superseded key.
+      senderKeyIds: states.map((state) => state.senderKeyId).filter(Boolean),
       data: encrypted,
       updatedAt: Date.now(),
     });

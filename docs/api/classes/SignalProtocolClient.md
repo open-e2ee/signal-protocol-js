@@ -112,6 +112,24 @@ User ID for this client instance
 
 ## Methods
 
+### acceptGroupMemberInvitation()
+
+> **acceptGroupMemberInvitation**(`groupId`): `Promise`\<`void`\>
+
+Accept this client's pending profile-key invitation.
+
+#### Parameters
+
+##### groupId
+
+[`GroupId`](../type-aliases/GroupId.md)
+
+#### Returns
+
+`Promise`\<`void`\>
+
+***
+
 ### acceptIdentityRotation()
 
 > **acceptIdentityRotation**(`userId`, `identity`, `identityType?`): `Promise`\<[`ContactIdentityRecord`](../namespaces/keys/interfaces/ContactIdentityRecord.md)\>
@@ -140,7 +158,7 @@ Accept an authenticated composite-identity rotation and reset bound sessions.
 
 ### addGroupMember()
 
-> **addGroupMember**(`groupId`, `editorAci`, `newMemberAci`, `newMemberProfileKey`): `Promise`\<`void`\>
+> **addGroupMember**(`groupId`, `editorAci`, `member`): `Promise`\<`void`\>
 
 Add a member to a group.
 
@@ -154,13 +172,9 @@ Add a member to a group.
 
 `Uint8Array`
 
-##### newMemberAci
+##### member
 
-`Uint8Array`
-
-##### newMemberProfileKey
-
-`Uint8Array`
+[`GroupMemberInput`](../type-aliases/GroupMemberInput.md)
 
 #### Returns
 
@@ -347,7 +361,7 @@ Create a new group.
 
 ##### members
 
-`object`[]
+[`GroupMemberInput`](../type-aliases/GroupMemberInput.md)[]
 
 ##### title
 
@@ -438,6 +452,28 @@ for (const member of groupMembers) {
 #### Implementation of
 
 [`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`createGroupSenderKey`](../interfaces/ISignalProtocolClient.md#creategroupsenderkey)
+
+***
+
+### declineGroupMemberInvitation()
+
+> **declineGroupMemberInvitation**(`groupId`, `identity?`): `Promise`\<`void`\>
+
+Decline this account's ACI- or PNI-keyed pending invitation.
+
+#### Parameters
+
+##### groupId
+
+[`GroupId`](../type-aliases/GroupId.md)
+
+##### identity?
+
+`"aci"` \| `"pni"`
+
+#### Returns
+
+`Promise`\<`void`\>
 
 ***
 

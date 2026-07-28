@@ -266,10 +266,63 @@ export interface SenderKeysConfig {
   /**
    * Maximum age for locally generated sender keys before rotation.
    *
+   * Clamped to the range {@link SENDER_KEY_AGE_FLOOR} to
+   * {@link SENDER_KEY_AGE_CEILING}; a value outside it is treated as the bound
+   * it passed, and a value that is not a positive finite number falls back to
+   * the default.
+   *
    * @default 1209600000
    */
   maxSenderKeyAge?: number;
 }
+
+/**
+ * Hard upper bound on {@link SenderKeysConfig.maxSenderKeyAge}, in
+ * milliseconds.
+ *
+ * A sender key is the one piece of group key material that no ratchet
+ * refreshes: it advances a chain forward on every send, so it gives forward
+ * secrecy against a later compromise, but a member who holds the key at time
+ * T can read everything sent under it afterwards. Only rotation ends that,
+ * and rotation is what this bound guarantees eventually happens. Membership
+ * changes normally force it sooner; the age bound is what covers a group
+ * whose membership never changes.
+ *
+ * Ninety days matches the ceiling the reference implementation applies to its
+ * own remotely configured value. The difference here is who is being bounded:
+ * the reference clamps a value it sets itself, whereas this SDK takes the
+ * value from the host application, so the clamp is the only thing keeping a
+ * deployment from disabling rotation outright by configuring an age no key
+ * will reach.
+ */
+export const SENDER_KEY_AGE_CEILING = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * Hard lower bound on {@link SenderKeysConfig.maxSenderKeyAge}, in
+ * milliseconds.
+ *
+ * Unlike the ceiling this is not a security bound — rotating sooner is
+ * strictly safer — it is an availability one, and it exists because expiry is
+ * enforced on a key that a *send* has to rotate and redistribute. When a key
+ * expires the send path generates a new one, fans a distribution message out
+ * to every other member over sequential network calls, then retries the
+ * encrypt, which re-checks the age of the key it just created. If the
+ * configured age is shorter than that fan-out takes, the retry finds the new
+ * key already expired and the send fails permanently, having burned a rotation
+ * and a message to every member on each attempt.
+ *
+ * An hour is well clear of that: even a group at the membership limit, with a
+ * distribution message to each member, finishes its fan-out in minutes at
+ * worst. It is also low enough to leave deliberately aggressive rotation
+ * policies intact, which a bound measured in days would not.
+ *
+ * A configured age below this is treated as the bound rather than rejected,
+ * because the value that reaches it is usually a unit mistake — this field is
+ * milliseconds, so a host that means fourteen days and passes `14` lands here
+ * — and the safe reading of "rotate far more often than I asked" is to rotate
+ * as often as the implementation can actually deliver.
+ */
+export const SENDER_KEY_AGE_FLOOR = 60 * 60 * 1000;
 
 /**
  * Default values for Sender Keys configuration.

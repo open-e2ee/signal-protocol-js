@@ -15,7 +15,7 @@
  *
  * const signal = await createSignalProtocolClient({
  *   identity: { userId },
- *   adapters: { storage: expoStore({ relay }), relay },
+ *   adapters: { storage: expoStore(), relay },
  *   onProgress: ({ stage, percent, message }) => console.log(`${stage}: ${percent}%`)
  * });
  *
@@ -36,6 +36,12 @@ export { ConvexSignalProtocolRelayServer } from './relay';
 export type { ConvexSignalProtocolRelayApi, ConvexSignalProtocolRelayOptions } from './relay';
 export { ConvexGroupServer } from './group-server';
 export type { ConvexGroupServerApi } from './group-server';
+export { defineConvexSignalProtocolBackend } from './backend';
+export type {
+  ConvexSignalProtocolBackendIdentity,
+  DefineConvexSignalProtocolBackendConfig,
+} from './backend';
+export { CONVEX_GROUP_SERVER_SECRET_ENV_VAR } from './constants';
 
 // Type conversion utilities
 export * from './types';

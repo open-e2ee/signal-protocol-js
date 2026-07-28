@@ -7,7 +7,6 @@
 export {};
 import { ExpoSignalProtocolStore } from './adapter';
 import type { ILogger } from '../../../logger';
-import type { ISignalProtocolRemoteSenderStateStore } from '../../../remote/relay/types';
 
 export { ExpoSignalProtocolStore } from './adapter';
 export { getKeyStorage, resetKeyStorage } from './key-storage';
@@ -23,10 +22,11 @@ export { createPreKeyMaintenanceStore } from './maintenance';
 export type { MessageRecord, IMessageRecordStore } from '../../../types';
 
 export interface ExpoSignalProtocolStoreFactoryOptions {
-  relay?: ISignalProtocolRemoteSenderStateStore;
   logger?: ILogger;
 }
 
-export function expoStore(options: ExpoSignalProtocolStoreFactoryOptions = {}): ExpoSignalProtocolStore {
-  return new ExpoSignalProtocolStore(options.relay, options.logger);
+export function expoStore(
+  options: ExpoSignalProtocolStoreFactoryOptions = {}
+): ExpoSignalProtocolStore {
+  return new ExpoSignalProtocolStore(options.logger);
 }

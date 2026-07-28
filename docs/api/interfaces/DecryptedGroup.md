@@ -81,6 +81,12 @@ Sequential revision counter (0-based, increments with each change).
 
 ***
 
+### terminated
+
+> **terminated**: `boolean`
+
+***
+
 ### title
 
 > **title**: `string`

@@ -13,6 +13,29 @@ cache for offline access.
 
 ## Methods
 
+### clearSenderKeyRotationBarrier()
+
+> **clearSenderKeyRotationBarrier**(`groupId`, `expectedRevision`): `Promise`\<`void`\>
+
+Clear C7's barrier only when it still names `expectedRevision`.
+A stale completion must never clear a newer accepted transition.
+
+#### Parameters
+
+##### groupId
+
+`string`
+
+##### expectedRevision
+
+`number`
+
+#### Returns
+
+`Promise`\<`void`\>
+
+***
+
 ### deleteGroupState()
 
 > **deleteGroupState**(`groupId`): `Promise`\<`void`\>
@@ -85,11 +108,52 @@ Get a group master key.
 
 ***
 
+### getSenderKeyRotationBarrier()
+
+> **getSenderKeyRotationBarrier**(`groupId`): `Promise`\<`number` \| `null`\>
+
+Get the accepted revision whose C7 rotation is still pending.
+
+#### Parameters
+
+##### groupId
+
+`string`
+
+#### Returns
+
+`Promise`\<`number` \| `null`\>
+
+***
+
 ### storeGroupState()
 
 > **storeGroupState**(`groupId`, `state`): `Promise`\<`void`\>
 
 Store decrypted group state cache.
+
+#### Parameters
+
+##### groupId
+
+`string`
+
+##### state
+
+[`DecryptedGroup`](DecryptedGroup.md)
+
+#### Returns
+
+`Promise`\<`void`\>
+
+***
+
+### storeGroupStateWithSenderKeyRotationBarrier()
+
+> **storeGroupStateWithSenderKeyRotationBarrier**(`groupId`, `state`): `Promise`\<`void`\>
+
+Atomically store accepted group state and establish C7's sender-key
+rotation barrier at that state's revision.
 
 #### Parameters
 

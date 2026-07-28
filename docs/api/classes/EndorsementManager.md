@@ -93,7 +93,7 @@ Expiration in epoch seconds, or null if no cache exists
 
 ### getCombinedToken()
 
-> **getCombinedToken**(`groupId`, `recipientUserIds`, `groupSecretParams?`): `Promise`\<\{ `expiration`: `number`; `token`: `Uint8Array`; \} \| `null`\>
+> **getCombinedToken**(`groupId`, `recipientUserIds`, `groupSecretParams?`): `Promise`\<\{ `aciBytesByUserId`: `Map`\<`string`, `Uint8Array`\<`ArrayBufferLike`\>\>; `expiration`: `number`; `token`: `Uint8Array`; \} \| `null`\>
 
 Get a combined token for multi-recipient (Sender Key) sends.
 
@@ -121,7 +121,7 @@ User IDs of all recipients (excluding self)
 
 #### Returns
 
-`Promise`\<\{ `expiration`: `number`; `token`: `Uint8Array`; \} \| `null`\>
+`Promise`\<\{ `aciBytesByUserId`: `Map`\<`string`, `Uint8Array`\<`ArrayBufferLike`\>\>; `expiration`: `number`; `token`: `Uint8Array`; \} \| `null`\>
 
 Serialized 24-byte full token and expiration, or null if unavailable
 
@@ -129,7 +129,7 @@ Serialized 24-byte full token and expiration, or null if unavailable
 
 ### getTokenForRecipient()
 
-> **getTokenForRecipient**(`groupId`, `recipientUserId`, `groupSecretParams?`): `Promise`\<\{ `expiration`: `number`; `token`: `Uint8Array`; \} \| `null`\>
+> **getTokenForRecipient**(`groupId`, `recipientUserId`, `groupSecretParams?`): `Promise`\<\{ `aciBytes`: `Uint8Array`; `expiration`: `number`; `token`: `Uint8Array`; \} \| `null`\>
 
 Get a serialized GroupSendFullToken for a single recipient.
 
@@ -157,7 +157,7 @@ User ID of the recipient (used as cache key)
 
 #### Returns
 
-`Promise`\<\{ `expiration`: `number`; `token`: `Uint8Array`; \} \| `null`\>
+`Promise`\<\{ `aciBytes`: `Uint8Array`; `expiration`: `number`; `token`: `Uint8Array`; \} \| `null`\>
 
 Serialized 24-byte full token and expiration, or null if unavailable
 

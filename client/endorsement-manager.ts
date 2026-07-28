@@ -49,13 +49,32 @@ const ENDORSEMENT_REFRESH_THRESHOLD_SECONDS = 2 * 60 * 60;
 // EndorsementManager
 // ---------------------------------------------------------------------------
 
+/**
+ * One member's cached endorsement, paired with the ACI it was issued over.
+ *
+ * The ACI travels with the endorsement because the send path must tell the
+ * relay which identities its token endorses — the relay verifies the token
+ * against those before reading any account — and the identities that are
+ * *correct* to claim are exactly the ones the endorsements were issued over
+ * at refresh time, not whatever a later lookup would resolve.
+ */
+export interface CachedMemberEndorsement {
+  /** Compressed endorsement point bytes. */
+  endorsement: Uint8Array;
+  /** 16-byte ACI the endorsement was issued over. */
+  aciBytes: Uint8Array;
+}
+
 export interface EndorsementCacheStore {
   getCachedEndorsements(
     groupId: string
-  ): Promise<{ endorsements: Map<string, Uint8Array>; expiration: number } | null>;
+  ): Promise<{
+    endorsements: Map<string, CachedMemberEndorsement>;
+    expiration: number;
+  } | null>;
   cacheEndorsements(
     groupId: string,
-    endorsements: Map<string, Uint8Array>,
+    endorsements: Map<string, CachedMemberEndorsement>,
     expiration: number
   ): Promise<void>;
   clearEndorsements(groupId: string): Promise<void>;
@@ -148,8 +167,11 @@ export class EndorsementManager {
       this.endorsementRootPublicKey
     );
 
-    // Build the compressed endorsement map without a self-endorsement.
-    const endorsementMap = new Map<string, Uint8Array>();
+    // Build the compressed endorsement map without a self-endorsement. Each
+    // entry keeps the ACI it was issued over: the send path claims exactly
+    // these identities to the relay, which verifies the token against them
+    // before reading any account.
+    const endorsementMap = new Map<string, CachedMemberEndorsement>();
     for (let i = 0; i < memberServiceIds.length; i++) {
       const userId = memberUserIds[i];
       // Skip self — we never send sealed sender to ourselves
@@ -157,7 +179,10 @@ export class EndorsementManager {
         continue;
       }
       const compressed = receivedEndorsements[i].endorsement.compress();
-      endorsementMap.set(userId, compressed.R);
+      endorsementMap.set(userId, {
+        endorsement: compressed.R,
+        aciBytes: memberServiceIds[i].uuid,
+      });
     }
 
     // 4. Cache via the app-owned endorsement adapter
@@ -189,7 +214,11 @@ export class EndorsementManager {
     groupId: string,
     recipientUserId: string,
     groupSecretParams?: GroupSecretParams
-  ): Promise<{ token: Uint8Array; expiration: number } | null> {
+  ): Promise<{
+    token: Uint8Array;
+    expiration: number;
+    aciBytes: Uint8Array;
+  } | null> {
     const cached = await this.cache.getCachedEndorsements(groupId);
     if (!cached) return null;
 
@@ -199,8 +228,8 @@ export class EndorsementManager {
       return null;
     }
 
-    const compressedBytes = cached.endorsements.get(recipientUserId);
-    if (!compressedBytes) {
+    const entry = cached.endorsements.get(recipientUserId);
+    if (!entry) {
       // Member may have been added after last endorsement fetch
       return null;
     }
@@ -211,14 +240,18 @@ export class EndorsementManager {
     }
 
     // Decompress → toToken (unblind) → createFullToken → serialize
-    const compressed = new CompressedEndorsement(compressedBytes);
+    const compressed = new CompressedEndorsement(entry.endorsement);
     const endorsement = compressed.decompress();
     const clientKey = ClientDecryptionKey.forFirstPointOfAttribute(
       groupSecretParams.uidEncKeyPair.a1
     );
     const rawToken = endorsement.toToken(clientKey);
     const fullToken = createFullToken({ token: rawToken }, cached.expiration);
-    return { token: serializeFullToken(fullToken), expiration: cached.expiration };
+    return {
+      token: serializeFullToken(fullToken),
+      expiration: cached.expiration,
+      aciBytes: entry.aciBytes,
+    };
   }
 
   /**
@@ -237,7 +270,11 @@ export class EndorsementManager {
     groupId: string,
     recipientUserIds: string[],
     groupSecretParams?: GroupSecretParams
-  ): Promise<{ token: Uint8Array; expiration: number } | null> {
+  ): Promise<{
+    token: Uint8Array;
+    expiration: number;
+    aciBytesByUserId: Map<string, Uint8Array>;
+  } | null> {
     if (recipientUserIds.length === 0) return null;
 
     const cached = await this.cache.getCachedEndorsements(groupId);
@@ -250,9 +287,10 @@ export class EndorsementManager {
 
     // Decompress all endorsements — if any member is missing, bail out
     const endorsements: Endorsement[] = [];
+    const aciBytesByUserId = new Map<string, Uint8Array>();
     for (const userId of recipientUserIds) {
-      const compressedBytes = cached.endorsements.get(userId);
-      if (!compressedBytes) {
+      const entry = cached.endorsements.get(userId);
+      if (!entry) {
         // Missing member endorsement — can't produce valid combined token.
         // Caller should use shouldRefreshEndorsements() pre-send to avoid this.
         this.logger.debug('Missing endorsement for member in getCombinedToken', {
@@ -261,8 +299,9 @@ export class EndorsementManager {
         });
         return null;
       }
-      const compressed = new CompressedEndorsement(compressedBytes);
+      const compressed = new CompressedEndorsement(entry.endorsement);
       endorsements.push(compressed.decompress());
+      aciBytesByUserId.set(userId, entry.aciBytes);
     }
 
     if (!groupSecretParams) {
@@ -279,7 +318,11 @@ export class EndorsementManager {
     );
     const rawToken = combined.toToken(clientKey);
     const fullToken = createFullToken({ token: rawToken }, cached.expiration);
-    return { token: serializeFullToken(fullToken), expiration: cached.expiration };
+    return {
+      token: serializeFullToken(fullToken),
+      expiration: cached.expiration,
+      aciBytesByUserId,
+    };
   }
 
   /**

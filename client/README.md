@@ -52,7 +52,7 @@ const signal = await createSignalProtocolClient({
   identity: { userId },
   adapters: {
     // Expo storage owns this device's private keys and session state.
-    storage: expoStore({ relay }),
+    storage: expoStore(),
     relay,
   },
 });

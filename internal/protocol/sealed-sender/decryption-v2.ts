@@ -23,7 +23,12 @@
 
 import type { UnsealV2Options, UnidentifiedSenderMessageContent, SenderCertificate } from './types';
 import type { ContentHint } from '../../../types/messages';
-import { SEALED_SENDER_V2_UUID_VERSION, SEALED_SENDER_V2_SERVICE_ID_VERSION } from './types';
+import {
+  SEALED_SENDER_V2_UUID_VERSION,
+  SEALED_SENDER_V2_SERVICE_ID_VERSION,
+  SealedSenderContentType,
+  isSealedSenderContentType,
+} from './types';
 import type { Base64 } from '../../../types';
 import { deserializeSenderCertificate, validateSenderCertificate } from './certificate';
 import {
@@ -47,19 +52,35 @@ import { x25519 } from '@noble/curves/ed25519.js';
 export {};
 const GENERIC_ERROR = 'Sealed sender verification failed';
 
+/** contentType(1) + certLen varint(1) + msgLen varint(1) + contentHint(1). */
+const MIN_ENVELOPE_BYTES = 4;
+
 /**
  * Parse decrypted envelope to extract certificate and message.
  */
 function parseEnvelope(envelope: Uint8Array): {
   certificate: SenderCertificate;
   message: Uint8Array;
-  contentHint?: ContentHint;
-  groupId?: Uint8Array;
+  contentType: SealedSenderContentType;
+  contentHint: ContentHint;
 } {
-  let offset = 0;
+  // Smallest well-formed envelope: type, two zero-length varints, hint.
+  if (envelope.length < MIN_ENVELOPE_BYTES) {
+    throw new Error(GENERIC_ERROR);
+  }
+
+  // Read content type (1 byte)
+  const contentType = envelope[0];
+  if (!isSealedSenderContentType(contentType)) {
+    throw new Error(GENERIC_ERROR);
+  }
+  let offset = 1;
 
   // Read certificate length
   const { value: certLen, bytesRead: certLenBytes } = decodeVarint(envelope, offset);
+  if (certLenBytes === 0) {
+    throw new Error(GENERIC_ERROR);
+  }
   offset += certLenBytes;
 
   if (offset + certLen > envelope.length) {
@@ -72,6 +93,9 @@ function parseEnvelope(envelope: Uint8Array): {
 
   // Read message length
   const { value: msgLen, bytesRead: msgLenBytes } = decodeVarint(envelope, offset);
+  if (msgLenBytes === 0) {
+    throw new Error(GENERIC_ERROR);
+  }
   offset += msgLenBytes;
 
   if (offset + msgLen > envelope.length) {
@@ -82,28 +106,24 @@ function parseEnvelope(envelope: Uint8Array): {
   const message = envelope.slice(offset, offset + msgLen);
   offset += msgLen;
 
-  // Read content hint (optional)
-  let contentHint: ContentHint | undefined;
-  if (offset < envelope.length) {
-    contentHint = envelope[offset] as ContentHint;
-    offset += 1;
+  // Read content hint. The serializer always writes it, and nothing follows
+  // it any more, so it is required rather than optional.
+  if (offset >= envelope.length) {
+    throw new Error(GENERIC_ERROR);
   }
+  const contentHint = envelope[offset] as ContentHint;
+  offset += 1;
 
-  // Read group ID (optional)
-  let groupId: Uint8Array | undefined;
-  if (offset < envelope.length) {
-    const { value: groupIdLen, bytesRead: groupIdLenBytes } = decodeVarint(envelope, offset);
-    offset += groupIdLenBytes;
-
-    if (groupIdLen > 0 && offset + groupIdLen <= envelope.length) {
-      groupId = envelope.slice(offset, offset + groupIdLen);
-    }
+  // The envelope is exactly its fields. Trailing bytes would make the format
+  // non-canonical — two distinct envelopes parsing to the same content.
+  if (offset !== envelope.length) {
+    throw new Error(GENERIC_ERROR);
   }
 
   // Deserialize certificate
   const certificate = deserializeSenderCertificate(certBytes);
 
-  return { certificate, message, contentHint, groupId };
+  return { certificate, message, contentType, contentHint };
 }
 
 /**
@@ -215,7 +235,7 @@ export async function unsealV2(
     // ========================================================================
     // Step 6: Parse envelope to get sender certificate
     // ========================================================================
-    const { certificate, message, contentHint, groupId } = parseEnvelope(envelope);
+    const { certificate, message, contentType, contentHint } = parseEnvelope(envelope);
 
     // ========================================================================
     // Step 7: Verify authentication tag (identity-to-identity ECDH)
@@ -254,7 +274,7 @@ export async function unsealV2(
       senderCertificate: certificate,
       signalProtocolMessage: bytesToBase64(message) as Base64,
       contentHint,
-      groupId: groupId ? (bytesToBase64(groupId) as Base64) : undefined,
+      contentType,
     };
   } finally {
     // Security: Zero all sensitive key material

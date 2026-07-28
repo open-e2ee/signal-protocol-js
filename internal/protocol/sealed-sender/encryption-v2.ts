@@ -27,7 +27,11 @@ import type {
   SealedSenderV2Message,
   SealedSenderV2Recipient,
 } from './types';
-import { SEALED_SENDER_V2_UUID_VERSION, V2_RANDOM_M_BYTES } from './types';
+import {
+  SEALED_SENDER_V2_UUID_VERSION,
+  V2_RANDOM_M_BYTES,
+  SealedSenderContentType,
+} from './types';
 import type { Base64 } from '../../../types';
 import { serializeSenderCertificate } from './certificate';
 import {
@@ -50,18 +54,21 @@ export {};
 const GENERIC_ERROR = 'Sealed sender encryption failed';
 
 /**
- * Serialize envelope (certificate + message) for encryption.
+ * Serialize envelope (content type + certificate + message) for encryption.
  *
  * Format matches V1 for consistency:
- * varint(certLen) || certBytes || varint(msgLen) || msgBytes || [contentHint] || [groupId]
+ * contentType(1) || varint(certLen) || certBytes || varint(msgLen) || msgBytes || contentHint
  */
 function serializeEnvelope(
   certBytes: Uint8Array,
   message: Uint8Array,
-  contentHint?: number,
-  groupId?: Uint8Array
+  contentType: SealedSenderContentType,
+  contentHint?: number
 ): Uint8Array {
   const parts: Uint8Array[] = [];
+
+  // Content type (1 byte)
+  parts.push(new Uint8Array([contentType]));
 
   // Certificate length as varint
   parts.push(encodeVarint(certBytes.length));
@@ -73,14 +80,6 @@ function serializeEnvelope(
 
   // Content hint (1 byte)
   parts.push(new Uint8Array([contentHint ?? 0]));
-
-  // Group ID (optional with length prefix)
-  if (groupId && groupId.length > 0) {
-    parts.push(encodeVarint(groupId.length));
-    parts.push(groupId);
-  } else {
-    parts.push(new Uint8Array([0]));
-  }
 
   return concatBytes(...parts);
 }
@@ -122,7 +121,7 @@ export async function sealMultiRecipient(
     recipients,
     signalProtocolMessage,
     contentHint,
-    groupId,
+    contentType = SealedSenderContentType.MESSAGE,
   } = options;
 
   // Validate recipients
@@ -156,7 +155,12 @@ export async function sealMultiRecipient(
     // Step 4: Serialize and encrypt envelope with AES-GCM-SIV
     // ========================================================================
     const certBytes = serializeSenderCertificate(senderCertificate);
-    const envelope = serializeEnvelope(certBytes, signalProtocolMessage, contentHint, groupId);
+    const envelope = serializeEnvelope(
+      certBytes,
+      signalProtocolMessage,
+      contentType,
+      contentHint
+    );
 
     // AES-GCM-SIV with zero nonce (safe because key is single-use)
     const messageCiphertext = aesGcmSivEncryptZeroNonce(cipherKey, envelope);

@@ -1,0 +1,53 @@
+name: Bug report
+description: Something behaves incorrectly or fails
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Suspected **security vulnerability**? Stop — do not file it here.
+        Use private reporting instead: https://github.com/open-e2ee/signal-protocol-js/security
+  - type: input
+    id: version
+    attributes:
+      label: SDK version
+      placeholder: "0.1.0-alpha.7"
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      multiple: true
+      options:
+        - Expo (dev build)
+        - Expo Go
+        - React Native (bare)
+        - Browser
+        - Node
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+      description: Include the exact error text or state you observed.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: |
+        The smallest code that shows the problem. The mock adapters
+        (`local/store/mock`, `remote/relay/mock`) usually make a
+        single-file reproduction possible.
+      render: ts
+    validations:
+      required: true
+  - type: textarea
+    id: adapters
+    attributes:
+      label: Adapters in use
+      placeholder: "storage: expo store + secure-store vault, relay: convex"

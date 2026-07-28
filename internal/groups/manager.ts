@@ -891,9 +891,44 @@ export class GroupManager {
         return restored;
       }
 
-      // Once a client has a baseline it may advance only through individually
-      // verified transitions. A full snapshot must never bypass a bad or
-      // missing log entry (C1/C3).
+      // A pending principal holds an entitlement to the current state, not a
+      // tenure: the server refuses them the change log outright, and C1/C3's
+      // verified-transition requirement starts at the baseline their
+      // acceptance will establish, not at the invitation (S10a). So they
+      // catch up the way the reference ecosystem's clients do when the
+      // server does not recognize them as a member — a fresh signed
+      // snapshot, verified and installed whole.
+      if (!isMember(cached!, this.aci.uuid)) {
+        let result: GroupSnapshot | null;
+        try {
+          result = await this.withAuthRetry(rawId, (auth) =>
+            this.server.getGroup(secretParams.groupId, auth)
+          );
+        } catch (error: unknown) {
+          if (!GroupManager.isNotReadableRejection(error)) throw error;
+          // The invitation this principal held was revoked. Nothing is
+          // installed: the cached pending view stays the last verified
+          // state, and a later re-invitation serves a fresh snapshot.
+          throw new Error(
+            'GROUP_ACCESS_REVOKED: Invitation was revoked before it could be accepted'
+          );
+        }
+        if (!result) {
+          throw new Error(`GROUP_NOT_FOUND: Group ${rawId} not found on server`);
+        }
+        const state = this.decryptVerifiedSnapshot(secretParams, result);
+        if (state.revision < currentRevision) {
+          throw new Error(
+            'INVALID_CHANGE_SEQUENCE: Server snapshot regressed behind the verified baseline'
+          );
+        }
+        await this.store.storeGroupState(rawId, state);
+        return state;
+      }
+
+      // Once a member has a baseline it may advance only through
+      // individually verified transitions. A full snapshot must never bypass
+      // a bad or missing log entry (C1/C3).
       const changes = await this.withAuthRetry(rawId, (auth) =>
         this.server.getGroupChanges(secretParams.groupId, currentRevision, auth)
       );
@@ -909,11 +944,7 @@ export class GroupManager {
             this.server.getGroup(secretParams.groupId, auth)
           );
         } catch (error: unknown) {
-          const data =
-            error != null && typeof error === 'object' && 'data' in error
-              ? (error as { data?: { code?: string } }).data
-              : undefined;
-          if (data?.code !== 'FORBIDDEN') throw error;
+          if (!GroupManager.isNotReadableRejection(error)) throw error;
         }
         if (baseline) {
           const restored = this.decryptVerifiedSnapshot(
@@ -1828,11 +1859,7 @@ export class GroupManager {
         this.server.getGroup(secretParams.groupId, auth)
       );
     } catch (error: unknown) {
-      const data =
-        error != null && typeof error === 'object' && 'data' in error
-          ? (error as { data?: { code?: string } }).data
-          : undefined;
-      if (data?.code !== 'FORBIDDEN') throw error;
+      if (!GroupManager.isNotReadableRejection(error)) throw error;
     }
     if (readableResult) {
       const readableState = decryptBoundSnapshot(readableResult);
@@ -1994,9 +2021,28 @@ export class GroupManager {
     // the client request the full state. Fetch the exact historical version
     // established by that verified transition so a concurrent later mutation
     // cannot force an unverified snapshot jump.
-    const fullResult = await this.withAuthRetry(groupIdHex, (auth) =>
-      this.server.getGroup(secretParams.groupId, auth, entry.version)
-    );
+    let fullResult: GroupSnapshot | null;
+    try {
+      fullResult = await this.withAuthRetry(groupIdHex, (auth) =>
+        this.server.getGroup(secretParams.groupId, auth, entry.version)
+      );
+    } catch (error: unknown) {
+      // Only the not-readable rejection is revocation. This is a *versioned*
+      // read, so the same 403 code can also carry the join-version floor —
+      // a rejection about one historical version, raised while the
+      // membership itself is fine — and translating that into
+      // GROUP_ACCESS_REVOKED would report a live member as removed.
+      if (!GroupManager.isNotReadableRejection(error)) throw error;
+      // The join was accepted and signed, then revoked before this read: the
+      // server authorizes reads at the current state, and the current state
+      // no longer lists us. Surface the revocation instead of claiming a
+      // membership we can neither read nor verify — no state is installed,
+      // and from here this principal is the ordinary re-entitlement case: a
+      // later re-add or approval serves a fresh signed baseline.
+      throw new Error(
+        'GROUP_ACCESS_REVOKED: Join was accepted, then revoked before its baseline could be read'
+      );
+    }
     if (!fullResult) {
       throw new Error(
         `GROUP_SNAPSHOT_NOT_FOUND: Accepted join snapshot ${entry.version} is unavailable`
@@ -2015,6 +2061,26 @@ export class GroupManager {
   // =========================================================================
   // Internal helpers
   // =========================================================================
+
+  /**
+   * Whether a server rejection means "you may not read this group at all".
+   *
+   * Only the `not_readable` FORBIDDEN carries that meaning — it is what the
+   * server raises when the requester is banned or absent from the
+   * authorizing roster, and it is the sole rejection a client may interpret
+   * as revocation. The same code with reason `before_join` is the
+   * join-version floor: it refuses one historical version while saying
+   * nothing about current access, so treating it as revocation would
+   * mistranslate a live membership into "revoked". Anything else (bad
+   * presentation, malformed request) is not an access answer at all.
+   */
+  private static isNotReadableRejection(error: unknown): boolean {
+    const data =
+      error != null && typeof error === 'object' && 'data' in error
+        ? (error as { data?: { code?: string; reason?: string } }).data
+        : undefined;
+    return data?.code === 'FORBIDDEN' && data?.reason === 'not_readable';
+  }
 
   /** Whether this client's verified local span still carries full-state read access. */
   private isReadableBySelf(state: DecryptedGroup): boolean {

@@ -297,6 +297,52 @@ Message key or null if not found/expired
 
 ***
 
+### resolveGroupForSenderKeyId()
+
+> **resolveGroupForSenderKeyId**(`senderKeyId`, `userId`, `deviceId`): `Promise`\<`string` \| `null`\>
+
+Resolve the group a sender key belongs to, given only the identifier that
+travels on the wire.
+
+A received group message names its sender key by `senderKeyId` and nothing
+else — the identifier is opaque, and the envelope no longer carries a
+group. This is the receiver's only way back to a group, so it is what
+decides which sender key state to decrypt against.
+
+Searches previous states as well as current ones. A message encrypted just
+before a rotation is still in flight when the rotation lands, and its
+`senderKeyId` names the superseded key; resolving only against current
+state would strand exactly the messages the rotation window exists to
+cover.
+
+#### Parameters
+
+##### senderKeyId
+
+`string`
+
+Opaque identifier read from the SenderKeyMessage frame
+
+##### userId
+
+`string`
+
+Sender user identifier, from the envelope
+
+##### deviceId
+
+`number`
+
+Sender device identifier, from the envelope
+
+#### Returns
+
+`Promise`\<`string` \| `null`\>
+
+The group ID, or null if this device has no such sender key
+
+***
+
 ### storeSenderKey()
 
 > **storeSenderKey**(`groupId`, `userId`, `deviceId`, `state`): `Promise`\<`void`\>

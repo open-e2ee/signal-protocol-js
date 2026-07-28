@@ -54,14 +54,6 @@ Skip persistence if recipient offline (for typing indicators, receipts).
 
 ***
 
-### groupId?
-
-> `optional` **groupId?**: `string`
-
-Group ID (for group messages)
-
-***
-
 ### id?
 
 > `optional` **id?**: `string`
@@ -72,7 +64,7 @@ Server-assigned envelope ID (set by server)
 
 ### messageType
 
-> **messageType**: `"ciphertext"` \| `"prekey_bundle"` \| `"plaintext_content"` \| `"server_delivery_receipt"` \| `"unidentified_sender"`
+> **messageType**: `"ciphertext"` \| `"prekey_bundle"` \| `"sender_key"` \| `"server_delivery_receipt"` \| `"unidentified_sender"`
 
 Relay-visible envelope type.
 Client-to-client types (delivery_receipt, typing_indicator, sender_key_distribution)
@@ -81,9 +73,16 @@ contract carries only the outer envelope type.
 
 - ciphertext: Standard Double Ratchet message (contains encrypted Content)
 - prekey_bundle: Session initiation (X3DH/PQXDH)
-- plaintext_content: Sealed sender envelope
+- sender_key: Group message encrypted with sender keys
 - server_delivery_receipt: Server-generated delivery receipts
 - unidentified_sender: Sealed sender protocol messages
+
+`sender_key` tells the receiver to decrypt the payload as a framed
+SenderKeyMessage rather than as a pairwise ratchet message. It names no
+group: the receiver reads the opaque distribution identifier out of the
+frame and resolves the group from its own sender key store. The relay
+therefore learns that an envelope is group traffic, which its fan-out
+pattern already implies, but not which group.
 
 ***
 

@@ -11,6 +11,11 @@ import type { SealedSenderConfig } from './config';
 import type { Envelope } from '../remote/relay/types';
 import { resolveSignalProtocolLogger, type ILogger } from '../logger';
 import type { Base64 } from '../types';
+import {
+  SealedSenderContentType,
+  SEALED_SENDER_V2_SERVICE_ID_VERSION,
+  SEALED_SENDER_V2_UUID_VERSION,
+} from '../internal/protocol/sealed-sender/types';
 
 /**
  * Wrap an encrypted ciphertext with sealed sender encryption.
@@ -23,6 +28,9 @@ import type { Base64 } from '../types';
  * @param senderIdentityPrivate - Sender's X25519 identity private key
  * @param recipientIdentityPublic - Recipient's X25519 identity public key
  * @param config - Sealed sender config with trust roots
+ * @param contentType - How the recipient should decrypt the inner ciphertext.
+ *   The outer envelope is `unidentified_sender` for every sealed message, so
+ *   this is the only signal that a payload is a framed SenderKeyMessage.
  * @returns Base64-encoded sealed sender message
  */
 export {};
@@ -32,7 +40,8 @@ export async function sealMessage(
   senderIdentityPrivate: Uint8Array,
   recipientIdentityPublic: Uint8Array,
   _config: SealedSenderConfig,
-  _providedLogger?: ILogger
+  _providedLogger?: ILogger,
+  contentType?: SealedSenderContentType
 ): Promise<string> {
   const { seal, deserializeSenderCertificate, encodeUnidentifiedSenderMessage } =
     await import('../internal/protocol/sealed-sender');
@@ -51,6 +60,7 @@ export async function sealMessage(
     senderIdentityPrivate,
     recipientIdentityPublic,
     signalProtocolMessage,
+    contentType,
   });
 
   // Serialize: version byte + protobuf-encoded message (Sealed Sender wire format)
@@ -93,6 +103,7 @@ export async function unsealMessage(
   senderUserId: string;
   senderDeviceId: number;
   innerCiphertextBase64: string;
+  contentType: SealedSenderContentType;
 }> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   const { base64ToBytes, bytesToBase64 } = await import('../internal/crypto');
@@ -102,9 +113,6 @@ export async function unsealMessage(
   const versionByte = sealedBytes[0];
 
   // V2 detection: 0x22 = UUID version (ReceivedMessage), 0x23 = ServiceId version
-  const { SEALED_SENDER_V2_UUID_VERSION, SEALED_SENDER_V2_SERVICE_ID_VERSION } =
-    await import('../internal/protocol/sealed-sender/types');
-
   if (
     versionByte === SEALED_SENDER_V2_UUID_VERSION ||
     versionByte === SEALED_SENDER_V2_SERVICE_ID_VERSION
@@ -158,6 +166,7 @@ export async function unsealMessage(
     senderUserId: content.senderCertificate.senderUuid,
     senderDeviceId: content.senderCertificate.senderDeviceId,
     innerCiphertextBase64: content.signalProtocolMessage as string,
+    contentType: content.contentType,
   };
 }
 
@@ -178,12 +187,11 @@ async function unsealV2Message(
   senderUserId: string;
   senderDeviceId: number;
   innerCiphertextBase64: string;
+  contentType: SealedSenderContentType;
 }> {
   const { deserializeReceivedMessage } =
     await import('../internal/protocol/sealed-sender/v2-binary');
   const { unsealV2 } = await import('../internal/protocol/sealed-sender/decryption-v2');
-  const { SEALED_SENDER_V2_UUID_VERSION } =
-    await import('../internal/protocol/sealed-sender/types');
   const { bytesToBase64 } = await import('../internal/crypto');
   const { x25519 } = await import('@noble/curves/ed25519.js');
 
@@ -234,6 +242,7 @@ async function unsealV2Message(
     senderUserId: content.senderCertificate.senderUuid,
     senderDeviceId: content.senderCertificate.senderDeviceId,
     innerCiphertextBase64: content.signalProtocolMessage as string,
+    contentType: content.contentType,
   };
 }
 
@@ -253,6 +262,7 @@ export function reconstructEnvelope(
     senderUserId: string;
     senderDeviceId: number;
     innerCiphertextBase64: string;
+    contentType: SealedSenderContentType;
   }
 ): Envelope {
   return {
@@ -260,8 +270,39 @@ export function reconstructEnvelope(
     senderUserId: unsealed.senderUserId,
     senderDeviceId: unsealed.senderDeviceId,
     ciphertext: unsealed.innerCiphertextBase64,
-    // After unsealing, inner message type is always 'ciphertext'.
-    // Group vs 1:1 routing happens after decryption based on Content fields.
-    messageType: 'ciphertext',
+    messageType: envelopeTypeForContent(unsealed.contentType),
   };
+}
+
+/**
+ * Map a sealed envelope's content type onto the envelope type the decrypt
+ * path routes on.
+ *
+ * Exported because both receive paths need it — `SignalProtocolServiceCipher`
+ * via `reconstructEnvelope`, and `SignalProtocolClient.processIncomingEnvelope`
+ * directly. Two copies of this mapping would drift.
+ *
+ * `SENDERKEY_MESSAGE` is the only case that matters here: it is what keeps
+ * group routing working now that no group identifier travels on an envelope,
+ * sealed or otherwise. `PREKEY_MESSAGE` and `MESSAGE` both decrypt as pairwise
+ * ratchet messages, and the ratchet distinguishes them from the payload
+ * itself.
+ *
+ * The default is unreachable: `isSealedSenderContentType` rejects every other
+ * value at the parse, so nothing arrives here that this function cannot map.
+ * It exists so that adding an enum member without a route fails loudly rather
+ * than silently decrypting as something it is not.
+ */
+export function envelopeTypeForContent(
+  contentType: SealedSenderContentType
+): Envelope['messageType'] {
+  switch (contentType) {
+    case SealedSenderContentType.SENDERKEY_MESSAGE:
+      return 'sender_key';
+    case SealedSenderContentType.PREKEY_MESSAGE:
+    case SealedSenderContentType.MESSAGE:
+      return 'ciphertext';
+    default:
+      throw new Error('Unsupported sealed sender content type');
+  }
 }

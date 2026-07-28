@@ -1,5 +1,683 @@
 # Changelog
 
+## 0.1.0-alpha.8
+
+- **An internal pricing exploration is no longer published, and business
+  planning is now structurally unexportable.** `docs/pricing-preview.html` —
+  an internal pricing and revenue exploration — was allowlisted into the
+  public export in `0.1.0-alpha.5`. Nothing linked to it and it was never in
+  the npm package, but it had no business being public. It is removed from
+  the allowlist, and the release policy now refuses any file whose name
+  matches pricing, revenue, or business-model patterns, so re-adding one
+  becomes a deliberate policy edit instead of a one-line allowlist change.
+
+- **The assurance figures are now a build product.** The figures table in
+  `docs/ASSURANCE.md` was hand-maintained and had gone stale across two
+  releases. `npm run assurance:update` regenerates it from a real run and
+  refuses to write figures from a failing run; `release:verify` refuses to
+  cut an export when the figures are more than three days old. The README no
+  longer duplicates the numbers — it points at the one generated table.
+
+- **README: the product speaks before the disclaimer.** The Signal
+  non-affiliation paragraph moved below the benefit bullets (still above the
+  fold); the nav line gains `open-e2ee.dev` and `docs.open-e2ee.dev`, which
+  the README previously never linked; the hard-coded patch version — four
+  releases stale at time of fix — is replaced by the `0.1.0-alpha` maturity
+  line, with the npm badge carrying the exact version; the weekly-downloads
+  badge, which renders a near-zero number for a days-old package, is
+  replaced by a native-modules count that states a real differentiator.
+
+- **`COMMERCIAL.md` answers the highest-intent click.** Commercial licensing
+  previously dead-ended at an email address. The new file states who needs a
+  commercial license, what it changes and does not change, the public tiers,
+  and how buying works. Shipped in the npm package too.
+
+- **A contribution surface that tells the truth about the export model.**
+  `CONTRIBUTING.md` explains that `main` is generated, why PRs are ported
+  rather than merged, and that issues are triaged in public;
+  `CODE_OF_CONDUCT.md`, issue templates (with a security-reporting
+  off-ramp), and a PR template complete the set.
+
+- **Vulnerability reporting: private GitHub reporting and a safe harbor.**
+  `SECURITY.md` now offers GitHub private vulnerability reporting alongside
+  email, and commits to a good-faith safe harbor for security research.
+
+- **`docs/E2EE.md` grew from a summary into the architecture explainer its
+  README billing promises** — server-becomes-relay, device as source of
+  truth, identity as device keys, recovery as a product decision, metadata
+  visibility, and the new failure modes, each linking to the doc that goes
+  deeper. Its "ML-KEM (Kyber)" phrasing is corrected to "ML-KEM (FIPS 203)",
+  matching the distinction this changelog drew in `0.1.0-alpha.6`.
+
+- **The npm package no longer ships 1.8 MB of generated API reference.**
+  `docs/api` (391 generated files) stays in the repository for browsing but
+  leaves the tarball; installs should not pay for reference docs that are
+  regenerable and hosted.
+
+- **Supply-chain hardening.** Every workflow action is pinned to a commit
+  SHA; dependabot watches npm production dependencies and workflow actions
+  weekly; CodeQL runs the security-extended queries on every push, PR, and
+  weekly schedule.
+
+- **The composition guide leads with the shipped API.** The "Target
+  Composition" section — `deviceStorage`, `createExpoDeviceStorage`,
+  `signal.messages.subscribe`, none of which exist in the package — sat above
+  the real API at the top of `docs/CLIENT_COMPOSITION.md`, which is exactly
+  the position that gets copy-pasted. It moved to the bottom under "Future
+  Direction (Not Shipped)" behind an explicit these-imports-fail warning.
+
+- **The Node store README no longer claims an interface the adapter does not
+  implement.** `NodeSignalProtocolStore` covers the core single-device
+  surface but not the Sesame device-record, sender-key, or message-record
+  portions of `ISignalProtocolLocalStore` — and it has no `implements`
+  clause, so the compiler was never checking the README's claim. The README
+  now states the real coverage and points multi-device and group users at
+  the interface docs. Completing the adapter is tracked work; documenting
+  the boundary honestly could not wait for it.
+
+- **BREAKING: the group change log is for members; pending principals catch
+  up by snapshot.** The change log authorizes at the snapshot at
+  `fromVersion`, and a pending-profile-key entry appears in that roster, so
+  an invitee could walk the log forward from their invitation — reading, for
+  the whole invitation-to-acceptance window, a narration `getGroup` refuses
+  them by name, including who made each change. The server now requires the
+  requester to be a *member* of the authorizing snapshot (rejecting with the
+  distinct reason `not_a_member`), which closes the log to invitees outright
+  and, for members, states the tenure bound that the roster check previously
+  provided by accident.
+
+  Pending principals do not lose their catch-up path — they lose the log as
+  the mechanism. A pending client now advances by fetching the current state
+  as a fresh signed baseline, verified and installed whole, which is also
+  how the reference ecosystem's clients behave whenever the server does not
+  recognize them as a member. Acceptance is unaffected: it was always
+  submitted against the current state, which is exactly what the snapshot
+  provides. The specification records this as S10a, with the C1/C3 span
+  rules restated to make explicit what was previously implicit: a pending
+  view is a provisional baseline, not a span with living continuity, and a
+  member's span begins at the verified transition or baseline that makes
+  them a member.
+
+  One behavioral consequence: an invitee whose invitation is withdrawn no
+  longer receives the deletion as a signed change (the log that carried it
+  is closed to them). The next catch-up finds the current state refused and
+  surfaces `GROUP_ACCESS_REVOKED`, mutating nothing — the cached pending
+  view remains the last verified state, and a later re-invitation serves a
+  fresh baseline. Members are untouched: removal and ban still arrive as
+  verified transitions through the log, never as refusals.
+
+- **A full 256 KiB multi-recipient payload is accepted, as advertised.** The
+  content ceilings are enforced on the base64 columns as string-length
+  limits, and the multi-recipient limit was computed as `ceil((n / 3) * 4)`
+  instead of `4 * ceil(n / 3)` — two characters short of what 256 KiB
+  actually encodes to, since 262144 is not a multiple of 3. A payload at
+  exactly the advertised ceiling was refused with a 413. The single-recipient
+  limit was computed the same way but 96 KiB divides by 3, so only the
+  multi-recipient bound was wrong.
+
+- **A FORBIDDEN group read now says which question it answers, and only a
+  membership refusal reads as revocation.** Two different rejections share
+  the 403 `FORBIDDEN` code on the group read paths: "you may not read this
+  group at all" (banned, or absent from the authorizing roster) and "you may
+  not read this version of it" (the join-version floor added in the
+  removal-revocation work). They differed only in message text, and the
+  client treated any `FORBIDDEN` on a pinned baseline read as
+  `GROUP_ACCESS_REVOKED` — so a floor rejection, raised while the membership
+  itself was fine, would have been reported to the application as a revoked
+  membership. The rejections now carry a machine-readable `reason`
+  (`not_readable` / `before_join`) alongside the code, the client interprets
+  only `not_readable` as revocation and propagates everything else, and the
+  conformance tests assert on the reason rather than on message wording.
+
+- **A multi-recipient send may name each device only once, and retry
+  requests are rate limited.** The multi-recipient path is deliberately
+  exempt from the per-recipient inbound-bytes budget, matching the
+  reference, because a group-send token is supposed to price it. That
+  exemption assumes one call fans out to *distinct* devices. The reference
+  gets that from its wire format, which parses recipients into a map keyed
+  by service ID, so duplicates collapse before the handler ever sees them;
+  our flat array does not, so one endorsed device repeated a thousand times
+  in a single call stored a thousand copies of the ciphertext against an
+  unmetered budget. The handler now rejects a repeated `(userId, deviceId)`
+  with a 400 rather than collapsing it, since a repeat is a client bug and
+  quietly picking between two conflicting key blocks would bury it.
+
+  `sendRetryRequest` was unmetered too, and nothing else on that path bounds
+  it: a retry request carries no caller-supplied content to charge by size,
+  and it names an original sender the caller never has to have talked to, so
+  there is no relationship to check either. It is now counted per requester
+  against a token bucket sized for the legitimate case — a client returning
+  from a broken session asks for one per message it could not decrypt — and
+  refuses only a caller that keeps asking indefinitely.
+
+- **BREAKING: group-send tokens are verified before any account is read, and
+  sealed sends carry the recipient identities they claim.** A group-send
+  token is a signature over ACIs, but sealed sends name recipients by user
+  ID, so the relay resolved every named recipient to its stored ACI — up to
+  one indexed read per recipient, a thousand on the multi-recipient path —
+  *before* it could check the token. An anonymous caller holding a garbage
+  token could bill that work to the deployment on every call, on the one
+  path that is deliberately exempt from the per-recipient send budget
+  because the token is supposed to be the gate.
+
+  The order is now the reference implementation's, where sealed payloads
+  name recipients by service ID and the token is checked against the request
+  before any account is touched: the caller supplies the ACI it claims for
+  each recipient, the entire cryptographic check runs against those claims
+  first, and only then is each claim bound to the recipient's stored
+  account. A caller who lies about a binding has necessarily already
+  presented a token our own group server issued over the claimed set, so
+  the reads it spends were an authenticated member's to spend.
+
+  The claims ride the existing plumbing: the endorsement cache now stores,
+  next to each member's endorsement, the ACI it was issued over — the
+  identity that is *correct* to claim, as opposed to whatever a later lookup
+  would resolve — and the send paths pass them through. This changes the
+  app-owned `EndorsementCacheStore` interface (entries are now
+  `{ endorsement, aciBytes }` records rather than raw bytes) and adds
+  `targetAciBytes` / per-recipient `aciBytes` arguments to the sealed send
+  mutations, required when authorizing by group-send token.
+
+- **One ACI, one account.** Nothing stopped two user IDs from registering
+  the same ACI: `identify` is host-owned and unvalidated, and the second
+  account to claim an ACI would inherit every authorization decision made
+  about the first — sealed-sender access, group-send endorsements, identity
+  binding. The `accounts` table now has an `aciBytes` index and
+  `rememberAccount` refuses a claim on an ACI already registered to a
+  different user ID with a 409 `CONFLICT`. A deployment that already holds
+  duplicate-ACI rows keeps working — the check reads one claimant and the
+  duplicate surfaces as the intended 409 rather than an untyped error — but
+  which of the two accounts is refused depends on index order, so resolve
+  such rows deliberately before deploying.
+
+- **Removal and ban now revoke historical group-state reads.** `getGroup` with
+  an explicit version authorized the requester against the roster of the
+  *requested* snapshot, so anyone removed or banned at version N could keep
+  fetching every snapshot of their former tenure indefinitely — a removal that
+  does not revoke read access is not a removal. The server now authorizes
+  every full-state read against the group as it is *now*, and adds the floor
+  that snapshot-based authorization used to provide by accident: a member may
+  not read state from before the version they joined at, so membership grants
+  the group from when you joined, not its history.
+
+  The change log deliberately keeps snapshot-at-`fromVersion` authorization,
+  as the group specification already required: the walk serves entries only
+  while the requester stays readable and stops at — and includes — the change
+  that removed them, which is how a polling member learns of their removal.
+  Authorizing the log at the current state would 403 them into silence. What
+  this leaves reachable to a former member is bounded and not new: changes
+  from within their own tenure, ending at their removal — bytes they were
+  served while entitled.
+
+  One client-visible consequence: a join that is accepted and then revoked
+  before the joiner reads its baseline snapshot — an admin removing them in
+  the race window — now fails with `GROUP_ACCESS_REVOKED` instead of
+  reporting a membership the client could never verify or use. Nothing is
+  installed locally, and the principal becomes the ordinary re-entitlement
+  case: a later re-add serves a fresh signed baseline.
+
+  An invitation grants the current state and nothing else. A
+  pending-profile-key entry entitles its holder to read the group as it is —
+  acceptance needs that — but it is not a tenure, and its wire format pins
+  `joinedAtVersion` to zero, so deriving a history floor from it would read
+  as "joined at the beginning of time". An invitee who never accepts holds
+  the group master key, so every snapshot the server serves them decrypts;
+  versioned reads are therefore refused outright for pending principals.
+
+  This bounds `getGroup` only. The change log authorizes against the
+  snapshot at `fromVersion`, and a pending-profile-key entry appears in that
+  roster, so an invitee can still walk the log forward from their
+  invitation — a window during which they could already fetch the current
+  state at will, though the log additionally names who made each change.
+  Flooring the log would deny a pending member the entries they need to
+  reach the state their acceptance is submitted against, so closing that
+  window means changing how pending members catch up, not adding a check.
+
+- **The relay's send paths are bounded: per-recipient inbound budget, a
+  content-size ceiling, and a device-existence check on sealed sends.** None
+  of the component's send paths was rate limited or size limited, so one
+  caller — anonymous on the sealed path, any authenticated account on the
+  identified one — could grow a victim's message queue without bound for the
+  full seven-day retention window. Three bounds close this, each matching the
+  reference implementation's shape: message content is capped at 96 KiB for a
+  single-recipient envelope and 256 KiB for the shared multi-recipient
+  payload; single-recipient sends spend from a per-*recipient* byte budget
+  (4 MiB burst, 1 MiB/minute sustained) — keyed by the target because a
+  sealed sender is anonymous by design, so a per-sender limit on that path is
+  either meaningless or a hole; and `sendUnidentified` now refuses a target
+  device that does not exist, the check its multi-recipient sibling always
+  had. The multi-recipient path is deliberately not metered, also matching
+  the reference: the group-send token already prices it, and a per-recipient
+  budget there would let one noisy group partially starve delivery to its
+  quietest member.
+
+  The shared bucket is bounded from the sender side too. Keying by target is
+  forced on the sealed path — the sender is anonymous by design — but on the
+  identified path the sender is known, and a single authenticated account
+  must not be able to drain a victim's whole budget and starve every other
+  sender: identified sends also spend a per-(sender, recipient) sub-limit of
+  a quarter of the shared bucket. Neither bucket can be spent by a request
+  that goes on to fail: the charges are written in the mutation's own
+  transaction, so a send that 410s on the stale-device check — or trips the
+  other limit — rolls its charge back with everything else.
+
+- **The `STALE_DEVICE` error no longer discloses the recipient's current
+  registration ID.** The 410 thrown when a sender's view of a device is stale
+  echoed back `currentRegistrationId` — the live value — to any
+  account-authenticated caller, with no rate limit. That is the same read the
+  prekey-bundle fetch serves, minus its rate limiter: a free oracle for
+  watching registration-ID changes (device reinstalls) on arbitrary devices.
+  The error now names the stale device and nothing else, which is the
+  reference implementation's 410 body; the sender's recovery path is
+  unchanged, since recovering means re-fetching the bundle anyway.
+
+- **BREAKING: no group identifier travels on a message envelope any more.**
+  Every relayed message carried a plaintext `groupId` alongside its target, and
+  the relay stored it on each `messages` row for the seven-day retention
+  window. Grouping those rows by that column yielded the set of accounts that
+  received traffic for a group, so a relay operator could reconstruct rosters
+  without breaking any encryption. The column is gone, and so are the `groupId`
+  arguments on `messages.send`, `sendUnidentified`, and
+  `sendMultiRecipientUnidentified`, and the field on the envelopes those
+  functions return.
+
+  What replaces it is a message type. A group message is now typed
+  `sender_key`, which tells the receiver to decrypt the payload as a framed
+  SenderKeyMessage — and nothing else. The receiver reads the frame's
+  distribution identifier, which is opaque, and resolves the group against its
+  own sender key store. The envelope says how to decrypt, never which group.
+  This also removes a small trust problem: the receiver no longer selects a
+  sender key using a group id the sender asserted.
+
+  This closes the group's *name*, not the group *partition*. The distribution
+  identifier is unencrypted and stable for the life of a sender key, one send
+  produces byte-identical ciphertext on every recipient's row, and the
+  multi-recipient sealed path hands the relay a roster. A relay can still
+  partition delivery pairs into unlabeled groups; it can no longer put a
+  meaningful, cross-send label on one. The component README states the
+  remaining channels explicitly.
+
+  Sealed sender needed its own channel for this, because the outer envelope of
+  a sealed message is always `unidentified_sender` and cannot carry an inner
+  type. Sealed envelopes now begin with a content-type byte inside the seal,
+  matching the `Type` enum of the reference implementation's
+  `UnidentifiedSenderMessage.Message` (`PREKEY_MESSAGE`, `MESSAGE`,
+  `SENDERKEY_MESSAGE`, `PLAINTEXT_CONTENT`), and `SealOptions.groupId` —
+  encrypted, never populated by the send path — is removed in favour of
+  `contentType`. This is a wire-format change to sealed sender for both V1 and
+  V2.
+
+  Deploying this against an existing Convex deployment needs a manual step:
+  Convex validates stored documents against the new schema during the push,
+  before any of your code runs, so a `messages` row still carrying a `groupId`
+  fails the deploy and no migration can run ahead of it. Clear the `messages`
+  table — or stop sending and let the seven-day retention window drain it —
+  before deploying. Messages are transient and clients re-request undelivered
+  ones. See "Upgrading" in the component README.
+
+- **Fixed: on React Native, one member's sender key could permanently break
+  another's group messages.** The store indexes sender keys by the frame's
+  distribution identifier so a receiver can resolve a group without being told
+  which one. Every other adapter scopes that index by sender; the React Native
+  adapter keyed a flat pointer on the identifier alone, so a second sender
+  presenting the same identifier overwrote the first, and the displaced
+  sender's group messages failed to decrypt until it rotated. Distribution
+  identifiers are chosen by their sender and travel in the clear, so this was
+  reachable by any account sharing a group with the victim. The pointer key is
+  now scoped by sender and device.
+
+- **Fixed: on React Native, a host that issues colon-scoped user IDs could not
+  receive group messages at all.** The adapter joins composite storage keys on
+  `:` and split the sender key record key from the right, which silently
+  mis-assigns the components when a user ID contains a `:` of its own — and
+  nothing constrains user IDs, since they come from the host application's
+  identify hook, where a tenant- or issuer-scoped subject is ordinary. Every
+  group message resolved to nothing on such a deployment, deterministically and
+  permanently. The same join made a group ID a prefix of `<groupId>:<sub>`, so
+  deleting a group's sender keys also swept any group whose ID extended it.
+
+  Key components are now percent-escaped before they are joined, so no
+  identifier can carry a separator into a key or a scan prefix. This also
+  retires the residue left by the sender-scoping fix above, which had only
+  pushed the collision behind the same assumption.
+
+  Sender key records and pointers are unaffected on upgrade for a deployment
+  whose IDs contain neither `:` nor `%`, because such values escape to
+  themselves; only the values that were already broken move. Retry records are
+  different, and do move for everyone: their key is scanned by session ID, and
+  a session ID is `<userId>:<deviceId>`, so it always carries a separator. That
+  separator was load-bearing in the same way — a session ID of `alice:1` has
+  scan prefix `alice:1:`, which also matches the records of user `alice:1` on
+  device 2 — so the escaping applies there too.
+
+  The cost is that retry records written before the upgrade are not reachable
+  by session ID afterwards, so a retry request for a message sent before the
+  upgrade cannot be served and the sender's peer re-requests or gives up. They
+  are not leaked: the expiry sweep and the clear-all path scan the whole record
+  prefix and filter on the stored timestamp, so they are reaped on the normal
+  retention schedule regardless of key format.
+
+- **BREAKING: the `plaintext_content` envelope type is removed.** It was in the
+  relay's message-type union and the client's accepted list, but no send path
+  ever produced one and neither decrypt path handled one — an envelope carrying
+  it fell through to the pairwise ratchet and failed there. The reference uses
+  the corresponding sealed content type to carry a decryption-error receipt
+  when no session exists; this SDK delivers those over a dedicated relay
+  channel instead, so the type has no role here. The sealed-sender parser now
+  rejects the content-type byte outright rather than mapping it to an envelope
+  type with no handler. `docs/DEVIATIONS.md` §6.2 records the difference.
+
+  The literal is also gone from the relay's stored `messageType` union, so it
+  carries the same deploy-time hazard as the `groupId` removal above: a stored
+  row whose `messageType` is `plaintext_content` fails Convex schema validation
+  during the push. Clearing the `messages` table handles both at once.
+
+- **Sealed sender reads its content-type enum through a static import.** Four
+  call sites in `client/sealed-sender-ops.ts` and
+  `client/signal-service-cipher.ts` reached for
+  `internal/protocol/sealed-sender/types` with `await import(...)` on every
+  seal and unseal, to read `SealedSenderContentType` and the V2 version bytes.
+  Two of them were already redundant with a static import of the same module at
+  the top of the same file, and `client/client.ts` had none. This is a
+  consistency and readability change, not a bug fix: the module has runtime
+  exports, so a resolved dynamic import always carries the enum.
+
+- **Sealed sender envelope parsing is now canonical and validated.** Both the
+  V1 and V2 inner-envelope parsers accepted a payload with trailing bytes, an
+  unrecognised content-type byte, a truncated varint, or a missing content
+  hint. Parsing runs after authentication, so none of these was reachable by an
+  attacker, but two distinct byte strings could parse to identical content and
+  an unknown content type fell through to a routing default. The parsers now
+  reject all four, and the content hint is a required field rather than an
+  optional one.
+
+- **`maxSenderKeyAge` is bounded at 90 days.** The age-based rotation policy
+  already expired locally generated sender keys after a configurable interval,
+  defaulting to the 14 days the reference implementation uses, and the group
+  send path caught that expiry to rotate and redistribute before retrying. The
+  interval itself was unbounded, so a host could configure an age no key would
+  reach and switch rotation off without saying so. It is now clamped to 90
+  days, the same ceiling the reference applies to its own remotely configured
+  value — the difference being that this value comes from the host application
+  rather than from the SDK, which is what makes the clamp load-bearing rather
+  than belt-and-braces. A sender key is the group material no ratchet
+  refreshes, so a member who holds it can read everything sent under it until
+  it rotates; membership changes normally force that sooner, and the age bound
+  is what covers a group whose membership never changes. A configured value
+  that is not a positive finite number now falls back to the default instead of
+  being used, since such a value states no policy at all and a zero is far more
+  often an unset field than a request to rotate constantly. Both the clamp and
+  the fallback log a warning.
+
+- **`maxSenderKeyAge` is also bounded below, at one hour.** The interval had no
+  lower bound, and one that is too short fails in a way that is worse than not
+  rotating: expiry is enforced on the send path, which answers it by rotating
+  the key and fanning a distribution message out to every other member over
+  sequential network calls, then retrying the encrypt — against the age of the
+  key it just created. Configure an interval shorter than that fan-out takes
+  and the retry finds the new key expired too, so every group send fails
+  permanently, having burned a rotation and a message to every member on each
+  attempt. Since the field is milliseconds, a host that means fourteen days and
+  passes `14` reaches this, and it does so without ever sending a message that
+  would reveal the mistake in testing.
+
+  Values below the floor are raised to it with a warning rather than rejected.
+  Unlike the ceiling this is not a security bound — rotating sooner is strictly
+  safer — so the honest reading of an unreachably short interval is "rotate as
+  often as this implementation can actually deliver", which is what a host that
+  wants aggressive rotation was asking for. An hour clears the worst realistic
+  fan-out by a wide margin while leaving deliberately aggressive policies
+  intact, which a bound measured in days would not. `SENDER_KEY_AGE_FLOOR` is
+  exported alongside `SENDER_KEY_AGE_CEILING`.
+
+  Note what the clamp leaves you with if you hit it by mistake: a host that
+  passes `14` meaning days now rotates hourly, which is a distribution message
+  to every member of every group every hour. That is functional but not free,
+  and the warning is how you find out it is happening — which is the argument
+  for clamping rather than rejecting, since the alternative was group messaging
+  that simply did not work.
+
+  Separately, the expiry check no longer skips a locally generated key whose
+  stored creation time is missing or non-positive. Such a key is the one whose
+  life is genuinely unbounded, so waiving the age check on it exempted exactly
+  the case the check exists for; it is now treated as expired, which the send
+  path answers by rotating to a key whose age is known.
+
+- **Sender key identifiers are now opaque random UUIDs, closing a group
+  metadata leak.** A sender key's id was built as
+  `groupId:userId:deviceId:timestamp`, and that id travels the wire as the
+  SenderKeyMessage `distribution_uuid` — a field outside the ciphertext that
+  every relay on the delivery path reads off each group message. Sealed sender
+  does not cover this: it conceals the frame from the relay but not from the
+  rest of the path, and a deployment may have it disabled. A passive observer
+  could therefore reconstruct group rosters by grouping messages on a field it
+  cannot be prevented from reading. Ids are now random UUIDv4s carrying no
+  group, sender, device, or clock, matching the reference implementation's
+  random distribution UUID. The sender-keys specification states the
+  requirement in a new section on identifier opacity. This also fixes a
+  rotation bug: receivers detect a rotation by
+  comparing the incoming id against their stored state, so two rotations inside
+  the same millisecond produced an identical id and the second went unnoticed —
+  the rotation tests previously needed a `Date.now()` mock advancing a
+  millisecond per call to stay green, and now run against the real clock.
+- **BREAKING: the Expo store now keeps sender keys on the device instead of
+  sending them to a remote store.** Every sender-key and skipped-key operation
+  was proxied to an optional `ISignalProtocolRemoteSenderStateStore`, which
+  took the chain key and the sender's private signature key as parameters and
+  wrote them to whatever backend the application supplied. Those two values
+  together are enough to read every message on a sender's group chain and to
+  forge new ones, so a server holding them would nullify group message
+  confidentiality and authenticity; the skipped-key methods handed over the
+  message keys themselves. The reference implementation keeps its sender key
+  store local for exactly this reason. No shipped relay implemented the
+  interface, so in practice these calls threw and Expo group messaging did not
+  work at all — the fix is a real local implementation, not a guard.
+
+  Sender key records and skipped message keys now live in the Expo store's own
+  SQLCipher-encrypted database. The `sender_keys` table holds each record as
+  one row so a rotation's current and previous states can never be written
+  apart, and its `distribution_id` column is renamed `group_id` to match what
+  it has always contained. A new `skipped_sender_keys` table replaces the
+  remote skipped-key calls and bounds itself by evicting the lowest chain
+  indexes first.
+
+  `ISignalProtocolRemoteSenderStateStore` is removed, along with the `relay`
+  option on `expoStore()` and the corresponding `ExpoSignalProtocolStore`
+  constructor parameter. `expoStore({ relay })` becomes `expoStore()`. The
+  `sender_keys` schema change is not migrated: applications own Expo database
+  migrations, and any existing rows hold state that should not have left the
+  device.
+- **Device teardown no longer orphans key material, and the provisioning cron
+  no longer risks stalling.** `purgeDeviceStorage` deleted at most 4096 rows
+  per prekey table in a single transaction and stopped there. A device's
+  one-time prekeys have no ceiling — the component marks a consumed prekey
+  rather than deleting it, and no cron reclaims consumed rows — so a
+  long-lived device could exceed that and leave the remainder behind, keyed to
+  a deviceId a later link reuses. Teardown now deletes a fixed budget and
+  schedules a continuation until nothing remains. The device's identity
+  registration is always deleted in the first pass and `fetchPreKeyBundle`
+  gates on that row, so the device is unreachable the moment teardown returns
+  even while the sweep continues. Separately, the provisioning cleanup cron
+  swept 100 sessions per transaction while each `linked_pending_ack` row
+  cascades into a full device teardown; a cron that exceeds Convex's
+  per-mutation limits does not degrade, it stalls, and expired sessions then
+  stop being reaped at all. That sweep now uses a batch of 10 and relies on
+  its existing self-reschedule for throughput.
+- **Provisioning teardown now identifies the device it linked by an opaque
+  token rather than a millisecond timestamp.** Device rows are reused across
+  registrations, so rollback matched the device's `linkedAt` stamp to avoid
+  reaping a device the user had legitimately re-registered into the freed
+  slot. Two links landing in the same millisecond on the same slot produce
+  equal stamps, and teardown would then unlink the wrong — newer — device.
+  Every registration and link now mints a `linkToken`; it is never returned to
+  clients. A test that removes and re-registers without advancing the clock at
+  all fails against the old stamp comparison.
+- **Removed five exported Convex row types that described tables no consumer
+  can read.** `ConvexIdentityKey`, `ConvexEcSignedPreKey`, `ConvexEcPreKey`,
+  `ConvexKemPreKey`, and `ConvexKemLastResortPreKey` were unreferenced and
+  every one of them disagreed with `component/schema.ts`: all five omitted the
+  `identityType` discriminator, `ConvexIdentityKey` claimed a `deviceId` and a
+  raw `publicKey` where the real table holds a per-account
+  `compositeIdentity`, and both one-time prekey types documented that keys are
+  "DELETED when consumed" when the component marks `consumedAt` and leaves the
+  row for the sweep. The premise was wrong to begin with — the component's
+  tables are isolated, so an application cannot obtain these rows under any
+  type. The file header claiming nine component tables, one of them a
+  `prekeyBundleFetches` table that no longer exists, is corrected. The
+  surviving `FetchedPreKeyBundle` is now derived from the component's own
+  return validator instead of hand-written, so it cannot drift again.
+- **`ConvexSignalProtocolRelayApi` now carries real argument and return
+  types.** Its 43 function references were declared as bare
+  `FunctionReference<'mutation'>` / `<'query'>`, so every argument the relay
+  adapter passed to the component was `any` and a mismatch surfaced only as a
+  runtime validator rejection in the deployment. The type is now *derived*
+  from `defineConvexSignalProtocolBackend`'s return type via `ApiFromModules`
+  rather than restated by hand, which is what makes it meaningful — a
+  hand-written contract can drift from the functions it describes, and this
+  one had. The `getProvisioningMessage` return cast is removed as a
+  consequence: the reference now carries the component's own return
+  validator, so a component change that stops satisfying the interface fails
+  to compile instead of being cast away.
+- **Fixed sealed-sender fallback detection**, which decided whether to retry a
+  failed sealed send on the identified path by testing whether the error
+  message contained the substring `'Unauthorized'`. That was wrong in both
+  directions: any unrelated failure whose message happened to contain the word
+  — a rate limit, an app-level wrapper — downgraded the send to identified
+  delivery and disclosed the sender to the relay, while a genuine
+  `code: 'UNAUTHORIZED'` rejection whose message did not spell the word went
+  undetected and surfaced as a hard send failure. Detection now reads the
+  structured `ConvexError` payload; the string contract is removed with no
+  fallback.
+- **Rewrote `docs/SCHEMA.md`.** It described a 7-table schema the application
+  was instructed to define itself, with a multi-tenant `appId` column, index
+  names, a `deliveredAt` field, and a `sender_key_distribution` message type
+  that exist nowhere in the codebase, plus cleanup crons the component already
+  runs. The component owns all sixteen tables; the document now describes what
+  is stored, what the relay can and cannot see, and the real retention
+  behavior.
+
+- **Sealed sender can now be enabled.** `oe-groups trust-root` exports the
+  Ed25519 sender-certificate root alongside the group trust root, printing both
+  labelled (`group trust root:` / `sealed sender trust root:`). Previously only
+  the group root was printed, so there was no supported way to obtain the value
+  clients pin in `sealedSender.trustRoots`; inbound sealed-sender validation
+  stayed disabled and every send fell back to identified delivery, disclosing
+  the sender to the relay. The derivation now lives in one shared module
+  (`internal/protocol/sealed-sender/trust-root`) used by both the CLI and the
+  relay's certificate issuance, so the printed root cannot drift from the key
+  the deployment signs with, and a contract test pins the two as equal.
+  Corrects the `sealedSender` configuration docs, which required a
+  `SEALED_SENDER_SIGNING_KEY` environment variable that has never existed.
+
+- **`getProvisioningMessage` now returns `expiresAt`**, the session's absolute
+  deadline in epoch milliseconds (`null` when the session is unknown). The
+  Convex component already returned it, but the relay interface did not declare
+  it and the adapter cast it away, so no client could compute expiry locally.
+  The mock relay was brought to parity at the same time: it models the
+  acknowledgment's own TTL window granted by `completeProvisioning` — without
+  which a link completed near the deadline strands a device the client has
+  already persisted keys for — rejects expired sessions in
+  `connectNewDevice`, `sendProvisioningMessage`, `completeProvisioning`, and
+  `acknowledgeProvisioning`, and reports expiry as a computed status instead of
+  writing `expired` from inside a read. The shared relay contract suite now
+  pins all three behaviors.
+- **Security (Convex component):** the component now declares
+  `OE_GROUPS_SERVER_SECRET` as a typed component environment variable and
+  reads it through the declared-environment accessor. Convex components are
+  isolated from app deployment environment variables, so the previous
+  `process.env` read was unreachable in any real `app.use()` install and
+  every group, credential-issuance, and sender-certificate call failed at
+  runtime; apps must forward the secret with
+  `app.use(signalProtocol, { env: { OE_GROUPS_SERVER_SECRET: app.env.OE_GROUPS_SERVER_SECRET } })`.
+  The test-only injection seam is now default-deny: it refuses configuration
+  outside a recognized test runner instead of allowing it whenever a
+  deployment marker is absent.
+- **Breaking (relay API):** removed `getGroupMembers` from the relay surface
+  — the component, the app wrapper, `ConvexSignalProtocolRelayServer`, the
+  mock adapter (including its `setGroupMembers` test seam), and
+  `ISignalProtocolRelayServer`. The relay keeps no server-side group
+  membership map by design; relayed group sends now require
+  `SendOptions.groupMemberUserIds`, which the relay resolves to devices via
+  `getActiveDevices`. Group sends without a roster previously dropped the
+  message to zero recipients while reporting success.
+- Fixed cross-sender message suppression: `clientMessageId` deduplication is
+  now scoped to the sending account. The key was previously
+  `(targetUserId, targetDeviceId, clientMessageId)`, so two senders that mint
+  non-random client message IDs — a counter or a timestamp — silently
+  suppressed each other's messages to a shared recipient, and the suppressed
+  sender was handed the other sender's message ID and server timestamp.
+  Same-sender retries still collapse as before.
+- Documented two properties the component does not provide, both previously
+  unstated or overstated. **Group metadata privacy:** the relay can still
+  approximate a group's recipient set from delivery metadata — `messages` rows
+  carry a plaintext `groupId`, and the unencrypted `distributionUuid` in the
+  SenderKeyMessage frame embeds `groupId:senderUserId:senderDeviceId` — so the
+  component README's previous claim to keep no membership map has been
+  corrected to describe what removing `getGroupMembers` actually buys. Closing
+  the leak requires opaque distribution identifiers in the sender-key layer and
+  is tracked separately. **Device-scoped authorization:** `identify` resolves an
+  account, not a device, so every `deviceId` argument is a caller-chosen
+  routing selector and any session for an account can drain that account's
+  other device queues, send as any of its device IDs, and rotate any of its key
+  material.
+- Fixed silent message loss for skipped multi-recipient sealed-sender
+  recipients: the client now consumes the server's `uuids404` list,
+  refreshes those users' device lists, and redelivers per-device instead of
+  discarding the field while reporting the send as delivered.
+- Fixed provisioning acknowledgment data loss: completing a session now
+  grants the acknowledgment its own full session TTL (previously the ack
+  deadline was whatever remained of the original five-minute window, and
+  the every-minute cleanup cron could delete the freshly linked device
+  before the ack arrived), `acknowledgeProvisioning` rejects expired
+  sessions instead of racing the cron for the device's survival, and
+  session teardown deletes only the device the session created (matched by
+  its `linkedAt` stamp) with a full cascade of its key material, queued
+  messages, and heartbeats. Dead `patch`-before-`throw` writes that Convex
+  transaction rollback always discarded were removed, along with the never
+  persisted stored `expired` status; `getProvisioningMessage` now also
+  returns `expiresAt` so subscribed clients can compute expiry locally.
+- Retry requests now expire with the same seven-day TTL as messages, backed
+  by an hourly cleanup cron; `getPendingMessages` and
+  `getPendingRetryRequests` filter expired rows at read time instead of
+  serving them until the next cron pass.
+- Reduced write contention on the per-account identity row: mutations now
+  skip the account patch when the caller's identity bytes are unchanged,
+  instead of unconditionally rewriting the row (an OCC conflict hotspot
+  between a user's own concurrent mutations and sealed sends addressed to
+  them).
+- Corrected the exported `FetchedPreKeyBundle` type to the actual wire shape
+  (`registrationId`, `ecSignedPreKey`, `ecOneTimePreKey`,
+  `kemLastResortPreKey`, `kemOneTimePreKey`); the previous declaration
+  omitted `registrationId` and named four of five fields incorrectly.
+- `getActiveDevices` now caps its device scan at `MAX_DEVICES` instead of a
+  hardcoded 5, and the missing-snapshot guard in `getGroupChanges` throws
+  structured `ConvexError` data instead of a plain `Error`.
+- Extended the installable Convex component to own the complete relay backend,
+  adding isolated devices, identity and prekey storage, message and retry
+  queues, provisioning sessions, and sender-certificate issuance behind five
+  new public wrapper namespaces.
+- Added `@convex-dev/rate-limiter` as an optional child component and enforce a
+  ten-per-minute prekey-bundle fetch limit for each authenticated
+  fetcher/target pair.
+- Standardized component rejections on structured `ConvexError` data carrying
+  `{ code, status, message }`, including sealed-sender authorization failures
+  that retain an `Unauthorized:` message prefix for current client fallback
+  handling.
+- Added an installable Convex component defined as
+  `defineComponent('signalProtocol')`, with isolated group state, change, and
+  snapshot tables plus a `defineConvexSignalProtocolBackend()` app-wrapper
+  factory. The credential-issuance wrappers resolve application identity and
+  pass explicit ACI and optional PNI bytes into the component; group
+  operations remain authorized solely by their zero-knowledge presentations
+  and carry no caller identity.
+- Added the `@open-e2ee/signal-protocol-sdk/convex.config` export for mounting
+  the component with `app.use(signalProtocol)`.
+- **Breaking (Convex group backend):** removed `defineConvexGroupServer`,
+  `defineConvexGroupServerForTest`, `convexGroupServerTables`, and the
+  `@open-e2ee/signal-protocol-sdk/remote/relay/convex/server` export. The
+  pre-launch factory and app-owned tables are replaced directly by the
+  component and wrapper, with no compatibility aliases.
+
 ## 0.1.0-alpha.7
 
 - **Security (Convex group server):** structured rejection data now survives
@@ -204,7 +882,7 @@
   parameters were wrong. PQXDH §2.2 requires the info string to name the
   `pqkem` actually in use, and the SDK runs ML-KEM-1024 (FIPS 203), not
   round-3 CRYSTALS-Kyber — so two implementations feeding an identical label
-  derived *different* shared secrets, which is precisely what the info string
+  derived _different_ shared secrets, which is precisely what the info string
   exists to prevent. And §2.1 defines `info` as an identifier of the
   application deriving the key; this SDK is not Signal Messenger. **Sessions
   established under the old labels derive a different `SK` and cannot be
@@ -260,7 +938,7 @@
   gone. Protocol domain-separation strings are untouched and remain
   byte-identical. The Expo storage error message no longer carries a "Signal
   Protocol " prefix; it now reads `Expo storage DB bindings not configured.
-  Configure them from the host app before using Expo storage.` Anything
+Configure them from the host app before using Expo storage.` Anything
   matching on that text must be updated.
 - Corrected group-system source comments that described the permission model as
   server-enforced. The checks in `access-control.ts` run on the client over

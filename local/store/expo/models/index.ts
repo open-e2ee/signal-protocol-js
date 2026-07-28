@@ -149,15 +149,16 @@ export {
 export {
   SenderKey,
   type StoredSenderKey,
+  parseSenderKeyRecord,
   // Query functions
   getSenderKey,
-  getSenderKeyById,
-  getSenderKeysByDistribution,
+  findGroupBySenderKeyId,
+  getSenderKeysByGroup,
   getSenderKeysBySender,
   countSenderKeys,
-  countSenderKeysByDistribution,
+  countSenderKeysByGroup,
   deleteSenderKey,
-  deleteSenderKeysByDistribution,
+  deleteSenderKeysByGroup,
   deleteSenderKeysBySender,
   deleteAllSenderKeys,
   // Factory functions

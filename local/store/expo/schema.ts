@@ -157,23 +157,57 @@ export const sessions = sqliteTable(
   ]
 );
 
+/**
+ * Sender key state for group messaging.
+ *
+ * `record` holds the whole `SenderKeyState[]` as JSON — current state first,
+ * then the superseded states that the rotation window still needs. One column
+ * rather than one per field, so a row can never disagree with itself about
+ * which state is current.
+ *
+ * The chain key and the sender's private signature key live in this column.
+ * They are stored in the clear because the database file itself is
+ * SQLCipher-encrypted with an application-supplied key; they must never leave
+ * the device.
+ */
 export const senderKeys = sqliteTable(
   'sender_keys',
   {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    distributionId: text('distribution_id').notNull(),
+    groupId: text('group_id').notNull(),
     senderId: text('sender_id').notNull(),
     deviceId: integer('device_id').notNull(),
-    chainKey: text('chain_key').notNull(),
-    iteration: integer('iteration').notNull(),
-    previousStates: text('previous_states'),
+    record: text('record').notNull(),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
   (table) => [
-    uniqueIndex('idx_sender_keys_unique').on(table.distributionId, table.senderId, table.deviceId),
-    index('idx_sender_keys_distribution').on(table.distributionId),
+    primaryKey({ columns: [table.groupId, table.senderId, table.deviceId] }),
+    index('idx_sender_keys_group').on(table.groupId),
     index('idx_sender_keys_sender').on(table.senderId),
+  ]
+);
+
+/**
+ * Message keys skipped by out-of-order group messages.
+ *
+ * The composite primary key doubles as the range index for the
+ * (group, sender, device) prefix scans that the count and eviction paths use.
+ */
+export const skippedSenderKeys = sqliteTable(
+  'skipped_sender_keys',
+  {
+    groupId: text('group_id').notNull(),
+    senderId: text('sender_id').notNull(),
+    senderDeviceId: integer('sender_device_id').notNull(),
+    chainIndex: integer('chain_index').notNull(),
+    cipherKey: text('cipher_key').notNull(),
+    iv: text('iv').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.groupId, table.senderId, table.senderDeviceId, table.chainIndex],
+    }),
   ]
 );
 
@@ -233,6 +267,8 @@ export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
 export type SenderKey = typeof senderKeys.$inferSelect;
 export type NewSenderKey = typeof senderKeys.$inferInsert;
+export type SkippedSenderKeyRow = typeof skippedSenderKeys.$inferSelect;
+export type NewSkippedSenderKeyRow = typeof skippedSenderKeys.$inferInsert;
 export type MessageRecord = typeof messageRecords.$inferSelect;
 export type NewMessageRecord = typeof messageRecords.$inferInsert;
 export type GroupMasterKeyRow = typeof groupMasterKeys.$inferSelect;

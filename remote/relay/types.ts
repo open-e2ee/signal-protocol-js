@@ -3,14 +3,12 @@
  *
  * These are the DI contracts for relay-oriented remote services:
  * - ISignalProtocolRelayServer: Envelope delivery, device registry, prekey management
- * - ISignalProtocolRemoteSenderStateStore: Optional remote sender-key/skipped-key state
  *
  * @see docs/INTERFACES.md for full documentation
  */
 
 // Import PreKeyBundle from keys module (uses branded types)
 import type { PreKeyBundle, IdentityType, CompositeIdentityV1 } from '../../keys/types';
-import type { SenderKeyState } from '../../internal/protocol/sender-keys/manager';
 import type { RetryRequest } from '../../internal/sesame/types';
 import { ContentHint } from '../../types/messages';
 import type {
@@ -52,111 +50,6 @@ export interface IRelayGroupServer {
     userId: string,
     profileKey: Uint8Array
   ): Promise<Uint8Array>;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ISIGNALREMOTESENDERSTATESTORE
-// ════════════════════════════════════════════════════════════════════════════
-
-/**
- * Optional remote sender-state store for ExpoSignalProtocolStore.
- *
- * Provides server-side storage for:
- * - Sender Keys (group messaging)
- * - Skipped message keys (out-of-order decryption)
- *
- * NOTE: SESAME session metadata is stored locally only, following the Signal
- * Protocol SESAME specification.
- * The server only stores device registry, prekeys, and message mailbox.
- *
- * All methods are optional - ExpoSignalProtocolStore checks with `?.` before calling.
- * Pass a ConvexSignalProtocolRelayServer or similar backend to enable server-side storage.
- *
- * @example
- * ```typescript
- * const relay = new ConvexSignalProtocolRelayServer(convex, signalApi, {
- *   currentUserId: userId,
- * });
- * const keyStore = new ExpoSignalProtocolStore(relay);
- * ```
- */
-export interface ISignalProtocolRemoteSenderStateStore {
-  // ════════════════════════════════════════════════════════════
-  // SENDER KEYS (GROUP MESSAGING)
-  // ════════════════════════════════════════════════════════════
-
-  /** Store sender key state */
-  storeSenderKey?(
-    senderKeyId: string,
-    groupId: string,
-    userId: string,
-    deviceId: number,
-    chainKey: string,
-    signingKey: string,
-    iteration: number,
-    generation: number
-  ): Promise<void>;
-
-  /** Load sender key for a device */
-  loadSenderKeyForDevice?(
-    groupId: string,
-    userId: string,
-    deviceId: number
-  ): Promise<SenderKeyState | null>;
-
-  /** Delete a sender key */
-  deleteSenderKey?(senderKeyId: string): Promise<void>;
-
-  /** Load all sender keys for a group */
-  loadAllSenderKeysForGroup?(groupId: string): Promise<SenderKeyState[]>;
-
-  /** Delete all sender keys for a group */
-  deleteAllSenderKeysForGroup?(groupId: string): Promise<number>;
-
-  // ════════════════════════════════════════════════════════════
-  // SKIPPED SENDER KEYS (OUT-OF-ORDER MESSAGES)
-  // ════════════════════════════════════════════════════════════
-
-  /** Store skipped message key for out-of-order decryption */
-  storeSkippedSenderKey?(
-    groupId: string,
-    senderId: string,
-    senderDeviceId: number,
-    chainIndex: number,
-    cipherKey: string,
-    iv: string
-  ): Promise<void>;
-
-  /** Get skipped message key */
-  getSkippedSenderKey?(
-    groupId: string,
-    senderId: string,
-    senderDeviceId: number,
-    chainIndex: number
-  ): Promise<{ iv: string; cipherKey: string } | null>;
-
-  /** Delete skipped message key after use */
-  deleteSkippedSenderKey?(
-    groupId: string,
-    senderId: string,
-    senderDeviceId: number,
-    chainIndex: number
-  ): Promise<void>;
-
-  /** Count skipped keys for a sender */
-  countSkippedSenderKeys?(
-    groupId: string,
-    senderId: string,
-    senderDeviceId: number
-  ): Promise<number>;
-
-  /** Delete oldest skipped keys */
-  deleteOldestSkippedSenderKeys?(
-    groupId: string,
-    senderId: string,
-    senderDeviceId: number,
-    count: number
-  ): Promise<number>;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -231,6 +124,14 @@ export interface IProvisioningService {
       | 'rolled_back'
       | 'expired';
     message: string | null;
+    /**
+     * Absolute expiry of the session's current window, or null when the
+     * session no longer exists. After completion this is the acknowledgment
+     * deadline, which is a fresh full TTL rather than the remainder of the
+     * original window, so clients must read it rather than compute it from
+     * the session's creation time.
+     */
+    expiresAt: number | null;
   }>;
 
   /**
@@ -338,7 +239,8 @@ export interface IKeyRotationService {
  * - Device registry (multi-device support, max 5 devices per user)
  * - Prekey management (X3DH/PQXDH key exchange)
  *
- * Maps to 17 Convex tables.
+ * Backed by the 16 tables the Convex component owns; `docs/SCHEMA.md` covers
+ * what each stores and for how long.
  *
  * @example
  * ```typescript
@@ -607,17 +509,14 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
   ): Promise<void>;
 
   // ════════════════════════════════════════════════════════════
-  // GROUP MEMBER QUERY (Sender Keys)
+  // GROUP MEMBER RESOLUTION (Sender Keys)
+  //
+  // There is deliberately no getGroupMembers(groupId) endpoint: the relay
+  // keeps no server-side membership map (it would reveal the social graph
+  // the zero-knowledge group design hides). Membership is local-first —
+  // callers resolve the roster from their own decrypted group state and
+  // pass member user IDs, which the relay expands to devices.
   // ════════════════════════════════════════════════════════════
-
-  /**
-   * Get all devices in a group for message fanout.
-   * Used for Sender Key group message delivery.
-   *
-   * @param groupId - Group identifier
-   * @returns Array of member devices
-   */
-  getGroupMembers(groupId: string): Promise<GroupMemberDevice[]>;
 
   /**
    * Get all active devices for a user.
@@ -628,7 +527,7 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
 
   // ════════════════════════════════════════════════════════════
   // GROUP STATE (encrypted, server cannot decrypt)
-  // Maps to: encryptedGroups + groupChangeLogs tables
+  // Maps to: groups + groupChanges + groupSnapshots tables
   // ════════════════════════════════════════════════════════════
 
   /**
@@ -783,7 +682,6 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
    * @param sentMessageBase64 - Base64-encoded V2 multi-recipient binary blob
    * @param auth - Sealed sender authentication (access key or group send token)
    * @param timestamp - Client timestamp for message identification
-   * @param groupId - Optional group ID for group messages
    * @param recipientUserIds - Original user IDs in same order as binary recipients
    * @returns Message ID, server timestamp, and list of unknown recipient UUIDs
    *
@@ -792,7 +690,6 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
     sentMessageBase64: string,
     auth: SealedSenderAuth,
     timestamp: number,
-    groupId?: string,
     recipientUserIds?: string[],
     clientMessageId?: string
   ): Promise<{
@@ -856,7 +753,21 @@ export type Unsubscribe = () => void;
  */
 export type SealedSenderAuth =
   | { type: 'accessKey'; unidentifiedAccessKey: string }
-  | { type: 'groupSendToken'; groupSendToken: Uint8Array };
+  | {
+      type: 'groupSendToken';
+      groupSendToken: Uint8Array;
+      /**
+       * ACI bytes per recipient user ID — the identities the token endorses.
+       *
+       * The token is a signature over ACIs, not user IDs, and the relay
+       * verifies it before reading any account. It therefore needs the
+       * claimed ACI for each recipient up front; it then binds each claim to
+       * the recipient's stored account after the token checks out. The
+       * endorsement manager supplies these from its cache, which records the
+       * exact identities the endorsements were issued over.
+       */
+      recipientAciBytes: Map<string, Uint8Array>;
+    };
 
 /**
  * Envelope for delivery (profile naming)
@@ -885,14 +796,21 @@ export interface Envelope {
    *
    * - ciphertext: Standard Double Ratchet message (contains encrypted Content)
    * - prekey_bundle: Session initiation (X3DH/PQXDH)
-   * - plaintext_content: Sealed sender envelope
+   * - sender_key: Group message encrypted with sender keys
    * - server_delivery_receipt: Server-generated delivery receipts
    * - unidentified_sender: Sealed sender protocol messages
+   *
+   * `sender_key` tells the receiver to decrypt the payload as a framed
+   * SenderKeyMessage rather than as a pairwise ratchet message. It names no
+   * group: the receiver reads the opaque distribution identifier out of the
+   * frame and resolves the group from its own sender key store. The relay
+   * therefore learns that an envelope is group traffic, which its fan-out
+   * pattern already implies, but not which group.
    */
   messageType:
     | 'ciphertext'
     | 'prekey_bundle'
-    | 'plaintext_content'
+    | 'sender_key'
     | 'server_delivery_receipt'
     | 'unidentified_sender';
 
@@ -901,9 +819,6 @@ export interface Envelope {
 
   /** Skip persistence if recipient offline (for typing indicators, receipts). */
   ephemeral?: boolean;
-
-  /** Group ID (for group messages) */
-  groupId?: string;
 
   /** Server-assigned envelope ID (set by server) */
   id?: string;
@@ -976,10 +891,6 @@ export interface StaleSessionErrorData {
   reason: 'device_reinstalled';
   /** Human-readable error message */
   message: string;
-  /** The registration ID sender expected */
-  expectedRegistrationId?: number;
-  /** The actual current registration ID */
-  currentRegistrationId?: number;
 }
 
 /** Device info returned by getDevices() */
@@ -1066,7 +977,7 @@ export interface KemLastResortPreKeyUpload {
 
 /**
  * Group member device info for message fanout.
- * Used by getGroupMembers() for Sender Key distribution.
+ * Returned by getActiveDevices() for Sender Key distribution.
  */
 export interface GroupMemberDevice {
   /** User ID of the group member */

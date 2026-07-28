@@ -32,7 +32,6 @@
 export {};
 export type {
   ISignalProtocolRelayServer,
-  ISignalProtocolRemoteSenderStateStore,
   Envelope,
   DeviceInfo,
   DeviceType,

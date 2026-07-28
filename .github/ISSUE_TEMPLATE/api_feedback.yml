@@ -1,0 +1,19 @@
+name: API or documentation feedback
+description: The SDK works, but something is confusing, missing, or badly shaped
+labels: [feedback]
+body:
+  - type: textarea
+    id: friction
+    attributes:
+      label: What were you trying to do, and where did it get hard?
+      description: |
+        Alpha feedback shapes the 1.0 surface. "I expected X to exist",
+        "the docs never answer Y", and "this name misled me" are all
+        exactly what we want to hear.
+    validations:
+      required: true
+  - type: input
+    id: page
+    attributes:
+      label: Doc page or API involved (if any)
+      placeholder: "docs.open-e2ee.dev/start/expo, or createSignalProtocolClient options"

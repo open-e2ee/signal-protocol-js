@@ -49,6 +49,15 @@ configuration, apply the supplied key before schema access, create or migrate
 the exported tables, and return the matching raw and Drizzle handles. SQLCipher
 requires a development build and is not available in Expo Go.
 
+Every table this store exports holds material that must not leave the device.
+That includes the group `sender_keys` and `skipped_sender_keys` tables, whose
+rows contain the sender chain key, the sender's private signature key, and
+individual message keys — enough to read and to forge a sender's group
+messages. They are stored unencrypted at the row level because SQLCipher
+encrypts the database file itself, so the database key is the only thing that
+protects them. Do not back these tables up to a server or sync them between
+devices.
+
 ## Client usage
 
 ```ts
@@ -58,7 +67,7 @@ import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
 const client = await createSignalProtocolClient({
   identity: { userId },
   adapters: {
-    storage: expoStore({ relay }),
+    storage: expoStore(),
     relay,
   },
 });

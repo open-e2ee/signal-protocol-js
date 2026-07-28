@@ -36,6 +36,7 @@ import { isGroupId, extractGroupId } from '../internal/groups';
 import type { EndorsementManager } from './endorsement-manager';
 import type { PreparedAttachmentUpload, SendOptions, SendResult } from './types';
 import { ContentHint } from '../types/messages';
+import { SealedSenderContentType } from '../internal/protocol/sealed-sender/types';
 import {
   type BlockedRecipientsSyncInput,
   createDefaultSignalProtocolContentAdapter,
@@ -138,10 +139,10 @@ function isStaleSessionError(error: unknown): error is { data: StaleSessionError
 /**
  * Detect 409 mismatched devices error from V2 multi-recipient send.
  *
- * Server returns this when the device list in the request doesn't match
- * the recipient's current device list (device added/removed since last check).
- * Our Convex server throws errors with 'MISMATCHED_DEVICES' in the message.
- *
+ * The Convex component does not throw this: it reports skipped recipients
+ * via `uuids404` on a success response (handled in `tryMultiRecipientSend`).
+ * The matcher remains for relay implementations that reject the whole send
+ * with a mismatched-device error instead.
  */
 function isMismatchedDevicesError(message: string): boolean {
   return message.includes('MISMATCHED_DEVICES');
@@ -150,10 +151,10 @@ function isMismatchedDevicesError(message: string): boolean {
 /**
  * Detect 410 stale sessions error from V2 multi-recipient send.
  *
- * Server returns this when registration IDs in the request don't match
- * (device was reinstalled). Sessions need to be archived and re-established.
- * Our Convex server throws errors with 'STALE_DEVICE' in the message.
- *
+ * The Convex component throws STALE_DEVICE only on the single-recipient
+ * `send` path (structured `data.code`, see `isStaleSessionError`); its
+ * multi-recipient path reports mismatches via `uuids404` instead. The
+ * matcher remains for relay implementations that reject the whole send.
  */
 function isStaleSessionV2Error(message: string): boolean {
   return message.includes('STALE_DEVICE');
@@ -567,7 +568,7 @@ export class SignalProtocolServiceCipher {
     const validMessageTypes = [
       'prekey_bundle',
       'ciphertext',
-      'plaintext_content',
+      'sender_key',
       'server_delivery_receipt',
       'unidentified_sender',
     ] as const;
@@ -589,18 +590,22 @@ export class SignalProtocolServiceCipher {
           senderId: envelope.senderUserId,
           senderDeviceId: envelope.senderDeviceId,
           messageType: envelope.messageType,
-          groupId: envelope.groupId,
         },
       });
 
       let plaintext: string;
+      // Set for group messages once the frame's distribution identifier has
+      // been resolved against the local sender key store. The envelope carries
+      // no group, so this is the only place a group becomes known on receive.
+      let resolvedGroupId: string | null = null;
 
-      // Route to appropriate decryption based on context
-      // Group messages arrive as 'ciphertext' with groupId set (the server doesn't
-      // distinguish group vs pairwise — both are ciphertext envelopes)
-      if (envelope.groupId && envelope.messageType === 'ciphertext') {
-        // Group message encrypted with Sender Keys
-        plaintext = await this.decryptGroup(envelope);
+      // Route on the envelope type. `sender_key` says "decrypt this as a
+      // framed SenderKeyMessage"; it does not say which group, and cannot —
+      // that is the point of not putting a group on the envelope.
+      if (envelope.messageType === 'sender_key') {
+        const group = await this.decryptGroup(envelope);
+        plaintext = group.plaintext;
+        resolvedGroupId = group.groupId;
       } else {
         // Pairwise message - use SESAME for session convergence
         const sesameMessage = this.toSesameMessage(envelope);
@@ -617,7 +622,7 @@ export class SignalProtocolServiceCipher {
       // with the transcript's destination conversation.
       const conversationId =
         inspectedContent?.conversationId ||
-        envelope.groupId ||
+        resolvedGroupId ||
         this.getDirectConversationId(envelope.senderUserId);
 
       // Extract client timestamp from decrypted content
@@ -655,7 +660,7 @@ export class SignalProtocolServiceCipher {
         timestamp: clientTimestamp, // Use client timestamp for receipt matching
         serverTimestamp: envelope.serverTimestamp,
         receivedAt,
-        isGroup: !!envelope.groupId,
+        isGroup: resolvedGroupId !== null,
         messageType: envelope.messageType as DecryptedEnvelope['messageType'],
       };
 
@@ -779,11 +784,19 @@ export class SignalProtocolServiceCipher {
   }
 
   /**
-   * Decrypt a group message via Sender Keys
+   * Decrypt a group message via Sender Keys.
+   *
+   * The envelope names no group, so the group is resolved from the opaque
+   * distribution identifier inside the frame and returned alongside the
+   * plaintext — callers need it for the conversation ID and cannot read it off
+   * the envelope.
    *
    * @throws {EncryptionError} DECRYPTION_FAILED if decryption fails
    */
-  private async decryptGroup(envelope: Envelope): Promise<string> {
+  private async decryptGroup(envelope: Envelope): Promise<{
+    plaintext: string;
+    groupId: string;
+  }> {
     // Get the framed SenderKeyMessage bytes
     let framedBytes: Uint8Array;
     if (typeof envelope.ciphertext === 'string') {
@@ -793,9 +806,25 @@ export class SignalProtocolServiceCipher {
       framedBytes = envelope.ciphertext;
     }
 
+    const groupId = await this.senderKeyManager.resolveGroupForFramedMessage(
+      framedBytes,
+      envelope.senderUserId,
+      envelope.senderDeviceId
+    );
+
+    if (groupId === null) {
+      // No stored sender key claims this distribution identifier, so there is
+      // nothing to decrypt against. Same remedy as a missing key: ask the
+      // sender to redistribute.
+      throw new EncryptionError(
+        `No sender key from ${envelope.senderUserId} matches this group message - request key distribution`,
+        EncryptionErrorCode.SESSION_NOT_FOUND
+      );
+    }
+
     try {
       const plaintext = await this.senderKeyManager.decryptGroupMessage(
-        envelope.groupId!,
+        groupId,
         envelope.senderUserId,
         envelope.senderDeviceId,
         framedBytes
@@ -804,17 +833,17 @@ export class SignalProtocolServiceCipher {
       this.logger.debug('Decrypted group message', {
         category: 'E2EE',
         data: {
-          groupId: envelope.groupId,
+          groupId,
           senderId: envelope.senderUserId,
         },
       });
 
-      return plaintext;
+      return { plaintext, groupId };
     } catch (error) {
       const err = error as Error;
       if (err.message?.includes('SENDER_KEY_NOT_FOUND')) {
         throw new EncryptionError(
-          `No sender key from ${envelope.senderUserId} for group ${envelope.groupId} - request key distribution`,
+          `No sender key from ${envelope.senderUserId} for group ${groupId} - request key distribution`,
           EncryptionErrorCode.SESSION_NOT_FOUND,
           { originalError: err }
         );
@@ -1207,6 +1236,11 @@ export class SignalProtocolServiceCipher {
                 auth: {
                   type: 'groupSendToken',
                   groupSendToken: endorsementToken.token,
+                  // The identity the token endorses — the relay verifies the
+                  // token against this claim before reading any account.
+                  recipientAciBytes: new Map([
+                    [recipientUserId, endorsementToken.aciBytes],
+                  ]),
                 },
               };
             }
@@ -1358,11 +1392,10 @@ export class SignalProtocolServiceCipher {
       recipientUserId: string;
       recipientDeviceId: number;
       timestamp: number;
-      groupId?: string;
       clientMessageId?: string;
     },
     ciphertextBase64: string,
-    messageType: 'prekey_bundle' | 'ciphertext',
+    messageType: 'prekey_bundle' | 'ciphertext' | 'sender_key',
     recipientRegistrationId: number | undefined,
     sealedSender: Awaited<
       ReturnType<typeof SignalProtocolServiceCipher.prototype.resolveSealedSenderContext>
@@ -1376,13 +1409,22 @@ export class SignalProtocolServiceCipher {
     if (sealedSender && this.relay!.sendUnidentified) {
       const { sealMessage } = await import('./sealed-sender-ops');
 
+
       const sealedCiphertext = await sealMessage(
         ciphertextBase64,
         sealedSender.senderCertificateBase64,
         sealedSender.senderIdentityPrivate,
         sealedSender.recipientIdentityPublic,
         sealedSender.config,
-        this.logger
+        this.logger,
+        // The outer envelope is `unidentified_sender` for every sealed
+        // message, so the inner type has to travel inside the seal or the
+        // recipient cannot tell a group message from a pairwise one.
+        messageType === 'sender_key'
+          ? SealedSenderContentType.SENDERKEY_MESSAGE
+          : messageType === 'prekey_bundle'
+            ? SealedSenderContentType.PREKEY_MESSAGE
+            : SealedSenderContentType.MESSAGE
       );
 
       try {
@@ -1394,7 +1436,6 @@ export class SignalProtocolServiceCipher {
             senderDeviceId: 0,
             ciphertext: sealedCiphertext,
             messageType: 'unidentified_sender',
-            groupId: msg.groupId,
             timestamp: msg.timestamp,
             clientMessageId: effectiveClientMessageId,
             contentHint,
@@ -1472,7 +1513,6 @@ export class SignalProtocolServiceCipher {
       senderDeviceId: this.deviceId,
       ciphertext: ciphertextBase64,
       messageType,
-      groupId: msg.groupId,
       timestamp: msg.timestamp,
       clientMessageId: effectiveClientMessageId,
       recipientRegistrationId,
@@ -1583,8 +1623,6 @@ export class SignalProtocolServiceCipher {
       // Convert encryptedMessageJson to bytes for the seal
       const signalProtocolMessage = new TextEncoder().encode(encryptedMessageJson);
 
-      // Group ID as bytes
-      const groupIdBytes = new TextEncoder().encode(groupId);
 
       const sealResult = await sealMultiRecipient({
         senderCertificate,
@@ -1592,7 +1630,11 @@ export class SignalProtocolServiceCipher {
         senderIdentityPublic: senderKeys.senderIdentityPublic,
         recipients: v2Recipients,
         signalProtocolMessage,
-        groupId: groupIdBytes,
+        // The group this belongs to stays out of the sealed envelope. The
+        // content type says only "decrypt this as a framed SenderKeyMessage";
+        // the recipient resolves the group from the frame's distribution
+        // identifier against its own sender key store.
+        contentType: SealedSenderContentType.SENDERKEY_MESSAGE,
       });
 
       // Serialize to binary
@@ -1681,6 +1723,10 @@ export class SignalProtocolServiceCipher {
       const auth: SealedSenderAuth = {
         type: 'groupSendToken',
         groupSendToken: combinedToken.token,
+        // The identities the combined token endorses, straight from the
+        // endorsement cache — the relay verifies the token against these
+        // claims before reading any account.
+        recipientAciBytes: combinedToken.aciBytesByUserId,
       };
 
       // Send via relay
@@ -1689,33 +1735,53 @@ export class SignalProtocolServiceCipher {
         sentMessageBase64,
         auth,
         sendTimestamp,
-        groupId,
         recipientUserIds,
         clientMessageId
       );
 
+      // The server reports recipients it skipped (unregistered device,
+      // registration-ID mismatch after a reinstall) in uuids404 while still
+      // returning success for the rest. Dropping that field silently loses
+      // messages for exactly the members that most need redelivery: refresh
+      // their device lists and fan out to them per-device alongside the V1
+      // fallback members below.
+      const v1FallbackTargets = [...v1FallbackMembers];
+      if (result.uuids404?.length) {
+        this.logger.info('V2 send skipped recipients; refreshing and redelivering per-device', {
+          category: 'E2EE',
+          data: { groupId, skipped: result.uuids404 },
+        });
+        const refreshed = await Promise.all(
+          result.uuids404.map((uid) =>
+            this.relay!.getActiveDevices(uid).catch(() => [] as GroupMemberDevice[])
+          )
+        );
+        v1FallbackTargets.push(
+          ...refreshed.flat().filter((m) => m.userId !== this.userId)
+        );
+      }
+
       // Send to V1 fallback members via per-device fanout
-      if (v1FallbackMembers.length > 0) {
+      if (v1FallbackTargets.length > 0) {
         const sealedSenderByUser = new Map<
           string,
           Awaited<ReturnType<typeof this.resolveSealedSenderContext>>
         >();
-        const fallbackUserIds = [...new Set(v1FallbackMembers.map((m) => m.userId))];
+        const fallbackUserIds = [...new Set(v1FallbackTargets.map((m) => m.userId))];
         for (const userId of fallbackUserIds) {
           sealedSenderByUser.set(userId, await this.resolveSealedSenderContext(userId, groupId));
         }
 
-        for (const member of v1FallbackMembers) {
+        for (const member of v1FallbackTargets) {
           const sealedSender = sealedSenderByUser.get(member.userId) ?? null;
           await this.sendToDevice(
             {
               recipientUserId: member.userId,
               recipientDeviceId: member.deviceId,
               timestamp: sendTimestamp,
-              groupId,
             },
             encryptedMessageJson,
-            'ciphertext',
+            'sender_key',
             undefined,
             sealedSender,
             undefined,
@@ -1846,10 +1912,9 @@ export class SignalProtocolServiceCipher {
           recipientUserId: member.userId,
           recipientDeviceId: member.deviceId,
           timestamp: sendTimestamp,
-          groupId,
         },
         encryptedMessageJson,
-        'ciphertext',
+        'sender_key',
         undefined,
         sealedSender,
         undefined,
@@ -1859,6 +1924,34 @@ export class SignalProtocolServiceCipher {
     }
 
     return firstResult;
+  }
+
+  /**
+   * Resolve the group roster to concrete devices via the relay.
+   *
+   * `options.groupMemberUserIds` is required for relayed group sends: group
+   * membership is local-first (each client derives it from its own decrypted
+   * group state), and the relay deliberately keeps no server-side membership
+   * map — a groupId → member lookup would hand the relay the social graph
+   * the zero-knowledge group design exists to hide.
+   */
+  private async resolveGroupMemberDevices(
+    groupId: string,
+    options?: SendOptions
+  ): Promise<GroupMemberDevice[]> {
+    if (!options?.groupMemberUserIds?.length) {
+      throw new EncryptionError(
+        `Group send for ${groupId} requires options.groupMemberUserIds. ` +
+          'The relay keeps no server-side membership map; resolve the roster ' +
+          'from local group state and pass the member user IDs.',
+        EncryptionErrorCode.ENCRYPTION_FAILED,
+        { groupId }
+      );
+    }
+    const deviceResults = await Promise.all(
+      options.groupMemberUserIds.map((userId) => this.relay!.getActiveDevices(userId))
+    );
+    return deviceResults.flat();
   }
 
   /**
@@ -1920,13 +2013,7 @@ export class SignalProtocolServiceCipher {
 
         // Redistribute new sender key to all group members via relay
         if (this.relay) {
-          const members = options?.groupMemberUserIds?.length
-            ? (
-                await Promise.all(
-                  options.groupMemberUserIds.map((uid) => this.relay!.getActiveDevices(uid))
-                )
-              ).flat()
-            : await this.relay.getGroupMembers(actualGroupId);
+          const members = await this.resolveGroupMemberDevices(actualGroupId, options);
           const otherMembers = members.filter((m) => m.userId !== this.userId);
 
           for (const member of otherMembers) {
@@ -1959,8 +2046,11 @@ export class SignalProtocolServiceCipher {
                 senderUserId: this.userId,
                 senderDeviceId: this.deviceId,
                 ciphertext: ciphertextBase64,
+                // A distribution message is ordinary pairwise traffic. The
+                // group it announces is inside the encrypted payload, and
+                // naming it on the envelope would hand the relay the same
+                // membership map the message exists to keep off the wire.
                 messageType: getEnvelopeMessageType(msg.ciphertext),
-                groupId: actualGroupId,
                 timestamp: msg.timestamp,
               });
             }
@@ -1985,18 +2075,11 @@ export class SignalProtocolServiceCipher {
     let recipientDeviceCount = 0;
 
     if (this.relay) {
-      // Resolve group members → devices. Prefer caller-provided member list
-      // (local-first: membership lives in SQLite, not on server).
-      // Falls back to relay.getGroupMembers() for in-memory adapters.
-      let members: GroupMemberDevice[];
-      if (options?.groupMemberUserIds?.length) {
-        const deviceResults = await Promise.all(
-          options.groupMemberUserIds.map((userId) => this.relay!.getActiveDevices(userId))
-        );
-        members = deviceResults.flat();
-      } else {
-        members = await this.relay.getGroupMembers(actualGroupId);
-      }
+      // Resolve group members → devices from the caller-provided roster.
+      // Membership is local-first (it lives in each client's decrypted group
+      // state); the relay deliberately keeps no membership map, so there is
+      // no server endpoint to fall back to.
+      const members = await this.resolveGroupMemberDevices(actualGroupId, options);
       // Framed SenderKeyMessage bytes → base64 for transport
       const encryptedMessageJson = CryptoUtils.bytesToBase64(encrypted);
       const sendTimestamp = options?.timestamp ?? Date.now();

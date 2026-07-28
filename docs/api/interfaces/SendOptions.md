@@ -111,10 +111,18 @@ Media attachment flags bitmap, for example MediaAttachmentFlag.VoiceMessage
 
 > `optional` **groupMemberUserIds?**: `string`[]
 
-Pre-resolved group member user IDs (local-first member resolution).
-The caller provides the member list from local SQLite since group membership
-is not stored on the server. The cipher resolves these to device IDs via
-relay.getActiveDevices().
+Application user IDs of the group's members, for local-first fan-out.
+
+**Required for every group send** — a group send without it throws rather
+than delivering to nobody. The relay keeps no `groupId -> member` map by
+design, so it cannot supply the roster, and the SDK cannot derive it
+either: decrypted group state identifies members by ACI
+(`DecryptedMember.aciBytes`) while the relay routes by application
+`userId`, and only the application holds that mapping.
+
+Resolve the roster from local group state, map each member's ACI to your
+own account identifier, and pass the result. The cipher expands these to
+devices via `relay.getActiveDevices()`.
 
 ***
 

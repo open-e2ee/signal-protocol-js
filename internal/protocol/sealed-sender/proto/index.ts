@@ -9,6 +9,7 @@
 
 import protobuf from 'protobufjs';
 import type { Base64 } from '../../../../types';
+import { SealedSenderContentType } from '../types';
 import { bytesToBase64, base64ToBytes } from '../../../crypto';
 
 // ============================================================================
@@ -54,19 +55,17 @@ export interface SenderCertificateProto {
 
 /**
  * Message type enum (matches proto).
+ *
+ * Aliases the implementation's content type so the wire enum and the type the
+ * seal/unseal path carries cannot drift apart.
  */
-export enum MessageType {
-  PREKEY_MESSAGE = 1,
-  MESSAGE = 2,
-  SENDERKEY_MESSAGE = 7,
-  PLAINTEXT_CONTENT = 8,
-}
+export { SealedSenderContentType as MessageType };
 
 /**
  * Inner message structure.
  */
 export interface UnidentifiedSenderMessageData {
-  type: MessageType;
+  type: SealedSenderContentType;
   senderCertificate: SenderCertificateProto;
   content: Uint8Array;
   contentHint?: number;
@@ -338,7 +337,7 @@ export function decodeUnidentifiedSenderMessageData(
   };
 
   return {
-    type: message.type as MessageType,
+    type: message.type as SealedSenderContentType,
     senderCertificate: {
       certificate: new Uint8Array(message.senderCertificate.certificate),
       signature: new Uint8Array(message.senderCertificate.signature),

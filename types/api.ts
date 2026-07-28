@@ -1211,6 +1211,32 @@ export interface ISenderKeyStore {
   deleteSenderKey(groupId: string, userId: string, deviceId: number): Promise<void>;
 
   /**
+   * Resolve the group a sender key belongs to, given only the identifier that
+   * travels on the wire.
+   *
+   * A received group message names its sender key by `senderKeyId` and nothing
+   * else — the identifier is opaque, and the envelope no longer carries a
+   * group. This is the receiver's only way back to a group, so it is what
+   * decides which sender key state to decrypt against.
+   *
+   * Searches previous states as well as current ones. A message encrypted just
+   * before a rotation is still in flight when the rotation lands, and its
+   * `senderKeyId` names the superseded key; resolving only against current
+   * state would strand exactly the messages the rotation window exists to
+   * cover.
+   *
+   * @param senderKeyId - Opaque identifier read from the SenderKeyMessage frame
+   * @param userId - Sender user identifier, from the envelope
+   * @param deviceId - Sender device identifier, from the envelope
+   * @returns The group ID, or null if this device has no such sender key
+   */
+  resolveGroupForSenderKeyId(
+    senderKeyId: string,
+    userId: string,
+    deviceId: number
+  ): Promise<string | null>;
+
+  /**
    * Get all sender keys for a group (for admin operations).
    */
   getAllSenderKeysForGroup(groupId: string): Promise<SenderKeyState[]>;

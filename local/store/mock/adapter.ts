@@ -864,6 +864,31 @@ export class MockSignalProtocolStore implements ISignalProtocolLocalStore {
     }
   }
 
+  async resolveGroupForSenderKeyId(
+    senderKeyId: string,
+    userId: string,
+    deviceId: number
+  ): Promise<string | null> {
+    if (!senderKeyId) return null;
+
+    for (const [groupId, groupMap] of this.senderKeys.entries()) {
+      const state = groupMap.get(userId)?.get(deviceId);
+      if (!state) continue;
+      if (state.senderKeyId === senderKeyId) return groupId;
+
+      // A message encrypted just before a rotation still names the superseded
+      // key, so the record's previous states have to be searched too.
+      const record = this.senderKeyRecords.get(
+        this.getSenderKeyRecordKey(groupId, userId, deviceId)
+      );
+      if (record?.some((previous) => previous.senderKeyId === senderKeyId)) {
+        return groupId;
+      }
+    }
+
+    return null;
+  }
+
   async getAllSenderKeysForGroup(groupId: string): Promise<SenderKeyState[]> {
     const groupMap = this.senderKeys.get(groupId);
     if (!groupMap) return [];

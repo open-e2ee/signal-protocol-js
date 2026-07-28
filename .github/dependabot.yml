@@ -1,0 +1,19 @@
+# Dependency updates for the public repository.
+#
+# This repo is a mechanized export, so dependabot PRs here cannot merge to
+# main directly (see CONTRIBUTING.md) — they serve as public, visible alerts.
+# The corresponding bumps land in the internal repository and arrive in the
+# next release export.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    allow:
+      - dependency-type: production
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

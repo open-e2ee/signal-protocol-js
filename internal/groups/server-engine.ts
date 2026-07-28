@@ -111,13 +111,38 @@ const defaultRuntime: GroupServerEngineRuntime = {
   randomBytes: (length) => crypto.getRandomValues(new Uint8Array(length)),
 };
 
-class GroupServerError extends Error {
-  readonly data: { code: string; status: number };
+/**
+ * Machine-readable cause carried on a FORBIDDEN rejection.
+ *
+ * Two different questions produce a 403 on the read paths, and clients act
+ * on the difference: `not_readable` answers "may you read this group at
+ * all" (the requester is banned or absent from the authorizing roster) and
+ * is what a client may interpret as revocation; `before_join` answers "may
+ * you read this version of it" (the join-version floor) and says nothing
+ * about current access; `not_a_member` refuses the change log to a
+ * requester the snapshot lists only as pending — readable, but holding no
+ * tenure the log could narrate. Discriminating by code rather than by
+ * message text keeps the distinction out of prose, where it cannot be
+ * asserted on without coupling tests — and the manager's revocation
+ * handling — to error-message wording.
+ */
+export type GroupForbiddenReason =
+  | 'not_readable'
+  | 'before_join'
+  | 'not_a_member';
 
-  constructor(code: string, status: number, message: string) {
+class GroupServerError extends Error {
+  readonly data: { code: string; status: number; reason?: string };
+
+  constructor(
+    code: string,
+    status: number,
+    message: string,
+    reason?: string
+  ) {
     super(`${code}: ${message}`);
     this.name = 'GroupServerError';
-    this.data = { code, status };
+    this.data = reason === undefined ? { code, status } : { code, status, reason };
   }
 }
 
@@ -129,8 +154,11 @@ function rejectUnauthorized(message: string): never {
   throw new GroupServerError('UNAUTHORIZED', 403, message);
 }
 
-function rejectForbidden(message: string): never {
-  throw new GroupServerError('FORBIDDEN', 403, message);
+function rejectForbidden(
+  message: string,
+  reason?: GroupForbiddenReason
+): never {
+  throw new GroupServerError('FORBIDDEN', 403, message, reason);
 }
 
 function rejectConflict(message: string): never {
@@ -1465,8 +1493,31 @@ export class GroupAuthorizationServerEngine implements IGroupServer {
 
   private requireReadable(state: EncryptedGroup, requester: VerifiedRequester): void {
     if (!this.isReadable(state, requester)) {
-      rejectForbidden('Requester may not read full group state');
+      rejectForbidden('Requester may not read full group state', 'not_readable');
     }
+  }
+
+  /**
+   * The version at which the requester's current tenure began, or undefined
+   * when the requester has no tenure to read.
+   *
+   * Deliberately consults `members` only. A pending-profile-key entry is an
+   * invitation, not a tenure: its wire format pins `joinedAtVersion` to
+   * zero, so reading it here would hand every invitee a floor of "the
+   * beginning of time" — an invitee who never accepts could page through the
+   * group's entire pre-invitation history, which is more than acceptance
+   * itself would grant. An invitee reads the *current* state (that is what
+   * an invitation entitles, and what acceptance needs); versioned history
+   * starts existing for them when they join and their member entry records
+   * where.
+   */
+  private requesterJoinedAtVersion(
+    state: EncryptedGroup,
+    requester: VerifiedRequester
+  ): number | undefined {
+    return state.members.find((candidate) =>
+      requesterMatches(requester, candidate.userId)
+    )?.joinedAtVersion;
   }
 
   async createGroup(
@@ -1544,14 +1595,38 @@ export class GroupAuthorizationServerEngine implements IGroupServer {
   } | null> {
     const stored = this.groups.get(this.key(groupId));
     if (!stored) return null;
+    // Authorization is evaluated against the group as it is *now*, never
+    // against the requested snapshot. Historical snapshots each contain a
+    // roster, and authorizing against the requested one let anyone removed or
+    // banned at version N keep reading every version of their tenure forever
+    // — a removal that does not revoke read access is not a removal. Current
+    // membership answers "may you read this group"; the join-version floor
+    // below answers "may you read this version of it".
+    const requester = this.authenticate(groupId, authorization, stored.state);
+    this.requireReadable(stored.state, requester);
     const snapshot =
       version === undefined
         ? stored.snapshots.get(stored.state.version)
         : stored.snapshots.get(version);
     if (!snapshot) return null;
+    if (version !== undefined) {
+      // Under snapshot-based authorization this floor was implicit — a
+      // pre-join snapshot simply did not list the requester. Authorizing
+      // against the current state removes that accident, so the floor has to
+      // be stated: membership grants the group from when you joined, not its
+      // history.
+      const joinedAtVersion = this.requesterJoinedAtVersion(
+        stored.state,
+        requester
+      );
+      if (joinedAtVersion === undefined || version < joinedAtVersion) {
+        rejectForbidden(
+          'Requester may not read state from before they joined',
+          'before_join'
+        );
+      }
+    }
     const { state } = snapshot;
-    const requester = this.authenticate(groupId, authorization, state);
-    this.requireReadable(state, requester);
     const encryptedState = serializeEncryptedGroup(state);
     return {
       encryptedState,
@@ -1614,6 +1689,29 @@ export class GroupAuthorizationServerEngine implements IGroupServer {
     fromVersion: number,
     authorization: GroupAuthorization
   ): Promise<GroupChangeLogEntry[]> {
+    // Unlike getGroup, this deliberately authorizes against the *requested*
+    // snapshot. The walk below serves entries only while the requester stays
+    // readable, stopping at — and including — the change that removed them,
+    // which is how a removed member learns of their removal when they poll;
+    // authorizing against the current state would 403 them into silence
+    // instead. The exposure this leaves is bounded and not new: a former
+    // member can re-fetch changes from within their own tenure, ending at
+    // their removal — bytes they were served while entitled.
+    //
+    // The log is for members. A pending-profile-key entry entitles its
+    // holder to the current state — acceptance needs that, and getGroup
+    // serves it — but the log names the actor behind every change, and an
+    // invitation is not a tenure, so a requester who is merely pending in
+    // the snapshot at `fromVersion` is refused below even though that
+    // snapshot lists them as readable. Pending principals catch up by
+    // fetching a fresh signed snapshot instead (S10a), which is also how
+    // the reference ecosystem's clients behave: their state processor
+    // updates straight to the latest server state whenever the server does
+    // not recognize the requester as a member. This membership requirement
+    // is what closes history: for members it bounds the log at their
+    // tenure (a pre-join snapshot does not list them in `members`), and
+    // for invitees it closes the log outright.
+
     const stored = this.groups.get(this.key(groupId));
     if (!stored) return [];
     const snapshot = stored.snapshots.get(fromVersion);
@@ -1622,6 +1720,16 @@ export class GroupAuthorizationServerEngine implements IGroupServer {
     }
     const requester = this.authenticate(groupId, authorization, snapshot.state);
     this.requireReadable(snapshot.state, requester);
+    if (
+      !snapshot.state.members.some((member) =>
+        requesterMatches(requester, member.userId)
+      )
+    ) {
+      rejectForbidden(
+        'Only members may read the change log',
+        'not_a_member'
+      );
+    }
 
     const readablePrefix: GroupChangeLogEntry[] = [];
     for (const entry of stored.changes) {

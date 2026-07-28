@@ -58,6 +58,19 @@ decryption keys remain usable for delayed messages.
 
 > **senderKeyId**: `string`
 
+Opaque random UUID identifying this sender key.
+
+Written to the wire as the SenderKeyMessage `distribution_uuid`, which
+sits in the *unencrypted* frame — a relay reads it off every group
+message. It therefore carries no derivable content: no group, no sender,
+no device, no timestamp. Matching the reference, which likewise uses a
+random UUID distinct from the group identifier.
+
+Randomness also makes rotation unambiguous. Receivers detect a rotation by
+comparing this value against their stored state, so an identifier built
+from a millisecond clock would collide for two rotations inside the same
+millisecond and hide the second one.
+
 ***
 
 ### senderKeyVersion

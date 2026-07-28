@@ -14,7 +14,12 @@
 
 import type { SealOptions, UnidentifiedSenderMessage } from './types';
 import type { ContentHint } from '../../../types/messages';
-import { SEALED_SENDER_VERSION, SEALED_SENDER_SALT, MAC_BYTES } from './types';
+import {
+  SEALED_SENDER_VERSION,
+  SEALED_SENDER_SALT,
+  MAC_BYTES,
+  SealedSenderContentType,
+} from './types';
 import type { Base64 } from '../../../types';
 import { serializeSenderCertificate } from './certificate';
 import {
@@ -32,24 +37,32 @@ import {
 import { encodeVarint } from '../../encoding/proto/primitives';
 
 /**
- * Serialize the envelope plaintext (certificate + message).
+ * Serialize the envelope plaintext (content type + certificate + message).
  *
- * Format: varint(certBytes.length) || certBytes || varint(msgLen) || msg || [contentHint] || [groupId]
+ * Format: contentType(1) || varint(certLen) || certBytes || varint(msgLen) || msg || contentHint
+ *
+ * The content type leads because it is what the recipient needs before it can
+ * do anything with the payload. No group identifier is serialized: a group
+ * message says only that it is a framed SenderKeyMessage, and the recipient
+ * resolves the group from the frame's opaque distribution identifier.
  *
  * @param certBytes Serialized sender certificate
  * @param message Signal Protocol message
+ * @param contentType How the recipient should decrypt `message`
  * @param contentHint Optional content hint
- * @param groupId Optional group ID
  * @returns Serialized envelope
  */
 export {};
 function serializeEnvelope(
   certBytes: Uint8Array,
   message: Uint8Array,
-  contentHint?: ContentHint,
-  groupId?: Uint8Array
+  contentType: SealedSenderContentType,
+  contentHint?: ContentHint
 ): Uint8Array {
   const parts: Uint8Array[] = [];
+
+  // Content type (1 byte)
+  parts.push(new Uint8Array([contentType]));
 
   // Certificate length as varint
   const certLenVarint = encodeVarint(certBytes.length);
@@ -70,16 +83,6 @@ function serializeEnvelope(
     parts.push(new Uint8Array([contentHint]));
   } else {
     parts.push(new Uint8Array([0])); // DEFAULT
-  }
-
-  // Group ID (optional, with length prefix)
-  if (groupId !== undefined && groupId.length > 0) {
-    const groupIdLenVarint = encodeVarint(groupId.length);
-    parts.push(groupIdLenVarint);
-    parts.push(groupId);
-  } else {
-    // No group ID - encode length 0
-    parts.push(new Uint8Array([0]));
   }
 
   return concatBytes(...parts);
@@ -111,7 +114,7 @@ function serializeEnvelope(
  * 3. Derive keys: s_material = HKDF(salt=s_salt, ikm=s_ss, length=64)
  *    - s_cipherKey = s_material[0:32]
  *    - s_macKey = s_material[32:64]
- * 4. Serialize envelope: cert || message || hint || groupId
+ * 4. Serialize envelope: type || cert || message || hint
  * 5. Encrypt: s_ciphertext = AES-CTR(s_cipherKey, iv=0, envelope)
  * 6. MAC: s_mac = HMAC(s_macKey, s_ciphertext)
  * 7. encryptedMessage = s_ciphertext || s_mac
@@ -130,7 +133,7 @@ export async function seal(options: SealOptions): Promise<UnidentifiedSenderMess
     recipientIdentityPublic,
     signalProtocolMessage,
     contentHint,
-    groupId,
+    contentType = SealedSenderContentType.MESSAGE,
   } = options;
 
   // Arrays to track for secure zeroing
@@ -205,7 +208,12 @@ export async function seal(options: SealOptions): Promise<UnidentifiedSenderMess
 
     // Step 2.4: Serialize envelope (certificate + message)
     const certBytes = serializeSenderCertificate(senderCertificate);
-    const envelope = serializeEnvelope(certBytes, signalProtocolMessage, contentHint, groupId);
+    const envelope = serializeEnvelope(
+      certBytes,
+      signalProtocolMessage,
+      contentType,
+      contentHint
+    );
 
     // Step 2.5: Encrypt envelope
     const s_iv = new Uint8Array(16); // All zeros

@@ -13,7 +13,8 @@ Responsibilities:
 - Device registry (multi-device support, max 5 devices per user)
 - Prekey management (X3DH/PQXDH key exchange)
 
-Maps to 17 Convex tables.
+Backed by the 16 tables the Convex component owns; `docs/SCHEMA.md` covers
+what each stores and for how long.
 
 ## Example
 
@@ -209,7 +210,7 @@ Non-sensitive device information available before provisioning completes
 > **createGroupState**(`groupId`, `encryptedState`, `authorization`): `Promise`\<`void`\>
 
 Create a new encrypted group on the server.
-Server stores opaque ciphertext and never decrypts.
+Server stores and evaluates ciphertext structure but never decrypts it.
 
 #### Parameters
 
@@ -453,6 +454,10 @@ Metadata with timestamps and publicKey, or null if no key exists
 Get group change log entries after a given version.
 Used for incremental state synchronization.
 
+Authorization is evaluated at the `fromVersion` snapshot. Serve through
+the first transition that makes the requester unreadable, inclusive, and
+do not serve later transitions under that request.
+
 #### Parameters
 
 ##### groupId
@@ -477,38 +482,42 @@ ZK auth credential for anonymous group access
 
 `Promise`\<[`GroupChangeEntry`](GroupChangeEntry.md)[]\>
 
-Array of change log entries in version order
+Authorized contiguous change-log prefix in version order
 
 ***
 
-### getGroupMembers()
+### getGroupJoinInfo()
 
-> **getGroupMembers**(`groupId`): `Promise`\<[`GroupMemberDevice`](GroupMemberDevice.md)[]\>
+> **getGroupJoinInfo**(`groupId`, `inviteLinkPassword`, `authorization`): `Promise`\<\{ `encryptedJoinInfo`: `Uint8Array`; `version`: `number`; \} \| `null`\>
 
-Get all devices in a group for message fanout.
-Used for Sender Key group message delivery.
+Get the reduced invite-link projection after independent password
+verification. This response never includes member lists.
 
 #### Parameters
 
 ##### groupId
 
-`string`
+`Uint8Array`
 
-Group identifier
+##### inviteLinkPassword
+
+`Uint8Array`
+
+##### authorization
+
+[`GroupAuthorization`](GroupAuthorization.md)
 
 #### Returns
 
-`Promise`\<[`GroupMemberDevice`](GroupMemberDevice.md)[]\>
-
-Array of member devices
+`Promise`\<\{ `encryptedJoinInfo`: `Uint8Array`; `version`: `number`; \} \| `null`\>
 
 ***
 
 ### getGroupState()
 
-> **getGroupState**(`groupId`, `authorization`): `Promise`\<\{ `encryptedState`: `Uint8Array`; `version`: `number`; \} \| `null`\>
+> **getGroupState**(`groupId`, `authorization`, `version?`): `Promise`\<\{ `baselineSignature`: `Uint8Array`; `encryptedState`: `Uint8Array`; `version`: `number`; \} \| `null`\>
 
-Get the latest encrypted group state.
+Get encrypted group state.
 
 #### Parameters
 
@@ -524,11 +533,17 @@ Get the latest encrypted group state.
 
 ZK auth credential for anonymous group access
 
+##### version?
+
+`number`
+
+Optional exact historical version for a race-safe baseline
+
 #### Returns
 
-`Promise`\<\{ `encryptedState`: `Uint8Array`; `version`: `number`; \} \| `null`\>
+`Promise`\<\{ `baselineSignature`: `Uint8Array`; `encryptedState`: `Uint8Array`; `version`: `number`; \} \| `null`\>
 
-Encrypted state + current version, or null if not found
+Encrypted state + version, or null if the group/version is not found
 
 ***
 
@@ -639,7 +654,7 @@ Device ID
 
 ### getProvisioningMessage()
 
-> **getProvisioningMessage**(`sessionId`): `Promise`\<\{ `message`: `string` \| `null`; `status`: `"completed"` \| `"waiting"` \| `"connected"` \| `"ready"` \| `"linked_pending_ack"` \| `"rolled_back"` \| `"expired"`; \}\>
+> **getProvisioningMessage**(`sessionId`): `Promise`\<\{ `expiresAt`: `number` \| `null`; `message`: `string` \| `null`; `status`: `"completed"` \| `"waiting"` \| `"connected"` \| `"ready"` \| `"linked_pending_ack"` \| `"rolled_back"` \| `"expired"`; \}\>
 
 Get provisioning message for new device.
 
@@ -653,7 +668,7 @@ Provisioning session ID
 
 #### Returns
 
-`Promise`\<\{ `message`: `string` \| `null`; `status`: `"completed"` \| `"waiting"` \| `"connected"` \| `"ready"` \| `"linked_pending_ack"` \| `"rolled_back"` \| `"expired"`; \}\>
+`Promise`\<\{ `expiresAt`: `number` \| `null`; `message`: `string` \| `null`; `status`: `"completed"` \| `"waiting"` \| `"connected"` \| `"ready"` \| `"linked_pending_ack"` \| `"rolled_back"` \| `"expired"`; \}\>
 
 Status and encrypted message (if ready)
 
@@ -945,7 +960,7 @@ Message ID and server timestamp (for delivery receipt matching)
 
 ### sendMultiRecipientUnidentified()?
 
-> `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `groupId?`, `recipientUserIds?`, `clientMessageId?`): `Promise`\<\{ `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
+> `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `recipientUserIds?`, `clientMessageId?`): `Promise`\<\{ `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
 
 Send a V2 multi-recipient sealed sender message.
 
@@ -972,12 +987,6 @@ Sealed sender authentication (access key or group send token)
 `number`
 
 Client timestamp for message identification
-
-##### groupId?
-
-`string`
-
-Optional group ID for group messages
 
 ##### recipientUserIds?
 
@@ -1089,7 +1098,7 @@ Message ID and server timestamp
 
 ### submitGroupChange()
 
-> **submitGroupChange**(`groupId`, `expectedVersion`, `encryptedChange`, `updatedEncryptedState`, `authorization`): `Promise`\<\{ `serverSignature`: `Uint8Array`; \}\>
+> **submitGroupChange**(`groupId`, `expectedVersion`, `actions`, `inviteLinkPassword`, `authorization`): `Promise`\<[`GroupChangeEntry`](GroupChangeEntry.md)\>
 
 Submit a group change with optimistic concurrency control.
 Server validates expectedVersion === currentVersion before accepting.
@@ -1108,17 +1117,17 @@ Server validates expectedVersion === currentVersion before accepting.
 
 Expected current version (for optimistic concurrency)
 
-##### encryptedChange
+##### actions
 
 `Uint8Array`
 
-Serialized GroupChange (opaque)
+Client-proposed serialized Actions
 
-##### updatedEncryptedState
+##### inviteLinkPassword
 
 `Uint8Array`
 
-New full encrypted state after this change
+Required independently for link-join submissions
 
 ##### authorization
 
@@ -1128,9 +1137,9 @@ ZK auth credential for anonymous group access
 
 #### Returns
 
-`Promise`\<\{ `serverSignature`: `Uint8Array`; \}\>
+`Promise`\<[`GroupChangeEntry`](GroupChangeEntry.md)\>
 
-Server signature binding this change
+Exact accepted Actions bytes and their server signature
 
 #### Throws
 

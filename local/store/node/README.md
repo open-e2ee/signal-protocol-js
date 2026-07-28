@@ -1,7 +1,16 @@
 # Node Store
 
-`NodeSignalProtocolStore` implements `ISignalProtocolLocalStore` for Node.js using encrypted,
+`NodeSignalProtocolStore` provides Node.js protocol storage using encrypted,
 crash-durable filesystem state.
+
+**Coverage is partial.** This adapter implements the core single-device
+surface — identity, prekey, session, and kyber-prekey storage — and does not
+yet implement the multi-device (Sesame device records), group (sender keys),
+or message-record portions of `ISignalProtocolLocalStore`, nor some
+maintenance utilities. Use it for
+single-device Node processes; for multi-device or group flows in Node today,
+use `mockStore` for development or implement the full interface against your
+own database (see [Integration Interfaces](../../../docs/INTERFACES.md)).
 
 ## Why it exists
 

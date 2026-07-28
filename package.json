@@ -1,6 +1,6 @@
 {
   "name": "@open-e2ee/signal-protocol-sdk",
-  "version": "0.1.0-alpha.7",
+  "version": "0.1.0-alpha.8",
   "description": "Signal Protocol E2EE SDK for TypeScript — Expo, React Native, browser, and Node. Post-quantum PQXDH and Double Ratchet.",
   "keywords": [
     "open-e2ee",
@@ -63,9 +63,9 @@
       "types": "./dist/remote/relay/convex/relay.d.ts",
       "default": "./dist/remote/relay/convex/relay.js"
     },
-    "./remote/relay/convex/server": {
-      "types": "./dist/remote/relay/convex/server/index.d.ts",
-      "default": "./dist/remote/relay/convex/server/index.js"
+    "./convex.config": {
+      "types": "./dist/remote/relay/convex/component/convex.config.d.ts",
+      "default": "./dist/remote/relay/convex/component/convex.config.js"
     },
     "./remote/relay/mock": {
       "types": "./dist/remote/relay/mock/index.d.ts",
@@ -285,11 +285,12 @@
     "ADAPTERS.md",
     "ARCHITECTURE.md",
     "CHANGELOG.md",
+    "COMMERCIAL.md",
     "LICENSE",
     "NOTICE",
-    "THIRD_PARTY_NOTICES.md",
     "README.md",
     "SECURITY.md",
+    "THIRD_PARTY_NOTICES.md",
     "TROUBLESHOOTING.md",
     "blocking/README.md",
     "client/README.md",
@@ -307,7 +308,6 @@
     "docs/PROTOCOL_POLICY.md",
     "docs/RECIPES.md",
     "docs/SECURITY.md",
-    "docs/api",
     "encoding/README.md",
     "files/README.md",
     "groups/README.md",
@@ -328,7 +328,7 @@
     "remote/object-store/s3/README.md",
     "remote/relay/README.md",
     "remote/relay/convex/README.md",
-    "remote/relay/convex/server/README.md",
+    "remote/relay/convex/component/README.md",
     "remote/relay/mock/README.md",
     "safety/README.md",
     "scripts/oe-groups.mjs",
@@ -355,6 +355,7 @@
   },
   "peerDependencies": {
     "@convex-dev/r2": "^0.10.2",
+    "@convex-dev/rate-limiter": "^0.3.2",
     "convex": "^1.42.1",
     "drizzle-orm": "^0.45.1",
     "expo": "~55.0.27",
@@ -370,6 +371,9 @@
   },
   "peerDependenciesMeta": {
     "@convex-dev/r2": {
+      "optional": true
+    },
+    "@convex-dev/rate-limiter": {
       "optional": true
     },
     "convex": {
@@ -426,6 +430,7 @@
   },
   "devDependencies": {
     "@convex-dev/r2": "^0.10.2",
+    "@convex-dev/rate-limiter": "^0.3.2",
     "@types/async-lock": "^1.4.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",

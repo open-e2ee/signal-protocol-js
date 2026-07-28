@@ -4,7 +4,7 @@
  * Implementation of ISignalProtocolRelayServer using the Signal Protocol Convex component.
  * Zero-knowledge server - all content is opaque ciphertext.
  *
- * Uses the signal component's 17-table schema.
+ * Uses the signal component's 16-table schema.
  *
  * ## Component API Access Pattern
  *
@@ -20,7 +20,8 @@
 import type { ConvexReactClient } from 'convex/react';
 import type { ConvexHttpClient } from 'convex/browser';
 import { ConvexClient as BrowserConvexClient } from 'convex/browser';
-import type { FunctionReference } from 'convex/server';
+import type { ApiFromModules } from 'convex/server';
+import type { defineConvexSignalProtocolBackend } from './backend';
 import type {
   ISignalProtocolRelayServer,
   Envelope,
@@ -75,6 +76,25 @@ const MESSAGE_IDLE_THRESHOLD_MS = 500;
 const MAX_BATCH_WINDOW_MS = 5000;
 
 /**
+ * Whether a rejection is the component's structured `UNAUTHORIZED`.
+ *
+ * Reads the `ConvexError` payload rather than matching on the message text.
+ * A substring test for `'Unauthorized'` was wrong in both directions: any
+ * unrelated failure whose message happened to contain the word downgraded a
+ * sealed send to identified delivery — disclosing the sender to the relay to
+ * work around an error that was never an authorization failure — while a
+ * genuine `code: 'UNAUTHORIZED'` rejection whose message did not spell the
+ * word went undetected and surfaced as a hard send failure.
+ */
+function isUnauthorizedRejection(error: unknown): boolean {
+  const data =
+    error !== null && typeof error === 'object' && 'data' in error
+      ? (error as { data?: { code?: string } }).data
+      : undefined;
+  return data?.code === 'UNAUTHORIZED';
+}
+
+/**
  * Return type for retry request queries.
  * Matches the shape returned by getPendingRetryRequests.
  */
@@ -95,64 +115,47 @@ interface RetryRequestResult {
  */
 type ConvexClient = ConvexReactClient | ConvexHttpClient;
 
+type SignalProtocolBackend = ReturnType<
+  typeof defineConvexSignalProtocolBackend
+>;
+
+/**
+ * The `api.signal.*` shape Convex code-generates for an app whose
+ * `convex/signal/<namespace>.ts` modules re-export the matching namespace bag
+ * from {@link defineConvexSignalProtocolBackend}.
+ */
+type SignalProtocolBackendApi = ApiFromModules<{
+  messages: SignalProtocolBackend['messages'];
+  devices: SignalProtocolBackend['devices'];
+  keys: SignalProtocolBackend['keys'];
+  certificates: SignalProtocolBackend['certificates'];
+  provisioning: SignalProtocolBackend['provisioning'];
+  groups: SignalProtocolBackend['groups'];
+  zkAuth: SignalProtocolBackend['zkAuth'];
+}>;
+
+/**
+ * The app-side function references this adapter calls.
+ *
+ * Every reference carries the argument and return types Convex derives from
+ * the component's own validators, so a call site that disagrees with the
+ * component fails to compile here rather than at runtime in the deployment.
+ * The types are *derived* from {@link defineConvexSignalProtocolBackend}
+ * rather than restated, which is what makes the check meaningful — a
+ * hand-written contract can drift from the functions it describes, and this
+ * one previously had.
+ *
+ * `groups` and `zkAuth` are optional: a deployment that does not install the
+ * group namespaces still satisfies the rest of the relay surface.
+ */
 export interface ConvexSignalProtocolRelayApi {
-  messages: {
-    send: FunctionReference<'mutation'>;
-    getPendingMessages: FunctionReference<'query'>;
-    markDelivered: FunctionReference<'mutation'>;
-    getGroupMembers: FunctionReference<'query'>;
-    getActiveDevices: FunctionReference<'query'>;
-    sendUnidentified: FunctionReference<'mutation'>;
-    sendMultiRecipientUnidentified: FunctionReference<'mutation'>;
-    sendRetryRequest: FunctionReference<'mutation'>;
-    getPendingRetryRequests: FunctionReference<'query'>;
-    markRetryRequestHandled: FunctionReference<'mutation'>;
-  };
-  devices: {
-    getDevices: FunctionReference<'query'>;
-    registerDevice: FunctionReference<'mutation'>;
-    removeDevice: FunctionReference<'mutation'>;
-    markDeviceConnected: FunctionReference<'mutation'>;
-    markDeviceDisconnected: FunctionReference<'mutation'>;
-    presenceHeartbeat: FunctionReference<'mutation'>;
-  };
-  keys: {
-    uploadIdentityKey: FunctionReference<'mutation'>;
-    getIdentityKey: FunctionReference<'query'>;
-    uploadPreKeys: FunctionReference<'mutation'>;
-    fetchPreKeyBundle: FunctionReference<'mutation'>;
-    getPreKeyCount: FunctionReference<'query'>;
-    clearStaleKemPreKeys: FunctionReference<'mutation'>;
-    uploadEcSignedPreKey: FunctionReference<'mutation'>;
-    uploadKemLastResortPreKey: FunctionReference<'mutation'>;
-    getEcSignedPreKeyMetadata: FunctionReference<'query'>;
-    getKemLastResortPreKeyMetadata: FunctionReference<'query'>;
-  };
-  certificates: {
-    issueSenderCertificate: FunctionReference<'mutation'>;
-  };
-  provisioning: {
-    createProvisioningSession: FunctionReference<'mutation'>;
-    connectNewDevice: FunctionReference<'mutation'>;
-    sendProvisioningMessage: FunctionReference<'mutation'>;
-    getProvisioningMessage: FunctionReference<'query'>;
-    completeProvisioning: FunctionReference<'mutation'>;
-    acknowledgeProvisioning: FunctionReference<'mutation'>;
-    rollbackProvisioning: FunctionReference<'mutation'>;
-    deleteProvisioningSession: FunctionReference<'mutation'>;
-  };
-  groups?: {
-    createGroup: FunctionReference<'mutation'>;
-    getGroup: FunctionReference<'query'>;
-    getGroupJoinInfo: FunctionReference<'query'>;
-    getGroupChanges: FunctionReference<'query'>;
-    submitGroupChange: FunctionReference<'mutation'>;
-    refreshGroupSendEndorsements: FunctionReference<'mutation'>;
-  };
-  zkAuth?: {
-    issueAuthCredentialMutation: FunctionReference<'mutation'>;
-    issueProfileKeyCredentialMutation: FunctionReference<'mutation'>;
-  };
+  messages: SignalProtocolBackendApi['messages'];
+  devices: SignalProtocolBackendApi['devices'];
+  keys: SignalProtocolBackendApi['keys'];
+  certificates: SignalProtocolBackendApi['certificates'];
+  provisioning: SignalProtocolBackendApi['provisioning'];
+  groups?: SignalProtocolBackendApi['groups'];
+  zkAuth?: SignalProtocolBackendApi['zkAuth'];
 }
 
 export interface ConvexSignalProtocolRelayOptions {
@@ -164,7 +167,7 @@ export interface ConvexSignalProtocolRelayOptions {
 /**
  * ConvexSignalProtocolRelayServer - Implementation of ISignalProtocolRelayServer
  *
- * Uses the Convex Signal Protocol component for the 17-table relay schema.
+ * Uses the Convex Signal Protocol component for the 16-table relay schema.
  *
  * @example
  * ```typescript
@@ -280,7 +283,6 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
       messageType: envelope.messageType,
       urgent: envelope.urgent,
       ephemeral: envelope.ephemeral,
-      groupId: envelope.groupId,
       timestamp: envelope.timestamp,
       clientMessageId: envelope.clientMessageId,
       // Relay-side stale-device detection validates the registration ID only.
@@ -435,7 +437,6 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
               senderDeviceId: msg.senderDeviceId,
               ciphertext: msg.ciphertext,
               messageType: msg.messageType,
-              groupId: msg.groupId,
               timestamp: msg.timestamp,
               serverTimestamp: msg.serverTimestamp,
             });
@@ -516,7 +517,6 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
               senderDeviceId: msg.senderDeviceId,
               ciphertext: msg.ciphertext,
               messageType: msg.messageType,
-              groupId: msg.groupId,
               timestamp: msg.timestamp,
               serverTimestamp: msg.serverTimestamp,
             });
@@ -822,16 +822,8 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // GROUP MEMBERS (Sender Keys)
+  // GROUP MEMBER RESOLUTION (Sender Keys) — local-first; no membership map
   // ════════════════════════════════════════════════════════════════════════════
-
-  async getGroupMembers(groupId: string): Promise<GroupMemberDevice[]> {
-    const members = await this.convex.query(this.api.messages.getGroupMembers, {
-      groupId,
-    });
-
-    return members;
-  }
 
   async getActiveDevices(userId: string): Promise<GroupMemberDevice[]> {
     const devices = await this.convex.query(this.api.messages.getActiveDevices, {
@@ -862,14 +854,23 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
 
     try {
       if (auth.type === 'groupSendToken') {
-        // The server validates the ZK endorsement token before delivery.
+        // The server verifies the ZK endorsement token against the claimed
+        // recipient ACI before it reads any account, so the claim rides
+        // along with the token.
+        const claimed = auth.recipientAciBytes.get(envelope.targetUserId);
+        if (!claimed) {
+          throw new SealedSenderAuthError();
+        }
         return await this.convex.mutation(this.api.messages.sendUnidentified, {
           targetUserId: envelope.targetUserId,
           targetDeviceId: envelope.targetDeviceId,
+          targetAciBytes: claimed.buffer.slice(
+            claimed.byteOffset,
+            claimed.byteOffset + claimed.byteLength
+          ) as ArrayBuffer,
           ciphertext,
           timestamp: envelope.timestamp,
           clientMessageId: envelope.clientMessageId,
-          groupId: envelope.groupId,
           groupSendToken: auth.groupSendToken.buffer.slice(
             auth.groupSendToken.byteOffset,
             auth.groupSendToken.byteOffset + auth.groupSendToken.byteLength
@@ -884,15 +885,13 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
         ciphertext,
         timestamp: envelope.timestamp,
         clientMessageId: envelope.clientMessageId,
-        groupId: envelope.groupId,
         unidentifiedAccessKey: auth.unidentifiedAccessKey,
       });
     } catch (error) {
-      // Convex mutations that throw Error('Unauthorized') propagate as Error
-      // with the message intact. Convert to typed error for the cipher's
-      // sealed sender fallback detection.
-      if (error instanceof Error && error.message.includes('Unauthorized')) {
-        throw new SealedSenderAuthError(error);
+      // Convert an authorization rejection into the typed error the cipher
+      // watches for when deciding to retry on the identified path.
+      if (isUnauthorizedRejection(error)) {
+        throw new SealedSenderAuthError(error instanceof Error ? error : undefined);
       }
       throw error;
     }
@@ -907,14 +906,12 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
    * @param sentMessageBase64 - Base64-encoded V2 multi-recipient binary blob
    * @param auth - Sealed sender authentication (access key or group send token)
    * @param timestamp - Client timestamp for message identification
-   * @param groupId - Optional group ID for group messages
    * @param recipientUserIds - Original user IDs in same order as binary recipients
    */
   async sendMultiRecipientUnidentified(
     sentMessageBase64: string,
     auth: SealedSenderAuth,
     timestamp: number,
-    groupId?: string,
     recipientUserIds?: string[],
     clientMessageId?: string
   ): Promise<{ messageId: string; serverTimestamp: number; uuids404: string[] }> {
@@ -939,13 +936,27 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
 
     try {
       if (auth.type === 'groupSendToken') {
+        // Attach the claimed ACI to each recipient: the server verifies the
+        // token against the claims before it reads any account.
+        const claimedRecipients = flatRecipients.map((recipient) => {
+          const claimed = auth.recipientAciBytes.get(recipient.userId);
+          if (!claimed) {
+            throw new SealedSenderAuthError();
+          }
+          return {
+            ...recipient,
+            aciBytes: claimed.buffer.slice(
+              claimed.byteOffset,
+              claimed.byteOffset + claimed.byteLength
+            ) as ArrayBuffer,
+          };
+        });
         return await this.convex.mutation(this.api.messages.sendMultiRecipientUnidentified, {
-          recipients: flatRecipients,
+          recipients: claimedRecipients,
           ephemeralPublicBase64: bytesToBase64(parsed.ephemeralPublic),
           messageCiphertextBase64: bytesToBase64(parsed.messageCiphertext),
           timestamp,
           clientMessageId,
-          groupId,
           groupSendToken: auth.groupSendToken.buffer.slice(
             auth.groupSendToken.byteOffset,
             auth.groupSendToken.byteOffset + auth.groupSendToken.byteLength
@@ -959,12 +970,11 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
         messageCiphertextBase64: bytesToBase64(parsed.messageCiphertext),
         timestamp,
         clientMessageId,
-        groupId,
         unidentifiedAccessKey: auth.unidentifiedAccessKey,
       });
     } catch (error) {
-      if (error instanceof Error && error.message.includes('Unauthorized')) {
-        throw new SealedSenderAuthError(error);
+      if (isUnauthorizedRejection(error)) {
+        throw new SealedSenderAuthError(error instanceof Error ? error : undefined);
       }
       throw error;
     }
@@ -1287,21 +1297,13 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
       | 'rolled_back'
       | 'expired';
     message: string | null;
+    expiresAt: number | null;
   }> {
-    const result = await this.convex.query(this.api.provisioning.getProvisioningMessage, {
+    // No cast: the reference carries the component's own return validator, so
+    // a component change that stops satisfying this signature fails here.
+    return await this.convex.query(this.api.provisioning.getProvisioningMessage, {
       sessionId,
     });
-    return result as {
-      status:
-        | 'waiting'
-        | 'connected'
-        | 'ready'
-        | 'linked_pending_ack'
-        | 'completed'
-        | 'rolled_back'
-        | 'expired';
-      message: string | null;
-    };
   }
 
   async completeProvisioning(

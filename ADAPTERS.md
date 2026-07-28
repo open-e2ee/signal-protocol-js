@@ -99,7 +99,7 @@ const relay = convexRelay({
 const signal = await createSignalProtocolClient({
   identity: { userId },
   adapters: {
-    storage: expoStore({ relay }),
+    storage: expoStore(),
     relay,
   },
 });

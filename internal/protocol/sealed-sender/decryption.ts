@@ -16,7 +16,12 @@
 
 import type { UnsealOptions, UnidentifiedSenderMessageContent, SenderCertificate } from './types';
 import type { ContentHint } from '../../../types/messages';
-import { SEALED_SENDER_SALT, MAC_BYTES } from './types';
+import {
+  SEALED_SENDER_SALT,
+  MAC_BYTES,
+  SealedSenderContentType,
+  isSealedSenderContentType,
+} from './types';
 import type { Base64 } from '../../../types';
 import { deserializeSenderCertificate, validateSenderCertificate } from './certificate';
 import {
@@ -37,6 +42,9 @@ import { x25519 } from '@noble/curves/ed25519.js';
 /** Generic error message for all unseal failures */
 export {};
 const GENERIC_ERROR = 'Sealed sender verification failed';
+
+/** contentType(1) + certLen varint(1) + msgLen varint(1) + contentHint(1). */
+const MIN_ENVELOPE_BYTES = 4;
 
 /**
  * Decode a varint from bytes, returning a tuple for sealed sender call sites.
@@ -61,7 +69,7 @@ function decodeVarint(bytes: Uint8Array, offset: number): [number, number] {
 /**
  * Parse the decrypted envelope to extract certificate and message.
  *
- * Format: varint(certLen) || certBytes || varint(msgLen) || msgBytes || contentHint || [groupId]
+ * Format: contentType(1) || varint(certLen) || certBytes || varint(msgLen) || msgBytes || contentHint
  *
  * @param envelope Decrypted envelope bytes
  * @returns Parsed envelope components
@@ -69,13 +77,26 @@ function decodeVarint(bytes: Uint8Array, offset: number): [number, number] {
 function parseEnvelope(envelope: Uint8Array): {
   certificate: SenderCertificate;
   message: Uint8Array;
-  contentHint?: ContentHint;
-  groupId?: Uint8Array;
+  contentType: SealedSenderContentType;
+  contentHint: ContentHint;
 } {
-  let offset = 0;
+  // Smallest well-formed envelope: type, two zero-length varints, hint.
+  if (envelope.length < MIN_ENVELOPE_BYTES) {
+    throw new Error(GENERIC_ERROR);
+  }
+
+  // Read content type (1 byte)
+  const contentType = envelope[0];
+  if (!isSealedSenderContentType(contentType)) {
+    throw new Error(GENERIC_ERROR);
+  }
+  let offset = 1;
 
   // Read certificate length
   const [certLen, certLenBytes] = decodeVarint(envelope, offset);
+  if (certLenBytes === 0) {
+    throw new Error(GENERIC_ERROR);
+  }
   offset += certLenBytes;
 
   // Validate we have enough bytes for certificate
@@ -89,6 +110,9 @@ function parseEnvelope(envelope: Uint8Array): {
 
   // Read message length
   const [msgLen, msgLenBytes] = decodeVarint(envelope, offset);
+  if (msgLenBytes === 0) {
+    throw new Error(GENERIC_ERROR);
+  }
   offset += msgLenBytes;
 
   // Validate we have enough bytes for message
@@ -100,28 +124,24 @@ function parseEnvelope(envelope: Uint8Array): {
   const message = envelope.slice(offset, offset + msgLen);
   offset += msgLen;
 
-  // Read content hint (1 byte, optional - may not exist if at end)
-  let contentHint: ContentHint | undefined;
-  if (offset < envelope.length) {
-    contentHint = envelope[offset] as ContentHint;
-    offset += 1;
+  // Read content hint. The serializer always writes it, and nothing follows
+  // it any more, so it is required rather than optional.
+  if (offset >= envelope.length) {
+    throw new Error(GENERIC_ERROR);
   }
+  const contentHint = envelope[offset] as ContentHint;
+  offset += 1;
 
-  // Read group ID (optional, with length prefix)
-  let groupId: Uint8Array | undefined;
-  if (offset < envelope.length) {
-    const [groupIdLen, groupIdLenBytes] = decodeVarint(envelope, offset);
-    offset += groupIdLenBytes;
-
-    if (groupIdLen > 0 && offset + groupIdLen <= envelope.length) {
-      groupId = envelope.slice(offset, offset + groupIdLen);
-    }
+  // The envelope is exactly its fields. Trailing bytes would make the format
+  // non-canonical — two distinct envelopes parsing to the same content.
+  if (offset !== envelope.length) {
+    throw new Error(GENERIC_ERROR);
   }
 
   // Deserialize certificate
   const certificate = deserializeSenderCertificate(certBytes);
 
-  return { certificate, message, contentHint, groupId };
+  return { certificate, message, contentType, contentHint };
 }
 
 /**
@@ -299,7 +319,7 @@ export async function unseal(options: UnsealOptions): Promise<UnidentifiedSender
     const envelope = aesCtrDecrypt(s_cipherKey, s_iv, s_ciphertext);
 
     // Step 2.7: Parse envelope
-    const { certificate, message, contentHint, groupId } = parseEnvelope(envelope);
+    const { certificate, message, contentType, contentHint } = parseEnvelope(envelope);
 
     // Step 2.8: Validate sender identity matches certificate
     const certIdentityKey = base64ToBytes(certificate.senderIdentityKey);
@@ -324,7 +344,7 @@ export async function unseal(options: UnsealOptions): Promise<UnidentifiedSender
       senderCertificate: certificate,
       signalProtocolMessage: bytesToBase64(message) as Base64,
       contentHint,
-      groupId: groupId ? (bytesToBase64(groupId) as Base64) : undefined,
+      contentType,
     };
   } finally {
     // Security: Zero all sensitive key material

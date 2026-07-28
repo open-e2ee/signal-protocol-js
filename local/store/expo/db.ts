@@ -43,11 +43,13 @@ export type {
   NewProfileKey,
   NewRecipientIdentity,
   NewSenderKey,
+  NewSkippedSenderKeyRow,
   NewSession,
   ProfileKey,
   RecipientIdentity,
   SenderKey,
   Session,
+  SkippedSenderKeyRow,
 } from './schema';
 
 export type SignalProtocolExpoDrizzleDB = ExpoSQLiteDatabase<typeof schema>;
@@ -82,6 +84,7 @@ export interface SignalProtocolExpoDbBindings {
   kyberOneTimePreKeys?: typeof schema.kyberOneTimePreKeys;
   sessions?: typeof schema.sessions;
   senderKeys?: typeof schema.senderKeys;
+  skippedSenderKeys?: typeof schema.skippedSenderKeys;
   messageRecords?: typeof schema.messageRecords;
   groupMasterKeys?: typeof schema.groupMasterKeys;
   groupStateCache?: typeof schema.groupStateCache;
@@ -163,6 +166,7 @@ const fallbackTables = {
   kyberOneTimePreKeys: schema.kyberOneTimePreKeys,
   sessions: schema.sessions,
   senderKeys: schema.senderKeys,
+  skippedSenderKeys: schema.skippedSenderKeys,
   messageRecords: schema.messageRecords,
   groupMasterKeys: schema.groupMasterKeys,
   groupStateCache: schema.groupStateCache,
@@ -223,6 +227,8 @@ export const kyberOneTimePreKeys: typeof schema.kyberOneTimePreKeys =
   createBoundTableProxy('kyberOneTimePreKeys');
 export const sessions: typeof schema.sessions = createBoundTableProxy('sessions');
 export const senderKeys: typeof schema.senderKeys = createBoundTableProxy('senderKeys');
+export const skippedSenderKeys: typeof schema.skippedSenderKeys =
+  createBoundTableProxy('skippedSenderKeys');
 export const messageRecords: typeof schema.messageRecords = createBoundTableProxy('messageRecords');
 export const groupMasterKeys: typeof schema.groupMasterKeys =
   createBoundTableProxy('groupMasterKeys');
@@ -258,6 +264,9 @@ export const tables = {
   },
   get sessions(): typeof schema.sessions {
     return getCurrentTable('sessions', sessions);
+  },
+  get skippedSenderKeys(): typeof schema.skippedSenderKeys {
+    return getCurrentTable('skippedSenderKeys', skippedSenderKeys);
   },
   get senderKeys(): typeof schema.senderKeys {
     return getCurrentTable('senderKeys', senderKeys);

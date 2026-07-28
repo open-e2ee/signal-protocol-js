@@ -89,6 +89,20 @@ function cloneRelayValue<T>(value: T): T {
 }
 
 /**
+ * Reject an expired provisioning session. Throw-only, mirroring the Convex
+ * component: expiry is never stored, only computed. Sessions that lapse are
+ * rejected here and reported as `expired` by `getProvisioningMessage`.
+ */
+function requireLiveProvisioningSession(
+  session: { expiresAt: number },
+  sessionId: string
+): void {
+  if (session.expiresAt <= Date.now()) {
+    throw new Error(`Provisioning session ${sessionId} expired`);
+  }
+}
+
+/**
  * Mock Signal Protocol Relay Server for local development
  *
  * Provides in-memory backend simulation with the same interface as production adapters.
@@ -139,9 +153,6 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
   // Subscriptions
   private subscriptions = new Map<string, ((envelope: Envelope) => void)[]>();
 
-  // Group members for deterministic group-message fanout.
-  private groupMembers = new Map<string, GroupMemberDevice[]>(); // key: groupId
-
   // Provisioning sessions
   private provisioningSessions = new Map<
     string,
@@ -164,7 +175,12 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
         | 'completed'
         | 'rolled_back'
         | 'expired';
-      createdAt: number;
+      /**
+       * Absolute deadline, mirroring the Convex component. `completeProvisioning`
+       * extends it so the acknowledgment gets its own full TTL window rather
+       * than whatever remains of the original session.
+       */
+      expiresAt: number;
     }
   >();
   private provisioningCounter = 0;
@@ -763,10 +779,6 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     );
   }
 
-  async getGroupMembers(groupId: string): Promise<GroupMemberDevice[]> {
-    return cloneRelayValue(this.groupMembers.get(groupId) || []);
-  }
-
   async getActiveDevices(userId: string): Promise<GroupMemberDevice[]> {
     const deviceInfos = this.devices.get(userId) || [];
     return deviceInfos
@@ -793,7 +805,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     }
 
     for (const session of this.provisioningSessions.values()) {
-      const sessionExpired = now - session.createdAt > PROVISIONING_SESSION_TTL_MS;
+      const sessionExpired = session.expiresAt <= now;
       if (
         session.userId === userId &&
         session.assignedDeviceId &&
@@ -814,7 +826,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
       userId,
       ephemeralPublicKey,
       status: 'waiting',
-      createdAt: Date.now(),
+      expiresAt: now + PROVISIONING_SESSION_TTL_MS,
       assignedDeviceId,
     });
     return { sessionId };
@@ -836,6 +848,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     if (session.status !== 'waiting') {
       throw new Error(`Provisioning session ${sessionId} is not in waiting state`);
     }
+    requireLiveProvisioningSession(session, sessionId);
 
     session.newDeviceEphemeralPublicKey = ephemeralPublicKey;
     session.deviceMetadata = cloneRelayValue(deviceMetadata);
@@ -851,6 +864,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     if (!session) {
       throw new Error(`Provisioning session ${sessionId} not found`);
     }
+    requireLiveProvisioningSession(session, sessionId);
     if (session.status !== 'connected') {
       throw new Error(`Provisioning session ${sessionId} is not in connected state`);
     }
@@ -869,15 +883,22 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
       | 'rolled_back'
       | 'expired';
     message: string | null;
+    expiresAt: number | null;
   }> {
     const session = this.provisioningSessions.get(sessionId);
     if (!session) {
-      return { status: 'expired', message: null };
+      return { status: 'expired', message: null, expiresAt: null };
     }
 
-    // Check expiration (5 minutes)
-    if (Date.now() - session.createdAt > PROVISIONING_SESSION_TTL_MS) {
-      session.status = 'expired';
+    // Expiry is a computed status, never a stored one — reads do not mutate.
+    // Mirrors the Convex component, where a `patch` before a throw would be
+    // rolled back anyway and the cleanup cron deletes expired rows outright.
+    if (
+      session.status !== 'completed' &&
+      session.status !== 'rolled_back' &&
+      session.expiresAt <= Date.now()
+    ) {
+      return { status: 'expired', message: null, expiresAt: session.expiresAt };
     }
 
     return {
@@ -886,6 +907,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
         session.status === 'ready' || session.status === 'linked_pending_ack'
           ? session.encryptedMessage || null
           : null,
+      expiresAt: session.expiresAt,
     };
   }
 
@@ -902,6 +924,9 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     if (!session) {
       throw new Error(`Provisioning session ${sessionId} not found`);
     }
+    // Reject completion of an expired session — including one already in
+    // `linked_pending_ack`, whose device the cleanup cron is entitled to reap.
+    requireLiveProvisioningSession(session, sessionId);
     if (session.status !== 'ready' && session.status !== 'linked_pending_ack') {
       throw new Error(`Provisioning session ${sessionId} is not ready`);
     }
@@ -947,6 +972,9 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
 
     this.devices.set(session.userId, existingDevices);
     session.status = 'linked_pending_ack';
+    // Grant the acknowledgment its own full TTL window rather than whatever
+    // remains of the original session.
+    session.expiresAt = now + PROVISIONING_SESSION_TTL_MS;
     return { deviceId: session.assignedDeviceId };
   }
 
@@ -958,6 +986,8 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     if (session.status !== 'linked_pending_ack') {
       throw new Error(`Provisioning session ${sessionId} is not awaiting acknowledgment`);
     }
+    // An expired ack window is a rolled-back link, not a race the ack can win.
+    requireLiveProvisioningSession(session, sessionId);
 
     session.status = 'completed';
     delete session.encryptedMessage;
@@ -1057,7 +1087,6 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     sentMessageBase64: string,
     auth: SealedSenderAuth,
     timestamp: number,
-    groupId?: string,
     recipientUserIds?: string[],
     clientMessageId?: string
   ): Promise<{ messageId: string; serverTimestamp: number; uuids404: string[] }> {
@@ -1093,7 +1122,6 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
           senderDeviceId: 0,
           ciphertext: bytesToBase64(receivedMsg),
           messageType: 'unidentified_sender',
-          groupId,
           timestamp,
           clientMessageId,
         });
@@ -1405,7 +1433,6 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     this.pendingMessages.clear();
     this.clientMessageReceipts.clear();
     this.subscriptions.clear();
-    this.groupMembers.clear();
     this.provisioningSessions.clear();
     this.ecSignedPreKeyMetadata.clear();
     this.kemLastResortPreKeyMetadata.clear();
@@ -1417,13 +1444,6 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     this.failures.reset();
     this.messageCounter = 0;
     this.provisioningCounter = 0;
-  }
-
-  /**
-   * Set group members for deterministic local setup.
-   */
-  setGroupMembers(groupId: string, members: GroupMemberDevice[]): void {
-    this.groupMembers.set(groupId, cloneRelayValue(members));
   }
 
   /**

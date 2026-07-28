@@ -8,8 +8,9 @@
 
 Interface for server-side group operations.
 
-The server stores encrypted (opaque) group state and enforces
-version sequencing. It never decrypts group content.
+The server stores encrypted group state, verifies presentations, evaluates
+policy through deterministic ciphertext comparison, and enforces version
+sequencing. It never decrypts group content.
 
 ## Methods
 
@@ -41,9 +42,13 @@ Create a new group on the server.
 
 ### getGroup()
 
-> **getGroup**(`groupId`, `authorization`): `Promise`\<\{ `encryptedState`: `Uint8Array`; `version`: `number`; \} \| `null`\>
+> **getGroup**(`groupId`, `authorization`, `version?`): `Promise`\<[`GroupSnapshot`](GroupSnapshot.md) \| `null`\>
 
-Get the latest encrypted group state.
+Get encrypted group state.
+
+When `version` is supplied, the server must return that exact historical
+snapshot or null. Versioned reads make the post-join baseline race-safe:
+clients must not jump over unverified changes to a newer snapshot.
 
 #### Parameters
 
@@ -55,9 +60,13 @@ Get the latest encrypted group state.
 
 [`GroupAuthorization`](GroupAuthorization.md)
 
+##### version?
+
+`number`
+
 #### Returns
 
-`Promise`\<\{ `encryptedState`: `Uint8Array`; `version`: `number`; \} \| `null`\>
+`Promise`\<[`GroupSnapshot`](GroupSnapshot.md) \| `null`\>
 
 ***
 
@@ -65,7 +74,11 @@ Get the latest encrypted group state.
 
 > **getGroupChanges**(`groupId`, `fromVersion`, `authorization`): `Promise`\<`GroupChangeLogEntry`[]\>
 
-Get change log entries from a given version.
+Get the authorized change-log prefix after a historical version.
+
+Authorization is evaluated at the `fromVersion` snapshot. The response
+includes the first transition that makes the requester unreadable, then
+stops; a requester already unreadable at that snapshot is refused.
 
 #### Parameters
 
@@ -87,9 +100,35 @@ Get change log entries from a given version.
 
 ***
 
+### getGroupJoinInfo()
+
+> **getGroupJoinInfo**(`groupId`, `inviteLinkPassword`, `authorization`): `Promise`\<\{ `encryptedJoinInfo`: `Uint8Array`; `version`: `number`; \} \| `null`\>
+
+Get the reduced invite-link projection after server-side password verification.
+
+#### Parameters
+
+##### groupId
+
+`Uint8Array`
+
+##### inviteLinkPassword
+
+`Uint8Array`
+
+##### authorization
+
+[`GroupAuthorization`](GroupAuthorization.md)
+
+#### Returns
+
+`Promise`\<\{ `encryptedJoinInfo`: `Uint8Array`; `version`: `number`; \} \| `null`\>
+
+***
+
 ### submitGroupChange()
 
-> **submitGroupChange**(`groupId`, `expectedVersion`, `encryptedChange`, `updatedEncryptedState`, `authorization`): `Promise`\<\{ `serverSignature`: `Uint8Array`; \}\>
+> **submitGroupChange**(`groupId`, `expectedVersion`, `actions`, `inviteLinkPassword`, `authorization`): `Promise`\<`GroupChangeLogEntry`\>
 
 Submit a group change (optimistic concurrency).
 
@@ -103,11 +142,11 @@ Submit a group change (optimistic concurrency).
 
 `number`
 
-##### encryptedChange
+##### actions
 
 `Uint8Array`
 
-##### updatedEncryptedState
+##### inviteLinkPassword
 
 `Uint8Array`
 
@@ -117,4 +156,4 @@ Submit a group change (optimistic concurrency).
 
 #### Returns
 
-`Promise`\<\{ `serverSignature`: `Uint8Array`; \}\>
+`Promise`\<`GroupChangeLogEntry`\>

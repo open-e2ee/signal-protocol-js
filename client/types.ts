@@ -175,10 +175,18 @@ export interface SendOptions {
   contentHint?: ContentHint;
 
   /**
-   * Pre-resolved group member user IDs (local-first member resolution).
-   * The caller provides the member list from local SQLite since group membership
-   * is not stored on the server. The cipher resolves these to device IDs via
-   * relay.getActiveDevices().
+   * Application user IDs of the group's members, for local-first fan-out.
+   *
+   * **Required for every group send** — a group send without it throws rather
+   * than delivering to nobody. The relay keeps no `groupId -> member` map by
+   * design, so it cannot supply the roster, and the SDK cannot derive it
+   * either: decrypted group state identifies members by ACI
+   * (`DecryptedMember.aciBytes`) while the relay routes by application
+   * `userId`, and only the application holds that mapping.
+   *
+   * Resolve the roster from local group state, map each member's ACI to your
+   * own account identifier, and pass the result. The cipher expands these to
+   * devices via `relay.getActiveDevices()`.
    */
   groupMemberUserIds?: string[];
 }
@@ -475,11 +483,15 @@ export interface IncomingEnvelope {
   /** Server timestamp when message was received */
   serverTimestamp?: number;
 
-  /** Message type for filtering (ciphertext, prekey_bundle, etc.) */
+  /**
+   * Message type for filtering (ciphertext, prekey_bundle, etc.).
+   *
+   * `sender_key` marks group traffic: the payload is a framed
+   * SenderKeyMessage. It names no group — no envelope does — and the group is
+   * resolved from the frame's opaque distribution identifier against the
+   * local sender key store.
+   */
   messageType?: string;
-
-  /** Group ID for group messages */
-  groupId?: string;
 
   /**
    * Content hint for retry behavior per Signal Protocol.

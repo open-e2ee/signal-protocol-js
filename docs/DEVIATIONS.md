@@ -69,7 +69,7 @@ model and what is out of scope.
 | **SPQR / ML-KEM Braid** | ML-KEM Braid rev. 1 | **Deviation.** Same protocol, same KDF labels, same Reed–Solomon parameters, byte-identical message framing — except `hek = SHA3-256(ek_seed ‖ ek_vector)`, the operand order the specification states, which is the reverse of `libsignal`'s implementation | The normative text was followed over the executable reference | Wire-visible. Headers, ciphertexts, and shared secrets diverge; a braid session cannot complete a single epoch against `libsignal`'s implementation. Also means the KEM is not FIPS 203 in braid mode |
 | **Triple Ratchet** | `libsignal` `triple_ratchet.rs` | **Faithful.** The PQ secret enters as the HKDF salt at message-key expansion, same label, same order | — | The braiding construction follows the ML-KEM Braid specification |
 | **Sesame** | Sesame rev. 2 | **Deviation** on session expiry (§4.2 applies only to unacknowledged sessions) and on deleted devices (hard-removed rather than marked stale). **Extensions:** QR provisioning, device transfer, encrypted device names, identity-change gating, a 5-device cap | Product requirements the specification does not address | Hard deletion **drops the MAXLATENCY window, so in-flight messages from a just-removed device become permanently undecryptable**. Device transfer clones ratchet state, which weakens the forward-secrecy bound |
-| **Sealed sender v1** | `libsignal` `sealed_sender.rs` | **Deviation.** Correct labels, cipher, and MAC length, but the 96-byte HKDF output is split `(cipher, mac, chain)` where `libsignal` splits `(chain, cipher, mac)`; keys in the salt omit the `0x05` type byte; the inner envelope is a hand-rolled varint format rather than the `UnidentifiedSenderMessage.Message` protobuf | The slice order and the missing prefix are unintentional; the envelope is a deliberate simplification | Self-consistent and secure, but every v1 key sits in a different slot than `libsignal`'s. The envelope also drops the message-type field |
+| **Sealed sender v1** | `libsignal` `sealed_sender.rs` | **Deviation.** Correct labels, cipher, and MAC length, but the 96-byte HKDF output is split `(cipher, mac, chain)` where `libsignal` splits `(chain, cipher, mac)`; keys in the salt omit the `0x05` type byte; the inner envelope is a hand-rolled varint format rather than the `UnidentifiedSenderMessage.Message` protobuf, though it now carries the same message-type values | The slice order and the missing prefix are unintentional; the framing is a deliberate simplification | Self-consistent and secure, but every v1 key sits in a different slot than `libsignal`'s |
 | **Sealed sender v2** | `libsignal` `sealed_sender.rs` | **Faithful** on all four labels, the KEM, AES-256-GCM-SIV, the multi-recipient binary format, and the `0x3FFF` registration-ID mask | — | The v2 construction follows `libsignal` |
 | **Delivery token** | `libsignal` `profile_key.rs` | **Faithful.** `deriveAccessKey` follows `libsignal`'s `ProfileKey::derive_access_key`, and reproduces `libsignal`'s published known-answer values | — | Not an SDK invention, despite what the module name suggests |
 | **Sender keys** | `libsignal` `sender_keys.rs` | **Deviation.** Protobuf field numbers and `0x33` framing match, and the `0x01`/`0x02` seeds match, but message-key derivation **omits HKDF-Extract**, signatures are Ed25519 not XEdDSA, and `distributionUuid` carries a UTF-8 string rather than 16 UUID bytes | The Ed25519 choice follows the identity profile; the missing Extract appears unintentional | Group message keys differ from `libsignal`'s for the same chain key. Confirmed numerically, not merely by inspection |
@@ -700,10 +700,34 @@ internally inconsistent about this.
 
 **The inner envelope is a hand-rolled varint format**
 (`internal/protocol/sealed-sender/encryption.ts:46-86`) rather than the
-`UnidentifiedSenderMessage.Message` protobuf. It omits the message-type field that
-`libsignal` uses to dispatch between prekey and regular messages
-([`sealed_sender.rs:2055-2075`][ss]); the unseal path reconstructs the envelope
-with a fixed type instead.
+`UnidentifiedSenderMessage.Message` protobuf. It does carry the message-type
+field `libsignal` uses to dispatch between prekey, regular, sender-key, and
+plaintext payloads ([`sealed_sender.rs:2055-2075`][ss]), as a leading byte
+using `libsignal`'s enum values, so the framing differs but the dispatch does
+not. Through 0.1.0-alpha.7 the field was absent and the unseal path
+reconstructed the envelope with a fixed type, which made sealed group messages
+undecryptable as group messages.
+
+**`PLAINTEXT_CONTENT` (8) is a known wire value that this SDK rejects.**
+`libsignal` uses it to carry a `DecryptionErrorMessage` when no session exists
+to encrypt one under ([`sealed_sender.rs:2055-2075`][ss]). This SDK delivers
+decryption-error signals over a dedicated relay channel instead — the
+`retryRequests` table and `sendRetryRequest`, per Sesame §4.1 — so no send path
+produces the type and no decrypt path consumes it. It is therefore rejected at
+the envelope parse (`internal/protocol/sealed-sender/types.ts`) rather than
+mapped to an envelope type with no handler. The enum retains the member so the
+wire values stay a faithful record, and `envelopeTypeForContent` throws on it so
+that adding a member without a route fails loudly. A peer that sends one gets a
+clean parse failure, not a payload routed into the pairwise ratchet.
+
+Note the cost when debugging interop. The parsers throw a single generic error
+for every malformed envelope, so a peer implementation that legitimately sends
+`PLAINTEXT_CONTENT` fails with `Sealed sender verification failed` — the same
+string a MAC mismatch produces. The uniformity is deliberate and the parse runs
+after authentication, so nothing here is an oracle; but if sealed messages from
+one particular peer stack fail with that error while messages from this SDK
+succeed, check the leading content-type byte before treating it as a
+cryptographic failure.
 
 ### 6.3 The delivery token follows `libsignal`, not an SDK invention
 
@@ -740,10 +764,19 @@ AES-256-CBC with the derived IV matches, and the capacity constants match.
 Three things do not:
 
 **`distributionUuid` carries a UTF-8 string, not 16 UUID bytes.** The SDK writes
-`groupId:userId:deviceId:timestamp`
-(`internal/protocol/sender-keys/manager.ts:266`, `:493`); `libsignal` writes
-exactly 16 raw bytes and rejects anything else on parse. Related: `chain_id` is
-an FNV-1a hash of that string rather than a random 31-bit value.
+the 36-character textual form of a random UUIDv4
+(`internal/protocol/sender-keys/manager.ts:279`, `:932`); `libsignal` writes
+exactly the 16 raw bytes and rejects anything else on parse. The value is now
+the same *kind* of thing `libsignal` uses — an opaque random identifier
+unrelated to the group — but the encoding still differs, so the frames remain
+mutually unparseable. Related: `chain_id` is an FNV-1a hash of that string
+rather than a random 31-bit value.
+
+Until recently the SDK wrote `groupId:userId:deviceId:timestamp` here, which was
+a metadata leak rather than a format deviation: `distributionUuid` sits outside
+the ciphertext, so every relay on the path could read the plaintext group and
+sender off each message. That is fixed; the sender-keys specification now
+requires the identifier to be opaque.
 
 **Signatures are Ed25519, not XEdDSA**, per §1.2 — and `libsignal` serializes the
 signing key as 33 bytes where the SDK uses 32.
@@ -793,8 +826,8 @@ presentations, and the **server** validates every action against the group's
 access control before signing and persisting the accepted result. The
 enforcement rules are the SDK's own specified S1–S14 contract rather than
 Signal Messenger's server implementation, and the shipped enforcing server
-(`internal/groups/server-engine.ts`, with a Convex adapter at
-`remote/relay/convex/server.ts`) implements that contract. Clients verify the
+(`internal/groups/server-engine.ts`, with an installable Convex component)
+implements that contract. Clients verify the
 server's signature, group binding, strict version sequence, and pre-state
 authorization on every applied change.
 

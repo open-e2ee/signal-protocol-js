@@ -33,7 +33,6 @@ import type {
 } from '../../../types';
 import type { ProtocolAddress } from '../../../types/address';
 import type { IdentityKeyChange, TrustDirection } from '../../../types/trust';
-import type { ISignalProtocolRemoteSenderStateStore } from '../../../remote/relay/types';
 import type { DeviceRecord, UserRecord } from '../../../internal/sesame/types';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 
@@ -78,13 +77,10 @@ export {};
 export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
   private storage: KeyStorage;
   private logger: Required<ILogger>;
-  // Backend for SESAME/SenderKey operations (Convex relay server)
-  private backend?: ISignalProtocolRemoteSenderStateStore;
 
-  constructor(backend?: ISignalProtocolRemoteSenderStateStore, providedLogger?: ILogger) {
+  constructor(providedLogger?: ILogger) {
     this.logger = resolveSignalProtocolLogger(providedLogger);
     this.storage = new KeyStorage(this.logger);
-    this.backend = backend;
   }
 
   setLogger(providedLogger?: ILogger): void {
@@ -397,36 +393,6 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
     return encodeCompositeIdentityV1(record.identity);
   }
 
-  /**
-   * Helper to require backend for Sender Key operations.
-   * Note: SESAME operations are now local-only and don't require backend.
-   */
-  private requireBackend(operation: string): ISignalProtocolRemoteSenderStateStore {
-    if (!this.backend) {
-      throw new Error(
-        `${operation} requires a backend adapter. ` +
-          `Pass a ConvexSignalProtocolRelayServer to the key store constructor: ` +
-          `new ExpoSignalProtocolStore(relay)`
-      );
-    }
-    return this.backend;
-  }
-
-  private requireBackendMethod<K extends keyof ISignalProtocolRemoteSenderStateStore>(
-    operation: string,
-    method: K
-  ): NonNullable<ISignalProtocolRemoteSenderStateStore[K]> {
-    const backend = this.requireBackend(operation);
-    const fn = backend[method];
-    if (!fn) {
-      throw new Error(
-        `${operation} requires backend.${method}() method. ` +
-          `The provided backend does not implement this method.`
-      );
-    }
-    return fn as NonNullable<ISignalProtocolRemoteSenderStateStore[K]>;
-  }
-
   async getUserRecord(userId: string): Promise<UserRecord | null> {
     // UserRecords are stored locally - get all sessions for this user
     const sessions = await this.getSessionsForUser(userId);
@@ -670,7 +636,11 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
   // ============================================================================
   // Sender Keys Management (Group Messaging)
   // ============================================================================
-  // Sender Keys require server-side storage for group message coordination
+  // Sender key state is device-local. The chain key and the sender's private
+  // signature key are enough to read and to forge every message on that chain,
+  // so they never leave the device — the reference keeps its sender key store
+  // local for the same reason. SQLCipher encrypts the database file that holds
+  // them.
 
   async storeSenderKey(
     groupId: string,
@@ -678,17 +648,7 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
     deviceId: number,
     state: SenderKeyState
   ): Promise<void> {
-    const fn = this.requireBackendMethod('storeSenderKey', 'storeSenderKey');
-    await fn(
-      state.senderKeyId || `${groupId}:${userId}:${deviceId}`,
-      groupId,
-      userId,
-      deviceId,
-      state.chainKey || '',
-      state.signatureKey || '',
-      state.chainIndex || 0,
-      state.generation || 0
-    );
+    await this.storeSenderKeyRecord(groupId, userId, deviceId, [state]);
   }
 
   async getSenderKey(
@@ -696,18 +656,16 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
     userId: string,
     deviceId: number
   ): Promise<SenderKeyState | null> {
-    const fn = this.requireBackendMethod('getSenderKey', 'loadSenderKeyForDevice');
-    return (await fn(groupId, userId, deviceId)) ?? null;
+    const record = await this.getSenderKeyRecord(groupId, userId, deviceId);
+    return record?.[0] ?? null;
   }
 
   /**
-   * Store sender key record (current + previous states).
+   * Store a sender key record (current state first, then the superseded states
+   * the rotation window still needs).
    *
-   * Server and local writes are independent — not atomic. If the local
-   * SQLite write fails after the server write succeeds, previousStates
-   * are lost. This is acceptable: lost previous states only affect
-   * in-flight messages during a key rotation window, and the next
-   * successful write will restore them.
+   * The whole record is one row, so current and previous states can never be
+   * written apart from one another.
    */
   async storeSenderKeyRecord(
     groupId: string,
@@ -717,27 +675,8 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
   ): Promise<void> {
     if (states.length === 0) return;
 
-    const currentState = states[0];
-    const previousStates = states.length > 1 ? states.slice(1) : [];
-
-    // Sync current state to server via backend
-    await this.storeSenderKey(groupId, userId, deviceId, currentState);
-
-    // Upsert locally with previousStates (handles both insert and update)
-    const { SenderKey } = await import('./models/sender-key');
-    const now = Date.now();
-    const senderKey = new SenderKey({
-      id: 0,
-      distributionId: groupId,
-      senderId: userId,
-      deviceId,
-      chainKey: currentState.chainKey || '',
-      iteration: currentState.chainIndex || 0,
-      previousStates: previousStates.length > 0 ? JSON.stringify(previousStates) : null,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await senderKey.save();
+    const { createSenderKey } = await import('./models/sender-key');
+    await createSenderKey({ groupId, senderId: userId, deviceId, states }).save();
   }
 
   async getSenderKeyRecord(
@@ -745,66 +684,57 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
     userId: string,
     deviceId: number
   ): Promise<SenderKeyState[] | null> {
-    // Get full current state from server via backend
-    const currentState = await this.getSenderKey(groupId, userId, deviceId);
-    if (!currentState) return null;
+    const { getSenderKey } = await import('./models/sender-key');
+    const row = await getSenderKey(groupId, userId, deviceId);
+    if (!row) return null;
 
-    // Load previous states from local database
-    const { getDrizzle, senderKeys, eq, and } = await import('./db');
-    const db = await getDrizzle();
-    const results = await db
-      .select({ previousStates: senderKeys.previousStates })
-      .from(senderKeys)
-      .where(
-        and(
-          eq(senderKeys.distributionId, groupId),
-          eq(senderKeys.senderId, userId),
-          eq(senderKeys.deviceId, deviceId)
-        )
-      )
-      .limit(1);
-
-    const previousStatesJson = results[0]?.previousStates;
-    let previousStates: SenderKeyState[] = [];
-    if (previousStatesJson) {
-      try {
-        previousStates = JSON.parse(previousStatesJson);
-      } catch {
-        // Corrupted previousStates column — degrade to current state only.
-        // This can happen if an interrupted write truncated the JSON.
-        this.logger.warn('Corrupted previousStates JSON for sender key', {
-          groupId,
-          userId,
-          deviceId,
-        });
-      }
+    const states = row.states;
+    if (states.length === 0) {
+      // The record column failed to parse. Report "no sender key" so the
+      // caller asks for a fresh distribution message instead of throwing.
+      this.logger.warn('Corrupted sender key record', { groupId, userId, deviceId });
+      return null;
     }
 
-    return [currentState, ...previousStates];
+    return states;
+  }
+
+  async resolveGroupForSenderKeyId(
+    senderKeyId: string,
+    userId: string,
+    deviceId: number
+  ): Promise<string | null> {
+    const { findGroupBySenderKeyId } = await import('./models/sender-key');
+    return findGroupBySenderKeyId(senderKeyId, userId, deviceId);
   }
 
   async deleteSenderKey(groupId: string, userId: string, deviceId: number): Promise<void> {
-    const fn = this.requireBackendMethod('deleteSenderKey', 'deleteSenderKey');
-    const senderKeyId = `${groupId}:${userId}:${deviceId}`;
-    await fn(senderKeyId);
+    const { deleteSenderKey } = await import('./models/sender-key');
+    await deleteSenderKey(groupId, userId, deviceId);
   }
 
   async getAllSenderKeysForGroup(groupId: string): Promise<SenderKeyState[]> {
-    const fn = this.requireBackendMethod('getAllSenderKeysForGroup', 'loadAllSenderKeysForGroup');
-    return (await fn(groupId)) || [];
+    const { getSenderKeysByGroup } = await import('./models/sender-key');
+    const rows = await getSenderKeysByGroup(groupId);
+
+    const states: SenderKeyState[] = [];
+    for (const row of rows) {
+      const current = row.currentState;
+      if (current) states.push(current);
+    }
+    return states;
   }
 
   async deleteAllSenderKeysForGroup(groupId: string): Promise<number> {
-    const fn = this.requireBackendMethod(
-      'deleteAllSenderKeysForGroup',
-      'deleteAllSenderKeysForGroup'
-    );
-    return (await fn(groupId)) || 0;
+    const { deleteSenderKeysByGroup } = await import('./models/sender-key');
+    return deleteSenderKeysByGroup(groupId);
   }
 
   // ============================================================================
   // Skipped Sender Keys (Out-of-Order Message Support)
   // ============================================================================
+  // These are the message keys themselves. Same rule as the chain key above:
+  // device-local only.
 
   async storeSkippedSenderKey(
     groupId: string,
@@ -813,8 +743,29 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
     chainIndex: number,
     messageKey: { iv: string; cipherKey: string }
   ): Promise<void> {
-    const fn = this.requireBackendMethod('storeSkippedSenderKey', 'storeSkippedSenderKey');
-    await fn(groupId, senderId, senderDeviceId, chainIndex, messageKey.cipherKey, messageKey.iv);
+    const { getDrizzle, skippedSenderKeys } = await import('./db');
+    const db = await getDrizzle();
+
+    await db
+      .insert(skippedSenderKeys)
+      .values({
+        groupId,
+        senderId,
+        senderDeviceId,
+        chainIndex,
+        cipherKey: messageKey.cipherKey,
+        iv: messageKey.iv,
+        createdAt: Date.now(),
+      })
+      .onConflictDoUpdate({
+        target: [
+          skippedSenderKeys.groupId,
+          skippedSenderKeys.senderId,
+          skippedSenderKeys.senderDeviceId,
+          skippedSenderKeys.chainIndex,
+        ],
+        set: { cipherKey: messageKey.cipherKey, iv: messageKey.iv },
+      });
   }
 
   async getSkippedSenderKey(
@@ -823,10 +774,24 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
     senderDeviceId: number,
     chainIndex: number
   ): Promise<{ iv: string; cipherKey: string } | null> {
-    const fn = this.requireBackendMethod('getSkippedSenderKey', 'getSkippedSenderKey');
-    const key = await fn(groupId, senderId, senderDeviceId, chainIndex);
-    if (!key) return null;
-    return { iv: key.iv, cipherKey: key.cipherKey };
+    const { getDrizzle, skippedSenderKeys, eq, and } = await import('./db');
+    const db = await getDrizzle();
+
+    const results = await db
+      .select({ iv: skippedSenderKeys.iv, cipherKey: skippedSenderKeys.cipherKey })
+      .from(skippedSenderKeys)
+      .where(
+        and(
+          eq(skippedSenderKeys.groupId, groupId),
+          eq(skippedSenderKeys.senderId, senderId),
+          eq(skippedSenderKeys.senderDeviceId, senderDeviceId),
+          eq(skippedSenderKeys.chainIndex, chainIndex)
+        )
+      )
+      .limit(1);
+
+    const row = results[0];
+    return row ? { iv: row.iv, cipherKey: row.cipherKey } : null;
   }
 
   async deleteSkippedSenderKey(
@@ -835,8 +800,19 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
     senderDeviceId: number,
     chainIndex: number
   ): Promise<void> {
-    const fn = this.requireBackendMethod('deleteSkippedSenderKey', 'deleteSkippedSenderKey');
-    await fn(groupId, senderId, senderDeviceId, chainIndex);
+    const { getDrizzle, skippedSenderKeys, eq, and } = await import('./db');
+    const db = await getDrizzle();
+
+    await db
+      .delete(skippedSenderKeys)
+      .where(
+        and(
+          eq(skippedSenderKeys.groupId, groupId),
+          eq(skippedSenderKeys.senderId, senderId),
+          eq(skippedSenderKeys.senderDeviceId, senderDeviceId),
+          eq(skippedSenderKeys.chainIndex, chainIndex)
+        )
+      );
   }
 
   async countSkippedSenderKeys(
@@ -844,21 +820,70 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
     senderId: string,
     senderDeviceId: number
   ): Promise<number> {
-    const fn = this.requireBackendMethod('countSkippedSenderKeys', 'countSkippedSenderKeys');
-    return (await fn(groupId, senderId, senderDeviceId)) || 0;
+    const { getDrizzle, skippedSenderKeys, eq, and, count } = await import('./db');
+    const db = await getDrizzle();
+
+    const results = await db
+      .select({ count: count() })
+      .from(skippedSenderKeys)
+      .where(
+        and(
+          eq(skippedSenderKeys.groupId, groupId),
+          eq(skippedSenderKeys.senderId, senderId),
+          eq(skippedSenderKeys.senderDeviceId, senderDeviceId)
+        )
+      );
+
+    return results[0]?.count ?? 0;
   }
 
+  /**
+   * Evict the oldest skipped keys for a sender, so a peer cannot grow this
+   * table without bound by sending messages that skip ever further ahead.
+   *
+   * Oldest by chain index, not by insertion time: index order is the order the
+   * sender ratcheted, so the lowest index is the key least likely to still
+   * have a message in flight behind it.
+   */
   async deleteOldestSkippedSenderKeys(
     groupId: string,
     senderId: string,
     senderDeviceId: number,
     count: number
   ): Promise<number> {
-    const fn = this.requireBackendMethod(
-      'deleteOldestSkippedSenderKeys',
-      'deleteOldestSkippedSenderKeys'
+    if (count <= 0) return 0;
+
+    const { getDrizzle, skippedSenderKeys, eq, and, asc, inArray } = await import('./db');
+    const db = await getDrizzle();
+
+    const oldest = await db
+      .select({ chainIndex: skippedSenderKeys.chainIndex })
+      .from(skippedSenderKeys)
+      .where(
+        and(
+          eq(skippedSenderKeys.groupId, groupId),
+          eq(skippedSenderKeys.senderId, senderId),
+          eq(skippedSenderKeys.senderDeviceId, senderDeviceId)
+        )
+      )
+      .orderBy(asc(skippedSenderKeys.chainIndex))
+      .limit(count);
+
+    if (oldest.length === 0) return 0;
+
+    await db.delete(skippedSenderKeys).where(
+      and(
+        eq(skippedSenderKeys.groupId, groupId),
+        eq(skippedSenderKeys.senderId, senderId),
+        eq(skippedSenderKeys.senderDeviceId, senderDeviceId),
+        inArray(
+          skippedSenderKeys.chainIndex,
+          oldest.map((row) => row.chainIndex)
+        )
+      )
     );
-    return (await fn(groupId, senderId, senderDeviceId, count)) || 0;
+
+    return oldest.length;
   }
 
   // ============================================================================

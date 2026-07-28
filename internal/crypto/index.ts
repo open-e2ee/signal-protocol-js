@@ -213,7 +213,7 @@ export { sha3_256 } from '@noble/hashes/sha3.js';
 // ============================================================================
 // Random Number Generation
 // ============================================================================
-export { generateRandomBytes } from './random';
+export { generateRandomBytes, generateUuidV4 } from './random';
 
 // ============================================================================
 // Encoding/Decoding & Memory Management

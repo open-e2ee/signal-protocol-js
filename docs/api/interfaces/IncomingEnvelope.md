@@ -35,14 +35,6 @@ If not set, behavior is inferred from messageType via IMPLICIT_ENVELOPE_TYPES.
 
 ***
 
-### groupId?
-
-> `optional` **groupId?**: `string`
-
-Group ID for group messages
-
-***
-
 ### id
 
 > **id**: `string`
@@ -55,7 +47,12 @@ Server-assigned message ID
 
 > `optional` **messageType?**: `string`
 
-Message type for filtering (ciphertext, prekey_bundle, etc.)
+Message type for filtering (ciphertext, prekey_bundle, etc.).
+
+`sender_key` marks group traffic: the payload is a framed
+SenderKeyMessage. It names no group — no envelope does — and the group is
+resolved from the frame's opaque distribution identifier against the
+local sender key store.
 
 ***
 

@@ -13,12 +13,26 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
 ### How to Report
 
 1. **Do NOT open a public GitHub issue** for security vulnerabilities
-2. Email your findings to: security@open-e2ee.dev
+2. Report through either channel:
+   - GitHub private vulnerability reporting: use **Report a vulnerability** on
+     the repository's [Security tab](https://github.com/open-e2ee/signal-protocol-js/security)
+   - Email: security@open-e2ee.dev
 3. Include the following information:
    - Description of the vulnerability
    - Steps to reproduce
    - Potential impact
    - Suggested fix (if any)
+
+### Safe Harbor
+
+We will not pursue legal action or law-enforcement referral against
+good-faith security research on this codebase. Good faith means: make every
+effort to avoid privacy violations and data destruction, use your own accounts
+and devices for testing, do not exploit a finding beyond what is needed to
+demonstrate it, and give us a reasonable window to remediate before public
+disclosure. This applies to research on the SDK itself; testing deployed
+third-party applications that use the SDK is governed by those applications'
+own policies.
 
 ### What to Expect
 

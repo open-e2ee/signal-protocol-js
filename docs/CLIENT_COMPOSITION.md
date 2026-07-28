@@ -11,68 +11,6 @@ grouped under device storage, while remote encrypted bytes are supplied by an
 explicit object-store adapter. The current API passes protocol storage as
 `adapters.storage` and remote attachment storage as `adapters.remoteObjectStore`.
 
-## Target Composition
-
-The target public shape should make platform setup a factory problem, not a
-store-by-store wiring exercise:
-
-```ts
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { createExpoDeviceStorage } from "@open-e2ee/signal-protocol-sdk/device/storage/expo";
-import { convexR2ObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2";
-import { convexRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
-import { api } from "../convex/_generated/api";
-
-const signal = await createSignalProtocolClient({
-  identity: { userId, deviceId },
-  adapters: {
-    deviceStorage: createExpoDeviceStorage({ database, files }),
-    relay: convexRelay({ convex, api, currentUserId: userId }),
-    remoteObjectStore: convexR2ObjectStore({
-      convex,
-      api: api.signalObjectStore,
-    }),
-  },
-  protocol: {
-    postQuantum: "required",
-    braid: "required",
-  },
-});
-```
-
-Explicit facets preserve modularity for custom runtimes and independently
-verifiable integrations:
-
-```ts
-const signal = await createSignalProtocolClient({
-  identity: { userId, deviceId },
-  adapters: {
-    deviceStorage: {
-      protocol: protocolStore,
-      messages: messageStore,
-      files: fileStore,
-    },
-    relay,
-    remoteObjectStore,
-  },
-});
-```
-
-The target receive path should also be message-first:
-
-```ts
-const unsubscribe = signal.messages.subscribe(
-  { conversationId },
-  async (message) => {
-    await appMessages.render(message);
-  },
-);
-```
-
-Low-level hooks may remain available for advanced integrations, but ordinary
-app code should not depend on hook registration order or manual relay
-subscription startup.
-
 ## Local Client
 
 <!-- mock-snippet:run client-composition-local-client expect="" -->
@@ -113,7 +51,7 @@ const signal = await createSignalProtocolClient({
   identity: { userId, deviceId: 1 },
   adapters: {
     // Expo storage owns this device's private keys and session state.
-    storage: expoStore({ relay }),
+    storage: expoStore(),
     relay,
   },
   logger,
@@ -155,10 +93,10 @@ const signal = await createSignalProtocolClient({
 
 The current durable media queue does not require a second queue adapter. It
 stores bounded job metadata in `adapters.storage` under SDK-owned namespaced
-keys. The target message-first API will move this state behind
-`deviceStorage.messages` and local bytes behind `deviceStorage.files`, so app
-code does not have to compose queue callbacks for ordinary sends. Do not add a
-parallel public `signal.media.*` API once message attachment helpers exist.
+keys. The intended future shape moves this behind grouped device storage — see
+[Future direction](#future-direction-not-shipped) — so app code does not have
+to compose queue callbacks for ordinary sends. Do not add a parallel public
+`signal.media.*` API once message attachment helpers exist.
 
 ## Direct Client Creation
 
@@ -181,11 +119,27 @@ const signal = await SignalProtocolClient.create(userId, {
 - Keep platform choices in `adapters`.
 - Keep account/device identity in `identity`.
 - Keep product security policy in `protocol`.
-- Treat `adapters.storage` and `adapters.remoteObjectStore` as current API names; the
-  target public DX is `deviceStorage` plus `remoteObjectStore`.
 - Keep app logging, hooks, sealed sender, groups, and sender-key options at the
   top level so they match `SignalProtocolClient.create()`.
 - Use `protocol.postQuantum: 'compatible'` only when the product explicitly
   supports peers with no post-quantum material.
 - Use `protocol.braid: 'disabled'` only when a product-reviewed constraint
   explicitly selects direct SPQR.
+
+## Future Direction (Not Shipped)
+
+> **Nothing in this section exists in the package.** `deviceStorage`,
+> `createExpoDeviceStorage`, and `signal.messages.subscribe` are design intent
+> for a future release, recorded here so the direction is public. Importing
+> them fails today. The shipped API is everything above this heading.
+
+The intended future shape makes platform setup a factory problem rather than a
+store-by-store wiring exercise: a grouped `deviceStorage` adapter with
+`protocol`, `messages`, and `files` facets in place of today's flat
+`adapters.storage`, a per-platform factory such as a future
+`createExpoDeviceStorage({ database, files })`, and a message-first receive
+path shaped like `signal.messages.subscribe({ conversationId }, handler)` in
+place of hook registration plus manual `startRelaySubscription()`. Low-level
+hooks would remain for advanced integrations. When this lands it will be a
+breaking change and this guide will lead with it; until then, wire the current
+API.

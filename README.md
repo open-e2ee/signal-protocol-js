@@ -7,14 +7,13 @@
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-2f6f5e)](https://github.com/open-e2ee/signal-protocol-js/blob/main/LICENSE)
 [![Types: TypeScript](https://img.shields.io/badge/types-TypeScript-3178c6)](https://www.typescriptlang.org/)
 [![npm version](https://img.shields.io/npm/v/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
-[![npm downloads](https://img.shields.io/npm/dw/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
+[![native modules: 0](https://img.shields.io/badge/native_modules-0-2f6f5e)](https://github.com/open-e2ee/signal-protocol-js/blob/main/ARCHITECTURE.md)
 [![npm provenance](https://img.shields.io/badge/npm-provenance-2f6f5e)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk#provenance)
 [![Checks](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml/badge.svg)](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/open-e2ee/signal-protocol-js/badge)](https://scorecard.dev/viewer/?uri=github.com/open-e2ee/signal-protocol-js)
 
-*Not affiliated with Signal Messenger.* This is an independent implementation of the public Signal Protocol specifications — full notice in [NOTICE](https://github.com/open-e2ee/signal-protocol-js/blob/main/NOTICE). It is **not wire-compatible with Signal Messenger or libsignal**: messages, identities, and safety numbers do not interoperate, and every deliberate difference is documented in [DEVIATIONS](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/DEVIATIONS.md).
-
-[Docs](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/GETTING_STARTED.md) ·
+[Website](https://open-e2ee.dev) ·
+[Docs](https://docs.open-e2ee.dev) ·
 [Quick Start](#quick-start) ·
 [Architecture](https://github.com/open-e2ee/signal-protocol-js/blob/main/ARCHITECTURE.md) ·
 [Security Model](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/SECURITY.md) ·
@@ -28,9 +27,11 @@
 - **Post-quantum by default.** PQXDH and ML-KEM session establishment are on without configuration, and fail closed.
 - **Real messaging features.** Multi-device, groups, sealed sender, encrypted attachments, safety numbers.
 - **Pluggable storage and relay.** Device-local storage is required and yours; the relay is an interface, not a hosted service.
-- **AGPL-3.0-or-later, or a commercial license.** Building something closed-source? Email licensing@open-e2ee.dev.
+- **AGPL-3.0-or-later, or a commercial license.** Building something closed-source? See [COMMERCIAL](https://github.com/open-e2ee/signal-protocol-js/blob/main/COMMERCIAL.md).
 
-`0.1.0-alpha.2` — public APIs and persisted formats may change before `1.0`.
+*Not affiliated with Signal Messenger.* This is an independent implementation of the public Signal Protocol specifications — full notice in [NOTICE](https://github.com/open-e2ee/signal-protocol-js/blob/main/NOTICE). It is **not wire-compatible with Signal Messenger or libsignal**: messages, identities, and safety numbers do not interoperate, and every deliberate difference is documented in [DEVIATIONS](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/DEVIATIONS.md).
+
+`0.1.0-alpha` — public APIs and persisted formats may change before `1.0`.
 
 ## Install
 
@@ -124,13 +125,17 @@ Cryptography deserves evidence rather than adjectives, so here is what there is 
 
 **Dependencies: 7.** Seven direct production dependencies — `@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`, `async-lock`, `protobufjs`, `unique-names-generator` — resolving to 8 packages in total, the eighth being `long` by way of `protobufjs`. Everything else in the tree is a development or optional peer dependency.
 
-**Automated checks.** The published repository is a mechanized export of a private engineering repository, filtered by an allowlist; the automated checks live there and have to pass before an export is cut. The most recent full run, on 2026-07-24, was 351 modules and 5,875 assertions, all passing (1 skipped). The [assurance summary](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/ASSURANCE.md) explains what those cover, what is not published, and why. The published repository runs its own build, typecheck, and production dependency audit in [CI](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml) on every change.
+**Automated checks.** The published repository is a mechanized export of a private engineering repository, filtered by an allowlist; the automated checks live there and have to pass before an export is cut. The [assurance summary](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/ASSURANCE.md) carries the current run figures — regenerated from a real run as part of every release, never hand-edited — and explains what the checks cover, what is not published, and why. The published repository runs its own build, typecheck, and production dependency audit in [CI](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml) on every change.
 
 **Constant-time posture, honestly.** JavaScript engines offer no machine-level constant-time contract, and this SDK cannot invent one. What exists is best-effort source-level work on selected paths: full-scan comparison for equal-length MACs and identity bytes, fixed-work derivation of both decapsulation candidates before masked selection, and equal-work rejection padding on selected replay and authentication paths. These are not timing-equivalence proofs. Secret-influenced remainder and compression arithmetic remains, and JIT compilation, allocation, garbage collection, and cache effects stay observable. `secureZeroBytes()` overwrites the exact typed array it is handed and nothing more — not copies, not strings, not engine temporaries. The threat model does not cover hostile same-process code or a high-assurance co-resident timing adversary, and it says so.
 
 **Reporting a vulnerability.** Email security@open-e2ee.dev rather than opening an issue. Acknowledgment within 48 hours, initial assessment within 7 days; the full policy is in [SECURITY.md](https://github.com/open-e2ee/signal-protocol-js/blob/main/SECURITY.md).
 
 ## Documentation
+
+Hosted guides, quickstarts per runtime, and concept docs live at
+[docs.open-e2ee.dev](https://docs.open-e2ee.dev). The in-repo references below
+are versioned with the code:
 
 - [Getting Started](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/GETTING_STARTED.md) — installation, mental model, first working client.
 - [Package Surface](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/PACKAGE_SURFACE.md) — root exports, every subpath, adapter implementations, core concepts.
@@ -145,6 +150,6 @@ Cryptography deserves evidence rather than adjectives, so here is what there is 
 
 ## License and warranty
 
-Licensed under `AGPL-3.0-or-later`; see [LICENSE](https://github.com/open-e2ee/signal-protocol-js/blob/main/LICENSE). For proprietary products that cannot meet AGPL obligations, commercial licensing is available at licensing@open-e2ee.dev.
+Licensed under `AGPL-3.0-or-later`; see [LICENSE](https://github.com/open-e2ee/signal-protocol-js/blob/main/LICENSE). For proprietary products that cannot meet AGPL obligations, a commercial license is available — see [COMMERCIAL](https://github.com/open-e2ee/signal-protocol-js/blob/main/COMMERCIAL.md) or email licensing@open-e2ee.dev.
 
 The software is provided **as is**, without warranties or conditions of any kind. To the extent permitted by applicable law, copyright holders and contributors are not liable for damages arising from its use. Applications remain responsible for evaluating this SDK against their own requirements and for securing their deployment, storage, authentication, authorization, and operations. This summary does not modify the license; the complete warranty disclaimer and limitation of liability are in sections 15 and 16 of the GNU Affero General Public License.

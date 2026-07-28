@@ -193,6 +193,14 @@ export {
  */
 export { ProtocolAddress } from './types/address';
 
+/**
+ * The bounds applied to `SenderKeysConfig.maxSenderKeyAge`.
+ *
+ * Exported so a host that configures a rotation interval can read the range
+ * its value is clamped into rather than discovering it from a log line.
+ */
+export { SENDER_KEY_AGE_CEILING, SENDER_KEY_AGE_FLOOR } from './types/protocol-config';
+
 // ============================================================================
 // LOGGER UTILITIES
 // ============================================================================

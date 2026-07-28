@@ -75,10 +75,48 @@ const STORAGE_KEYS = {
   SESSION_PREFIX: '@signal:sessions:',
   SESAME_USER_PREFIX: '@signal:sesame:user:',
   SENDER_KEY_RECORD_PREFIX: '@signal:sender-key-record:',
+  // Maps an opaque `senderKeyId` to the record that holds it. A received group
+  // message names its sender key by that id and nothing else, and this backend
+  // is a flat key-value store with no secondary indexes, so the reverse lookup
+  // has to be a stored pointer. The pointer value is a record key, not key
+  // material; the ids in it already travel unencrypted on the wire.
+  //
+  // The pointer is scoped by sender, not by id alone. A sender chooses its own
+  // id and announces it in a distribution message, so two senders can name the
+  // same one — by accident or deliberately, after reading a shared group's
+  // distribution. A single global slot per id would let the second writer
+  // silently take over the first's pointer, and every subsequent message from
+  // the first sender would fail to resolve. See `getSenderKeyIdPointerKey`.
+  SENDER_KEY_ID_INDEX_PREFIX: '@signal:sender-key-id:',
   SKIPPED_SENDER_KEY_PREFIX: '@signal:skipped-sender-key:',
   MESSAGE_RECORD_PREFIX: '@signal:message-record:',
   SECURITY_EVENTS: '@signal:security-events',
 } as const;
+
+/**
+ * Escape a value so it cannot contain the `:` that joins composite keys.
+ *
+ * Composite keys in this backend are `:`-joined strings, and the components
+ * are identifiers the adapter does not get to choose: group IDs, sender key
+ * IDs read straight off the wire, and user IDs handed over by the host
+ * application's identify hook. None of them are validated, and a
+ * tenant-scoped `tenant:alice` is an ordinary thing for a host to produce, so
+ * "components contain no `:`" is an assumption rather than a fact and the
+ * encoding has to make it one.
+ *
+ * `%` is escaped first so the escape character itself round-trips: without it
+ * a literal `%3A` in an identifier would unescape into a separator. Values
+ * containing neither character escape to themselves, so an existing
+ * deployment whose IDs are already well behaved keeps the keys it has.
+ */
+function escapeKeyComponent(value: string): string {
+  return value.replace(/%/g, '%25').replace(/:/g, '%3A');
+}
+
+/** Inverse of {@link escapeKeyComponent}; unescapes in the opposite order. */
+function unescapeKeyComponent(value: string): string {
+  return value.replace(/%3A/g, ':').replace(/%25/g, '%');
+}
 
 /**
  * Session storage record
@@ -1047,15 +1085,26 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
   }
 
   private getSenderKeyRecordStorageKey(groupId: string, userId: string, deviceId: number): string {
-    return `${STORAGE_KEYS.SENDER_KEY_RECORD_PREFIX}${groupId}:${userId}:${deviceId}`;
+    return `${this.getSenderKeyRecordGroupPrefix(groupId)}${escapeKeyComponent(userId)}:${deviceId}`;
   }
 
+  /** Prefix matching every sender key record stored for one group. */
+  private getSenderKeyRecordGroupPrefix(groupId: string): string {
+    return `${STORAGE_KEYS.SENDER_KEY_RECORD_PREFIX}${escapeKeyComponent(groupId)}:`;
+  }
+
+  /**
+   * Prefix matching every skipped key of one sender in one group.
+   *
+   * Trailing `:` included: the chain index follows it, and without it the
+   * prefix for device 1 would also match device 10's keys.
+   */
   private getSkippedSenderKeyPrefix(
     groupId: string,
     senderId: string,
     senderDeviceId: number
   ): string {
-    return `${STORAGE_KEYS.SKIPPED_SENDER_KEY_PREFIX}${groupId}:${senderId}:${senderDeviceId}`;
+    return `${STORAGE_KEYS.SKIPPED_SENDER_KEY_PREFIX}${escapeKeyComponent(groupId)}:${escapeKeyComponent(senderId)}:${senderDeviceId}:`;
   }
 
   private getSkippedSenderKeyStorageKey(
@@ -1064,11 +1113,16 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     senderDeviceId: number,
     chainIndex: number
   ): string {
-    return `${this.getSkippedSenderKeyPrefix(groupId, senderId, senderDeviceId)}:${chainIndex}`;
+    return `${this.getSkippedSenderKeyPrefix(groupId, senderId, senderDeviceId)}${chainIndex}`;
   }
 
   private getMessageRecordStorageKey(sessionId: string, timestamp: number): string {
-    return `${STORAGE_KEYS.MESSAGE_RECORD_PREFIX}${sessionId}:${timestamp}`;
+    return `${this.getMessageRecordSessionPrefix(sessionId)}${timestamp}`;
+  }
+
+  /** Prefix matching every retry record stored for one session. */
+  private getMessageRecordSessionPrefix(sessionId: string): string {
+    return `${STORAGE_KEYS.MESSAGE_RECORD_PREFIX}${escapeKeyComponent(sessionId)}:`;
   }
 
   // ============================================================================
@@ -1257,16 +1311,123 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
 
   async deleteSenderKey(groupId: string, userId: string, deviceId: number): Promise<void> {
     this.ensureInitialized();
+    await this.removeSenderKeyIdPointers(groupId, userId, deviceId);
     await this.storageBackend.removeItem(
       this.getSenderKeyRecordStorageKey(groupId, userId, deviceId)
     );
+  }
+
+  /**
+   * Build the storage key for a `senderKeyId` pointer.
+   *
+   * Scoped by sender, so one sender's id can never displace another's. That
+   * scoping is only worth anything if the join is injective, and a
+   * `senderKeyId` is the component least entitled to trust — it is whatever
+   * bytes the sender put in the frame's distribution field, validated
+   * nowhere — so it is escaped rather than reasoned about. With every
+   * component escaped, no choice of id can synthesize another sender's
+   * `:<deviceId>:<userId>` tail.
+   */
+  private getSenderKeyIdPointerKey(
+    senderKeyId: string,
+    userId: string,
+    deviceId: number
+  ): string {
+    return `${STORAGE_KEYS.SENDER_KEY_ID_INDEX_PREFIX}${escapeKeyComponent(senderKeyId)}:${deviceId}:${escapeKeyComponent(userId)}`;
+  }
+
+  /**
+   * Drop the `senderKeyId` pointers a record owns, before the record goes.
+   *
+   * Ordered that way deliberately: a pointer that outlives its record is
+   * self-healing (`resolveGroupForSenderKeyId` confirms and deletes it), while
+   * a record that outlives its pointers is simply unreachable by id.
+   */
+  private async removeSenderKeyIdPointers(
+    groupId: string,
+    userId: string,
+    deviceId: number
+  ): Promise<void> {
+    const record = await this.getSenderKeyRecord(groupId, userId, deviceId);
+    if (!record) return;
+
+    await this.storageBackend.removeMany(
+      record
+        .map((state) => state.senderKeyId)
+        .filter(Boolean)
+        .map((senderKeyId) => this.getSenderKeyIdPointerKey(senderKeyId, userId, deviceId))
+    );
+  }
+
+  async resolveGroupForSenderKeyId(
+    senderKeyId: string,
+    userId: string,
+    deviceId: number
+  ): Promise<string | null> {
+    this.ensureInitialized();
+    if (!senderKeyId) return null;
+
+    const recordKey = await this.storageBackend.getItem(
+      this.getSenderKeyIdPointerKey(senderKeyId, userId, deviceId)
+    );
+    if (!recordKey) return null;
+
+    // The pointer is a cache over the records, so it is confirmed against the
+    // record rather than trusted. The sender check is an invariant assertion
+    // now that the pointer key is itself sender-scoped: a mismatch would mean
+    // the two disagree, so resolve to nothing rather than reaching into
+    // another sender's record. It is deliberately not deleted — the key
+    // belongs to this sender, and a wrong value is a bug to notice, not a
+    // stale entry to sweep.
+    const parsed = this.parseSenderKeyRecordStorageKey(recordKey);
+    if (!parsed || parsed.userId !== userId || parsed.deviceId !== deviceId) {
+      return null;
+    }
+
+    const record = await this.getSenderKeyRecord(parsed.groupId, userId, deviceId);
+    if (!record?.some((state) => state.senderKeyId === senderKeyId)) {
+      await this.storageBackend.removeItem(
+        this.getSenderKeyIdPointerKey(senderKeyId, userId, deviceId)
+      );
+      return null;
+    }
+
+    return parsed.groupId;
+  }
+
+  /**
+   * Split a record storage key back into its parts.
+   *
+   * The components were escaped on the way in, so the body holds exactly three
+   * `:`-separated fields and the split is unambiguous. Anything else is a key
+   * this adapter did not write.
+   */
+  private parseSenderKeyRecordStorageKey(
+    recordKey: string
+  ): { groupId: string; userId: string; deviceId: number } | null {
+    if (!recordKey.startsWith(STORAGE_KEYS.SENDER_KEY_RECORD_PREFIX)) return null;
+    const body = recordKey.slice(STORAGE_KEYS.SENDER_KEY_RECORD_PREFIX.length);
+
+    const parts = body.split(':');
+    if (parts.length !== 3) return null;
+    const [groupId, userId, device] = parts as [string, string, string];
+    if (!groupId || !userId || !device) return null;
+
+    const deviceId = Number(device);
+    if (!Number.isInteger(deviceId)) return null;
+
+    return {
+      groupId: unescapeKeyComponent(groupId),
+      userId: unescapeKeyComponent(userId),
+      deviceId,
+    };
   }
 
   async getAllSenderKeysForGroup(groupId: string): Promise<SenderKeyState[]> {
     this.ensureInitialized();
     const allKeys = await this.storageBackend.getAllKeys();
     const senderKeys = allKeys.filter((key) =>
-      key.startsWith(`${STORAGE_KEYS.SENDER_KEY_RECORD_PREFIX}${groupId}:`)
+      key.startsWith(this.getSenderKeyRecordGroupPrefix(groupId))
     );
 
     const states: SenderKeyState[] = [];
@@ -1287,8 +1448,16 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     this.ensureInitialized();
     const allKeys = await this.storageBackend.getAllKeys();
     const senderKeys = allKeys.filter((key) =>
-      key.startsWith(`${STORAGE_KEYS.SENDER_KEY_RECORD_PREFIX}${groupId}:`)
+      key.startsWith(this.getSenderKeyRecordGroupPrefix(groupId))
     );
+
+    for (const recordKey of senderKeys) {
+      const parsed = this.parseSenderKeyRecordStorageKey(recordKey);
+      if (parsed) {
+        await this.removeSenderKeyIdPointers(parsed.groupId, parsed.userId, parsed.deviceId);
+      }
+    }
+
     await this.storageBackend.removeMany(senderKeys);
     return senderKeys.length;
   }
@@ -1304,10 +1473,31 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
       return;
     }
 
-    await this.storageBackend.setItem(
-      this.getSenderKeyRecordStorageKey(groupId, userId, deviceId),
-      await this.encrypt(JSON.stringify(states))
-    );
+    const recordKey = this.getSenderKeyRecordStorageKey(groupId, userId, deviceId);
+
+    // Rotation drops the oldest state out of the record; its pointer has to go
+    // with it, or a replayed message naming a discarded key still resolves to
+    // a group and fails one layer deeper than it should.
+    const superseded = await this.getSenderKeyRecord(groupId, userId, deviceId);
+    const retained = new Set(states.map((state) => state.senderKeyId));
+    if (superseded) {
+      await this.storageBackend.removeMany(
+        superseded
+          .map((state) => state.senderKeyId)
+          .filter((senderKeyId) => senderKeyId && !retained.has(senderKeyId))
+          .map((senderKeyId) => this.getSenderKeyIdPointerKey(senderKeyId, userId, deviceId))
+      );
+    }
+
+    await this.storageBackend.setItem(recordKey, await this.encrypt(JSON.stringify(states)));
+
+    for (const senderKeyId of retained) {
+      if (!senderKeyId) continue;
+      await this.storageBackend.setItem(
+        this.getSenderKeyIdPointerKey(senderKeyId, userId, deviceId),
+        recordKey
+      );
+    }
   }
 
   async getSenderKeyRecord(
@@ -1477,7 +1667,7 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     this.ensureInitialized();
     const allKeys = await this.storageBackend.getAllKeys();
     const messageKeys = allKeys.filter((key) =>
-      key.startsWith(`${STORAGE_KEYS.MESSAGE_RECORD_PREFIX}${sessionId}:`)
+      key.startsWith(this.getMessageRecordSessionPrefix(sessionId))
     );
     if (messageKeys.length > 0) {
       await this.storageBackend.removeMany(messageKeys);

@@ -29,19 +29,23 @@ files that nobody could run would look like assurance without being any.
 Every change to the source repository runs the full set of automated checks,
 and an export is only cut from a revision where they pass.
 
-Most recent full run — 2026-07-24:
+Most recent full run — 2026-07-28:
 
 | | |
 |---|---|
-| Modules executed | 351 |
-| Assertions | 5,875 |
-| Passed | 5,874 |
-| Skipped | 1 |
+| Modules executed | 371 |
+| Assertions | 6,496 |
+| Passed | 6,493 |
+| Skipped | 3 |
 | Failed | 0 |
-| Wall time | 96 s |
+| Wall time | 237 s |
 
 Longer-running performance and endurance checks are excluded from that figure
 and run under separate commands.
+
+The table above is not hand-edited: release tooling regenerates it from a real
+run, refuses to write figures from a failing run, and the release gate refuses
+to cut an export when the figures are more than three days old.
 
 Coverage spans, in the terms this documentation uses elsewhere:
 

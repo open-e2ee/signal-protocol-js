@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/open-e2ee/signal-protocol-js/security
+    about: Never report suspected vulnerabilities in a public issue.
+  - name: Documentation and guides
+    url: https://docs.open-e2ee.dev
+    about: Quickstarts, concepts, and integration guides.
+  - name: Commercial licensing
+    url: https://open-e2ee.dev/pricing
+    about: Tiers, terms, and the console for self-serve purchase.

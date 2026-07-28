@@ -17,7 +17,7 @@
  * convex.setAuth(authToken);
  * const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
  * const relay = convexRelay({ convex, api: signalApi, currentUserId: userId });
- * const storage = expoStore({ relay });
+ * const storage = expoStore();
  *
  * const result = await rotateKeysHeadless(relay, userId, deviceId, { storage });
  * console.log(result); // { signedRotated: true, kyberRotated: false, oneTimeReplenished: true }

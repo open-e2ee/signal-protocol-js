@@ -11,11 +11,19 @@ All content is opaque to the server.
 
 ## Properties
 
-### encryptedChange
+### actions
 
-> **encryptedChange**: `Uint8Array`
+> **actions**: `Uint8Array`
 
-Serialized GroupChange (opaque to server)
+Exact serialized Actions bytes accepted and stored by the server
+
+***
+
+### changeEpoch
+
+> **changeEpoch**: `number`
+
+Protocol epoch for action feature gating
 
 ***
 

@@ -47,7 +47,7 @@ by `ConvexSignalProtocolRelayApi`. Use `satisfies` to get a compile-time diagnos
 without widening the generated references.
 
 To serve groups from this deployment, also mount the
-[Convex group server](./server/README.md) inside the same namespace
+[Convex Signal Protocol component](./component/README.md) inside the same namespace
 (`convex/signal/groups.ts` and `convex/signal/zkAuth.ts`); the relay
 advertises its `groupServer` capability only when both modules are
 configured.

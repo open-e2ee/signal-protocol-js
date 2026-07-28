@@ -140,6 +140,14 @@ compromised application code, a stolen unlocked device, or an attacker who also
 obtains the adapter encryption key. Browser IndexedDB and caller-provided React
 Native storage inherit their host application's security boundary.
 
+Group sender key state never leaves the device. A sender key record holds the
+chain key every message key on that chain derives from and the sender's private
+signature key; together they are enough to read a sender's group messages and to
+forge new ones, so no adapter transmits them and no relay contract accepts them.
+The same rule covers the message keys held for out-of-order group messages.
+Local adapters bound that skipped-key store so a peer cannot grow it without
+limit by skipping ever further ahead.
+
 Relay and remote object-store adapters receive public key material, routing
 metadata, and opaque ciphertext required by their contracts. TLS,
 authorization, abuse controls, atomic prekey consumption, and access logging
