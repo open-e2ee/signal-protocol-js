@@ -35,6 +35,7 @@ import type {
   Unsubscribe,
   GroupMemberDevice,
   GroupChangeEntry,
+  GroupChangePage,
   RetryRequest,
   AccountIdentityProvisioning,
   AccountIdentityRotation,
@@ -1438,7 +1439,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     groupId: Uint8Array,
     fromVersion: number,
     authorization: GroupAuthorization
-  ): Promise<GroupChangeEntry[]> {
+  ): Promise<GroupChangePage> {
     const { groups } = this.requireGroupServerApi();
     const result = await this.convex.query(groups.getGroupChanges, {
       groupId: this.toBytes(groupId),
@@ -1446,21 +1447,24 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
       presentation: this.toBytes(authorization.presentation),
       groupPublicParams: this.toBytes(authorization.groupPublicParams),
     });
-    return result.map(
-      (entry: {
-        version: number;
-        actions: ArrayBuffer;
-        serverSignature: ArrayBuffer;
-        changeEpoch: number;
-        timestamp: number;
-      }) => ({
-        version: entry.version,
-        actions: new Uint8Array(entry.actions),
-        serverSignature: new Uint8Array(entry.serverSignature),
-        changeEpoch: entry.changeEpoch,
-        timestamp: entry.timestamp,
-      })
-    );
+    return {
+      entries: result.entries.map(
+        (entry: {
+          version: number;
+          actions: ArrayBuffer;
+          serverSignature: ArrayBuffer;
+          changeEpoch: number;
+          timestamp: number;
+        }) => ({
+          version: entry.version,
+          actions: new Uint8Array(entry.actions),
+          serverSignature: new Uint8Array(entry.serverSignature),
+          changeEpoch: entry.changeEpoch,
+          timestamp: entry.timestamp,
+        })
+      ),
+      hasMore: result.hasMore,
+    };
   }
 
   async submitGroupChange(

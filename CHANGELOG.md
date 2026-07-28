@@ -1,5 +1,92 @@
 # Changelog
 
+## 0.1.0-alpha.9
+
+- **BREAKING: the multi-recipient content ceiling is the reference's
+  96 KiB, and the shared payload is stored once, not once per
+  recipient.** The 256 KiB ceiling was a misreading of the reference,
+  which validates what each recipient will *receive* against the same
+  96 KiB message-size constant it applies to individual sends — its
+  256 KiB constant is an HTTP entity-read cap on the whole request, not
+  a content bound. Worse, the fan-out stored a full copy of the shared
+  ciphertext in every recipient's row, so one full-size send to a large
+  group multiplied itself by the device count inside a single
+  transaction — the reference's message store instead inserts one
+  shared multi-recipient payload and hands each recipient a pointer,
+  and this relay now does the same: per-recipient rows keep only their
+  48 bytes of key material, delivery reassembles the exact wire form,
+  and the shared payload row shares the message queue's retention.
+  Found by this round's adversarial review; the ceiling boundary and
+  the once-per-send storage each carry a revert-proven test.
+
+- **The mock relay's send dedup is now sender-scoped, matching the
+  Convex backend**, and `clientMessageId` is documented as requiring
+  global uniqueness: sealed senders are anonymous by design, so every
+  sealed send to a device shares one dedup namespace, and a reused
+  counter or timestamp from two senders would silently collapse into
+  one stored message.
+
+- **The change-log walk now stops where the tenure ends, not where
+  readability ends.** The S10a work narrowed the change log's entry gate to
+  members but left the walk's continue condition on the weaker readable
+  set, so a removal that left another of the requester's aliases pending —
+  an ACI member whose PNI was invited, then the ACI removed — kept serving
+  post-tenure history to a principal the group now lists only as invited,
+  from any `fromVersion` inside the old tenure. Both gates now share one
+  membership predicate: the walk serves through the tenure-ending
+  transition, inclusive, and nothing after it. Versioned `getGroup` had the
+  sibling misclassification: a requester with no tenure at all fell into
+  the same `before_join` refusal as the join-version floor, telling a
+  revoked-then-re-invited member that their membership was intact. The
+  no-tenure case is now refused as `not_a_member`, `before_join` is raised
+  only against a live tenure, and the accepted-join read translates
+  `not_a_member` into `GROUP_ACCESS_REVOKED`. Found by this round's
+  adversarial review; the alias-removal walk, the versioned-read reasons,
+  the empty-page fault, and the snapshot-regression guard each carry a
+  revert-proven test, and the S10a catch-up test now proves the snapshot
+  mechanism against a server whose log throws.
+
+- **The Node store now implements all of `ISignalProtocolLocalStore`, and the
+  compiler enforces it.** `NodeSignalProtocolStore` was missing 37 of the
+  interface's 72 members — the whole Sesame device-record, sender-key,
+  skipped-sender-key, and message-record surfaces, plus metadata and the
+  prekey-recovery helpers — so multi-device linking and both group APIs were
+  unavailable to any Node process, and passing the store as `adapters.storage`
+  needed a cast. All 37 are implemented against the same encrypted, atomically
+  committed state document the adapter already used, and the class now carries
+  an `implements ISignalProtocolLocalStore` clause, so a missing member or a
+  drifted signature fails the build instead of surfacing as a runtime gap. The
+  store also joins the shared storage contract with extended boundaries and the
+  shared sender-key resolution contract, which the other adapters already ran.
+
+- **The Node store's registration ID survives a restart.** It was held in an
+  in-memory `Map` inside an adapter whose entire purpose is persistence, so
+  every process start reported registration ID 0 and every peer read the
+  restart as a reinstall. It is now part of the persisted state document,
+  keyed by identity type so ACI and PNI stay distinct. Kyber prekey usage
+  markers, previously in-memory for the same reason, persist alongside it.
+
+- **BREAKING: the group change log is served in pages.** `getGroupChanges`
+  returned the entire remaining log in one response — in practice the
+  Convex transport silently truncated its restore at 4096 changes with no
+  has-more signal, which is worse: a long log simply stopped syncing. The
+  endpoint now returns `{ entries, hasMore }`: at most 64 entries per
+  request, `hasMore` set only when the page was cut for size with the
+  requester still a member, and each resumed request authorized
+  independently at its own `fromVersion` snapshot. A walk that ends at the
+  log's tip or at the requester's own tenure-ending transition is complete
+  and says so — a removed member never sees `hasMore` dangle past the
+  change that removed them. The client sync loop pages until done,
+  resuming from the last verified revision, and treats a has-more page
+  that served nothing as a server fault rather than looping on it. The
+  reference's clients also drive an explicit paging loop off a has-more
+  signal, though their resume cursor is server-supplied where ours is the
+  client's own last verified revision; the page size here follows the
+  shape, not a verified reference constant. The Convex transport bounds
+  its storage restore to one page plus the look-ahead entry that decides
+  `hasMore`, so the read cost now scales with the page rather than with
+  `min(history, 4096)`.
+
 ## 0.1.0-alpha.8
 
 - **An internal pricing exploration is no longer published, and business

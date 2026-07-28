@@ -4,6 +4,7 @@ import type {
   GroupChangeLogEntry,
 } from '../../../../internal/groups/manager';
 import {
+  GROUP_CHANGE_LOG_PAGE_LIMIT,
   GroupAuthorizationServerEngine,
   type GroupServerEngineRuntime,
   type GroupServerPersistedGroup,
@@ -125,6 +126,8 @@ async function loadEngine(
   options: {
     snapshotVersions?: number[];
     changesAfterVersion?: number;
+    /** Cap on restored changes (and their post-state snapshots). */
+    changeLimit?: number;
   } = {}
 ): Promise<{
   engine: GroupAuthorizationServerEngine;
@@ -155,7 +158,7 @@ async function loadEngine(
           .gt('version', changesAfterVersion)
       )
       .order('asc')
-      .take(MAX_CHANGE_BATCH);
+      .take(Math.min(options.changeLimit ?? MAX_CHANGE_BATCH, MAX_CHANGE_BATCH));
     for (const document of documents) {
       changes.push({
         version: document.version,
@@ -364,7 +367,10 @@ export const getGroupChanges = query({
     presentation: v.bytes(),
     groupPublicParams: v.bytes(),
   },
-  returns: v.array(changeResultValidator),
+  returns: v.object({
+    entries: v.array(changeResultValidator),
+    hasMore: v.boolean(),
+  }),
   handler: async (ctx, input) => {
     const groupId = toUint8Array(input.groupId);
     const { engine, groupDocument } = await loadEngine(
@@ -375,9 +381,13 @@ export const getGroupChanges = query({
       {
         snapshotVersions: [input.fromVersion],
         changesAfterVersion: input.fromVersion,
+        // One page plus the single look-ahead entry that decides hasMore:
+        // the engine caps its walk at the page limit, so restoring more
+        // than this is pure read amplification.
+        changeLimit: GROUP_CHANGE_LOG_PAGE_LIMIT + 1,
       }
     );
-    if (!groupDocument) return [];
+    if (!groupDocument) return { entries: [], hasMore: false };
     const result = await translateEngineErrors(() =>
       engine.getGroupChanges(
         groupId,
@@ -385,13 +395,16 @@ export const getGroupChanges = query({
         authorization(input)
       )
     );
-    return result.map((entry) => ({
-      version: entry.version,
-      actions: toArrayBuffer(entry.actions),
-      serverSignature: toArrayBuffer(entry.serverSignature),
-      changeEpoch: entry.changeEpoch,
-      timestamp: entry.timestamp,
-    }));
+    return {
+      entries: result.entries.map((entry) => ({
+        version: entry.version,
+        actions: toArrayBuffer(entry.actions),
+        serverSignature: toArrayBuffer(entry.serverSignature),
+        changeEpoch: entry.changeEpoch,
+        timestamp: entry.timestamp,
+      })),
+      hasMore: result.hasMore,
+    };
   },
 });
 

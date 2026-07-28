@@ -888,7 +888,10 @@ export function defineConvexSignalProtocolBackend<
           presentation: v.bytes(),
           groupPublicParams: v.bytes(),
         },
-        returns: v.array(changeResultValidator),
+        returns: v.object({
+          entries: v.array(changeResultValidator),
+          hasMore: v.boolean(),
+        }),
         handler: async (ctx, input) =>
           await ctx.runQuery(component.groups.getGroupChanges, input),
       }),

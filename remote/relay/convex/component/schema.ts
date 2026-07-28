@@ -178,6 +178,10 @@ export default defineSchema({
     timestamp: v.number(),
     serverTimestamp: v.number(),
     clientMessageId: v.optional(v.string()),
+    // Present on multi-recipient rows: `ciphertext` then holds only the
+    // version byte and this recipient's key material, and the shared
+    // remainder lives once in `multiRecipientPayloads`.
+    sharedPayloadId: v.optional(v.string()),
     expiresAt: v.number(),
   })
     .index('by_message_id', ['messageId'])
@@ -197,6 +201,23 @@ export default defineSchema({
       'senderUserId',
       'clientMessageId',
     ])
+    .index('by_expires_at', ['expiresAt']),
+  // The shared portion of a multi-recipient sealed-sender message —
+  // ephemeral public key and message ciphertext — stored once per send.
+  // The per-recipient message rows carry only their 48 bytes of key
+  // material plus a reference here, and delivery reassembles the wire
+  // form. This is the reference's shape: its message store inserts one
+  // shared multi-recipient payload and hands each recipient a pointer,
+  // because storing a copy per recipient turns one send into an
+  // amplification of itself. Rows share the message queue's retention
+  // and are reaped by TTL, not by delivery — the last reader must not
+  // have to know it is last.
+  multiRecipientPayloads: defineTable({
+    payloadId: v.string(),
+    sharedBase64: v.string(),
+    expiresAt: v.number(),
+  })
+    .index('by_payload_id', ['payloadId'])
     .index('by_expires_at', ['expiresAt']),
   retryRequests: defineTable({
     requestId: v.string(),

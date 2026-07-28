@@ -21,6 +21,7 @@ import type {
   IGroupServer,
   GroupAuthorization,
   GroupChangeLogEntry,
+  GroupChangeLogPage,
   GroupSnapshot,
 } from '../../../internal/groups/manager';
 
@@ -146,24 +147,25 @@ export class ConvexGroupServer implements IGroupServer {
   }
 
   /**
-   * Get change log entries from a given version.
+   * Get one page of change log entries from a given version.
    *
    * Used for incremental group state sync. The enforcing backend authorizes
    * at the requested snapshot, requires the requester to be a member there —
    * pending principals catch up by snapshot instead (S10a) — and returns
    * changes through the first transition that revokes the requester,
-   * inclusive.
+   * inclusive. A page cut for size sets `hasMore`; resume from the last
+   * served version.
    *
    * @param groupId - 32-byte group identifier
    * @param fromVersion - Version to start from (exclusive)
    * @param authorization - ZK auth credential presentation + group public params
-   * @returns Array of change log entries with encrypted changes and server signatures
+   * @returns One change-log page with encrypted changes and server signatures
    */
   async getGroupChanges(
     groupId: Uint8Array,
     fromVersion: number,
     authorization: GroupAuthorization
-  ): Promise<GroupChangeLogEntry[]> {
+  ): Promise<GroupChangeLogPage> {
     const result = await this.convex.query(this.api.getGroupChanges, {
       groupId: this.toBytes(groupId),
       fromVersion,
@@ -171,21 +173,24 @@ export class ConvexGroupServer implements IGroupServer {
       groupPublicParams: this.toBytes(authorization.groupPublicParams),
     });
 
-    return result.map(
-      (entry: {
-        version: number;
-        actions: ArrayBuffer;
-        serverSignature: ArrayBuffer;
-        changeEpoch: number;
-        timestamp: number;
-      }) => ({
-        version: entry.version,
-        actions: new Uint8Array(entry.actions),
-        serverSignature: new Uint8Array(entry.serverSignature),
-        changeEpoch: entry.changeEpoch,
-        timestamp: entry.timestamp,
-      })
-    );
+    return {
+      entries: result.entries.map(
+        (entry: {
+          version: number;
+          actions: ArrayBuffer;
+          serverSignature: ArrayBuffer;
+          changeEpoch: number;
+          timestamp: number;
+        }) => ({
+          version: entry.version,
+          actions: new Uint8Array(entry.actions),
+          serverSignature: new Uint8Array(entry.serverSignature),
+          changeEpoch: entry.changeEpoch,
+          timestamp: entry.timestamp,
+        })
+      ),
+      hasMore: result.hasMore,
+    };
   }
 
   /**

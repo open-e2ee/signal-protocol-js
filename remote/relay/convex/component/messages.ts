@@ -30,8 +30,16 @@ const MAX_MULTI_RECIPIENT_DEVICES = 1000;
 /**
  * Ceiling on a single message's content, before base64 framing.
  *
- * 96 KiB for a single-recipient envelope and 256 KiB for the shared
- * multi-recipient payload, matching the reference implementation's bounds.
+ * 96 KiB, and the same 96 KiB for the shared multi-recipient ciphertext.
+ * The reference validates what each recipient will *receive* — the
+ * one-byte version, that recipient's key material, and the shared data —
+ * against a single 96 KiB message-size constant, on the individual and
+ * multi-recipient paths alike; its separate 256 KiB constant is an HTTP
+ * entity-read cap on the whole request (shared payload plus every
+ * recipient block), not a content ceiling, and an earlier version of this
+ * file mistook it for one. The shared ciphertext is the dominant term of
+ * the per-recipient view, so it is what the ceiling binds here.
+ *
  * The columns are base64 strings, so the byte ceilings are enforced as
  * string-length ceilings: base64 emits 4 characters per started group of 3
  * bytes, which is 4 * ceil(n / 3) — the ceiling belongs inside the division,
@@ -41,7 +49,7 @@ const MAX_MULTI_RECIPIENT_DEVICES = 1000;
 const base64LengthOf = (byteLength: number): number =>
   4 * Math.ceil(byteLength / 3);
 const MAX_MESSAGE_BYTES = 96 * 1024;
-const MAX_MULTI_RECIPIENT_MESSAGE_BYTES = 256 * 1024;
+const MAX_MULTI_RECIPIENT_MESSAGE_BYTES = 96 * 1024;
 const MAX_CIPHERTEXT_LENGTH = base64LengthOf(MAX_MESSAGE_BYTES);
 const MAX_MULTI_RECIPIENT_CIPHERTEXT_LENGTH = base64LengthOf(
   MAX_MULTI_RECIPIENT_MESSAGE_BYTES
@@ -100,8 +108,13 @@ const rateLimiter = new RateLimiter(components.rateLimiter, {
   },
   // Counted, not metered by size: a retry request is a fixed-shape row. A
   // client coming back from a broken session legitimately asks for one per
-  // message it could not decrypt, so the burst allowance is generous; what
-  // it refuses is a caller that keeps asking indefinitely.
+  // message it could not decrypt, so the burst allowance is generous. What
+  // this bounds is the *rate*, not the total: a refilling bucket never
+  // refuses a patient caller, so a hostile account can still accrete rows
+  // against a target at the refill rate for as long as it cares to, up to
+  // whatever the seven-day TTL retains. That is a storage-and-noise cost,
+  // not a denial — the target reads the oldest page first and can drain —
+  // and the row TTL, not this bucket, is what ultimately bounds it.
   retryRequests: {
     kind: 'token bucket',
     rate: 120,
@@ -287,6 +300,7 @@ type StoredMessage = {
   ephemeral?: boolean;
   timestamp: number;
   clientMessageId?: string;
+  sharedPayloadId?: string;
 };
 
 async function insertMessage(
@@ -426,36 +440,77 @@ export const getPendingMessages = query({
         )
         .take(MAX_PENDING_MESSAGES)
     ).filter((row) => row.expiresAt > now);
-    return rows.map(
-      ({
-        messageId,
-        targetUserId,
-        targetDeviceId,
-        senderUserId,
-        senderDeviceId,
-        ciphertext,
-        messageType,
-        urgent,
-        ephemeral,
-        timestamp,
-        serverTimestamp,
-        clientMessageId,
-        expiresAt,
-      }) => ({
-        id: messageId,
-        targetUserId,
-        targetDeviceId,
-        senderUserId,
-        senderDeviceId,
-        ciphertext,
-        messageType,
-        urgent,
-        ephemeral,
-        timestamp,
-        serverTimestamp,
-        clientMessageId,
-        expiresAt,
-      })
+    // Multi-recipient rows store only their per-recipient prefix; the wire
+    // form is reassembled here from the once-stored shared payload. The
+    // payload shares the row's exact expiresAt, and the filter above has
+    // already dropped expired rows, so a missing payload is not a benign
+    // expiry race — it is an integrity fault, and it is served as one.
+    const sharedByPayloadId = new Map<string, Uint8Array>();
+    const wireCiphertext = async (row: {
+      ciphertext: string;
+      sharedPayloadId?: string;
+    }): Promise<string> => {
+      if (row.sharedPayloadId === undefined) return row.ciphertext;
+      let shared = sharedByPayloadId.get(row.sharedPayloadId);
+      if (!shared) {
+        const payloadId = row.sharedPayloadId;
+        const payload = await ctx.db
+          .query('multiRecipientPayloads')
+          .withIndex('by_payload_id', (q) => q.eq('payloadId', payloadId))
+          .unique();
+        if (!payload) {
+          // ConvexError so the structured {code, status} survives
+          // serialization, matching the groups module's integrity-fault
+          // rejections. Not a RelayErrorCode: those name request faults,
+          // and this one is the server's.
+          throw new ConvexError({
+            code: 'INTERNAL_ERROR',
+            status: 500,
+            message:
+              'Shared multi-recipient payload is missing for a live message',
+          });
+        }
+        shared = base64ToBytes(asBase64(payload.sharedBase64));
+        sharedByPayloadId.set(row.sharedPayloadId, shared);
+      }
+      const prefix = base64ToBytes(asBase64(row.ciphertext));
+      const wire = new Uint8Array(prefix.length + shared.length);
+      wire.set(prefix, 0);
+      wire.set(shared, prefix.length);
+      return bytesToBase64(wire);
+    };
+    return Promise.all(
+      rows.map(
+        async ({
+          messageId,
+          targetUserId,
+          targetDeviceId,
+          senderUserId,
+          senderDeviceId,
+          messageType,
+          urgent,
+          ephemeral,
+          timestamp,
+          serverTimestamp,
+          clientMessageId,
+          expiresAt,
+          ...row
+        }) => ({
+          id: messageId,
+          targetUserId,
+          targetDeviceId,
+          senderUserId,
+          senderDeviceId,
+          ciphertext: await wireCiphertext(row),
+          messageType,
+          urgent,
+          ephemeral,
+          timestamp,
+          serverTimestamp,
+          clientMessageId,
+          expiresAt,
+        })
+      )
     );
   },
 });
@@ -661,13 +716,12 @@ export const sendMultiRecipientUnidentified = mutation({
     // budgets ~100 bytes per recipient block. 512 base64 characters is far
     // above any real encoding and far below a useful flood.
     //
-    // One entry per (userId, deviceId). The fan-out below stores a full copy
-    // of the shared ciphertext for every entry it accepts, so a request
-    // naming one device N times stores N copies of it — and a group-send
-    // token endorses the recipient *set*, saying nothing about how many
-    // times a member may appear in it. Rejecting rather than collapsing: a
-    // repeat is a client bug, and quietly picking one of two conflicting key
-    // blocks would bury it.
+    // One entry per (userId, deviceId). Each accepted entry stores only its
+    // own key material next to a reference to the once-stored shared
+    // payload, but a repeat is still rejected rather than collapsed — a
+    // group-send token endorses the recipient *set*, saying nothing about
+    // how many times a member may appear in it, a repeat is a client bug,
+    // and quietly picking one of two conflicting key blocks would bury it.
     const seenDevices = new Set<string>();
     for (const recipient of input.recipients) {
       requireCiphertextWithin(recipient.encryptedMessageKeyBase64, 512);
@@ -696,6 +750,29 @@ export const sendMultiRecipientUnidentified = mutation({
     const messageCiphertext = base64ToBytes(
       asBase64(input.messageCiphertextBase64)
     );
+    // The shared remainder — ephemeral public key and message ciphertext —
+    // is stored once and referenced from every accepted recipient row,
+    // matching the reference's message store, which inserts one shared
+    // multi-recipient payload and hands each recipient a pointer. Storing
+    // a copy per row turns a ~100 KiB send into recipient-count times that
+    // in one transaction. Created lazily on the first accepted recipient;
+    // a request whose recipients all 404 (or all deduplicate) stores
+    // nothing new beyond, at worst, one TTL-reaped orphan payload.
+    const sharedLength = ephemeralPublic.length + messageCiphertext.length;
+    let sharedPayloadId: string | undefined;
+    const ensureSharedPayload = async (
+      shared: Uint8Array
+    ): Promise<string> => {
+      if (sharedPayloadId === undefined) {
+        sharedPayloadId = crypto.randomUUID();
+        await ctx.db.insert('multiRecipientPayloads', {
+          payloadId: sharedPayloadId,
+          sharedBase64: bytesToBase64(shared),
+          expiresAt: Date.now() + MESSAGE_TTL_MS,
+        });
+      }
+      return sharedPayloadId;
+    };
     let first:
       { messageId: string; serverTimestamp: number } | undefined;
     const uuids404 = new Set<string>();
@@ -730,21 +807,31 @@ export const sendMultiRecipientUnidentified = mutation({
         uuids404.add(recipient.userId);
         continue;
       }
+      // The canonical serializer builds (and validates) the full wire
+      // form; the row keeps only the per-recipient prefix — version byte
+      // and key material — and delivery reattaches the shared suffix.
       const receivedMessage = serializeReceivedMessage(
         base64ToBytes(asBase64(recipient.encryptedMessageKeyBase64)),
         base64ToBytes(asBase64(recipient.authenticationTagBase64)),
         ephemeralPublic,
         messageCiphertext
       );
+      const prefix = receivedMessage.subarray(
+        0,
+        receivedMessage.length - sharedLength
+      );
       const result = await insertMessage(ctx, {
         targetUserId: recipient.userId,
         targetDeviceId: recipient.deviceId,
         senderUserId: '',
         senderDeviceId: 0,
-        ciphertext: bytesToBase64(receivedMessage),
+        ciphertext: bytesToBase64(prefix),
         messageType: 'unidentified_sender',
         timestamp: input.timestamp,
         clientMessageId: input.clientMessageId,
+        sharedPayloadId: await ensureSharedPayload(
+          receivedMessage.subarray(receivedMessage.length - sharedLength)
+        ),
       });
       first ??= result;
     }

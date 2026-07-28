@@ -162,13 +162,16 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           groupPublicParams: ArrayBuffer;
           presentation: ArrayBuffer;
         },
-        Array<{
-          actions: ArrayBuffer;
-          changeEpoch: number;
-          serverSignature: ArrayBuffer;
-          timestamp: number;
-          version: number;
-        }>,
+        {
+          entries: Array<{
+            actions: ArrayBuffer;
+            changeEpoch: number;
+            serverSignature: ArrayBuffer;
+            timestamp: number;
+            version: number;
+          }>;
+          hasMore: boolean;
+        },
         Name
       >;
       getGroupJoinInfo: FunctionReference<

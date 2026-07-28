@@ -3,14 +3,12 @@
 `NodeSignalProtocolStore` provides Node.js protocol storage using encrypted,
 crash-durable filesystem state.
 
-**Coverage is partial.** This adapter implements the core single-device
-surface — identity, prekey, session, and kyber-prekey storage — and does not
-yet implement the multi-device (Sesame device records), group (sender keys),
-or message-record portions of `ISignalProtocolLocalStore`, nor some
-maintenance utilities. Use it for
-single-device Node processes; for multi-device or group flows in Node today,
-use `mockStore` for development or implement the full interface against your
-own database (see [Integration Interfaces](../../../docs/INTERFACES.md)).
+It implements all of `ISignalProtocolLocalStore` — identity, prekeys, sessions,
+Kyber prekeys, Sesame device records, sender keys, and message records — so
+multi-device and group flows work in Node without a custom adapter. The class
+declares `implements ISignalProtocolLocalStore`, so the compiler rejects any
+build in which a member is missing or its signature drifts; that check is the
+guarantee behind this paragraph, not a manual audit.
 
 ## Why it exists
 

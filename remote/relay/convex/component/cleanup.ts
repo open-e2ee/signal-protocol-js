@@ -46,6 +46,30 @@ export const cleanupExpiredMessages = internalMutation({
   },
 });
 
+export const cleanupExpiredMultiRecipientPayloads = internalMutation({
+  args: { cutoff: v.optional(v.number()) },
+  returns: cleanupResultValidator,
+  handler: async (ctx, input) => {
+    const cutoff = input.cutoff ?? Date.now();
+    const rows = await ctx.db
+      .query('multiRecipientPayloads')
+      .withIndex('by_expires_at', (q) => q.lt('expiresAt', cutoff))
+      .take(CLEANUP_BATCH_SIZE);
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+    const continued = rows.length === CLEANUP_BATCH_SIZE;
+    if (continued) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.cleanup.cleanupExpiredMultiRecipientPayloads,
+        { cutoff }
+      );
+    }
+    return { deleted: rows.length, continued };
+  },
+});
+
 export const cleanupExpiredRetryRequests = internalMutation({
   args: { cutoff: v.optional(v.number()) },
   returns: cleanupResultValidator,

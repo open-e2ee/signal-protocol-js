@@ -577,23 +577,25 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
   } | null>;
 
   /**
-   * Get group change log entries after a given version.
+   * Get one page of group change log entries after a given version.
    * Used for incremental state synchronization.
    *
-   * Authorization is evaluated at the `fromVersion` snapshot. Serve through
-   * the first transition that makes the requester unreadable, inclusive, and
-   * do not serve later transitions under that request.
+   * Authorization is evaluated at the `fromVersion` snapshot, and the
+   * requester must be a member there. Serve through the first transition
+   * that makes the requester unreadable, inclusive, and do not serve later
+   * transitions under that request. A page cut for size sets `hasMore`;
+   * the client resumes from the last served version.
    *
    * @param groupId - 32-byte group identifier
    * @param fromVersion - Fetch changes with version > fromVersion
    * @param authorization - ZK auth credential for anonymous group access
-   * @returns Authorized contiguous change-log prefix in version order
+   * @returns One authorized contiguous change-log page in version order
    */
   getGroupChanges(
     groupId: Uint8Array,
     fromVersion: number,
     authorization: GroupAuthorization
-  ): Promise<GroupChangeEntry[]>;
+  ): Promise<GroupChangePage>;
 
   /**
    * Submit a group change with optimistic concurrency control.
@@ -839,6 +841,13 @@ export interface Envelope {
    * If a client retries after an unknown relay result, it should reuse the
    * same value so the relay can return the original accept metadata instead
    * of inserting a duplicate pending envelope.
+   *
+   * MUST be globally unique — a UUID, not a counter or timestamp. On the
+   * identified path the relay scopes deduplication by sender, but a sealed
+   * sender is anonymous by design, so every sealed send to a device shares
+   * one dedup namespace: two sealed senders reusing the same value would
+   * silently collapse into one stored message, with the second sender
+   * handed the first message's receipt.
    */
   clientMessageId?: string;
 
@@ -1001,4 +1010,15 @@ export interface GroupChangeEntry {
   changeEpoch: number;
   /** When the server accepted this change */
   timestamp: number;
+}
+
+/**
+ * One page of the group change log, returned by getGroupChanges().
+ *
+ * `hasMore` is true only when the server cut the page for size with the
+ * requester still readable; resume from the version of the last entry.
+ */
+export interface GroupChangePage {
+  entries: GroupChangeEntry[];
+  hasMore: boolean;
 }

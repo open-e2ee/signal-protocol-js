@@ -25,6 +25,13 @@ crons.interval(
 );
 
 crons.interval(
+  'delete expired multi-recipient payloads',
+  { hours: 1 },
+  internal.cleanup.cleanupExpiredMultiRecipientPayloads,
+  {}
+);
+
+crons.interval(
   'delete stale KEM prekeys',
   { hours: 24 },
   internal.cleanup.cleanupStaleKemPreKeys,

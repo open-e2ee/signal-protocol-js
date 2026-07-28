@@ -38,7 +38,9 @@ operational behavior require further deployment evidence.
 
 - `NodeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/node`
 
-Use this for non-mobile environments that need a filesystem-backed store.
+Use this for non-mobile environments that need a filesystem-backed store. It
+implements the full core store contract, including SESAME records, sender-key
+state, retry message records, and recovery helpers.
 
 ## Composition
 

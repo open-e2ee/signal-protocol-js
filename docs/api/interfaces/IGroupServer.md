@@ -72,13 +72,17 @@ clients must not jump over unverified changes to a newer snapshot.
 
 ### getGroupChanges()
 
-> **getGroupChanges**(`groupId`, `fromVersion`, `authorization`): `Promise`\<`GroupChangeLogEntry`[]\>
+> **getGroupChanges**(`groupId`, `fromVersion`, `authorization`): `Promise`\<`GroupChangeLogPage`\>
 
-Get the authorized change-log prefix after a historical version.
+Get one page of the authorized change log after a historical version.
 
-Authorization is evaluated at the `fromVersion` snapshot. The response
-includes the first transition that makes the requester unreadable, then
-stops; a requester already unreadable at that snapshot is refused.
+Authorization is evaluated at the `fromVersion` snapshot, and the
+requester must be a member there (S10; S10a governs how a refused
+pending requester advances instead). The page includes the first
+transition whose post-state drops the requester from `members`, then
+stops; a requester who is not a member at that snapshot is refused.
+`hasMore` signals a page cut for size, resumable from the last served
+version.
 
 #### Parameters
 
@@ -96,7 +100,7 @@ stops; a requester already unreadable at that snapshot is refused.
 
 #### Returns
 
-`Promise`\<`GroupChangeLogEntry`[]\>
+`Promise`\<`GroupChangeLogPage`\>
 
 ***
 

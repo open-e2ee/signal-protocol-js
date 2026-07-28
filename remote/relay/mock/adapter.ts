@@ -21,6 +21,7 @@ import type {
   Unsubscribe,
   GroupMemberDevice,
   GroupChangeEntry,
+  GroupChangePage,
   RetryRequest,
   AccountIdentityProvisioning,
   AccountIdentityRotation,
@@ -147,7 +148,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
 
   // Messages/envelopes
   private pendingMessages = new Map<string, Envelope[]>(); // key: `${userId}:${deviceId}`
-  private clientMessageReceipts = new Map<string, { messageId: string; serverTimestamp: number }>(); // key: `${userId}:${deviceId}:${clientMessageId}`
+  private clientMessageReceipts = new Map<string, { messageId: string; serverTimestamp: number }>(); // key: `${userId}:${deviceId}:${senderUserId}:${clientMessageId}`
   private messageCounter = 0;
 
   // Subscriptions
@@ -269,7 +270,12 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
   async send(envelope: Envelope): Promise<{ messageId: string; serverTimestamp: number }> {
     await this.failures.waitForLatency();
     const targetKey = `${envelope.targetUserId}:${envelope.targetDeviceId}`;
-    const receiptKey = envelope.clientMessageId ? `${targetKey}:${envelope.clientMessageId}` : null;
+    // Sender-scoped like the Convex backend's dedup index: a
+    // clientMessageId collapses retries from the same sender only, never
+    // two senders that happen to reuse a value.
+    const receiptKey = envelope.clientMessageId
+      ? `${targetKey}:${envelope.senderUserId ?? ''}:${envelope.clientMessageId}`
+      : null;
     if (receiptKey) {
       const existing = this.clientMessageReceipts.get(receiptKey);
       if (existing) {
@@ -1246,7 +1252,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     groupId: Uint8Array,
     fromVersion: number,
     authorization: GroupAuthorization
-  ): Promise<GroupChangeEntry[]> {
+  ): Promise<GroupChangePage> {
     return this.groupAuthorizationServer.getGroupChanges(
       groupId,
       fromVersion,

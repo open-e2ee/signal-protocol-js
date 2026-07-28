@@ -36,28 +36,98 @@ const DEFAULT_DATA_DIR = join(homedir(), '.config', 'open-e2ee', 'signal-protoco
  */
 const SECURE_FILE_MODE = 0o600;
 
-interface StoredNodeSession {
+export interface StoredNodeSession {
   userId: string;
   deviceId: number;
   serializedRecord: string;
 }
 
+/**
+ * Group, user, and device identifiers each occupy their own key position.
+ *
+ * A single joined string key would let a delimiter inside any one component
+ * shift the boundary between them, mapping two distinct senders onto one slot.
+ */
+export type NodeSenderKeyTree<T> = Record<string, Record<string, Record<string, T>>>;
+
+/**
+ * Group-messaging namespaces, mutated together so a rotation is one commit.
+ *
+ * The fields are `readonly` because a mutation callback receives a view onto
+ * the state document, not the document: replacing a field would update the
+ * view and commit nothing. Edit the dictionaries in place.
+ */
+export interface NodeSenderKeyState<T> {
+  /** groupId -> userId -> deviceId -> current state */
+  readonly current: NodeSenderKeyTree<T>;
+  /** groupId -> userId -> deviceId -> [current, ...previous] */
+  readonly records: NodeSenderKeyTree<T[]>;
+  /** groupId -> senderId -> deviceId -> chainIndex -> skipped message key */
+  readonly skipped: Record<string, NodeSenderKeyTree<unknown>>;
+}
+
+/** SESAME device state and the sessions it owns, mutated as one unit. */
+export interface NodeSesameState<T> {
+  readonly users: Record<string, T>;
+  readonly sessions: Record<string, StoredNodeSession>;
+}
+
 interface NodeAtomicSecurityState {
-  version: 1;
+  version: 2;
   contacts: Record<string, unknown>;
   ecOneTimePreKeys: Record<string, unknown[]>;
   kemOneTimePreKeys: Record<string, unknown[]>;
   sessions: Record<string, StoredNodeSession>;
+  /** SESAME user records, serialized by the adapter (Maps and byte arrays flattened). */
+  sesameUsers: Record<string, unknown>;
+  senderKeys: NodeSenderKeyTree<unknown>;
+  senderKeyRecords: NodeSenderKeyTree<unknown[]>;
+  skippedSenderKeys: Record<string, NodeSenderKeyTree<unknown>>;
+  /** sessionId -> client timestamp -> MessageRecord */
+  messageRecords: Record<string, Record<string, unknown>>;
+  metadata: Record<string, string>;
+  registrationIds: Record<string, number>;
+  kyberUsage: Record<string, unknown>;
+}
+
+function emptyDictionary<T>(): T {
+  return Object.create(null) as T;
 }
 
 function createEmptySecurityState(): NodeAtomicSecurityState {
   return {
-    version: 1,
-    contacts: Object.create(null) as Record<string, unknown>,
-    ecOneTimePreKeys: Object.create(null) as Record<string, unknown[]>,
-    kemOneTimePreKeys: Object.create(null) as Record<string, unknown[]>,
-    sessions: Object.create(null) as Record<string, StoredNodeSession>,
+    version: 2,
+    contacts: emptyDictionary(),
+    ecOneTimePreKeys: emptyDictionary(),
+    kemOneTimePreKeys: emptyDictionary(),
+    sessions: emptyDictionary(),
+    sesameUsers: emptyDictionary(),
+    senderKeys: emptyDictionary(),
+    senderKeyRecords: emptyDictionary(),
+    skippedSenderKeys: emptyDictionary(),
+    messageRecords: emptyDictionary(),
+    metadata: emptyDictionary(),
+    registrationIds: emptyDictionary(),
+    kyberUsage: emptyDictionary(),
   };
+}
+
+/**
+ * Rebuild a decoded dictionary with a null prototype, `depth` levels down.
+ *
+ * `JSON.parse` produces ordinary objects, on which `__proto__` and
+ * `constructor` are not plain data keys: assigning to them either invokes an
+ * inherited setter or is silently dropped. Every dictionary here is keyed by
+ * identifiers the application supplies — user, group, device, session, and
+ * metadata names — so each level is rebuilt before it is indexed.
+ */
+function toNullPrototype<T>(value: unknown, depth: number): T {
+  const source = (value ?? {}) as Record<string, unknown>;
+  const result = emptyDictionary<Record<string, unknown>>();
+  for (const key of Object.keys(source)) {
+    result[key] = depth > 1 ? toNullPrototype(source[key], depth - 1) : source[key];
+  }
+  return result as T;
 }
 
 /**
@@ -174,11 +244,15 @@ export class NodeEncryptedDatabase {
     await this.writeSecurityStateFile(createEmptySecurityState());
   }
 
-  private assertSecurityState(value: unknown): asserts value is NodeAtomicSecurityState {
+  private assertSecurityState(
+    value: unknown
+  ): asserts value is Partial<NodeAtomicSecurityState> & { version: 1 | 2 } {
     if (!value || typeof value !== 'object') throw new Error('Invalid Node security state');
-    const state = value as Partial<NodeAtomicSecurityState>;
+    const state = value as Omit<Partial<NodeAtomicSecurityState>, 'version'> & {
+      version?: number;
+    };
     if (
-      state.version !== 1 ||
+      (state.version !== 1 && state.version !== 2) ||
       !state.contacts ||
       typeof state.contacts !== 'object' ||
       !state.ecOneTimePreKeys ||
@@ -195,28 +269,27 @@ export class NodeEncryptedDatabase {
   private async readSecurityStateFile(): Promise<NodeAtomicSecurityState> {
     const fileData = await readFile(this.securityStatePath, 'utf8');
     const encrypted = JSON.parse(fileData) as EncryptedRecord;
-    const state = decryptRecord<unknown>(encrypted, this.dbKey!);
-    this.assertSecurityState(state);
-    // JSON.parse creates ordinary objects whose `__proto__`/`constructor`
-    // names have special behavior. Normalize every attacker-influenced key
-    // dictionary so arbitrary valid user IDs remain plain data keys.
-    state.contacts = Object.assign(Object.create(null), state.contacts) as Record<
-      string,
-      unknown
-    >;
-    state.ecOneTimePreKeys = Object.assign(
-      Object.create(null),
-      state.ecOneTimePreKeys
-    ) as Record<string, unknown[]>;
-    state.kemOneTimePreKeys = Object.assign(
-      Object.create(null),
-      state.kemOneTimePreKeys
-    ) as Record<string, unknown[]>;
-    state.sessions = Object.assign(Object.create(null), state.sessions) as Record<
-      string,
-      StoredNodeSession
-    >;
-    return state;
+    const decoded = decryptRecord<unknown>(encrypted, this.dbKey!);
+    this.assertSecurityState(decoded);
+    // A version 1 document predates the SESAME, group, message-record, and
+    // metadata namespaces. It is widened here rather than reset: discarding it
+    // would drop pinned contact identities, and an unpinned contact is one
+    // whose next identity change goes undetected.
+    return {
+      version: 2,
+      contacts: toNullPrototype(decoded.contacts, 1),
+      ecOneTimePreKeys: toNullPrototype(decoded.ecOneTimePreKeys, 1),
+      kemOneTimePreKeys: toNullPrototype(decoded.kemOneTimePreKeys, 1),
+      sessions: toNullPrototype(decoded.sessions, 1),
+      sesameUsers: toNullPrototype(decoded.sesameUsers, 1),
+      senderKeys: toNullPrototype(decoded.senderKeys, 3),
+      senderKeyRecords: toNullPrototype(decoded.senderKeyRecords, 3),
+      skippedSenderKeys: toNullPrototype(decoded.skippedSenderKeys, 4),
+      messageRecords: toNullPrototype(decoded.messageRecords, 2),
+      metadata: toNullPrototype(decoded.metadata, 1),
+      registrationIds: toNullPrototype(decoded.registrationIds, 1),
+      kyberUsage: toNullPrototype(decoded.kyberUsage, 1),
+    };
   }
 
   private async writeSecurityStateFile(state: NodeAtomicSecurityState): Promise<void> {
@@ -524,7 +597,7 @@ export class NodeEncryptedDatabase {
   async deleteOneTimePreKeys(identityType?: string): Promise<void> {
     await this.mutateSecurityState((state) => {
       if (identityType) delete state.ecOneTimePreKeys[identityType];
-      else state.ecOneTimePreKeys = {};
+      else state.ecOneTimePreKeys = emptyDictionary();
     });
   }
 
@@ -621,7 +694,7 @@ export class NodeEncryptedDatabase {
 
   async deleteAllSessions(): Promise<void> {
     await this.mutateSecurityState((state) => {
-      state.sessions = Object.create(null) as Record<string, StoredNodeSession>;
+      state.sessions = emptyDictionary();
     });
   }
 
@@ -668,6 +741,196 @@ export class NodeEncryptedDatabase {
         ).filter((key) => key.keyId !== kemOneTimePreKeyId);
       }
     });
+  }
+
+  // ============================================================================
+  // SESAME Device State
+  //
+  // Device records and the sessions they own are one mutation domain: a device
+  // record naming a session that is not in `sessions` (or the reverse) is a
+  // divergence no later read can repair, so both move under one commit.
+  // ============================================================================
+
+  async readSesameState<T>(): Promise<NodeSesameState<T>> {
+    const state = await this.readSecurityState();
+    return {
+      users: state.sesameUsers as Record<string, T>,
+      sessions: state.sessions,
+    };
+  }
+
+  /** Drop every session and every SESAME device record in one commit. */
+  async clearSesameState(): Promise<void> {
+    await this.mutateSecurityState((state) => {
+      state.sessions = emptyDictionary();
+      state.sesameUsers = emptyDictionary();
+    });
+  }
+
+  async mutateSesameState<T, R>(mutation: (state: NodeSesameState<T>) => R): Promise<R> {
+    return await this.mutateSecurityState((state) =>
+      mutation({
+        users: state.sesameUsers as Record<string, T>,
+        sessions: state.sessions,
+      })
+    );
+  }
+
+  // ============================================================================
+  // Sender Keys (Group Messaging)
+  // ============================================================================
+
+  async readSenderKeyState<T>(): Promise<NodeSenderKeyState<T>> {
+    const state = await this.readSecurityState();
+    return {
+      current: state.senderKeys as NodeSenderKeyTree<T>,
+      records: state.senderKeyRecords as NodeSenderKeyTree<T[]>,
+      skipped: state.skippedSenderKeys,
+    };
+  }
+
+  /**
+   * Atomically update the group-messaging namespaces.
+   *
+   * A rotation writes the new current state and the retained previous states
+   * together; a crash between them would leave a sender key whose in-flight
+   * messages can no longer be resolved.
+   */
+  async mutateSenderKeyState<T, R>(mutation: (state: NodeSenderKeyState<T>) => R): Promise<R> {
+    return await this.mutateSecurityState((state) =>
+      mutation({
+        current: state.senderKeys as NodeSenderKeyTree<T>,
+        records: state.senderKeyRecords as NodeSenderKeyTree<T[]>,
+        skipped: state.skippedSenderKeys,
+      })
+    );
+  }
+
+  // ============================================================================
+  // Message Records (SESAME Retry Support)
+  // ============================================================================
+
+  async readMessageRecords<T>(): Promise<Record<string, Record<string, T>>> {
+    const state = await this.readSecurityState();
+    return state.messageRecords as Record<string, Record<string, T>>;
+  }
+
+  async mutateMessageRecords<T, R>(
+    mutation: (records: Record<string, Record<string, T>>) => R
+  ): Promise<R> {
+    return await this.mutateSecurityState((state) =>
+      mutation(state.messageRecords as Record<string, Record<string, T>>)
+    );
+  }
+
+  // ============================================================================
+  // Metadata, Registration IDs, and Kyber Usage
+  // ============================================================================
+
+  async getMetadataValue(key: string): Promise<string | null> {
+    const state = await this.readSecurityState();
+    return state.metadata[key] ?? null;
+  }
+
+  async setMetadataValue(key: string, value: string): Promise<void> {
+    await this.mutateSecurityState((state) => {
+      state.metadata[key] = value;
+    });
+  }
+
+  async getRegistrationId(identityType: string): Promise<number> {
+    const state = await this.readSecurityState();
+    return state.registrationIds[identityType] ?? 0;
+  }
+
+  async setRegistrationId(identityType: string, id: number): Promise<void> {
+    await this.mutateSecurityState((state) => {
+      state.registrationIds[identityType] = id;
+    });
+  }
+
+  async markKyberPreKeyUsed<T>(key: string, usage: T): Promise<void> {
+    await this.mutateSecurityState((state) => {
+      state.kyberUsage[key] = usage;
+    });
+  }
+
+  // ============================================================================
+  // Key Recovery (PQXDH §4.13 identifier-collision recovery)
+  // ============================================================================
+
+  async getEcSignedPreKeyMaxId(identityType: string = 'aci'): Promise<number> {
+    const keys = await this.readCollection<{ keyId: number }>(`signed_prekeys_${identityType}`);
+    return keys.reduce((max, key) => (key.keyId > max ? key.keyId : max), 0);
+  }
+
+  async getKyberPreKeyMaxId(identityType: string = 'aci'): Promise<number> {
+    const keys = await this.readCollection<{ id: number }>(`kyber_prekeys_${identityType}`);
+    return keys.reduce((max, key) => (key.id > max ? key.id : max), 0);
+  }
+
+  async deleteAllPreKeys(identityType: string = 'aci'): Promise<{
+    ecSignedPreKeys: number;
+    ecOneTimePreKeys: number;
+    kyberPreKeys: number;
+    kemOneTimePreKeys: number;
+  }> {
+    const [signedPreKeys, kyberPreKeys] = await Promise.all([
+      this.readCollection<unknown>(`signed_prekeys_${identityType}`),
+      this.readCollection<unknown>(`kyber_prekeys_${identityType}`),
+    ]);
+
+    const oneTimeCounts = await this.mutateSecurityState((state) => {
+      const ec = (state.ecOneTimePreKeys[identityType] ?? []).length;
+      const kem = (state.kemOneTimePreKeys[identityType] ?? []).length;
+      delete state.ecOneTimePreKeys[identityType];
+      delete state.kemOneTimePreKeys[identityType];
+      for (const key of Object.keys(state.kyberUsage)) {
+        if (key.startsWith(`${identityType}:`)) delete state.kyberUsage[key];
+      }
+      return { ec, kem };
+    });
+
+    await Promise.all([
+      this.deleteCollection(`signed_prekeys_${identityType}`),
+      this.deleteCollection(`kyber_prekeys_${identityType}`),
+    ]);
+
+    return {
+      ecSignedPreKeys: signedPreKeys.length,
+      ecOneTimePreKeys: oneTimeCounts.ec,
+      kyberPreKeys: kyberPreKeys.length,
+      kemOneTimePreKeys: oneTimeCounts.kem,
+    };
+  }
+
+  async getDetailedStats(): Promise<{
+    sessions: number;
+    ecSignedPreKeys: number;
+    ecOneTimePreKeys: number;
+    kyberPreKeys: number;
+    kemOneTimePreKeys: number;
+    users: number;
+  }> {
+    const state = await this.readSecurityState();
+    const [signedAci, signedPni, kyberAci, kyberPni] = await Promise.all([
+      this.readCollection(`signed_prekeys_aci`).then((keys) => keys.length),
+      this.readCollection(`signed_prekeys_pni`).then((keys) => keys.length),
+      this.readCollection(`kyber_prekeys_aci`).then((keys) => keys.length),
+      this.readCollection(`kyber_prekeys_pni`).then((keys) => keys.length),
+    ]);
+
+    const total = (collection: Record<string, unknown[]>): number =>
+      Object.values(collection).reduce((count, keys) => count + keys.length, 0);
+
+    return {
+      sessions: Object.keys(state.sessions).length,
+      ecSignedPreKeys: signedAci + signedPni,
+      ecOneTimePreKeys: total(state.ecOneTimePreKeys),
+      kyberPreKeys: kyberAci + kyberPni,
+      kemOneTimePreKeys: total(state.kemOneTimePreKeys),
+      users: Object.keys(state.sesameUsers).length,
+    };
   }
 
   // ============================================================================

@@ -9,6 +9,7 @@
 import type {
   GroupAuthorization,
   GroupChangeLogEntry,
+  GroupChangeLogPage,
   IGroupServer,
 } from './manager';
 import {
@@ -72,6 +73,15 @@ import { RistrettoPoint } from '../protocol/zk/proofs/sho';
 
 const MAX_GROUP_SIZE = 1000;
 const INVITE_LINK_PASSWORD_LENGTH = 16;
+// One change-log page. The reference paginates this endpoint — its clients
+// carry an explicit paging loop driven by a has-more signal — and this
+// limit follows the shape, not a verified reference constant (the group
+// server's page size is not visible from the client sources). 64 sits well
+// above any realistic burst of unsynced changes and well below a request
+// that carries a group's whole history. Exported so a storage-backed
+// transport can bound its restore at one page plus the single look-ahead
+// entry that decides `hasMore`.
+export const GROUP_CHANGE_LOG_PAGE_LIMIT = 64;
 
 interface StoredSnapshot {
   state: EncryptedGroup;
@@ -112,19 +122,24 @@ const defaultRuntime: GroupServerEngineRuntime = {
 };
 
 /**
- * Machine-readable cause carried on a FORBIDDEN rejection.
+ * Machine-readable cause carried on some FORBIDDEN rejections.
  *
- * Two different questions produce a 403 on the read paths, and clients act
- * on the difference: `not_readable` answers "may you read this group at
- * all" (the requester is banned or absent from the authorizing roster) and
- * is what a client may interpret as revocation; `before_join` answers "may
- * you read this version of it" (the join-version floor) and says nothing
- * about current access; `not_a_member` refuses the change log to a
- * requester the snapshot lists only as pending — readable, but holding no
- * tenure the log could narrate. Discriminating by code rather than by
- * message text keeps the distinction out of prose, where it cannot be
- * asserted on without coupling tests — and the manager's revocation
- * handling — to error-message wording.
+ * Three different questions produce a 403 on the read paths, and clients
+ * act on the difference: `not_readable` answers "may you read this group
+ * at all" (the requester is banned or absent from the authorizing roster)
+ * and is what a client may interpret as revocation; `before_join` answers
+ * "may you read this version of it" (the join-version floor, raised only
+ * while the requester holds a live tenure); `not_a_member` refuses a
+ * member read — the change log, or a versioned snapshot — to a requester
+ * who is readable but holds no tenure, i.e. is only pending. The `code`
+ * is FORBIDDEN for all three; it is this `reason` field that carries the
+ * distinction, and discriminating by it rather than by message text keeps
+ * the difference out of prose, where it cannot be asserted on without
+ * coupling tests — and the manager's revocation handling — to
+ * error-message wording. Rejections outside these read paths (bad
+ * presentations, link-password failures, terminated groups, …) carry no
+ * reason at all: a client must treat a missing reason as "not an access
+ * answer", never as revocation.
  */
 export type GroupForbiddenReason =
   | 'not_readable'
@@ -1484,10 +1499,24 @@ export class GroupAuthorizationServerEngine implements IGroupServer {
   private isReadable(state: EncryptedGroup, requester: VerifiedRequester): boolean {
     if (requesterIsBanned(state, requester)) return false;
     return (
-      state.members.some((member) => requesterMatches(requester, member.userId)) ||
+      this.isMemberOf(state, requester) ||
       state.membersPendingProfileKey.some((pending) =>
         requesterMatches(requester, pending.member.userId)
       )
+    );
+  }
+
+  /**
+   * Whether the requester holds a member entry in this state. This is the
+   * change-log predicate: the log is a member read (S10), so the walk both
+   * admits and continues on membership — the same requester can hold a
+   * member entry under one alias and a pending entry under another (§7.6),
+   * and continuing on the weaker readable-set would keep serving the log
+   * after the transition that ended their tenure.
+   */
+  private isMemberOf(state: EncryptedGroup, requester: VerifiedRequester): boolean {
+    return state.members.some((member) =>
+      requesterMatches(requester, member.userId)
     );
   }
 
@@ -1619,7 +1648,22 @@ export class GroupAuthorizationServerEngine implements IGroupServer {
         stored.state,
         requester
       );
-      if (joinedAtVersion === undefined || version < joinedAtVersion) {
+      if (joinedAtVersion === undefined) {
+        // Readable but not a member — a pending principal. Versioned
+        // history is a member read (S10a grants an invitee the current
+        // state only), and this is a different answer than `before_join`:
+        // that reason promises the membership itself is fine, which is
+        // exactly wrong for a former member whose re-invitation left them
+        // pending. `not_a_member` is accurate in both directions — a live
+        // invitee probing history is not told they were revoked, and a
+        // revoked-then-re-invited member is not told their membership is
+        // intact.
+        rejectForbidden(
+          'Only members may read versioned group state',
+          'not_a_member'
+        );
+      }
+      if (version < joinedAtVersion) {
         rejectForbidden(
           'Requester may not read state from before they joined',
           'before_join'
@@ -1688,15 +1732,16 @@ export class GroupAuthorizationServerEngine implements IGroupServer {
     groupId: Uint8Array,
     fromVersion: number,
     authorization: GroupAuthorization
-  ): Promise<GroupChangeLogEntry[]> {
+  ): Promise<GroupChangeLogPage> {
     // Unlike getGroup, this deliberately authorizes against the *requested*
     // snapshot. The walk below serves entries only while the requester stays
-    // readable, stopping at — and including — the change that removed them,
-    // which is how a removed member learns of their removal when they poll;
-    // authorizing against the current state would 403 them into silence
-    // instead. The exposure this leaves is bounded and not new: a former
-    // member can re-fetch changes from within their own tenure, ending at
-    // their removal — bytes they were served while entitled.
+    // a member, stopping at — and including — the change that ended their
+    // tenure, which is how a removed member learns of their removal when
+    // they poll; authorizing against the current state would 403 them into
+    // silence instead. The exposure this leaves is bounded and not new: a
+    // former member can re-fetch changes from within their own tenure,
+    // ending at the change that ended it — bytes they were served while
+    // entitled.
     //
     // The log is for members. A pending-profile-key entry entitles its
     // holder to the current state — acceptance needs that, and getGroup
@@ -1713,35 +1758,47 @@ export class GroupAuthorizationServerEngine implements IGroupServer {
     // for invitees it closes the log outright.
 
     const stored = this.groups.get(this.key(groupId));
-    if (!stored) return [];
+    if (!stored) return { entries: [], hasMore: false };
     const snapshot = stored.snapshots.get(fromVersion);
     if (!snapshot) {
       rejectBadRequest(`Group snapshot ${fromVersion} does not exist`);
     }
     const requester = this.authenticate(groupId, authorization, snapshot.state);
     this.requireReadable(snapshot.state, requester);
-    if (
-      !snapshot.state.members.some((member) =>
-        requesterMatches(requester, member.userId)
-      )
-    ) {
+    if (!this.isMemberOf(snapshot.state, requester)) {
       rejectForbidden(
         'Only members may read the change log',
         'not_a_member'
       );
     }
 
-    const readablePrefix: GroupChangeLogEntry[] = [];
+    // Paged: one request must not be made to carry a group's whole history.
+    // `hasMore` is set only on a size cut with the requester still a member
+    // — the client resumes from the last served version, and each resumed
+    // page re-authorizes at its own fromVersion snapshot. A walk ending at
+    // the log's tip or at the requester's own tenure-ending transition is
+    // complete, so a removed member still never sees `hasMore` dangle past
+    // the change that removed them. The continue condition is the same
+    // membership predicate as the entry gate above: continuing on the
+    // weaker readable-set would serve post-tenure history to a requester
+    // whose removal left an alias pending (§7.6), and the resumed page's
+    // entry gate would then refuse the very request this page invited.
+    const memberPrefix: GroupChangeLogEntry[] = [];
+    let hasMore = false;
     for (const entry of stored.changes) {
       if (entry.version <= fromVersion) continue;
-      readablePrefix.push(entry);
+      if (memberPrefix.length >= GROUP_CHANGE_LOG_PAGE_LIMIT) {
+        hasMore = true;
+        break;
+      }
+      memberPrefix.push(entry);
       const postState = stored.snapshots.get(entry.version);
       if (!postState) {
         throw new Error(`Missing group snapshot ${entry.version}`);
       }
-      if (!this.isReadable(postState.state, requester)) break;
+      if (!this.isMemberOf(postState.state, requester)) break;
     }
-    return structuredClone(readablePrefix);
+    return { entries: structuredClone(memberPrefix), hasMore };
   }
 
   async submitGroupChange(

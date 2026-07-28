@@ -449,14 +449,16 @@ Metadata with timestamps and publicKey, or null if no key exists
 
 ### getGroupChanges()
 
-> **getGroupChanges**(`groupId`, `fromVersion`, `authorization`): `Promise`\<[`GroupChangeEntry`](GroupChangeEntry.md)[]\>
+> **getGroupChanges**(`groupId`, `fromVersion`, `authorization`): `Promise`\<`GroupChangePage`\>
 
-Get group change log entries after a given version.
+Get one page of group change log entries after a given version.
 Used for incremental state synchronization.
 
-Authorization is evaluated at the `fromVersion` snapshot. Serve through
-the first transition that makes the requester unreadable, inclusive, and
-do not serve later transitions under that request.
+Authorization is evaluated at the `fromVersion` snapshot, and the
+requester must be a member there. Serve through the first transition
+that makes the requester unreadable, inclusive, and do not serve later
+transitions under that request. A page cut for size sets `hasMore`;
+the client resumes from the last served version.
 
 #### Parameters
 
@@ -480,9 +482,9 @@ ZK auth credential for anonymous group access
 
 #### Returns
 
-`Promise`\<[`GroupChangeEntry`](GroupChangeEntry.md)[]\>
+`Promise`\<`GroupChangePage`\>
 
-Authorized contiguous change-log prefix in version order
+One authorized contiguous change-log page in version order
 
 ***
 

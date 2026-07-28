@@ -242,17 +242,21 @@ export interface IGroupServer {
   ): Promise<{ encryptedJoinInfo: Uint8Array; version: number } | null>;
 
   /**
-   * Get the authorized change-log prefix after a historical version.
+   * Get one page of the authorized change log after a historical version.
    *
-   * Authorization is evaluated at the `fromVersion` snapshot. The response
-   * includes the first transition that makes the requester unreadable, then
-   * stops; a requester already unreadable at that snapshot is refused.
+   * Authorization is evaluated at the `fromVersion` snapshot, and the
+   * requester must be a member there (S10; S10a governs how a refused
+   * pending requester advances instead). The page includes the first
+   * transition whose post-state drops the requester from `members`, then
+   * stops; a requester who is not a member at that snapshot is refused.
+   * `hasMore` signals a page cut for size, resumable from the last served
+   * version.
    */
   getGroupChanges(
     groupId: Uint8Array,
     fromVersion: number,
     authorization: GroupAuthorization
-  ): Promise<GroupChangeLogEntry[]>;
+  ): Promise<GroupChangeLogPage>;
 
   /** Submit a group change (optimistic concurrency). */
   submitGroupChange(
@@ -278,6 +282,20 @@ export interface GroupChangeLogEntry {
   serverSignature: Uint8Array;
   changeEpoch: number;
   timestamp: number;
+}
+
+/**
+ * One page of the change log.
+ *
+ * The log is served in bounded pages so one request cannot be made to carry
+ * a group's whole history. `hasMore` is true only when the server stopped
+ * for size with the requester still readable — the client resumes from the
+ * version of the last entry served. A walk that ends at the log's tip, or
+ * at the transition that revokes the requester, is complete and says so.
+ */
+export interface GroupChangeLogPage {
+  entries: GroupChangeLogEntry[];
+  hasMore: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -928,14 +946,26 @@ export class GroupManager {
 
       // Once a member has a baseline it may advance only through
       // individually verified transitions. A full snapshot must never bypass
-      // a bad or missing log entry (C1/C3).
-      const changes = await this.withAuthRetry(rawId, (auth) =>
-        this.server.getGroupChanges(secretParams.groupId, currentRevision, auth)
-      );
-
+      // a bad or missing log entry (C1/C3). The log arrives in pages; each
+      // page resumes from the last verified revision, so an aborted sync
+      // resumes exactly where the applied prefix ends.
       let state = cached!;
-      for (const entry of changes) {
-        state = await this.applyVerifiedChange(rawId, state, entry);
+      for (;;) {
+        const page = await this.withAuthRetry(rawId, (auth) =>
+          this.server.getGroupChanges(secretParams.groupId, state.revision, auth)
+        );
+        for (const entry of page.entries) {
+          state = await this.applyVerifiedChange(rawId, state, entry);
+        }
+        if (!page.hasMore) break;
+        // hasMore with an empty page is a server that claims progress it
+        // did not make; looping on it would spin forever, and breaking
+        // would report a stale state as current.
+        if (page.entries.length === 0) {
+          throw new Error(
+            'INVALID_CHANGE_SEQUENCE: Server reported more changes but served none'
+          );
+        }
       }
       if (!this.isReadableBySelf(state)) {
         let baseline: GroupSnapshot | null = null;
@@ -2027,12 +2057,18 @@ export class GroupManager {
         this.server.getGroup(secretParams.groupId, auth, entry.version)
       );
     } catch (error: unknown) {
-      // Only the not-readable rejection is revocation. This is a *versioned*
-      // read, so the same 403 code can also carry the join-version floor —
-      // a rejection about one historical version, raised while the
-      // membership itself is fine — and translating that into
-      // GROUP_ACCESS_REVOKED would report a live member as removed.
-      if (!GroupManager.isNotReadableRejection(error)) throw error;
+      // This is a *versioned* read, so a 403 can carry three answers.
+      // `not_readable` is revocation outright. `not_a_member` means the
+      // membership the accepted self-add just established is already gone —
+      // the requester is at most pending again, so the join was revoked
+      // between acceptance and this read. `before_join` is the one benign
+      // 403 here: the engine raises it only for a requester holding a live
+      // tenure whose floor sits above the requested version, and
+      // translating that into GROUP_ACCESS_REVOKED would report a live
+      // member as removed — so it, like every unreasoned rejection,
+      // propagates untranslated.
+      const reason = GroupManager.forbiddenReason(error);
+      if (reason !== 'not_readable' && reason !== 'not_a_member') throw error;
       // The join was accepted and signed, then revoked before this read: the
       // server authorizes reads at the current state, and the current state
       // no longer lists us. Surface the revocation instead of claiming a
@@ -2075,11 +2111,16 @@ export class GroupManager {
    * presentation, malformed request) is not an access answer at all.
    */
   private static isNotReadableRejection(error: unknown): boolean {
+    return GroupManager.forbiddenReason(error) === 'not_readable';
+  }
+
+  /** The FORBIDDEN reason a server rejection carries, if any. */
+  private static forbiddenReason(error: unknown): string | undefined {
     const data =
       error != null && typeof error === 'object' && 'data' in error
         ? (error as { data?: { code?: string; reason?: string } }).data
         : undefined;
-    return data?.code === 'FORBIDDEN' && data?.reason === 'not_readable';
+    return data?.code === 'FORBIDDEN' ? data.reason : undefined;
   }
 
   /** Whether this client's verified local span still carries full-state read access. */

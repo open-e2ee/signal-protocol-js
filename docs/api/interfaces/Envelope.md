@@ -30,6 +30,13 @@ If a client retries after an unknown relay result, it should reuse the
 same value so the relay can return the original accept metadata instead
 of inserting a duplicate pending envelope.
 
+MUST be globally unique — a UUID, not a counter or timestamp. On the
+identified path the relay scopes deduplication by sender, but a sealed
+sender is anonymous by design, so every sealed send to a device shares
+one dedup namespace: two sealed senders reusing the same value would
+silently collapse into one stored message, with the second sender
+handed the first message's receipt.
+
 ***
 
 ### contentHint?
