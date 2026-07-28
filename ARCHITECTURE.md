@@ -90,7 +90,7 @@ The executable layer map lives in [layers.ts](./layers.ts).
 | Layer | Name              | Runtime directories                                            | Responsibility                                                    |
 | ----- | ----------------- | -------------------------------------------------------------- | ----------------------------------------------------------------- |
 | 1     | API               | `client/`                                                      | Public client boundary and application-facing workflows           |
-| 2     | Orchestration     | `internal/manager/`, `internal/sesame/`, `internal/groups-v2/` | Coordinate sessions, devices, groups, retries, relay/store ports  |
+| 2     | Orchestration     | `internal/manager/`, `internal/sesame/`, `internal/groups/`    | Coordinate sessions, devices, groups, retries, relay/store ports  |
 | 3     | Domain/Session    | `internal/session/`, `safety/`                                 | Session records, handshake, cipher, safety numbers                |
 | 4     | Domain/Algorithms | `internal/protocol/`                                           | Key agreement, ratchets, sender keys, sealed sender, ZK protocols |
 | 5     | Domain/Keys       | `keys/`                                                        | Key types and generation                                          |

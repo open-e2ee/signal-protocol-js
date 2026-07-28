@@ -37,15 +37,17 @@ import type {
   RetryRequest,
   AccountIdentityProvisioning,
   AccountIdentityRotation,
+  IRelayGroupServer,
 } from '../types';
 import { RetryReason } from '../../../internal/sesame/types';
 
 import type { PublicKey, Signature } from '../../../keys/branded';
 import type { CompositeIdentityV1, IdentityType } from '../../../keys/types';
 import { decodeCompositeIdentityV1, encodeCompositeIdentityV1 } from '../../../keys/identity';
-import type { GroupAuthorization } from '../../../internal/groups-v2/manager';
+import type { GroupAuthorization } from '../../../internal/groups/manager';
 import { SealedSenderAuthError } from '../../../types/errors';
 import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
+import { ConvexGroupServer } from './group-server';
 
 /**
  * Polling interval for retry request subscription (in milliseconds).
@@ -139,15 +141,17 @@ export interface ConvexSignalProtocolRelayApi {
     rollbackProvisioning: FunctionReference<'mutation'>;
     deleteProvisioningSession: FunctionReference<'mutation'>;
   };
-  groups: {
+  groups?: {
     createGroup: FunctionReference<'mutation'>;
     getGroup: FunctionReference<'query'>;
+    getGroupJoinInfo: FunctionReference<'query'>;
     getGroupChanges: FunctionReference<'query'>;
     submitGroupChange: FunctionReference<'mutation'>;
     refreshGroupSendEndorsements: FunctionReference<'mutation'>;
   };
-  zkAuth: {
+  zkAuth?: {
     issueAuthCredentialMutation: FunctionReference<'mutation'>;
+    issueProfileKeyCredentialMutation: FunctionReference<'mutation'>;
   };
 }
 
@@ -194,6 +198,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
   private currentUserId?: string;
   private getAuthToken?: () => Promise<string | null>;
   private readonly logger: Required<ILogger>;
+  readonly groupServer?: IRelayGroupServer;
 
   /**
    * Create a new ConvexSignalProtocolRelayServer.
@@ -213,6 +218,15 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     this.currentUserId = options.currentUserId;
     this.getAuthToken = options.getAuthToken;
     this.logger = resolveSignalProtocolLogger(options.logger);
+    if (api.groups && api.zkAuth) {
+      this.groupServer = {
+        server: new ConvexGroupServer(convex, api.groups),
+        issueAuthCredential: (userId) =>
+          this.issueAuthCredential(userId),
+        issueProfileKeyCredential: (_userId, profileKey) =>
+          this.issueProfileKeyCredential(profileKey),
+      };
+    }
   }
 
   /**
@@ -1358,7 +1372,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // GROUP STATE (GroupsV2 — encrypted, server-opaque)
+  // GROUP STATE (encrypted, server-opaque)
   // ════════════════════════════════════════════════════════════════════════════
 
   async createGroupState(
@@ -1366,7 +1380,8 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     encryptedState: Uint8Array,
     authorization: GroupAuthorization
   ): Promise<void> {
-    await this.convex.mutation(this.api.groups.createGroup, {
+    const { groups } = this.requireGroupServerApi();
+    await this.convex.mutation(groups.createGroup, {
       groupId: this.toBytes(groupId),
       encryptedState: this.toBytes(encryptedState),
       presentation: this.toBytes(authorization.presentation),
@@ -1376,19 +1391,43 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
 
   async getGroupState(
     groupId: Uint8Array,
-    authorization: GroupAuthorization
+    authorization: GroupAuthorization,
+    version?: number
   ): Promise<{
     encryptedState: Uint8Array;
     version: number;
+    baselineSignature: Uint8Array;
   } | null> {
-    const result = await this.convex.query(this.api.groups.getGroup, {
+    const { groups } = this.requireGroupServerApi();
+    const result = await this.convex.query(groups.getGroup, {
       groupId: this.toBytes(groupId),
+      presentation: this.toBytes(authorization.presentation),
+      groupPublicParams: this.toBytes(authorization.groupPublicParams),
+      version,
+    });
+    if (!result) return null;
+    return {
+      encryptedState: new Uint8Array(result.encryptedState),
+      version: result.version,
+      baselineSignature: new Uint8Array(result.baselineSignature),
+    };
+  }
+
+  async getGroupJoinInfo(
+    groupId: Uint8Array,
+    inviteLinkPassword: Uint8Array,
+    authorization: GroupAuthorization
+  ): Promise<{ encryptedJoinInfo: Uint8Array; version: number } | null> {
+    const { groups } = this.requireGroupServerApi();
+    const result = await this.convex.query(groups.getGroupJoinInfo, {
+      groupId: this.toBytes(groupId),
+      inviteLinkPassword: this.toBytes(inviteLinkPassword),
       presentation: this.toBytes(authorization.presentation),
       groupPublicParams: this.toBytes(authorization.groupPublicParams),
     });
     if (!result) return null;
     return {
-      encryptedState: new Uint8Array(result.encryptedState),
+      encryptedJoinInfo: new Uint8Array(result.encryptedJoinInfo),
       version: result.version,
     };
   }
@@ -1398,7 +1437,8 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     fromVersion: number,
     authorization: GroupAuthorization
   ): Promise<GroupChangeEntry[]> {
-    const result = await this.convex.query(this.api.groups.getGroupChanges, {
+    const { groups } = this.requireGroupServerApi();
+    const result = await this.convex.query(groups.getGroupChanges, {
       groupId: this.toBytes(groupId),
       fromVersion,
       presentation: this.toBytes(authorization.presentation),
@@ -1407,13 +1447,15 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     return result.map(
       (entry: {
         version: number;
-        encryptedChange: ArrayBuffer;
+        actions: ArrayBuffer;
         serverSignature: ArrayBuffer;
+        changeEpoch: number;
         timestamp: number;
       }) => ({
         version: entry.version,
-        encryptedChange: new Uint8Array(entry.encryptedChange),
+        actions: new Uint8Array(entry.actions),
         serverSignature: new Uint8Array(entry.serverSignature),
+        changeEpoch: entry.changeEpoch,
         timestamp: entry.timestamp,
       })
     );
@@ -1422,24 +1464,51 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
   async submitGroupChange(
     groupId: Uint8Array,
     expectedVersion: number,
-    encryptedChange: Uint8Array,
-    updatedEncryptedState: Uint8Array,
+    actions: Uint8Array,
+    inviteLinkPassword: Uint8Array,
     authorization: GroupAuthorization
-  ): Promise<{ serverSignature: Uint8Array }> {
-    const result = await this.convex.mutation(this.api.groups.submitGroupChange, {
+  ): Promise<GroupChangeEntry> {
+    // S13: the server derives the change epoch from the accepted actions; a
+    // legacy caller-supplied epoch must be rejected, matching
+    // ConvexGroupServer.submitGroupChange.
+    if (arguments.length !== 5) {
+      throw new Error(
+        'INVALID_REQUEST: Group change submission must not carry an epoch'
+      );
+    }
+    const { groups } = this.requireGroupServerApi();
+    const result = await this.convex.mutation(groups.submitGroupChange, {
       groupId: this.toBytes(groupId),
       expectedVersion,
-      encryptedChange: this.toBytes(encryptedChange),
-      updatedEncryptedState: this.toBytes(updatedEncryptedState),
+      actions: this.toBytes(actions),
+      inviteLinkPassword: this.toBytes(inviteLinkPassword),
       presentation: this.toBytes(authorization.presentation),
       groupPublicParams: this.toBytes(authorization.groupPublicParams),
     });
-    return { serverSignature: new Uint8Array(result.serverSignature) };
+    return {
+      version: result.version,
+      actions: new Uint8Array(result.actions),
+      serverSignature: new Uint8Array(result.serverSignature),
+      changeEpoch: result.changeEpoch,
+      timestamp: result.timestamp,
+    };
   }
 
   async issueAuthCredential(_userId: string): Promise<Uint8Array> {
     // userId kept for ISignalProtocolRelayServer interface compat; server uses auth session
-    const result = await this.convex.mutation(this.api.zkAuth.issueAuthCredentialMutation, {});
+    const api = this.requireGroupServerApi();
+    const result = await this.convex.mutation(api.zkAuth.issueAuthCredentialMutation, {});
+    return new Uint8Array(result);
+  }
+
+  async issueProfileKeyCredential(
+    profileKey: Uint8Array
+  ): Promise<Uint8Array> {
+    const api = this.requireGroupServerApi();
+    const result = await this.convex.mutation(
+      api.zkAuth.issueProfileKeyCredentialMutation,
+      { profileKey: this.toBytes(profileKey) }
+    );
     return new Uint8Array(result);
   }
 
@@ -1447,7 +1516,8 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     groupId: Uint8Array,
     authorization: GroupAuthorization
   ): Promise<{ endorsements: Uint8Array; expiration: number }> {
-    const result = await this.convex.mutation(this.api.groups.refreshGroupSendEndorsements, {
+    const api = this.requireGroupServerApi();
+    const result = await this.convex.mutation(api.groups.refreshGroupSendEndorsements, {
       groupId: this.toBytes(groupId),
       presentation: this.toBytes(authorization.presentation),
       groupPublicParams: this.toBytes(authorization.groupPublicParams),
@@ -1461,6 +1531,21 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
   // ════════════════════════════════════════════════════════════════════════════
   // UTILITY METHODS
   // ════════════════════════════════════════════════════════════════════════════
+
+  private requireGroupServerApi(): {
+    groups: NonNullable<ConvexSignalProtocolRelayApi['groups']>;
+    zkAuth: NonNullable<ConvexSignalProtocolRelayApi['zkAuth']>;
+  } {
+    if (!this.api.groups || !this.api.zkAuth) {
+      throw new Error(
+        'This Convex relay does not expose the groupServer capability; configure both groups and zkAuth API modules'
+      );
+    }
+    return {
+      groups: this.api.groups,
+      zkAuth: this.api.zkAuth,
+    };
+  }
 
   /** Convert Uint8Array to ArrayBuffer for Convex v.bytes() args. */
   private toBytes(data: Uint8Array): ArrayBuffer {

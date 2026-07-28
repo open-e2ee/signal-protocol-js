@@ -11,7 +11,7 @@
 Branded type for prefixed group IDs
 
 Ensures compile-time safety for group ID handling.
-A GroupId is always a string with the Signal Protocol V2 prefix.
+A GroupId is always a string with the OpenE2EE group prefix.
 
 ## Type Declaration
 
@@ -23,5 +23,5 @@ A GroupId is always a string with the Signal Protocol V2 prefix.
 
 ```typescript
 const groupId: GroupId = createGroupId('abc123');
-// groupId is '__signal_group__v2__!abc123' with GroupId type
+// groupId is 'open-e2ee:group:abc123' with GroupId type
 ```

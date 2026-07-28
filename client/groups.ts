@@ -11,8 +11,8 @@ import type {
   SenderKeyManager,
   SenderKeyDistributionMessage,
 } from '../internal/protocol/sender-keys';
-import type { GroupsV2Manager } from '../internal/groups-v2';
-import type { DecryptedGroup, AccessControl, MemberRole } from '../internal/groups-v2';
+import type { GroupManager, GroupMemberInput } from '../internal/groups';
+import type { DecryptedGroup, AccessControl, MemberRole } from '../internal/groups';
 import type { GroupId } from '../internal/groups/group-id';
 
 /**
@@ -103,9 +103,11 @@ export async function encryptGroupMessage(
   ctx: SignalProtocolClientContext,
   senderKeyManager: SenderKeyManager,
   groupId: string,
-  plaintext: string | Uint8Array
+  plaintext: string | Uint8Array,
+  assertCanSend?: (groupId: string) => Promise<void>
 ): Promise<Uint8Array> {
   try {
+    await assertCanSend?.(groupId);
     const plaintextBytes =
       typeof plaintext === 'string' ? new TextEncoder().encode(plaintext) : plaintext;
     const encrypted = await senderKeyManager.encryptGroupMessage(
@@ -127,6 +129,12 @@ export async function encryptGroupMessage(
       throw error;
     }
     const err = error as Error;
+    if (
+      err.message?.startsWith('GROUP_SEND_BLOCKED_BY_SECURITY_REACTION:') ||
+      err.message?.startsWith('GROUP_SEND_BLOCKED_BY_ELIGIBILITY:')
+    ) {
+      throw err;
+    }
     if (err.message?.includes('SENDER_KEY_NOT_FOUND')) {
       throw new EncryptionError(
         `No sender key for group ${groupId} - call createGroupSenderKey() first`,
@@ -365,13 +373,13 @@ export async function getGroupSenderKeyStats(
 }
 
 // ============================================================================
-// GROUPS V2 OPERATIONS (Signal Private Group System)
+// GROUP OPERATIONS (Signal Private Group System)
 // ============================================================================
 
 /**
- * Wrap a GroupsV2 operation with consistent logging and error handling.
+ * Wrap a group operation with consistent logging and error handling.
  *
- * All V2 functions follow the same pattern: call manager, log success, throw
+ * All group functions follow the same pattern: call manager, log success, throw
  * EncryptionError on failure. This helper eliminates that boilerplate.
  */
 async function wrapGroupOp<T>(
@@ -386,26 +394,28 @@ async function wrapGroupOp<T>(
     logger.debug(label, { category: 'E2EE', data: logData });
     return result;
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === 'GroupSecurityReactionPendingError'
+    ) {
+      throw error;
+    }
     throw new EncryptionError(label, errorCode, { originalError: error as Error });
   }
 }
 
 /**
- * Create a new GroupsV2 group
+ * Create a new group
  *
  * Generates a master key, builds initial encrypted state, and uploads
  * to the server. The creator is added as an administrator.
  */
-export async function createGroupV2(
+export async function createGroup(
   ctx: SignalProtocolClientContext,
-  manager: GroupsV2Manager,
+  manager: GroupManager,
   creatorAci: Uint8Array,
   creatorProfileKey: Uint8Array,
-  members: Array<{
-    aciBytes: Uint8Array;
-    profileKey: Uint8Array;
-    role?: MemberRole;
-  }>,
+  members: GroupMemberInput[],
   title: string,
   options?: {
     description?: string;
@@ -415,7 +425,7 @@ export async function createGroupV2(
   }
 ): Promise<{ groupId: GroupId; masterKey: Uint8Array }> {
   return wrapGroupOp(
-    `Created GroupsV2 group "${title}"`,
+    `Created group "${title}"`,
     ctx.logger,
     () => manager.createGroup(creatorAci, creatorProfileKey, members, title, options),
     { memberCount: members.length + 1, title },
@@ -424,17 +434,17 @@ export async function createGroupV2(
 }
 
 /**
- * Get the decrypted state for a GroupsV2 group
+ * Get the decrypted state for a group
  *
  * Returns cached state if available, otherwise fetches from server.
  */
-export async function getGroupStateV2(
+export async function getGroupState(
   ctx: SignalProtocolClientContext,
-  manager: GroupsV2Manager,
+  manager: GroupManager,
   groupId: GroupId
 ): Promise<DecryptedGroup> {
   return wrapGroupOp(
-    `Retrieved GroupsV2 state for ${groupId}`,
+    `Retrieved group state for ${groupId}`,
     ctx.logger,
     async () => {
       const state = await manager.getGroupState(groupId);
@@ -445,18 +455,18 @@ export async function getGroupStateV2(
 }
 
 /**
- * Sync GroupsV2 group state from server
+ * Sync group state from server
  *
  * Fetches the latest state or replays the change log to bring
  * local state up to date.
  */
-export async function syncGroupV2(
+export async function syncGroup(
   ctx: SignalProtocolClientContext,
-  manager: GroupsV2Manager,
+  manager: GroupManager,
   groupId: GroupId
 ): Promise<DecryptedGroup> {
   return wrapGroupOp(
-    `Synced GroupsV2 state for ${groupId}`,
+    `Synced group state for ${groupId}`,
     ctx.logger,
     async () => {
       const state = await manager.syncGroup(groupId);
@@ -467,38 +477,66 @@ export async function syncGroupV2(
 }
 
 /**
- * Add a member to a GroupsV2 group
+ * Add a member to a group
  */
-export async function addGroupMemberV2(
+export async function addGroupMember(
   ctx: SignalProtocolClientContext,
-  manager: GroupsV2Manager,
+  manager: GroupManager,
   groupId: GroupId,
   editorAci: Uint8Array,
-  newMemberAci: Uint8Array,
-  newMemberProfileKey: Uint8Array
+  member: GroupMemberInput
 ): Promise<void> {
   return wrapGroupOp(
-    `Added member to GroupsV2 group ${groupId}`,
+    `Added member to group ${groupId}`,
     ctx.logger,
-    () => manager.addMember(groupId, editorAci, newMemberAci, newMemberProfileKey),
+    () => manager.addMember(groupId, editorAci, member),
+    { groupId }
+  );
+}
+
+/** Accept this client's pending profile-key invitation. */
+export async function acceptGroupMemberInvitation(
+  ctx: SignalProtocolClientContext,
+  manager: GroupManager,
+  groupId: GroupId
+): Promise<void> {
+  return wrapGroupOp(
+    `Accepted group invitation for ${groupId}`,
+    ctx.logger,
+    () => manager.acceptMemberInvitation(groupId),
+    { groupId }
+  );
+}
+
+/** Decline this client's ACI- or PNI-keyed pending invitation. */
+export async function declineGroupMemberInvitation(
+  ctx: SignalProtocolClientContext,
+  manager: GroupManager,
+  groupId: GroupId,
+  identity: 'aci' | 'pni' = 'aci'
+): Promise<void> {
+  return wrapGroupOp(
+    `Declined ${identity.toUpperCase()} group invitation for ${groupId}`,
+    ctx.logger,
+    () => manager.declineMemberInvitation(groupId, identity),
     { groupId }
   );
 }
 
 /**
- * Remove a member from a GroupsV2 group
+ * Remove a member from a group
  *
  * Triggers sender key rotation for forward secrecy.
  */
-export async function removeGroupMemberV2(
+export async function removeGroupMember(
   ctx: SignalProtocolClientContext,
-  manager: GroupsV2Manager,
+  manager: GroupManager,
   groupId: GroupId,
   editorAci: Uint8Array,
   targetAci: Uint8Array
 ): Promise<void> {
   return wrapGroupOp(
-    `Removed member from GroupsV2 group ${groupId}`,
+    `Removed member from group ${groupId}`,
     ctx.logger,
     () => manager.removeMember(groupId, editorAci, targetAci),
     { groupId }
@@ -506,16 +544,16 @@ export async function removeGroupMemberV2(
 }
 
 /**
- * Leave a GroupsV2 group (self-remove)
+ * Leave a group (self-remove)
  */
-export async function leaveGroupV2(
+export async function leaveGroup(
   ctx: SignalProtocolClientContext,
-  manager: GroupsV2Manager,
+  manager: GroupManager,
   groupId: GroupId,
   userAci: Uint8Array
 ): Promise<void> {
   return wrapGroupOp(
-    `Left GroupsV2 group ${groupId}`,
+    `Left group ${groupId}`,
     ctx.logger,
     () => manager.leaveGroup(groupId, userAci),
     {
@@ -525,17 +563,17 @@ export async function leaveGroupV2(
 }
 
 /**
- * Update the title of a GroupsV2 group
+ * Update the title of a group
  */
-export async function updateGroupTitleV2(
+export async function updateGroupTitle(
   ctx: SignalProtocolClientContext,
-  manager: GroupsV2Manager,
+  manager: GroupManager,
   groupId: GroupId,
   editorAci: Uint8Array,
   title: string
 ): Promise<void> {
   return wrapGroupOp(
-    `Updated GroupsV2 group title for ${groupId}`,
+    `Updated group title for ${groupId}`,
     ctx.logger,
     () => manager.updateTitle(groupId, editorAci, title),
     { groupId, title }
@@ -543,17 +581,17 @@ export async function updateGroupTitleV2(
 }
 
 /**
- * Update the description of a GroupsV2 group
+ * Update the description of a group
  */
-export async function updateGroupDescriptionV2(
+export async function updateGroupDescription(
   ctx: SignalProtocolClientContext,
-  manager: GroupsV2Manager,
+  manager: GroupManager,
   groupId: GroupId,
   editorAci: Uint8Array,
   description: string
 ): Promise<void> {
   return wrapGroupOp(
-    `Updated GroupsV2 group description for ${groupId}`,
+    `Updated group description for ${groupId}`,
     ctx.logger,
     () => manager.updateDescription(groupId, editorAci, description),
     { groupId }
@@ -561,17 +599,17 @@ export async function updateGroupDescriptionV2(
 }
 
 /**
- * Update access control settings for a GroupsV2 group
+ * Update access control settings for a group
  */
-export async function updateGroupAccessControlV2(
+export async function updateGroupAccessControl(
   ctx: SignalProtocolClientContext,
-  manager: GroupsV2Manager,
+  manager: GroupManager,
   groupId: GroupId,
   editorAci: Uint8Array,
   updates: Partial<AccessControl>
 ): Promise<void> {
   return wrapGroupOp(
-    `Updated GroupsV2 group access control for ${groupId}`,
+    `Updated group access control for ${groupId}`,
     ctx.logger,
     () => manager.updateAccessControl(groupId, editorAci, updates),
     { groupId, updates }
@@ -579,16 +617,16 @@ export async function updateGroupAccessControlV2(
 }
 
 /**
- * Create an invite link for a GroupsV2 group
+ * Create an invite link for a group
  */
-export async function createGroupInviteLinkV2(
+export async function createGroupInviteLink(
   ctx: SignalProtocolClientContext,
-  manager: GroupsV2Manager,
+  manager: GroupManager,
   groupId: GroupId,
   editorAci: Uint8Array
 ): Promise<string> {
   return wrapGroupOp(
-    `Created GroupsV2 invite link for ${groupId}`,
+    `Created group invite link for ${groupId}`,
     ctx.logger,
     () => manager.createInviteLink(groupId, editorAci),
     { groupId }
@@ -596,21 +634,21 @@ export async function createGroupInviteLinkV2(
 }
 
 /**
- * Join a GroupsV2 group via invite link
+ * Join a group via invite link
  *
  * Parses the invite link, validates the password, and adds
  * the user as a member or to the requesting members list
  * (if admin approval is required).
  */
-export async function joinGroupViaInviteLinkV2(
+export async function joinGroupViaInviteLink(
   ctx: SignalProtocolClientContext,
-  manager: GroupsV2Manager,
+  manager: GroupManager,
   url: string,
   userAci: Uint8Array,
   userProfileKey: Uint8Array
 ): Promise<{ groupId: GroupId; status: 'joined' | 'pending_approval' }> {
   return wrapGroupOp(
-    `Joined GroupsV2 group via invite link`,
+    `Joined group via invite link`,
     ctx.logger,
     () => manager.joinViaInviteLink(url, userAci, userProfileKey),
     {},

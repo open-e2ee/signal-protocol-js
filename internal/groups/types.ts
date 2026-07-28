@@ -1,7 +1,7 @@
 /**
- * GroupsV2 State Types
+ * Group state types
  *
- * Encrypted wire-state and decrypted local-state types for version-2 groups.
+ * Encrypted wire-state and decrypted local-state types.
  *
  */
 
@@ -45,6 +45,8 @@ export interface AccessControl {
   members: AccessRequired;
   /** Who can join via invite link. */
   addFromInviteLink: AccessRequired;
+  /** Who can modify another member's label. */
+  memberLabel: AccessRequired;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +76,17 @@ export interface EncryptedPendingMember {
   addedByUserId: Uint8Array;
   /** Milliseconds since epoch. */
   timestamp: number;
+}
+
+/**
+ * A pending invitation in a group-creation submission.
+ *
+ * Provenance is deliberately absent: the enforcing server derives the creator
+ * and its clock value before signing canonical version zero.
+ */
+export interface EncryptedCreationPendingMember {
+  userId: Uint8Array;
+  role: MemberRole;
 }
 
 /** Member requesting admin approval. Matches MemberPendingAdminApproval. */
@@ -111,6 +124,26 @@ export interface EncryptedGroup {
   inviteLinkPassword: Uint8Array;
   announcementsOnly: boolean;
   membersBanned: EncryptedBannedMember[];
+  terminated: boolean;
+}
+
+/**
+ * The untrusted client submission accepted by the group-creation endpoint.
+ *
+ * Requesting and banned entries cannot exist before the group does. They stay
+ * in the wire shape as empty arrays so every group-state field remains
+ * explicit, while invitation provenance is server-derived.
+ */
+export interface EncryptedGroupCreationSubmission
+  extends Omit<
+    EncryptedGroup,
+    | 'membersPendingProfileKey'
+    | 'membersPendingAdminApproval'
+    | 'membersBanned'
+  > {
+  membersPendingProfileKey: EncryptedCreationPendingMember[];
+  membersPendingAdminApproval: never[];
+  membersBanned: never[];
 }
 
 // ---------------------------------------------------------------------------
@@ -153,9 +186,37 @@ export interface DecryptedMember {
   labelString: string;
 }
 
+/** ADD_MEMBER action. joinedAtRevision is server-derived after acceptance. */
+export interface DecryptedAddMember {
+  aciBytes: Uint8Array;
+  role: MemberRole;
+  profileKey: Uint8Array;
+  joinedAtRevision?: number;
+}
+
+/** MODIFY_MEMBER_PROFILE_KEY action. */
+export interface DecryptedProfileKeyUpdate {
+  aciBytes: Uint8Array;
+  profileKey: Uint8Array;
+}
+
+/** ACI-keyed pending-member promotion with server-derived result metadata. */
+export interface DecryptedPendingMemberPromotion {
+  aciBytes: Uint8Array;
+  profileKey: Uint8Array;
+  role?: MemberRole;
+  joinedAtRevision?: number;
+}
+
+/** PNI-to-ACI pending-member promotion. */
+export interface DecryptedPniAciMemberPromotion
+  extends DecryptedPendingMemberPromotion {
+  pniBytes: Uint8Array;
+}
+
 /** Decrypted pending member. Matches DecryptedPendingMember. */
 export interface DecryptedPendingMember {
-  /** 17-byte ServiceId (1 byte kind + 16 bytes UUID). */
+  /** 17-byte ServiceId, or empty when the target is quarantined. */
   serviceIdBytes: Uint8Array;
   role: MemberRole;
   /** 16-byte ACI of who added this member. */
@@ -163,19 +224,77 @@ export interface DecryptedPendingMember {
   timestamp: number;
   /** Preserved ciphertext for re-encryption on removal. */
   serviceIdCipherText: Uint8Array;
+  /** The target could not be safely decrypted and is inert under §9.5. */
+  quarantined?: true;
+}
+
+/** ADD_MEMBER_PENDING_PROFILE_KEY action with server-derived provenance. */
+export interface DecryptedAddPendingMember {
+  /** 17-byte ServiceId, or empty when the target is quarantined. */
+  serviceIdBytes: Uint8Array;
+  role: MemberRole;
+  addedByAci?: Uint8Array;
+  timestamp?: number;
+  /** Locally preserved ciphertext; not a distinct wire field. */
+  serviceIdCipherText?: Uint8Array;
+  /** The target could not be safely decrypted and is inert under §9.5. */
+  quarantined?: true;
 }
 
 /** Decrypted requesting member. Matches DecryptedRequestingMember. */
 export interface DecryptedRequestingMember {
+  /** 16-byte ACI, or empty when the target is quarantined. */
   aciBytes: Uint8Array;
   profileKey: Uint8Array;
   timestamp: number;
+  /** Preserved ciphertexts for a quarantined entry. */
+  aciCipherText?: Uint8Array;
+  profileKeyCipherText?: Uint8Array;
+  /** The target could not be safely decrypted and is inert under §9.5. */
+  quarantined?: true;
+}
+
+/** ADD_MEMBER_PENDING_ADMIN_APPROVAL action. */
+export interface DecryptedAddRequestingMember {
+  /** 16-byte ACI, or empty when the target is quarantined. */
+  aciBytes: Uint8Array;
+  profileKey: Uint8Array;
+  timestamp?: number;
+  /** Preserved ciphertexts for a quarantined entry. */
+  aciCipherText?: Uint8Array;
+  profileKeyCipherText?: Uint8Array;
+  /** The target could not be safely decrypted and is inert under §9.5. */
+  quarantined?: true;
 }
 
 /** Decrypted banned member. Matches DecryptedBannedMember. */
 export interface DecryptedBannedMember {
+  /** 17-byte ServiceId, or empty when the target is quarantined. */
   serviceIdBytes: Uint8Array;
   timestamp: number;
+  /** Preserved ciphertext for a quarantined entry. */
+  serviceIdCipherText?: Uint8Array;
+  /** The target could not be safely decrypted and is inert under §9.5. */
+  quarantined?: true;
+}
+
+/** BAN_MEMBER action. */
+export interface DecryptedAddBannedMember {
+  /** 17-byte ServiceId, or empty when the target is quarantined. */
+  serviceIdBytes: Uint8Array;
+  timestamp?: number;
+  /** Preserved ciphertext for a quarantined entry. */
+  serviceIdCipherText?: Uint8Array;
+  /** The target could not be safely decrypted and is inert under §9.5. */
+  quarantined?: true;
+}
+
+/** UNBAN_MEMBER action. */
+export interface DecryptedDeleteBannedMember {
+  /** 17-byte ServiceId, or empty when the target is quarantined. */
+  serviceIdBytes: Uint8Array;
+  /** Preserved ciphertext when deleting a quarantined entry. */
+  serviceIdCipherText?: Uint8Array;
 }
 
 /** Decrypted pending member removal. Matches DecryptedPendingMemberRemoval. */
@@ -223,6 +342,7 @@ export interface DecryptedGroup {
   description: string;
   isAnnouncementGroup: EnabledState;
   bannedMembers: DecryptedBannedMember[];
+  terminated: boolean;
 }
 
 /**
@@ -238,15 +358,15 @@ export interface DecryptedGroupChange {
   revision: number;
 
   // Membership changes
-  newMembers: DecryptedMember[];
+  newMembers: DecryptedAddMember[];
   deleteMembers: Uint8Array[]; // ACI bytes of members to remove
   modifyMemberRoles: DecryptedModifyMemberRole[];
-  modifiedProfileKeys: DecryptedMember[];
+  modifiedProfileKeys: DecryptedProfileKeyUpdate[];
 
   // Pending member changes
-  newPendingMembers: DecryptedPendingMember[];
+  newPendingMembers: DecryptedAddPendingMember[];
   deletePendingMembers: DecryptedPendingMemberRemoval[];
-  promotePendingMembers: DecryptedMember[];
+  promotePendingMembers: DecryptedPendingMemberPromotion[];
 
   // Attribute changes
   newTitle?: DecryptedString;
@@ -257,10 +377,15 @@ export interface DecryptedGroupChange {
   newAttributeAccess?: AccessRequired;
   newMemberAccess?: AccessRequired;
   newInviteLinkAccess?: AccessRequired;
+  newMemberLabelAccess?: AccessRequired;
 
   // Requesting member changes (admin approval flow)
-  newRequestingMembers: DecryptedRequestingMember[];
-  deleteRequestingMembers: Uint8Array[]; // ACI bytes
+  newRequestingMembers: DecryptedAddRequestingMember[];
+  /**
+   * ACI bytes, or a preserved 65-byte ciphertext when deleting a quarantined
+   * requesting entry.
+   */
+  deleteRequestingMembers: Uint8Array[];
   promoteRequestingMembers: DecryptedApproveMember[];
 
   // Invite link
@@ -273,32 +398,52 @@ export interface DecryptedGroupChange {
   newIsAnnouncementGroup?: EnabledState;
 
   // Ban list
-  newBannedMembers: DecryptedBannedMember[];
-  deleteBannedMembers: DecryptedBannedMember[];
+  newBannedMembers: DecryptedAddBannedMember[];
+  deleteBannedMembers: DecryptedDeleteBannedMember[];
 
   // PNI-ACI promotion (change epoch 5)
-  promotePendingPniAciMembers: DecryptedMember[];
+  promotePendingPniAciMembers: DecryptedPniAciMemberPromotion[];
 
   // Labels (change epoch 6)
   modifyMemberLabels: DecryptedModifyMemberLabel[];
+
+  // Group lifecycle
+  terminate?: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Encrypted Change Types (encrypted wire format for group changes)
 // ---------------------------------------------------------------------------
 
-/** Encrypted member in a group change. Identity fields are ciphertext. */
-export interface EncryptedChangeMember {
-  /** Encrypted ACI (65-byte UuidCiphertext). */
+/** Encrypted ADD_MEMBER action. joinedAtRevision is server-derived. */
+export interface EncryptedChangeAddMember {
   aciCiphertext: Uint8Array;
   role: MemberRole;
-  /** Encrypted profile key (65-byte ProfileKeyCiphertext). */
   profileKeyCiphertext: Uint8Array;
-  joinedAtRevision: number;
-  /** Encrypted PNI (65-byte UuidCiphertext), empty if not present. */
+  presentation: Uint8Array;
+  joinedAtRevision?: number;
+}
+
+/** Encrypted MODIFY_MEMBER_PROFILE_KEY action. */
+export interface EncryptedChangeProfileKeyUpdate {
+  aciCiphertext: Uint8Array;
+  profileKeyCiphertext: Uint8Array;
+  presentation: Uint8Array;
+}
+
+/** Encrypted ACI-keyed promotion. */
+export interface EncryptedChangePendingMemberPromotion {
+  aciCiphertext: Uint8Array;
+  profileKeyCiphertext: Uint8Array;
+  presentation: Uint8Array;
+  role?: MemberRole;
+  joinedAtRevision?: number;
+}
+
+/** Encrypted PNI-to-ACI promotion. */
+export interface EncryptedChangePniAciMemberPromotion
+  extends EncryptedChangePendingMemberPromotion {
   pniCiphertext: Uint8Array;
-  labelEmoji: string;
-  labelString: string;
 }
 
 /** Encrypted pending member in a group change. */
@@ -306,9 +451,10 @@ export interface EncryptedChangePendingMember {
   /** Encrypted ServiceId (65-byte UuidCiphertext). */
   serviceIdCiphertext: Uint8Array;
   role: MemberRole;
-  /** Encrypted ACI of who added this member (65-byte UuidCiphertext). */
-  addedByAciCiphertext: Uint8Array;
-  timestamp: number;
+  /** Server-derived canonical inviter. */
+  addedByAciCiphertext?: Uint8Array;
+  /** Server-derived canonical timestamp. */
+  timestamp?: number;
 }
 
 /** Encrypted pending member removal in a group change. */
@@ -323,7 +469,10 @@ export interface EncryptedChangeRequestingMember {
   aciCiphertext: Uint8Array;
   /** Encrypted profile key (65-byte ProfileKeyCiphertext). */
   profileKeyCiphertext: Uint8Array;
-  timestamp: number;
+  /** Profile-key credential presentation for server verification. */
+  presentation: Uint8Array;
+  /** Server-derived canonical timestamp. */
+  timestamp?: number;
 }
 
 /** Encrypted approve member in a group change. */
@@ -344,57 +493,62 @@ export interface EncryptedChangeModifyMemberRole {
 export interface EncryptedChangeBannedMember {
   /** Encrypted ServiceId (65-byte UuidCiphertext). */
   serviceIdCiphertext: Uint8Array;
-  timestamp: number;
+  /** Server-derived canonical timestamp. */
+  timestamp?: number;
+}
+
+/** Encrypted UNBAN_MEMBER action. */
+export interface EncryptedChangeBannedMemberRemoval {
+  serviceIdCiphertext: Uint8Array;
 }
 
 /** Encrypted modify member label in a group change. */
 export interface EncryptedChangeModifyMemberLabel {
   /** Encrypted ACI (65-byte UuidCiphertext). */
   aciCiphertext: Uint8Array;
-  labelEmoji: string;
-  labelString: string;
+  labelEmojiCiphertext: Uint8Array;
+  labelStringCiphertext: Uint8Array;
 }
 
 /**
  * Encrypted group change. Mirrors DecryptedGroupChange but with identity
  * fields (ACI, PNI, profileKey) encrypted as ciphertext.
  *
- * Non-identity fields (role, revision, timestamps, labels, access control)
- * remain plaintext because they carry no PII.
+ * Roles, revisions, timestamps, access-control enums, and avatar URLs remain
+ * plaintext. Group attributes, member labels, identities, and profile keys
+ * are ciphertexts.
  *
- * This type has no counterpart in the Signal Protocol group system, where the
- * encrypted change is a set of per-action messages each carrying a
- * zero-knowledge presentation that lets the server authorize the action
- * without decrypting it. Nothing here carries a presentation, so a server
- * cannot tie a plaintext `role` to an authenticated actor. Authorization is
- * enforced client-side (see access-control.ts) and is therefore only as
- * trustworthy as the submitting client.
+ * The client leaves `sourceUserId` and `groupId` unset. A conforming server
+ * derives and sets both before serializing and signing the accepted Actions.
  */
 export interface EncryptedGroupChange {
-  /** Encrypted ServiceId of the editor (65-byte UuidCiphertext). */
-  editorCiphertext: Uint8Array;
+  /** Server-derived encrypted ACI of the editor (65-byte UuidCiphertext). */
+  sourceUserId?: Uint8Array;
+  /** Server-set 32-byte group identifier. */
+  groupId?: Uint8Array;
   revision: number;
 
   // Membership changes
-  newMembers: EncryptedChangeMember[];
+  newMembers: EncryptedChangeAddMember[];
   deleteMembers: Uint8Array[]; // Encrypted ACI ciphertexts
   modifyMemberRoles: EncryptedChangeModifyMemberRole[];
-  modifiedProfileKeys: EncryptedChangeMember[];
+  modifiedProfileKeys: EncryptedChangeProfileKeyUpdate[];
 
   // Pending member changes
   newPendingMembers: EncryptedChangePendingMember[];
   deletePendingMembers: EncryptedChangePendingMemberRemoval[];
-  promotePendingMembers: EncryptedChangeMember[];
+  promotePendingMembers: EncryptedChangePendingMemberPromotion[];
 
-  // Attribute changes (already encrypted blobs or null — pass through)
-  newTitle?: DecryptedString;
+  // Attribute changes (encrypted blobs)
+  newTitle?: Uint8Array;
   newAvatar?: DecryptedString;
-  newTimer?: DecryptedTimer;
+  newTimer?: Uint8Array;
 
   // Access control changes (plaintext enums)
   newAttributeAccess?: AccessRequired;
   newMemberAccess?: AccessRequired;
   newInviteLinkAccess?: AccessRequired;
+  newMemberLabelAccess?: AccessRequired;
 
   // Requesting member changes
   newRequestingMembers: EncryptedChangeRequestingMember[];
@@ -405,20 +559,23 @@ export interface EncryptedGroupChange {
   newInviteLinkPassword?: Uint8Array;
 
   // Description
-  newDescription?: DecryptedString;
+  newDescription?: Uint8Array;
 
   // Announcements
   newIsAnnouncementGroup?: EnabledState;
 
   // Ban list
   newBannedMembers: EncryptedChangeBannedMember[];
-  deleteBannedMembers: EncryptedChangeBannedMember[];
+  deleteBannedMembers: EncryptedChangeBannedMemberRemoval[];
 
   // PNI-ACI promotion (change epoch 5)
-  promotePendingPniAciMembers: EncryptedChangeMember[];
+  promotePendingPniAciMembers: EncryptedChangePniAciMemberPromotion[];
 
   // Labels (change epoch 6)
   modifyMemberLabels: EncryptedChangeModifyMemberLabel[];
+
+  // Group lifecycle
+  terminate?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -467,6 +624,7 @@ export interface GroupChangeResponse {
 
 /** Public group info visible via invite link. Matches DecryptedGroupJoinInfo. */
 export interface DecryptedGroupJoinInfo {
+  publicKey: Uint8Array;
   title: string;
   avatar: string;
   memberCount: number;
@@ -474,7 +632,18 @@ export interface DecryptedGroupJoinInfo {
   revision: number;
   pendingAdminApproval: boolean;
   description: string;
-  isAnnouncementGroup: boolean;
+}
+
+/** Reduced encrypted projection served to an invite-link holder. */
+export interface EncryptedGroupJoinInfo {
+  publicKey: Uint8Array;
+  title: Uint8Array;
+  avatar: string;
+  memberCount: number;
+  addFromInviteLink: AccessRequired;
+  revision: number;
+  pendingAdminApproval: boolean;
+  description: Uint8Array;
 }
 
 // ---------------------------------------------------------------------------
@@ -487,6 +656,7 @@ export function defaultAccessControl(): AccessControl {
     attributes: AccessRequired.MEMBER,
     members: AccessRequired.MEMBER,
     addFromInviteLink: AccessRequired.UNSATISFIABLE,
+    memberLabel: AccessRequired.ADMINISTRATOR,
   };
 }
 

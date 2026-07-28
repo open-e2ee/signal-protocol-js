@@ -188,7 +188,7 @@ export interface ISignalProtocolClient {
    * - Multi-device fan-out
    * - Sender key distribution for groups
    *
-   * @param recipientId - Group ID with V2 prefix or userId for direct messages
+   * @param recipientId - Prefixed group ID or userId for direct messages
    * @param content - DataMessageInput, string, or raw Uint8Array bytes
    * @param options - Optional send options
    * @returns SendResult with messageId, timestamp, recipientDeviceCount
@@ -1599,11 +1599,12 @@ export interface IMessageRecordStore {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// GroupsV2 Re-exports (defined in internal/groups-v2/manager.ts)
+// Group re-exports (defined in internal/groups/manager.ts)
 // ════════════════════════════════════════════════════════════════════════════
 
 export type {
   IGroupStateStore,
   IGroupServer,
+  GroupSnapshot,
   GroupChangeLogEntry,
-} from '../internal/groups-v2/manager';
+} from '../internal/groups/manager';

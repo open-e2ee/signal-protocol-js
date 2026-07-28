@@ -1,26 +1,29 @@
 /**
  * Public groups API.
  *
- * Group identity helpers and GroupsV2 state/contracts live here. This is the
+ * Group identity helpers and group state/contracts live here. This is the
  * supported import surface for app code instead of internal groups modules.
  */
 
 export {};
-export { GROUP_V2_PREFIX, isGroupId, createGroupId, extractGroupId } from '../internal/groups';
+export { GROUP_ID_PREFIX, isGroupId, createGroupId, extractGroupId } from '../internal/groups';
 export type { GroupId } from '../internal/groups';
 
 export {
-  GroupsV2Manager,
+  GroupManager,
   GroupAction,
   MemberRole,
   AccessRequired,
   EnabledState,
   applyGroupChange,
-  validateChange,
+  validateChangeStructure,
   canPerformAction,
   createGroupInviteLink,
   parseGroupInviteLink,
-} from '../internal/groups-v2';
+  GROUP_TRUST_ROOT_VERSION,
+  decodeGroupTrustRoot,
+  encodeGroupTrustRoot,
+} from '../internal/groups';
 
 export type {
   DecryptedGroup,
@@ -31,8 +34,14 @@ export type {
   EncryptedGroup,
   IGroupStateStore,
   IGroupServer,
+  GroupSnapshot,
   GroupChangeLogEntry,
-  GroupsV2ManagerOptions,
+  GroupManagerOptions,
+  GroupMemberInput,
+  PresentedGroupMemberInput,
+  InvitedGroupMemberInput,
   OnSenderKeyRotation,
   OnEndorsementsInvalidated,
-} from '../internal/groups-v2';
+  GroupActionContext,
+  GroupTrustRoot,
+} from '../internal/groups';

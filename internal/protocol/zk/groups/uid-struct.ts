@@ -29,6 +29,11 @@ export interface ServiceId {
   uuid: Uint8Array; // 16 bytes
 }
 
+/** Return whether a UUID is the reserved all-zero value. */
+export function isNilUuid(uuid: Uint8Array): boolean {
+  return uuid.length === 16 && uuid.every((byte) => byte === 0);
+}
+
 /**
  * Serialize a ServiceId to 17-byte binary form: [kind_byte, ...uuid_bytes].
  */

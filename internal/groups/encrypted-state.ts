@@ -16,16 +16,20 @@ import {
   type EncryptedPendingMember,
   type EncryptedRequestingMember,
   type EncryptedBannedMember,
+  type EncryptedGroupJoinInfo,
   type DecryptedGroup,
   type DecryptedMember,
   type DecryptedPendingMember,
   type DecryptedRequestingMember,
   type DecryptedBannedMember,
+  type DecryptedGroupJoinInfo,
   type DecryptedTimer,
   type GroupAttributeBlob,
   EnabledState,
 } from './types';
 
+import { getGroupPublicParams } from '../protocol/zk/groups';
+import { serializeGroupPublicParams } from '../protocol/zk/groups/auth-credential';
 import {
   type GroupSecretParams,
   type ServiceId,
@@ -39,6 +43,7 @@ import {
   encryptProfileKeyCiphertext,
   decryptProfileKeyCiphertext,
 } from '../protocol/zk/groups';
+import { isNilUuid } from '../protocol/zk/groups/uid-struct';
 
 import type { ExpiringProfileKeyCredential } from '../protocol/zk/groups/profile-key-credential';
 import type { CredentialPublicKey } from '../protocol/zk/credentials/credentials';
@@ -46,6 +51,12 @@ import {
   presentProfileKeyCredential,
   serializeProfileKeyCredentialPresentation,
 } from '../protocol/zk/groups/profile-key-credential';
+import {
+  validateGroupAccessControl,
+  validateGroupCanonicalFields,
+  validateGroupIdentifiers,
+  validateGroupMemberRoles,
+} from './change-actions';
 
 // ---------------------------------------------------------------------------
 // Padding helpers
@@ -87,7 +98,7 @@ function decodeAttributeBlob(bytes: Uint8Array): GroupAttributeBlob {
 /**
  * Encrypt a label string as a blob.
  */
-function encryptLabelAsBlob(secretParams: GroupSecretParams, label: string): Uint8Array {
+export function encryptLabelAsBlob(secretParams: GroupSecretParams, label: string): Uint8Array {
   if (!label) return new Uint8Array(0);
   const randomness = crypto.getRandomValues(new Uint8Array(32));
   const blob: GroupAttributeBlob = { type: 'title', title: label };
@@ -99,7 +110,10 @@ function encryptLabelAsBlob(secretParams: GroupSecretParams, label: string): Uin
 /**
  * Decrypt a label blob back to a string.
  */
-function decryptLabelFromBlob(secretParams: GroupSecretParams, ciphertext: Uint8Array): string {
+export function decryptLabelFromBlob(
+  secretParams: GroupSecretParams,
+  ciphertext: Uint8Array
+): string {
   if (ciphertext.length === 0) return '';
   const plaintext = decryptBlobWithPadding(secretParams, ciphertext);
   const blob = decodeAttributeBlob(plaintext);
@@ -374,9 +388,15 @@ function encryptPendingMember(
   secretParams: GroupSecretParams,
   pending: DecryptedPendingMember
 ): EncryptedPendingMember {
-  // Parse and encrypt serviceId
-  const serviceId = parseServiceIdBytes(pending.serviceIdBytes);
-  const encryptedUserId = encryptUuid(secretParams, serviceId);
+  if (pending.quarantined === true) {
+    throw new Error(
+      'INVALID_GROUP: Quarantined pending entries cannot be submitted'
+    );
+  }
+  const encryptedUserId = encryptUuid(
+    secretParams,
+    parseServiceIdBytes(pending.serviceIdBytes)
+  );
 
   // Create minimal EncryptedMember for the pending entry
   const member: EncryptedMember = {
@@ -407,20 +427,43 @@ function decryptPendingMember(
   secretParams: GroupSecretParams,
   pending: EncryptedPendingMember
 ): DecryptedPendingMember {
-  // Decrypt userId from the nested member
-  const serviceId = decryptUuid(secretParams, pending.member.userId);
-  const serviceIdBytes = serviceIdBinary(serviceId);
-
+  if (
+    pending.member.profileKey.length !== 0 ||
+    pending.member.presentation.length !== 0
+  ) {
+    throw new Error(
+      'INVALID_GROUP: Pending profile-key member must not carry a profile key or presentation'
+    );
+  }
   // Decrypt addedBy
   const addedByServiceId = decryptUuid(secretParams, pending.addedByUserId);
+  if (
+    addedByServiceId.kind !== SERVICE_ID_ACI ||
+    isNilUuid(addedByServiceId.uuid)
+  ) {
+    throw new Error('INVALID_GROUP: Pending-member inviter must be a non-nil ACI');
+  }
 
-  return {
-    serviceIdBytes,
+  const common = {
     role: pending.member.role,
     addedByAci: addedByServiceId.uuid,
     timestamp: pending.timestamp,
-    serviceIdCipherText: pending.member.userId,
+    serviceIdCipherText: new Uint8Array(pending.member.userId),
   };
+  try {
+    const serviceId = decryptUuid(secretParams, pending.member.userId);
+    if (isNilUuid(serviceId.uuid)) throw new Error('nil target');
+    return {
+      ...common,
+      serviceIdBytes: serviceIdBinary(serviceId),
+    };
+  } catch {
+    return {
+      ...common,
+      serviceIdBytes: new Uint8Array(0),
+      quarantined: true,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +475,11 @@ export function encryptRequestingMember(
   member: DecryptedRequestingMember,
   presentationContext?: PresentationContext
 ): EncryptedRequestingMember {
+  if (member.quarantined === true) {
+    throw new Error(
+      'INVALID_GROUP: Quarantined requesting entries cannot be submitted'
+    );
+  }
   const aciServiceId: ServiceId = {
     kind: SERVICE_ID_ACI,
     uuid: member.aciBytes,
@@ -468,9 +516,31 @@ function decryptRequestingMember(
   secretParams: GroupSecretParams,
   member: EncryptedRequestingMember
 ): DecryptedRequestingMember {
-  const serviceId = decryptUuid(secretParams, member.userId);
+  let serviceId: ServiceId;
+  try {
+    serviceId = decryptUuid(secretParams, member.userId);
+  } catch {
+    return {
+      aciBytes: new Uint8Array(0),
+      profileKey: new Uint8Array(0),
+      timestamp: member.timestamp,
+      aciCipherText: new Uint8Array(member.userId),
+      profileKeyCipherText: new Uint8Array(member.profileKey),
+      quarantined: true,
+    };
+  }
   if (serviceId.kind !== SERVICE_ID_ACI) {
     throw new Error(`Expected ACI service ID, got kind ${serviceId.kind}`);
+  }
+  if (isNilUuid(serviceId.uuid)) {
+    return {
+      aciBytes: new Uint8Array(0),
+      profileKey: new Uint8Array(0),
+      timestamp: member.timestamp,
+      aciCipherText: new Uint8Array(member.userId),
+      profileKeyCipherText: new Uint8Array(member.profileKey),
+      quarantined: true,
+    };
   }
 
   const profileKey =
@@ -493,8 +563,15 @@ function encryptBannedMember(
   secretParams: GroupSecretParams,
   member: DecryptedBannedMember
 ): EncryptedBannedMember {
-  const serviceId = parseServiceIdBytes(member.serviceIdBytes);
-  const encryptedUserId = encryptUuid(secretParams, serviceId);
+  if (member.quarantined === true) {
+    throw new Error(
+      'INVALID_GROUP: Quarantined banned entries cannot be submitted'
+    );
+  }
+  const encryptedUserId = encryptUuid(
+    secretParams,
+    parseServiceIdBytes(member.serviceIdBytes)
+  );
 
   return {
     userId: encryptedUserId,
@@ -506,13 +583,21 @@ function decryptBannedMember(
   secretParams: GroupSecretParams,
   member: EncryptedBannedMember
 ): DecryptedBannedMember {
-  const serviceId = decryptUuid(secretParams, member.userId);
-  const serviceIdBytes = serviceIdBinary(serviceId);
-
-  return {
-    serviceIdBytes,
-    timestamp: member.timestamp,
-  };
+  try {
+    const serviceId = decryptUuid(secretParams, member.userId);
+    if (isNilUuid(serviceId.uuid)) throw new Error('nil target');
+    return {
+      serviceIdBytes: serviceIdBinary(serviceId),
+      timestamp: member.timestamp,
+    };
+  } catch {
+    return {
+      serviceIdBytes: new Uint8Array(0),
+      timestamp: member.timestamp,
+      serviceIdCipherText: new Uint8Array(member.userId),
+      quarantined: true,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -530,8 +615,18 @@ function decryptBannedMember(
 export function encryptGroupState(
   secretParams: GroupSecretParams,
   group: DecryptedGroup,
-  memberPresentationContexts?: Map<string, PresentationContext>
+  memberPresentationContexts?: ReadonlyMap<string, PresentationContext>
 ): EncryptedGroup {
+  const structuralErrors = [
+    ...validateGroupIdentifiers(group),
+    ...validateGroupAccessControl(group),
+    ...validateGroupMemberRoles(group),
+    ...validateGroupCanonicalFields(group),
+  ];
+  if (structuralErrors.length > 0) {
+    throw new Error(`INVALID_GROUP: ${structuralErrors.join('; ')}`);
+  }
+
   // Encrypt title
   const titleRandomness = crypto.getRandomValues(new Uint8Array(32));
   const title = group.title
@@ -577,7 +672,8 @@ export function encryptGroupState(
   const membersBanned = group.bannedMembers.map((m) => encryptBannedMember(secretParams, m));
 
   return {
-    publicKey: secretParams.groupId,
+    terminated: group.terminated,
+    publicKey: serializeGroupPublicParams(getGroupPublicParams(secretParams)),
     title,
     description,
     avatarUrl: group.avatar || '',
@@ -635,7 +731,7 @@ export function decryptGroupState(
   // Decrypt banned members
   const bannedMembers = encrypted.membersBanned.map((m) => decryptBannedMember(secretParams, m));
 
-  return {
+  const group: DecryptedGroup = {
     title,
     avatar: encrypted.avatarUrl || '',
     disappearingMessagesTimer,
@@ -648,5 +744,36 @@ export function decryptGroupState(
     description,
     isAnnouncementGroup: encrypted.announcementsOnly ? EnabledState.ENABLED : EnabledState.DISABLED,
     bannedMembers,
+    terminated: encrypted.terminated,
+  };
+  const structuralErrors = [
+    ...validateGroupIdentifiers(group),
+    ...validateGroupAccessControl(group),
+    ...validateGroupMemberRoles(group),
+    ...validateGroupCanonicalFields(group),
+  ];
+  if (structuralErrors.length > 0) {
+    throw new Error(`INVALID_GROUP: ${structuralErrors.join('; ')}`);
+  }
+  return group;
+}
+
+/** Decrypt the reduced projection returned to an invite-link holder. */
+export function decryptGroupJoinInfo(
+  secretParams: GroupSecretParams,
+  encrypted: EncryptedGroupJoinInfo
+): DecryptedGroupJoinInfo {
+  return {
+    publicKey: encrypted.publicKey,
+    title: encrypted.title.length > 0 ? decryptGroupTitle(secretParams, encrypted.title) : '',
+    avatar: encrypted.avatar,
+    memberCount: encrypted.memberCount,
+    addFromInviteLink: encrypted.addFromInviteLink,
+    revision: encrypted.revision,
+    pendingAdminApproval: encrypted.pendingAdminApproval,
+    description:
+      encrypted.description.length > 0
+        ? decryptGroupDescription(secretParams, encrypted.description)
+        : '',
   };
 }

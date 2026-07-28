@@ -8,7 +8,7 @@
  * ```
  * Layer 0: EXTERNAL          - Your application (React Native, Node, etc.)
  * Layer 1: API               - client/ (SignalProtocolClient, ISignalProtocolClient)
- * Layer 2: ORCHESTRATION     - manager/, sesame/, groups-v2/ (SignalProtocolManager, SesameManager, GroupsV2Manager)
+ * Layer 2: ORCHESTRATION     - manager/, sesame/, groups/ (SignalProtocolManager, SesameManager, GroupManager)
  * Layer 3: DOMAIN/SESSION    - session/, safety/ (establishment, cipher, handshake, safety numbers)
  * Layer 4: DOMAIN/ALGORITHMS - protocol/ (X3DH, PQXDH, Double Ratchet, SPQR, Sender Keys, Sealed Sender, ZK proofs)
  * Layer 5: DOMAIN/KEYS       - keys/ (types, generation, branded types)
@@ -121,7 +121,7 @@ export const LAYER_DEFINITIONS: Record<Layer, LayerDefinition> = {
   [LAYERS.ORCHESTRATION]: {
     level: LAYERS.ORCHESTRATION,
     displayName: 'Orchestration',
-    directories: ['manager', 'sesame', 'groups-v2'],
+    directories: ['manager', 'sesame', 'groups'],
     dependsOn: [
       LAYERS.DOMAIN_SESSION,
       LAYERS.DOMAIN_ALGORITHMS,
@@ -247,7 +247,7 @@ export const DIRECTORY_TO_LAYER: Record<string, Layer> = {
   client: LAYERS.API,
   manager: LAYERS.ORCHESTRATION,
   sesame: LAYERS.ORCHESTRATION,
-  'groups-v2': LAYERS.ORCHESTRATION,
+  'groups': LAYERS.ORCHESTRATION,
   session: LAYERS.DOMAIN_SESSION,
   safety: LAYERS.DOMAIN_SESSION,
   protocol: LAYERS.DOMAIN_ALGORITHMS,

@@ -32,6 +32,24 @@
 
 ## Methods
 
+### assertEndorsementRootPublicKey()
+
+> **assertEndorsementRootPublicKey**(`expected`): `void`
+
+Require this verifier to use the endorsement root pinned by group config.
+
+#### Parameters
+
+##### expected
+
+[`ServerRootPublicKey`](ServerRootPublicKey.md)
+
+#### Returns
+
+`void`
+
+***
+
 ### clearGroupEndorsements()
 
 > **clearGroupEndorsements**(`groupId`): `Promise`\<`void`\>

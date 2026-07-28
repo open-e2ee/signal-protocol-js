@@ -118,10 +118,16 @@ import {
 } from '../media';
 import { StorageBackedSignalProtocolClientMedia, type SignalProtocolClientMedia } from './media';
 
-// GroupsV2 (Signal Private Group System)
-import { GroupsV2Manager } from '../internal/groups-v2';
-import type { DecryptedGroup, AccessControl } from '../internal/groups-v2';
+// Group state (Signal Private Group System)
+import { GroupManager, decodeGroupTrustRoot } from '../internal/groups';
+import type {
+  DecryptedGroup,
+  AccessControl,
+  GroupMemberInput,
+  IGroupStateStore,
+} from '../internal/groups';
 import type { GroupId } from '../internal/groups/group-id';
+import { SignalProtocolGroupStateStore } from '../internal/groups/sdk-store';
 
 // Re-export for backwards compatibility (definition moved to constants.ts to avoid require cycles)
 export {};
@@ -195,8 +201,9 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   // Group messaging support (Sender Keys)
   private readonly senderKeyManager: SenderKeyManager;
 
-  // GroupsV2 state management (Phase 6)
-  private groupsV2Manager?: GroupsV2Manager;
+  // Group state management
+  private groupManager?: GroupManager;
+  private groupStore?: IGroupStateStore;
 
   // Cipher coordination (encrypts/decrypts, routes to appropriate cipher)
   private readonly cipher: SignalProtocolServiceCipher;
@@ -310,25 +317,74 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     // Initialize Sender Key manager for group messaging
     this.senderKeyManager = new SenderKeyManager(this._storage, config?.senderKeys, this.logger);
 
-    // Initialize GroupsV2 manager if configured
-    if (config?.groupsV2) {
-      this.groupsV2Manager = new GroupsV2Manager({
-        store: config.groupsV2.store,
-        server: config.groupsV2.server,
-        issueCredential: () => {
-          if (!this.relay) throw new Error('GroupsV2 requires a relay server');
-          return this.relay.issueAuthCredential(this._userId);
-        },
-        credentialPublicKey: config.groupsV2.credentialPublicKey,
-        aci: config.groupsV2.aci,
-        pni: config.groupsV2.pni,
+    // Initialize the group manager if configured
+    if (config?.groups) {
+      const capability = this.relay?.groupServer;
+      const server = config.groups.server ?? capability?.server;
+      const issueCredential =
+        config.groups.issueCredential ??
+        (capability
+          ? () => capability.issueAuthCredential(this._userId)
+          : undefined);
+      const issueProfileKeyCredential =
+        config.groups.issueProfileKeyCredential ??
+        (capability
+          ? () =>
+              capability.issueProfileKeyCredential(
+                this._userId,
+                config.groups!.profileKey
+              )
+          : undefined);
+
+      if (!server || !issueCredential || !issueProfileKeyCredential) {
+        const missing = [
+          !server ? 'server' : undefined,
+          !issueCredential ? 'issueCredential' : undefined,
+          !issueProfileKeyCredential
+            ? 'issueProfileKeyCredential'
+            : undefined,
+        ].filter((value): value is string => value !== undefined);
+        throw new Error(
+          `Groups require the relay.groupServer capability or explicit overrides; missing: ${missing.join(', ')}`
+        );
+      }
+      if (!config.aci) {
+        throw new Error(
+          'Groups require the client identity ACI; set identity.aci'
+        );
+      }
+
+      const trustRoot = decodeGroupTrustRoot(config.groups.trustRoot);
+      this.groupStore =
+        config.groups.store ??
+        new SignalProtocolGroupStateStore(this._storage);
+      const endorsementManager = config.groups.endorsementManager;
+      endorsementManager?.assertEndorsementRootPublicKey(
+        trustRoot.endorsementRootPublicKey
+      );
+
+      this.groupManager = new GroupManager({
+        store: this.groupStore,
+        server,
+        issueCredential,
+        credentialPublicKey: trustRoot.credentialPublicKey,
+        serverSigningPublicKey: trustRoot.serverSigningPublicKey,
+        allowUnauthenticatedGroupHistory:
+          config.groups.allowUnauthenticatedGroupHistory,
+        onConfigurationWarning: config.groups.onConfigurationWarning,
+        aci: config.aci,
+        pni: config.pni,
+        issueProfileKeyCredential,
+        profileKeyCredentialPublicKey:
+          trustRoot.profileKeyCredentialPublicKey,
+        profileKey: config.groups.profileKey,
         onSenderKeyRotation: async (groupId) => {
           // Forward to existing sender key rotation
           await this.rotateGroupSenderKey(groupId as string);
         },
-        onEndorsementsInvalidated: config.groupsV2.endorsementManager
+        onEndorsementsInvalidated: endorsementManager
           ? async (groupId) => {
-              await config.groupsV2!.endorsementManager!.clearGroupEndorsements(groupId);
+              await endorsementManager.clearGroupEndorsements(groupId);
             }
           : undefined,
       });
@@ -346,6 +402,11 @@ export class SignalProtocolClient implements ISignalProtocolClient {
       this.contentAdapter,
       this.logger
     );
+    if (this.groupManager) {
+      this.cipher.setGroupSendBarrierChecker((groupId) =>
+        this.groupManager!.assertGroupSendAllowed(groupId)
+      );
+    }
 
     // Set up auto-session establishment callback
     // This enables lazy session creation when sending to users without established sessions
@@ -440,13 +501,13 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     }
 
     // Set up endorsement manager if configured
-    if (config?.groupsV2?.endorsementManager) {
-      this.cipher.setEndorsementManager(config.groupsV2.endorsementManager);
+    if (config?.groups?.endorsementManager) {
+      this.cipher.setEndorsementManager(config.groups.endorsementManager);
     }
 
     // Set up group secret params provider — derives params from master key in store
-    if (config?.groupsV2?.store) {
-      const store = config.groupsV2.store;
+    if (this.groupStore) {
+      const store = this.groupStore;
       this.cipher.setGroupSecretParamsProvider(async (groupId: string) => {
         const masterKey = await store.getMasterKey(groupId);
         if (!masterKey) return null;
@@ -459,21 +520,21 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     // Fetches fresh endorsements from server when cache is empty, expiring, or
     // missing members.
     if (
-      config?.groupsV2?.endorsementManager &&
-      config?.groupsV2?.store &&
+      config?.groups?.endorsementManager &&
+      this.groupStore &&
       this.relay?.refreshGroupSendEndorsements &&
-      this.groupsV2Manager
+      this.groupManager
     ) {
-      const groupsV2Config = config.groupsV2;
-      const endorsementManager = groupsV2Config.endorsementManager!;
-      const groupStore = groupsV2Config.store;
-      const groupsV2Manager = this.groupsV2Manager;
+      const groupConfig = config.groups;
+      const endorsementManager = groupConfig.endorsementManager!;
+      const groupStore = this.groupStore;
+      const groupManager = this.groupManager;
       const relay = this.relay;
       const selfUserId = this._userId;
 
       this.cipher.setEndorsementRefresher(async (groupId: string, memberUserIds: string[]) => {
         // 1. Build ZK authorization (credential presentation + group public params)
-        const authorization = await groupsV2Manager.getAuthorization(groupId);
+        const authorization = await groupManager.getAuthorization(groupId);
 
         // 2. Get group secret params for endorsement processing
         const masterKey = await groupStore.getMasterKey(groupId);
@@ -501,8 +562,8 @@ export class SignalProtocolClient implements ISignalProtocolClient {
 
         const allUserIds = [...memberUserIds, selfUserId];
         const aciHexToUserId = new Map<string, string>();
-        const resolvedAciBytes = groupsV2Config.resolveAciBytesByUserIds
-          ? await groupsV2Config.resolveAciBytesByUserIds(allUserIds)
+        const resolvedAciBytes = groupConfig.resolveAciBytesByUserIds
+          ? await groupConfig.resolveAciBytesByUserIds(allUserIds)
           : new Map<string, Uint8Array>();
         for (const [userId, aciBytes] of resolvedAciBytes.entries()) {
           const hex = Array.from(aciBytes)
@@ -622,16 +683,16 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   }
 
   /**
-   * Get GroupsV2Manager, throwing if not configured.
+   * Get GroupManager, throwing if not configured.
    */
-  private get groupsV2(): GroupsV2Manager {
-    if (!this.groupsV2Manager) {
+  private get groups(): GroupManager {
+    if (!this.groupManager) {
       throw new EncryptionError(
-        'GroupsV2 not configured. Provide groupsV2 config to SignalProtocolClient.create().',
+        'Groups not configured. Provide groups config to SignalProtocolClient.create().',
         EncryptionErrorCode.INITIALIZATION_FAILED
       );
     }
-    return this.groupsV2Manager;
+    return this.groupManager;
   }
 
   /**
@@ -771,7 +832,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
         );
       }
 
-      const finalConfig = {
+      const finalConfig: SignalProtocolClientConfig = {
         ...config,
         protocolStrategy: resolveSignalProtocolStrategy(config),
         storage: config.storage,
@@ -1513,7 +1574,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    *
    * All inputs are normalized to Uint8Array before reaching the cipher layer.
    *
-   * @param recipientId - User ID or group ID (groups use the V2 group ID prefix)
+   * @param recipientId - User ID or group ID (groups use the package group ID prefix)
    * @param content - DataMessageInput, string, or Uint8Array to encrypt and send
    * @param options - Optional send options (isBinary for blob encryption, etc.)
    * @returns SendResult with messageId, timestamp, and device count
@@ -2397,7 +2458,16 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * ```
    */
   async encryptGroupMessage(groupId: string, plaintext: string): Promise<Uint8Array> {
-    return GroupOps.encryptGroupMessage(this.ctx, this.senderKeyManager, groupId, plaintext);
+    return GroupOps.encryptGroupMessage(
+      this.ctx,
+      this.senderKeyManager,
+      groupId,
+      plaintext,
+      this.groupManager
+        ? (candidateGroupId) =>
+            this.groupManager!.assertGroupSendAllowed(candidateGroupId)
+        : undefined
+    );
   }
 
   /**
@@ -2799,16 +2869,16 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   }
 
   // ============================================================================
-  // GROUPS V2 (Signal Private Group System)
+  // GROUP STATE (Signal Private Group System)
   // ============================================================================
 
   /**
-   * Create a new GroupsV2 group.
+   * Create a new group.
    */
-  async createGroupV2(
+  async createGroup(
     creatorAci: Uint8Array,
     creatorProfileKey: Uint8Array,
-    members: Array<{ aciBytes: Uint8Array; profileKey: Uint8Array }>,
+    members: GroupMemberInput[],
     title: string,
     options?: {
       description?: string;
@@ -2817,9 +2887,9 @@ export class SignalProtocolClient implements ISignalProtocolClient {
       disappearingMessagesDuration?: number;
     }
   ): Promise<{ groupId: GroupId; masterKey: Uint8Array }> {
-    return GroupOps.createGroupV2(
+    return GroupOps.createGroup(
       this.ctx,
-      this.groupsV2,
+      this.groups,
       creatorAci,
       creatorProfileKey,
       members,
@@ -2831,72 +2901,90 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Get decrypted group state (from cache or server).
    */
-  async getGroupStateV2(groupId: GroupId): Promise<DecryptedGroup> {
-    return GroupOps.getGroupStateV2(this.ctx, this.groupsV2, groupId);
+  async getGroupState(groupId: GroupId): Promise<DecryptedGroup> {
+    return GroupOps.getGroupState(this.ctx, this.groups, groupId);
   }
 
   /**
    * Sync group state from server.
    */
-  async syncGroupV2(groupId: GroupId): Promise<DecryptedGroup> {
-    return GroupOps.syncGroupV2(this.ctx, this.groupsV2, groupId);
+  async syncGroup(groupId: GroupId): Promise<DecryptedGroup> {
+    return GroupOps.syncGroup(this.ctx, this.groups, groupId);
   }
 
   /**
-   * Add a member to a GroupsV2 group.
+   * Add a member to a group.
    */
-  async addGroupMemberV2(
+  async addGroupMember(
     groupId: GroupId,
     editorAci: Uint8Array,
-    newMemberAci: Uint8Array,
-    newMemberProfileKey: Uint8Array
+    member: GroupMemberInput
   ): Promise<void> {
-    return GroupOps.addGroupMemberV2(
+    return GroupOps.addGroupMember(
       this.ctx,
-      this.groupsV2,
+      this.groups,
       groupId,
       editorAci,
-      newMemberAci,
-      newMemberProfileKey
+      member
+    );
+  }
+
+  /** Accept this client's pending profile-key invitation. */
+  async acceptGroupMemberInvitation(groupId: GroupId): Promise<void> {
+    return GroupOps.acceptGroupMemberInvitation(this.ctx, this.groups, groupId);
+  }
+
+  /**
+   * Decline this account's ACI- or PNI-keyed pending invitation.
+   */
+  async declineGroupMemberInvitation(
+    groupId: GroupId,
+    identity: 'aci' | 'pni' = 'aci'
+  ): Promise<void> {
+    return GroupOps.declineGroupMemberInvitation(
+      this.ctx,
+      this.groups,
+      groupId,
+      identity
     );
   }
 
   /**
-   * Remove a member from a GroupsV2 group. Triggers sender key rotation.
+   * Remove a member from a group. Triggers sender key rotation.
    */
-  async removeGroupMemberV2(
+  async removeGroupMember(
     groupId: GroupId,
     editorAci: Uint8Array,
     targetAci: Uint8Array
   ): Promise<void> {
-    return GroupOps.removeGroupMemberV2(this.ctx, this.groupsV2, groupId, editorAci, targetAci);
+    return GroupOps.removeGroupMember(this.ctx, this.groups, groupId, editorAci, targetAci);
   }
 
   /**
-   * Leave a GroupsV2 group.
+   * Leave a group.
    */
-  async leaveGroupV2(groupId: GroupId, userAci: Uint8Array): Promise<void> {
-    return GroupOps.leaveGroupV2(this.ctx, this.groupsV2, groupId, userAci);
+  async leaveGroup(groupId: GroupId, userAci: Uint8Array): Promise<void> {
+    return GroupOps.leaveGroup(this.ctx, this.groups, groupId, userAci);
   }
 
   /**
-   * Update GroupsV2 group title.
+   * Update a group's title.
    */
-  async updateGroupTitleV2(groupId: GroupId, editorAci: Uint8Array, title: string): Promise<void> {
-    return GroupOps.updateGroupTitleV2(this.ctx, this.groupsV2, groupId, editorAci, title);
+  async updateGroupTitle(groupId: GroupId, editorAci: Uint8Array, title: string): Promise<void> {
+    return GroupOps.updateGroupTitle(this.ctx, this.groups, groupId, editorAci, title);
   }
 
   /**
-   * Update GroupsV2 group description.
+   * Update a group's description.
    */
-  async updateGroupDescriptionV2(
+  async updateGroupDescription(
     groupId: GroupId,
     editorAci: Uint8Array,
     description: string
   ): Promise<void> {
-    return GroupOps.updateGroupDescriptionV2(
+    return GroupOps.updateGroupDescription(
       this.ctx,
-      this.groupsV2,
+      this.groups,
       groupId,
       editorAci,
       description
@@ -2904,16 +2992,16 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   }
 
   /**
-   * Update GroupsV2 group access control.
+   * Update a group's access control.
    */
-  async updateGroupAccessControlV2(
+  async updateGroupAccessControl(
     groupId: GroupId,
     editorAci: Uint8Array,
     updates: Partial<AccessControl>
   ): Promise<void> {
-    return GroupOps.updateGroupAccessControlV2(
+    return GroupOps.updateGroupAccessControl(
       this.ctx,
-      this.groupsV2,
+      this.groups,
       groupId,
       editorAci,
       updates
@@ -2921,21 +3009,21 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   }
 
   /**
-   * Create an invite link for a GroupsV2 group.
+   * Create an invite link for a group.
    */
-  async createGroupInviteLinkV2(groupId: GroupId, editorAci: Uint8Array): Promise<string> {
-    return GroupOps.createGroupInviteLinkV2(this.ctx, this.groupsV2, groupId, editorAci);
+  async createGroupInviteLink(groupId: GroupId, editorAci: Uint8Array): Promise<string> {
+    return GroupOps.createGroupInviteLink(this.ctx, this.groups, groupId, editorAci);
   }
 
   /**
-   * Join a GroupsV2 group via invite link.
+   * Join a group via invite link.
    */
-  async joinGroupViaInviteLinkV2(
+  async joinGroupViaInviteLink(
     url: string,
     userAci: Uint8Array,
     userProfileKey: Uint8Array
   ): Promise<{ groupId: GroupId; status: 'joined' | 'pending_approval' }> {
-    return GroupOps.joinGroupViaInviteLinkV2(this.ctx, this.groupsV2, url, userAci, userProfileKey);
+    return GroupOps.joinGroupViaInviteLink(this.ctx, this.groups, url, userAci, userProfileKey);
   }
 
   // ============================================================================

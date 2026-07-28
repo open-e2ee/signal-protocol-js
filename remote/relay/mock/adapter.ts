@@ -24,8 +24,9 @@ import type {
   RetryRequest,
   AccountIdentityProvisioning,
   AccountIdentityRotation,
+  IRelayGroupServer,
 } from '../types';
-import type { GroupAuthorization } from '../../../internal/groups-v2/manager';
+import type { GroupAuthorization } from '../../../internal/groups/manager';
 import type { PublicKey, Signature } from '../../../keys/branded';
 import type { CompositeIdentityV1, IdentityType } from '../../../keys/types';
 import {
@@ -38,13 +39,17 @@ import { constantTimeEqual } from '../../../internal/crypto/utils';
 import { PROVISIONING_SESSION_TTL_MS } from '../../../device/constants';
 import {
   generateServerSecretParams,
-  serverSign,
+  type ServerPublicParams,
   type ServerSecretParams,
 } from '../../../internal/protocol/zk/groups/server-params';
 import {
   issueAuthCredential as issueAuthCredentialZk,
   serializeAuthCredentialResponse,
 } from '../../../internal/protocol/zk/groups/auth-credential';
+import {
+  issueProfileKeyCredential as issueProfileKeyCredentialZk,
+  serializeProfileKeyCredentialResponse,
+} from '../../../internal/protocol/zk/groups/profile-key-credential';
 import {
   SERVICE_ID_ACI,
   SERVICE_ID_PNI,
@@ -67,6 +72,7 @@ import {
   MockRelayFailureController,
   type MockRelayFailureOptions,
 } from './failures';
+import { MockGroupAuthorizationServer } from './group-server';
 
 export interface MockSignalProtocolRelayServerOptions {
   failures?: MockRelayFailureOptions;
@@ -180,12 +186,14 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     ((request: RetryRequest) => Promise<void>)[]
   >();
 
-  // GroupsV2 encrypted state (server-opaque)
-  private groupStates = new Map<string, { encryptedState: Uint8Array; version: number }>(); // key: hex(groupId)
-  private groupChangeLogs = new Map<string, GroupChangeEntry[]>(); // key: hex(groupId)
-
   // Server secret params for signing and ZK auth (deterministic local seed)
-  private serverSecretParams: ServerSecretParams = generateServerSecretParams(new Uint8Array(32));
+  private readonly serverSecretParams: ServerSecretParams = generateServerSecretParams(
+    new Uint8Array(32)
+  );
+  private readonly groupAuthorizationServer = new MockGroupAuthorizationServer(
+    this.serverSecretParams
+  );
+  readonly groupServer: IRelayGroupServer;
 
   constructor(options: MockSignalProtocolRelayServerOptions = {}) {
     this.failures = new MockRelayFailureController(
@@ -193,6 +201,13 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
       (targetKey, envelope) => this.deliverEnvelope(targetKey, envelope),
       (targetKey) => this.deliverPending(targetKey)
     );
+    this.groupServer = {
+      server: this.groupAuthorizationServer,
+      issueAuthCredential: (userId) =>
+        this.issueAuthCredential(userId),
+      issueProfileKeyCredential: (userId, profileKey) =>
+        this.issueProfileKeyCredential(userId, profileKey),
+    };
   }
 
   /** Build a storage key with explicit identity-type separation. */
@@ -1144,75 +1159,87 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
   }
 
   // ============================================================================
-  // GroupsV2 State (encrypted, server-opaque)
+  // Group state (encrypted, server-opaque)
   // ============================================================================
 
   async createGroupState(
     groupId: Uint8Array,
     encryptedState: Uint8Array,
-    _authorization: GroupAuthorization
+    authorization: GroupAuthorization
   ): Promise<void> {
-    const key = this.groupIdToHex(groupId);
-    this.groupStates.set(key, { encryptedState: cloneRelayValue(encryptedState), version: 0 });
-    this.groupChangeLogs.set(key, []);
+    await this.groupAuthorizationServer.createGroup(groupId, encryptedState, authorization);
+  }
+
+  async createGroup(
+    groupId: Uint8Array,
+    encryptedState: Uint8Array,
+    authorization: GroupAuthorization
+  ): Promise<void> {
+    await this.createGroupState(groupId, encryptedState, authorization);
   }
 
   async getGroupState(
     groupId: Uint8Array,
-    _authorization: GroupAuthorization
+    authorization: GroupAuthorization,
+    version?: number
   ): Promise<{
     encryptedState: Uint8Array;
     version: number;
+    baselineSignature: Uint8Array;
   } | null> {
-    const key = this.groupIdToHex(groupId);
-    const state = this.groupStates.get(key);
-    return state ? cloneRelayValue(state) : null;
+    return this.groupAuthorizationServer.getGroup(groupId, authorization, version);
+  }
+
+  async getGroup(
+    groupId: Uint8Array,
+    authorization: GroupAuthorization,
+    version?: number
+  ): Promise<{
+    encryptedState: Uint8Array;
+    version: number;
+    baselineSignature: Uint8Array;
+  } | null> {
+    return this.getGroupState(groupId, authorization, version);
+  }
+
+  async getGroupJoinInfo(
+    groupId: Uint8Array,
+    inviteLinkPassword: Uint8Array,
+    authorization: GroupAuthorization
+  ): Promise<{ encryptedJoinInfo: Uint8Array; version: number } | null> {
+    return this.groupAuthorizationServer.getGroupJoinInfo(
+      groupId,
+      inviteLinkPassword,
+      authorization
+    );
   }
 
   async getGroupChanges(
     groupId: Uint8Array,
     fromVersion: number,
-    _authorization: GroupAuthorization
+    authorization: GroupAuthorization
   ): Promise<GroupChangeEntry[]> {
-    const key = this.groupIdToHex(groupId);
-    const changes = this.groupChangeLogs.get(key) ?? [];
-    return cloneRelayValue(changes.filter((c) => c.version > fromVersion));
+    return this.groupAuthorizationServer.getGroupChanges(
+      groupId,
+      fromVersion,
+      authorization
+    );
   }
 
   async submitGroupChange(
     groupId: Uint8Array,
     expectedVersion: number,
-    encryptedChange: Uint8Array,
-    updatedEncryptedState: Uint8Array,
-    _authorization: GroupAuthorization
-  ): Promise<{ serverSignature: Uint8Array }> {
-    const key = this.groupIdToHex(groupId);
-    const current = this.groupStates.get(key);
-    if (!current) {
-      throw new Error(`Group not found: ${key}`);
-    }
-    if (current.version !== expectedVersion) {
-      throw new Error(`Version conflict: expected ${expectedVersion}, got ${current.version}`);
-    }
-
-    const newVersion = current.version + 1;
-    const randomness = crypto.getRandomValues(new Uint8Array(32));
-    const serverSignature = serverSign(this.serverSecretParams, randomness, encryptedChange);
-    const entry: GroupChangeEntry = {
-      version: newVersion,
-      encryptedChange: cloneRelayValue(encryptedChange),
-      serverSignature,
-      timestamp: Date.now(),
-    };
-
-    current.encryptedState = cloneRelayValue(updatedEncryptedState);
-    current.version = newVersion;
-
-    const changes = this.groupChangeLogs.get(key) ?? [];
-    changes.push(cloneRelayValue(entry));
-    this.groupChangeLogs.set(key, changes);
-
-    return cloneRelayValue({ serverSignature });
+    actions: Uint8Array,
+    inviteLinkPassword: Uint8Array,
+    authorization: GroupAuthorization
+  ): Promise<GroupChangeEntry> {
+    return this.groupAuthorizationServer.submitGroupChange(
+      groupId,
+      expectedVersion,
+      actions,
+      inviteLinkPassword,
+      authorization
+    );
   }
 
   // ============================================================================
@@ -1234,12 +1261,12 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
   async issueAuthCredential(userId: string): Promise<Uint8Array> {
     const identity = this.getOrCreateIdentity(userId);
     const aci: ServiceId = { kind: SERVICE_ID_ACI, uuid: uuidToBytes(identity.uuid) };
-    // Nil PNI for non-phone apps — credential math only needs issuance/reception consistency
-    const NIL_PNI_UUID = '00000000-0000-0000-0000-000000000000';
-    const pni: ServiceId = {
-      kind: SERVICE_ID_PNI,
-      uuid: uuidToBytes(identity.phoneNumberIdentifier ?? NIL_PNI_UUID),
-    };
+    const pni: ServiceId | undefined = identity.phoneNumberIdentifier
+      ? {
+          kind: SERVICE_ID_PNI,
+          uuid: uuidToBytes(identity.phoneNumberIdentifier),
+        }
+      : undefined;
 
     const redemptionTime = Math.floor(Date.now() / 1000 / SECONDS_PER_DAY) * SECONDS_PER_DAY;
     const randomness = crypto.getRandomValues(new Uint8Array(32));
@@ -1255,14 +1282,51 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     return serializeAuthCredentialResponse(response);
   }
 
+  async issueProfileKeyCredential(
+    userId: string,
+    profileKey: Uint8Array
+  ): Promise<Uint8Array> {
+    const { aci } = this.getGroupServiceIds(userId);
+    const now = Math.floor(Date.now() / 1000);
+    const redemptionTime =
+      Math.floor(now / SECONDS_PER_DAY) * SECONDS_PER_DAY +
+      2 * SECONDS_PER_DAY;
+    const response = issueProfileKeyCredentialZk(
+      this.serverSecretParams.profileKeyCredentialKeyPair,
+      aci,
+      profileKey,
+      redemptionTime,
+      crypto.getRandomValues(new Uint8Array(32))
+    );
+    return serializeProfileKeyCredentialResponse(response);
+  }
+
+  /** Published parameters for wiring the executable reference group server. */
+  getGroupServerPublicParams(): ServerPublicParams {
+    return this.groupAuthorizationServer.publicParams;
+  }
+
+  /** Service IDs deterministically associated with a mock relay account. */
+  getGroupServiceIds(userId: string): { aci: ServiceId; pni?: ServiceId } {
+    const identity = this.getOrCreateIdentity(userId);
+    return {
+      aci: { kind: SERVICE_ID_ACI, uuid: uuidToBytes(identity.uuid) },
+      pni: identity.phoneNumberIdentifier
+        ? {
+            kind: SERVICE_ID_PNI,
+            uuid: uuidToBytes(identity.phoneNumberIdentifier),
+          }
+        : undefined,
+    };
+  }
+
   async refreshGroupSendEndorsements(
     groupId: Uint8Array,
-    _authorization: GroupAuthorization
+    authorization: GroupAuthorization
   ): Promise<{ endorsements: Uint8Array; expiration: number }> {
-    const key = this.groupIdToHex(groupId);
-    const group = this.groupStates.get(key);
+    const group = await this.groupAuthorizationServer.getGroup(groupId, authorization);
     if (!group) {
-      throw new Error(`Group not found: ${key}`);
+      throw new Error('Group not found');
     }
 
     // Extract UidEncCiphertext objects from the serialized encrypted state.
@@ -1347,8 +1411,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     this.kemLastResortPreKeyMetadata.clear();
     this.retryRequests.clear();
     this.retryRequestSubscriptions.clear();
-    this.groupStates.clear();
-    this.groupChangeLogs.clear();
+    this.groupAuthorizationServer.clear();
     this.userIdentities.clear();
     this.senderCertificates.clear();
     this.failures.reset();
@@ -1469,12 +1532,6 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
       keyIds.add(preKey.keyId);
     }
     consumed.set(storageKey, keyIds);
-  }
-
-  private groupIdToHex(groupId: Uint8Array): string {
-    return Array.from(groupId)
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
   }
 
   private deliverEnvelope(targetKey: string, envelope: Envelope): void {

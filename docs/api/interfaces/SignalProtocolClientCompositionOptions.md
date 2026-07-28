@@ -51,7 +51,7 @@ signal.startRelaySubscription();
 
 ## Extends
 
-- `Omit`\<[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md), `"remoteObjectStore"` \| `"deviceId"` \| `"enablePniKeys"` \| `"protocol"` \| `"protocolManager"` \| `"protocolStrategy"` \| `"relay"` \| `"storage"`\>
+- `Omit`\<[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md), `"remoteObjectStore"` \| `"aci"` \| `"deviceId"` \| `"enablePniKeys"` \| `"protocol"` \| `"protocolManager"` \| `"protocolStrategy"` \| `"relay"` \| `"pni"` \| `"storage"`\>
 
 ## Properties
 
@@ -90,24 +90,21 @@ Recommended: Enable in development, disable in production
 
 ***
 
-### groupsV2?
+### groups?
 
-> `optional` **groupsV2?**: `object`
+> `optional` **groups?**: `object`
 
-GroupsV2 configuration for Signal Private Group System.
+Group System configuration.
 Required for group state management (create, sync, membership changes).
 
-#### aci
+#### allowUnauthenticatedGroupHistory?
 
-> **aci**: [`ServiceId`](ServiceId.md)
+> `optional` **allowUnauthenticatedGroupHistory?**: `boolean`
 
-User's ACI for credential presentation.
+Explicitly accept group history without server signatures.
 
-#### credentialPublicKey
-
-> **credentialPublicKey**: [`CredentialPublicKey`](CredentialPublicKey.md)
-
-Server's credential public key for verifying issuance proofs.
+This selects the documented non-conforming deployment mode and emits a
+visible configuration warning.
 
 #### endorsementManager?
 
@@ -115,17 +112,47 @@ Server's credential public key for verifying issuance proofs.
 
 Pre-constructed EndorsementManager for group send endorsement-based auth.
 
-#### endorsementRootPublicKey?
+#### issueCredential?
 
-> `optional` **endorsementRootPublicKey?**: [`ServerRootPublicKey`](../classes/ServerRootPublicKey.md)
+> `optional` **issueCredential?**: () => `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
 
-Server's endorsement root public key for verifying group send endorsements.
+Override the relay's auth-credential issuance transport.
 
-#### pni?
+##### Returns
 
-> `optional` **pni?**: [`ServiceId`](ServiceId.md)
+`Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
 
-User's PNI for credential presentation (optional — nil UUID used for non-phone apps).
+#### issueProfileKeyCredential?
+
+> `optional` **issueProfileKeyCredential?**: () => `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
+
+Override the relay's profile-key credential issuance transport.
+
+##### Returns
+
+`Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
+
+#### onConfigurationWarning?
+
+> `optional` **onConfigurationWarning?**: (`warning`) => `void`
+
+Receive the §12.3 non-conforming deployment warning.
+
+##### Parameters
+
+###### warning
+
+`GroupConfigurationWarning`
+
+##### Returns
+
+`void`
+
+#### profileKey
+
+> **profileKey**: `Uint8Array`
+
+This account's 32-byte profile key.
 
 #### resolveAciBytesByUserIds?
 
@@ -143,33 +170,44 @@ Resolve member ACIs without importing app content models into the client.
 
 `Promise`\<`Map`\<`string`, `Uint8Array`\<`ArrayBufferLike`\>\>\>
 
-#### server
+#### server?
 
-> **server**: [`IGroupServer`](IGroupServer.md)
+> `optional` **server?**: [`IGroupServer`](IGroupServer.md)
 
-Server-side group operations.
+Override `relay.groupServer.server` for a custom deployment.
 
-#### store
+#### store?
 
-> **store**: [`IGroupStateStore`](IGroupStateStore.md)
+> `optional` **store?**: [`IGroupStateStore`](IGroupStateStore.md)
 
-Local group state storage (master keys, cached state).
+Override the SDK local storage adapter for group state.
+
+#### trustRoot
+
+> **trustRoot**: `Uint8Array`
+
+Versioned serialized trust root pinned by the application at build time.
+
+This value is never fetched from the relay and trusted at runtime.
 
 #### Example
 
 ```typescript
 const signal = await SignalProtocolClient.create(userId, {
   storage: customStorage,
-  groupsV2: {
-    store: new SQLiteGroupStateStore(db),
-    server: new ConvexGroupServer(convex),
+  relay,
+  aci,
+  pni,
+  groups: {
+    trustRoot: GROUP_TRUST_ROOT,
+    profileKey,
   }
 });
 ```
 
 #### Inherited from
 
-[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`groupsV2`](SignalProtocolClientConfig.md#groupsv2)
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`groups`](SignalProtocolClientConfig.md#groups)
 
 ***
 

@@ -1,6 +1,6 @@
 {
   "name": "@open-e2ee/signal-protocol-sdk",
-  "version": "0.1.0-alpha.6",
+  "version": "0.1.0-alpha.7",
   "description": "Signal Protocol E2EE SDK for TypeScript — Expo, React Native, browser, and Node. Post-quantum PQXDH and Double Ratchet.",
   "keywords": [
     "open-e2ee",
@@ -43,6 +43,9 @@
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "oe-groups": "./scripts/oe-groups.mjs"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -59,6 +62,10 @@
     "./remote/relay/convex/relay": {
       "types": "./dist/remote/relay/convex/relay.d.ts",
       "default": "./dist/remote/relay/convex/relay.js"
+    },
+    "./remote/relay/convex/server": {
+      "types": "./dist/remote/relay/convex/server/index.d.ts",
+      "default": "./dist/remote/relay/convex/server/index.js"
     },
     "./remote/relay/mock": {
       "types": "./dist/remote/relay/mock/index.d.ts",
@@ -321,8 +328,10 @@
     "remote/object-store/s3/README.md",
     "remote/relay/README.md",
     "remote/relay/convex/README.md",
+    "remote/relay/convex/server/README.md",
     "remote/relay/mock/README.md",
     "safety/README.md",
+    "scripts/oe-groups.mjs",
     "sealed-sender/README.md",
     "types/README.md",
     "username/README.md",
@@ -412,7 +421,8 @@
   "overrides": {
     "xcode": {
       "uuid": "11.1.1"
-    }
+    },
+    "brace-expansion": "^5.0.8"
   },
   "devDependencies": {
     "@convex-dev/r2": "^0.10.2",
@@ -420,6 +430,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "convex": "^1.42.3",
+    "convex-test": "^0.0.54",
     "drizzle-orm": "^0.45.1",
     "esbuild": "^0.27.0",
     "expo": "~55.0.27",

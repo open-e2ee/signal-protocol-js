@@ -73,8 +73,8 @@ model and what is out of scope.
 | **Sealed sender v2** | `libsignal` `sealed_sender.rs` | **Faithful** on all four labels, the KEM, AES-256-GCM-SIV, the multi-recipient binary format, and the `0x3FFF` registration-ID mask | — | The v2 construction follows `libsignal` |
 | **Delivery token** | `libsignal` `profile_key.rs` | **Faithful.** `deriveAccessKey` follows `libsignal`'s `ProfileKey::derive_access_key`, and reproduces `libsignal`'s published known-answer values | — | Not an SDK invention, despite what the module name suggests |
 | **Sender keys** | `libsignal` `sender_keys.rs` | **Deviation.** Protobuf field numbers and `0x33` framing match, and the `0x01`/`0x02` seeds match, but message-key derivation **omits HKDF-Extract**, signatures are Ed25519 not XEdDSA, and `distributionUuid` carries a UTF-8 string rather than 16 UUID bytes | The Ed25519 choice follows the identity profile; the missing Extract appears unintentional | Group message keys differ from `libsignal`'s for the same chain key. Confirmed numerically, not merely by inspection |
-| **Groups v2** | Signal Private Group System | **Independent design.** Real zkgroup primitives underneath, but the client is the state authority: it re-encrypts and uploads whole group state, and server signatures are not verified | Ships a working group system without a validating server | The relay **cannot validate group changes**, so it cannot enforce roles or membership. This is a materially weaker trust model than the Signal Private Group System, where the server validates every change against zero-knowledge presentations |
-| **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation uses SDK-specific labels | Server keys are the SDK's own trust root, not Signal Messenger's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal Messenger's |
+| **Groups** | Signal Private Group System | **Independent design.** Real zkgroup primitives underneath; the server validates every change against zero-knowledge presentations and signs the accepted result, and clients verify those signatures. **Deviation:** profile-key credential issuance is not blinded — the issuing server sees the raw profile key at issuance time | Ships a validating group server with an enforcement contract (S1–S14) specified in-tree | Not wire-compatible with the Signal Private Group System; credentials are not interchangeable. The unblinded issuance path means a hostile issuance server learns profile keys, which the Signal Private Group System's blinded issuance prevents |
+| **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation is structured as four labelled derivations rather than one seeded derivation | Server keys are the deploying operator's own trust root (each deployment generates its own seed), not Signal Messenger's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal Messenger's |
 | **Registration IDs** | `libsignal` `sealed_sender.rs` | **Faithful** as of 0.1.0-alpha.4. Generated in `[1, 16383]`, strictly inside the 14 bits the wire format reserves | — | Through alpha.3 the range ran to 16384, which masked to `0` on the wire in multi-recipient sealed sender for roughly 1 install in 16,384 |
 
 ---
@@ -774,47 +774,48 @@ uniformly random HMAC output is cryptographically fine — but the repository's 
 sender-keys note claims equivalence with `libsignal` at this step, and that claim
 is incorrect. Flagged for correction.
 
-### 7.3 Groups v2 is an independent design
+### 7.3 Groups are an independent design
 
 The zero-knowledge primitives underneath are real and faithful (§7.4). The group
 system built on them is not the Signal Private Group System.
 
 What is faithful: role and access-control enum values match `libsignal`'s exactly,
-group ID derivation from the master key is correct, the `__signal_group__v2__!`
-identifier encoding follows `libsignal`, authentication genuinely uses zkgroup
+group ID derivation from the master key is correct, the `open-e2ee:group:`
+identifier namespace is package-owned, authentication genuinely uses zkgroup
 credentials, and member identifiers and profile keys are encrypted with real
 `UidCiphertext` and `ProfileKeyCiphertext`.
 
 What differs, and it is structural:
 
-**The client is the state authority.** The SDK's client applies a change,
-re-encrypts the entire group state, and uploads it
-(`internal/groups-v2/manager.ts:1176-1193`). Signal Messenger's client submits only a set of
-change actions, each carrying zero-knowledge presentations, and the **server**
-validates every action and signs the result.
+**The enforcement contract is this SDK's own.** Like the Signal Private Group
+System, the client submits change actions carrying zero-knowledge
+presentations, and the **server** validates every action against the group's
+access control before signing and persisting the accepted result. The
+enforcement rules are the SDK's own specified S1–S14 contract rather than
+Signal Messenger's server implementation, and the shipped enforcing server
+(`internal/groups/server-engine.ts`, with a Convex adapter at
+`remote/relay/convex/server.ts`) implements that contract. Clients verify the
+server's signature, group binding, strict version sequence, and pre-state
+authorization on every applied change.
 
-**Consequence, stated plainly: the relay cannot validate group changes.** It can
-compare an expected version number and nothing else. It cannot verify that the
-member making a change was permitted to make it, because the change actions carry
-no zero-knowledge presentations for it to check. Any authenticated member can
-rewrite roles, membership, and the ban list. Server signatures are returned but
-never verified on receipt.
-
-This is a materially weaker trust model than the Signal Private Group System, and
-anyone deploying group messaging on this SDK needs to know it: group membership
-and roles are enforced by cooperating clients, not by the server, and not
-cryptographically against a malicious member. It is a reasonable position for an
-SDK that ships without a validating server component, and it is not what a reader
-of the Signal Private Group System documentation would assume.
+**Profile-key credential issuance is not blinded.** The issuance endpoint
+receives the raw 32-byte profile key, so the issuing server sees every user's
+profile key in plaintext at issuance time. The Signal Private Group System
+issues profile-key credentials over a *blinded* commitment, so its server
+never learns the key. The blinding primitives exist in this codebase
+(`internal/protocol/zk/credentials/issuance.ts`) but are not wired into this
+path; §12.1 of the in-tree group specification carries the same caveat.
+A deployer must treat the issuance server as learning profile keys — and
+therefore profile names and avatars — until blinded issuance ships.
 
 **Serialization is JSON**, not protobuf, both for group state
-(`internal/groups-v2/manager.ts:1229-1236`) and for the blob payloads inside the
-AES-256-GCM-SIV envelope (`internal/groups-v2/encrypted-state.ts:70-81`). Every
+(`internal/groups/manager.ts:1229-1236`) and for the blob payloads inside the
+AES-256-GCM-SIV envelope (`internal/groups/encrypted-state.ts:70-81`). Every
 encrypted group title and description is undecryptable by Signal Messenger even with the
 correct master key.
 
 **Invite links** use `https://join.open-e2ee.dev/#` with a 49-byte raw payload
-(`internal/groups-v2/invite-link.ts:36`, `:78-85`), where `libsignal` uses
+(`internal/groups/invite-link.ts:36`, `:78-85`), where `libsignal` uses
 `https://signal.group/#` with a protobuf. This is labelled accurately in source as
 the package's own format.
 
@@ -833,11 +834,13 @@ redemption window all match `libsignal`. The strongest evidence is a test that
 asserts the 416-byte serialized system parameters against a hex string taken from
 `libsignal`'s own Rust test, and passes.
 
-One deviation: server secret parameters are derived under four SDK-specific labels
-rather than `libsignal`'s single seeded derivation
-(`internal/protocol/zk/groups/server-params.ts:43-54`). The same randomness
-therefore yields different server keys, and credentials are not interchangeable
-with Signal Messenger's. That follows from the SDK being its own trust root.
+One deviation: server secret parameters are derived as four separately labelled
+key derivations rather than `libsignal`'s single seeded derivation
+(`internal/protocol/zk/groups/server-params.ts:43-54`), so the same randomness
+would yield different server keys. Independently of that structural difference,
+each deployment generates its **own** random 32-byte seed, which is what makes
+the trust root the deploying operator's rather than Signal Messenger's.
+Credentials are not interchangeable with Signal Messenger's.
 
 Credential serialization is also ad hoc and carries no version byte, where
 `libsignal` uses a leading version byte. That is a forward-compatibility gap

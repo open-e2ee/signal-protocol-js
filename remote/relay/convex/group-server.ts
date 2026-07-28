@@ -4,9 +4,10 @@
  * Implementation of IGroupServer using Convex mutations/queries for
  * server-side encrypted group state storage.
  *
- * The server stores encrypted (opaque) group state and enforces version
- * sequencing. It never decrypts group content. This adapter bridges
- * the IGroupServer interface (Uint8Array) to Convex's v.bytes() (ArrayBuffer).
+ * This is a client transport adapter, not an enforcing group server. The
+ * application-supplied Convex functions must implement the enforcing-server
+ * obligations. This adapter bridges IGroupServer (Uint8Array) to Convex
+ * v.bytes() (ArrayBuffer).
  *
  * The application supplies its generated Convex function references. Those
  * functions retain responsibility for authentication, authorization, and
@@ -20,7 +21,8 @@ import type {
   IGroupServer,
   GroupAuthorization,
   GroupChangeLogEntry,
-} from '../../../internal/groups-v2/manager';
+  GroupSnapshot,
+} from '../../../internal/groups/manager';
 
 /**
  * Either ConvexReactClient or ConvexHttpClient can be used.
@@ -32,6 +34,7 @@ type ConvexClient = ConvexReactClient | ConvexHttpClient;
 export interface ConvexGroupServerApi {
   createGroup: FunctionReference<'mutation'>;
   getGroup: FunctionReference<'query'>;
+  getGroupJoinInfo: FunctionReference<'query'>;
   getGroupChanges: FunctionReference<'query'>;
   submitGroupChange: FunctionReference<'mutation'>;
 }
@@ -55,8 +58,8 @@ export interface ConvexGroupServerApi {
  * const groupApi = api.signal.groups satisfies ConvexGroupServerApi;
  * const groupServer = new ConvexGroupServer(convex, groupApi);
  *
- * // Use with GroupsV2Manager
- * const manager = new GroupsV2Manager({
+ * // Use with GroupManager
+ * const manager = new GroupManager({
  *   server: groupServer,
  *   store: localStore,
  *   ...
@@ -94,20 +97,23 @@ export class ConvexGroupServer implements IGroupServer {
   }
 
   /**
-   * Get the latest encrypted group state from the server.
+   * Get encrypted group state from the server.
    *
    * @param groupId - 32-byte group identifier
    * @param authorization - ZK auth credential presentation + group public params
-   * @returns Encrypted state and version, or null if group does not exist
+   * @param version - Optional exact historical version
+   * @returns Encrypted state and version, or null if group/version does not exist
    */
   async getGroup(
     groupId: Uint8Array,
-    authorization: GroupAuthorization
-  ): Promise<{ encryptedState: Uint8Array; version: number } | null> {
+    authorization: GroupAuthorization,
+    version?: number
+  ): Promise<GroupSnapshot | null> {
     const result = await this.convex.query(this.api.getGroup, {
       groupId: this.toBytes(groupId),
       presentation: this.toBytes(authorization.presentation),
       groupPublicParams: this.toBytes(authorization.groupPublicParams),
+      version,
     });
 
     if (!result) return null;
@@ -115,14 +121,36 @@ export class ConvexGroupServer implements IGroupServer {
     return {
       encryptedState: new Uint8Array(result.encryptedState),
       version: result.version,
+      baselineSignature: new Uint8Array(result.baselineSignature),
+    };
+  }
+
+  async getGroupJoinInfo(
+    groupId: Uint8Array,
+    inviteLinkPassword: Uint8Array,
+    authorization: GroupAuthorization
+  ): Promise<{ encryptedJoinInfo: Uint8Array; version: number } | null> {
+    const result = await this.convex.query(this.api.getGroupJoinInfo, {
+      groupId: this.toBytes(groupId),
+      inviteLinkPassword: this.toBytes(inviteLinkPassword),
+      presentation: this.toBytes(authorization.presentation),
+      groupPublicParams: this.toBytes(authorization.groupPublicParams),
+    });
+
+    if (!result) return null;
+
+    return {
+      encryptedJoinInfo: new Uint8Array(result.encryptedJoinInfo),
+      version: result.version,
     };
   }
 
   /**
    * Get change log entries from a given version.
    *
-   * Used for incremental group state sync. The server returns all changes
-   * after the specified version, allowing the client to replay them locally.
+   * Used for incremental group state sync. The enforcing backend authorizes
+   * at the requested snapshot and returns changes through the first
+   * transition that revokes the requester, inclusive.
    *
    * @param groupId - 32-byte group identifier
    * @param fromVersion - Version to start from (exclusive)
@@ -144,13 +172,15 @@ export class ConvexGroupServer implements IGroupServer {
     return result.map(
       (entry: {
         version: number;
-        encryptedChange: ArrayBuffer;
+        actions: ArrayBuffer;
         serverSignature: ArrayBuffer;
+        changeEpoch: number;
         timestamp: number;
       }) => ({
         version: entry.version,
-        encryptedChange: new Uint8Array(entry.encryptedChange),
+        actions: new Uint8Array(entry.actions),
         serverSignature: new Uint8Array(entry.serverSignature),
+        changeEpoch: entry.changeEpoch,
         timestamp: entry.timestamp,
       })
     );
@@ -159,34 +189,44 @@ export class ConvexGroupServer implements IGroupServer {
   /**
    * Submit a group change with optimistic concurrency control.
    *
-   * The server validates the expected version matches the current version,
-   * computes a Schnorr server signature over the encrypted change, stores
-   * the change log entry, and updates the group state atomically.
+   * The application server validates and applies the ciphertext Actions,
+   * signs the exact accepted bytes, and stores the transition atomically.
    *
    * @param groupId - 32-byte group identifier
    * @param expectedVersion - Current version for optimistic concurrency
-   * @param encryptedChange - Serialized EncryptedGroupChange
-   * @param updatedEncryptedState - New full encrypted state after applying the change
+   * @param actions - Client-proposed serialized encrypted Actions
+   * @param inviteLinkPassword - Independently verified link-join credential
    * @param authorization - ZK auth credential presentation + group public params
-   * @returns Server signature over the encrypted change (for client-side verification)
+   * @returns Exact accepted Actions and their server signature
    */
   async submitGroupChange(
     groupId: Uint8Array,
     expectedVersion: number,
-    encryptedChange: Uint8Array,
-    updatedEncryptedState: Uint8Array,
+    actions: Uint8Array,
+    inviteLinkPassword: Uint8Array,
     authorization: GroupAuthorization
-  ): Promise<{ serverSignature: Uint8Array }> {
+  ): Promise<GroupChangeLogEntry> {
+    if (arguments.length !== 5) {
+      throw new Error(
+        'INVALID_REQUEST: Group change submission must not carry an epoch'
+      );
+    }
     const result = await this.convex.mutation(this.api.submitGroupChange, {
       groupId: this.toBytes(groupId),
       expectedVersion,
-      encryptedChange: this.toBytes(encryptedChange),
-      updatedEncryptedState: this.toBytes(updatedEncryptedState),
+      actions: this.toBytes(actions),
+      inviteLinkPassword: this.toBytes(inviteLinkPassword),
       presentation: this.toBytes(authorization.presentation),
       groupPublicParams: this.toBytes(authorization.groupPublicParams),
     });
 
-    return { serverSignature: new Uint8Array(result.serverSignature) };
+    return {
+      version: result.version,
+      actions: new Uint8Array(result.actions),
+      serverSignature: new Uint8Array(result.serverSignature),
+      changeEpoch: result.changeEpoch,
+      timestamp: result.timestamp,
+    };
   }
 
   // ════════════════════════════════════════════════════════════════════════════

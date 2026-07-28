@@ -13,7 +13,10 @@ import type { PreKeyBundle, IdentityType, CompositeIdentityV1 } from '../../keys
 import type { SenderKeyState } from '../../internal/protocol/sender-keys/manager';
 import type { RetryRequest } from '../../internal/sesame/types';
 import { ContentHint } from '../../types/messages';
-import type { GroupAuthorization } from '../../internal/groups-v2/manager';
+import type {
+  GroupAuthorization,
+  IGroupServer,
+} from '../../internal/groups/manager';
 
 // Re-export for consumers of this module
 export {};
@@ -31,6 +34,24 @@ export interface AccountIdentityProvisioning {
 /** Explicit account identity rotation guarded by the previously trusted tuple. */
 export interface AccountIdentityRotation extends AccountIdentityProvisioning {
   expectedCurrentCommitment: Uint8Array;
+}
+
+/**
+ * Optional relay capability for the Group System.
+ *
+ * The trust root is intentionally absent: clients pin it out of band rather
+ * than discovering and trusting it from this runtime capability.
+ */
+export interface IRelayGroupServer {
+  /** Encrypted group-state transport. */
+  readonly server: IGroupServer;
+  /** Issue an auth credential for the relay's authenticated account. */
+  issueAuthCredential(userId: string): Promise<Uint8Array>;
+  /** Issue a profile-key credential for the relay's authenticated account. */
+  issueProfileKeyCredential(
+    userId: string,
+    profileKey: Uint8Array
+  ): Promise<Uint8Array>;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -342,6 +363,9 @@ export interface IKeyRotationService {
  * ```
  */
 export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRotationService {
+  /** Optional conforming Group System transport and issuance capability. */
+  readonly groupServer?: IRelayGroupServer;
+
   // ════════════════════════════════════════════════════════════
   // ENVELOPE DELIVERY
   // Maps to: envelopes table
@@ -603,13 +627,13 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
   getActiveDevices(userId: string): Promise<GroupMemberDevice[]>;
 
   // ════════════════════════════════════════════════════════════
-  // GROUP STATE (GroupsV2 — encrypted, server-opaque)
+  // GROUP STATE (encrypted, server cannot decrypt)
   // Maps to: encryptedGroups + groupChangeLogs tables
   // ════════════════════════════════════════════════════════════
 
   /**
    * Create a new encrypted group on the server.
-   * Server stores opaque ciphertext and never decrypts.
+   * Server stores and evaluates ciphertext structure but never decrypts it.
    *
    * @param groupId - 32-byte group identifier
    * @param encryptedState - Serialized EncryptedGroup (opaque to server)
@@ -622,17 +646,34 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
   ): Promise<void>;
 
   /**
-   * Get the latest encrypted group state.
+   * Get encrypted group state.
    *
    * @param groupId - 32-byte group identifier
    * @param authorization - ZK auth credential for anonymous group access
-   * @returns Encrypted state + current version, or null if not found
+   * @param version - Optional exact historical version for a race-safe baseline
+   * @returns Encrypted state + version, or null if the group/version is not found
    */
   getGroupState(
     groupId: Uint8Array,
-    authorization: GroupAuthorization
+    authorization: GroupAuthorization,
+    version?: number
   ): Promise<{
     encryptedState: Uint8Array;
+    version: number;
+    /** S14 signature over groupId, version, and the exact encryptedState bytes. */
+    baselineSignature: Uint8Array;
+  } | null>;
+
+  /**
+   * Get the reduced invite-link projection after independent password
+   * verification. This response never includes member lists.
+   */
+  getGroupJoinInfo(
+    groupId: Uint8Array,
+    inviteLinkPassword: Uint8Array,
+    authorization: GroupAuthorization
+  ): Promise<{
+    encryptedJoinInfo: Uint8Array;
     version: number;
   } | null>;
 
@@ -640,10 +681,14 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
    * Get group change log entries after a given version.
    * Used for incremental state synchronization.
    *
+   * Authorization is evaluated at the `fromVersion` snapshot. Serve through
+   * the first transition that makes the requester unreadable, inclusive, and
+   * do not serve later transitions under that request.
+   *
    * @param groupId - 32-byte group identifier
    * @param fromVersion - Fetch changes with version > fromVersion
    * @param authorization - ZK auth credential for anonymous group access
-   * @returns Array of change log entries in version order
+   * @returns Authorized contiguous change-log prefix in version order
    */
   getGroupChanges(
     groupId: Uint8Array,
@@ -657,19 +702,19 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
    *
    * @param groupId - 32-byte group identifier
    * @param expectedVersion - Expected current version (for optimistic concurrency)
-   * @param encryptedChange - Serialized GroupChange (opaque)
-   * @param updatedEncryptedState - New full encrypted state after this change
+   * @param actions - Client-proposed serialized Actions
+   * @param inviteLinkPassword - Required independently for link-join submissions
    * @param authorization - ZK auth credential for anonymous group access
-   * @returns Server signature binding this change
+   * @returns Exact accepted Actions bytes and their server signature
    * @throws ConflictError if expectedVersion !== currentVersion
    */
   submitGroupChange(
     groupId: Uint8Array,
     expectedVersion: number,
-    encryptedChange: Uint8Array,
-    updatedEncryptedState: Uint8Array,
+    actions: Uint8Array,
+    inviteLinkPassword: Uint8Array,
     authorization: GroupAuthorization
-  ): Promise<{ serverSignature: Uint8Array }>;
+  ): Promise<GroupChangeEntry>;
 
   // ════════════════════════════════════════════════════════════
   // ZK AUTH CREDENTIALS (anonymous group access)
@@ -1037,10 +1082,12 @@ export interface GroupMemberDevice {
 export interface GroupChangeEntry {
   /** Revision number this change produces */
   version: number;
-  /** Serialized GroupChange (opaque to server) */
-  encryptedChange: Uint8Array;
+  /** Exact serialized Actions bytes accepted and stored by the server */
+  actions: Uint8Array;
   /** Server's binding signature for this change */
   serverSignature: Uint8Array;
+  /** Protocol epoch for action feature gating */
+  changeEpoch: number;
   /** When the server accepted this change */
   timestamp: number;
 }

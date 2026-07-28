@@ -789,7 +789,7 @@ Automatically handles:
 
 `string`
 
-Group ID with V2 prefix or userId for direct messages
+Prefixed group ID or userId for direct messages
 
 ##### content
 

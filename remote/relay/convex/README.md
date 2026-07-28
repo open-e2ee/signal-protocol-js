@@ -46,6 +46,12 @@ The generated `api.signal` namespace must expose the nested functions described
 by `ConvexSignalProtocolRelayApi`. Use `satisfies` to get a compile-time diagnostic
 without widening the generated references.
 
+To serve groups from this deployment, also mount the
+[Convex group server](./server/README.md) inside the same namespace
+(`convex/signal/groups.ts` and `convex/signal/zkAuth.ts`); the relay
+advertises its `groupServer` capability only when both modules are
+configured.
+
 Public-key reads may be available to authenticated peers, but every write must
 derive ownership from server-side authentication rather than trusting a
 client-supplied user ID.

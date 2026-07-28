@@ -29,7 +29,7 @@ True if this is a group ID
 ## Example
 
 ```typescript
-const id = '__signal_group__v2__!abc123';
+const id = 'open-e2ee:group:abc123';
 if (isGroupId(id)) {
   // id is now typed as GroupId
   const raw = extractGroupId(id);

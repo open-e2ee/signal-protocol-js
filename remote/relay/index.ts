@@ -42,6 +42,7 @@ export type {
   Unsubscribe,
   AccountIdentityProvisioning,
   AccountIdentityRotation,
+  IRelayGroupServer,
 } from './types';
 
 // Mock adapter is exported here for convenient local composition.

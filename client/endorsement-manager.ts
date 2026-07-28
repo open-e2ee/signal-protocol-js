@@ -32,6 +32,7 @@ import {
 import type { ServerRootPublicKey } from '../internal/protocol/zk/credentials/endorsements';
 import type { GroupSecretParams } from '../internal/protocol/zk/groups/group-params';
 import type { ServiceId } from '../internal/protocol/zk/groups/uid-struct';
+import { constantTimeEqual } from '../internal/crypto/utils';
 import { defaultSignalProtocolLogger, type ILogger } from '../logger';
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,24 @@ export class EndorsementManager {
     private readonly endorsementRootPublicKey: ServerRootPublicKey,
     private readonly logger: Required<ILogger> = defaultSignalProtocolLogger
   ) {}
+
+  /**
+   * Require this verifier to use the endorsement root pinned by group config.
+   */
+  assertEndorsementRootPublicKey(
+    expected: ServerRootPublicKey
+  ): void {
+    if (
+      !constantTimeEqual(
+        this.endorsementRootPublicKey.PK.toBytes(),
+        expected.PK.toBytes()
+      )
+    ) {
+      throw new Error(
+        'EndorsementManager root does not match groups.trustRoot endorsement root'
+      );
+    }
+  }
 
   /**
    * Check if cached endorsements need refresh.

@@ -3,6 +3,7 @@ import type { SignalProtocolClientConfig, SignalProtocolConfig } from './config'
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import type { ISignalProtocolRelayServer } from '../remote/relay/types';
 import type { ISignalProtocolLocalStore, ISignalProtocolManager } from '../types/api';
+import type { ServiceId } from '../internal/protocol/zk/groups/uid-struct';
 
 /**
  * Stable identity inputs for one Signal Protocol client instance.
@@ -16,6 +17,10 @@ export interface SignalProtocolClientIdentityConfig {
   deviceId?: number;
   /** Generate and sync both ACI and PNI key material when true. */
   enablePniKeys?: boolean;
+  /** Account ACI used by the Group System. */
+  aci?: ServiceId;
+  /** Optional account PNI used by the Group System. */
+  pni?: ServiceId;
 }
 
 /**
@@ -78,12 +83,14 @@ export interface SignalProtocolClientAdapterConfig {
 export interface SignalProtocolClientCompositionOptions extends Omit<
   SignalProtocolClientConfig,
   | 'remoteObjectStore'
+  | 'aci'
   | 'deviceId'
   | 'enablePniKeys'
   | 'protocol'
   | 'protocolManager'
   | 'protocolStrategy'
   | 'relay'
+  | 'pni'
   | 'storage'
 > {
   identity: SignalProtocolClientIdentityConfig;
@@ -104,11 +111,13 @@ export function createSignalProtocolClientConfig(
 
   return {
     ...config,
+    aci: identity.aci,
     remoteObjectStore: adapters.remoteObjectStore,
     deviceId: identity.deviceId,
     enablePniKeys: identity.enablePniKeys,
     protocolManager: adapters.protocolManager,
     protocol,
+    pni: identity.pni,
     relay: adapters.relay,
     storage: adapters.storage,
   };

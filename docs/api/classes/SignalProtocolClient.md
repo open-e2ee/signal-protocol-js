@@ -138,11 +138,11 @@ Accept an authenticated composite-identity rotation and reset bound sessions.
 
 ***
 
-### addGroupMemberV2()
+### addGroupMember()
 
-> **addGroupMemberV2**(`groupId`, `editorAci`, `newMemberAci`, `newMemberProfileKey`): `Promise`\<`void`\>
+> **addGroupMember**(`groupId`, `editorAci`, `newMemberAci`, `newMemberProfileKey`): `Promise`\<`void`\>
 
-Add a member to a GroupsV2 group.
+Add a member to a group.
 
 #### Parameters
 
@@ -329,11 +329,59 @@ Confirm an authenticated comparison of the currently displayed tuple.
 
 ***
 
-### createGroupInviteLinkV2()
+### createGroup()
 
-> **createGroupInviteLinkV2**(`groupId`, `editorAci`): `Promise`\<`string`\>
+> **createGroup**(`creatorAci`, `creatorProfileKey`, `members`, `title`, `options?`): `Promise`\<\{ `groupId`: [`GroupId`](../type-aliases/GroupId.md); `masterKey`: `Uint8Array`; \}\>
 
-Create an invite link for a GroupsV2 group.
+Create a new group.
+
+#### Parameters
+
+##### creatorAci
+
+`Uint8Array`
+
+##### creatorProfileKey
+
+`Uint8Array`
+
+##### members
+
+`object`[]
+
+##### title
+
+`string`
+
+##### options?
+
+###### accessControl?
+
+`Partial`\<`AccessControl`\>
+
+###### avatarUrl?
+
+`string`
+
+###### description?
+
+`string`
+
+###### disappearingMessagesDuration?
+
+`number`
+
+#### Returns
+
+`Promise`\<\{ `groupId`: [`GroupId`](../type-aliases/GroupId.md); `masterKey`: `Uint8Array`; \}\>
+
+***
+
+### createGroupInviteLink()
+
+> **createGroupInviteLink**(`groupId`, `editorAci`): `Promise`\<`string`\>
+
+Create an invite link for a group.
 
 #### Parameters
 
@@ -390,54 +438,6 @@ for (const member of groupMembers) {
 #### Implementation of
 
 [`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`createGroupSenderKey`](../interfaces/ISignalProtocolClient.md#creategroupsenderkey)
-
-***
-
-### createGroupV2()
-
-> **createGroupV2**(`creatorAci`, `creatorProfileKey`, `members`, `title`, `options?`): `Promise`\<\{ `groupId`: [`GroupId`](../type-aliases/GroupId.md); `masterKey`: `Uint8Array`; \}\>
-
-Create a new GroupsV2 group.
-
-#### Parameters
-
-##### creatorAci
-
-`Uint8Array`
-
-##### creatorProfileKey
-
-`Uint8Array`
-
-##### members
-
-`object`[]
-
-##### title
-
-`string`
-
-##### options?
-
-###### accessControl?
-
-`Partial`\<`AccessControl`\>
-
-###### avatarUrl?
-
-`string`
-
-###### description?
-
-`string`
-
-###### disappearingMessagesDuration?
-
-`number`
-
-#### Returns
-
-`Promise`\<\{ `groupId`: [`GroupId`](../type-aliases/GroupId.md); `masterKey`: `Uint8Array`; \}\>
 
 ***
 
@@ -1167,9 +1167,9 @@ console.log(`${stats.skippedKeysCount} skipped keys stored`);
 
 ***
 
-### getGroupStateV2()
+### getGroupState()
 
-> **getGroupStateV2**(`groupId`): `Promise`\<[`DecryptedGroup`](../interfaces/DecryptedGroup.md)\>
+> **getGroupState**(`groupId`): `Promise`\<[`DecryptedGroup`](../interfaces/DecryptedGroup.md)\>
 
 Get decrypted group state (from cache or server).
 
@@ -1378,11 +1378,11 @@ True if identity keys exist and client is ready to use
 
 ***
 
-### joinGroupViaInviteLinkV2()
+### joinGroupViaInviteLink()
 
-> **joinGroupViaInviteLinkV2**(`url`, `userAci`, `userProfileKey`): `Promise`\<\{ `groupId`: [`GroupId`](../type-aliases/GroupId.md); `status`: `"joined"` \| `"pending_approval"`; \}\>
+> **joinGroupViaInviteLink**(`url`, `userAci`, `userProfileKey`): `Promise`\<\{ `groupId`: [`GroupId`](../type-aliases/GroupId.md); `status`: `"joined"` \| `"pending_approval"`; \}\>
 
-Join a GroupsV2 group via invite link.
+Join a group via invite link.
 
 #### Parameters
 
@@ -1404,11 +1404,11 @@ Join a GroupsV2 group via invite link.
 
 ***
 
-### leaveGroupV2()
+### leaveGroup()
 
-> **leaveGroupV2**(`groupId`, `userAci`): `Promise`\<`void`\>
+> **leaveGroup**(`groupId`, `userAci`): `Promise`\<`void`\>
 
-Leave a GroupsV2 group.
+Leave a group.
 
 #### Parameters
 
@@ -1692,11 +1692,11 @@ ISignalProtocolClient.registerHook
 
 ***
 
-### removeGroupMemberV2()
+### removeGroupMember()
 
-> **removeGroupMemberV2**(`groupId`, `editorAci`, `targetAci`): `Promise`\<`void`\>
+> **removeGroupMember**(`groupId`, `editorAci`, `targetAci`): `Promise`\<`void`\>
 
-Remove a member from a GroupsV2 group. Triggers sender key rotation.
+Remove a member from a group. Triggers sender key rotation.
 
 #### Parameters
 
@@ -1919,7 +1919,7 @@ All inputs are normalized to Uint8Array before reaching the cipher layer.
 
 `string`
 
-User ID or group ID (groups use the V2 group ID prefix)
+User ID or group ID (groups use the package group ID prefix)
 
 ##### content
 
@@ -2216,9 +2216,9 @@ Sync local account-level communication/privacy configuration to our other linked
 
 ***
 
-### syncGroupV2()
+### syncGroup()
 
-> **syncGroupV2**(`groupId`): `Promise`\<[`DecryptedGroup`](../interfaces/DecryptedGroup.md)\>
+> **syncGroup**(`groupId`): `Promise`\<[`DecryptedGroup`](../interfaces/DecryptedGroup.md)\>
 
 Sync group state from server.
 
@@ -2427,11 +2427,11 @@ Sync a local view-once open event to our other linked devices.
 
 ***
 
-### updateGroupAccessControlV2()
+### updateGroupAccessControl()
 
-> **updateGroupAccessControlV2**(`groupId`, `editorAci`, `updates`): `Promise`\<`void`\>
+> **updateGroupAccessControl**(`groupId`, `editorAci`, `updates`): `Promise`\<`void`\>
 
-Update GroupsV2 group access control.
+Update a group's access control.
 
 #### Parameters
 
@@ -2453,11 +2453,11 @@ Update GroupsV2 group access control.
 
 ***
 
-### updateGroupDescriptionV2()
+### updateGroupDescription()
 
-> **updateGroupDescriptionV2**(`groupId`, `editorAci`, `description`): `Promise`\<`void`\>
+> **updateGroupDescription**(`groupId`, `editorAci`, `description`): `Promise`\<`void`\>
 
-Update GroupsV2 group description.
+Update a group's description.
 
 #### Parameters
 
@@ -2479,11 +2479,11 @@ Update GroupsV2 group description.
 
 ***
 
-### updateGroupTitleV2()
+### updateGroupTitle()
 
-> **updateGroupTitleV2**(`groupId`, `editorAci`, `title`): `Promise`\<`void`\>
+> **updateGroupTitle**(`groupId`, `editorAci`, `title`): `Promise`\<`void`\>
 
-Update GroupsV2 group title.
+Update a group's title.
 
 #### Parameters
 

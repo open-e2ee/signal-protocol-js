@@ -27,6 +27,6 @@ Raw group ID without prefix
 ## Example
 
 ```typescript
-extractGroupId('__signal_group__v2__!abc123'); // 'abc123'
-extractGroupId('abc123');                      // 'abc123' (no prefix)
+extractGroupId('open-e2ee:group:abc123'); // 'abc123'
+extractGroupId('abc123');                 // 'abc123' (no prefix)
 ```

@@ -232,6 +232,16 @@ export interface SignalProtocolClientConfig {
   enablePniKeys?: boolean;
 
   /**
+   * This account's ACI for Group System credential presentation.
+   *
+   * Required when `groups` is configured.
+   */
+  aci?: import('../internal/protocol/zk/groups/uid-struct').ServiceId;
+
+  /** This account's optional PNI for Group System credential presentation. */
+  pni?: import('../internal/protocol/zk/groups/uid-struct').ServiceId;
+
+  /**
    * Relay adapter for server synchronization.
    *
    * If provided, the client will automatically:
@@ -726,33 +736,51 @@ export interface SignalProtocolClientConfig {
   sealedSender?: SealedSenderConfig;
 
   /**
-   * GroupsV2 configuration for Signal Private Group System.
+   * Group System configuration.
    * Required for group state management (create, sync, membership changes).
    *
    * @example
    * ```typescript
    * const signal = await SignalProtocolClient.create(userId, {
    *   storage: customStorage,
-   *   groupsV2: {
-   *     store: new SQLiteGroupStateStore(db),
-   *     server: new ConvexGroupServer(convex),
+   *   relay,
+   *   aci,
+   *   pni,
+   *   groups: {
+   *     trustRoot: GROUP_TRUST_ROOT,
+   *     profileKey,
    *   }
    * });
    * ```
    */
-  groupsV2?: {
-    /** Local group state storage (master keys, cached state). */
-    store: import('../internal/groups-v2/manager').IGroupStateStore;
-    /** Server-side group operations. */
-    server: import('../internal/groups-v2/manager').IGroupServer;
-    /** Server's credential public key for verifying issuance proofs. */
-    credentialPublicKey: import('../internal/protocol/zk/credentials/credentials').CredentialPublicKey;
-    /** User's ACI for credential presentation. */
-    aci: import('../internal/protocol/zk/groups/uid-struct').ServiceId;
-    /** User's PNI for credential presentation (optional — nil UUID used for non-phone apps). */
-    pni?: import('../internal/protocol/zk/groups/uid-struct').ServiceId;
-    /** Server's endorsement root public key for verifying group send endorsements. */
-    endorsementRootPublicKey?: import('../internal/protocol/zk/credentials/endorsements').ServerRootPublicKey;
+  groups?: {
+    /**
+     * Versioned serialized trust root pinned by the application at build time.
+     *
+     * This value is never fetched from the relay and trusted at runtime.
+     */
+    trustRoot: Uint8Array;
+    /** This account's 32-byte profile key. */
+    profileKey: Uint8Array;
+    /** Override the SDK local storage adapter for group state. */
+    store?: import('../internal/groups/manager').IGroupStateStore;
+    /** Override `relay.groupServer.server` for a custom deployment. */
+    server?: import('../internal/groups/manager').IGroupServer;
+    /** Override the relay's auth-credential issuance transport. */
+    issueCredential?: () => Promise<Uint8Array>;
+    /** Override the relay's profile-key credential issuance transport. */
+    issueProfileKeyCredential?: () => Promise<Uint8Array>;
+    /**
+     * Explicitly accept group history without server signatures.
+     *
+     * This selects the documented non-conforming deployment mode and emits a
+     * visible configuration warning.
+     */
+    allowUnauthenticatedGroupHistory?: boolean;
+    /** Receive the §12.3 non-conforming deployment warning. */
+    onConfigurationWarning?: (
+      warning: import('../internal/groups/manager').GroupConfigurationWarning
+    ) => void;
     /** Pre-constructed EndorsementManager for group send endorsement-based auth. */
     endorsementManager?: import('./endorsement-manager').EndorsementManager;
     /** Resolve member ACIs without importing app content models into the client. */

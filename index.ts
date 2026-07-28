@@ -350,12 +350,20 @@ export type {
   TusMediaAttachmentTransferOptions,
 } from './media';
 
-// Group ID utilities (Signal Protocol V2 prefix format)
+// Group ID utilities (package-owned prefix format)
 //
-// Full GroupsV2 contracts and managers live on `@open-e2ee/signal-protocol-sdk/groups`.
-export { GROUP_V2_PREFIX, isGroupId, createGroupId, extractGroupId } from './internal/groups';
+// Full group contracts and managers live on `@open-e2ee/signal-protocol-sdk/groups`.
+export {
+  GROUP_ID_PREFIX,
+  GROUP_TRUST_ROOT_VERSION,
+  createGroupId,
+  decodeGroupTrustRoot,
+  encodeGroupTrustRoot,
+  extractGroupId,
+  isGroupId,
+} from './internal/groups';
 
-export type { GroupId } from './internal/groups';
+export type { GroupId, GroupTrustRoot } from './internal/groups';
 
 /**
  * Remote infrastructure interfaces (DI contracts)
@@ -374,6 +382,7 @@ export type { GroupId } from './internal/groups';
  * ```
  */
 export type {
+  IRelayGroupServer,
   ISignalProtocolRelayServer,
   Envelope,
   DeviceInfo,
@@ -482,8 +491,12 @@ export type {
   GroupAuthorization,
   IGroupServer,
   IGroupStateStore,
-} from './internal/groups-v2/manager';
-export type { DecryptedGroup } from './internal/groups-v2/types';
+  GroupSnapshot,
+  GroupMemberInput,
+  PresentedGroupMemberInput,
+  InvitedGroupMemberInput,
+} from './internal/groups/manager';
+export type { DecryptedGroup } from './internal/groups/types';
 export type { SenderKeyState } from './internal/protocol/sender-keys/manager';
 export type {
   MLKEMBraidAgentState,

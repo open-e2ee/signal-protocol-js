@@ -64,6 +64,7 @@ Expo storage or Convex helpers.
 - `@open-e2ee/signal-protocol-sdk/remote/relay`
 - `@open-e2ee/signal-protocol-sdk/remote/relay/convex`
 - `@open-e2ee/signal-protocol-sdk/remote/relay/convex/relay`
+- `@open-e2ee/signal-protocol-sdk/remote/relay/convex/server`
 - `@open-e2ee/signal-protocol-sdk/remote/relay/mock`
 - `@open-e2ee/signal-protocol-sdk/remote/relay/types`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store`
@@ -144,6 +145,10 @@ Expo storage or Convex helpers.
 
 - `ConvexSignalProtocolRelayServer` for Convex-backed apps
 - `convexRelay()` for Convex-backed composition
+- `defineConvexGroupServer()` via the server-only
+  `@open-e2ee/signal-protocol-sdk/remote/relay/convex/server` entry point,
+  with the `oe-groups` CLI (`npx oe-groups trust-root`) for secret
+  initialization and trust-root export
 - `MockSignalProtocolRelayServer` / `mockRelay()` for local development
 - custom implementations via `ISignalProtocolRelayServer`
 

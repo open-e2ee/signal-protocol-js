@@ -3,7 +3,7 @@
  *
  * @module groups/group-id
  *
- * Adds and validates the package's version-2 group-ID prefix.
+ * Adds and validates the package's group-ID prefix.
  *
  */
 export {};
@@ -13,20 +13,20 @@ declare const __brand_groupId: unique symbol;
  * Branded type for prefixed group IDs
  *
  * Ensures compile-time safety for group ID handling.
- * A GroupId is always a string with the Signal Protocol V2 prefix.
+ * A GroupId is always a string with the OpenE2EE group prefix.
  *
  * @example
  * ```typescript
  * const groupId: GroupId = createGroupId('abc123');
- * // groupId is '__signal_group__v2__!abc123' with GroupId type
+ * // groupId is 'open-e2ee:group:abc123' with GroupId type
  * ```
  */
 export type GroupId = string & { readonly [__brand_groupId]: true };
 
 /**
- * Canonical prefix for version 2 group identifiers.
+ * Canonical prefix for group identifiers.
  */
-export const GROUP_V2_PREFIX = '__signal_group__v2__!';
+export const GROUP_ID_PREFIX = 'open-e2ee:group:';
 
 /**
  * Check if an ID is a group ID (has group prefix)
@@ -38,7 +38,7 @@ export const GROUP_V2_PREFIX = '__signal_group__v2__!';
  *
  * @example
  * ```typescript
- * const id = '__signal_group__v2__!abc123';
+ * const id = 'open-e2ee:group:abc123';
  * if (isGroupId(id)) {
  *   // id is now typed as GroupId
  *   const raw = extractGroupId(id);
@@ -46,7 +46,7 @@ export const GROUP_V2_PREFIX = '__signal_group__v2__!';
  * ```
  */
 export function isGroupId(id: string): id is GroupId {
-  return id.startsWith(GROUP_V2_PREFIX);
+  return id.startsWith(GROUP_ID_PREFIX);
 }
 
 /**
@@ -58,14 +58,14 @@ export function isGroupId(id: string): id is GroupId {
  * @example
  * ```typescript
  * const groupId = createGroupId('abc123');
- * // groupId is '__signal_group__v2__!abc123' with GroupId type
+ * // groupId is 'open-e2ee:group:abc123' with GroupId type
  * ```
  */
 export function createGroupId(rawId: string): GroupId {
-  if (rawId.startsWith(GROUP_V2_PREFIX)) {
+  if (rawId.startsWith(GROUP_ID_PREFIX)) {
     return rawId as GroupId; // Already prefixed
   }
-  return `${GROUP_V2_PREFIX}${rawId}` as GroupId;
+  return `${GROUP_ID_PREFIX}${rawId}` as GroupId;
 }
 
 /**
@@ -76,14 +76,13 @@ export function createGroupId(rawId: string): GroupId {
  *
  * @example
  * ```typescript
- * extractGroupId('__signal_group__v2__!abc123'); // 'abc123'
- * extractGroupId('abc123');                      // 'abc123' (no prefix)
+ * extractGroupId('open-e2ee:group:abc123'); // 'abc123'
+ * extractGroupId('abc123');                 // 'abc123' (no prefix)
  * ```
  */
 export function extractGroupId(groupId: GroupId | string): string {
-  // Handle Signal Protocol V2 prefix
-  if (groupId.startsWith(GROUP_V2_PREFIX)) {
-    return groupId.slice(GROUP_V2_PREFIX.length);
+  if (groupId.startsWith(GROUP_ID_PREFIX)) {
+    return groupId.slice(GROUP_ID_PREFIX.length);
   }
   // Already unprefixed
   return groupId;

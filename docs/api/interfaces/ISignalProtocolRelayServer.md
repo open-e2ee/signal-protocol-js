@@ -42,6 +42,14 @@ await relay.send({
 
 - `IProvisioningService`.`IKeyRotationService`
 
+## Properties
+
+### groupServer?
+
+> `readonly` `optional` **groupServer?**: [`IRelayGroupServer`](IRelayGroupServer.md)
+
+Optional conforming Group System transport and issuance capability.
+
 ## Methods
 
 ### acknowledgeProvisioning()

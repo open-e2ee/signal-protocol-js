@@ -214,6 +214,7 @@ export type StaleSessionRefresher = (
  *
  */
 export type EndorsementRefresher = (groupId: string, memberUserIds: string[]) => Promise<boolean>;
+export type GroupSendBarrierChecker = (groupId: string) => Promise<void>;
 
 /**
  * SignalProtocolServiceCipher - Routes encryption and decryption to appropriate ciphers
@@ -243,6 +244,7 @@ export class SignalProtocolServiceCipher {
   private contactProfileStateStore?: ContactProfileStateStore;
   private endorsementManager?: EndorsementManager;
   private endorsementRefresher?: EndorsementRefresher;
+  private groupSendBarrierChecker?: GroupSendBarrierChecker;
   private groupSecretParamsProvider?: (
     groupId: string
   ) => Promise<import('../internal/protocol/zk/groups/group-params').GroupSecretParams | null>;
@@ -472,6 +474,11 @@ export class SignalProtocolServiceCipher {
     this.endorsementRefresher = refresher;
   }
 
+  /** Enforce the group-system C7 barrier at the sender-key send boundary. */
+  setGroupSendBarrierChecker(checker: GroupSendBarrierChecker): void {
+    this.groupSendBarrierChecker = checker;
+  }
+
   /**
    * Set the group secret params provider callback.
    *
@@ -664,7 +671,7 @@ export class SignalProtocolServiceCipher {
    * - Binary content with mimeType → encryptBlob (two-layer encryption)
    * - User ID → encryptToUser (SESAME)
    *
-   * @param recipientId - User ID or group ID (groups use the V2 group ID prefix)
+   * @param recipientId - User ID or group ID (groups use the package group ID prefix)
    * @param content - Uint8Array bytes to encrypt and send
    * @param options - Optional send options (mimeType for binary content, etc.)
    * @returns SendResult with messageId, timestamp, and device count
@@ -1867,6 +1874,7 @@ export class SignalProtocolServiceCipher {
   ): Promise<SendResult> {
     // Extract actual group ID from prefixed format
     const actualGroupId = extractGroupId(groupId);
+    await this.groupSendBarrierChecker?.(actualGroupId);
 
     // Require sender key to exist - caller (SignalProtocolClient.createGroupSenderKey) must create it first
     // This ensures proper sender key distribution to group members before sending

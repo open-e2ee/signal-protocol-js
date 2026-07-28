@@ -237,7 +237,7 @@ export function serverSign(
  * @returns `true` if the signature is valid, `false` otherwise
  */
 export function serverVerifySignature(
-  publicParams: ServerPublicParams,
+  publicParams: Pick<ServerPublicParams, 'signingPublicKey'>,
   message: Uint8Array,
   signature: Uint8Array
 ): boolean {

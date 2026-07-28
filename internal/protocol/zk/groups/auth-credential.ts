@@ -33,8 +33,14 @@ import type {
   CredentialPublicKey,
 } from '../credentials/credentials';
 import type { PublicAttribute } from '../credentials/attributes';
-import { type UidStruct, type ServiceId, uidStructFromServiceId } from './uid-struct';
+import {
+  type UidStruct,
+  type ServiceId,
+  isNilUuid,
+  uidStructFromServiceId,
+} from './uid-struct';
 import { type UidEncCiphertext, UidEncryptionDomain } from './uid-encryption';
+import { ProfileKeyEncryptionDomain } from './profile-key-encryption';
 import type { GroupSecretParams, GroupPublicParams } from './group-params';
 import { SECONDS_PER_DAY } from './group-params';
 import { scalarToBytes, bytesToScalarCanonical } from '../proofs/sho';
@@ -82,6 +88,8 @@ function redemptionTimePublicAttribute(time: number): PublicAttribute {
 export interface AuthCredentialWithPniResponse {
   /** ZK issuance proof binding the credential to (ACI, PNI, redemptionTime). */
   readonly issuanceProof: IssuanceProof;
+  /** Whether the proof binds a PNI attribute. Encoded by the proof width on the wire. */
+  readonly pniPresent: boolean;
   /** Day-aligned epoch timestamp (must be a multiple of SECONDS_PER_DAY). */
   readonly redemptionTime: number;
 }
@@ -102,8 +110,8 @@ export interface AuthCredentialWithPni {
   readonly credential: Credential;
   /** The user's ACI as a UidStruct (pair of Ristretto points). */
   readonly aci: UidStruct;
-  /** The user's PNI as a UidStruct (pair of Ristretto points). */
-  readonly pni: UidStruct;
+  /** The user's PNI, absent for accounts that have no PNI. */
+  readonly pni?: UidStruct;
   /** Day-aligned epoch timestamp. */
   readonly redemptionTime: number;
 }
@@ -127,8 +135,8 @@ export interface AuthCredentialPresentation {
   readonly proof: PresentationProof;
   /** ACI encrypted under the group's UID encryption key. */
   readonly aciCiphertext: UidEncCiphertext;
-  /** PNI encrypted under the group's UID encryption key. */
-  readonly pniCiphertext: UidEncCiphertext;
+  /** PNI encrypted under the group's UID encryption key, when the credential has one. */
+  readonly pniCiphertext?: UidEncCiphertext;
   /** Day-aligned epoch timestamp matching the credential. */
   readonly redemptionTime: number;
 }
@@ -159,21 +167,24 @@ export interface AuthCredentialPresentation {
 export function issueAuthCredential(
   credentialKeyPair: CredentialKeyPair,
   aci: ServiceId,
-  pni: ServiceId,
+  pni: ServiceId | undefined,
   redemptionTime: number,
   randomness: Uint8Array
 ): AuthCredentialWithPniResponse {
+  if (isNilUuid(aci.uuid) || (pni !== undefined && isNilUuid(pni.uuid))) {
+    throw new Error('Auth credential identifiers must not use the nil UUID');
+  }
   const aciUid = uidStructFromServiceId(aci);
-  const pniUid = uidStructFromServiceId(pni);
+  const pniUid = pni === undefined ? undefined : uidStructFromServiceId(pni);
 
   const builder = new IssuanceProofBuilder(CREDENTIAL_LABEL);
   builder.addAttribute(aciUid);
-  builder.addAttribute(pniUid);
+  if (pniUid !== undefined) builder.addAttribute(pniUid);
   builder.addPublicAttribute(redemptionTimePublicAttribute(redemptionTime));
 
   const issuanceProof = builder.issue(credentialKeyPair, randomness);
 
-  return { issuanceProof, redemptionTime };
+  return { issuanceProof, pniPresent: pniUid !== undefined, redemptionTime };
 }
 
 // ---------------------------------------------------------------------------
@@ -202,19 +213,26 @@ export function receiveAuthCredential(
   publicKey: CredentialPublicKey,
   response: AuthCredentialWithPniResponse,
   aci: ServiceId,
-  pni: ServiceId,
+  pni: ServiceId | undefined,
   redemptionTime: number
 ): AuthCredentialWithPni {
   if (redemptionTime % SECONDS_PER_DAY !== 0) {
     throw new VerificationFailure();
   }
+  if (
+    isNilUuid(aci.uuid) ||
+    (pni !== undefined && isNilUuid(pni.uuid)) ||
+    response.pniPresent !== (pni !== undefined)
+  ) {
+    throw new VerificationFailure();
+  }
 
   const aciUid = uidStructFromServiceId(aci);
-  const pniUid = uidStructFromServiceId(pni);
+  const pniUid = pni === undefined ? undefined : uidStructFromServiceId(pni);
 
   const builder = new IssuanceProofBuilder(CREDENTIAL_LABEL);
   builder.addAttribute(aciUid);
-  builder.addAttribute(pniUid);
+  if (pniUid !== undefined) builder.addAttribute(pniUid);
   builder.addPublicAttribute(redemptionTimePublicAttribute(redemptionTime));
 
   const credential = builder.verify(publicKey, response.issuanceProof);
@@ -258,12 +276,13 @@ export function presentAuthCredential(
 
   const builder = new PresentationProofBuilder(CREDENTIAL_LABEL);
   builder.addAttribute(aci, groupSecretParams.uidEncKeyPair);
-  builder.addAttribute(pni, groupSecretParams.uidEncKeyPair);
+  if (pni !== undefined) builder.addAttribute(pni, groupSecretParams.uidEncKeyPair);
 
   const proof = builder.present(publicKey, credential, randomness);
 
   const aciCiphertext = groupSecretParams.uidEncKeyPair.encrypt(aci);
-  const pniCiphertext = groupSecretParams.uidEncKeyPair.encrypt(pni);
+  const pniCiphertext =
+    pni === undefined ? undefined : groupSecretParams.uidEncKeyPair.encrypt(pni);
 
   return {
     proof,
@@ -313,7 +332,9 @@ export function verifyAuthCredentialPresentation(
 
   const verifier = new PresentationProofVerifier(CREDENTIAL_LABEL);
   verifier.addAttribute(aciCiphertext, groupPublicParams.uidEncPublicKey);
-  verifier.addAttribute(pniCiphertext, groupPublicParams.uidEncPublicKey);
+  if (pniCiphertext !== undefined) {
+    verifier.addAttribute(pniCiphertext, groupPublicParams.uidEncPublicKey);
+  }
   verifier.addPublicAttribute(redemptionTimePublicAttribute(redemptionTime));
 
   verifier.verify(credentialKeyPair, proof);
@@ -340,11 +361,17 @@ const Point = RistrettoPoint;
 export function serializeAuthCredentialResponse(
   response: AuthCredentialWithPniResponse
 ): Uint8Array {
-  const { issuanceProof, redemptionTime } = response;
+  const { issuanceProof, pniPresent, redemptionTime } = response;
   const tBytes = scalarToBytes(issuanceProof.credential.t);
   const uBytes = issuanceProof.credential.U.toBytes();
   const vBytes = issuanceProof.credential.V.toBytes();
   const proofBytes = issuanceProof.pokshoProof;
+  const expectedProofLength = pniPresent ? 320 : 256;
+  if (proofBytes.length !== expectedProofLength) {
+    throw new Error(
+      `serializeAuthCredentialResponse: expected ${expectedProofLength}-byte proof`
+    );
+  }
 
   const buf = new Uint8Array(8 + 32 + 32 + 32 + proofBytes.length);
   const view = new DataView(buf.buffer);
@@ -362,8 +389,8 @@ export function serializeAuthCredentialResponse(
 export function deserializeAuthCredentialResponse(
   bytes: Uint8Array
 ): AuthCredentialWithPniResponse {
-  // 8 (time) + 32*3 (credential) + 320 (issuance proof: 1 challenge + 9 responses)
-  if (bytes.length !== 424) {
+  // With PNI: 8 + 32*3 + 320. Without PNI: 8 + 32*3 + 256.
+  if (bytes.length !== 424 && bytes.length !== 360) {
     throw new Error('deserializeAuthCredentialResponse: invalid length');
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -380,6 +407,7 @@ export function deserializeAuthCredentialResponse(
       credential: { t, U, V },
       pokshoProof,
     },
+    pniPresent: bytes.length === 424,
     redemptionTime,
   };
 }
@@ -393,7 +421,7 @@ export function deserializeAuthCredentialResponse(
  *   [C_y_count: 4 LE u32] [C_y[]: 32 * n]
  *   [proofLen: 4 LE u32] [pokshoProof: proofLen]
  *   [aci.E_A1: 32] [aci.E_A2: 32]
- *   [pni.E_A1: 32] [pni.E_A2: 32]
+ *   [pni.E_A1: 32] [pni.E_A2: 32]   // present only when credential has PNI
  */
 export function serializeAuthCredentialPresentation(
   presentation: AuthCredentialPresentation
@@ -401,8 +429,16 @@ export function serializeAuthCredentialPresentation(
   const { proof, aciCiphertext, pniCiphertext, redemptionTime } = presentation;
   const cyCount = proof.C_y.length;
   const proofLen = proof.pokshoProof.length;
+  const expectedCyCount = pniCiphertext === undefined ? 3 : 5;
+  if (cyCount !== expectedCyCount) {
+    throw new Error(
+      `serializeAuthCredentialPresentation: expected ${expectedCyCount} C_y points`
+    );
+  }
 
-  const totalLen = 8 + 32 * 3 + 4 + 32 * cyCount + 4 + proofLen + 32 * 4;
+  const ciphertextPointCount = pniCiphertext === undefined ? 2 : 4;
+  const totalLen =
+    8 + 32 * 3 + 4 + 32 * cyCount + 4 + proofLen + 32 * ciphertextPointCount;
   const buf = new Uint8Array(totalLen);
   const view = new DataView(buf.buffer);
   let offset = 0;
@@ -432,9 +468,11 @@ export function serializeAuthCredentialPresentation(
   offset += 32;
   buf.set(aciCiphertext.E_A2.toBytes(), offset);
   offset += 32;
-  buf.set(pniCiphertext.E_A1.toBytes(), offset);
-  offset += 32;
-  buf.set(pniCiphertext.E_A2.toBytes(), offset);
+  if (pniCiphertext !== undefined) {
+    buf.set(pniCiphertext.E_A1.toBytes(), offset);
+    offset += 32;
+    buf.set(pniCiphertext.E_A2.toBytes(), offset);
+  }
 
   return buf;
 }
@@ -445,8 +483,8 @@ export function serializeAuthCredentialPresentation(
 export function deserializeAuthCredentialPresentation(
   bytes: Uint8Array
 ): AuthCredentialPresentation {
-  // Minimum: 8 (time) + 96 (C_x0,C_x1,C_V) + 4 (cyCount) + 4 (proofLen) + 128 (4 ciphertext points)
-  const MIN_LEN = 240;
+  // Minimum tail is the two-point ACI ciphertext; PNI adds two more points.
+  const MIN_LEN = 176;
   if (bytes.length < MIN_LEN) {
     throw new Error('deserializeAuthCredentialPresentation: too short');
   }
@@ -465,7 +503,7 @@ export function deserializeAuthCredentialPresentation(
 
   const cyCount = view.getUint32(offset, true);
   offset += 4;
-  if (cyCount > 16 || offset + cyCount * 32 + 4 + 128 > bytes.length) {
+  if (cyCount > 16 || offset + cyCount * 32 + 4 + 64 > bytes.length) {
     throw new Error('deserializeAuthCredentialPresentation: cyCount out of bounds');
   }
   const C_y: RistrettoPoint[] = [];
@@ -476,7 +514,19 @@ export function deserializeAuthCredentialPresentation(
 
   const proofLen = view.getUint32(offset, true);
   offset += 4;
-  if (offset + proofLen + 128 > bytes.length) {
+  const ciphertextTailLength = bytes.length - (offset + proofLen);
+  if (ciphertextTailLength > 128) {
+    throw new Error('deserializeAuthCredentialPresentation: trailing bytes');
+  }
+  if (ciphertextTailLength !== 64 && ciphertextTailLength !== 128) {
+    throw new Error('deserializeAuthCredentialPresentation: invalid ciphertext tail');
+  }
+  const pniPresent = ciphertextTailLength === 128;
+  const expectedCyCount = pniPresent ? 5 : 3;
+  if (cyCount !== expectedCyCount) {
+    throw new Error('deserializeAuthCredentialPresentation: attribute count mismatch');
+  }
+  if (offset + proofLen + ciphertextTailLength !== bytes.length) {
     throw new Error('deserializeAuthCredentialPresentation: proofLen out of bounds');
   }
   const pokshoProof = bytes.slice(offset, offset + proofLen);
@@ -486,10 +536,14 @@ export function deserializeAuthCredentialPresentation(
   offset += 32;
   const aciE_A2 = Point.fromBytes(bytes.subarray(offset, offset + 32));
   offset += 32;
-  const pniE_A1 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-  const pniE_A2 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
+  let pniCiphertext: UidEncCiphertext | undefined;
+  if (pniPresent) {
+    const pniE_A1 = Point.fromBytes(bytes.subarray(offset, offset + 32));
+    offset += 32;
+    const pniE_A2 = Point.fromBytes(bytes.subarray(offset, offset + 32));
+    offset += 32;
+    pniCiphertext = new Ciphertext(pniE_A1, pniE_A2, UidEncryptionDomain);
+  }
 
   if (offset !== bytes.length) {
     throw new Error('deserializeAuthCredentialPresentation: trailing bytes');
@@ -498,7 +552,7 @@ export function deserializeAuthCredentialPresentation(
   return {
     proof: { C_x0, C_x1, C_V, C_y, pokshoProof },
     aciCiphertext: new Ciphertext(aciE_A1, aciE_A2, UidEncryptionDomain),
-    pniCiphertext: new Ciphertext(pniE_A1, pniE_A2, UidEncryptionDomain),
+    pniCiphertext,
     redemptionTime,
   };
 }
@@ -526,10 +580,6 @@ export function deserializeGroupPublicParams(bytes: Uint8Array): GroupPublicPara
   const groupId = bytes.slice(0, 32);
   const uidEncA = Point.fromBytes(bytes.subarray(32, 64));
   const profileKeyEncA = Point.fromBytes(bytes.subarray(64, 96));
-
-  // Import ProfileKeyEncryptionDomain lazily to avoid circular dependency
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { ProfileKeyEncryptionDomain } = require('./profile-key-encryption');
 
   return {
     groupId,

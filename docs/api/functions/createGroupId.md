@@ -28,5 +28,5 @@ Prefixed group ID (branded type)
 
 ```typescript
 const groupId = createGroupId('abc123');
-// groupId is '__signal_group__v2__!abc123' with GroupId type
+// groupId is 'open-e2ee:group:abc123' with GroupId type
 ```

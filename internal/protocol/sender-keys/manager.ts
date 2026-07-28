@@ -1,5 +1,5 @@
 /**
- * Sender Keys Protocol Implementation (Signal Protocol Group V2)
+ * Sender Keys protocol implementation for group messaging
  *
  * Implements the package's Sender Keys construction for efficient group messaging.
  * Each group member has a sender key that encrypts messages for all members.
