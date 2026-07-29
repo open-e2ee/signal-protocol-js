@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **The public repository's snippet check no longer requires an unpublished
+  file.** `0.1.0-alpha.8` removed the internal pricing preview from the
+  export, but `run-mock-snippets.mjs` — which ships in both repositories —
+  still read it unconditionally, so the public "shipped mock snippets" CI job
+  failed with ENOENT from the `0.1.0-alpha.9` push onward. The runner now
+  validates that file's snippets only where the file exists, which is the
+  boundary the export already draws. `ossf/scorecard-action` also moves to
+  v2.4.4 (dependabot, applied here so the export carries it).
+
 ## 0.1.0-alpha.9
 
 - **BREAKING: the multi-recipient content ceiling is the reference's

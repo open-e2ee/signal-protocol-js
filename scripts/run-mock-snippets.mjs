@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -99,6 +100,12 @@ function decodeHtml(value) {
 }
 
 function parsePricingPreview() {
+  // The pricing preview is internal-only and excluded from the public export,
+  // but this script ships in both repositories. Validate its snippets when the
+  // file exists; skip cleanly where it was never published.
+  if (!existsSync(join(repoRoot, pricingSource))) {
+    return [];
+  }
   const source = readFileSync(join(repoRoot, pricingSource), 'utf8');
   const codeBlocks = [
     ...source.matchAll(
