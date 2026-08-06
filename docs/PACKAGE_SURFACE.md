@@ -65,7 +65,7 @@ Expo storage or Convex helpers.
 - `@open-e2ee/signal-protocol-sdk/remote/relay/convex`
 - `@open-e2ee/signal-protocol-sdk/remote/relay/convex/relay`
 - `@open-e2ee/signal-protocol-sdk/convex.config`
-- `@open-e2ee/signal-protocol-sdk/remote/relay/mock`
+- `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
 - `@open-e2ee/signal-protocol-sdk/remote/relay/types`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`
@@ -103,7 +103,7 @@ Expo storage or Convex helpers.
 - `@open-e2ee/signal-protocol-sdk/local/store/expo`
 - `@open-e2ee/signal-protocol-sdk/local/store/expo/db`
 - `@open-e2ee/signal-protocol-sdk/local/store/expo/schema`
-- `@open-e2ee/signal-protocol-sdk/local/store/mock`
+- `@open-e2ee/signal-protocol-sdk/local/store/memory`
 - `@open-e2ee/signal-protocol-sdk/local/store/node`
 - `@open-e2ee/signal-protocol-sdk/local/store/react-native`
 - `@open-e2ee/signal-protocol-sdk/local/store/web`
@@ -121,8 +121,8 @@ Expo storage or Convex helpers.
 
 ### Development adapters
 
-- `@open-e2ee/signal-protocol-sdk/remote/relay/mock`
-- `@open-e2ee/signal-protocol-sdk/local/store/mock`
+- `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
+- `@open-e2ee/signal-protocol-sdk/local/store/memory`
 
 `internal/**` is implementation-only and not part of the supported external API.
 
@@ -150,7 +150,7 @@ Expo storage or Convex helpers.
   `defineConvexSignalProtocolBackend()` and the `oe-groups` CLI
   (`npx oe-groups trust-root`) for secret initialization and trust-root
   export
-- `MockSignalProtocolRelayServer` / `mockRelay()` for local development
+- `InMemorySignalProtocolRelayServer` / `inMemoryRelay()` for local development
 - custom implementations via `ISignalProtocolRelayServer`
 
 ### Storage implementations
@@ -164,7 +164,7 @@ Expo storage or Convex helpers.
 - `ReactNativeSignalProtocolStore` / `reactNativeStore()` for bare React Native
   (experimental; provide your own key-value backend)
 - `NodeSignalProtocolStore` / `nodeStore()` for Node environments
-- `MockSignalProtocolStore` / `mockStore()` for local development
+- `InMemorySignalProtocolStore` / `inMemoryStore()` for local development
 - custom implementations via `ISignalProtocolLocalStore`
 
 ### Remote object storage

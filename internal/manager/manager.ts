@@ -122,8 +122,8 @@ import { SessionBuilder, SessionCipher } from '../session';
  *
  * @example Dependency injection for custom composition
  * ```typescript
- * const mockStorage = new MockSignalProtocolStore();
- * const manager = new SignalProtocolManager(mockStorage);
+ * const store = new InMemorySignalProtocolStore();
+ * const manager = new SignalProtocolManager(store);
  * await manager.initialize();
  * ```
  *

@@ -1,8 +1,8 @@
 /**
  * SenderKeyMessage Protobuf Encoding/Decoding
  *
- * Encodes and decodes SenderKeyMessage and SenderKeyDistributionMessage with
- * protobufjs.
+ * Hand-written static codecs for SenderKeyMessage and
+ * SenderKeyDistributionMessage, built on the shared wire primitives.
  *
  * This is the canonical signing format: Ed25519 signatures cover
  * `version_byte + protobuf_encode(SenderKeyMessage)`.
@@ -40,80 +40,36 @@
  * @internal
  */
 
-import protobuf from 'protobufjs';
+import { ProtoReader, concatFields, encodeBytesField, encodeUint32Field } from './primitives';
 
 // ============================================================================
-// Protobuf Type Definitions (built programmatically, no .proto file loading)
+// Wire Field Numbers
 // ============================================================================
 export {};
-const root = new protobuf.Root();
 
-const SenderKeyMessageType = new protobuf.Type('SenderKeyMessage')
-  .add(new protobuf.Field('distributionUuid', 1, 'bytes'))
-  .add(new protobuf.Field('chainId', 2, 'uint32'))
-  .add(new protobuf.Field('iteration', 3, 'uint32'))
-  .add(new protobuf.Field('ciphertext', 4, 'bytes'));
+/**
+ * Both schemas share field numbers 1-3. Field 4 is the ciphertext in
+ * SenderKeyMessage and the chain key in SenderKeyDistributionMessage, which
+ * alone carries a field 5.
+ */
+const SENDER_KEY_FIELD = {
+  distributionUuid: 1,
+  chainId: 2,
+  iteration: 3,
+  ciphertext: 4,
+  chainKey: 4,
+  signingKey: 5,
+} as const;
 
-const SenderKeyDistributionMessageType = new protobuf.Type('SenderKeyDistributionMessage')
-  .add(new protobuf.Field('distributionUuid', 1, 'bytes'))
-  .add(new protobuf.Field('chainId', 2, 'uint32'))
-  .add(new protobuf.Field('iteration', 3, 'uint32'))
-  .add(new protobuf.Field('chainKey', 4, 'bytes'))
-  .add(new protobuf.Field('signingKey', 5, 'bytes'));
-
-root.add(SenderKeyMessageType);
-root.add(SenderKeyDistributionMessageType);
-
-type DecodedMessage = protobuf.Message<Record<string, unknown>> & Record<string, unknown>;
-
-function hasDecodedField(message: DecodedMessage, field: string): boolean {
-  return Object.prototype.hasOwnProperty.call(message, field);
-}
-
-function requireDecodedUint32(message: DecodedMessage, field: string, typeName: string): number {
-  if (!hasDecodedField(message, field)) {
+/**
+ * Return a decoded field's value, or report which required field the wire
+ * bytes left out.
+ */
+function requireDecoded<T>(value: T | undefined, field: string, typeName: string): T {
+  if (value === undefined) {
     throw new Error(`Malformed ${typeName}: missing ${field}`);
   }
-
-  const value = message[field];
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 0xffffffff) {
-    throw new Error(`Malformed ${typeName}: invalid ${field}`);
-  }
-
-  return value >>> 0;
-}
-
-function requireDecodedBytes(message: DecodedMessage, field: string, typeName: string): Uint8Array {
-  if (!hasDecodedField(message, field)) {
-    throw new Error(`Malformed ${typeName}: missing ${field}`);
-  }
-
-  const value = message[field];
-  if (!(value instanceof Uint8Array)) {
-    throw new Error(`Malformed ${typeName}: invalid ${field}`);
-  }
-
-  return new Uint8Array(value);
-}
-
-function optionalDecodedUint32(
-  message: DecodedMessage,
-  field: string,
-  typeName: string
-): number | undefined {
-  return hasDecodedField(message, field)
-    ? requireDecodedUint32(message, field, typeName)
-    : undefined;
-}
-
-function optionalDecodedBytes(
-  message: DecodedMessage,
-  field: string,
-  typeName: string
-): Uint8Array | undefined {
-  return hasDecodedField(message, field)
-    ? requireDecodedBytes(message, field, typeName)
-    : undefined;
+  return value;
 }
 
 // ============================================================================
@@ -147,27 +103,25 @@ export interface SenderKeyMessageFields {
  * [field1: distribution_uuid] [field3: iteration] [field4: ciphertext]
  *
  * Fields are encoded in field-number order per protobuf convention.
- * Optional fields (distributionUuid) are omitted when undefined.
+ * Optional fields (distributionUuid) are omitted when undefined; presence, not
+ * value, decides, so a field the caller set is written even when it is zero.
  *
  * @param msg - Message fields to encode
  * @returns Protobuf-encoded bytes
  */
 export function encodeSenderKeyMessage(msg: SenderKeyMessageFields): Uint8Array {
-  const payload: Record<string, unknown> = {
-    iteration: msg.iteration,
-    ciphertext: msg.ciphertext,
-  };
+  const fields: Uint8Array[] = [];
 
   if (msg.distributionUuid !== undefined) {
-    payload.distributionUuid = msg.distributionUuid;
+    fields.push(encodeBytesField(SENDER_KEY_FIELD.distributionUuid, msg.distributionUuid));
   }
-
   if (msg.chainId !== undefined) {
-    payload.chainId = msg.chainId;
+    fields.push(encodeUint32Field(SENDER_KEY_FIELD.chainId, msg.chainId));
   }
+  fields.push(encodeUint32Field(SENDER_KEY_FIELD.iteration, msg.iteration));
+  fields.push(encodeBytesField(SENDER_KEY_FIELD.ciphertext, msg.ciphertext));
 
-  const message = SenderKeyMessageType.create(payload);
-  return new Uint8Array(SenderKeyMessageType.encode(message).finish());
+  return concatFields(...fields);
 }
 
 /**
@@ -179,14 +133,37 @@ export function encodeSenderKeyMessage(msg: SenderKeyMessageFields): Uint8Array 
  * @returns Decoded message fields
  */
 export function decodeSenderKeyMessage(bytes: Uint8Array): SenderKeyMessageFields {
-  const message = SenderKeyMessageType.decode(bytes) as DecodedMessage;
-  const distributionUuid = optionalDecodedBytes(message, 'distributionUuid', 'SenderKeyMessage');
+  let distributionUuid: Uint8Array | undefined;
+  let chainId: number | undefined;
+  let iteration: number | undefined;
+  let ciphertext: Uint8Array | undefined;
+
+  const reader = new ProtoReader(bytes);
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case SENDER_KEY_FIELD.distributionUuid:
+        distributionUuid = reader.readBytes();
+        break;
+      case SENDER_KEY_FIELD.chainId:
+        chainId = reader.readUint32();
+        break;
+      case SENDER_KEY_FIELD.iteration:
+        iteration = reader.readUint32();
+        break;
+      case SENDER_KEY_FIELD.ciphertext:
+        ciphertext = reader.readBytes();
+        break;
+      default:
+        reader.skipField();
+    }
+  }
 
   return {
     distributionUuid: distributionUuid?.length ? distributionUuid : undefined,
-    chainId: optionalDecodedUint32(message, 'chainId', 'SenderKeyMessage'),
-    iteration: requireDecodedUint32(message, 'iteration', 'SenderKeyMessage'),
-    ciphertext: requireDecodedBytes(message, 'ciphertext', 'SenderKeyMessage'),
+    chainId,
+    iteration: requireDecoded(iteration, 'iteration', 'SenderKeyMessage'),
+    ciphertext: requireDecoded(ciphertext, 'ciphertext', 'SenderKeyMessage'),
   };
 }
 
@@ -226,22 +203,19 @@ export interface SenderKeyDistributionMessageFields {
 export function encodeSenderKeyDistributionMessage(
   msg: SenderKeyDistributionMessageFields
 ): Uint8Array {
-  const payload: Record<string, unknown> = {
-    iteration: msg.iteration,
-    chainKey: msg.chainKey,
-    signingKey: msg.signingKey,
-  };
+  const fields: Uint8Array[] = [];
 
   if (msg.distributionUuid !== undefined) {
-    payload.distributionUuid = msg.distributionUuid;
+    fields.push(encodeBytesField(SENDER_KEY_FIELD.distributionUuid, msg.distributionUuid));
   }
-
   if (msg.chainId !== undefined) {
-    payload.chainId = msg.chainId;
+    fields.push(encodeUint32Field(SENDER_KEY_FIELD.chainId, msg.chainId));
   }
+  fields.push(encodeUint32Field(SENDER_KEY_FIELD.iteration, msg.iteration));
+  fields.push(encodeBytesField(SENDER_KEY_FIELD.chainKey, msg.chainKey));
+  fields.push(encodeBytesField(SENDER_KEY_FIELD.signingKey, msg.signingKey));
 
-  const message = SenderKeyDistributionMessageType.create(payload);
-  return new Uint8Array(SenderKeyDistributionMessageType.encode(message).finish());
+  return concatFields(...fields);
 }
 
 /**
@@ -253,19 +227,42 @@ export function encodeSenderKeyDistributionMessage(
 export function decodeSenderKeyDistributionMessage(
   bytes: Uint8Array
 ): SenderKeyDistributionMessageFields {
-  const message = SenderKeyDistributionMessageType.decode(bytes) as DecodedMessage;
-  const distributionUuid = optionalDecodedBytes(
-    message,
-    'distributionUuid',
-    'SenderKeyDistributionMessage'
-  );
+  let distributionUuid: Uint8Array | undefined;
+  let chainId: number | undefined;
+  let iteration: number | undefined;
+  let chainKey: Uint8Array | undefined;
+  let signingKey: Uint8Array | undefined;
+
+  const reader = new ProtoReader(bytes);
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case SENDER_KEY_FIELD.distributionUuid:
+        distributionUuid = reader.readBytes();
+        break;
+      case SENDER_KEY_FIELD.chainId:
+        chainId = reader.readUint32();
+        break;
+      case SENDER_KEY_FIELD.iteration:
+        iteration = reader.readUint32();
+        break;
+      case SENDER_KEY_FIELD.chainKey:
+        chainKey = reader.readBytes();
+        break;
+      case SENDER_KEY_FIELD.signingKey:
+        signingKey = reader.readBytes();
+        break;
+      default:
+        reader.skipField();
+    }
+  }
 
   return {
     distributionUuid: distributionUuid?.length ? distributionUuid : undefined,
-    chainId: optionalDecodedUint32(message, 'chainId', 'SenderKeyDistributionMessage'),
-    iteration: requireDecodedUint32(message, 'iteration', 'SenderKeyDistributionMessage'),
-    chainKey: requireDecodedBytes(message, 'chainKey', 'SenderKeyDistributionMessage'),
-    signingKey: requireDecodedBytes(message, 'signingKey', 'SenderKeyDistributionMessage'),
+    chainId,
+    iteration: requireDecoded(iteration, 'iteration', 'SenderKeyDistributionMessage'),
+    chainKey: requireDecoded(chainKey, 'chainKey', 'SenderKeyDistributionMessage'),
+    signingKey: requireDecoded(signingKey, 'signingKey', 'SenderKeyDistributionMessage'),
   };
 }
 

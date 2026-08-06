@@ -181,12 +181,12 @@ export const INFRASTRUCTURE_MODULES = {
   local: {
     directories: ['local'],
     implementsPorts: ['ISignalProtocolLocalStore'],
-    description: 'Local persistence and secret vault adapters: Expo, Node, Mock, Web, React Native',
+    description: 'Local persistence and secret vault adapters: Expo, Node, Memory, Web, React Native',
   },
   remote: {
     directories: ['remote'],
     implementsPorts: ['ISignalProtocolRelayServer', 'SignalProtocolRemoteObjectStore'],
-    description: 'Remote relay and object-store adapters: Convex, Mock, R2, S3',
+    description: 'Remote relay and object-store adapters: Convex, Memory, R2, S3',
   },
   device: {
     directories: ['device'],

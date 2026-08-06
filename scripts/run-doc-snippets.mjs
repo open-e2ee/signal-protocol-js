@@ -17,7 +17,7 @@ const typescriptBin = join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc')
 const tarballArgument = process.argv[2];
 
 if (!tarballArgument) {
-  throw new Error('Usage: node scripts/run-mock-snippets.mjs <packed-package.tgz>');
+  throw new Error('Usage: node scripts/run-doc-snippets.mjs <packed-package.tgz>');
 }
 
 const tarballPath = resolve(tarballArgument);
@@ -44,12 +44,12 @@ function run(command, args, options = {}) {
   return result;
 }
 
-function isMockSnippet(code) {
+function isDocSnippet(code) {
   return (
-    code.includes('/local/store/mock') ||
-    code.includes('/remote/relay/mock') ||
-    code.includes('mockStore(') ||
-    code.includes('mockRelay(')
+    code.includes('/local/store/memory') ||
+    code.includes('/remote/relay/memory') ||
+    code.includes('inMemoryStore(') ||
+    code.includes('inMemoryRelay(')
   );
 }
 
@@ -62,7 +62,7 @@ function parseDirective(source, mode, value) {
   const parsed = /^(\S+)\s+expect="([^"]*)"$/.exec(directive);
   if (!parsed) {
     throw new Error(
-      `${source} runnable mock snippet must declare: mock-snippet:run <id> expect="<stdout>"`
+      `${source} runnable doc snippet must declare: doc-snippet:run <id> expect="<stdout>"`
     );
   }
   return { id: parsed[1], expectedOutput: parsed[2] };
@@ -72,12 +72,12 @@ function parseMarkdown(relativePath) {
   const source = readFileSync(join(repoRoot, relativePath), 'utf8');
   const snippets = [];
   const fence =
-    /(?:(<!--\s*mock-snippet:(run|skip)\s+([^>]+?)\s*-->)\s*)?```(?:ts|typescript)\r?\n([\s\S]*?)```/g;
+    /(?:(<!--\s*doc-snippet:(run|skip)\s+([^>]+?)\s*-->)\s*)?```(?:ts|typescript)\r?\n([\s\S]*?)```/g;
   for (const match of source.matchAll(fence)) {
     const [, marker, mode, idOrReason, code] = match;
-    if (!isMockSnippet(code)) continue;
+    if (!isDocSnippet(code)) continue;
     if (!marker) {
-      throw new Error(`${relativePath} contains an unclassified mock snippet`);
+      throw new Error(`${relativePath} contains an unclassified doc snippet`);
     }
     const directive = parseDirective(relativePath, mode, idOrReason);
     snippets.push({
@@ -109,16 +109,16 @@ function parsePricingPreview() {
   const source = readFileSync(join(repoRoot, pricingSource), 'utf8');
   const codeBlocks = [
     ...source.matchAll(
-      /(?:(<!--\s*mock-snippet:(run|skip)\s+([^>]+?)\s*-->)\s*)?<pre><code[^>]*>([\s\S]*?)<\/code><\/pre>/g
+      /(?:(<!--\s*doc-snippet:(run|skip)\s+([^>]+?)\s*-->)\s*)?<pre><code[^>]*>([\s\S]*?)<\/code><\/pre>/g
     ),
   ];
   const snippets = [];
   for (const match of codeBlocks) {
     const [, marker, mode, idOrReason, highlightedCode] = match;
     const code = decodeHtml(highlightedCode.replace(/<[^>]+>/g, ''));
-    if (!isMockSnippet(code)) continue;
+    if (!isDocSnippet(code)) continue;
     if (!marker) {
-      throw new Error(`${pricingSource} contains an unclassified mock snippet`);
+      throw new Error(`${pricingSource} contains an unclassified doc snippet`);
     }
     const directive = parseDirective(pricingSource, mode, idOrReason);
     snippets.push({
@@ -137,7 +137,7 @@ const snippets = [
 ];
 
 if (snippets.length === 0) {
-  throw new Error('No mock snippets were discovered');
+  throw new Error('No doc snippets were discovered');
 }
 
 for (const snippet of snippets) {
@@ -148,14 +148,14 @@ for (const snippet of snippets) {
 
 const runnable = snippets.filter((snippet) => snippet.mode === 'run');
 const skipped = snippets.filter((snippet) => snippet.mode === 'skip');
-const fixtureDir = mkdtempSync(join(tmpdir(), 'signal-mock-snippets-'));
+const fixtureDir = mkdtempSync(join(tmpdir(), 'signal-doc-snippets-'));
 
 try {
   writeFileSync(
     join(fixtureDir, 'package.json'),
     `${JSON.stringify(
       {
-        name: 'signal-mock-snippet-runner',
+        name: 'signal-doc-snippet-runner',
         private: true,
         type: 'module',
       },
@@ -212,15 +212,15 @@ try {
       );
     }
     process.stdout.write(
-      `mock-snippet:ok ${snippet.source}:${snippet.id}${result.stdout ? `\n${result.stdout.trim()}` : ''}\n`
+      `doc-snippet:ok ${snippet.source}:${snippet.id}${result.stdout ? `\n${result.stdout.trim()}` : ''}\n`
     );
   }
 
   for (const snippet of skipped) {
-    process.stdout.write(`mock-snippet:skip ${snippet.source}:${snippet.id}\n`);
+    process.stdout.write(`doc-snippet:skip ${snippet.source}:${snippet.id}\n`);
   }
   process.stdout.write(
-    `mock-snippets:ok ${runnable.length} run, ${skipped.length} explicitly skipped, package ${basename(tarballPath)}\n`
+    `doc-snippets:ok ${runnable.length} run, ${skipped.length} explicitly skipped, package ${basename(tarballPath)}\n`
   );
 } finally {
   rmSync(fixtureDir, { recursive: true, force: true });

@@ -1,6 +1,6 @@
 # In-Memory Store
 
-`MockSignalProtocolStore` implements `ISignalProtocolLocalStore` in memory for examples, local
+`InMemorySignalProtocolStore` implements `ISignalProtocolLocalStore` in memory for examples, local
 development, and deterministic application prototypes.
 
 Real protocol and cryptography; simulated in-memory infrastructure.
@@ -16,11 +16,11 @@ security or persistence boundary.
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
+import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
 
 const client = await createSignalProtocolClient({
   identity: { userId: "alice" },
-  adapters: { storage: mockStore() },
+  adapters: { storage: inMemoryStore() },
 });
 ```
 
@@ -35,17 +35,17 @@ you can target the next named store operation:
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import {
-  mockStore,
-  MockStorageWriteError,
-} from "@open-e2ee/signal-protocol-sdk/local/store/mock";
+  inMemoryStore,
+  InjectedStorageWriteError,
+} from "@open-e2ee/signal-protocol-sdk/local/store/memory";
 
-const storage = mockStore({ failures: { seed: 7 } });
+const storage = inMemoryStore({ failures: { seed: 7 } });
 storage.failures.failNextWrite("setMetadata");
 
 try {
   await storage.setMetadata("draft", "encrypted-pointer");
 } catch (error) {
-  if (error instanceof MockStorageWriteError) {
+  if (error instanceof InjectedStorageWriteError) {
     // The explicitly injected failure is consumed, so this retry succeeds.
     await storage.setMetadata("draft", "encrypted-pointer");
   }

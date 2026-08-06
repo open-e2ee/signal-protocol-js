@@ -52,11 +52,11 @@ export interface SignalProtocolClientAdapterConfig {
  * @example Minimal local client
  * ```typescript
  * import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
- * import { mockStore } from '@open-e2ee/signal-protocol-sdk/local/store/mock';
+ * import { inMemoryStore } from '@open-e2ee/signal-protocol-sdk/local/store/memory';
  *
  * const signal = await createSignalProtocolClient({
  *   identity: { userId: 'alice' },
- *   adapters: { storage: mockStore() },
+ *   adapters: { storage: inMemoryStore() },
  * });
  * ```
  *

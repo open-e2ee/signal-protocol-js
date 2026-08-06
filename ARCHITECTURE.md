@@ -40,7 +40,7 @@ compatibility shim when a boundary is wrong.
 | Public feature surfaces | [blocking/](./blocking/), [groups/](./groups/), [media/](./media/), [profile/](./profile/), [sealed-sender/](./sealed-sender/), [username/](./username/), [zk/](./zk/) | App-facing helpers that compose protocol, media, or account-state behavior without joining the inward dependency hierarchy |
 | Public utility surfaces | [encoding/](./encoding/), [files/](./files/), [hooks/](./hooks/), [utils/](./utils/), `logger.ts`, `server-clock.ts`, `versions.ts`                                    | Stable helpers, React hooks, logging, clock estimation, version metadata, and file/encoding utilities                      |
 | Local adapters          | [local/](./local/)                                                                                                                                                     | Local protocol stores and secret vault integrations                                                                        |
-| Remote adapters         | [remote/](./remote/)                                                                                                                                                   | Relay and object-store ports plus Convex, mock, R2, and S3 adapters                                                        |
+| Remote adapters         | [remote/](./remote/)                                                                                                                                                   | Relay and object-store ports plus Convex, in-memory, R2, and S3 adapters                                                   |
 | Device features         | [device/](./device/)                                                                                                                                                   | Device IDs, provisioning, linked-device lifecycle and transfer                                                             |
 
 ## Documentation Ownership
@@ -71,9 +71,9 @@ import {
 Platform and backend integrations are explicit subpaths such as:
 
 - `@open-e2ee/signal-protocol-sdk/local/store/expo`
-- `@open-e2ee/signal-protocol-sdk/local/store/mock`
+- `@open-e2ee/signal-protocol-sdk/local/store/memory`
 - `@open-e2ee/signal-protocol-sdk/remote/relay/convex`
-- `@open-e2ee/signal-protocol-sdk/remote/relay/mock`
+- `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2/server`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store/s3`

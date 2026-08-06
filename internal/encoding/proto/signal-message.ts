@@ -1,7 +1,8 @@
 /**
  * SignalProtocolMessage / PreKeySignalProtocolMessage Protobuf Encoding/Decoding
  *
- * Encodes and decodes SignalProtocolMessage and PreKeySignalProtocolMessage with protobufjs.
+ * Hand-written static codecs for SignalProtocolMessage and
+ * PreKeySignalProtocolMessage, built on the shared wire primitives.
  * These are the core message types of the Signal Protocol's Double Ratchet.
  *
  * Proto schema:
@@ -41,15 +42,20 @@
  * @internal
  */
 
-import protobuf from 'protobufjs';
 import type { ProtocolAddress } from '../../../types/address';
-import { decodeVarint, encodeVarint } from './primitives';
+import {
+  ProtoReader,
+  concatFields,
+  decodeVarint,
+  encodeBytesField,
+  encodeUint32Field,
+  encodeVarint,
+} from './primitives';
 
 // ============================================================================
-// Protobuf Type Definitions (built programmatically, no .proto file loading)
+// Wire Field Numbers
 // ============================================================================
 export {};
-const root = new protobuf.Root();
 // Bound adversarial protobuf work without constraining the documented 10 MiB
 // message contract. Larger payloads use the separately bounded attachment path.
 export const MAX_SIGNAL_PROTOCOL_WIRE_MESSAGE_BYTES = 16 * 1024 * 1024;
@@ -61,23 +67,45 @@ function assertWireMessageSize(bytes: Uint8Array, label: string): void {
 }
 
 /**
- * SignalProtocolMessage protobuf type.
+ * SignalProtocolMessage wire field numbers.
  *
- * Wire fields:
  * - ratchet_key (1, bytes) - current ratchet public key
  * - counter (2, uint32) - message number in current chain
  * - previous_counter (3, uint32) - length of previous sending chain
  * - ciphertext (4, bytes) - encrypted message content
  * - pq_ratchet (5, bytes) - opaque SPQR binary data (NOT protobuf)
+ * - addresses (6, bytes) - sender/recipient address binding
+ * - recipient_identity_type (100, uint32) - SDK extension
  */
-const SignalProtocolMessageType = new protobuf.Type('SignalProtocolMessage')
-  .add(new protobuf.Field('ratchetKey', 1, 'bytes'))
-  .add(new protobuf.Field('counter', 2, 'uint32'))
-  .add(new protobuf.Field('previousCounter', 3, 'uint32'))
-  .add(new protobuf.Field('ciphertext', 4, 'bytes'))
-  .add(new protobuf.Field('pqRatchet', 5, 'bytes'))
-  .add(new protobuf.Field('addresses', 6, 'bytes'))
-  .add(new protobuf.Field('recipientIdentityType', 100, 'uint32', 'optional'));
+const SIGNAL_MESSAGE_FIELD = {
+  ratchetKey: 1,
+  counter: 2,
+  previousCounter: 3,
+  ciphertext: 4,
+  pqRatchet: 5,
+  addresses: 6,
+  recipientIdentityType: 100,
+} as const;
+
+/**
+ * PreKeySignalProtocolMessage wire field numbers.
+ *
+ * Fields 1-8 are the base PreKeySignalProtocolMessage fields. Fields 100-102
+ * are SDK extensions for KEM one-time prekeys and recipient identity scope.
+ */
+const PREKEY_MESSAGE_FIELD = {
+  oneTimePreKeyId: 1,
+  baseKey: 2,
+  identityKey: 3,
+  message: 4,
+  registrationId: 5,
+  signedPreKeyId: 6,
+  kyberPreKeyId: 7,
+  kyberCiphertext: 8,
+  kemOneTimePreKeyId: 100,
+  kemOneTimeCiphertext: 101,
+  recipientIdentityType: 102,
+} as const;
 
 const ADDRESS_BINDING_FORMAT_VERSION = 1;
 
@@ -201,35 +229,6 @@ export function signalProtocolMessageAddressesEqual(
   );
 }
 
-/**
- * PreKeySignalProtocolMessage protobuf type.
- *
- * Fields 1-8 are the base PreKeySignalProtocolMessage fields. Fields 100-102 are SDK
- * extensions for KEM one-time prekeys and recipient identity scope.
- */
-const PreKeySignalProtocolMessageType = new protobuf.Type('PreKeySignalProtocolMessage')
-  // oneTimePreKeyId uses 'optional' rule (proto2 semantics) so that value 0 is
-  // distinguished from "not set" using proto2 optional presence.
-  // Without this, protobufjs proto3 default behavior omits 0 on encode and
-  // makes 0 indistinguishable from absent on decode — breaking X3DH when
-  // the one-time prekey has keyId=0.
-  .add(new protobuf.Field('oneTimePreKeyId', 1, 'uint32', 'optional'))
-  .add(new protobuf.Field('baseKey', 2, 'bytes'))
-  .add(new protobuf.Field('identityKey', 3, 'bytes'))
-  .add(new protobuf.Field('message', 4, 'bytes'))
-  .add(new protobuf.Field('registrationId', 5, 'uint32'))
-  .add(new protobuf.Field('signedPreKeyId', 6, 'uint32'))
-  // kyberPreKeyId and kemOneTimePreKeyId also use 'optional' for the same reason
-  .add(new protobuf.Field('kyberPreKeyId', 7, 'uint32', 'optional'))
-  .add(new protobuf.Field('kyberCiphertext', 8, 'bytes'))
-  // Custom extension fields (high field numbers to avoid upstream conflicts)
-  .add(new protobuf.Field('kemOneTimePreKeyId', 100, 'uint32', 'optional'))
-  .add(new protobuf.Field('kemOneTimeCiphertext', 101, 'bytes'))
-  .add(new protobuf.Field('recipientIdentityType', 102, 'uint32', 'optional'));
-
-root.add(SignalProtocolMessageType);
-root.add(PreKeySignalProtocolMessageType);
-
 // ============================================================================
 // SignalProtocolMessage
 // ============================================================================
@@ -272,6 +271,11 @@ export interface SignalProtocolMessageFields {
  * This produces the **protobuf bytes only** — no version byte or MAC.
  * Use `frameSignalProtocolMessage()` from `envelope.ts` for the complete wire format.
  *
+ * Presence, not proto3 defaults, decides what reaches the wire: a field the
+ * caller set is written even when it equals the type's zero value, so a
+ * counter of 0 and a key id of 0 are distinguishable from absent. Fields are
+ * written in ascending field-number order.
+ *
  * @param msg - Message fields to encode
  * @returns Protobuf-encoded bytes (no framing)
  *
@@ -280,27 +284,39 @@ export function encodeSignalProtocolMessage(msg: SignalProtocolMessageFields): U
   if (!msg.addresses?.length) {
     throw new Error('SignalProtocolMessage addresses field is required');
   }
+  if (
+    msg.recipientIdentityType !== undefined &&
+    msg.recipientIdentityType !== 1 &&
+    msg.recipientIdentityType !== 2
+  ) {
+    throw new Error('SignalProtocolMessage recipientIdentityType must be ACI=1 or PNI=2');
+  }
 
-  const payload: Record<string, unknown> = {
-    ratchetKey: msg.ratchetKey,
-    counter: msg.counter,
-    previousCounter: msg.previousCounter,
-    ciphertext: msg.ciphertext,
-    addresses: msg.addresses,
-  };
+  const fields: Uint8Array[] = [];
 
+  if (msg.ratchetKey !== undefined) {
+    fields.push(encodeBytesField(SIGNAL_MESSAGE_FIELD.ratchetKey, msg.ratchetKey));
+  }
+  if (msg.counter !== undefined) {
+    fields.push(encodeUint32Field(SIGNAL_MESSAGE_FIELD.counter, msg.counter));
+  }
+  if (msg.previousCounter !== undefined) {
+    fields.push(encodeUint32Field(SIGNAL_MESSAGE_FIELD.previousCounter, msg.previousCounter));
+  }
+  if (msg.ciphertext !== undefined) {
+    fields.push(encodeBytesField(SIGNAL_MESSAGE_FIELD.ciphertext, msg.ciphertext));
+  }
   if (msg.pqRatchet !== undefined) {
-    payload.pqRatchet = msg.pqRatchet;
+    fields.push(encodeBytesField(SIGNAL_MESSAGE_FIELD.pqRatchet, msg.pqRatchet));
   }
+  fields.push(encodeBytesField(SIGNAL_MESSAGE_FIELD.addresses, msg.addresses));
   if (msg.recipientIdentityType !== undefined) {
-    if (msg.recipientIdentityType !== 1 && msg.recipientIdentityType !== 2) {
-      throw new Error('SignalProtocolMessage recipientIdentityType must be ACI=1 or PNI=2');
-    }
-    payload.recipientIdentityType = msg.recipientIdentityType;
+    fields.push(
+      encodeUint32Field(SIGNAL_MESSAGE_FIELD.recipientIdentityType, msg.recipientIdentityType)
+    );
   }
 
-  const message = SignalProtocolMessageType.create(payload);
-  return new Uint8Array(SignalProtocolMessageType.encode(message).finish());
+  return concatFields(...fields);
 }
 
 /**
@@ -315,46 +331,71 @@ export function encodeSignalProtocolMessage(msg: SignalProtocolMessageFields): U
  */
 export function decodeSignalProtocolMessage(bytes: Uint8Array): SignalProtocolMessageFields {
   assertWireMessageSize(bytes, 'SignalProtocolMessage');
-  const decoded = SignalProtocolMessageType.decode(bytes);
-  const message = SignalProtocolMessageType.toObject(decoded, {
-    defaults: false,
-    bytes: Uint8Array,
-  }) as {
-    ratchetKey: Uint8Array;
-    counter: number;
-    previousCounter: number;
-    ciphertext: Uint8Array;
-    pqRatchet?: Uint8Array;
-    addresses?: Uint8Array;
-    recipientIdentityType?: number;
-  };
 
-  if (!message.addresses?.length) {
+  let ratchetKey: Uint8Array | undefined;
+  let counter: number | undefined;
+  let previousCounter: number | undefined;
+  let ciphertext: Uint8Array | undefined;
+  let pqRatchet: Uint8Array | undefined;
+  let addresses: Uint8Array | undefined;
+  let recipientIdentityType: number | undefined;
+
+  const reader = new ProtoReader(bytes);
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case SIGNAL_MESSAGE_FIELD.ratchetKey:
+        ratchetKey = reader.readBytes();
+        break;
+      case SIGNAL_MESSAGE_FIELD.counter:
+        counter = reader.readUint32();
+        break;
+      case SIGNAL_MESSAGE_FIELD.previousCounter:
+        previousCounter = reader.readUint32();
+        break;
+      case SIGNAL_MESSAGE_FIELD.ciphertext:
+        ciphertext = reader.readBytes();
+        break;
+      case SIGNAL_MESSAGE_FIELD.pqRatchet:
+        pqRatchet = reader.readBytes();
+        break;
+      case SIGNAL_MESSAGE_FIELD.addresses:
+        addresses = reader.readBytes();
+        break;
+      case SIGNAL_MESSAGE_FIELD.recipientIdentityType:
+        recipientIdentityType = reader.readUint32();
+        break;
+      default:
+        reader.skipField();
+    }
+  }
+
+  if (!addresses?.length) {
     throw new Error('Missing required field: addresses');
   }
-  if (message.ratchetKey?.length !== 33) {
+  if (ratchetKey?.length !== 33) {
     throw new Error('SignalProtocolMessage ratchetKey must contain exactly 33 bytes');
   }
-  if (!message.ciphertext?.length) {
+  if (!ciphertext?.length) {
     throw new Error('SignalProtocolMessage ciphertext must not be empty');
   }
 
   if (
-    message.recipientIdentityType !== undefined &&
-    message.recipientIdentityType !== 1 &&
-    message.recipientIdentityType !== 2
+    recipientIdentityType !== undefined &&
+    recipientIdentityType !== 1 &&
+    recipientIdentityType !== 2
   ) {
     throw new Error('SignalProtocolMessage recipientIdentityType must be ACI=1 or PNI=2');
   }
 
   return {
-    ratchetKey: new Uint8Array(message.ratchetKey),
-    counter: message.counter >>> 0,
-    previousCounter: message.previousCounter >>> 0,
-    ciphertext: new Uint8Array(message.ciphertext),
-    pqRatchet: message.pqRatchet?.length ? new Uint8Array(message.pqRatchet) : undefined,
-    addresses: new Uint8Array(message.addresses),
-    recipientIdentityType: message.recipientIdentityType,
+    ratchetKey,
+    counter: counter ?? 0,
+    previousCounter: previousCounter ?? 0,
+    ciphertext,
+    pqRatchet: pqRatchet?.length ? pqRatchet : undefined,
+    addresses,
+    recipientIdentityType,
   };
 }
 
@@ -419,33 +460,53 @@ export function encodePreKeySignalProtocolMessage(msg: PreKeySignalProtocolMessa
     throw new Error('PreKeySignalProtocolMessage recipientIdentityType must be ACI=1 or PNI=2');
   }
   // Map TS interface names → proto wire field names
-  const payload: Record<string, unknown> = {
-    baseKey: msg.baseKey,
-    identityKey: msg.identityKey,
-    message: msg.message,
-    registrationId: msg.registrationId,
-    signedPreKeyId: msg.ecSignedPreKeyId, // TS ecSignedPreKeyId → wire signedPreKeyId
-    recipientIdentityType: msg.recipientIdentityType,
-  };
+  const fields: Uint8Array[] = [];
 
   if (msg.ecOneTimePreKeyId !== undefined) {
-    payload.oneTimePreKeyId = msg.ecOneTimePreKeyId; // TS ecOneTimePreKeyId → wire oneTimePreKeyId
+    // TS ecOneTimePreKeyId → wire oneTimePreKeyId
+    fields.push(encodeUint32Field(PREKEY_MESSAGE_FIELD.oneTimePreKeyId, msg.ecOneTimePreKeyId));
+  }
+  if (msg.baseKey !== undefined) {
+    fields.push(encodeBytesField(PREKEY_MESSAGE_FIELD.baseKey, msg.baseKey));
+  }
+  if (msg.identityKey !== undefined) {
+    fields.push(encodeBytesField(PREKEY_MESSAGE_FIELD.identityKey, msg.identityKey));
+  }
+  if (msg.message !== undefined) {
+    fields.push(encodeBytesField(PREKEY_MESSAGE_FIELD.message, msg.message));
+  }
+  if (msg.registrationId !== undefined) {
+    fields.push(encodeUint32Field(PREKEY_MESSAGE_FIELD.registrationId, msg.registrationId));
+  }
+  if (msg.ecSignedPreKeyId !== undefined) {
+    // TS ecSignedPreKeyId → wire signedPreKeyId
+    fields.push(encodeUint32Field(PREKEY_MESSAGE_FIELD.signedPreKeyId, msg.ecSignedPreKeyId));
   }
   if (msg.kemLastResortPreKeyId !== undefined) {
-    payload.kyberPreKeyId = msg.kemLastResortPreKeyId; // TS kemLastResortPreKeyId → wire kyberPreKeyId
+    // TS kemLastResortPreKeyId → wire kyberPreKeyId
+    fields.push(encodeUint32Field(PREKEY_MESSAGE_FIELD.kyberPreKeyId, msg.kemLastResortPreKeyId));
   }
   if (msg.kemLastResortCiphertext !== undefined) {
-    payload.kyberCiphertext = msg.kemLastResortCiphertext; // TS kemLastResortCiphertext → wire kyberCiphertext
+    // TS kemLastResortCiphertext → wire kyberCiphertext
+    fields.push(
+      encodeBytesField(PREKEY_MESSAGE_FIELD.kyberCiphertext, msg.kemLastResortCiphertext)
+    );
   }
   if (msg.kemOneTimePreKeyId !== undefined) {
-    payload.kemOneTimePreKeyId = msg.kemOneTimePreKeyId;
+    fields.push(
+      encodeUint32Field(PREKEY_MESSAGE_FIELD.kemOneTimePreKeyId, msg.kemOneTimePreKeyId)
+    );
   }
   if (msg.kemOneTimeCiphertext !== undefined) {
-    payload.kemOneTimeCiphertext = msg.kemOneTimeCiphertext;
+    fields.push(
+      encodeBytesField(PREKEY_MESSAGE_FIELD.kemOneTimeCiphertext, msg.kemOneTimeCiphertext)
+    );
   }
+  fields.push(
+    encodeUint32Field(PREKEY_MESSAGE_FIELD.recipientIdentityType, msg.recipientIdentityType)
+  );
 
-  const message = PreKeySignalProtocolMessageType.create(payload);
-  return new Uint8Array(PreKeySignalProtocolMessageType.encode(message).finish());
+  return concatFields(...fields);
 }
 
 /**
@@ -460,27 +521,65 @@ export function encodePreKeySignalProtocolMessage(msg: PreKeySignalProtocolMessa
  */
 export function decodePreKeySignalProtocolMessage(bytes: Uint8Array): PreKeySignalProtocolMessageFields {
   assertWireMessageSize(bytes, 'PreKeySignalProtocolMessage');
-  const decoded = PreKeySignalProtocolMessageType.decode(bytes);
-  // Use toObject with defaults:false so that absent optional fields are omitted
-  // (undefined) while present fields retain their value — including 0.
-  // Proto2 optional presence makes value 0 a valid key ID, distinct
-  // from "field not set".
-  const wireMessage = PreKeySignalProtocolMessageType.toObject(decoded, {
-    defaults: false,
-    bytes: Uint8Array,
-  }) as {
+
+  // Every field is tracked by presence, so an absent field stays undefined
+  // while a present one keeps its value — including 0. Proto2 optional
+  // presence makes value 0 a valid key ID, distinct from "field not set".
+  const wireMessage: {
     oneTimePreKeyId?: number; // wire field 1
-    baseKey: Uint8Array; // wire field 2
-    identityKey: Uint8Array; // wire field 3
-    message: Uint8Array; // wire field 4
-    registrationId: number; // wire field 5
-    signedPreKeyId: number; // wire field 6
+    baseKey?: Uint8Array; // wire field 2
+    identityKey?: Uint8Array; // wire field 3
+    message?: Uint8Array; // wire field 4
+    registrationId?: number; // wire field 5
+    signedPreKeyId?: number; // wire field 6
     kyberPreKeyId?: number; // wire field 7
     kyberCiphertext?: Uint8Array; // wire field 8
     kemOneTimePreKeyId?: number; // wire field 100
     kemOneTimeCiphertext?: Uint8Array; // wire field 101
     recipientIdentityType?: number; // wire field 102
-  };
+  } = {};
+
+  const reader = new ProtoReader(bytes);
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case PREKEY_MESSAGE_FIELD.oneTimePreKeyId:
+        wireMessage.oneTimePreKeyId = reader.readUint32();
+        break;
+      case PREKEY_MESSAGE_FIELD.baseKey:
+        wireMessage.baseKey = reader.readBytes();
+        break;
+      case PREKEY_MESSAGE_FIELD.identityKey:
+        wireMessage.identityKey = reader.readBytes();
+        break;
+      case PREKEY_MESSAGE_FIELD.message:
+        wireMessage.message = reader.readBytes();
+        break;
+      case PREKEY_MESSAGE_FIELD.registrationId:
+        wireMessage.registrationId = reader.readUint32();
+        break;
+      case PREKEY_MESSAGE_FIELD.signedPreKeyId:
+        wireMessage.signedPreKeyId = reader.readUint32();
+        break;
+      case PREKEY_MESSAGE_FIELD.kyberPreKeyId:
+        wireMessage.kyberPreKeyId = reader.readUint32();
+        break;
+      case PREKEY_MESSAGE_FIELD.kyberCiphertext:
+        wireMessage.kyberCiphertext = reader.readBytes();
+        break;
+      case PREKEY_MESSAGE_FIELD.kemOneTimePreKeyId:
+        wireMessage.kemOneTimePreKeyId = reader.readUint32();
+        break;
+      case PREKEY_MESSAGE_FIELD.kemOneTimeCiphertext:
+        wireMessage.kemOneTimeCiphertext = reader.readBytes();
+        break;
+      case PREKEY_MESSAGE_FIELD.recipientIdentityType:
+        wireMessage.recipientIdentityType = reader.readUint32();
+        break;
+      default:
+        reader.skipField();
+    }
+  }
 
   if (wireMessage.baseKey?.length !== 33) {
     throw new Error('PreKeySignalProtocolMessage baseKey must contain exactly 33 bytes');
@@ -506,33 +605,32 @@ export function decodePreKeySignalProtocolMessage(bytes: Uint8Array): PreKeySign
 
   // Map proto wire names → TS interface names
   const result: PreKeySignalProtocolMessageFields = {
-    baseKey: new Uint8Array(wireMessage.baseKey),
-    identityKey: new Uint8Array(wireMessage.identityKey),
-    message: new Uint8Array(wireMessage.message),
-    registrationId: wireMessage.registrationId >>> 0,
-    ecSignedPreKeyId: wireMessage.signedPreKeyId >>> 0, // wire signedPreKeyId → TS ecSignedPreKeyId
+    baseKey: wireMessage.baseKey,
+    identityKey: wireMessage.identityKey,
+    message: wireMessage.message,
+    registrationId: wireMessage.registrationId,
+    ecSignedPreKeyId: wireMessage.signedPreKeyId, // wire signedPreKeyId → TS ecSignedPreKeyId
     recipientIdentityType: wireMessage.recipientIdentityType,
   };
 
-  // Optional fields: with toObject({defaults:false}), absent fields are undefined
-  // and present fields have their value (including 0), preserving proto2
-  // optional-field semantics.
+  // Optional fields: an absent field is undefined and a present one has its
+  // value (including 0), preserving proto2 optional-field semantics.
   if (wireMessage.oneTimePreKeyId !== undefined) {
-    result.ecOneTimePreKeyId = wireMessage.oneTimePreKeyId >>> 0; // wire oneTimePreKeyId → TS ecOneTimePreKeyId
+    result.ecOneTimePreKeyId = wireMessage.oneTimePreKeyId; // wire oneTimePreKeyId → TS ecOneTimePreKeyId
   }
   if (wireMessage.kyberPreKeyId !== undefined) {
-    result.kemLastResortPreKeyId = wireMessage.kyberPreKeyId >>> 0; // wire kyberPreKeyId → TS kemLastResortPreKeyId
+    result.kemLastResortPreKeyId = wireMessage.kyberPreKeyId; // wire kyberPreKeyId → TS kemLastResortPreKeyId
   }
   if (wireMessage.kyberCiphertext?.length) {
-    result.kemLastResortCiphertext = new Uint8Array(wireMessage.kyberCiphertext); // wire kyberCiphertext → TS kemLastResortCiphertext
+    result.kemLastResortCiphertext = wireMessage.kyberCiphertext; // wire kyberCiphertext → TS kemLastResortCiphertext
   }
 
   // Optional custom extension fields (100-101) — already use correct names
   if (wireMessage.kemOneTimePreKeyId !== undefined) {
-    result.kemOneTimePreKeyId = wireMessage.kemOneTimePreKeyId >>> 0;
+    result.kemOneTimePreKeyId = wireMessage.kemOneTimePreKeyId;
   }
   if (wireMessage.kemOneTimeCiphertext?.length) {
-    result.kemOneTimeCiphertext = new Uint8Array(wireMessage.kemOneTimeCiphertext);
+    result.kemOneTimeCiphertext = wireMessage.kemOneTimeCiphertext;
   }
 
   return result;

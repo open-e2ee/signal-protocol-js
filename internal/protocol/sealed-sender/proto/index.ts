@@ -1,16 +1,44 @@
 /**
- * Protocol Buffer Bindings for Sealed Sender
+ * Wire Codec for Sealed Sender
  *
- * TypeScript bindings for the sealed sender wire format.
- * Uses protobufjs for encoding/decoding.
+ * Hand-written static encoders and decoders for the sealed sender wire format,
+ * built on the shared protobuf primitives. No code is generated at runtime, so
+ * this path runs under `script-src 'self'`, in a Chrome MV3 extension, and
+ * under `node --disallow-code-generation-from-strings`.
  *
- * Field numbers follow the sealed-sender wire format.
+ * Certificates are signed over their *serialized* inner bytes, so byte
+ * identity here is what keeps an already-issued certificate verifiable. Two
+ * consequences run through the whole module:
+ *
+ * - Nothing re-encodes a signed region. Wherever the surface carries a signed
+ *   payload it carries the raw bytes the signer saw — `certificate` in either
+ *   wrapper, and `signerCertificate` inside the sender certificate — and the
+ *   decoders hand those bytes straight through.
+ * - The encoders reproduce what this module emitted before, field for field
+ *   and byte for byte, including writing an explicitly-set zero. The
+ *   `sealed-sender` golden vectors pin every case in both directions. One
+ *   input diverges: a string holding an unpaired surrogate encodes to the
+ *   replacement character here, where reflection emitted the surrogate's own
+ *   three bytes. `senderE164` and `senderUuid` are the only string fields,
+ *   and no verification path re-encodes either.
+ *
+ * Field numbers are those this format has always written, and
+ * `UnidentifiedDelivery.proto` alongside this file now records them.
  */
 
-import protobuf from 'protobufjs';
 import type { Base64 } from '../../../../types';
 import { SealedSenderContentType } from '../types';
 import { bytesToBase64, base64ToBytes } from '../../../crypto';
+import {
+  ProtoReader,
+  concatFields,
+  encodeBytesField,
+  encodeEnumField,
+  encodeFixed64Field,
+  encodeMessageField,
+  encodeStringField,
+  encodeUint32Field,
+} from '../../../encoding/proto/primitives';
 
 // ============================================================================
 // Type Definitions (matching proto messages)
@@ -82,70 +110,57 @@ export interface UnidentifiedSenderMessageProto {
 }
 
 // ============================================================================
-// Protobuf Root and Type Definitions
+// Field Numbers
 // ============================================================================
 
-// Build protobuf types programmatically (avoids file loading issues in RN)
-const root = new protobuf.Root();
+/** `ServerCertificate.Certificate` — the signed inner server certificate. */
+const SERVER_CERTIFICATE_DATA = {
+  id: 1,
+  key: 2,
+} as const;
 
-// ServerCertificate.Certificate — fields match sealed_sender.proto
-const ServerCertificateCertificate = new protobuf.Type('Certificate')
-  .add(new protobuf.Field('id', 1, 'uint32'))
-  .add(new protobuf.Field('key', 2, 'bytes'));
+/** `ServerCertificate` — the outer wrapper carrying the signature. */
+const SERVER_CERTIFICATE = {
+  certificate: 1,
+  signature: 2,
+} as const;
 
-// ServerCertificate (outer wrapper)
-const ServerCertificateType = new protobuf.Type('ServerCertificate')
-  .add(ServerCertificateCertificate)
-  .add(new protobuf.Field('certificate', 1, 'bytes'))
-  .add(new protobuf.Field('signature', 2, 'bytes'));
+/** `SenderCertificate.Certificate` — the signed inner sender certificate. */
+const SENDER_CERTIFICATE_DATA = {
+  senderE164: 1,
+  senderDevice: 2,
+  expires: 3,
+  identityKey: 4,
+  signerCertificate: 5,
+  senderUuid: 6,
+} as const;
 
-// SenderCertificate.Certificate — field numbers match sealed_sender.proto exactly:
-//   senderE164=1, senderDevice=2, expires=3(fixed64), identityKey=4,
-//   signer.certificate=5(bytes), senderUuid.uuidString=6
-// We only use the embedded certificate variant (field 5) and uuidString (field 6).
-const SenderCertificateCertificate = new protobuf.Type('Certificate')
-  .add(new protobuf.Field('senderE164', 1, 'string'))
-  .add(new protobuf.Field('senderDevice', 2, 'uint32'))
-  .add(new protobuf.Field('expires', 3, 'fixed64'))
-  .add(new protobuf.Field('identityKey', 4, 'bytes'))
-  .add(new protobuf.Field('signerCertificate', 5, 'bytes')) // serialized ServerCertificate
-  .add(new protobuf.Field('senderUuid', 6, 'string')); // uuidString variant
+/** `SenderCertificate` — the outer wrapper carrying the signature. */
+const SENDER_CERTIFICATE = {
+  certificate: 1,
+  signature: 2,
+} as const;
 
-// SenderCertificate (outer wrapper)
-const SenderCertificateType = new protobuf.Type('SenderCertificate')
-  .add(SenderCertificateCertificate)
-  .add(new protobuf.Field('certificate', 1, 'bytes'))
-  .add(new protobuf.Field('signature', 2, 'bytes'));
+/** `UnidentifiedSenderMessage.Message` — the decrypted inner message. */
+const UNIDENTIFIED_SENDER_MESSAGE_DATA = {
+  type: 1,
+  senderCertificate: 2,
+  content: 3,
+  contentHint: 4,
+  groupId: 5,
+} as const;
 
-// UnidentifiedSenderMessage.Type enum
-const MessageTypeEnum = new protobuf.Enum('Type', {
-  PREKEY_MESSAGE: 1,
-  MESSAGE: 2,
-  SENDERKEY_MESSAGE: 7,
-  PLAINTEXT_CONTENT: 8,
-});
+/** `UnidentifiedSenderMessage` — the sealed envelope. */
+const UNIDENTIFIED_SENDER_MESSAGE = {
+  ephemeralPublic: 1,
+  encryptedStatic: 2,
+  encryptedMessage: 3,
+} as const;
 
-// UnidentifiedSenderMessage.Message
-const UnidentifiedSenderMessageMessage = new protobuf.Type('Message')
-  .add(MessageTypeEnum)
-  .add(new protobuf.Field('type', 1, 'Type'))
-  .add(new protobuf.Field('senderCertificate', 2, 'SenderCertificate'))
-  .add(new protobuf.Field('content', 3, 'bytes'))
-  .add(new protobuf.Field('contentHint', 4, 'uint32'))
-  .add(new protobuf.Field('groupId', 5, 'bytes'));
-
-// UnidentifiedSenderMessage
-const UnidentifiedSenderMessageType = new protobuf.Type('UnidentifiedSenderMessage')
-  .add(MessageTypeEnum)
-  .add(UnidentifiedSenderMessageMessage)
-  .add(new protobuf.Field('ephemeralPublic', 1, 'bytes'))
-  .add(new protobuf.Field('encryptedStatic', 2, 'bytes'))
-  .add(new protobuf.Field('encryptedMessage', 3, 'bytes'));
-
-// Add all types to root
-root.add(ServerCertificateType);
-root.add(SenderCertificateType);
-root.add(UnidentifiedSenderMessageType);
+/** The zero value a bytes field decodes to when the message omits it. */
+function emptyBytes(): Uint8Array {
+  return new Uint8Array(0);
+}
 
 // ============================================================================
 // Server Certificate Encoding
@@ -153,52 +168,79 @@ root.add(UnidentifiedSenderMessageType);
 
 /**
  * Encode server certificate inner Certificate data to protobuf bytes.
+ *
+ * These are the bytes the trust root signs.
  */
 export function encodeServerCertificateData(data: ServerCertificateData): Uint8Array {
-  const message = ServerCertificateCertificate.create({
-    id: data.id,
-    key: data.key,
-  });
-  return ServerCertificateCertificate.encode(message).finish();
+  return concatFields(
+    encodeUint32Field(SERVER_CERTIFICATE_DATA.id, data.id),
+    encodeBytesField(SERVER_CERTIFICATE_DATA.key, data.key)
+  );
 }
 
 /**
  * Decode server certificate inner Certificate data from protobuf bytes.
  */
 export function decodeServerCertificateData(bytes: Uint8Array): ServerCertificateData {
-  const message = ServerCertificateCertificate.decode(bytes) as unknown as {
-    id: number;
-    key: Uint8Array;
-  };
-  return {
-    id: message.id,
-    key: new Uint8Array(message.key),
-  };
+  const reader = new ProtoReader(bytes);
+  let id = 0;
+  let key = emptyBytes();
+
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case SERVER_CERTIFICATE_DATA.id:
+        id = reader.readUint32();
+        break;
+      case SERVER_CERTIFICATE_DATA.key:
+        key = reader.readBytes();
+        break;
+      default:
+        reader.skipField();
+        break;
+    }
+  }
+
+  return { id, key };
 }
 
 /**
  * Encode server certificate outer wrapper to protobuf bytes.
  */
 export function encodeServerCertificate(cert: ServerCertificateProto): Uint8Array {
-  const message = ServerCertificateType.create({
-    certificate: cert.certificate,
-    signature: cert.signature,
-  });
-  return ServerCertificateType.encode(message).finish();
+  return concatFields(
+    encodeBytesField(SERVER_CERTIFICATE.certificate, cert.certificate),
+    encodeBytesField(SERVER_CERTIFICATE.signature, cert.signature)
+  );
 }
 
 /**
  * Decode server certificate outer wrapper from protobuf bytes.
+ *
+ * `certificate` is returned exactly as it arrived — it is the byte string the
+ * signature was computed over.
  */
 export function decodeServerCertificate(bytes: Uint8Array): ServerCertificateProto {
-  const message = ServerCertificateType.decode(bytes) as unknown as {
-    certificate: Uint8Array;
-    signature: Uint8Array;
-  };
-  return {
-    certificate: new Uint8Array(message.certificate),
-    signature: new Uint8Array(message.signature),
-  };
+  const reader = new ProtoReader(bytes);
+  let certificate = emptyBytes();
+  let signature = emptyBytes();
+
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case SERVER_CERTIFICATE.certificate:
+        certificate = reader.readBytes();
+        break;
+      case SERVER_CERTIFICATE.signature:
+        signature = reader.readBytes();
+        break;
+      default:
+        reader.skipField();
+        break;
+    }
+  }
+
+  return { certificate, signature };
 }
 
 // ============================================================================
@@ -209,57 +251,79 @@ export function decodeServerCertificate(bytes: Uint8Array): ServerCertificatePro
  * Encode sender certificate inner Certificate data to protobuf bytes.
  * Field numbers are part of the sealed-sender wire format.
  *
+ * These are the bytes the issuing server signs. Fields are written in field
+ * number order; `senderE164` is written only when the sender has one, which is
+ * the one field a certificate may legitimately omit.
  */
 export function encodeSenderCertificateData(data: SenderCertificateData): Uint8Array {
-  const certData: Record<string, unknown> = {
-    senderUuid: data.senderUuid,
-    senderDevice: data.senderDevice,
-    expires: data.expires,
-    identityKey: data.identityKey,
-    signerCertificate: data.signerCertificate,
-  };
+  const parts: Uint8Array[] = [];
 
   if (data.senderE164) {
-    certData.senderE164 = data.senderE164;
+    parts.push(encodeStringField(SENDER_CERTIFICATE_DATA.senderE164, data.senderE164));
   }
 
-  const message = SenderCertificateCertificate.create(certData);
-  return SenderCertificateCertificate.encode(message).finish();
+  parts.push(encodeUint32Field(SENDER_CERTIFICATE_DATA.senderDevice, data.senderDevice));
+  parts.push(encodeFixed64Field(SENDER_CERTIFICATE_DATA.expires, BigInt(data.expires)));
+  parts.push(encodeBytesField(SENDER_CERTIFICATE_DATA.identityKey, data.identityKey));
+  parts.push(encodeBytesField(SENDER_CERTIFICATE_DATA.signerCertificate, data.signerCertificate));
+  parts.push(encodeStringField(SENDER_CERTIFICATE_DATA.senderUuid, data.senderUuid));
+
+  return concatFields(...parts);
 }
 
 /**
  * Decode sender certificate inner Certificate data from protobuf bytes.
  *
+ * `signerCertificate` is the serialized `ServerCertificate` and is returned
+ * unmodified: the sender certificate's signature covers these bytes, so
+ * re-encoding it here would invalidate certificates that are currently valid.
  */
 export function decodeSenderCertificateData(bytes: Uint8Array): SenderCertificateData {
-  const message = SenderCertificateCertificate.decode(bytes) as unknown as {
-    senderE164?: string;
-    senderUuid: string;
-    senderDevice: number;
-    expires: number | { low: number; high: number };
-    identityKey: Uint8Array;
-    signerCertificate?: Uint8Array;
-  };
+  const reader = new ProtoReader(bytes);
+  let senderE164 = '';
+  let senderUuid = '';
+  let senderDevice = 0;
+  let expires = 0;
+  let identityKey = emptyBytes();
+  let signerCertificate = emptyBytes();
 
-  // Handle protobuf Long type for fixed64 expires
-  let expires: number;
-  if (typeof message.expires === 'number') {
-    expires = message.expires;
-  } else if (message.expires && typeof message.expires === 'object') {
-    expires = (message.expires.high >>> 0) * 0x100000000 + (message.expires.low >>> 0);
-  } else {
-    expires = 0;
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case SENDER_CERTIFICATE_DATA.senderE164:
+        senderE164 = reader.readString();
+        break;
+      case SENDER_CERTIFICATE_DATA.senderDevice:
+        senderDevice = reader.readUint32();
+        break;
+      case SENDER_CERTIFICATE_DATA.expires:
+        // Milliseconds since the epoch. A Number holds that exactly well past
+        // any expiry a 24-hour credential can carry, and the surface has
+        // always been a Number.
+        expires = Number(reader.readFixed64());
+        break;
+      case SENDER_CERTIFICATE_DATA.identityKey:
+        identityKey = reader.readBytes();
+        break;
+      case SENDER_CERTIFICATE_DATA.signerCertificate:
+        signerCertificate = reader.readBytes();
+        break;
+      case SENDER_CERTIFICATE_DATA.senderUuid:
+        senderUuid = reader.readString();
+        break;
+      default:
+        reader.skipField();
+        break;
+    }
   }
 
   return {
-    senderE164: message.senderE164 || undefined,
-    senderUuid: message.senderUuid,
-    senderDevice: message.senderDevice,
+    senderE164: senderE164 || undefined,
+    senderUuid,
+    senderDevice,
     expires,
-    identityKey: new Uint8Array(message.identityKey),
-    signerCertificate: message.signerCertificate
-      ? new Uint8Array(message.signerCertificate)
-      : new Uint8Array(0),
+    identityKey,
+    signerCertificate,
   };
 }
 
@@ -267,25 +331,39 @@ export function decodeSenderCertificateData(bytes: Uint8Array): SenderCertificat
  * Encode sender certificate outer wrapper to protobuf bytes.
  */
 export function encodeSenderCertificate(cert: SenderCertificateProto): Uint8Array {
-  const message = SenderCertificateType.create({
-    certificate: cert.certificate,
-    signature: cert.signature,
-  });
-  return SenderCertificateType.encode(message).finish();
+  return concatFields(
+    encodeBytesField(SENDER_CERTIFICATE.certificate, cert.certificate),
+    encodeBytesField(SENDER_CERTIFICATE.signature, cert.signature)
+  );
 }
 
 /**
  * Decode sender certificate outer wrapper from protobuf bytes.
+ *
+ * `certificate` is returned exactly as it arrived — it is the byte string the
+ * signature was computed over.
  */
 export function decodeSenderCertificate(bytes: Uint8Array): SenderCertificateProto {
-  const message = SenderCertificateType.decode(bytes) as unknown as {
-    certificate: Uint8Array;
-    signature: Uint8Array;
-  };
-  return {
-    certificate: new Uint8Array(message.certificate),
-    signature: new Uint8Array(message.signature),
-  };
+  const reader = new ProtoReader(bytes);
+  let certificate = emptyBytes();
+  let signature = emptyBytes();
+
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case SENDER_CERTIFICATE.certificate:
+        certificate = reader.readBytes();
+        break;
+      case SENDER_CERTIFICATE.signature:
+        signature = reader.readBytes();
+        break;
+      default:
+        reader.skipField();
+        break;
+    }
+  }
+
+  return { certificate, signature };
 }
 
 // ============================================================================
@@ -294,57 +372,89 @@ export function decodeSenderCertificate(bytes: Uint8Array): SenderCertificatePro
 
 /**
  * Encode inner message data to bytes.
+ *
+ * `contentHint` is written whenever it is set, zero included — an absent hint
+ * and a hint of zero are different statements. `groupId` follows the same rule.
  */
 export function encodeUnidentifiedSenderMessageData(
   data: UnidentifiedSenderMessageData
 ): Uint8Array {
-  const msgData: Record<string, unknown> = {
-    type: data.type,
-    senderCertificate: {
-      certificate: data.senderCertificate.certificate,
-      signature: data.senderCertificate.signature,
-    },
-    content: data.content,
-  };
+  const parts: Uint8Array[] = [
+    encodeEnumField(UNIDENTIFIED_SENDER_MESSAGE_DATA.type, data.type),
+    encodeMessageField(
+      UNIDENTIFIED_SENDER_MESSAGE_DATA.senderCertificate,
+      encodeSenderCertificate(data.senderCertificate)
+    ),
+    encodeBytesField(UNIDENTIFIED_SENDER_MESSAGE_DATA.content, data.content),
+  ];
 
   if (data.contentHint !== undefined) {
-    msgData.contentHint = data.contentHint;
+    parts.push(encodeUint32Field(UNIDENTIFIED_SENDER_MESSAGE_DATA.contentHint, data.contentHint));
   }
 
   if (data.groupId) {
-    msgData.groupId = data.groupId;
+    parts.push(encodeBytesField(UNIDENTIFIED_SENDER_MESSAGE_DATA.groupId, data.groupId));
   }
 
-  const message = UnidentifiedSenderMessageMessage.create(msgData);
-  return UnidentifiedSenderMessageMessage.encode(message).finish();
+  return concatFields(...parts);
 }
 
 /**
  * Decode inner message data from bytes.
+ *
+ * `type` is returned as it arrived — 0 when the field is absent, and any
+ * other value the wire carried, declared by the enum or not. Reflection
+ * clamped every undeclared value to the enum's first arm, so both an absent
+ * type and a type from a newer peer were reported as `PREKEY_MESSAGE`, which
+ * the sender never wrote; preserving the value is also what the protobuf spec
+ * asks of a decoder. The return type names the enum but nothing here narrows
+ * to it, so a caller that routes on `type` must put it through
+ * `isSealedSenderContentType` first. Neither decrypt path does today — both
+ * read the content type from the envelope framing, not from this decoder.
  */
 export function decodeUnidentifiedSenderMessageData(
   bytes: Uint8Array
 ): UnidentifiedSenderMessageData {
-  const message = UnidentifiedSenderMessageMessage.decode(bytes) as unknown as {
-    type: number;
-    senderCertificate: {
-      certificate: Uint8Array;
-      signature: Uint8Array;
-    };
-    content: Uint8Array;
-    contentHint?: number;
-    groupId?: Uint8Array;
+  const reader = new ProtoReader(bytes);
+  let type = 0;
+  let senderCertificate: SenderCertificateProto = {
+    certificate: emptyBytes(),
+    signature: emptyBytes(),
   };
+  let content = emptyBytes();
+  let contentHint = 0;
+  let groupId = emptyBytes();
+
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case UNIDENTIFIED_SENDER_MESSAGE_DATA.type:
+        type = reader.readEnum();
+        break;
+      case UNIDENTIFIED_SENDER_MESSAGE_DATA.senderCertificate:
+        senderCertificate = decodeSenderCertificate(reader.readMessage());
+        break;
+      case UNIDENTIFIED_SENDER_MESSAGE_DATA.content:
+        content = reader.readBytes();
+        break;
+      case UNIDENTIFIED_SENDER_MESSAGE_DATA.contentHint:
+        contentHint = reader.readUint32();
+        break;
+      case UNIDENTIFIED_SENDER_MESSAGE_DATA.groupId:
+        groupId = reader.readBytes();
+        break;
+      default:
+        reader.skipField();
+        break;
+    }
+  }
 
   return {
-    type: message.type as SealedSenderContentType,
-    senderCertificate: {
-      certificate: new Uint8Array(message.senderCertificate.certificate),
-      signature: new Uint8Array(message.senderCertificate.signature),
-    },
-    content: new Uint8Array(message.content),
-    contentHint: message.contentHint,
-    groupId: message.groupId ? new Uint8Array(message.groupId) : undefined,
+    type: type as SealedSenderContentType,
+    senderCertificate,
+    content,
+    contentHint,
+    groupId,
   };
 }
 
@@ -352,29 +462,41 @@ export function decodeUnidentifiedSenderMessageData(
  * Encode outer sealed sender message to bytes.
  */
 export function encodeUnidentifiedSenderMessage(msg: UnidentifiedSenderMessageProto): Uint8Array {
-  const message = UnidentifiedSenderMessageType.create({
-    ephemeralPublic: msg.ephemeralPublic,
-    encryptedStatic: msg.encryptedStatic,
-    encryptedMessage: msg.encryptedMessage,
-  });
-  return UnidentifiedSenderMessageType.encode(message).finish();
+  return concatFields(
+    encodeBytesField(UNIDENTIFIED_SENDER_MESSAGE.ephemeralPublic, msg.ephemeralPublic),
+    encodeBytesField(UNIDENTIFIED_SENDER_MESSAGE.encryptedStatic, msg.encryptedStatic),
+    encodeBytesField(UNIDENTIFIED_SENDER_MESSAGE.encryptedMessage, msg.encryptedMessage)
+  );
 }
 
 /**
  * Decode outer sealed sender message from bytes.
  */
 export function decodeUnidentifiedSenderMessage(bytes: Uint8Array): UnidentifiedSenderMessageProto {
-  const message = UnidentifiedSenderMessageType.decode(bytes) as unknown as {
-    ephemeralPublic: Uint8Array;
-    encryptedStatic: Uint8Array;
-    encryptedMessage: Uint8Array;
-  };
+  const reader = new ProtoReader(bytes);
+  let ephemeralPublic = emptyBytes();
+  let encryptedStatic = emptyBytes();
+  let encryptedMessage = emptyBytes();
 
-  return {
-    ephemeralPublic: new Uint8Array(message.ephemeralPublic),
-    encryptedStatic: new Uint8Array(message.encryptedStatic),
-    encryptedMessage: new Uint8Array(message.encryptedMessage),
-  };
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case UNIDENTIFIED_SENDER_MESSAGE.ephemeralPublic:
+        ephemeralPublic = reader.readBytes();
+        break;
+      case UNIDENTIFIED_SENDER_MESSAGE.encryptedStatic:
+        encryptedStatic = reader.readBytes();
+        break;
+      case UNIDENTIFIED_SENDER_MESSAGE.encryptedMessage:
+        encryptedMessage = reader.readBytes();
+        break;
+      default:
+        reader.skipField();
+        break;
+    }
+  }
+
+  return { ephemeralPublic, encryptedStatic, encryptedMessage };
 }
 
 // ============================================================================

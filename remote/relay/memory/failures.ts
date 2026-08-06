@@ -1,6 +1,6 @@
 import type { Envelope } from '../types';
 
-export interface MockRelayFailureOptions {
+export interface RelayFailureOptions {
   /**
    * Stable offset for cadence-based failures. The same seed and options always
    * produce the same delivery schedule.
@@ -33,20 +33,20 @@ function positiveInteger(value: number | undefined, name: string): void {
  * Failure selection is counter/seed based. It never consults Math.random or
  * wall-clock time.
  */
-export class MockRelayFailureController {
+export class RelayFailureController {
   private options: Required<
     Pick<
-      MockRelayFailureOptions,
+      RelayFailureOptions,
       'seed' | 'latencyMs' | 'reorderDeliveryPairs' | 'rejectAuthorization' | 'exhaustOneTimePreKeys'
     >
   > &
-    Pick<MockRelayFailureOptions, 'duplicateDeliveryEvery'>;
+    Pick<RelayFailureOptions, 'duplicateDeliveryEvery'>;
   private disconnectedTargets = new Set<string>();
   private reorderBuffers = new Map<string, Envelope>();
   private deliveryOrdinal = 0;
 
   constructor(
-    options: MockRelayFailureOptions | undefined,
+    options: RelayFailureOptions | undefined,
     private readonly deliverEnvelope: DeliverEnvelope,
     private readonly deliverPending: DeliverPending
   ) {
@@ -61,13 +61,13 @@ export class MockRelayFailureController {
     this.validate();
   }
 
-  configure(options: Partial<MockRelayFailureOptions>): void {
+  configure(options: Partial<RelayFailureOptions>): void {
     const candidate = { ...this.options, ...options };
     this.validate(candidate);
     this.options = candidate;
   }
 
-  snapshot(): Readonly<MockRelayFailureOptions> {
+  snapshot(): Readonly<RelayFailureOptions> {
     return { ...this.options };
   }
 

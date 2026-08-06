@@ -17,12 +17,12 @@ messaging. `protocol.postQuantum` and `protocol.braid` both default to
 
 ```ts
 import { createSignalProtocolClient, ProtocolAddress } from '@open-e2ee/signal-protocol-sdk';
-import { mockStore } from '@open-e2ee/signal-protocol-sdk/local/store/mock';
+import { inMemoryStore } from '@open-e2ee/signal-protocol-sdk/local/store/memory';
 
 const signal = await createSignalProtocolClient({
   // A local-only client still needs storage for this device's key/session state.
   identity: { userId: 'alice' },
-  adapters: { storage: mockStore() },
+  adapters: { storage: inMemoryStore() },
 });
 
 // ProtocolAddress is for direct device-level APIs.

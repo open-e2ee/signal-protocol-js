@@ -48,7 +48,7 @@ reporting or security@open-e2ee.dev.
 The SDK is dual-licensed (AGPL-3.0-or-later, with commercial licenses sold for
 proprietary use — see [COMMERCIAL.md](./COMMERCIAL.md)). By submitting a
 contribution you agree it is licensed under the repository's AGPL-3.0-or-later
-license and that Open E2EE LLC may also distribute it under its commercial
+license and that OpenE2EE LLC may also distribute it under its commercial
 licenses. If you are not comfortable with that dual grant, please say so in
 the PR instead of submitting — an issue describing the fix is still valuable
 and carries no licensing implications.

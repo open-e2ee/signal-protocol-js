@@ -9,18 +9,18 @@
  *
  * ```typescript
  * import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
- * import { mockRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/mock';
- * import { mockStore } from '@open-e2ee/signal-protocol-sdk/local/store/mock';
+ * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
+ * import { inMemoryStore } from '@open-e2ee/signal-protocol-sdk/local/store/memory';
  *
- * const relay = mockRelay();
+ * const relay = inMemoryRelay();
  * const alice = await createSignalProtocolClient({
  *   identity: { userId: 'alice' },
- *   adapters: { storage: mockStore(), relay },
+ *   adapters: { storage: inMemoryStore(), relay },
  * });
  *
  * const bob = await createSignalProtocolClient({
  *   identity: { userId: 'bob' },
- *   adapters: { storage: mockStore(), relay },
+ *   adapters: { storage: inMemoryStore(), relay },
  * });
  *
  * await alice.syncToServer();

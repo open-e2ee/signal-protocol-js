@@ -18,7 +18,7 @@ The relay interface handles server-owned Signal Protocol state:
 Use:
 
 - `ConvexSignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/convex`
-- `MockSignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/mock`
+- `InMemorySignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
 - or a custom implementation
 
 ### Storage: `ISignalProtocolLocalStore`
@@ -38,7 +38,7 @@ Use:
 - `IndexedDbSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/web` (experimental)
 - `ReactNativeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/react-native` (experimental; use `await ReactNativeSignalProtocolStore.create({ storage })` with a caller-provided key-value backend)
 - `NodeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/node`
-- `MockSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/mock`
+- `InMemorySignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/memory`
 - or a custom implementation
 
 ### Remote object storage: `SignalProtocolRemoteObjectStore`
@@ -69,11 +69,11 @@ functions retain authentication, authorization, and persistence.
 
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
+import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
 
 const signal = await createSignalProtocolClient({
   identity: { userId: "alice" },
-  adapters: { storage: mockStore() },
+  adapters: { storage: inMemoryStore() },
 });
 ```
 
@@ -112,19 +112,19 @@ database and SQLCipher bootstrap.
 
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
-import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
+import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
+import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
 
-const relay = mockRelay();
+const relay = inMemoryRelay();
 
 const alice = await createSignalProtocolClient({
   identity: { userId: "alice" },
-  adapters: { storage: mockStore(), relay },
+  adapters: { storage: inMemoryStore(), relay },
 });
 
 const bob = await createSignalProtocolClient({
   identity: { userId: "bob" },
-  adapters: { storage: mockStore(), relay },
+  adapters: { storage: inMemoryStore(), relay },
 });
 ```
 
@@ -182,7 +182,7 @@ const signal = await createSignalProtocolClient({
 
 ## Verifiable adapter design
 
-Mock relay and storage adapters provide deterministic, in-memory behavior for
+In-memory relay and storage adapters provide deterministic behavior for
 development environments. Production adapters remain dependency-injected so
 applications can evaluate storage, delivery, and failure behavior without
 reaching into client internals.

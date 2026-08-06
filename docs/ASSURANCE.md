@@ -61,7 +61,7 @@ Coverage spans, in the terms this documentation uses elsewhere:
   invariants.
 - **Integration flows** — multi-device fanout, group membership lifecycle,
   device linking and provisioning, PNI-to-ACI upgrade, and relay delivery.
-- **Adapter behavior** — the Expo, browser, Node, React Native, and mock
+- **Adapter behavior** — the Expo, browser, Node, React Native, and in-memory
   storage adapters, plus the Convex relay and object-store adapters.
 - **Public surface** — the exported API shape and the quickstart printed in the
   [README](../README.md), which is executed as written on every change.
@@ -78,7 +78,7 @@ is a badge on the README you can click through to the run logs:
   dependency tree.
 
 That is a genuine, independently reproducible signal about the code you are
-reading: it compiles, its types are consistent, and its seven production
+reading: it compiles, its types are consistent, and its six production
 dependencies carry no known advisories at moderate or higher severity. It is
 not a substitute for the protocol checks, and it is not offered as one.
 

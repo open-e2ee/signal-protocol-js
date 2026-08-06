@@ -4,6 +4,10 @@
  * Protocol Buffer definitions for sealed sender message serialization.
  * These definitions are the sealed-sender protobuf wire schema.
  *
+ * Nothing generates code from this file: `index.ts` alongside it is a
+ * hand-written codec, and this is the schema that codec implements. Keep the
+ * two in step by hand — the golden vectors pin the wire, so the code is the
+ * side that wins an argument between them.
  */
 
 syntax = "proto2";
@@ -40,16 +44,22 @@ message SenderCertificate {
   message Certificate {
     /** Sender's phone number (E.164 format, optional) */
     optional string senderE164 = 1;
-    /** Sender's UUID (required) */
-    optional string senderUuid = 2;
     /** Sender's device ID (1-5) */
-    optional uint32 senderDevice = 3;
+    optional uint32 senderDevice = 2;
     /** Certificate expiration (Unix timestamp milliseconds) */
-    optional fixed64 expires = 4;
+    optional fixed64 expires = 3;
     /** Sender's X25519 identity public key (32 bytes) */
-    optional bytes identityKey = 5;
-    /** Server certificate that signed this certificate */
-    optional ServerCertificate signer = 6;
+    optional bytes identityKey = 4;
+    /**
+     * Server certificate that signed this certificate.
+     *
+     * The codec calls this field `signerCertificate` and carries it as the
+     * serialized `ServerCertificate` bytes rather than a decoded message,
+     * because the sender certificate's signature covers them.
+     */
+    optional ServerCertificate signer = 5;
+    /** Sender's UUID (required) */
+    optional string senderUuid = 6;
   }
 
   /** Serialized Certificate message */

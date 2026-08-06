@@ -7,5 +7,5 @@
  */
 
 export {
-  GroupAuthorizationServerEngine as MockGroupAuthorizationServer,
+  GroupAuthorizationServerEngine as InMemoryGroupAuthorizationServer,
 } from '../../../internal/groups/server-engine';

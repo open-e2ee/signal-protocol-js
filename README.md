@@ -51,24 +51,24 @@ Adapters declare their runtime requirements as optional peer dependencies, so in
 
 Two clients, one process, no account and no server. The relay holds the envelope; only Bob's device turns it back into text.
 
-<!-- mock-snippet:run readme-quick-start expect="alice: hello" -->
+<!-- doc-snippet:run readme-quick-start expect="alice: hello" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
-import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
+import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
+import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
 
-const relay = mockRelay();
+const relay = inMemoryRelay();
 await relay.registerDevice("alice", { encryptedDeviceName: new ArrayBuffer(0) });
 await relay.registerDevice("bob", { encryptedDeviceName: new ArrayBuffer(0) });
 
 const alice = await createSignalProtocolClient({
   identity: { userId: "alice" },
-  adapters: { storage: mockStore(), relay },
+  adapters: { storage: inMemoryStore(), relay },
 });
 const bob = await createSignalProtocolClient({
   identity: { userId: "bob" },
-  adapters: { storage: mockStore(), relay },
+  adapters: { storage: inMemoryStore(), relay },
 });
 
 await alice.syncToServer();
@@ -89,17 +89,19 @@ Next: [inspect what the relay actually stored](https://github.com/open-e2ee/sign
 
 ## How it compares
 
-Measured from the GitHub and npm registry APIs on 2026-07-24. Every alternative is a real project doing a real job; the axes below are the ones this SDK was built to change, not a general quality ranking.
+Measured from the GitHub API, the npm registry API, and the published package tarballs on 2026-08-03. Every alternative is a real project doing a real job; the axes below are the ones this SDK was built to change, not a general quality ranking.
 
 | | Expo / React Native | Browser | Maintained | Post-quantum | TypeScript-native | Commercial license |
 |---|---|---|---|---|---|---|
-| **`@open-e2ee/signal-protocol-sdk`** | Yes | Yes (browser store is experimental) | Yes — `0.1.0-alpha`, active | Yes — PQXDH + ML-KEM, default and fails closed | Yes | Yes |
-| [`@signalapp/libsignal-client`](https://github.com/signalapp/libsignal) | No — prebuilt native binaries for Windows, macOS, and Linux only | No | Yes — very active | Yes | No — Rust core with TypeScript bindings | No (AGPL-3.0 only) |
+| **`@open-e2ee/signal-protocol-sdk`** | Yes | Yes (browser store is experimental) | Yes — `0.1.x` alpha, active | Key agreement yes — PQXDH + ML-KEM, default and fails closed. Signatures no — identities are classical Ed25519 | Yes | Yes |
+| [`@signalapp/libsignal-client`](https://github.com/signalapp/libsignal) | No — Node native addon; the 0.99.3 tarball ships binaries for macOS, Linux, and Windows only | No | Yes — very active; repo push 2026-07-31 | Key agreement yes | No — Rust core with TypeScript bindings | No (AGPL-3.0 only) |
 | [`libsignal-protocol-javascript`](https://github.com/signalapp/libsignal-protocol-javascript) | No | Yes | No — archived, last push 2021-08-04 | No | No — JavaScript | No (GPL-3.0) |
 | [`@privacyresearch/libsignal-protocol-typescript`](https://github.com/privacyresearchgroup/libsignal-protocol-typescript) | No documented React Native path | Yes | No — last npm publish 2023-05-06, last repo push 2023-07-18 | No | Yes | No (GPL-3.0) |
-| [`ts-mls`](https://github.com/LukaJCB/ts-mls) | Yes | Yes | Yes — very active | Yes | Yes | No (MIT) |
+| [`ts-mls`](https://github.com/LukaJCB/ts-mls) | Not stated — browsers, Node, and serverless are the documented targets | Yes | Yes — very active; repo push 2026-08-03 | Key agreement and signatures — ML-KEM and ML-DSA-87 ciphersuites | Yes | Not needed (MIT) |
 
-`ts-mls` implements [MLS (RFC 9420)](https://www.rfc-editor.org/rfc/rfc9420.html), a different protocol with different properties — if MLS suits your product, it is a good library and this table is not an argument against it. `@signalapp/libsignal-client` is the implementation Signal Messenger itself uses; its README states that use outside Signal Messenger is unsupported.
+`ts-mls` implements [MLS (RFC 9420)](https://www.rfc-editor.org/rfc/rfc9420.html), a different protocol with different properties — if MLS suits your product, it is a good library and this table is not an argument against it, and its post-quantum coverage reaches further than this SDK's. `@signalapp/libsignal-client` is the implementation Signal Messenger itself uses; its README states that use outside Signal Messenger is unsupported. If you are shipping a desktop or server application on Node, reach for it first.
+
+The longer version of this table, with a paragraph on each project, is at [open-e2ee.dev/compare](https://open-e2ee.dev/compare).
 
 ## Trust and verification
 
@@ -123,7 +125,7 @@ Cryptography deserves evidence rather than adjectives, so here is what there is 
 
 **Not wire-compatible, and specific about why.** This SDK cannot exchange messages with Signal Messenger or `libsignal`, cannot exchange identities with them, and its safety numbers will never match the ones a Signal Messenger client displays for the same two users. The cryptographic core is the same; the wire profile is deliberately its own. Identities are a versioned composite of separate X25519 and Ed25519 keys rather than one Curve25519 key, so signatures are ordinary RFC 8032 Ed25519 rather than XEdDSA; ML-KEM-1024 keys and ciphertexts are tagged `0x0A`, distinct from the round-3 Kyber1024 `0x08` tag. [DEVIATIONS](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/DEVIATIONS.md) is the complete account — every difference from the specifications and from `libsignal`, with the reason, the cost, and the file that implements it. The threat model boundary is in the [security model](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/SECURITY.md).
 
-**Dependencies: 7.** Seven direct production dependencies — `@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`, `async-lock`, `protobufjs`, `unique-names-generator` — resolving to 8 packages in total, the eighth being `long` by way of `protobufjs`. Everything else in the tree is a development or optional peer dependency.
+**Dependencies: 6.** Six direct production dependencies — `@noble/ciphers`, `@noble/curves`, `@noble/hashes`, `@noble/post-quantum`, `async-lock`, `unique-names-generator` — resolving to 6 packages in total: the only transitive edges are the `@noble` packages depending on one another, so the resolved tree adds nothing the list above does not already name. Everything else in the tree is a development or optional peer dependency.
 
 **Automated checks.** The published repository is a mechanized export of a private engineering repository, filtered by an allowlist; the automated checks live there and have to pass before an export is cut. The [assurance summary](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/ASSURANCE.md) carries the current run figures — regenerated from a real run as part of every release, never hand-edited — and explains what the checks cover, what is not published, and why. The published repository runs its own build, typecheck, and production dependency audit in [CI](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml) on every change.
 

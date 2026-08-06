@@ -2684,7 +2684,7 @@ const signal = await SignalProtocolClient.create('user-123', {
 
 // For local development with in-memory adapters
 const signal = await SignalProtocolClient.create('local-user', {
-  protocolManager: mockManager,
-  storage: mockStorage
+  protocolManager: inMemoryManager,
+  storage: inMemoryStorage
 });
 ```

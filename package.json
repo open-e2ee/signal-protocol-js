@@ -1,6 +1,6 @@
 {
   "name": "@open-e2ee/signal-protocol-sdk",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-alpha.10",
   "description": "Signal Protocol E2EE SDK for TypeScript — Expo, React Native, browser, and Node. Post-quantum PQXDH and Double Ratchet.",
   "keywords": [
     "open-e2ee",
@@ -67,9 +67,9 @@
       "types": "./dist/remote/relay/convex/component/convex.config.d.ts",
       "default": "./dist/remote/relay/convex/component/convex.config.js"
     },
-    "./remote/relay/mock": {
-      "types": "./dist/remote/relay/mock/index.d.ts",
-      "default": "./dist/remote/relay/mock/index.js"
+    "./remote/relay/memory": {
+      "types": "./dist/remote/relay/memory/index.d.ts",
+      "default": "./dist/remote/relay/memory/index.js"
     },
     "./remote/relay/types": {
       "types": "./dist/remote/relay/types.d.ts",
@@ -203,9 +203,9 @@
       "types": "./dist/local/store/expo/schema.d.ts",
       "default": "./dist/local/store/expo/schema.js"
     },
-    "./local/store/mock": {
-      "types": "./dist/local/store/mock/index.d.ts",
-      "default": "./dist/local/store/mock/index.js"
+    "./local/store/memory": {
+      "types": "./dist/local/store/memory/index.d.ts",
+      "default": "./dist/local/store/memory/index.js"
     },
     "./local/store/node": {
       "types": "./dist/local/store/node/index.d.ts",
@@ -315,7 +315,7 @@
     "keys/README.md",
     "local/store/README.md",
     "local/store/expo/README.md",
-    "local/store/mock/README.md",
+    "local/store/memory/README.md",
     "local/store/node/README.md",
     "local/store/react-native/README.md",
     "local/store/web/README.md",
@@ -329,7 +329,7 @@
     "remote/relay/README.md",
     "remote/relay/convex/README.md",
     "remote/relay/convex/component/README.md",
-    "remote/relay/mock/README.md",
+    "remote/relay/memory/README.md",
     "safety/README.md",
     "scripts/oe-groups.mjs",
     "sealed-sender/README.md",
@@ -419,7 +419,6 @@
     "@noble/hashes": "2.2.0",
     "@noble/post-quantum": "^0.6.1",
     "async-lock": "^1.4.0",
-    "protobufjs": "^8.6.5",
     "unique-names-generator": "^4.7.1"
   },
   "overrides": {

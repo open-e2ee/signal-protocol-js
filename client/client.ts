@@ -11,13 +11,13 @@
  * @example Basic usage
  * ```typescript
  * import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
- * import { mockStore } from '@open-e2ee/signal-protocol-sdk/local/store/mock';
- * import { mockRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/mock';
+ * import { inMemoryStore } from '@open-e2ee/signal-protocol-sdk/local/store/memory';
+ * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
  *
- * const relay = mockRelay();
+ * const relay = inMemoryRelay();
  * const signal = await createSignalProtocolClient({
  *   identity: { userId: 'alice' },
- *   adapters: { storage: mockStore(), relay },
+ *   adapters: { storage: inMemoryStore(), relay },
  * });
  *
  * await signal.syncToServer();
@@ -806,8 +806,8 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    *
    * // For local development with in-memory adapters
    * const signal = await SignalProtocolClient.create('local-user', {
-   *   protocolManager: mockManager,
-   *   storage: mockStorage
+   *   protocolManager: inMemoryManager,
+   *   storage: inMemoryStorage
    * });
    * ```
    */

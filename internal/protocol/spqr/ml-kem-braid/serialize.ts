@@ -9,7 +9,18 @@
  * @module ml-kem-braid/serialize
  */
 
-import protobuf from 'protobufjs';
+import {
+  ProtoReader,
+  concatFields,
+  encodeBoolField,
+  encodeBytesField,
+  encodeEnumField,
+  encodeMessageField,
+  encodeRepeatedBytesField,
+  encodeRepeatedMessageField,
+  encodeUint32Field,
+  encodeUint64Field,
+} from '../../../encoding/proto/primitives';
 import { assertBraidChunkIndex, assertBraidEncoderCursor } from './chunk-domain';
 import { MessageType, PROTOCOL_CONSTANTS } from './types';
 import type { MLKEMBraidMessage, AuthenticatorState } from './types';
@@ -362,94 +373,389 @@ export function deserializeMessageBinary(bytes: Uint8Array): MLKEMBraidMessage {
 // Protobuf Format Serialization
 // =============================================================================
 
-// Lazy-loaded protobuf root
-let protoRoot: protobuf.Root | null = null;
-let V1MsgType: protobuf.Type | null = null;
-let AuthenticatorType: protobuf.Type | null = null;
-let PolynomialEncoderType: protobuf.Type | null = null;
-let PolynomialDecoderType: protobuf.Type | null = null;
+/**
+ * Field numbers from `proto/pq_ratchet.proto`. They are frozen: the same wire
+ * is read by the reference implementation, and `Authenticator`,
+ * `PolynomialEncoder`, and `PolynomialDecoder` are the persisted ratchet
+ * state, so an installed client must keep decoding what it wrote yesterday.
+ */
+const V1MSG_FIELDS = {
+  epoch: 1,
+  index: 2,
+  hdr: 3,
+  ek: 4,
+  ekCt1Ack: 5,
+  ct1Ack: 6,
+  ct1: 7,
+  ct2: 8,
+  versionCapability: 9,
+} as const;
+
+const CHUNK_FIELDS = { index: 1, data: 2 } as const;
+
+const VERSION_CAPABILITY_FIELDS = { maxVersion: 1, minVersion: 2 } as const;
+
+const AUTHENTICATOR_FIELDS = { rootKey: 1, macKey: 2 } as const;
+
+const POLYNOMIAL_ENCODER_FIELDS = { idx: 1, pts: 2, polys: 3, messageSize: 4 } as const;
+
+const POLYNOMIAL_DECODER_FIELDS = {
+  ptsNeeded: 1,
+  polys: 2,
+  chunks: 3,
+  isComplete: 4,
+  messageSize: 5,
+} as const;
+
+/** `Version.V_1`; `V_0 = 0` is reserved and the runtime never emits it. */
+const VERSION_V1 = 1;
 
 /**
- * Initialize protobuf types (loads .proto file)
+ * The `V1Msg.inner_msg` oneof, in field order. Setting one arm clears the
+ * others, on encode and on decode alike: a message that arrives carrying two
+ * arms keeps only the last one on the wire.
  */
-async function initProto(): Promise<void> {
-  if (protoRoot) return;
+const V1MSG_ONEOF_ARMS = ['hdr', 'ek', 'ekCt1Ack', 'ct1Ack', 'ct1', 'ct2'] as const;
 
-  // Use protobufjs reflection API to define types inline
-  // This avoids file system access which may not work in all environments
-  protoRoot = new protobuf.Root();
+/**
+ * Wire-level view of a decoded message: every field is optional and is present
+ * only when the bytes carried it.
+ *
+ * Presence is the contract, not the value. A field explicitly set to its zero
+ * value is written to the wire — `epoch: 0` is `08 00`, `isComplete: false` is
+ * `20 00` — and an absent field decodes to `undefined` here so the public
+ * functions below can apply their own defaults. Collapsing the two would
+ * change the bytes for messages this package has already persisted.
+ */
+interface ChunkWire {
+  index?: number;
+  data?: Uint8Array;
+}
 
-  // Define Version enum (V_0 = 0, V_1 = 1)
-  const Version = new protobuf.Enum('Version', {
-    V_0: 0, // Reserved; runtime requires V_1
-    V_1: 1, // ML-KEM Braid (post-quantum)
-  });
+interface VersionCapabilityWire {
+  maxVersion?: number;
+  minVersion?: number;
+}
 
-  // Define Chunk message
-  const Chunk = new protobuf.Type('Chunk')
-    .add(new protobuf.Field('index', 1, 'uint32'))
-    .add(new protobuf.Field('data', 2, 'bytes'));
+interface V1MsgWire {
+  epoch?: bigint;
+  index?: number;
+  hdr?: ChunkWire;
+  ek?: ChunkWire;
+  ekCt1Ack?: ChunkWire;
+  ct1Ack?: boolean;
+  ct1?: ChunkWire;
+  ct2?: ChunkWire;
+  versionCapability?: VersionCapabilityWire;
+}
 
-  // Define ChunkEntry message
-  const ChunkEntry = new protobuf.Type('ChunkEntry')
-    .add(new protobuf.Field('index', 1, 'uint32'))
-    .add(new protobuf.Field('data', 2, 'bytes'));
+interface AuthenticatorWire {
+  rootKey?: Uint8Array;
+  macKey?: Uint8Array;
+}
 
-  // Define VersionCapability message (for negotiation)
-  const VersionCapability = new protobuf.Type('VersionCapability')
-    .add(new protobuf.Field('maxVersion', 1, 'Version'))
-    .add(new protobuf.Field('minVersion', 2, 'Version'));
+interface PolynomialEncoderWire {
+  idx?: number;
+  pts: Uint8Array[];
+  polys: Uint8Array[];
+  messageSize?: number;
+}
 
-  // Define V1Msg message with oneof and optional version capability
-  const V1Msg = new protobuf.Type('V1Msg')
-    .add(new protobuf.Field('epoch', 1, 'uint64'))
-    .add(new protobuf.Field('index', 2, 'uint32'))
-    .add(
-      new protobuf.OneOf('innerMsg')
-        .add(new protobuf.Field('hdr', 3, 'Chunk'))
-        .add(new protobuf.Field('ek', 4, 'Chunk'))
-        .add(new protobuf.Field('ekCt1Ack', 5, 'Chunk'))
-        .add(new protobuf.Field('ct1Ack', 6, 'bool'))
-        .add(new protobuf.Field('ct1', 7, 'Chunk'))
-        .add(new protobuf.Field('ct2', 8, 'Chunk'))
-    )
-    .add(new protobuf.Field('versionCapability', 9, 'VersionCapability'));
+interface PolynomialDecoderWire {
+  ptsNeeded?: number;
+  polys?: number;
+  chunks: ChunkWire[];
+  isComplete?: boolean;
+  messageSize?: number;
+}
 
-  // Define Authenticator message
-  const Authenticator = new protobuf.Type('Authenticator')
-    .add(new protobuf.Field('rootKey', 1, 'bytes'))
-    .add(new protobuf.Field('macKey', 2, 'bytes'));
+function assertProtoBytes(value: unknown, label: string): asserts value is Uint8Array {
+  if (!(value instanceof Uint8Array)) {
+    throw new Error(`${label} must be a Uint8Array`);
+  }
+}
 
-  // Define PolynomialEncoder message
-  const PolynomialEncoder = new protobuf.Type('PolynomialEncoder')
-    .add(new protobuf.Field('idx', 1, 'uint32'))
-    .add(new protobuf.Field('pts', 2, 'bytes', 'repeated'))
-    .add(new protobuf.Field('polys', 3, 'bytes', 'repeated'))
-    .add(new protobuf.Field('messageSize', 4, 'uint32'));
+function assertProtoUint32(value: unknown, label: string): asserts value is number {
+  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 0xffffffff) {
+    throw new Error(`${label} must be an integer between 0 and 4294967295`);
+  }
+}
 
-  // Define PolynomialDecoder message
-  const PolynomialDecoder = new protobuf.Type('PolynomialDecoder')
-    .add(new protobuf.Field('ptsNeeded', 1, 'uint32'))
-    .add(new protobuf.Field('polys', 2, 'uint32'))
-    .add(new protobuf.Field('chunks', 3, 'ChunkEntry', 'repeated'))
-    .add(new protobuf.Field('isComplete', 4, 'bool'))
-    .add(new protobuf.Field('messageSize', 5, 'uint32'));
+/** Assign one oneof arm, clearing whichever sibling was set before. */
+function setInnerMsg<K extends (typeof V1MSG_ONEOF_ARMS)[number]>(
+  msg: V1MsgWire,
+  arm: K,
+  value: V1MsgWire[K]
+): void {
+  for (const other of V1MSG_ONEOF_ARMS) {
+    delete msg[other];
+  }
+  msg[arm] = value;
+}
 
-  // Add all types to root
-  protoRoot.add(Version);
-  protoRoot.add(Chunk);
-  protoRoot.add(ChunkEntry);
-  protoRoot.add(VersionCapability);
-  protoRoot.add(V1Msg);
-  protoRoot.add(Authenticator);
-  protoRoot.add(PolynomialEncoder);
-  protoRoot.add(PolynomialDecoder);
+function encodeChunk(chunk: ChunkWire): Uint8Array {
+  const fields: Uint8Array[] = [];
+  if (chunk.index !== undefined) {
+    fields.push(encodeUint32Field(CHUNK_FIELDS.index, chunk.index));
+  }
+  if (chunk.data !== undefined) {
+    fields.push(encodeBytesField(CHUNK_FIELDS.data, chunk.data));
+  }
+  return concatFields(...fields);
+}
 
-  // Resolve nested type references
-  V1MsgType = protoRoot.lookupType('V1Msg');
-  AuthenticatorType = protoRoot.lookupType('Authenticator');
-  PolynomialEncoderType = protoRoot.lookupType('PolynomialEncoder');
-  PolynomialDecoderType = protoRoot.lookupType('PolynomialDecoder');
+function decodeChunk(bytes: Uint8Array): ChunkWire {
+  const chunk: ChunkWire = {};
+  const reader = new ProtoReader(bytes);
+
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case CHUNK_FIELDS.index:
+        chunk.index = reader.readUint32();
+        break;
+      case CHUNK_FIELDS.data:
+        chunk.data = reader.readBytes();
+        break;
+      default:
+        reader.skipField();
+    }
+  }
+
+  return chunk;
+}
+
+function encodeVersionCapability(capability: VersionCapabilityWire): Uint8Array {
+  const fields: Uint8Array[] = [];
+  if (capability.maxVersion !== undefined) {
+    fields.push(encodeEnumField(VERSION_CAPABILITY_FIELDS.maxVersion, capability.maxVersion));
+  }
+  if (capability.minVersion !== undefined) {
+    fields.push(encodeEnumField(VERSION_CAPABILITY_FIELDS.minVersion, capability.minVersion));
+  }
+  return concatFields(...fields);
+}
+
+function decodeVersionCapability(bytes: Uint8Array): VersionCapabilityWire {
+  const capability: VersionCapabilityWire = {};
+  const reader = new ProtoReader(bytes);
+
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case VERSION_CAPABILITY_FIELDS.maxVersion:
+        capability.maxVersion = reader.readEnum();
+        break;
+      case VERSION_CAPABILITY_FIELDS.minVersion:
+        capability.minVersion = reader.readEnum();
+        break;
+      default:
+        reader.skipField();
+    }
+  }
+
+  return capability;
+}
+
+function encodeV1Msg(msg: V1MsgWire): Uint8Array {
+  const fields: Uint8Array[] = [];
+  if (msg.epoch !== undefined) {
+    fields.push(encodeUint64Field(V1MSG_FIELDS.epoch, msg.epoch));
+  }
+  if (msg.index !== undefined) {
+    fields.push(encodeUint32Field(V1MSG_FIELDS.index, msg.index));
+  }
+  if (msg.hdr !== undefined) {
+    fields.push(encodeMessageField(V1MSG_FIELDS.hdr, encodeChunk(msg.hdr)));
+  }
+  if (msg.ek !== undefined) {
+    fields.push(encodeMessageField(V1MSG_FIELDS.ek, encodeChunk(msg.ek)));
+  }
+  if (msg.ekCt1Ack !== undefined) {
+    fields.push(encodeMessageField(V1MSG_FIELDS.ekCt1Ack, encodeChunk(msg.ekCt1Ack)));
+  }
+  if (msg.ct1Ack !== undefined) {
+    fields.push(encodeBoolField(V1MSG_FIELDS.ct1Ack, msg.ct1Ack));
+  }
+  if (msg.ct1 !== undefined) {
+    fields.push(encodeMessageField(V1MSG_FIELDS.ct1, encodeChunk(msg.ct1)));
+  }
+  if (msg.ct2 !== undefined) {
+    fields.push(encodeMessageField(V1MSG_FIELDS.ct2, encodeChunk(msg.ct2)));
+  }
+  if (msg.versionCapability !== undefined) {
+    fields.push(
+      encodeMessageField(
+        V1MSG_FIELDS.versionCapability,
+        encodeVersionCapability(msg.versionCapability)
+      )
+    );
+  }
+  return concatFields(...fields);
+}
+
+function decodeV1Msg(bytes: Uint8Array): V1MsgWire {
+  const msg: V1MsgWire = {};
+  const reader = new ProtoReader(bytes);
+
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case V1MSG_FIELDS.epoch:
+        msg.epoch = reader.readUint64();
+        break;
+      case V1MSG_FIELDS.index:
+        msg.index = reader.readUint32();
+        break;
+      case V1MSG_FIELDS.hdr:
+        setInnerMsg(msg, 'hdr', decodeChunk(reader.readMessage()));
+        break;
+      case V1MSG_FIELDS.ek:
+        setInnerMsg(msg, 'ek', decodeChunk(reader.readMessage()));
+        break;
+      case V1MSG_FIELDS.ekCt1Ack:
+        setInnerMsg(msg, 'ekCt1Ack', decodeChunk(reader.readMessage()));
+        break;
+      case V1MSG_FIELDS.ct1Ack:
+        setInnerMsg(msg, 'ct1Ack', reader.readBool());
+        break;
+      case V1MSG_FIELDS.ct1:
+        setInnerMsg(msg, 'ct1', decodeChunk(reader.readMessage()));
+        break;
+      case V1MSG_FIELDS.ct2:
+        setInnerMsg(msg, 'ct2', decodeChunk(reader.readMessage()));
+        break;
+      case V1MSG_FIELDS.versionCapability:
+        msg.versionCapability = decodeVersionCapability(reader.readMessage());
+        break;
+      default:
+        reader.skipField();
+    }
+  }
+
+  return msg;
+}
+
+function encodeAuthenticator(auth: AuthenticatorWire): Uint8Array {
+  const fields: Uint8Array[] = [];
+  if (auth.rootKey !== undefined) {
+    fields.push(encodeBytesField(AUTHENTICATOR_FIELDS.rootKey, auth.rootKey));
+  }
+  if (auth.macKey !== undefined) {
+    fields.push(encodeBytesField(AUTHENTICATOR_FIELDS.macKey, auth.macKey));
+  }
+  return concatFields(...fields);
+}
+
+function decodeAuthenticator(bytes: Uint8Array): AuthenticatorWire {
+  const auth: AuthenticatorWire = {};
+  const reader = new ProtoReader(bytes);
+
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case AUTHENTICATOR_FIELDS.rootKey:
+        auth.rootKey = reader.readBytes();
+        break;
+      case AUTHENTICATOR_FIELDS.macKey:
+        auth.macKey = reader.readBytes();
+        break;
+      default:
+        reader.skipField();
+    }
+  }
+
+  return auth;
+}
+
+function encodePolynomialEncoder(state: PolynomialEncoderWire): Uint8Array {
+  const fields: Uint8Array[] = [];
+  if (state.idx !== undefined) {
+    fields.push(encodeUint32Field(POLYNOMIAL_ENCODER_FIELDS.idx, state.idx));
+  }
+  fields.push(encodeRepeatedBytesField(POLYNOMIAL_ENCODER_FIELDS.pts, state.pts));
+  fields.push(encodeRepeatedBytesField(POLYNOMIAL_ENCODER_FIELDS.polys, state.polys));
+  if (state.messageSize !== undefined) {
+    fields.push(encodeUint32Field(POLYNOMIAL_ENCODER_FIELDS.messageSize, state.messageSize));
+  }
+  return concatFields(...fields);
+}
+
+function decodePolynomialEncoder(bytes: Uint8Array): PolynomialEncoderWire {
+  const state: PolynomialEncoderWire = { pts: [], polys: [] };
+  const reader = new ProtoReader(bytes);
+
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case POLYNOMIAL_ENCODER_FIELDS.idx:
+        state.idx = reader.readUint32();
+        break;
+      case POLYNOMIAL_ENCODER_FIELDS.pts:
+        state.pts.push(reader.readBytes());
+        break;
+      case POLYNOMIAL_ENCODER_FIELDS.polys:
+        state.polys.push(reader.readBytes());
+        break;
+      case POLYNOMIAL_ENCODER_FIELDS.messageSize:
+        state.messageSize = reader.readUint32();
+        break;
+      default:
+        reader.skipField();
+    }
+  }
+
+  return state;
+}
+
+function encodePolynomialDecoder(state: PolynomialDecoderWire): Uint8Array {
+  const fields: Uint8Array[] = [];
+  if (state.ptsNeeded !== undefined) {
+    fields.push(encodeUint32Field(POLYNOMIAL_DECODER_FIELDS.ptsNeeded, state.ptsNeeded));
+  }
+  if (state.polys !== undefined) {
+    fields.push(encodeUint32Field(POLYNOMIAL_DECODER_FIELDS.polys, state.polys));
+  }
+  fields.push(
+    encodeRepeatedMessageField(POLYNOMIAL_DECODER_FIELDS.chunks, state.chunks.map(encodeChunk))
+  );
+  if (state.isComplete !== undefined) {
+    fields.push(encodeBoolField(POLYNOMIAL_DECODER_FIELDS.isComplete, state.isComplete));
+  }
+  if (state.messageSize !== undefined) {
+    fields.push(encodeUint32Field(POLYNOMIAL_DECODER_FIELDS.messageSize, state.messageSize));
+  }
+  return concatFields(...fields);
+}
+
+function decodePolynomialDecoder(bytes: Uint8Array): PolynomialDecoderWire {
+  const state: PolynomialDecoderWire = { chunks: [] };
+  const reader = new ProtoReader(bytes);
+
+  while (reader.hasMore()) {
+    const { fieldNumber } = reader.readTag();
+    switch (fieldNumber) {
+      case POLYNOMIAL_DECODER_FIELDS.ptsNeeded:
+        state.ptsNeeded = reader.readUint32();
+        break;
+      case POLYNOMIAL_DECODER_FIELDS.polys:
+        state.polys = reader.readUint32();
+        break;
+      case POLYNOMIAL_DECODER_FIELDS.chunks:
+        state.chunks.push(decodeChunk(reader.readMessage()));
+        break;
+      case POLYNOMIAL_DECODER_FIELDS.isComplete:
+        state.isComplete = reader.readBool();
+        break;
+      case POLYNOMIAL_DECODER_FIELDS.messageSize:
+        state.messageSize = reader.readUint32();
+        break;
+      default:
+        reader.skipField();
+    }
+  }
+
+  return state;
 }
 
 /**
@@ -457,29 +763,17 @@ async function initProto(): Promise<void> {
  */
 export async function serializeMessageProto(msg: MLKEMBraidMessage): Promise<Uint8Array> {
   validateMessage(msg);
-  await initProto();
 
-  // Protobuf uses Number for uint64 (safe up to 2^53-1)
-  // For larger values, we'd need to use protobufjs's Long type
-  let epochValue: number | object = Number(msg.epoch);
-  if (msg.epoch > BigInt(Number.MAX_SAFE_INTEGER)) {
-    // Use Long from protobufjs for large values
-    const Long = protobuf.util.Long;
-    if (Long) {
-      const high = Number(msg.epoch >> 32n);
-      const low = Number(msg.epoch & 0xffffffffn);
-      epochValue = new Long(low, high, true);
-    }
-  }
-
-  const protoMsg: Record<string, unknown> = {
-    epoch: epochValue,
+  // Both scalars are written even at zero: the epoch and the chunk index are
+  // always set on the wire, never elided as proto3 defaults.
+  const protoMsg: V1MsgWire = {
+    epoch: msg.epoch,
     index: msg.chunkIndex ?? 0,
   };
 
   // Map MessageType to oneof field
   if (msg.data) {
-    const chunk = { index: msg.chunkIndex ?? 0, data: msg.data };
+    const chunk: ChunkWire = { index: msg.chunkIndex ?? 0, data: msg.data };
     switch (msg.type) {
       case MessageType.Hdr:
         protoMsg.hdr = chunk;
@@ -508,18 +802,12 @@ export async function serializeMessageProto(msg: MLKEMBraidMessage): Promise<Uin
   if (msg.versionCapability) {
     assertV1VersionCapability(msg.versionCapability);
     protoMsg.versionCapability = {
-      maxVersion: 1,
-      minVersion: 1,
+      maxVersion: VERSION_V1,
+      minVersion: VERSION_V1,
     };
   }
 
-  const errMsg = V1MsgType!.verify(protoMsg);
-  if (errMsg) {
-    throw new Error(`Invalid message: ${errMsg}`);
-  }
-
-  const message = V1MsgType!.create(protoMsg);
-  return V1MsgType!.encode(message).finish();
+  return encodeV1Msg(protoMsg);
 }
 
 /**
@@ -527,15 +815,10 @@ export async function serializeMessageProto(msg: MLKEMBraidMessage): Promise<Uin
  */
 export async function deserializeMessageProto(bytes: Uint8Array): Promise<MLKEMBraidMessage> {
   assertWireInput(bytes, 'ML-KEM Braid protobuf message');
-  await initProto();
 
-  const decoded = V1MsgType!.decode(bytes);
-  const obj = V1MsgType!.toObject(decoded, {
-    longs: String, // bigint support
-    bytes: Uint8Array,
-  });
+  const obj = decodeV1Msg(bytes);
 
-  const epoch = typeof obj.epoch === 'string' ? BigInt(obj.epoch) : BigInt(obj.epoch || 0);
+  const epoch = obj.epoch ?? 0n;
   let type = MessageType.None;
   let chunkIndex: number | undefined;
   let data: Uint8Array | undefined;
@@ -588,20 +871,13 @@ export async function deserializeMessageProto(bytes: Uint8Array): Promise<MLKEMB
  * Serialize authenticator state to protobuf
  */
 export async function serializeAuthenticatorProto(auth: AuthenticatorState): Promise<Uint8Array> {
-  await initProto();
+  assertProtoBytes(auth.root_key, 'Authenticator root key');
+  assertProtoBytes(auth.mac_key, 'Authenticator MAC key');
 
-  const protoMsg = {
+  return encodeAuthenticator({
     rootKey: auth.root_key,
     macKey: auth.mac_key,
-  };
-
-  const errMsg = AuthenticatorType!.verify(protoMsg);
-  if (errMsg) {
-    throw new Error(`Invalid authenticator: ${errMsg}`);
-  }
-
-  const message = AuthenticatorType!.create(protoMsg);
-  return AuthenticatorType!.encode(message).finish();
+  });
 }
 
 /**
@@ -611,19 +887,16 @@ export async function deserializeAuthenticatorProto(
   bytes: Uint8Array
 ): Promise<AuthenticatorState> {
   assertWireInput(bytes, 'ML-KEM Braid authenticator protobuf');
-  await initProto();
 
-  const decoded = AuthenticatorType!.decode(bytes);
-  const obj = AuthenticatorType!.toObject(decoded, { bytes: Uint8Array });
+  const { rootKey, macKey } = decodeAuthenticator(bytes);
 
-  const result = {
-    root_key: obj.rootKey,
-    mac_key: obj.macKey,
-  };
-  if (result.root_key?.length !== 32 || result.mac_key?.length !== 32) {
+  if (rootKey?.length !== 32 || macKey?.length !== 32) {
     throw new Error('Authenticator keys must each contain exactly 32 bytes');
   }
-  return result;
+  return {
+    root_key: rootKey,
+    mac_key: macKey,
+  };
 }
 
 // =============================================================================
@@ -813,24 +1086,19 @@ export async function serializeEncoderProto(state: {
   originalDataSize: number;
 }): Promise<Uint8Array> {
   assertBraidEncoderCursor(state.currentChunkIndex, 'Encoder state index');
-  await initProto();
+  assertProtoUint32(state.originalDataSize, 'Encoder state message size');
+  for (const [position, chunk] of state.dataChunks.entries()) {
+    assertProtoBytes(chunk, `Encoder state evaluation point ${position}`);
+  }
 
-  const protoMsg = {
+  return encodePolynomialEncoder({
     idx: state.currentChunkIndex,
     pts: state.dataChunks,
     polys: state.polynomials.map(
       (p) => new Uint8Array(p.coefficients.flatMap((c) => [(c >> 8) & 0xff, c & 0xff]))
     ),
     messageSize: state.originalDataSize,
-  };
-
-  const errMsg = PolynomialEncoderType!.verify(protoMsg);
-  if (errMsg) {
-    throw new Error(`Invalid encoder state: ${errMsg}`);
-  }
-
-  const message = PolynomialEncoderType!.create(protoMsg);
-  return PolynomialEncoderType!.encode(message).finish();
+  });
 }
 
 /**
@@ -843,13 +1111,11 @@ export async function deserializeEncoderProto(bytes: Uint8Array): Promise<{
   messageSize: number;
 }> {
   assertWireInput(bytes, 'ML-KEM Braid encoder protobuf state');
-  await initProto();
 
-  const decoded = PolynomialEncoderType!.decode(bytes);
-  const obj = PolynomialEncoderType!.toObject(decoded, { bytes: Uint8Array });
+  const obj = decodePolynomialEncoder(bytes);
 
   // Convert polys back to coefficient arrays
-  const polys = (obj.polys || []).map((polyBytes: Uint8Array) => {
+  const polys = obj.polys.map((polyBytes: Uint8Array) => {
     const coeffs: number[] = [];
     for (let i = 0; i < polyBytes.length; i += 2) {
       coeffs.push((polyBytes[i] << 8) | polyBytes[i + 1]);
@@ -875,29 +1141,23 @@ export async function serializeDecoderProto(state: {
   receivedChunks: Map<number, Uint8Array>;
   messageSize: number;
 }): Promise<Uint8Array> {
-  await initProto();
-
-  const chunks: Array<{ index: number; data: Uint8Array }> = [];
+  const chunks: ChunkWire[] = [];
   for (const [index, data] of state.receivedChunks) {
     assertBraidChunkIndex(index, 'Decoder chunk index');
+    assertProtoBytes(data, `Decoder chunk ${index} data`);
     chunks.push({ index, data });
   }
 
-  const protoMsg = {
+  assertProtoUint32(state.config.dataChunks, 'Decoder state points needed');
+  assertProtoUint32(state.messageSize, 'Decoder state message size');
+
+  return encodePolynomialDecoder({
     ptsNeeded: state.config.dataChunks,
     polys: 16,
     chunks,
     isComplete: state.receivedChunks.size >= state.config.dataChunks,
     messageSize: state.messageSize,
-  };
-
-  const errMsg = PolynomialDecoderType!.verify(protoMsg);
-  if (errMsg) {
-    throw new Error(`Invalid decoder state: ${errMsg}`);
-  }
-
-  const message = PolynomialDecoderType!.create(protoMsg);
-  return PolynomialDecoderType!.encode(message).finish();
+  });
 }
 
 /**
@@ -911,16 +1171,20 @@ export async function deserializeDecoderProto(bytes: Uint8Array): Promise<{
   messageSize: number;
 }> {
   assertWireInput(bytes, 'ML-KEM Braid decoder protobuf state');
-  await initProto();
 
-  const decoded = PolynomialDecoderType!.decode(bytes);
-  const obj = PolynomialDecoderType!.toObject(decoded, { bytes: Uint8Array });
+  const obj = decodePolynomialDecoder(bytes);
 
   const chunks = new Map<number, Uint8Array>();
-  for (const chunk of obj.chunks || []) {
+  for (const chunk of obj.chunks) {
     const index = assertBraidChunkIndex(chunk.index, 'Decoder chunk index');
     if (chunks.has(index)) {
       throw new Error(`Decoder state contains duplicate chunk index ${index}`);
+    }
+    // A chunk entry with no data field at all is malformed state. The
+    // reflection codec used to admit it and put `undefined` in the map, which
+    // surfaced as a failure inside the Reed-Solomon decoder instead of here.
+    if (chunk.data === undefined) {
+      throw new Error(`Decoder state chunk ${index} is missing its data`);
     }
     chunks.set(index, chunk.data);
   }
@@ -939,15 +1203,21 @@ export async function deserializeDecoderProto(bytes: Uint8Array): Promise<{
 // =============================================================================
 
 /**
- * Initialize serialization module (loads protobuf)
+ * Initialize serialization module.
+ *
+ * Nothing is loaded any more — the codecs above are static functions, so there
+ * is no schema to build at runtime and no first-call latency to pay. Kept, and
+ * kept async, because callers await it before serializing.
  */
 export async function initSerialization(): Promise<void> {
-  await initProto();
+  return Promise.resolve();
 }
 
 /**
  * Check if serialization is ready
+ *
+ * Always true: with static codecs there is no state that could be missing.
  */
 export function isSerializationReady(): boolean {
-  return protoRoot !== null;
+  return true;
 }

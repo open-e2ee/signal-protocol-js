@@ -107,14 +107,14 @@ This is the target DX the package is moving toward. It is shown here so app
 developers can understand the intended mental model while the current stable API
 still uses `storage`, `remoteObjectStore`, hooks, and transition-only media helpers.
 
-<!-- mock-snippet:skip target-message-api-not-yet-shipped -->
+<!-- doc-snippet:skip target-message-api-not-yet-shipped -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { createInMemoryDeviceStorage } from "@open-e2ee/signal-protocol-sdk/device/storage/memory";
-import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
+import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
 
-const relay = mockRelay();
+const relay = inMemoryRelay();
 
 const alice = await createSignalProtocolClient({
   identity: { userId: "alice", deviceId: 1 },
@@ -224,18 +224,18 @@ current `signal.media.*` examples into lower-level transition or migration docs.
 
 ## Current Stable Local Clients
 
-Use mock adapters for local examples and development:
+Use the in-memory adapters for local examples and development:
 the demo sends while Bob is offline, inspects the relay-visible ciphertext, and
 then starts Bob's subscription to show the decrypted plaintext entering the app.
 
-<!-- mock-snippet:run getting-started-stable-local-clients expect="bob decrypted: alice: hello" -->
+<!-- doc-snippet:run getting-started-stable-local-clients expect="bob decrypted: alice: hello" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
-import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
+import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
+import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
 
-const relay = mockRelay();
+const relay = inMemoryRelay();
 
 // The relay knows which devices exist, but it does not get plaintext.
 await relay.registerDevice("alice", {
@@ -246,12 +246,12 @@ await relay.registerDevice("bob", { encryptedDeviceName: new ArrayBuffer(0) });
 // Each client represents one device. Its protocol storage is local to that device.
 const alice = await createSignalProtocolClient({
   identity: { userId: "alice" },
-  adapters: { storage: mockStore(), relay },
+  adapters: { storage: inMemoryStore(), relay },
 });
 
 const bob = await createSignalProtocolClient({
   identity: { userId: "bob" },
-  adapters: { storage: mockStore(), relay },
+  adapters: { storage: inMemoryStore(), relay },
 });
 
 await alice.syncToServer();
@@ -303,7 +303,7 @@ relay sees encrypted envelope: {
 bob decrypted: alice: hello
 ```
 
-The mock relay lets the example inspect what a server can see. The relay sees
+The in-memory relay lets the example inspect what a server can see. The relay sees
 metadata plus encrypted envelope bytes; it does not receive Bob's decrypted
 message content. The first message often uses `prekey_bundle` to establish a
 session, and later messages use `ciphertext`.

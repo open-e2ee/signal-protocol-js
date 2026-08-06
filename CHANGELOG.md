@@ -1,6 +1,172 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-alpha.10
+
+- **BREAKING: the quickstart adapters are named for what they are —
+  in memory, not mocks.** Nothing in either adapter is a test double: the
+  protocol and the cryptography are real, and only the infrastructure is
+  simulated. The name said otherwise, and readers discounted the quick
+  start because of it. The `mock` subpaths are gone rather than aliased —
+  this is a pre-1.0 alpha with no customers, so a compatibility layer would
+  only preserve the wrong word. Update imports and identifiers:
+
+  | Before | After |
+  |---|---|
+  | `@open-e2ee/signal-protocol-sdk/local/store/mock` | `@open-e2ee/signal-protocol-sdk/local/store/memory` |
+  | `@open-e2ee/signal-protocol-sdk/remote/relay/mock` | `@open-e2ee/signal-protocol-sdk/remote/relay/memory` |
+  | `mockStore()` | `inMemoryStore()` |
+  | `mockRelay()` | `inMemoryRelay()` |
+  | `MockSignalProtocolStore` | `InMemorySignalProtocolStore` |
+  | `MockSignalProtocolStoreOptions` | `InMemorySignalProtocolStoreOptions` |
+  | `MockSignalProtocolRelayServer` | `InMemorySignalProtocolRelayServer` |
+  | `MockSignalProtocolRelayServerOptions` | `InMemorySignalProtocolRelayServerOptions` |
+  | `MockStoreFailureController` | `StoreFailureController` |
+  | `MockStoreFailureOptions` | `StoreFailureOptions` |
+  | `MockRelayFailureController` | `RelayFailureController` |
+  | `MockRelayFailureOptions` | `RelayFailureOptions` |
+  | `MockStorageWriteError` | `InjectedStorageWriteError` |
+
+  The failure controllers moved with the adapters and kept their behavior.
+  They were never test doubles either — they are deterministic, seeded
+  failure injection for the documented recovery exercises — so they lost
+  the `Mock` prefix instead of the subpath.
+  No runtime behavior changed: the storage-failure error message drops the
+  word "mock" and `InjectedStorageWriteError` reports the new class name,
+  and nothing else on the wire, in storage, or in the failure semantics
+  moved. The doc-snippet runner that executes every shipped snippet is now
+  `scripts/run-doc-snippets.mjs` with a `doc-snippet:` marker, because the
+  snippets it runs were never mock snippets.
+
+- **`protobufjs` is no longer a dependency of the published package**, and
+  the eval gate that proves it is now part of CI. The relay's sealed-sender
+  certificate issuer was the last module importing it, through
+  `protobufjs/minimal`'s `Writer` — which generates no code, so it was never
+  what made the SDK throw `EvalError` under a strict Content-Security-Policy,
+  but it did pull `protobufjs` and `long` into every install to write four
+  fields. Issuance now goes through the same hand-written sealed-sender codec
+  that validates the certificates it produces, so the field numbers an
+  Ed25519 signature is computed over are described in one module instead of
+  two that had to agree. The package declares six direct production
+  dependencies and resolves to six packages in total; `protobufjs` remains a
+  development dependency, where the wire tests use it as an independent
+  oracle. The bytes are unchanged, which is the whole of the risk here — a
+  certificate is a signature over exactly these bytes, and any shift would
+  have invalidated every one already issued. Golden vectors captured from the
+  old writer before the rewrite pin the issued bytes for four shapes,
+  including a multi-byte UUID and an expiry above 2^53, and each is
+  re-validated through the certificate chain with real keys.
+
+- **A varint that cannot fit a `uint32` is refused at the encoder instead of
+  written wrong.** `encodeVarint` stops at five bytes, so it truncated
+  anything above 4294967295 — 2^32 came out as `80 00`, which the 64-bit
+  decoder then correctly rejected as non-canonical — and it wrote `NaN` as 0
+  and `1.5` as 1. All three now throw a named error at the point the mistake
+  is made. Callers that need the wider range already have `encodeVarint64`.
+  Nothing in this package encoded a value in the refused range.
+
+  One decode-side strictness note that belongs with the wire work above and
+  was not recorded when it landed: an unknown field encoded as a group (wire
+  types 3 and 4) is rejected rather than skipped, where `protobufjs` skipped
+  it. Groups are deprecated, no schema here uses them, and skipping one
+  correctly means matching its end tag — a parser state this format has no
+  reason to carry.
+
+- **The sealed-sender wire codec is hand-written, and no signed certificate
+  region is re-encoded on the way through.** Its five message types and the
+  `UnidentifiedSenderMessage.Type` enum were assembled at runtime by
+  `protobufjs` reflection, which compiles its encoders with `new Function` —
+  the construct a `script-src 'self'` policy blocks — and they are now static
+  encoders and decoders over the shared wire primitives. Every byte is
+  unchanged, which carries more weight here than anywhere else in the wire
+  work: a server certificate's signature is computed over its serialized
+  inner bytes and a sender certificate's over its own, so a shift in field
+  order, in a nested length prefix, or in whether an explicitly-set zero
+  reaches the wire would invalidate every certificate already issued. The
+  decoders hand signed regions back as the raw bytes they arrived as, never
+  as a re-encoded structure. The 19 committed golden vectors pin all of it in
+  both directions. Two decode paths do change, both for messages that were
+  already malformed or came from a peer this version does not know: an inner
+  message whose `type` names no declared arm — including an absent field,
+  which reads as 0 — now decodes to the value that arrived, where reflection
+  substituted the enum's first arm and so reported a `PREKEY_MESSAGE` the
+  sender never wrote, and callers that route on the value must narrow it with
+  `isSealedSenderContentType`; and a message with no `senderCertificate`
+  decodes to empty wrapper fields, which certificate validation rejects,
+  instead of raising `TypeError` from a null dereference. A third shift is
+  smaller still: string fields decode through `TextDecoder`, which maps
+  invalid UTF-8 to U+FFFD replacement characters where reflection produced
+  other strings — for one shape, an empty string the required-field check
+  then rejected. A certificate whose `senderUuid` is not valid UTF-8
+  therefore now decodes instead of failing that check; such bytes can only
+  exist under a trusted issuer's signature, and every issuer this SDK has
+  shipped writes valid UTF-8.
+
+- **The SPQR wire and ratchet-state serializer no longer builds its schema
+  at runtime**, so the post-quantum ratchet works under a `script-src 'self'`
+  policy. The ML-KEM Braid codec described its eight messages to
+  `protobufjs` reflection, which compiles each encoder with `new Function` —
+  the one construct a strict Content-Security-Policy forbids, and the reason
+  the SDK threw `EvalError` in a hardened browser, an extension service
+  worker, or anywhere else code generation is off. The eight messages now
+  have hand-written encoders and decoders over the wire primitives, and the
+  module imports nothing from `protobufjs`. Every exported function keeps
+  its name and signature, and the presence rules that decide what reaches
+  the wire are unchanged: an explicitly-set zero is still written, an absent
+  field still decodes to its typed zero rather than `undefined`, and the
+  `V1Msg` `inner_msg` oneof still emits exactly one arm. That matters more
+  than usual here, because the encoder, decoder, and authenticator messages
+  are *persisted* ratchet state — an install that upgrades has to decode the
+  bytes it wrote before it upgraded. Byte identity is pinned by 49 golden
+  vectors covering each message, each oneof arm, empty and maximal repeated
+  fields, and epochs at 0, 1, 2^32, 2^53−1, 2^53+1, and 2^64−1.
+
+  Three behaviors moved, each away from silent corruption. A persisted
+  decoder chunk that carries an index but no data used to yield a map entry
+  holding `undefined`, which surfaced later as a confusing failure inside
+  Reed–Solomon reconstruction; it is now rejected where it is read, naming
+  the chunk — nothing in this package has ever written that shape, so it can
+  only come from corrupt state. Encoding state that violates its declared
+  types — a field that is not the `Uint8Array` it claims, a size that is
+  negative or above 4294967295 — now throws a named error where the old
+  encoder silently wrapped the value and wrote wrong bytes. And
+  `isSerializationReady()` now always returns `true`: with static codecs
+  there is no schema to build and no not-ready state to report
+  (`initSerialization()` stays as an awaitable no-op for callers that
+  sequence on it).
+
+- **The Double Ratchet and sender-key message codecs no longer build their
+  wire types at runtime.** `SignalProtocolMessage`,
+  `PreKeySignalProtocolMessage`, `SenderKeyMessage`, and
+  `SenderKeyDistributionMessage` were encoded and decoded through
+  `protobufjs` reflection, which compiles each encoder with `new Function` —
+  the exact construct a `script-src 'self'` policy blocks. All four are now
+  hand-written encoders and `ProtoReader` decode loops over the shared wire
+  primitives, and neither module imports `protobufjs`. Nothing on the wire
+  moves: the twenty committed golden vectors for these two modules pin every
+  byte in both directions, including the behavior that is easiest to lose in
+  a rewrite — presence, not value, decides what is written, so a counter of
+  0 and a prekey id of 0 stay distinguishable from an absent field, an empty
+  bytes field still reaches the wire and is still dropped on decode, and
+  unknown fields are still skipped. Decoding is stricter in one respect
+  inherited from the primitives: a field whose wire type contradicts its tag
+  is now rejected rather than read as its declared type.
+
+- **The protobuf wire primitives now cover 64-bit varints and the field
+  shapes the message schemas actually use**, which is the groundwork for
+  encoding every message here without `protobufjs` — and so without the
+  runtime code generation that a `script-src 'self'` policy blocks. The
+  varint helpers stopped at 32 bits in five bytes, so the SPQR epoch, a
+  uint64, had no representation that survived a round trip; there are now
+  bigint encode and decode functions with a ten-byte ceiling, alongside
+  helpers for bool, enum, string, fixed64, embedded-message, and repeated
+  fields, and a `ProtoReader` cursor that owns the read-tag-dispatch-skip
+  loop every decoder repeats. The existing 32-bit functions are untouched
+  and byte-compatible. Two contracts are deliberately stricter than
+  `protobufjs`: a varint must be canonically encoded, because these bytes
+  are signed and MAC'd and a redundant encoding would make the signed byte
+  string malleable; and a field whose wire type contradicts its tag is
+  rejected rather than misread. Nothing on the wire moves — no encoder has
+  ever emitted the forms now refused.
 
 - **The public repository's snippet check no longer requires an unpublished
   file.** `0.1.0-alpha.8` removed the internal pricing preview from the

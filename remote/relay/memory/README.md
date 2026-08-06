@@ -1,6 +1,6 @@
 # In-Memory Relay
 
-`MockSignalProtocolRelayServer` implements `ISignalProtocolRelayServer` in memory for examples
+`InMemorySignalProtocolRelayServer` implements `ISignalProtocolRelayServer` in memory for examples
 and local application development.
 
 Real protocol and cryptography; simulated in-memory infrastructure.
@@ -16,13 +16,13 @@ authorization or durability boundary.
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
-import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
+import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
+import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
 
-const relay = mockRelay();
+const relay = inMemoryRelay();
 const client = await createSignalProtocolClient({
   identity: { userId: "alice" },
-  adapters: { storage: mockStore(), relay },
+  adapters: { storage: inMemoryStore(), relay },
 });
 
 await client.syncToServer();
@@ -34,14 +34,14 @@ abuse prevention, or durable delivery and must not be used in production.
 
 ## Deterministic failure and recovery exercises
 
-Failure mode is opt-in and seeded. The default `mockRelay()` remains the
+Failure mode is opt-in and seeded. The default `inMemoryRelay()` remains the
 deterministic happy path:
 
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
-import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
+import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
 
-const relay = mockRelay({
+const relay = inMemoryRelay({
   failures: {
     seed: 7,
     latencyMs: 20,

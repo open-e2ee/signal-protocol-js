@@ -1,7 +1,7 @@
 /**
- * Mock Storage Adapter
+ * In-Memory Storage Adapter
  *
- * In-memory storage adapter for local development.
+ * Storage adapter for local development.
  * Uses Map/Set for fast storage without any external dependencies.
  *
  * WARNING: All data is lost when the adapter is destroyed.
@@ -43,12 +43,12 @@ import type { UserRecord, DeviceRecord } from '../../../types';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { generateRandomBytes } from '../../../internal/crypto/random';
 import {
-  MockStoreFailureController,
-  type MockStoreFailureOptions,
+  StoreFailureController,
+  type StoreFailureOptions,
 } from './failures';
 
-export interface MockSignalProtocolStoreOptions {
-  failures?: MockStoreFailureOptions;
+export interface InMemorySignalProtocolStoreOptions {
+  failures?: StoreFailureOptions;
 }
 
 /**
@@ -63,14 +63,14 @@ function cloneStored<T>(value: T): T {
 }
 
 /**
- * Mock storage adapter for local development
+ * In-memory storage adapter for local development
  *
  * Provides in-memory storage with the same interface as production adapters.
  * Useful when persistent storage is intentionally unnecessary.
  *
  * @example
  * ```typescript
- * const storage = new MockSignalProtocolStore();
+ * const storage = new InMemorySignalProtocolStore();
  *
  * // Use like any other storage adapter
  * await storage.storeIdentityKey(keyPair);
@@ -78,8 +78,8 @@ function cloneStored<T>(value: T): T {
  * ```
  */
 export {};
-export class MockSignalProtocolStore implements ISignalProtocolLocalStore {
-  readonly failures: MockStoreFailureController;
+export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
+  readonly failures: StoreFailureController;
 
   // Identity keys and registration IDs keyed by identityType
   private identityKeys = new Map<IdentityType, IdentityKeyPair>();
@@ -118,8 +118,8 @@ export class MockSignalProtocolStore implements ISignalProtocolLocalStore {
   // Metadata storage
   private readonly _metadata = new Map<string, string>();
 
-  constructor(options: MockSignalProtocolStoreOptions = {}) {
-    this.failures = new MockStoreFailureController(options.failures);
+  constructor(options: InMemorySignalProtocolStoreOptions = {}) {
+    this.failures = new StoreFailureController(options.failures);
   }
 
   // ============================================================================

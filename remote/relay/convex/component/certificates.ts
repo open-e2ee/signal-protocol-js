@@ -1,5 +1,4 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { Writer } from 'protobufjs/minimal.js';
 import { v } from 'convex/values';
 import type { PrivateKey, PublicKey } from '../../../../keys/branded';
 import { decodeCompositeIdentityV1 } from '../../../../keys/identity';
@@ -7,6 +6,12 @@ import {
   bytesToBase64,
   base64ToBytes,
 } from '../../../../internal/crypto/utils';
+import {
+  encodeSenderCertificate,
+  encodeSenderCertificateData,
+  encodeServerCertificate,
+  encodeServerCertificateData,
+} from '../../../../internal/protocol/sealed-sender/proto';
 import { CERTIFICATE_EXPIRATION_MS } from '../../../../internal/protocol/sealed-sender/types';
 import {
   SEALED_SENDER_ROOT_LABEL,
@@ -20,6 +25,13 @@ import { relayError } from './errors';
 import { groupServerSecretParams } from './runtime';
 
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
+
+/**
+ * The `id` this relay stamps on its server certificate.
+ *
+ * One signing key, so one identifier; revocation lists are keyed by it.
+ */
+const SERVER_CERTIFICATE_ID = 1;
 
 async function derivePrivateKey(label: string): Promise<PrivateKey> {
   return bytesToBase64(
@@ -39,22 +51,18 @@ async function certificateAuthority() {
   const serverPublicKey = bytesToBase64(
     ed25519.getPublicKey(base64ToBytes(serverPrivateKey))
   ) as PublicKey;
-  const serverCertificateBytes = Writer.create()
-    .uint32(8)
-    .uint32(1)
-    .uint32(18)
-    .bytes(base64ToBytes(serverPublicKey))
-    .finish();
+  const serverCertificateBytes = encodeServerCertificateData({
+    id: SERVER_CERTIFICATE_ID,
+    key: base64ToBytes(serverPublicKey),
+  });
   const serverSignature = ed25519.sign(
     serverCertificateBytes,
     base64ToBytes(rootPrivateKey)
   );
-  const serializedServerCertificate = Writer.create()
-    .uint32(10)
-    .bytes(serverCertificateBytes)
-    .uint32(18)
-    .bytes(serverSignature)
-    .finish();
+  const serializedServerCertificate = encodeServerCertificate({
+    certificate: serverCertificateBytes,
+    signature: serverSignature,
+  });
   return {
     rootPublicKey,
     serverPrivateKey,
@@ -125,29 +133,22 @@ export const issueSenderCertificate = mutation({
     }
     const authority = await certificateAuthority();
     const expiresAt = now + CERTIFICATE_EXPIRATION_MS;
-    const certificateBytes = Writer.create()
-      .uint32(16)
-      .uint32(input.deviceId)
-      .uint32(25)
-      .fixed64(expiresAt)
-      .uint32(34)
-      .bytes(base64ToBytes(composite.x25519PublicKey))
-      .uint32(42)
-      .bytes(authority.serializedServerCertificate)
-      .uint32(50)
-      .string(input.callerUserId)
-      .finish();
+    const certificateBytes = encodeSenderCertificateData({
+      senderDevice: input.deviceId,
+      expires: expiresAt,
+      identityKey: base64ToBytes(composite.x25519PublicKey),
+      signerCertificate: authority.serializedServerCertificate,
+      senderUuid: input.callerUserId,
+    });
     const signature = ed25519.sign(
       certificateBytes,
       base64ToBytes(authority.serverPrivateKey)
     );
     const encoded = bytesToBase64(
-      Writer.create()
-        .uint32(10)
-        .bytes(certificateBytes)
-        .uint32(18)
-        .bytes(signature)
-        .finish()
+      encodeSenderCertificate({
+        certificate: certificateBytes,
+        signature,
+      })
     );
     const value = {
       userId: input.callerUserId,

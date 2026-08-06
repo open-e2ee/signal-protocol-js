@@ -44,5 +44,5 @@ export type {
   IRelayGroupServer,
 } from './types';
 
-// Mock adapter is exported here for convenient local composition.
-export { MockSignalProtocolRelayServer } from './mock';
+// The in-memory adapter is exported here for convenient local composition.
+export { InMemorySignalProtocolRelayServer } from './memory';

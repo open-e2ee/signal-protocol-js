@@ -13,17 +13,17 @@ explicit object-store adapter. The current API passes protocol storage as
 
 ## Local Client
 
-<!-- mock-snippet:run client-composition-local-client expect="" -->
+<!-- doc-snippet:run client-composition-local-client expect="" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
+import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
 
 const signal = await createSignalProtocolClient({
   // One Signal Protocol client represents one app account/device.
   identity: { userId: "alice" },
   // Local-only clients can omit a relay, but still need device-local storage.
-  adapters: { storage: mockStore() },
+  adapters: { storage: inMemoryStore() },
 });
 ```
 

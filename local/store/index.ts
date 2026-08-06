@@ -5,7 +5,7 @@
  *
  * This barrel file exports ONLY platform-agnostic local-store code:
  * - Interfaces and types (DI contracts)
- * - MockSignalProtocolStore (for local development)
+ * - InMemorySignalProtocolStore (for local development)
  *
  * Platform-specific adapters must be imported from their subpaths:
  * - `@open-e2ee/signal-protocol-sdk/local/store/expo` → Expo adapter
@@ -20,7 +20,7 @@
  * import type { ISignalProtocolLocalStore } from '@open-e2ee/signal-protocol-sdk/local/store';
  *
  * // Local development (any platform)
- * import { MockSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store';
+ * import { InMemorySignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store';
  *
  * // Platform-specific (choose one)
  * import { ExpoSignalProtocolStore, getKeyStorage } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
@@ -41,5 +41,5 @@ export type { ISignalProtocolLocalStore } from '../../types';
 // MessageRecord types for SESAME retry request support
 export type { MessageRecord, IMessageRecordStore } from '../../types';
 
-// Mock local store (for local development on any platform)
-export { MockSignalProtocolStore } from './mock';
+// In-memory local store (for local development on any platform)
+export { InMemorySignalProtocolStore } from './memory';

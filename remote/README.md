@@ -18,7 +18,7 @@ replaceable and prevent them from owning private keys or plaintext.
 ### Relay
 
 - `ConvexSignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/convex`
-- `MockSignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/mock`
+- `InMemorySignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
 - custom implementations via `ISignalProtocolRelayServer`
 
 ### Remote object storage
@@ -190,22 +190,22 @@ needed to authorize and construct short-lived operations.
 
 ## Local development
 
-Use `MockSignalProtocolRelayServer` when multiple clients need a shared in-memory relay:
+Use `InMemorySignalProtocolRelayServer` when multiple clients need a shared in-memory relay:
 
 ```ts
 import { SignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { MockSignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
-import { MockSignalProtocolStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
+import { InMemorySignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
+import { InMemorySignalProtocolStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
 
-const relay = new MockSignalProtocolRelayServer();
+const relay = new InMemorySignalProtocolRelayServer();
 
 const alice = await SignalProtocolClient.create("alice", {
-  storage: new MockSignalProtocolStore(),
+  storage: new InMemorySignalProtocolStore(),
   relay,
 });
 
 const bob = await SignalProtocolClient.create("bob", {
-  storage: new MockSignalProtocolStore(),
+  storage: new InMemorySignalProtocolStore(),
   relay,
 });
 ```

@@ -13,14 +13,14 @@ uses public exports only.
 This local demo sends while Bob is offline so you can see the relay's encrypted
 envelope and Bob's decrypted plaintext in the same workflow.
 
-<!-- mock-snippet:run recipes-two-local-clients expect="bob decrypted: alice: hello" -->
+<!-- doc-snippet:run recipes-two-local-clients expect="bob decrypted: alice: hello" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
-import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
+import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
+import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
 
-const relay = mockRelay();
+const relay = inMemoryRelay();
 
 // The relay knows which devices exist, but it does not get plaintext.
 await relay.registerDevice("alice", {
@@ -31,12 +31,12 @@ await relay.registerDevice("bob", { encryptedDeviceName: new ArrayBuffer(0) });
 // Each client represents one device. Its storage is local to that device.
 const alice = await createSignalProtocolClient({
   identity: { userId: "alice" },
-  adapters: { storage: mockStore(), relay },
+  adapters: { storage: inMemoryStore(), relay },
 });
 
 const bob = await createSignalProtocolClient({
   identity: { userId: "bob" },
-  adapters: { storage: mockStore(), relay },
+  adapters: { storage: inMemoryStore(), relay },
 });
 
 await alice.syncToServer();
@@ -135,25 +135,25 @@ before creating the client.
 
 ## Local development
 
-<!-- mock-snippet:run recipes-local-development expect="" -->
+<!-- doc-snippet:run recipes-local-development expect="" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { mockRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/mock";
-import { mockStore } from "@open-e2ee/signal-protocol-sdk/local/store/mock";
+import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
+import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
 
-const relay = mockRelay();
+const relay = inMemoryRelay();
 
 const alice = await createSignalProtocolClient({
   // `identity` is the app account/device being represented.
   identity: { userId: "alice" },
   // `adapters` are the concrete storage/relay implementation for this run.
-  adapters: { storage: mockStore(), relay },
+  adapters: { storage: inMemoryStore(), relay },
 });
 
 const bob = await createSignalProtocolClient({
   identity: { userId: "bob" },
-  adapters: { storage: mockStore(), relay },
+  adapters: { storage: inMemoryStore(), relay },
 });
 ```
 

@@ -22,7 +22,7 @@ without coupling the client to a database or platform.
 
 ### Local development
 
-- `MockSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/mock`
+- `InMemorySignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/memory`
 
 ### Experimental
 
@@ -119,4 +119,4 @@ can leave a concurrently-created session trusted under a rotated identity.
 - [Node adapter](./node/README.md)
 - [Bare React Native adapter](./react-native/README.md)
 - [Web adapter](./web/README.md)
-- [Mock adapter](./mock/README.md)
+- [In-memory adapter](./memory/README.md)

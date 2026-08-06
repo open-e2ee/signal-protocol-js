@@ -1,4 +1,4 @@
-export interface MockStoreFailureOptions {
+export interface StoreFailureOptions {
   /**
    * Stable offset for cadence-based write failures. The same seed and options
    * always fail the same writes.
@@ -8,10 +8,10 @@ export interface MockStoreFailureOptions {
   writeFailureEvery?: number;
 }
 
-export class MockStorageWriteError extends Error {
+export class InjectedStorageWriteError extends Error {
   constructor(readonly operation: string) {
-    super(`Injected mock storage write failure during ${operation}`);
-    this.name = 'MockStorageWriteError';
+    super(`Injected storage write failure during ${operation}`);
+    this.name = 'InjectedStorageWriteError';
   }
 }
 
@@ -21,19 +21,19 @@ export class MockStorageWriteError extends Error {
  * Explicit failures and cadence selection are counter/seed based. They never
  * consult Math.random or wall-clock time.
  */
-export class MockStoreFailureController {
+export class StoreFailureController {
   private seed: number;
   private writeFailureEvery?: number;
   private writeOrdinal = 0;
   private scheduled = new Map<string, number>();
 
-  constructor(options?: MockStoreFailureOptions) {
+  constructor(options?: StoreFailureOptions) {
     this.seed = options?.seed ?? 0;
     this.writeFailureEvery = options?.writeFailureEvery;
     this.validate();
   }
 
-  configure(options: Partial<MockStoreFailureOptions>): void {
+  configure(options: Partial<StoreFailureOptions>): void {
     const candidateSeed = options.seed ?? this.seed;
     const candidateWriteFailureEvery =
       'writeFailureEvery' in options ? options.writeFailureEvery : this.writeFailureEvery;
@@ -52,13 +52,13 @@ export class MockStoreFailureController {
   beforeWrite(operation: string): void {
     this.writeOrdinal += 1;
     if (this.consumeScheduled(operation) || this.consumeScheduled('*')) {
-      throw new MockStorageWriteError(operation);
+      throw new InjectedStorageWriteError(operation);
     }
     if (
       this.writeFailureEvery &&
       (this.writeOrdinal + this.seed) % this.writeFailureEvery === 0
     ) {
-      throw new MockStorageWriteError(operation);
+      throw new InjectedStorageWriteError(operation);
     }
   }
 
@@ -67,7 +67,7 @@ export class MockStoreFailureController {
     this.scheduled.clear();
   }
 
-  snapshot(): Readonly<MockStoreFailureOptions> {
+  snapshot(): Readonly<StoreFailureOptions> {
     return { seed: this.seed, writeFailureEvery: this.writeFailureEvery };
   }
 

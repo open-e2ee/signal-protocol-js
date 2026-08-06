@@ -1,7 +1,7 @@
 /**
- * Mock Signal Protocol Relay Server
+ * In-Memory Signal Protocol Relay Server
  *
- * In-memory implementation of ISignalProtocolRelayServer for local development.
+ * Implementation of ISignalProtocolRelayServer for local development.
  * Simulates a backend server without any network calls.
  *
  * WARNING: All data is lost when the adapter is destroyed.
@@ -70,13 +70,13 @@ import { ristretto255 } from '@noble/curves/ed25519.js';
 import { MAX_DEVICES } from '../../../device/constants';
 import { SealedSenderAuthError } from '../../../types/errors';
 import {
-  MockRelayFailureController,
-  type MockRelayFailureOptions,
+  RelayFailureController,
+  type RelayFailureOptions,
 } from './failures';
-import { MockGroupAuthorizationServer } from './group-server';
+import { InMemoryGroupAuthorizationServer } from './group-server';
 
-export interface MockSignalProtocolRelayServerOptions {
-  failures?: MockRelayFailureOptions;
+export interface InMemorySignalProtocolRelayServerOptions {
+  failures?: RelayFailureOptions;
 }
 
 /**
@@ -104,14 +104,14 @@ function requireLiveProvisioningSession(
 }
 
 /**
- * Mock Signal Protocol Relay Server for local development
+ * In-memory Signal Protocol relay server for local development
  *
- * Provides in-memory backend simulation with the same interface as production adapters.
+ * Provides a backend simulation with the same interface as production adapters.
  * Useful when a real backend is intentionally unnecessary.
  *
  * @example
  * ```typescript
- * const relay = new MockSignalProtocolRelayServer();
+ * const relay = new InMemorySignalProtocolRelayServer();
  *
  * // Register a device
  * const deviceId = await relay.registerDevice('alice', { encryptedDeviceName: new ArrayBuffer(0) });
@@ -126,8 +126,8 @@ function requireLiveProvisioningSession(
 /** Canonically encoded account identity. */
 export {};
 
-export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer {
-  readonly failures: MockRelayFailureController;
+export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelayServer {
+  readonly failures: RelayFailureController;
 
   // Device registry
   private devices = new Map<string, DeviceInfo[]>(); // key: userId
@@ -207,13 +207,13 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
   private readonly serverSecretParams: ServerSecretParams = generateServerSecretParams(
     new Uint8Array(32)
   );
-  private readonly groupAuthorizationServer = new MockGroupAuthorizationServer(
+  private readonly groupAuthorizationServer = new InMemoryGroupAuthorizationServer(
     this.serverSecretParams
   );
   readonly groupServer: IRelayGroupServer;
 
-  constructor(options: MockSignalProtocolRelayServerOptions = {}) {
-    this.failures = new MockRelayFailureController(
+  constructor(options: InMemorySignalProtocolRelayServerOptions = {}) {
+    this.failures = new RelayFailureController(
       options.failures,
       (targetKey, envelope) => this.deliverEnvelope(targetKey, envelope),
       (targetKey) => this.deliverPending(targetKey)
@@ -448,7 +448,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
   // Note: updatePushToken removed - push tokens are managed by convex/signal/push.ts
 
   /**
-   * Mock: Mark device as connected.
+   * Mark device as connected.
    * In local development, pass userId directly since there is no JWT.
    */
   async markDeviceConnected(deviceId: number, userId?: string): Promise<void> {
@@ -463,7 +463,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
   }
 
   /**
-   * Mock: Mark device as disconnected.
+   * Mark device as disconnected.
    * In local development, pass userId directly since there is no JWT.
    */
   async markDeviceDisconnected(deviceId: number, userId?: string): Promise<void> {
@@ -1050,7 +1050,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
   // Sealed Sender (Anonymous Delivery)
   // ============================================================================
 
-  /** Mock sender certificate store (base64 cert per userId:deviceId) */
+  /** Sender certificate store (base64 cert per userId:deviceId) */
   private senderCertificates = new Map<string, string>();
 
   /** Return the sender certificate configured for this device. */
@@ -1064,7 +1064,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
   }
 
   /**
-   * Mock: Send sealed sender message (anonymous delivery).
+   * Send sealed sender message (anonymous delivery).
    * Same as send() but without sender identification.
    */
   async sendUnidentified(
@@ -1074,8 +1074,8 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     if (this.failures.shouldRejectAuthorization()) {
       throw new SealedSenderAuthError();
     }
-    // Mock: pass through without validation; callers can override if needed.
-    void auth; // Accept but don't validate in mock
+    // Pass through without validation; callers can override if needed.
+    void auth; // Accept but don't validate in the in-memory relay
     return this.send({
       ...envelope,
       senderUserId: '',
@@ -1085,7 +1085,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
   }
 
   /**
-   * Mock: Send V2 multi-recipient sealed sender message.
+   * Send V2 multi-recipient sealed sender message.
    * Parses the binary blob, constructs per-device ReceivedMessages,
    * and fans out via send().
    */
@@ -1096,7 +1096,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     recipientUserIds?: string[],
     clientMessageId?: string
   ): Promise<{ messageId: string; serverTimestamp: number; uuids404: string[] }> {
-    void auth; // Accept but don't validate in mock
+    void auth; // Accept but don't validate in the in-memory relay
 
     const { base64ToBytes, bytesToBase64 } = await import('../../../internal/crypto');
     const { asBase64 } = await import('../../../types/utils');
@@ -1285,7 +1285,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
   private getOrCreateIdentity(userId: string): { uuid: string; phoneNumberIdentifier?: string } {
     let identity = this.userIdentities.get(userId);
     if (!identity) {
-      // No phoneNumberIdentifier — mock matches username-based (non-phone) app pattern
+      // No phoneNumberIdentifier — matches the username-based (non-phone) app pattern
       identity = { uuid: crypto.randomUUID() };
       this.userIdentities.set(userId, identity);
     }
@@ -1340,7 +1340,7 @@ export class MockSignalProtocolRelayServer implements ISignalProtocolRelayServer
     return this.groupAuthorizationServer.publicParams;
   }
 
-  /** Service IDs deterministically associated with a mock relay account. */
+  /** Service IDs deterministically associated with an in-memory relay account. */
   getGroupServiceIds(userId: string): { aci: ServiceId; pni?: ServiceId } {
     const identity = this.getOrCreateIdentity(userId);
     return {
