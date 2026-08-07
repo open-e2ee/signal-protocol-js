@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0-alpha.12
+
+- **AES-GCM without additional data no longer fails in the browser.** Every
+  AES-GCM call built its Web Crypto parameters with `additionalData` always
+  present, holding `undefined` when the caller passed no AAD. Node converts
+  those parameters through WebIDL, where a member set to `undefined` is
+  absent, and accepts them. Chrome parses them by hand: a present
+  `additionalData` key must be a BufferSource whatever its value, so the same
+  call throws `AeadParams: additionalData: Not a BufferSource`. Device
+  provisioning and device transfer pass no AAD at all, so both worked under
+  Node and were unusable in a browser. The parameters are now built in one
+  place, which omits the member when there is nothing to put in it. No key
+  agreement, payload, or wire byte changed.
+
 ## 0.1.0-alpha.11
 
 - **BREAKING: device provisioning no longer requires React Native, and

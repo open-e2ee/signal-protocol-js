@@ -34,6 +34,29 @@ function buf(value: Uint8Array | undefined): Uint8Array<ArrayBuffer> | undefined
   return value as Uint8Array<ArrayBuffer> | undefined;
 }
 
+/**
+ * AES-GCM parameters for Web Crypto, with the AAD left out when there is none.
+ *
+ * Omitting an optional dictionary member and setting it to `undefined` are not
+ * the same thing here. Node's Web Crypto converts the parameters through WebIDL,
+ * where an `undefined` member is absent, and accepts it. Chrome parses them by
+ * hand: a present `additionalData` key must be a BufferSource whatever its
+ * value, so the call fails with `AeadParams: additionalData: Not a BufferSource`.
+ *
+ * Every AES-GCM caller that passes no AAD therefore worked under Node and threw
+ * in a browser — including device provisioning and device transfer, neither of
+ * which passes AAD at all. Building the parameters in one place is what keeps
+ * the next call site from reintroducing it.
+ */
+function gcmParams(iv: Uint8Array, additionalData?: Uint8Array): AesGcmParams {
+  return {
+    name: 'AES-GCM',
+    iv: buf(iv),
+    tagLength: 128, // 128-bit auth tag
+    ...(additionalData ? { additionalData: buf(additionalData) } : {}),
+  };
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -89,12 +112,7 @@ export async function aesGcmEncrypt(
 
   // Encrypt
   const encrypted = await crypto.subtle.encrypt(
-    {
-      name: 'AES-GCM',
-      iv: buf(iv),
-      additionalData: buf(additionalData),
-      tagLength: 128, // 128-bit auth tag
-    },
+    gcmParams(iv, additionalData),
     cryptoKey,
     buf(plaintext)
   );
@@ -140,12 +158,7 @@ export async function aesGcmEncryptWithIV(
 
   // Encrypt
   const encrypted = await crypto.subtle.encrypt(
-    {
-      name: 'AES-GCM',
-      iv: buf(iv),
-      additionalData: buf(additionalData),
-      tagLength: 128, // 128-bit auth tag
-    },
+    gcmParams(iv, additionalData),
     cryptoKey,
     buf(plaintext)
   );
@@ -195,12 +208,7 @@ export async function aesGcmDecrypt(
 
   // Decrypt
   const decrypted = await crypto.subtle.decrypt(
-    {
-      name: 'AES-GCM',
-      iv: buf(ivBytes),
-      additionalData: buf(additionalData),
-      tagLength: 128,
-    },
+    gcmParams(ivBytes, additionalData),
     cryptoKey,
     buf(encrypted)
   );
@@ -541,12 +549,7 @@ export async function aesGcmEncryptWithIVBytes(
   ]);
 
   const encrypted = await crypto.subtle.encrypt(
-    {
-      name: 'AES-GCM',
-      iv: buf(iv),
-      additionalData: buf(additionalData),
-      tagLength: 128,
-    },
+    gcmParams(iv, additionalData),
     cryptoKey,
     buf(plaintext)
   );
@@ -578,12 +581,7 @@ export async function aesGcmDecryptWithIVBytes(
   ]);
 
   const decrypted = await crypto.subtle.decrypt(
-    {
-      name: 'AES-GCM',
-      iv: buf(iv),
-      additionalData: buf(additionalData),
-      tagLength: 128,
-    },
+    gcmParams(iv, additionalData),
     cryptoKey,
     buf(ciphertext)
   );
