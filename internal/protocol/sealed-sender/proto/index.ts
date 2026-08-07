@@ -28,7 +28,12 @@
 
 import type { Base64 } from '../../../../types';
 import { SealedSenderContentType } from '../types';
-import { bytesToBase64, base64ToBytes } from '../../../crypto';
+/* The encoding helpers come from their own module rather than the crypto
+ * barrel: the relay component bundles this codec, and the barrel also exports
+ * `generateRandomBytes`, whose third-choice runtime fallback is a dynamic
+ * `import('expo-crypto')`. That fallback never runs on a server, but a bundler
+ * still parses what it reaches, and the Expo package pulls in React Native. */
+import { bytesToBase64, base64ToBytes } from '../../../crypto/utils';
 import {
   ProtoReader,
   concatFields,

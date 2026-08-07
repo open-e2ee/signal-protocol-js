@@ -20,10 +20,12 @@
  * - Shares identity key only (not full backup with sessions)
  * - Adds new device (doesn't migrate/wipe old device)
  * - Multiple devices remain active
+ *
+ * This module is platform-free on purpose. The device's own description arrives
+ * as a `LocalDeviceMetadata` parameter, so nothing here needs to ask a platform
+ * what it is running on; `./expo-metadata` supplies that for Expo hosts.
  */
 
-import { Platform } from 'react-native';
-import Constants from 'expo-constants';
 import type { IProvisioningService } from '../remote/relay/types';
 import * as crypto from '../internal/crypto';
 import type { IdentityKeyPair, IdentityType } from '../keys';
@@ -665,26 +667,6 @@ export async function receiveProvisioningMessage(
 // ============================================================================
 // Utilities
 // ============================================================================
-
-/**
- * Get Device Metadata (New Device)
- *
- * Collects device information for provisioning.
- *
- * The device name remains local until provisioning has delivered the account
- * identity key needed to encrypt it for server storage.
- *
- * @param deviceName - Human-readable device name chosen on the new device
- * @returns Local device metadata
- */
-export function getDeviceMetadata(deviceName: string): LocalDeviceMetadata {
-  return {
-    deviceName,
-    platform: Platform.OS,
-    appVersion: Constants.expoConfig?.version ?? 'unknown',
-    osVersion: Platform.Version.toString(),
-  };
-}
 
 function toProvisioningConnectionMetadata(
   metadata: LocalDeviceMetadata

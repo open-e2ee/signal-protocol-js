@@ -81,6 +81,7 @@ Expo storage or Convex helpers.
 - `@open-e2ee/signal-protocol-sdk/device`
 - `@open-e2ee/signal-protocol-sdk/device/constants`
 - `@open-e2ee/signal-protocol-sdk/device/device-id`
+- `@open-e2ee/signal-protocol-sdk/device/expo-metadata`
 - `@open-e2ee/signal-protocol-sdk/device/lifecycle`
 - `@open-e2ee/signal-protocol-sdk/device/provisioning`
 - `@open-e2ee/signal-protocol-sdk/encoding`

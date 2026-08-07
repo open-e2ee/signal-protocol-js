@@ -95,6 +95,30 @@ jobs:
       - name: Run the eval gate
         run: node ./scripts/smoke-csp.mjs
 
+  import-surface:
+    name: Every export subpath imports without optional peers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install from the committed lockfile
+        run: npm ci --ignore-scripts
+
+      # Packs, installs into a consumer outside the repo whose node_modules has
+      # every optional peer removed, and imports each entry in the export map.
+      # `peerDependenciesMeta` marks react-native, the expo-* packages, convex
+      # and idb optional, so a consumer may have none of them — but a static
+      # import of an absent package throws before the module runs, and every
+      # other check here either resolves types without loading a module or runs
+      # from inside the repo, where the optional peers are installed.
+      - name: Probe the import surface
+        run: node ./scripts/smoke-import-surface.mjs
+
   doc-snippets:
     name: Shipped doc snippets run as printed
     runs-on: ubuntu-latest

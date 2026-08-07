@@ -29,16 +29,16 @@ files that nobody could run would look like assurance without being any.
 Every change to the source repository runs the full set of automated checks,
 and an export is only cut from a revision where they pass.
 
-Most recent full run — 2026-07-28:
+Most recent full run — 2026-08-07:
 
 | | |
 |---|---|
-| Modules executed | 372 |
-| Assertions | 6,552 |
-| Passed | 6,550 |
+| Modules executed | 380 |
+| Assertions | 6,842 |
+| Passed | 6,840 |
 | Skipped | 2 |
 | Failed | 0 |
-| Wall time | 395 s |
+| Wall time | 332 s |
 
 Longer-running performance and endurance checks are excluded from that figure
 and run under separate commands.
@@ -75,12 +75,25 @@ is a badge on the README you can click through to the run logs:
 - `npm run build` — a full TypeScript compile of the published sources;
 - `npm run typecheck`;
 - `npm audit --omit=dev` at moderate severity against the production
-  dependency tree.
+  dependency tree;
+- the [README](../README.md) Quick Start, extracted from the file as printed
+  and run against the packed package, then run a second time under
+  `--disallow-code-generation-from-strings` — the flag that stands in for a
+  strict `script-src` policy and for a Chrome MV3 extension;
+- every classified snippet in the shipped documentation, executed against the
+  packed package;
+- every subpath in the package's export map, imported by a consumer outside
+  the repository whose `node_modules` has all of the optional peer
+  dependencies removed. Entry points that are honestly bound to a platform are
+  named in the check itself, and the list is verified in both directions, so
+  an exemption that stops being true fails the check.
 
 That is a genuine, independently reproducible signal about the code you are
-reading: it compiles, its types are consistent, and its six production
-dependencies carry no known advisories at moderate or higher severity. It is
-not a substitute for the protocol checks, and it is not offered as one.
+reading: it compiles, its types are consistent, its six production
+dependencies carry no known advisories at moderate or higher severity, and the
+code printed in its documentation runs as printed on a machine that is not
+ours. It is not a substitute for the protocol checks, and it is not offered as
+one.
 
 ## What this is not
 

@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.1.0-alpha.11
+
+- **BREAKING: device provisioning no longer requires React Native, and
+  `getDeviceMetadata` moved to its own subpath.** `device/provisioning`
+  statically imported `react-native` and `expo-constants` at module scope.
+  Both are optional peer dependencies, so the package's own contract says a
+  consumer may have neither — but a static import of an absent package throws
+  `ERR_MODULE_NOT_FOUND` before the module runs, which made the entire
+  device-linking surface unimportable in Node and in the browser. The two
+  imports existed for three fields of one function. Provisioning itself is a
+  protocol and already takes the device's description as a
+  `LocalDeviceMetadata` parameter, so it is now platform-free, and
+  `getDeviceMetadata` lives at
+  `@open-e2ee/signal-protocol-sdk/device/expo-metadata`. It is no longer
+  re-exported from the `device` barrel. Callers off Expo build the four
+  fields themselves; callers on Expo change one import path. No key
+  agreement, payload, or wire byte changed.
+
+- **`local/vault` no longer drags Expo SecureStore in behind the
+  interface.** The barrel re-exported
+  `ExpoSecureStoreSignalProtocolSecretVault`, so importing the vault
+  *contract* failed without `expo-secure-store` installed. The barrel now
+  exports only `ISignalProtocolLocalSecretVault`; the implementation keeps
+  its own subpath, `local/vault/expo-secure-store`, which is where every
+  caller in this repository already imported it from.
+
+- **New check: `node ./scripts/smoke-import-surface.mjs`, wired into CI.**
+  Packs the package, installs it into a consumer outside the repository whose
+  `node_modules` has every optional peer removed, and imports all 59
+  published export subpaths. Entry points that are genuinely bound to a
+  platform are listed explicitly, and the list is verified in both
+  directions, so an exemption that stops being true fails the check rather
+  than lingering. Nothing caught the two defects above: the checks that name
+  every subpath resolve types without ever loading a module, and the checks
+  that load modules run from inside the repository, where the optional peers
+  are installed as devDependencies and Node's resolver finds them.
+
+- **Bundling the sealed-sender codec no longer pulls React Native in with
+  it.** The codec imported two base64 helpers from the `internal/crypto`
+  barrel, and that barrel also exports `generateRandomBytes`, whose
+  third-choice runtime fallback is a dynamic `import('expo-crypto')`. The
+  fallback is correct — it is how the SDK finds a secure random source on
+  Expo, behind two other sources and a `try`/`catch` — but a bundler
+  resolves what it can reach without asking whether the branch will run, and
+  `expo-crypto` reaches `react-native`, whose entry point is Flow rather than
+  TypeScript. Anything bundling the codec for a server or a browser was
+  therefore parsing a mobile UI framework, and any bundler without a Flow
+  loader stopped there. The helpers now come from `internal/crypto/utils`,
+  which imports nothing but types, so the reachable graph ends where the
+  encoding does. No encoder, decoder, or byte changed.
+
 ## 0.1.0-alpha.10
 
 - **BREAKING: the quickstart adapters are named for what they are —
