@@ -107,7 +107,7 @@ The longer version of this table, with a paragraph on each project, is at [open-
 
 Cryptography deserves evidence rather than adjectives, so here is what there is and what there is not.
 
-**Audit status.** Not yet audited. An independent review is planned; no firm is engaged and no date is set. Nothing here should be read as a third-party assurance claim.
+**Audit status.** Reviewed continuously by adversarial AI agents; not audited by any independent firm. Every change passes an adversarial AI review before it merges, and recurring whole-codebase AI audit passes run against the engineering repository. What that covers — and what it does not — is stated in the [assurance summary](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/ASSURANCE.md). No independent firm has audited the SDK, and none is engaged. Nothing here should be read as a third-party assurance claim.
 
 **Security model and protocol policy.** The [security model](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/SECURITY.md) states the threat model, what is in and out of scope, the storage boundary, and the resource limits. The [protocol policy](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/PROTOCOL_POLICY.md) states which protocol modes are supported and which fail closed.
 
@@ -131,7 +131,7 @@ Cryptography deserves evidence rather than adjectives, so here is what there is 
 
 **Constant-time posture, honestly.** JavaScript engines offer no machine-level constant-time contract, and this SDK cannot invent one. What exists is best-effort source-level work on selected paths: full-scan comparison for equal-length MACs and identity bytes, fixed-work derivation of both decapsulation candidates before masked selection, and equal-work rejection padding on selected replay and authentication paths. These are not timing-equivalence proofs. Secret-influenced remainder and compression arithmetic remains, and JIT compilation, allocation, garbage collection, and cache effects stay observable. `secureZeroBytes()` overwrites the exact typed array it is handed and nothing more — not copies, not strings, not engine temporaries. The threat model does not cover hostile same-process code or a high-assurance co-resident timing adversary, and it says so.
 
-**Reporting a vulnerability.** Email security@open-e2ee.dev rather than opening an issue. Acknowledgment within 48 hours, initial assessment within 7 days; the full policy is in [SECURITY.md](https://github.com/open-e2ee/signal-protocol-js/blob/main/SECURITY.md).
+**Reporting a vulnerability.** Email security@open-e2ee.dev rather than opening an issue. Acknowledgment within 72 hours, initial assessment within 7 days; the full policy is in [SECURITY.md](https://github.com/open-e2ee/signal-protocol-js/blob/main/SECURITY.md).
 
 ## Documentation
 

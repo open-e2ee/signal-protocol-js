@@ -66,6 +66,18 @@ Coverage spans, in the terms this documentation uses elsewhere:
 - **Public surface** — the exported API shape and the quickstart printed in the
   [README](../README.md), which is executed as written on every change.
 
+## What reviews each change
+
+The checks above are automated, and automation only finds what someone thought
+to encode. Alongside them, every change to the source repository passes an
+adversarial AI review before it merges, and recurring whole-codebase AI audit
+passes run against the same repository, with their findings fixed through the
+same gated process as any other change. These reviews are performed by AI
+agents rather than by reviewers at a firm, and their transcripts are not
+published — so they describe what the process requires, not a result you can
+inspect. No independent firm has audited this package, and an adversarial AI
+review is not a substitute for one.
+
 ## What this repository verifies in public
 
 Continuous integration here runs on every push and pull request, and its result
@@ -97,9 +109,10 @@ one.
 
 ## What this is not
 
-- **Not an audit.** No independent security audit has been performed. One is
-  planned; no firm is engaged and no date is set. Until a report exists and is
-  published, treat this package as unaudited.
+- **Not an independent firm audit.** No independent security firm has audited
+  this package, and none is engaged. The adversarial AI review described above
+  is continuous and it is real, but it is not a third-party assurance result;
+  treat this package as unaudited by any independent firm.
 - **Not a compatibility guarantee.** Conformance work checks this profile
   against the published specifications it cites. It does not establish general
   wire compatibility with Signal Messenger, which this project does not claim.
