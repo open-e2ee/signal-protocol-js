@@ -33,6 +33,14 @@
 
 `0.1.0-alpha` — public APIs and persisted formats may change before `1.0`.
 
+## See it run
+
+[![Linking a second device on the demo page: the scenario runs, then reports what each device can read — the device that was already there holds both messages, and the newly linked device holds only the one sent after it existed.](https://raw.githubusercontent.com/open-e2ee/signal-protocol-js/main/docs/assets/demo/second-device.gif)](https://open-e2ee.dev/demo/#add-a-second-device)
+
+A second device is linked to an account over the real QR handshake. The message sent before that device existed is not on it — not withheld by a policy, but unreadable because the device's keys did not exist when that message was encrypted.
+
+Recorded from [open-e2ee.dev/demo](https://open-e2ee.dev/demo), which runs this package in the browser against the in-memory store and the in-memory relay: real protocol and cryptography, simulated in-memory infrastructure. Every scenario there prints the receiving device's own log, unedited.
+
 ## Install
 
 ```bash
