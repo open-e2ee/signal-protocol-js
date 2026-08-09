@@ -36,7 +36,7 @@ own policies.
 
 ### What to Expect
 
-- **Acknowledgment**: Within 48 hours of your report
+- **Acknowledgment**: Within 72 hours of your report
 - **Initial Assessment**: Within 7 days
 - **Resolution Timeline**: Depends on severity
   - Critical: 24-72 hours
