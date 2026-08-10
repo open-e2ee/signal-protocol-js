@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0
+
+- **First non-prerelease release.** Identical in code to `0.1.0-alpha.14`;
+  the version graduates the `0.1.0-alpha` series. The alpha label is retired
+  because the condition it described no longer holds: every shipped store
+  adapter now carries the full `ISignalProtocolLocalStore` contract with its
+  graduation checklist running as continuous CI gates — the storage contract
+  suites in real Chromium, Firefox, and WebKit, the backend-conformance kit
+  on Hermes, and the interruption, storage-pressure, multi-tab, and soak
+  suites. The `0.x` caveat stands: public APIs and persisted formats may
+  change before `1.0`.
+
 ## 0.1.0-alpha.14
 
 - **`ReactNativeSignalProtocolStore` is no longer experimental.** Every gate

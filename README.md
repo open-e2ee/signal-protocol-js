@@ -31,7 +31,7 @@
 
 *Not affiliated with Signal Messenger.* This is an independent implementation of the public Signal Protocol specifications — full notice in [NOTICE](https://github.com/open-e2ee/signal-protocol-js/blob/main/NOTICE). It is **not wire-compatible with Signal Messenger or libsignal**: messages, identities, and safety numbers do not interoperate, and every deliberate difference is documented in [DEVIATIONS](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/DEVIATIONS.md).
 
-`0.1.0-alpha` — public APIs and persisted formats may change before `1.0`.
+`0.1.x` — public APIs and persisted formats may change before `1.0`.
 
 ## See it run
 
@@ -101,7 +101,7 @@ Measured from the GitHub API, the npm registry API, and the published package ta
 
 | | Expo / React Native | Browser | Maintained | Post-quantum | TypeScript-native | Commercial license |
 |---|---|---|---|---|---|---|
-| **`@open-e2ee/signal-protocol-sdk`** | Yes | Yes | Yes — `0.1.x` alpha, active | Key agreement yes — PQXDH + ML-KEM, default and fails closed. Signatures no — identities are classical Ed25519 | Yes | Yes |
+| **`@open-e2ee/signal-protocol-sdk`** | Yes | Yes | Yes — `0.1.x`, active | Key agreement yes — PQXDH + ML-KEM, default and fails closed. Signatures no — identities are classical Ed25519 | Yes | Yes |
 | [`@signalapp/libsignal-client`](https://github.com/signalapp/libsignal) | No — Node native addon; the 0.99.3 tarball ships binaries for macOS, Linux, and Windows only | No | Yes — very active; repo push 2026-07-31 | Key agreement yes | No — Rust core with TypeScript bindings | No (AGPL-3.0 only) |
 | [`libsignal-protocol-javascript`](https://github.com/signalapp/libsignal-protocol-javascript) | No | Yes | No — archived, last push 2021-08-04 | No | No — JavaScript | No (GPL-3.0) |
 | [`@privacyresearch/libsignal-protocol-typescript`](https://github.com/privacyresearchgroup/libsignal-protocol-typescript) | No documented React Native path | Yes | No — last npm publish 2023-05-06, last repo push 2023-07-18 | No | Yes | No (GPL-3.0) |
