@@ -1,8 +1,9 @@
 /**
  * Web Storage Package
  *
- * Experimental storage for web browsers using IndexedDB.
- * This adapter is not yet feature-equivalent with ExpoSignalProtocolStore.
+ * Storage for web browsers using IndexedDB. Implements the full core
+ * store contract; see local/store/web/README.md for the security
+ * boundary and the gates that verify it.
  */
 export {};
 import { IndexedDbSignalProtocolStore } from './adapter';

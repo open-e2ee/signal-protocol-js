@@ -24,15 +24,74 @@ without coupling the client to a database or platform.
 
 - `InMemorySignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/memory`
 
-### Experimental
+### Web
 
 - `IndexedDbSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/web`
+
+Use this for browser applications. It implements the full core store
+contract, including SESAME records, sender-key state, retry message records,
+and recovery helpers, and it graduated from experimental by completing every
+gate on the checklist below. Deployment still requires the origin-security
+review described in the [web adapter guide](./web/README.md).
+
+### Experimental
+
 - `ReactNativeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/react-native` (create it with `await ReactNativeSignalProtocolStore.create({ storage })` and provide your own key-value backend)
 
-These experimental adapters implement the full core store contract, including
+This experimental adapter implements the full core store contract, including
 SESAME records, sender-key state, retry message records, and recovery helpers.
-They remain experimental because their platform hardening and long-run
+It remains experimental because its platform hardening and long-run
 operational behavior require further deployment evidence.
+
+#### Graduation checklist
+
+The experimental label comes off an adapter when every item below is a named,
+continuously running CI gate. Each gate tests the adapter's own contract —
+the promises `ISignalProtocolLocalStore` makes — never the platform under it:
+browsers, IndexedDB, and React Native are the environment an adapter must
+honor its promises in, not the subject of a test.
+
+`IndexedDbSignalProtocolStore` (graduated; the gates keep running):
+
+- [x] Storage contract suites pass in real Chromium, Firefox, and WebKit on
+      every change to the source repository. The suites are the same modules
+      the jest gate runs, so a matcher means the same thing in both gates.
+- [x] Interruption tests: a real tab is destroyed while a write is in
+      flight — atomic session/trust commit, identity rotation, fresh-database
+      bootstrap, and a prekey batch — and the store reopened from a fresh tab
+      is readable on the next `initialize()`, with each atomic security
+      commit observed either fully applied or fully absent, never partial.
+      Runs in all three engines on every change to the source repository.
+- [x] Multi-tab tests: concurrent revision-checked writes from two real
+      tabs — two live IndexedDB connections — resolve per the contract's
+      compare-and-set promise: one winner per create race, losers told
+      instead of silently overwritten, rejected commits leave no partial
+      state. Runs in all three engines on every change to the source
+      repository.
+- [x] Storage-pressure tests: quota exhaustion surfaces as the typed
+      `StorageQuotaExceededError` (`STORAGE_QUOTA_EXCEEDED`), never a silent
+      partial write. A jest suite drives quota-shaped backend failures
+      through every write path in the adapter, and a real Chromium run
+      exhausts a clamped origin quota and observes the typed rejection, no
+      partial state, and a clean retry once space frees. Runs on every
+      change to the source repository.
+- [x] Soak evidence: a long-run open/write/close cycle holds memory and
+      latency flat. A soak runner drives 2,000 full
+      construct/initialize/write/read/close cycles through the adapter in
+      one real Chromium page, samples renderer memory - including
+      ArrayBuffer backing stores - after forced garbage collection, and
+      fails if the late-run median of memory or per-cycle latency grows
+      beyond a small tolerance over the early-run median. Runs on every
+      change to the source repository, and `npm run soak:web-store` runs
+      longer sessions on demand.
+
+`ReactNativeSignalProtocolStore`:
+
+- [ ] Exported backend-conformance kit: the SDK cannot test an
+      application-supplied `storage` backend, so it ships the contract suite
+      the application runs against its own backend.
+- [ ] Reference backend passes that kit on Hermes in CI.
+- [ ] Interruption and storage-pressure tests against the reference backend.
 
 ### Node
 

@@ -57,9 +57,36 @@ and [MDN Content Security Policy guide](https://developer.mozilla.org/docs/Web/H
 ## Operational status
 
 The adapter covers the core store contract, including atomic security commits,
-SESAME state, sender-key state, and retry records. It remains experimental
-because browser storage, multi-tab coordination, quota behavior, and long-run
-operational characteristics require deployment-specific validation.
+SESAME state, sender-key state, and retry records. Every gate on its
+graduation checklist in the parent [storage guide](../README.md) runs
+continuously, and the experimental label has come off: this is a supported
+adapter. Deployment still requires review of the origin-security controls
+above.
+
+When a write exhausts the origin's storage quota, it rejects with the typed
+`StorageQuotaExceededError` (code `STORAGE_QUOTA_EXCEEDED`). Every write
+commits in one atomic transaction, so the error always means the write did
+not persist — never a partial record. The application should free space or
+request more from the platform, then retry.
+
+The storage contract suites run against this adapter in real Chromium,
+Firefox, and WebKit on every change to the source repository. A multi-tab
+suite drives concurrent revision-checked writes through two live
+connections on one origin — the state a deployed application enters when a
+user opens a second tab — an interruption suite destroys a tab while a
+write is in flight, then asserts the reopened store is readable and every
+atomic security commit landed all-or-nothing, and a storage-pressure suite
+clamps the origin's quota in Chromium, exhausts it, and asserts the typed
+rejection, intact prior state, and a clean retry once space frees, while a
+jest suite drives quota-shaped backend failures through every write path
+in the adapter. A soak runner drives thousands of full
+open/write/read/close cycles through the adapter in one Chromium page and
+fails if memory — including ArrayBuffer backing stores, sampled after
+forced garbage collection — or per-cycle latency drifts upward across the
+run. The contract suites are the same modules the jest gate runs, and
+every assertion targets this adapter's contract — the engines are the
+environment the adapter must honor its promises in, not the subject of
+the tests.
 
 See the parent [storage guide](../README.md), [adapter guide](../../../ADAPTERS.md),
 and [security model](../../../docs/SECURITY.md).

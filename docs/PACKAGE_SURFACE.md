@@ -161,7 +161,7 @@ Expo storage or Convex helpers.
 - `@open-e2ee/signal-protocol-sdk/local/store/expo` also exports the Expo helpers
   Signal Protocol composes directly: `getKeyStorage`, `getDatabaseKeyManager`,
   `clearDatabaseKeyCache`, and `createPreKeyMaintenanceStore`
-- `IndexedDbSignalProtocolStore` / `indexedDbStore()` for browsers (experimental)
+- `IndexedDbSignalProtocolStore` / `indexedDbStore()` for browsers
 - `ReactNativeSignalProtocolStore` / `reactNativeStore()` for bare React Native
   (experimental; provide your own key-value backend)
 - `NodeSignalProtocolStore` / `nodeStore()` for Node environments

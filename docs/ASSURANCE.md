@@ -29,16 +29,16 @@ files that nobody could run would look like assurance without being any.
 Every change to the source repository runs the full set of automated checks,
 and an export is only cut from a revision where they pass.
 
-Most recent full run — 2026-08-07:
+Most recent full run — 2026-08-10:
 
 | | |
 |---|---|
-| Modules executed | 380 |
-| Assertions | 6,844 |
-| Passed | 6,842 |
+| Modules executed | 381 |
+| Assertions | 6,864 |
+| Passed | 6,862 |
 | Skipped | 2 |
 | Failed | 0 |
-| Wall time | 326 s |
+| Wall time | 253 s |
 
 Longer-running performance and endurance checks are excluded from that figure
 and run under separate commands.
@@ -62,7 +62,13 @@ Coverage spans, in the terms this documentation uses elsewhere:
 - **Integration flows** — multi-device fanout, group membership lifecycle,
   device linking and provisioning, PNI-to-ACI upgrade, and relay delivery.
 - **Adapter behavior** — the Expo, browser, Node, React Native, and in-memory
-  storage adapters, plus the Convex relay and object-store adapters.
+  storage adapters, plus the Convex relay and object-store adapters. The
+  browser adapter's contract suites additionally run inside real Chromium,
+  Firefox, and WebKit pages on every change, and a soak run drives thousands
+  of full open/write/read/close cycles through the browser adapter in
+  Chromium on every change, failing on upward memory or latency drift; the
+  assertions target the adapter's contract, and the engines are the
+  environment it must honor that contract in, not the subject of the tests.
 - **Public surface** — the exported API shape and the quickstart printed in the
   [README](../README.md), which is executed as written on every change.
 

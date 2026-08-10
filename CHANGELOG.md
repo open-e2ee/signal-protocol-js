@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.1.0-alpha.13
+
+- **`IndexedDbSignalProtocolStore` is no longer experimental.** Every gate
+  on its graduation checklist now runs continuously: the storage contract
+  suites in real Chromium, Firefox, and WebKit; the multi-tab
+  compare-and-set suite; the interruption suite; the storage-pressure
+  suite; and a new soak gate. The soak drives 2,000 full
+  construct/initialize/write/read/close cycles through the adapter in one
+  real Chromium page, samples renderer memory — including ArrayBuffer
+  backing stores, which plain JS-heap readings miss — after forced
+  garbage collection, and fails if the late-run median of memory or
+  per-cycle latency grows beyond a small tolerance over the early-run
+  median. Injecting a per-cycle leak into the adapter turns both
+  detectors red. `npm run soak:web-store` runs longer sessions on demand.
+  The React Native adapter remains experimental; its checklist is
+  unchanged.
+
+- **Quota exhaustion in the browser store now surfaces as a typed error.**
+  A write that exhausts the origin's storage quota rejects with the new
+  public `StorageQuotaExceededError` (code `STORAGE_QUOTA_EXCEEDED`)
+  instead of the raw engine `QuotaExceededError`. The mapping lives at the
+  adapter boundary — one seam covering every store method, matched by
+  error name so it holds across engines — and because every write commits
+  in one atomic transaction, the typed error always means the write did
+  not persist, never a partial record. A jest suite drives quota-shaped
+  backend failures through every write path, and a new Chromium
+  storage-pressure spec in the real-browser gate clamps the origin's
+  quota, exhausts it against the real engine, and asserts the typed
+  rejection, intact prior state, and a clean retry once space frees.
+
+- The real-browser gate now includes an interruption suite: a Playwright
+  spec destroys a real tab while a write is in flight — an atomic
+  session/trust commit, an identity rotation, a fresh-database bootstrap,
+  and a prekey batch — then reopens the store from a fresh tab and asserts
+  it is readable and each atomic security commit landed all-or-nothing,
+  never partially. The kills are sampled at several points inside each
+  write, in all three engines, and a deterministic structural test backs
+  them: each atomic security commit must open exactly one readwrite
+  transaction, which is what makes every kill land all-or-nothing. Tearing
+  either commit into two transactions turns the structural test red on
+  every run.
+
+- **Two tabs no longer race the IndexedDB store into silent data loss.** Two
+  cross-connection races existed in the browser adapter. First, the database
+  encryption key bootstrap read then wrote in separate transactions, so two
+  tabs initializing a fresh database concurrently could each generate a
+  different key — records written by the losing tab then failed authenticated
+  decryption everywhere else. Second, first-contact trust pinning checked
+  then wrote in separate transactions, so two tabs pinning different
+  identities were both told `NEW_IDENTITY` while one pin silently replaced
+  the other. Both paths now create through IndexedDB's `add()`, which refuses
+  to overwrite: the bootstrap loser adopts the winner's key, and a
+  first-contact loser re-evaluates its candidate against the pin that won.
+  Rotation, verification, and the atomic session/trust commit already
+  performed their compare-and-set inside a single transaction and are
+  unchanged.
+
+- The real-browser gate now includes a multi-tab compare-and-set suite: a
+  Playwright spec drives two tabs — two live IndexedDB connections on one
+  origin — through concurrent key bootstrap, first-contact pinning,
+  rotations, verification-versus-rotation, and one-time-prekey consumption,
+  in all three engines. The two races above are what this suite caught, and
+  reverting either fix turns it red.
+
+- **Reading sessions or group sender keys no longer fails on Firefox and
+  WebKit.** `getSessionsForUser` and `getAllSenderKeysForGroup` in the
+  IndexedDB store decrypted each row inside the cursor loop. An IndexedDB
+  transaction deactivates the moment the event loop turns to anything that is
+  not one of its own requests, so awaiting Web Crypto mid-iteration let the
+  transaction commit and the next cursor advance threw
+  `TransactionInactiveError`. Chromium's laxer transaction lifetime and the
+  fake-indexeddb test double both tolerated the pattern, which is how it went
+  unseen. Both methods now collect the encrypted rows inside the transaction
+  and decrypt after it completes, the pattern the prekey reads already used.
+  No key agreement, payload, or wire byte changed.
+
+- **`IndexedDbSignalProtocolStore.close()`.** The store held its database
+  connection open for the life of the page, and an open connection blocks
+  deletion and version upgrades of the database from anywhere else — so an
+  application signing out or clearing local state had no supported way to
+  release it. `close()` closes the connection and drops the in-memory
+  database key; call `initialize()` again before any other operation.
+
+- The storage contract suites now also run against
+  `IndexedDbSignalProtocolStore` inside real Chromium, Firefox, and WebKit
+  pages on every change to the source repository. The suites are the same
+  modules the jest gate runs; the Firefox and WebKit failures above are what
+  the gate caught on its first run.
+
 ## 0.1.0-alpha.12
 
 - **AES-GCM without additional data no longer fails in the browser.** Every

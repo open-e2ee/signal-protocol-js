@@ -307,6 +307,17 @@ export enum EncryptionErrorCode {
    */
   DATABASE_LOCKED = 'DATABASE_LOCKED',
 
+  /**
+   * The storage backend rejected a write because the origin's storage
+   * quota is exhausted.
+   *
+   * The rejected write did not persist: storage adapters commit each
+   * write in an atomic transaction, so quota exhaustion rolls the whole
+   * transaction back instead of leaving a subset. The application should
+   * free space or request more from the platform, then retry.
+   */
+  STORAGE_QUOTA_EXCEEDED = 'STORAGE_QUOTA_EXCEEDED',
+
   // ===== Initialization Errors =====
 
   /** Signal Protocol initialization failed */
@@ -748,6 +759,37 @@ export class PQXDHRequiredError extends EncryptionError {
       opts.fallbackType ?? (reason === 'no_kyber_prekey' ? 'missing_keys' : 'crypto_failure');
     this.retryable = opts.retryable ?? reason === 'no_kyber_prekey'; // Missing keys can be retried after partner updates
     this.suggestedRetryDelay = opts.suggestedRetryDelay ?? (this.retryable ? 30000 : undefined); // 30s default for retryable
+  }
+}
+
+/**
+ * Error thrown when the storage backend rejects a write because the
+ * origin's storage quota is exhausted.
+ *
+ * The rejected write did not persist: storage adapters commit each write
+ * in an atomic transaction, so quota exhaustion rolls the whole
+ * transaction back instead of leaving a subset. The application should
+ * free space or request more from the platform, then retry the write.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await store.storeSessionRecord(address, record);
+ * } catch (error) {
+ *   if (error instanceof StorageQuotaExceededError) {
+ *     await promptUserToFreeSpace();
+ *   }
+ * }
+ * ```
+ */
+export class StorageQuotaExceededError extends EncryptionError {
+  constructor(operation: string, originalError?: Error) {
+    super(
+      `Storage quota exceeded during ${operation}`,
+      EncryptionErrorCode.STORAGE_QUOTA_EXCEEDED,
+      { operation, originalError }
+    );
+    this.name = 'StorageQuotaExceededError';
   }
 }
 

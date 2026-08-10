@@ -35,7 +35,7 @@ Use:
 
 - `ExpoSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/expo`
 - Expo integration helpers like `getKeyStorage`, `getDatabaseKeyManager`, `clearDatabaseKeyCache`, and `createPreKeyMaintenanceStore` from `@open-e2ee/signal-protocol-sdk/local/store/expo`
-- `IndexedDbSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/web` (experimental)
+- `IndexedDbSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/web`
 - `ReactNativeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/react-native` (experimental; use `await ReactNativeSignalProtocolStore.create({ storage })` with a caller-provided key-value backend)
 - `NodeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/node`
 - `InMemorySignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/memory`

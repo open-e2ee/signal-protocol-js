@@ -44,7 +44,11 @@ import {
   verifyContactIdentityRecord,
 } from '../../../keys/identity';
 import type { SessionState, ProtocolAddress } from '../../../types';
-import { IdentityKeyChange, TrustDirection } from '../../../types';
+import {
+  IdentityKeyChange,
+  StorageQuotaExceededError,
+  TrustDirection,
+} from '../../../types';
 import {
   assertCurrentSessionRecord,
   type SessionRecord,
@@ -204,6 +208,113 @@ type SerializedUserRecord = Omit<UserRecord, 'devices'> & {
 };
 
 /**
+ * Compares stored ciphertext, not secret material - corrupt-row cleanup only
+ * deletes a row whose bytes are still the ones that failed to deserialize.
+ */
+function encryptedBytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * An IndexedDB add() that lost a create race fails with ConstraintError.
+ * Checked by name rather than instanceof: the error crosses the idb
+ * wrapper, and test doubles construct it without the DOMException class.
+ */
+function isConstraintError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'ConstraintError'
+  );
+}
+
+/**
+ * A write that exhausts the origin's storage quota fails with
+ * QuotaExceededError. Checked by name rather than instanceof, like
+ * isConstraintError: engines differ on the constructor - a DOMException
+ * today, an Error subclass in the newer storage spec - and the name is
+ * the stable part.
+ */
+function isQuotaExceededError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'QuotaExceededError'
+  );
+}
+
+function mapQuotaFailure(operation: string, error: unknown): unknown {
+  if (!isQuotaExceededError(error)) return error;
+  // The failure is Error-shaped by the name check above, but not always
+  // instanceof Error: Node's DOMException does not extend Error.
+  return new StorageQuotaExceededError(operation, error as Error);
+}
+
+/**
+ * Rebinds every method of the store so a QuotaExceededError from
+ * IndexedDB crosses the adapter boundary as the typed
+ * StorageQuotaExceededError. Quota exhaustion can surface from any put,
+ * add, or transaction commit, so the mapping lives at this one seam
+ * instead of inside each of the adapter's write paths, and a method
+ * added later is covered without a wrapper of its own. The failed
+ * transaction rolls back whole, so the typed error always means the
+ * write did not persist.
+ *
+ * The walk starts at the instance's own prototype rather than this
+ * class's, so a subclass override is the method that gets wrapped
+ * instead of being shadowed by a wrapper around the base method.
+ */
+function mapQuotaFailuresAtBoundary(store: IndexedDbSignalProtocolStore): void {
+  const methods = new Map<string, (this: unknown, ...args: unknown[]) => unknown>();
+  for (
+    let prototype: object | null = Object.getPrototypeOf(store) as object | null;
+    prototype !== null && prototype !== Object.prototype;
+    prototype = Object.getPrototypeOf(prototype) as object | null
+  ) {
+    for (const name of Object.getOwnPropertyNames(prototype)) {
+      // First found wins: the walk goes most-derived first.
+      if (name === 'constructor' || methods.has(name)) continue;
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+      if (typeof descriptor?.value !== 'function') continue;
+      methods.set(name, descriptor.value as (this: unknown, ...args: unknown[]) => unknown);
+    }
+  }
+  for (const [name, method] of methods) {
+    (store as unknown as Record<string, unknown>)[name] = function mapped(
+      this: unknown,
+      ...args: unknown[]
+    ): unknown {
+      let result: unknown;
+      try {
+        result = method.apply(this, args);
+      } catch (error) {
+        throw mapQuotaFailure(name, error);
+      }
+      // Duck-typed rather than instanceof Promise so a cross-realm
+      // promise or plain thenable from an override maps too.
+      if (
+        result !== null &&
+        typeof result === 'object' &&
+        typeof (result as { then?: unknown }).then === 'function'
+      ) {
+        return Promise.resolve(result).catch((error: unknown) => {
+          throw mapQuotaFailure(name, error);
+        });
+      }
+      return result;
+    };
+  }
+}
+
+/**
  * Web storage adapter using IndexedDB and Web Crypto API
  *
  * Implements ISignalProtocolLocalStore for web browsers with:
@@ -218,6 +329,10 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
   private readonly dbName = 'signal-protocol-storage';
   private readonly dbVersion = 6; // v6 indexes sender key records by senderKeyId
   private readonly _metadata = new Map<string, string>();
+
+  constructor() {
+    mapQuotaFailuresAtBoundary(this);
+  }
 
   /**
    * Initialize the storage adapter
@@ -315,9 +430,21 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     if (storedKey) {
       this.databaseKey = storedKey as Uint8Array;
     } else {
-      // Generate new 32-byte key using Web Crypto
-      this.databaseKey = crypto.getRandomValues(new Uint8Array(32));
-      await this.db.put('metadata', this.databaseKey, 'databaseKey');
+      // Generate new 32-byte key using Web Crypto. add() refuses to
+      // overwrite, so when two connections bootstrap a fresh database
+      // concurrently exactly one key is ever stored - the loser adopts the
+      // winner's key instead of encrypting records nobody else can read.
+      const candidate = crypto.getRandomValues(new Uint8Array(32));
+      try {
+        await this.db.add('metadata', candidate, 'databaseKey');
+        this.databaseKey = candidate;
+      } catch (error) {
+        if (!isConstraintError(error)) throw error;
+        this.databaseKey = (await this.db.get(
+          'metadata',
+          'databaseKey'
+        )) as Uint8Array;
+      }
 
       // ⚠️ WARNING: Browser storage is vulnerable to XSS attacks
       console.warn(
@@ -325,6 +452,21 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
           'Ensure Content Security Policy (CSP) is configured to mitigate XSS risks.'
       );
     }
+  }
+
+  /**
+   * Close the underlying IndexedDB connection and drop the in-memory copy of
+   * the database key.
+   *
+   * An open connection blocks both deletion and version upgrades of the
+   * database from any other connection, so an application that signs out,
+   * clears local state, or migrates must be able to close the store. After
+   * close(), call initialize() again before any other operation.
+   */
+  close(): void {
+    this.db?.close();
+    this.db = null;
+    this.databaseKey = null;
   }
 
   /**
@@ -396,23 +538,36 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
   ): Promise<IdentityKeyChange> {
     this.ensureInitialized();
     const contactKey = this.serializeContactIdentityKey(address, identityType);
-    const existing = await this.db!.get('contacts', contactKey);
-    const record = existing ? await this.decodeContactRecord(existing.data) : null;
-    if (existing && record && existing.revision !== record.revision) {
-      throw new Error('Contact identity revision metadata does not match encrypted record');
+    for (;;) {
+      const existing = await this.db!.get('contacts', contactKey);
+      const record = existing ? await this.decodeContactRecord(existing.data) : null;
+      if (existing && record && existing.revision !== record.revision) {
+        throw new Error('Contact identity revision metadata does not match encrypted record');
+      }
+      const status = evaluateContactIdentityCandidate(record, identity, suppliedCommitment);
+      if (status === 'NEW') {
+        const created = createUnverifiedContactIdentityRecord(identity, Date.now());
+        validateContactIdentityRecord(created);
+        try {
+          // add() refuses to overwrite: if a concurrent connection pinned
+          // this contact first, re-evaluate the candidate against the record
+          // that won instead of silently replacing a TOFU pin.
+          await this.db!.add('contacts', {
+            key: contactKey,
+            userId: address.userId,
+            data: await this.encrypt(JSON.stringify(created)),
+            revision: created.revision,
+          });
+        } catch (error) {
+          if (isConstraintError(error)) continue;
+          throw error;
+        }
+        return IdentityKeyChange.NEW_IDENTITY;
+      }
+      if (status === 'MATCH') return IdentityKeyChange.UNCHANGED;
+      if (status === 'ROLLBACK') return IdentityKeyChange.ROLLBACK;
+      return IdentityKeyChange.CHANGED;
     }
-    const status = evaluateContactIdentityCandidate(record, identity, suppliedCommitment);
-    if (status === 'NEW') {
-      await this.putContactRecord(
-        contactKey,
-        address.userId,
-        createUnverifiedContactIdentityRecord(identity, Date.now())
-      );
-      return IdentityKeyChange.NEW_IDENTITY;
-    }
-    if (status === 'MATCH') return IdentityKeyChange.UNCHANGED;
-    if (status === 'ROLLBACK') return IdentityKeyChange.ROLLBACK;
-    return IdentityKeyChange.CHANGED;
   }
 
   async getContactIdentity(
@@ -901,17 +1056,43 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
   async getSessionsForUser(userId: string): Promise<SessionRecord[]> {
     this.ensureInitialized();
 
-    const records: SessionRecord[] = [];
-    const tx = this.db!.transaction('sessions', 'readwrite');
+    // Collect encrypted rows first - decrypting inside the iteration would
+    // deactivate the transaction and the next cursor advance throws
+    // TransactionInactiveError on spec-conformant engines (Firefox, WebKit)
+    const rows: Array<{ key: string; data: Uint8Array }> = [];
+    const tx = this.db!.transaction('sessions', 'readonly');
     const index = tx.objectStore('sessions').index('by-user');
 
     for await (const cursor of index.iterate(userId)) {
-      const decrypted = await this.decrypt(cursor.value.data);
+      rows.push({ key: cursor.primaryKey as string, data: cursor.value.data });
+    }
+    await tx.done;
+
+    const records: SessionRecord[] = [];
+    const corruptRows: Array<{ key: string; data: Uint8Array }> = [];
+    for (const row of rows) {
+      const decrypted = await this.decrypt(row.data);
       try {
         records.push(deserializeSessionRecord(decrypted));
       } catch {
-        await cursor.delete();
+        corruptRows.push(row);
       }
+    }
+
+    if (corruptRows.length > 0) {
+      // Re-read and compare inside one readwrite transaction: a concurrent
+      // writer may have replaced the corrupt bytes with a valid record since
+      // the snapshot above, and an unconditional delete would destroy it.
+      // Every await here is an IDB request, so the transaction stays active.
+      const cleanupTx = this.db!.transaction('sessions', 'readwrite');
+      const store = cleanupTx.objectStore('sessions');
+      for (const row of corruptRows) {
+        const current = await store.get(row.key);
+        if (current && encryptedBytesEqual(current.data, row.data)) {
+          await store.delete(row.key);
+        }
+      }
+      await cleanupTx.done;
     }
 
     return records;
@@ -1006,20 +1187,6 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     const record = JSON.parse(await this.decrypt(data)) as ContactIdentityRecord;
     validateContactIdentityRecord(record);
     return record;
-  }
-
-  private async putContactRecord(
-    key: string,
-    userId: string,
-    record: ContactIdentityRecord
-  ): Promise<void> {
-    validateContactIdentityRecord(record);
-    await this.db!.put('contacts', {
-      key,
-      userId,
-      data: await this.encrypt(JSON.stringify(record)),
-      revision: record.revision,
-    });
   }
 
   /**
@@ -1402,12 +1569,21 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
   async getAllSenderKeysForGroup(groupId: string): Promise<SenderKeyState[]> {
     this.ensureInitialized();
 
-    const states: SenderKeyState[] = [];
+    // Collect encrypted rows first - decrypting inside the iteration would
+    // deactivate the transaction and the next cursor advance throws
+    // TransactionInactiveError on spec-conformant engines (Firefox, WebKit)
+    const encryptedRows: Uint8Array[] = [];
     const tx = this.db!.transaction('senderKeyRecords', 'readonly');
     const index = tx.objectStore('senderKeyRecords').index('by-group');
 
     for await (const cursor of index.iterate(groupId)) {
-      const decrypted = await this.decrypt(cursor.value.data);
+      encryptedRows.push(cursor.value.data);
+    }
+    await tx.done;
+
+    const states: SenderKeyState[] = [];
+    for (const data of encryptedRows) {
+      const decrypted = await this.decrypt(data);
       const record = JSON.parse(decrypted) as SenderKeyState[];
       if (record[0]) {
         states.push(record[0]);
