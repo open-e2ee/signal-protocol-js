@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.0-alpha.14
+
+- **`ReactNativeSignalProtocolStore` is no longer experimental.** Every gate
+  on its graduation checklist now runs continuously. A new
+  backend-conformance kit — `runBackendConformance` and
+  `assertBackendConformance`, exported from the package — executes thirteen
+  cases against any `ReactNativeKeyValueStorage` implementation: round-trips,
+  key listing, batch removal, in-order atomic application, checks evaluated
+  against pre-batch state, null-guarded creation, all-or-nothing failure,
+  exact-userId session removal with in-batch visibility, a single winner
+  between concurrent guarded batches, and durability across reopen. Negative
+  tests prove the kit catches a non-atomic backend, a prefix-matching
+  session removal, and an unserialized backend. A new
+  `createReferenceReactNativeBackend` — the executable specification of the
+  backend contract — passes the kit on the Hermes engine React Native ships
+  with, in a new CI gate that runs the bundled kit on the sha256-pinned
+  Hermes CLI and requires an explicit pass sentinel, because Hermes exits 0
+  on an unhandled async rejection. Interruption and storage-pressure jest
+  suites drive the adapter over the reference backend: a simulated process
+  kill before commit leaves every atomic security write all-or-nothing and
+  a retry after reopen lands it whole, and quota exhaustion is exercised
+  through every write path.
+
+- **Quota exhaustion in the React Native store now surfaces as a typed
+  error.** The backend contract gains a documented quota signal: a backend
+  rejects the failing write with an error named `QuotaExceededError` and
+  commits nothing. The adapter maps that signal to the public
+  `StorageQuotaExceededError` (code `STORAGE_QUOTA_EXCEEDED`) at the same
+  adapter-boundary seam the browser store uses, so both stores report
+  storage pressure identically.
+
 ## 0.1.0-alpha.13
 
 - **`IndexedDbSignalProtocolStore` is no longer experimental.** Every gate

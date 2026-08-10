@@ -32,8 +32,40 @@ compare-and-swap checks and commit all writes, removals, and exact per-user
 session deletion atomically and durably, including across process termination.
 A batched sequence of independent writes is not sufficient.
 
-This adapter remains experimental because key custody, crash recovery, backup
-behavior, and transaction guarantees depend on the supplied native backend.
+## Verifying your backend
+
+The adapter's guarantees hold only over a backend that honors the
+`ReactNativeKeyValueStorage` contract, and the SDK cannot test the backend
+your application supplies. The package therefore exports a
+backend-conformance kit — run it against your backend from your
+application's own tests:
+
+```ts
+import {
+  assertBackendConformance,
+  createReferenceReactNativeBackend,
+} from "@open-e2ee/signal-protocol-sdk/local/store/react-native";
+
+await assertBackendConformance({
+  createBackend: () => createMyBackend(),
+  // Optional: return a new instance over the same persistence medium to
+  // verify committed writes survive reopen. Reported as skipped when absent.
+  reopen: (previous) => reopenMyBackend(previous),
+});
+```
+
+`assertBackendConformance` throws one error naming every failing case;
+`runBackendConformance` returns the structured result instead.
+`createReferenceReactNativeBackend` is the executable specification of the
+contract: an in-memory backend that passes the kit, useful as a comparison
+point and as a test double. Continuous integration runs the kit against the
+reference backend on the Hermes engine, and drives the adapter over it
+through interruption and storage-pressure suites; the checklist that
+graduated this adapter is in the parent [storage guide](../README.md).
+
+Key custody, crash durability, and backup behavior remain properties of your
+chosen native storage engine — the kit verifies contract semantics, and your
+deployment review must still cover the engine itself.
 
 See the parent [storage guide](../README.md), [adapter guide](../../../ADAPTERS.md),
 and [security model](../../../docs/SECURITY.md).

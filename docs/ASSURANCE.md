@@ -33,12 +33,12 @@ Most recent full run — 2026-08-10:
 
 | | |
 |---|---|
-| Modules executed | 381 |
-| Assertions | 6,864 |
-| Passed | 6,862 |
+| Modules executed | 384 |
+| Assertions | 6,893 |
+| Passed | 6,891 |
 | Skipped | 2 |
 | Failed | 0 |
-| Wall time | 253 s |
+| Wall time | 330 s |
 
 Longer-running performance and endurance checks are excluded from that figure
 and run under separate commands.
@@ -66,8 +66,11 @@ Coverage spans, in the terms this documentation uses elsewhere:
   browser adapter's contract suites additionally run inside real Chromium,
   Firefox, and WebKit pages on every change, and a soak run drives thousands
   of full open/write/read/close cycles through the browser adapter in
-  Chromium on every change, failing on upward memory or latency drift; the
-  assertions target the adapter's contract, and the engines are the
+  Chromium on every change, failing on upward memory or latency drift. The
+  React Native adapter's exported backend-conformance kit runs against its
+  reference backend on the Hermes engine on every change, and interruption
+  and storage-pressure suites drive the adapter over that backend. In every
+  case the assertions target the adapter's contract, and the engines are the
   environment it must honor that contract in, not the subject of the tests.
 - **Public surface** — the exported API shape and the quickstart printed in the
   [README](../README.md), which is executed as written on every change.

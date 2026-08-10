@@ -3,6 +3,15 @@
  *
  * Bare React Native consumers must provide their own implementation so the
  * Signal Protocol package does not hard-code a specific storage library.
+ * Verify an implementation with the backend-conformance kit exported from
+ * this package (`assertBackendConformance`); the store's guarantees hold
+ * only over a conforming backend.
+ *
+ * Quota signal: a backend that enforces a storage limit must reject the
+ * failing write with an error whose `name` is `'QuotaExceededError'` and
+ * commit nothing from that write. The store maps that failure to its typed
+ * `StorageQuotaExceededError` at the adapter boundary, so the application
+ * always sees a write that did not persist, never a partial one.
  */
 export interface ReactNativeKeyValueStorage {
   getItem(key: string): Promise<string | null>;

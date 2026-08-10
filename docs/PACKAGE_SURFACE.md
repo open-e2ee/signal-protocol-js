@@ -163,7 +163,8 @@ Expo storage or Convex helpers.
   `clearDatabaseKeyCache`, and `createPreKeyMaintenanceStore`
 - `IndexedDbSignalProtocolStore` / `indexedDbStore()` for browsers
 - `ReactNativeSignalProtocolStore` / `reactNativeStore()` for bare React Native
-  (experimental; provide your own key-value backend)
+  (provide your own key-value backend and verify it with the exported
+  backend-conformance kit)
 - `NodeSignalProtocolStore` / `nodeStore()` for Node environments
 - `InMemorySignalProtocolStore` / `inMemoryStore()` for local development
 - custom implementations via `ISignalProtocolLocalStore`

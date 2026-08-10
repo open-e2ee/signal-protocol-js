@@ -54,7 +54,7 @@ import {
   verifyContactIdentityRecord,
 } from '../../../keys/identity';
 import type { SessionState, ProtocolAddress, DeviceID } from '../../../types';
-import { IdentityKeyChange, TrustDirection } from '../../../types';
+import { IdentityKeyChange, StorageQuotaExceededError, TrustDirection } from '../../../types';
 import type { Base64 } from '../../../types/utils';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import type { ReactNativeKeyValueStorage } from './storage';
@@ -119,6 +119,83 @@ function unescapeKeyComponent(value: string): string {
 }
 
 /**
+ * A write the injected backend rejects for want of space fails with an error
+ * named `QuotaExceededError`. Checked by name rather than instanceof, as in
+ * the web adapter: the backend is application-supplied, so no error class is
+ * shared with it, and the name is the documented signal.
+ */
+function isQuotaExceededError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'QuotaExceededError'
+  );
+}
+
+function mapQuotaFailure(operation: string, error: unknown): unknown {
+  if (!isQuotaExceededError(error)) return error;
+  // The failure is Error-shaped by the name check above, but not always
+  // instanceof Error: a backend may surface a platform exception object.
+  return new StorageQuotaExceededError(operation, error as Error);
+}
+
+/**
+ * Rebinds every method of the store so a QuotaExceededError from the
+ * injected backend crosses the adapter boundary as the typed
+ * StorageQuotaExceededError. Quota exhaustion can surface from any setItem
+ * or atomicWrite the backend runs, so the mapping lives at this one seam
+ * instead of inside each of the adapter's write paths, and a method added
+ * later is covered without a wrapper of its own. The backend contract
+ * commits nothing from a rejected write, so the typed error always means
+ * the write did not persist.
+ *
+ * Wrapping runs inside the private constructor, and `create` is the only
+ * construction path, so every caller-visible instance is wrapped before any
+ * method can run.
+ */
+function mapQuotaFailuresAtBoundary(store: ReactNativeSignalProtocolStore): void {
+  const methods = new Map<string, (this: unknown, ...args: unknown[]) => unknown>();
+  for (
+    let prototype: object | null = Object.getPrototypeOf(store) as object | null;
+    prototype !== null && prototype !== Object.prototype;
+    prototype = Object.getPrototypeOf(prototype) as object | null
+  ) {
+    for (const name of Object.getOwnPropertyNames(prototype)) {
+      // First found wins: the walk goes most-derived first.
+      if (name === 'constructor' || methods.has(name)) continue;
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+      if (typeof descriptor?.value !== 'function') continue;
+      methods.set(name, descriptor.value as (this: unknown, ...args: unknown[]) => unknown);
+    }
+  }
+  for (const [name, method] of methods) {
+    (store as unknown as Record<string, unknown>)[name] = function mapped(
+      this: unknown,
+      ...args: unknown[]
+    ): unknown {
+      let result: unknown;
+      try {
+        result = method.apply(this, args);
+      } catch (error) {
+        throw mapQuotaFailure(name, error);
+      }
+      // Duck-typed rather than instanceof Promise so a cross-realm
+      // promise or plain thenable from an override maps too.
+      if (
+        result !== null &&
+        typeof result === 'object' &&
+        typeof (result as { then?: unknown }).then === 'function'
+      ) {
+        return Promise.resolve(result).catch((error: unknown) => {
+          throw mapQuotaFailure(name, error);
+        });
+      }
+      return result;
+    };
+  }
+}
+
+/**
  * Session storage record
  */
 interface StoredSessionRecord {
@@ -170,6 +247,7 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
 
   private constructor(options: { storage: ReactNativeKeyValueStorage }) {
     this.storageBackend = options.storage;
+    mapQuotaFailuresAtBoundary(this);
   }
 
   static async create(options: {

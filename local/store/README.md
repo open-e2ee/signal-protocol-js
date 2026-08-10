@@ -34,14 +34,17 @@ and recovery helpers, and it graduated from experimental by completing every
 gate on the checklist below. Deployment still requires the origin-security
 review described in the [web adapter guide](./web/README.md).
 
-### Experimental
+### Bare React Native
 
 - `ReactNativeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/react-native` (create it with `await ReactNativeSignalProtocolStore.create({ storage })` and provide your own key-value backend)
 
-This experimental adapter implements the full core store contract, including
-SESAME records, sender-key state, retry message records, and recovery helpers.
-It remains experimental because its platform hardening and long-run
-operational behavior require further deployment evidence.
+Use this for bare React Native applications that supply their own key-value
+backend. It implements the full core store contract, including SESAME records,
+sender-key state, retry message records, and recovery helpers, and it
+graduated from experimental by completing every gate on the checklist below.
+The supplied backend is the application's responsibility: verify it with the
+exported backend-conformance kit described in the
+[React Native adapter guide](./react-native/README.md).
 
 #### Graduation checklist
 
@@ -85,13 +88,36 @@ honor its promises in, not the subject of a test.
       change to the source repository, and `npm run soak:web-store` runs
       longer sessions on demand.
 
-`ReactNativeSignalProtocolStore`:
+`ReactNativeSignalProtocolStore` (graduated; the gates keep running):
 
-- [ ] Exported backend-conformance kit: the SDK cannot test an
+- [x] Exported backend-conformance kit: the SDK cannot test an
       application-supplied `storage` backend, so it ships the contract suite
-      the application runs against its own backend.
-- [ ] Reference backend passes that kit on Hermes in CI.
-- [ ] Interruption and storage-pressure tests against the reference backend.
+      the application runs against its own backend. `runBackendConformance`
+      and `assertBackendConformance` execute thirteen cases against any
+      `ReactNativeKeyValueStorage`: round-trips, key listing, batch removal,
+      in-order atomic application, checks evaluated against pre-batch state,
+      null-guarded creation, all-or-nothing failure, exact-userId session
+      removal with in-batch visibility, one winner between concurrent
+      guarded batches, and durability across reopen. A jest gate proves the
+      kit catches a non-atomic backend, a prefix-matching session removal,
+      and an unserialized backend, on every change to the source repository.
+- [x] Reference backend passes that kit on Hermes in CI.
+      `createReferenceReactNativeBackend` is the executable specification of
+      the backend contract, and a named gate bundles the kit with esbuild
+      and runs it against the reference backend on the sha256-pinned Hermes
+      CLI — the engine React Native ships with — on every change to the
+      source repository. The runner requires an explicit pass sentinel
+      because Hermes exits 0 on an unhandled async rejection.
+- [x] Interruption and storage-pressure tests against the reference
+      backend. A simulated process kill before commit leaves each atomic
+      security write — session/trust commit, identity rotation, trust
+      verification — fully absent after reopen, and an identical retry lands
+      it fully applied. Quota exhaustion surfaces as the typed
+      `StorageQuotaExceededError` (`STORAGE_QUOTA_EXCEEDED`), never a silent
+      partial write: a jest suite drives quota-shaped backend failures
+      through every write path, and a real-quota run over the reference
+      backend observes the typed rejection, no partial state, and a clean
+      retry once space frees. Runs on every change to the source repository.
 
 ### Node
 
@@ -166,7 +192,9 @@ can leave a concurrently-created session trusted under a rotated identity.
   still requires review of key custody, backups, and host security.
 - `@open-e2ee/signal-protocol-sdk/local/store/expo` is also the package home for Expo-specific
   integration helpers that a real app composes directly.
-- Experimental adapters may cover the same contract surface, but should still be positioned carefully until their platform security/performance characteristics are battle-tested.
+- An adapter carries the experimental label until every item on its
+  graduation checklist is a named, continuously running CI gate. Both the web
+  and bare React Native adapters have completed theirs.
 - Storage adapters should expose the real package contract instead of app-specific wrappers.
 
 ## Related Docs
