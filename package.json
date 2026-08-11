@@ -420,7 +420,7 @@
   "dependencies": {
     "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^2.2.0",
-    "@noble/hashes": "2.2.0",
+    "@noble/hashes": "2.3.0",
     "@noble/post-quantum": "^0.6.1",
     "async-lock": "^1.4.0",
     "unique-names-generator": "^4.7.1"
