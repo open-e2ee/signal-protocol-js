@@ -15,7 +15,7 @@ The `@open-e2ee` scope is the umbrella namespace. Package and primary-client
 names identify the protocol they implement so future protocol packages do not
 share an ambiguous client identity.
 
-This package is in alpha. Prefer a clear, versioned correction over a
+This package is pre-1.0. Prefer a clear, versioned correction over a
 compatibility shim when a boundary is wrong.
 
 ## Review Posture
@@ -137,6 +137,7 @@ object records, credentials, and bucket.
 - `PostQuantumPolicy`
 - `ProtocolStrategyConfig`
 - `ProtocolSelectionEvent`
+- `BraidProgressEvent`
 - `SenderKeysConfig`
 - `PreKeyMaintenanceStore`
 - `SENDER_KEYS_DEFAULTS`
@@ -163,6 +164,13 @@ compatibility decision. Advanced strategy fields remain available for
 diagnostics, telemetry, and algorithm tuning, but compatibility fallback is selected
 through `protocol.postQuantum: 'compatible'`, and direct SPQR is selected
 through `protocol.braid: 'disabled'`.
+
+Two strategy hooks report protocol events. `onProtocolSelected` fires once per
+session establishment, from the handshake. `onBraidProgress` fires on every
+braid-mode send and receive, from the SPQR seam that holds the braid state; the
+manager carries the strategy into `SessionCipher`, which passes it to `spqrSend`
+and `spqrRecv`. Both hooks are guarded, so a consumer that throws cannot break
+the protocol path.
 
 ## Session Resolution
 

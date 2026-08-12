@@ -222,4 +222,13 @@ export interface SessionCipherConfig {
    * @default 1000
    */
   maxSkip?: number;
+
+  /**
+   * Protocol strategy configuration.
+   *
+   * The cipher does not choose protocol behavior — session establishment
+   * already did — but it is the layer that drives SPQR on every message, so
+   * the strategy's per-message diagnostic hooks are reported from here.
+   */
+  protocolStrategy?: ProtocolStrategyConfig;
 }

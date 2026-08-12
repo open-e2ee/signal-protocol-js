@@ -7,7 +7,7 @@ body:
     attributes:
       label: What were you trying to do, and where did it get hard?
       description: |
-        Alpha feedback shapes the 1.0 surface. "I expected X to exist",
+        Pre-1.0 feedback shapes the 1.0 surface. "I expected X to exist",
         "the docs never answer Y", and "this name misled me" are all
         exactly what we want to hear.
     validations:

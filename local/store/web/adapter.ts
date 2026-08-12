@@ -620,15 +620,24 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
       await tx.done;
       throw new Error('Contact identity changed concurrently during rotation');
     }
-    await contacts.put({
-      key,
-      userId: address.userId,
-      data: encrypted,
-      revision: replacement.revision,
-    });
-    const sessions = tx.objectStore('sessions').index('by-user');
-    for await (const cursor of sessions.iterate(address.userId)) await cursor.delete();
-    await tx.done;
+    // Read the doomed session keys before mutating, then enter every
+    // mutation in one synchronous batch. A dying page closes its connection
+    // gracefully, and a transaction that is idle at an await boundary then
+    // commits the writes it already holds — a cursor walk that deletes as
+    // it goes leaves windows where the new pin commits with sessions still
+    // trusted under the old identity.
+    const sessions = tx.objectStore('sessions');
+    const doomedKeys = await sessions.index('by-user').getAllKeys(address.userId);
+    await Promise.all([
+      contacts.put({
+        key,
+        userId: address.userId,
+        data: encrypted,
+        revision: replacement.revision,
+      }),
+      ...doomedKeys.map((sessionKey) => sessions.delete(sessionKey)),
+      tx.done,
+    ]);
     return replacement;
   }
 
@@ -1002,24 +1011,33 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
       await tx.done;
       throw new Error('Atomic session/trust commit cannot consume a missing KEM one-time prekey');
     }
+    // Every mutation must enter the transaction in one synchronous batch.
+    // A dying page closes its connection gracefully, and a transaction that
+    // is idle at an await boundary then commits the writes it already holds
+    // — an await between mutations is a window for a partial commit.
+    const writes: Promise<unknown>[] = [];
     if (newContact && encryptedContact) {
-      await contacts.put({
-        key: contactKey,
-        userId: commit.address.userId,
-        data: encryptedContact,
-        revision: newContact.revision,
-      });
+      writes.push(
+        contacts.put({
+          key: contactKey,
+          userId: commit.address.userId,
+          data: encryptedContact,
+          revision: newContact.revision,
+        })
+      );
     }
-    await tx.objectStore('sessions').put({
-      key: addressKey,
-      userId: commit.address.userId,
-      deviceId: commit.address.deviceId,
-      data: encrypted,
-      updatedAt: Date.now(),
-    });
-    if (ecPreKeyStorageKey) await prekeys.delete(ecPreKeyStorageKey);
-    if (kemPreKeyStorageKey) await prekeys.delete(kemPreKeyStorageKey);
-    await tx.done;
+    writes.push(
+      tx.objectStore('sessions').put({
+        key: addressKey,
+        userId: commit.address.userId,
+        deviceId: commit.address.deviceId,
+        data: encrypted,
+        updatedAt: Date.now(),
+      })
+    );
+    if (ecPreKeyStorageKey) writes.push(prekeys.delete(ecPreKeyStorageKey));
+    if (kemPreKeyStorageKey) writes.push(prekeys.delete(kemPreKeyStorageKey));
+    await Promise.all([...writes, tx.done]);
   }
 
   async deleteSessionRecord(address: ProtocolAddress): Promise<void> {

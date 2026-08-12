@@ -78,7 +78,10 @@
 
 import AsyncLock from 'async-lock';
 import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
-import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../types/protocol-config';
+import {
+  MAX_UNACKNOWLEDGED_SESSION_AGE_MS,
+  type ProtocolStrategyConfig,
+} from '../../types/protocol-config';
 import type { Ciphertext, IdentityType, PublicKey } from '../../keys';
 import {
   compositeIdentitiesEqual,
@@ -169,6 +172,7 @@ function identityTypeFromWire(value: number): IdentityType {
  * Decryption operates on a clone and persists it only after authentication and
  * plaintext recovery succeed.
  */
+
 function cloneSessionStateForDecryptAttempt(session: SessionState): SessionState {
   return CryptoUtils.cloneProtocolState(session);
 }
@@ -273,6 +277,9 @@ export class SessionCipher {
   /** Maximum message keys to skip in one chain (DoS protection) */
   private readonly maxSkip: number;
 
+  /** Protocol strategy, carried for the SPQR per-message diagnostic hooks */
+  private readonly protocolStrategy?: ProtocolStrategyConfig;
+
   /**
    * Create a new SessionCipher instance
    *
@@ -285,6 +292,8 @@ export class SessionCipher {
    * @param config - Optional configuration
    * @param config.maxSkip - Maximum message keys to skip (default: 1000).
    *   Higher values allow more out-of-order messages but increase memory/CPU.
+   * @param config.protocolStrategy - Protocol strategy, for the SPQR
+   *   per-message diagnostic hooks.
    */
   constructor(
     keyStorage: ISignalProtocolLocalStore,
@@ -297,6 +306,7 @@ export class SessionCipher {
     this.establishSession = establishSession;
     this.lock = lock;
     this.maxSkip = config.maxSkip ?? SessionCipher.DEFAULT_MAX_SKIP;
+    this.protocolStrategy = config.protocolStrategy;
     this.logger = logger;
   }
 
@@ -454,7 +464,11 @@ export class SessionCipher {
 
           // Step B: PQ message key + opaque bytes from black-box SPQR
           // spqrSend handles ALL PQ: lazy KEM, version capability, key derivation
-          const spqrResult = await spqrSend(session.tripleRatchet.spqrState, this.logger);
+          const spqrResult = await spqrSend(
+            session.tripleRatchet.spqrState,
+            this.logger,
+            this.protocolStrategy
+          );
           if (spqrResult.msgBytes.length > 0) {
             pqRatchetBytes = spqrResult.msgBytes;
           }
@@ -1371,7 +1385,8 @@ export class SessionCipher {
               spqrRecvResult = await spqrRecv(
                 session.tripleRatchet.spqrState,
                 receivedPqRatchetBytes,
-                this.logger
+                this.logger,
+                this.protocolStrategy
               );
             }
 

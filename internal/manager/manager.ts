@@ -195,7 +195,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
         this.keyStorage,
         this.establishSessionFromPreKeyMessage.bind(this),
         this.lock,
-        {},
+        { protocolStrategy: this.protocolStrategy },
         this.logger
       );
     }

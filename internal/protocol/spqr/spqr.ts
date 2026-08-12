@@ -118,15 +118,21 @@ import {
 import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
 
 // SPQR limits configuration (profile protocol defaults)
-import { type ResolvedSPQRLimits, SPQR_LIMITS_DEFAULTS } from '../../../types/protocol-config';
+import {
+  type ProtocolStrategyConfig,
+  type ResolvedSPQRLimits,
+  SPQR_LIMITS_DEFAULTS,
+} from '../../../types/protocol-config';
 import { EncryptionError, EncryptionErrorCode } from '../../../types/errors';
 import { asBase64, type Base64 } from '../../../types/utils';
+import { getErrorMessage } from '../../../utils/errors';
 // SCKAState is the canonical type from session.ts - imported here for internal use
 import type { SCKAState } from '../../../types/session';
 
 // Braid mode types (imported dynamically to avoid circular deps when not used)
 import type { MLKEMBraidAgentState, MLKEMBraidMessage, OutputKey } from './ml-kem-braid/types';
 import { KDF_OK } from './ml-kem-braid/kdf';
+import { readBraidChunkProgress } from './ml-kem-braid/progress';
 
 // Version negotiation (owned by Triple Ratchet)
 import type { VersionNegotiationState } from '../version';
@@ -1038,6 +1044,21 @@ export async function deriveSPQRSendKey(
 
   const sendChain = spqrState.kdfChains[epoch].send;
 
+  // A zeroed send chain key is a placeholder, never key material. Advancing an
+  // epoch for receiving only installs one (`chains === 'receive'`), and pruning
+  // writes one over every send chain below the send epoch. Deriving from it
+  // would produce a message key from a known constant, so refuse instead.
+  // No production path reaches this: the pruned epochs are below `sendEpoch`
+  // and the guard above already rejects them, and `spqrSend` repairs a
+  // receive-only advance before it derives.
+  if (sendChain.CK === ZEROED_CHAIN_KEY) {
+    throw new EncryptionError(
+      `SPQR send chain for epoch ${epoch} holds no key material`,
+      EncryptionErrorCode.INVALID_STATE,
+      { epoch, operation: 'deriveSPQRSendKey' }
+    );
+  }
+
   // Counter overflow check
   if (sendChain.N >= SPQR_CONFIG.MAX_INDEX) {
     throw new EncryptionError(
@@ -1356,6 +1377,42 @@ import { createStateMachine, MessageType } from './ml-kem-braid';
 let braidStateMachine: IMLKEMBraidStateMachine | undefined;
 
 /**
+ * Report braid chunk progress to the host's diagnostic hook.
+ *
+ * The hook is diagnostic, so a consumer that throws must not take the ratchet
+ * down with it; this mirrors how the handshake guards `onProtocolSelected`.
+ *
+ * @param braidState - Braid state as it stands after the send or receive
+ * @param emittedEpochKey - Whether that operation produced the epoch secret
+ */
+function reportBraidProgress(
+  braidState: MLKEMBraidAgentState,
+  emittedEpochKey: boolean,
+  logger: Required<ILogger>,
+  config?: ProtocolStrategyConfig
+): void {
+  if (!config?.onBraidProgress) {
+    return;
+  }
+
+  const { carried, required } = readBraidChunkProgress(braidState);
+
+  try {
+    config.onBraidProgress({
+      chunksCarried: carried,
+      chunksRequired: required,
+      epoch: braidState.epoch,
+      emittedEpochKey,
+    });
+  } catch (error) {
+    logger.warn('Braid progress callback failed', {
+      category: 'E2EE',
+      data: { error: getErrorMessage(error) },
+    });
+  }
+}
+
+/**
  * Result of spqrSend(): opaque bytes + optional message key.
  *
  * - Bootstrap: msgBytes may be empty, messageKey=null
@@ -1394,11 +1451,13 @@ export interface SPQRRecvResult {
  * The DH ratchet never touches post-quantum state.
  *
  * @param state - SPQR state (mutated: KEM state, chain advanced)
+ * @param config - Protocol strategy, for the braid progress hook
  * @returns Opaque bytes and optional message key
  */
 export async function spqrSend(
   state: SPQRState,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger,
+  config?: ProtocolStrategyConfig
 ): Promise<SPQRSendResult> {
   const emptyResult: SPQRSendResult = { msgBytes: new Uint8Array(0), messageKey: null };
 
@@ -1427,10 +1486,19 @@ export async function spqrSend(
   let braidMessage:
     | { type: number; epoch: bigint; chunkIndex?: number; data?: Uint8Array }
     | undefined;
+  // The epoch the peer can still follow. The state machine reports it on every
+  // Send, including the ones that carry no chunk, and it advances only when
+  // that side's transfer completes — so it stays behind `state.epoch` for the
+  // whole stretch where this side holds an epoch secret the peer cannot derive
+  // yet. The outgoing chunk cannot stand in for it: a sender that has had its
+  // ciphertext acknowledged but cannot yet build the next one has no chunk to
+  // read an epoch from, which is exactly when the two sides are furthest apart.
+  let braidSendingEpoch: bigint | undefined;
   if (state.mode === 'braid' && state.braidState) {
     // Stateless singleton — all state is passed as arguments to Send/Receive
     const sm = (braidStateMachine ??= createStateMachine());
     const result = await sm.Send(state.braidState);
+    braidSendingEpoch = result.sending_epoch;
 
     if (result.message.type !== MessageType.None) {
       braidMessage = {
@@ -1444,6 +1512,8 @@ export async function spqrSend(
     if (result.output_key) {
       await addSPQRBraidEpoch(state, result.output_key);
     }
+
+    reportBraidProgress(state.braidState, !!result.output_key, logger, config);
   }
 
   // Derive SPQR send key (returns null during bootstrap).
@@ -1451,7 +1521,7 @@ export async function spqrSend(
   // In braid mode this must happen after the state-machine send so any returned
   // epoch secret is added before deriving the key for the serialized message.
   const sendKeyEpoch =
-    braidMessage !== undefined ? spqrWireEpochToInternalEpoch(braidMessage.epoch) : undefined;
+    braidSendingEpoch !== undefined ? spqrWireEpochToInternalEpoch(braidSendingEpoch) : undefined;
   const spqrKeyResult = await deriveSPQRSendKey(state, logger, sendKeyEpoch);
 
   // Check if there's any data to send
@@ -1467,12 +1537,14 @@ export async function spqrSend(
   const mode: 'braid' | 'direct' | 'none' = isBraid ? 'braid' : isDirect ? 'direct' : 'none';
 
   // Encode to compact binary wire format (replaces protobuf envelope)
-  // In braid mode, use the braid state machine's epoch (from the message).
+  // In braid mode, use the epoch the state machine is sending under, whether or
+  // not this message carries a chunk; the receiver reads it either way.
   // In direct/none mode, convert the zero-based internal SPQR KDF epoch to
   // the `SPQR` one-based wire epoch.
-  const wireEpoch = isBraid
-    ? braidMessage!.epoch
-    : spqrInternalEpochToWireEpoch(spqrKeyResult?.epoch ?? state.epoch);
+  const wireEpoch =
+    braidSendingEpoch !== undefined
+      ? braidSendingEpoch
+      : spqrInternalEpochToWireEpoch(spqrKeyResult?.epoch ?? state.epoch);
   const msgBytes = encodeSPQRWire({
     version: 1,
     epoch: wireEpoch,
@@ -1511,12 +1583,14 @@ export async function spqrSend(
  *
  * @param state - SPQR state (mutated: version negotiation, sckaState, chains, needsSendRatchet)
  * @param msgBytes - Opaque pq_ratchet bytes from wire (undefined = no PQ data)
+ * @param config - Protocol strategy, for the braid progress hook
  * @returns PQ message key to combine with EC key via KDF_HYBRID (or null)
  */
 export async function spqrRecv(
   state: SPQRState,
   msgBytes: Uint8Array | undefined,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<ILogger> = defaultSignalProtocolLogger,
+  config?: ProtocolStrategyConfig
 ): Promise<SPQRRecvResult> {
   // No PQ data during bootstrap or malformed transport with no pq_ratchet field.
   if (!msgBytes || msgBytes.length === 0) {
@@ -1561,6 +1635,8 @@ export async function spqrRecv(
     if (result.output_key) {
       await addSPQRBraidEpoch(state, result.output_key);
     }
+
+    reportBraidProgress(state.braidState, !!result.output_key, logger, config);
     // No needsSendRatchet flag — braid state machine drives send behavior
     // via its own state transitions, matching the profile pattern.
   }

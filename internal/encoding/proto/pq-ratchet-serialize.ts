@@ -27,6 +27,7 @@
  */
 
 import { assertBraidChunkIndex } from '../../protocol/spqr/ml-kem-braid/chunk-domain';
+import { MessageType } from '../../protocol/spqr/ml-kem-braid/types';
 
 // ============================================================================
 // Constants
@@ -43,7 +44,7 @@ const DIRECT_PUBLIC_KEY = 0x81;
 /** Direct mode: both ML-KEM-768 ciphertext and public key */
 const DIRECT_BOTH = 0x82;
 /** None: no braid/direct payload (header-only message with epoch/index) */
-const MODE_NONE = 0x00;
+const MODE_NONE: number = MessageType.None;
 
 /** ML-KEM-768 ciphertext size */
 const MLKEM768_CIPHERTEXT_SIZE = 1088;
@@ -57,10 +58,11 @@ const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 const MAX_VARINT_U64_BYTES = 10;
 
 /**
- * Valid braid message types (`SPQR` MessageType enum, values 1-6).
+ * Valid braid message types. The mode byte carries the `SPQR` `MessageType`
+ * enum directly, so both bounds come from the enum instead of a copy.
  */
-const MAX_BRAID_MSG_TYPE = 6;
-const BRAID_CT1_ACK_MSG_TYPE = 4;
+const MAX_BRAID_MSG_TYPE: number = MessageType.Ct2;
+const BRAID_CT1_ACK_MSG_TYPE: number = MessageType.Ct1Ack;
 
 // ============================================================================
 // Types
@@ -327,6 +329,14 @@ export function encodeSPQRWire(msg: SPQRWireMessage): Uint8Array {
       const braidChunkIndex = msg.braidChunkIndex ?? 0;
       assertBraidChunkIndex(braidChunkIndex, 'braid chunk index');
       offset = encodeVarintLEB128(braidChunkIndex, buf, offset);
+      // The slot is a fixed 32 bytes, so a short chunk pads the remainder with
+      // zeros and encodes a chunk the sender never held. The buffer ends here,
+      // so an oversized chunk raises a `RangeError` that names no field.
+      if (msg.braidChunkData!.length !== BRAID_CHUNK_SIZE) {
+        throw new Error(
+          `Invalid braid chunk length: ${msg.braidChunkData!.length} (expected ${BRAID_CHUNK_SIZE})`
+        );
+      }
       buf.set(msg.braidChunkData!, offset);
       offset += BRAID_CHUNK_SIZE;
     }

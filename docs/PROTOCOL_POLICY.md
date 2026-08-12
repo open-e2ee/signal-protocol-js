@@ -114,5 +114,11 @@ for diagnostics. It distinguishes post-quantum success from explicit classical
 compatibility fallback. Do not set `protocolStrategy.allowClassicalFallback`
 when `protocol.postQuantum` is present.
 
+The advanced `protocolStrategy.onBraidProgress` callback reports ML-KEM Braid
+chunk progress after every braid-mode send and receive: the chunks this side has
+carried in the current epoch, the chunks the open transfers account for, the
+epoch, and whether the operation produced the epoch secret. A direct-mode
+session never raises it.
+
 Do not set `protocolStrategy.sckaMode` when `protocol` is present. Use
 `protocol.braid` so the public product policy owns the direct-vs-Braid choice.

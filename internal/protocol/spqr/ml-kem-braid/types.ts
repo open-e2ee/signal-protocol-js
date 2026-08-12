@@ -233,17 +233,20 @@ export interface MLKEMBraidBaseState {
 }
 
 /**
- * Unified ML-KEM Braid agent state
+ * The complete state of one ML-KEM Braid participant, in either role.
  *
- * The state name determines the current role — no `role` field needed.
- * This matches the `SPQR` pattern where the state variant
- * is the role.
+ * The ML-KEM Braid specification calls a protocol participant an agent,
+ * and this name follows it. The name also separates this type from
+ * `MLKEMBraidState`, which is the 11-state machine position that the
+ * `state` field holds.
  *
- * Use isInAliceRole(state) / isInBobRole(state) to check current role.
- *
+ * The state name determines the current role, so this type carries no
+ * `role` field. This matches the `SPQR` pattern, where the state variant
+ * is the role. Call `isInAliceRole(state)` or `isInBobRole(state)` to read
+ * the role.
  */
 export interface MLKEMBraidAgentState extends MLKEMBraidBaseState {
-  // No role field — state.state determines current role via ALICE_STATES/BOB_STATES
+  // The role comes from `state`, which ALICE_STATES and BOB_STATES partition.
 
   // ----- KEM State (populated in Alice role states) -----
 

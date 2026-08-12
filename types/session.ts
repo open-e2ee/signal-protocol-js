@@ -33,7 +33,7 @@ import type { ResolvedSPQRLimits, SCKAMode } from './protocol-config';
 /**
  * Persisted record version for the composite-identity session profile.
  *
- * Version 4 is a deliberate alpha-format break: version 3 records did not bind
+ * Version 4 is a deliberate pre-1.0 format break: version 3 records did not bind
  * the ACI/PNI namespaces of both endpoint identity tuples and must be reset,
  * never migrated or interpreted as version 4.
  */

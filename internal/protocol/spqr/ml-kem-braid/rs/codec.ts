@@ -111,17 +111,20 @@ export interface ErasureConfig {
 // =============================================================================
 
 /**
- * Chunk counts for standard ML-KEM-768 components
- * Based on 32-byte chunk size
+ * Data chunk counts for the standard ML-KEM-768 components.
+ *
+ * Each count is `ceil(component bytes / CHUNK_SIZE)`. The header and CT2 byte
+ * strings include a 32-byte MAC; the EK vector and CT1 carry none, and
+ * `state-machine.ts` records why. Parity chunks are not counted here.
  */
 export const CHUNK_COUNTS = {
-  /** Header (64 bytes) + MAC (32 bytes) = 96 bytes / 32 = 3 chunks */
+  /** Header: ek_seed (32) + hek (32) + MAC (32) = 96 bytes / 32 = 3 chunks */
   HEADER: 3,
-  /** EK Vector: 1152 bytes / 32 = 36 chunks + ~30% parity = 37 chunks sent */
-  EK_VECTOR: 37,
-  /** CT1: 960 bytes / 32 = 30 chunks + ~30% parity = 31 chunks sent */
-  CT1: 31,
-  /** CT2 (128 bytes) + Combined MAC (32 bytes) = 160 bytes / 32 = 5 chunks */
+  /** EK vector: 1152 bytes / 32 = 36 chunks */
+  EK_VECTOR: 36,
+  /** CT1: 960 bytes / 32 = 30 chunks */
+  CT1: 30,
+  /** CT2: 128 bytes + combined MAC (32 bytes) = 160 bytes / 32 = 5 chunks */
   CT2: 5,
 } as const;
 

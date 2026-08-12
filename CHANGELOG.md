@@ -1,5 +1,88 @@
 # Changelog
 
+## 0.2.0
+
+- **ML-KEM Braid key-agreement progress is now observable.** A new
+  `protocolStrategy.onBraidProgress` callback reports a `BraidProgressEvent`
+  after every braid-mode send and receive: the chunks this side has carried in
+  the current epoch, the chunks the open transfers account for, the epoch, and
+  whether the operation produced the epoch secret. Braid mode spreads one
+  ML-KEM key agreement across many messages, and until now the chunk counts
+  lived entirely inside the state machine, so a host had no way to show or log
+  how far a ratchet had travelled. A direct-mode session never raises the
+  callback. The hook is guarded exactly as `onProtocolSelected` is: a consumer
+  that throws is logged and the protocol path continues.
+
+- **The web store's atomic commits leave no window for a partial commit
+  under tab death.** A dying page closes its IndexedDB connection
+  gracefully, and a transaction that is idle at an await boundary then
+  commits the writes it already holds. The atomic session/trust commit
+  awaited each write in turn, so a tab death after the session write could
+  commit the session while the consumed one-time prekey survived — CI
+  observed exactly that once in Firefox. The identity-rotation commit
+  deleted sessions through an awaited cursor walk, with the same windows
+  between the new pin and each deletion. Both commits now enter every
+  mutation in one synchronous batch before any settles, and a structural
+  browser test fails on every run — no kill timing required — if a commit
+  regains an await boundary between writes.
+
+- **ML-KEM Braid key agreement completes.** A braid session now reaches its
+  first epoch on both sides; before this it could not complete one at all,
+  failing at the 66th alternating message with `Future epoch requested`.
+  Braid is the default SCKA mode, so this was the default path. The two sides
+  derive an epoch secret at very different times by design — the encapsulator
+  from a single `Encaps1` over the header, the decapsulator only after
+  `Decaps` over the full `ct1 ‖ ct2` — and everything sent across that gap has
+  to go out under the epoch the peer can still follow. `spqrSend` took that
+  epoch from the chunk it was emitting, so it lost it on exactly the messages
+  that carry no chunk: once its ciphertext is acknowledged, a sender has
+  nothing left to send until the encapsulation-key transfer finishes. It then
+  fell back to its own SPQR epoch, which had already advanced, and the peer
+  rejected the message. The braid state machine reports the epoch it is
+  sending under on every send, including the empty ones, and `spqrSend` now
+  uses that for both the message-key derivation and the wire epoch. No wire
+  format, serialized state, or public API changes.
+
+- **Session state survives cloning under a cross-realm `structuredClone`.**
+  `cloneProtocolState` now checks once whether the ambient `structuredClone`
+  returns objects of the calling realm, and falls back to its portable clone
+  when it does not. Reached across a realm boundary — the arrangement a Node
+  `vm` context produces, and one Jest builds for everything it runs —
+  `structuredClone` returns a working `Map` whose prototype belongs to the
+  other realm, so `instanceof Map` reports false for it everywhere downstream.
+  Two silent losses followed: the session codec wrote such a `Map` as `{}`,
+  and the portable clone rebuilt it as a prototype-only husk whose `size`
+  getter throws. ML-KEM Braid felt this first, because its decoders are the
+  only protocol state held in a `Map` that has to survive many clones — a
+  receiving decoder discarded every chunk it had accepted, held at one chunk
+  forever, and the key agreement could never complete. Single-realm hosts, the
+  browser and React Native included, always took and still take the native
+  path.
+
+- **Restoring a braid encoder state now rejects a malformed polynomial.** Each
+  `polys` element is a run of big-endian 16-bit coefficients. An odd-length
+  element read one byte past the end. The resulting
+  `undefined` folded into the low half of a coefficient. A truncated state
+  therefore decoded to a polynomial with a fabricated final term. The decoder
+  now refuses empty and odd-length elements, as the reference does.
+
+- **Encoding a braid message now rejects a chunk that is not 32 bytes.** The
+  slot holds exactly 32 bytes. A shorter chunk left the rest of the slot zeroed and
+  encoded a chunk the sender never held. A longer chunk raised a bounds error
+  that named no field. Both now fail and report the length offered. The braid
+  state machine only ever produces 32-byte chunks.
+
+- **Deriving an SPQR send key now rejects a zeroed chain key.** Two paths
+  install one. An epoch advance for receiving alone installs a zeroed send
+  chain key. Pruning writes one over each retired send chain. Deriving from
+  either would key a message from a known constant. No production path reached
+  that state, so the check is defence in depth.
+
+- **The unused SPQR binary header codec is gone.** `serializeSPQRHeaderBinary`
+  and `deserializeSPQRHeaderBinary` emitted an unversioned framing. No
+  production path used it. The documented wire format does not describe it. Use
+  the protobuf codec, which carries the version capability.
+
 ## 0.1.0
 
 - **First non-prerelease release.** Identical in code to `0.1.0-alpha.14`;

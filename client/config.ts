@@ -22,6 +22,7 @@ import type {
 export type { ILogger } from '../logger';
 export {};
 export type {
+  BraidProgressEvent,
   ClassicalFallbackReason,
   NetworkConstraints,
   ProtocolSelectionEvent,
@@ -431,6 +432,22 @@ export interface SignalProtocolClientConfig {
    *         tripleRatchet: event.usedTripleRatchet,
    *         compatibilityFallback: event.usedClassicalFallback,
    *         fallbackReason: event.classicalFallbackReason
+   *       });
+   *     }
+   *   }
+   * });
+   * ```
+   *
+   * @example Show ML-KEM Braid key-agreement progress
+   * ```typescript
+   * const signal = await SignalProtocolClient.create(userId, {
+   *   storage: customStorage,
+   *   protocolStrategy: {
+   *     onBraidProgress: (event) => {
+   *       ratchetIndicator.update({
+   *         carried: event.chunksCarried,
+   *         required: event.chunksRequired,
+   *         epoch: event.epoch
    *       });
    *     }
    *   }

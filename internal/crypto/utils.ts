@@ -251,12 +251,38 @@ export function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
   return difference === 0;
 }
 
+let checkedNativeClone: unknown;
+let nativeCloneStaysInRealm = false;
+
+/**
+ * Does the ambient structuredClone hand back objects this realm recognizes?
+ *
+ * A structuredClone reached across a realm boundary — the arrangement a Node vm
+ * context produces, and one Jest builds for everything it runs — returns a working
+ * Map whose prototype belongs to the other realm. `instanceof Map` then reports
+ * false everywhere downstream: the session codec writes such a Map as `{}`, and
+ * the portable clone below rebuilds it as a prototype-only husk whose `size`
+ * getter throws. Both losses are silent. The portable path constructs its Maps
+ * here, so use it whenever the native clone would leave the realm.
+ */
+function isNativeCloneUsable(nativeClone: <U>(input: U) => U): boolean {
+  if (nativeClone !== checkedNativeClone) {
+    checkedNativeClone = nativeClone;
+    try {
+      nativeCloneStaysInRealm = nativeClone(new Map()) instanceof Map;
+    } catch {
+      nativeCloneStaysInRealm = false;
+    }
+  }
+  return nativeCloneStaysInRealm;
+}
+
 /** Clone protocol state without losing bigint, typed arrays, Map, or cycles. */
 export function cloneProtocolState<T>(value: T, forcePortableClone = false): T {
   const nativeClone = (
     globalThis as typeof globalThis & { structuredClone?: <U>(input: U) => U }
   ).structuredClone;
-  if (!forcePortableClone && typeof nativeClone === 'function') {
+  if (!forcePortableClone && typeof nativeClone === 'function' && isNativeCloneUsable(nativeClone)) {
     return nativeClone(value);
   }
 

@@ -60,7 +60,7 @@ model and what is out of scope.
 | **Identity keys** | X3DH §2.2; `libsignal` `identity_key.rs` | **Deviation.** A 67-byte composite of separate X25519 and Ed25519 keys replaces the single 33-byte Curve25519 identity key | Avoids XEdDSA, a non-standard signature scheme with no vetted JavaScript implementation; standard Ed25519 is independently verifiable | Two keys to store and rotate; larger identity; **no wire compatibility for any identity-bearing material** |
 | **Prekey signatures** | X3DH §2.2, §4.5 | **Deviation.** RFC 8032 Ed25519 over a domain-separated context binding the identity commitment, algorithm tag, and key ID — not XEdDSA over the bare key | Defeats cross-algorithm and cross-key-ID substitution that a bare-key signature does not cover | Strictly stronger binding; signatures are unverifiable by Signal Messenger clients and vice versa |
 | **Safety numbers** | `libsignal` `fingerprint.rs` | **Deviation.** Iteration and digit encoding are byte-identical, but the input is a composite-identity commitment under an SDK domain string, the QR version is `3`, and the two halves are ordered by user ID rather than by digit string | Follows from the composite identity; a single-key fingerprint cannot authenticate both components | **Safety numbers are not comparable to Signal Messenger's.** The ordering rule also differs from `libsignal` even on the single-key path |
-| **X3DH / PQXDH** | X3DH rev. 1; PQXDH rev. 3 | **Faithful** on DH order, the `0xFF`×32 prefix, zero-salt HKDF, KEM-secret position, and — since `0.1.0-alpha.6` — on PQXDH §2.2's info-string construction. **Deviation:** ML-KEM-1024 (FIPS 203) replaces round-3 Kyber1024 | Standardized ML-KEM preferred over round-3 Kyber. The info string names it, and names this application rather than `libsignal`'s, as §2.1 and §2.2 require | Wire-incompatible with `libsignal` by construction, and the label now says so. Sessions established before `0.1.0-alpha.6` derive a different `SK` and cannot be continued |
+| **X3DH / PQXDH** | X3DH rev. 1; PQXDH rev. 3 | **Faithful** on DH order, the `0xFF`×32 prefix, zero-salt HKDF, KEM-secret position, and PQXDH §2.2's info-string construction. **Deviation:** ML-KEM-1024 (FIPS 203) replaces round-3 Kyber1024 | Standardized ML-KEM preferred over round-3 Kyber. The info string names it, and names this application rather than `libsignal`'s, as §2.1 and §2.2 require | Wire-incompatible with `libsignal` by construction, and the label now says so. The info string is part of the derivation, so any peer that names a different one derives a different `SK` and cannot complete the handshake |
 | **Associated data** | X3DH §3.3 | **Deviation.** `AD` is a domain-separated HMAC input over SHA-256 commitments to both composite identities, not `IK_A ‖ IK_B` | Binds the Ed25519 component, which a raw-key `AD` would leave uncovered | Stronger binding; wire-incompatible |
 | **Double Ratchet** | Double Ratchet rev. 4 | **Faithful** on `WhisperRatchet`, `WhisperMessageKeys`, the `0x01`/`0x02` seeds, the 80-byte split, AES-256-CBC, the `0x44` version byte, and 8-byte MAC truncation | — | The ratchet core follows the Double Ratchet specification |
 | **Message wire format** | `libsignal` `wire.proto` | **Faithful** field numbers 1–8. **Extension:** fields at 100+ carry identity type and ML-KEM one-time prekey material. **Deviation:** address binding uses variable-length UTF-8 user IDs and 4-byte device IDs instead of 17-byte ServiceIds and 1-byte device IDs | The SDK binds application-defined identifiers, not Signal Messenger ACIs | Wire-incompatible; a Signal Messenger client would silently ignore the added fields |
@@ -75,7 +75,7 @@ model and what is out of scope.
 | **Sender keys** | `libsignal` `sender_keys.rs` | **Deviation.** Protobuf field numbers and `0x33` framing match, and the `0x01`/`0x02` seeds match, but message-key derivation **omits HKDF-Extract**, signatures are Ed25519 not XEdDSA, and `distributionUuid` carries a UTF-8 string rather than 16 UUID bytes | The Ed25519 choice follows the identity profile; the missing Extract appears unintentional | Group message keys differ from `libsignal`'s for the same chain key. Confirmed numerically, not merely by inspection |
 | **Groups** | Signal Private Group System | **Independent design.** Real zkgroup primitives underneath; the server validates every change against zero-knowledge presentations and signs the accepted result, and clients verify those signatures. **Deviation:** profile-key credential issuance is not blinded — the issuing server sees the raw profile key at issuance time | Ships a validating group server with an enforcement contract (S1–S14) specified in-tree | Not wire-compatible with the Signal Private Group System; credentials are not interchangeable. The unblinded issuance path means a hostile issuance server learns profile keys, which the Signal Private Group System's blinded issuance prevents |
 | **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation is structured as four labelled derivations rather than one seeded derivation | Server keys are the deploying operator's own trust root (each deployment generates its own seed), not Signal Messenger's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal Messenger's |
-| **Registration IDs** | `libsignal` `sealed_sender.rs` | **Faithful** as of 0.1.0-alpha.4. Generated in `[1, 16383]`, strictly inside the 14 bits the wire format reserves | — | Through alpha.3 the range ran to 16384, which masked to `0` on the wire in multi-recipient sealed sender for roughly 1 install in 16,384 |
+| **Registration IDs** | `libsignal` `sealed_sender.rs` | **Faithful.** Generated in `[1, 16383]`, strictly inside the 14 bits the wire format reserves | — | — |
 
 ---
 
@@ -225,14 +225,13 @@ Registration IDs are generated in the closed range `[1, 16383]`
 `libsignal` rejects any ID where `id & 0x3FFF != id`
 ([`sealed_sender.rs:1508-1515`][ss]); `libsignal`'s own helper generates `[1, 16380]`.
 
-Through 0.1.0-alpha.3 the range was `[1, 16384]`, an off-by-one: 16384 is
-`0x4000` and does not fit in 14 bits, and the SDK's multi-recipient sealed sender
-encoder masks rather than rejects
-(`internal/protocol/sealed-sender/v2-binary.ts:170-171`), so a generated `16384`
-was written to the wire as `0` — roughly 1 install in 16,384. This is corrected
-as of 0.1.0-alpha.4; the generated range is now strictly narrower than
-`libsignal`'s accepted range, and a regression test asserts every generated ID
-survives the mask unchanged.
+The upper bound is load-bearing rather than cosmetic. `16384` is `0x4000` and
+does not fit in 14 bits, and the SDK's multi-recipient sealed-sender encoder
+masks rather than rejects
+(`internal/protocol/sealed-sender/v2-binary.ts:170-171`), so an ID one above
+the range would reach the wire as `0`. The generated range is therefore
+strictly narrower than `libsignal`'s accepted range, and a test asserts every
+generated ID survives the mask unchanged.
 
 ---
 
@@ -280,23 +279,22 @@ this SDK is and runs. PQXDH §2.2 defines the info string as `info`, `curve`,
 defines the same `info` parameter, and §3.3 uses it as the HKDF info with
 nothing appended.
 
-Through `0.1.0-alpha.5` these were `libsignal`'s labels — `WhisperText` and
-`WhisperText_X25519_SHA-256_CRYSTALS-KYBER-1024` ([`pqxdh.rs:73-74`][pq]) —
-which was wrong on both parameters:
+The SDK does not use `libsignal`'s labels — `WhisperText` and
+`WhisperText_X25519_SHA-256_CRYSTALS-KYBER-1024` ([`pqxdh.rs:73-74`][pq]).
+Inheriting them would be wrong on both parameters:
 
-1. **`pqkem` named a KEM the SDK does not run**, violating §2.2. Worse than a
-   labelling error: two implementations feeding an identical label derived
-   *different* shared secrets, because the KEM underneath differed, with
-   nothing at the KDF layer to signal it. Domain separation is the one job the
-   info string has.
-2. **`info` named someone else's application.** The specifications ask for an
-   identifier of the application deriving the key. This SDK is not Signal
-   Messenger, and the label saying otherwise was inherited, not chosen.
+1. **`pqkem` would name a KEM the SDK does not run**, violating §2.2. That is
+   worse than a labelling error: two implementations feeding an identical
+   label derive *different* shared secrets, because the KEM underneath
+   differs, with nothing at the KDF layer to signal it. Domain separation is
+   the one job the info string has.
+2. **`info` would name someone else's application.** The specifications ask
+   for an identifier of the application deriving the key. This SDK is not
+   Signal Messenger.
 
-Both are corrected as of `0.1.0-alpha.6`. This is a
-pre-1.0 format break: sessions established under the old labels derive a
-different `SK` and cannot be continued. Nothing else about the derivation
-changed.
+Choosing the SDK's own labels is a pre-1.0 format break against sessions
+established under `libsignal`'s: they derive a different `SK` and cannot be
+continued. Nothing else about the derivation changes.
 
 An application that needs `libsignal`'s known-answer vectors can still get them
 by setting `protocolStrategy.keyExchangeInfoString` to the old label
@@ -489,8 +487,8 @@ past each boundary rather than on it.
 ## 4. SPQR and the ML-KEM Braid
 
 This is the same protocol as the SparsePostQuantumRatchet v1 protocol, implemented
-independently and pinned against `SparsePostQuantumRatchet v1.5.1` (commit
-`f2589fef`). The fidelity is high and specific:
+independently and pinned against commit `fd32048`, which upstream tags
+`SparsePostQuantumRatchet v1.5.3`. The fidelity is high and specific:
 
 - **KDF labels are byte-identical**, including the double space in
   `"Signal PQ Ratchet V1 Chain  Start"` (`internal/crypto/kdf/hkdf.ts:353-368`).
@@ -506,6 +504,18 @@ independently and pinned against `SparsePostQuantumRatchet v1.5.1` (commit
   `serialize.rs`, with the same message-type values and the same epoch offset.
 - **ML-KEM-768 with the same incremental split** (32-byte seed, 1152-byte vector,
   960/128-byte ciphertext parts).
+
+The delta review that moved the pin forward from `f2589fef` found one behavioural
+change upstream. Decoding a chain epoch direction now rejects a `next` chain key
+whose length is neither zero nor 32 bytes. The internal next-key assertion checks
+that same exact length rather than mere non-emptiness.
+
+The SDK is already at least as strict. Restoring SPQR state requires every chain
+key, root key, and skipped-message key to be canonical base64 for exactly 32
+bytes (`internal/protocol/spqr/serialize.ts:44-72`). The SDK has no state in
+which the key is absent. Two upstream error strings now name the value they
+reject. The rest of the delta is proof-assistant annotation and loop rewriting,
+which leaves behaviour unchanged.
 
 ### 4.1 The `hek` operand order diverges
 
@@ -549,7 +559,7 @@ braid session persisted under the former ordering.
 
 **Extension.** An opt-in direct mode (`protocol.braid: 'disabled'`) uses stock
 ML-KEM-768 and adds wire message types `0x80`–`0x82`
-(`internal/encoding/proto/pq-ratchet-serialize.ts:38-45`). `libsignal`'s parser rejects
+(`internal/encoding/proto/pq-ratchet-serialize.ts:40-45`). `libsignal`'s parser rejects
 anything above `6`, so these are visible only within the SDK; they occupy a byte
 range `libsignal` has not claimed. This mode has no Signal Protocol analogue.
 
@@ -561,6 +571,37 @@ state is not portable in either direction.
 evicts by wall-clock timestamp, where `libsignal` triggers at `max_ooo × 11/10 + 1` and
 evicts by message index. `libsignal`'s rule is deterministic and index-anchored; the
 SDK's introduces a clock dependency into ratchet state.
+
+**Deviation.** The varint decoder is the stricter of the two. It rejects any
+value above `uint64` (`internal/encoding/proto/pq-ratchet-serialize.ts:163-186`).
+`libsignal` accumulates into a `u64` and shifts the tenth byte by 63 places
+(`src/v1/chunked/states/serialize.rs:154-181`). It therefore drops every bit at
+or above 2^64 without an error. The two decoders differ only on malformed input,
+because no encoder produces such a varint.
+
+**Deviation.** The erasure layer works in whole chunks. It counts 32-byte
+chunks and zero-pads the final chunk
+(`internal/protocol/spqr/ml-kem-braid/rs/codec.ts:261` and `:810`). `libsignal`
+instead counts GF(2^16) elements, and spreads the remainder across the sixteen
+polynomials (`src/encoding/polynomial.rs:794-802`). The two agree on any input
+whose length is a multiple of 32 bytes. All four braid components have such a
+length, from the 96-byte header with MAC to the 1152-byte encapsulation-key
+vector (`internal/protocol/spqr/ml-kem-braid/state-machine.ts:91-97`). The
+divergence therefore reaches no byte on the wire.
+
+**Deviation.** The `PolynomialEncoder` state message differs from `libsignal`'s
+in three ways (`internal/protocol/spqr/ml-kem-braid/serialize.ts:400`, `:671-682`).
+The SDK sets `pts` and `polys` together. The reference sets exactly one of the
+two, and its schema says so (`src/proto/pq_ratchet.proto:8-16`). The SDK's `pts`
+holds one data chunk for each 32 bytes of the component, where the reference
+holds sixteen point vectors. The SDK also adds a `messageSize` field at number 4,
+which the reference message does not define. `libsignal` refuses all three
+(`src/encoding/polynomial.rs:597-616`).
+
+Nothing in the SDK calls this codec. It reaches only the internal `ml-kem-braid`
+barrel (`internal/protocol/spqr/ml-kem-braid/index.ts:197-198`), and no braid
+session persists through it. Correcting the shape would change a persisted
+format, so this entry records the divergence rather than repairing it.
 
 ### 4.3 The Triple Ratchet is faithful
 
@@ -704,9 +745,9 @@ internally inconsistent about this.
 field `libsignal` uses to dispatch between prekey, regular, sender-key, and
 plaintext payloads ([`sealed_sender.rs:2055-2075`][ss]), as a leading byte
 using `libsignal`'s enum values, so the framing differs but the dispatch does
-not. Through 0.1.0-alpha.7 the field was absent and the unseal path
-reconstructed the envelope with a fixed type, which made sealed group messages
-undecryptable as group messages.
+not. The field is what lets the unseal path restore the real message type
+rather than reconstruct the envelope with a fixed one, which is what sealed
+group messages need to decrypt as group messages.
 
 **`PLAINTEXT_CONTENT` (8) is a known wire value that this SDK rejects.**
 `libsignal` uses it to carry a `DecryptionErrorMessage` when no session exists

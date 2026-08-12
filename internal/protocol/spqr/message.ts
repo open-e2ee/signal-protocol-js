@@ -28,8 +28,6 @@
 import { MessageType } from './ml-kem-braid/types';
 import type { MLKEMBraidMessage } from './ml-kem-braid/types';
 import {
-  serializeMessageBinary,
-  deserializeMessageBinary,
   serializeMessageProto,
   deserializeMessageProto,
   bytesToHex,
@@ -200,44 +198,6 @@ export function getMessageTypeName(type: MessageType): string {
 // =============================================================================
 // Serialization
 // =============================================================================
-
-/**
- * Serialize SPQR header to binary format.
- *
- * Uses the compact binary format for wire transmission.
- * Note: Binary format does not support version capability.
- * Use serializeSPQRHeaderProto when version capability is required.
- *
- * @param header - Header to serialize
- * @returns Binary representation
- */
-export function serializeSPQRHeaderBinary(header: SPQRMessageHeader): Uint8Array {
-  const msg: MLKEMBraidMessage = {
-    epoch: header.epoch,
-    type: header.type,
-    chunkIndex: header.chunkIndex,
-    data: header.data,
-    // Note: version capability not included in binary format
-  };
-  return serializeMessageBinary(msg);
-}
-
-/**
- * Deserialize SPQR header from binary format.
- *
- * @param bytes - Binary data to deserialize
- * @returns Deserialized header
- */
-export function deserializeSPQRHeaderBinary(bytes: Uint8Array): SPQRMessageHeader {
-  const msg = deserializeMessageBinary(bytes);
-  return {
-    version: 'v1',
-    epoch: msg.epoch,
-    chunkIndex: msg.chunkIndex ?? 0,
-    type: msg.type,
-    data: msg.data,
-  };
-}
 
 /**
  * Serialize SPQR header to Protocol Buffer format.

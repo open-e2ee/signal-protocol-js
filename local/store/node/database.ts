@@ -210,7 +210,7 @@ export class NodeEncryptedDatabase {
   }
 
   /**
-   * Direct alpha-format reset. Contacts, one-time prekeys, and sessions now
+   * Direct pre-1.0 format reset. Contacts, one-time prekeys, and sessions now
    * share one encrypted document so security-sensitive multi-record commits are
    * one atomic filesystem replacement.
    */

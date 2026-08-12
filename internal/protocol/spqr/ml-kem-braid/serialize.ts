@@ -1114,8 +1114,17 @@ export async function deserializeEncoderProto(bytes: Uint8Array): Promise<{
 
   const obj = decodePolynomialEncoder(bytes);
 
-  // Convert polys back to coefficient arrays
-  const polys = obj.polys.map((polyBytes: Uint8Array) => {
+  // Convert polys back to coefficient arrays. Each element is a run of
+  // big-endian 16-bit coefficients, so an empty or odd-length run is not a
+  // polynomial. Odd length used to read one byte past the end and fold
+  // `undefined` into the low half of a coefficient, inventing a final
+  // coefficient the encoder never wrote.
+  const polys = obj.polys.map((polyBytes: Uint8Array, position: number) => {
+    if (polyBytes.length === 0 || polyBytes.length % 2 !== 0) {
+      throw new Error(
+        `Encoder state polynomial ${position} must be a non-empty whole number of 16-bit coefficients`
+      );
+    }
     const coeffs: number[] = [];
     for (let i = 0; i < polyBytes.length; i += 2) {
       coeffs.push((polyBytes[i] << 8) | polyBytes[i + 1]);

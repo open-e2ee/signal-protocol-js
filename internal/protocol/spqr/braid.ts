@@ -53,7 +53,8 @@ import { MessageType } from './ml-kem-braid/types';
  * Maximum chunks to generate in a single spqrBraidSend call.
  *
  * This is a safety limit to prevent infinite loops if the state machine
- * malfunctions. Normal operation generates ~76 chunks per epoch.
+ * malfunctions. An epoch carries 74 data chunks, and about 30% more once
+ * Reed-Solomon parity is included.
  *
  * @internal
  */

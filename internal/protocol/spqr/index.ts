@@ -117,9 +117,6 @@ export {
   headerToBraidMessage,
   hasSPQRHeader,
   getMessageTypeName,
-  // Binary serialization (legacy, doesn't support version capability)
-  serializeSPQRHeaderBinary,
-  deserializeSPQRHeaderBinary,
   // Protobuf serialization with version capability
   serializeSPQRHeaderProto,
   deserializeSPQRHeaderProto,

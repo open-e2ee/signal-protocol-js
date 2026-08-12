@@ -144,6 +144,46 @@ export interface ProtocolSelectionEvent {
 }
 
 /**
+ * ML-KEM Braid chunk progress, for diagnostics and progress display.
+ *
+ * Braid mode spreads an ML-KEM key agreement across many messages: each
+ * message carries one erasure-coded chunk, and an epoch closes only once
+ * enough chunks have travelled in both directions. Nothing outside the braid
+ * state machine can otherwise observe that, so a host that wants to show or
+ * log the ratchet's progress has no other source for it.
+ */
+export interface BraidProgressEvent {
+  /**
+   * Chunks this side has carried in {@link epoch}: chunks it has emitted plus
+   * chunks it has accepted.
+   */
+  chunksCarried: number;
+
+  /**
+   * Chunks the transfers opened in {@link epoch} account for.
+   *
+   * This is not a target that {@link chunksCarried} settles on. Sending
+   * capacity includes roughly 30% parity beyond the chunks a peer needs to
+   * reconstruct, and transfers open as the epoch advances rather than all at
+   * once, so the two counts converge only loosely.
+   */
+  chunksRequired: number;
+
+  /** Braid epoch the counts above belong to. */
+  epoch: bigint;
+
+  /**
+   * Whether the send or receive that raised this event produced the epoch
+   * secret.
+   *
+   * When that secret also ends the epoch, the state machine has already reset
+   * its counters, so {@link chunksCarried} and {@link chunksRequired} describe
+   * the epoch that has just begun rather than the one the secret closed.
+   */
+  emittedEpochKey: boolean;
+}
+
+/**
  * SCKA mode for SPQR key exchange.
  */
 export type SCKAMode = 'direct' | 'braid';
@@ -221,6 +261,14 @@ export interface ProtocolStrategyConfig {
    * Called after key exchange completes, before the first message is encrypted.
    */
   onProtocolSelected?: (event: ProtocolSelectionEvent) => void;
+
+  /**
+   * Called after each ML-KEM Braid send or receive, in braid mode only.
+   *
+   * A direct-mode session never raises it, because direct mode carries no
+   * chunks.
+   */
+  onBraidProgress?: (event: BraidProgressEvent) => void;
 
   /**
    * Custom SPQR HKDF info strings.
@@ -491,6 +539,7 @@ export function applyProtocolStrategyDefaults(
   Pick<
     ProtocolStrategyConfig,
     | 'onProtocolSelected'
+    | 'onBraidProgress'
     | 'networkConstraints'
     | 'spqrInfoStrings'
     | 'spqrLimits'
@@ -500,6 +549,7 @@ export function applyProtocolStrategyDefaults(
     allowClassicalFallback: config?.allowClassicalFallback ?? false,
     sckaMode: config?.sckaMode ?? 'braid',
     onProtocolSelected: config?.onProtocolSelected,
+    onBraidProgress: config?.onBraidProgress,
     networkConstraints: config?.networkConstraints,
     spqrInfoStrings: config?.spqrInfoStrings,
     spqrLimits: config?.spqrLimits,
