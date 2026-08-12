@@ -28,10 +28,13 @@ jobs:
       - name: Build fuzzers
         uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
-          # The sanitizer is left at its default: the action rejects "none",
-          # and for JavaScript the value is inert -- Jazzer.js targets carry
-          # no sanitizer runtime, and OSS-Fuzz's build checks skip sanitizer
-          # verification for this language.
+          # coverage is the only sanitizer value both layers accept for
+          # JavaScript: the action rejects "none", and the base image's
+          # compile wrapper rejects every real sanitizer ("JavaScript
+          # projects cannot be fuzzed with sanitizers"). At runtime it is a
+          # label, not an instrumentation choice -- Jazzer.js targets carry
+          # no sanitizer runtime.
+          sanitizer: coverage
           language: javascript
           # Every target always builds and runs; the seams are small enough
           # that the whole set fits in one run's budget.
@@ -42,5 +45,6 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           language: javascript
+          sanitizer: coverage
           mode: code-change
           fuzz-seconds: 900
