@@ -142,7 +142,19 @@ export function bytesToBase64(bytes: Uint8Array): Base64 {
  * @see RFC 4648 Section 5 - Base 64 Encoding with URL and Filename Safe Alphabet
  */
 export function bytesToUrlSafeBase64(bytes: Uint8Array): string {
-  return bytesToBase64Portable(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return stripBase64Padding(bytesToBase64Portable(bytes).replace(/\+/g, '-').replace(/\//g, '_'));
+}
+
+/**
+ * Strip trailing `=` padding without a regular expression.
+ *
+ * A `/=+$/` replace backtracks quadratically on long runs of `=`, and these
+ * conversions accept library input.
+ */
+function stripBase64Padding(base64: string): string {
+  let end = base64.length;
+  while (end > 0 && base64.charCodeAt(end - 1) === 0x3d /* '=' */) end--;
+  return base64.slice(0, end);
 }
 
 /**
@@ -155,7 +167,7 @@ export function bytesToUrlSafeBase64(bytes: Uint8Array): string {
  * @returns URL-safe base64 string (no +, /, or = characters)
  */
 export function base64ToUrlSafe(base64: string): string {
-  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return stripBase64Padding(base64.replace(/\+/g, '-').replace(/\//g, '_'));
 }
 
 /**

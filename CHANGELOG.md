@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.2.1
+
+- **Two GitHub code-scanning findings in shipped code are fixed.** The
+  URL-safe base64 conversions stripped trailing `=` padding with a `/=+$/`
+  replace, which backtracks quadratically on input that is mostly `=`
+  characters; padding is now stripped by index in linear time. The Node
+  store's `getKey` probed the key file with `access()` before reading it,
+  leaving a race window between the check and the read; it now reads
+  directly and treats `ENOENT` as an absent key. Neither fix changes
+  observable behavior on well-formed input. The scan's prototype-pollution
+  alerts against the Node sender-key trees were confirmed false positives:
+  every decoded dictionary level is rebuilt with a null prototype before it
+  is indexed, and the full-interface tests already prove `__proto__` keys
+  round-trip as plain data.
+
+- **Vulnerable development-dependency versions are updated.** `js-yaml`,
+  `nanoid`, `postcss`, and `brace-expansion` move past their published
+  denial-of-service advisories. The two `image-size` advisories have no
+  fixed release yet; they sit behind Metro's dev-time asset parsing and do
+  not reach the published package, whose production dependencies audit
+  clean.
+
+- **`@noble/ciphers` moves to 2.3.0.** A routine minor update of the
+  symmetric-cipher dependency, applied internally so the public Dependabot
+  pull request can close against this release.
+
 ## 0.2.0
 
 - **ML-KEM Braid key-agreement progress is now observable.** A new

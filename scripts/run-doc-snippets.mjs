@@ -91,12 +91,24 @@ function parseMarkdown(relativePath) {
 }
 
 function decodeHtml(value) {
+  // Decode `&amp;` last: decoding it earlier turns `&amp;quot;` into
+  // `&quot;`, which the later replacements would then decode a second time.
   return value
     .replaceAll('&lt;', '<')
     .replaceAll('&gt;', '>')
-    .replaceAll('&amp;', '&')
     .replaceAll('&quot;', '"')
-    .replaceAll('&#39;', "'");
+    .replaceAll('&#39;', "'")
+    .replaceAll('&amp;', '&');
+}
+
+function stripHtmlTags(value) {
+  // Re-run until stable: one pass over `<<code>span>` leaves `<span>` behind.
+  let text = value;
+  for (let previous; text !== previous; ) {
+    previous = text;
+    text = text.replace(/<[^>]*>/g, '');
+  }
+  return text;
 }
 
 function parsePricingPreview() {
@@ -115,7 +127,7 @@ function parsePricingPreview() {
   const snippets = [];
   for (const match of codeBlocks) {
     const [, marker, mode, idOrReason, highlightedCode] = match;
-    const code = decodeHtml(highlightedCode.replace(/<[^>]+>/g, ''));
+    const code = decodeHtml(stripHtmlTags(highlightedCode));
     if (!isDocSnippet(code)) continue;
     if (!marker) {
       throw new Error(`${pricingSource} contains an unclassified doc snippet`);

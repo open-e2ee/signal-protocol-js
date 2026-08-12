@@ -17,10 +17,9 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, writeFile, unlink, access, chmod } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, unlink, chmod } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { constants } from 'node:fs';
 import { EncryptionError, EncryptionErrorCode } from '../../../types';
 
 /**
@@ -114,14 +113,9 @@ export class NodeDatabaseKeyManager {
         return this.cachedKey;
       }
 
-      // Check if file exists
-      try {
-        await access(this.keyFilePath, constants.R_OK);
-      } catch {
-        return null;
-      }
-
-      // Read key from file
+      // Read key from file; a missing file surfaces as ENOENT below. A
+      // separate access() pre-check would race against concurrent
+      // creation or deletion of the key file.
       const keyBuffer = await readFile(this.keyFilePath);
       const keyBytes = new Uint8Array(keyBuffer);
 
