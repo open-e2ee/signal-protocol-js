@@ -2,9 +2,13 @@
 
 ## Supported Versions
 
+Security fixes ship in the newest release line. Older lines receive no
+backports.
+
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.2.x   | :white_check_mark: |
+| < 0.2.0 | :x:                |
 
 ## Reporting a Vulnerability
 

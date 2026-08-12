@@ -1,0 +1,7 @@
+# Keeps local ClusterFuzzLite container builds honest: the image must build
+# the package itself, never inherit host build output or host-platform
+# dependency installs. CI checkouts contain none of these.
+.git
+node_modules
+dist
+coverage

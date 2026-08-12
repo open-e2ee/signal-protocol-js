@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.2.2
+
+- **The unfixable `image-size` development dependency is replaced with an
+  inert local stub.** Both open advisories against `image-size` cover every
+  released version and have no fix. The package reaches the tree only
+  through Metro's image-asset pipeline, which nothing in this repository
+  exercises. An npm override now points it at a local package that throws
+  on use, so the development install carries no known-vulnerable code and
+  `npm audit` reports clean across the whole tree.
+
+- **Continuous fuzzing runs against the parser seams.** ClusterFuzzLite
+  builds Jazzer.js fuzz targets over the wire-message, sender-key,
+  sealed-sender, and post-quantum ratchet decoders, the base64 conversions,
+  and the persistent session-record codec, on every push, pull request, and
+  manual dispatch. Writing the targets' rejection contract surfaced one
+  defect, fixed here: a session record with a malformed map encoding
+  escaped the codec as a `TypeError` instead of its controlled error.
+
+- **The README carries the OpenSSF Best Practices badge.** The project
+  earned the passing level at bestpractices.dev (project 14043).
+
+- **`SECURITY.md` states the supported release line correctly.** The
+  supported-versions table had not moved past 0.1.x; it now names 0.2.x
+  and states the no-backports rule.
+
 ## 0.2.1
 
 - **Two GitHub code-scanning findings in shipped code are fixed.** The

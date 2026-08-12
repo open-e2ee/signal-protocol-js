@@ -1,0 +1,8 @@
+{
+  "name": "image-size",
+  "version": "99.0.0",
+  "description": "Local inert replacement that keeps the unfixed image-size package out of the development install. The version is fictional: it exists to sit outside every advisory range and to satisfy lockfile validation.",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "main": "index.cjs"
+}

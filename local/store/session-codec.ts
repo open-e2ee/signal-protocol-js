@@ -36,8 +36,14 @@ export function deserializeSessionRecord(json: string): SessionRecord {
       return Uint8Array.from(value.value);
     }
     if (value && typeof value === 'object' && value[SESSION_JSON_TYPE_TAG] === 'map') {
-      if (!Array.isArray(value.entries)) throw new Error('Invalid Map encoding in session record');
-      return new Map(value.entries);
+      const entries: unknown = value.entries;
+      if (
+        !Array.isArray(entries) ||
+        !entries.every((entry) => Array.isArray(entry) && entry.length === 2)
+      ) {
+        throw new Error('Invalid Map encoding in session record');
+      }
+      return new Map(entries as [unknown, unknown][]);
     }
     return value;
   }) as SessionRecord;

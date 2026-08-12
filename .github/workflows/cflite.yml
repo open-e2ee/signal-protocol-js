@@ -1,0 +1,44 @@
+name: ClusterFuzzLite
+
+# Continuous fuzzing of the parser seams: the Jazzer.js targets in fuzz/ run
+# against every wire-format decoder and the persistent-record codec.
+#
+# This file is exported verbatim, so it exists in both repositories, but the
+# job guard limits it to the published one: fuzzing the same code twice buys
+# nothing, and the private repository's Actions minutes are billed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cflite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzzing:
+    name: Fuzz parser seams
+    if: github.repository == 'open-e2ee/signal-protocol-js'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: javascript
+          sanitizer: none
+          # Every target always builds and runs; the seams are small enough
+          # that the whole set fits in one run's budget.
+          keep-unaffected-fuzz-targets: true
+
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          language: javascript
+          sanitizer: none
+          mode: code-change
+          fuzz-seconds: 900

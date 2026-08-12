@@ -1,6 +1,6 @@
 {
   "name": "@open-e2ee/signal-protocol-sdk",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Signal Protocol E2EE SDK for TypeScript — Expo, React Native, browser, and Node. Post-quantum PQXDH and Double Ratchet.",
   "keywords": [
     "open-e2ee",
@@ -429,7 +429,8 @@
     "xcode": {
       "uuid": "11.1.1"
     },
-    "brace-expansion": "^5.0.9"
+    "brace-expansion": "^5.0.9",
+    "image-size": "file:./vendor/image-size-disabled"
   },
   "devDependencies": {
     "@convex-dev/r2": "^0.10.2",

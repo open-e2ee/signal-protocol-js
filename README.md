@@ -11,6 +11,7 @@
 [![npm provenance](https://img.shields.io/badge/npm-provenance-2f6f5e)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk#provenance)
 [![Checks](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml/badge.svg)](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/open-e2ee/signal-protocol-js/badge)](https://scorecard.dev/viewer/?uri=github.com/open-e2ee/signal-protocol-js)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14043/badge)](https://www.bestpractices.dev/projects/14043)
 
 [Website](https://open-e2ee.dev) ·
 [Docs](https://docs.open-e2ee.dev) ·
