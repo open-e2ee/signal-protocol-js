@@ -17,3 +17,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Keeps the ClusterFuzzLite pins from rotting: the digest-pinned build
+  # image and the lockfile-pinned Jazzer.js tooling.
+  - package-ecosystem: docker
+    directory: /.clusterfuzzlite
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /.clusterfuzzlite/tooling
+    schedule:
+      interval: weekly

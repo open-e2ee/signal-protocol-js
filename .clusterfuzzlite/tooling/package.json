@@ -1,0 +1,10 @@
+{
+  "name": "cflite-tooling",
+  "version": "0.0.0",
+  "description": "Pinned Jazzer.js for the ClusterFuzzLite build container, installed with `npm ci` so the download is integrity-checked against this directory's lockfile.",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "dependencies": {
+    "@jazzer.js/core": "4.0.0"
+  }
+}

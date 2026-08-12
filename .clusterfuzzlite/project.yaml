@@ -1,1 +1,5 @@
 language: javascript
+# Jazzer.js 4.0.0 ships a prebuilt libFuzzer addon that needs a newer glibc
+# than the legacy Ubuntu 20.04 base images carry. This pivots the build and
+# run containers to their Ubuntu 24.04 variants.
+base_os_version: ubuntu-24-04

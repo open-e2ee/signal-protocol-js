@@ -28,8 +28,11 @@ jobs:
       - name: Build fuzzers
         uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
+          # The sanitizer is left at its default: the action rejects "none",
+          # and for JavaScript the value is inert -- Jazzer.js targets carry
+          # no sanitizer runtime, and OSS-Fuzz's build checks skip sanitizer
+          # verification for this language.
           language: javascript
-          sanitizer: none
           # Every target always builds and runs; the seams are small enough
           # that the whole set fits in one run's budget.
           keep-unaffected-fuzz-targets: true
@@ -39,6 +42,5 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           language: javascript
-          sanitizer: none
           mode: code-change
           fuzz-seconds: 900
