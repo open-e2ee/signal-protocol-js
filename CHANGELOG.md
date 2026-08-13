@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.3
+
+- **`@noble/post-quantum` 0.6.1 → 0.7.0.** Upstream hardening of the
+  primitives under the post-quantum ratchet: an intermediate-overflow fix
+  in ML-KEM's NTT multiplication, stricter input validation throughout,
+  and ML-KEM public-key cache detachment. The 0.7.0 breaking changes are
+  confined to hybrid-KEM aliases and a utils export, neither of which this
+  package imports. The bump also unifies the dependency tree on single
+  copies of `@noble/hashes` and `@noble/curves` 2.3.0.
+
 ## 0.2.2
 
 - **The unfixable `image-size` development dependency is replaced with an
