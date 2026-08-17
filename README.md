@@ -28,7 +28,7 @@
 - **Post-quantum by default.** PQXDH and ML-KEM session establishment are on without configuration, and fail closed.
 - **Real messaging features.** Multi-device, groups, sealed sender, encrypted attachments, safety numbers.
 - **Pluggable storage and relay.** Device-local storage is required and yours; the relay is an interface, not a hosted service.
-- **AGPL-3.0-or-later, or a commercial license.** Building something closed-source? See [COMMERCIAL](https://github.com/open-e2ee/signal-protocol-js/blob/main/COMMERCIAL.md).
+- **AGPLv3, or a commercial license.** Building something closed-source? See [COMMERCIAL](https://github.com/open-e2ee/signal-protocol-js/blob/main/COMMERCIAL.md).
 
 *Not affiliated with Signal Messenger.* This is an independent implementation of the public Signal Protocol specifications — full notice in [NOTICE](https://github.com/open-e2ee/signal-protocol-js/blob/main/NOTICE). It is **not wire-compatible with Signal Messenger or libsignal**: messages, identities, and safety numbers do not interoperate, and every deliberate difference is documented in [DEVIATIONS](https://github.com/open-e2ee/signal-protocol-js/blob/main/docs/DEVIATIONS.md).
 
@@ -161,6 +161,6 @@ are versioned with the code:
 
 ## License and warranty
 
-Licensed under `AGPL-3.0-or-later`; see [LICENSE](https://github.com/open-e2ee/signal-protocol-js/blob/main/LICENSE). For proprietary products that cannot meet AGPL obligations, a commercial license is available — see [COMMERCIAL](https://github.com/open-e2ee/signal-protocol-js/blob/main/COMMERCIAL.md) or email licensing@open-e2ee.dev.
+Licensed under `AGPL-3.0-or-later`; see [LICENSE](https://github.com/open-e2ee/signal-protocol-js/blob/main/LICENSE). For proprietary products that cannot meet AGPLv3 obligations, a commercial license is available — see [COMMERCIAL](https://github.com/open-e2ee/signal-protocol-js/blob/main/COMMERCIAL.md) or email licensing@open-e2ee.dev.
 
 The software is provided **as is**, without warranties or conditions of any kind. To the extent permitted by applicable law, copyright holders and contributors are not liable for damages arising from its use. Applications remain responsible for evaluating this SDK against their own requirements and for securing their deployment, storage, authentication, authorization, and operations. This summary does not modify the license; the complete warranty disclaimer and limitation of liability are in sections 15 and 16 of the GNU Affero General Public License.
