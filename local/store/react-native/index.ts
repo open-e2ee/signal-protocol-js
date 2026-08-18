@@ -4,7 +4,7 @@
  * Storage for React Native without Expo.
  * Consumers must provide their own persistent key-value backend and construct
  * the store with `await ReactNativeSignalProtocolStore.create({ storage })`.
- * The adapter implements the core store contract; its durability rests on the
+ * The adapter implements the core store contract. Its durability rests on the
  * injected backend, so verify the backend with the exported
  * backend-conformance kit (`assertBackendConformance`).
  */

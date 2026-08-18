@@ -31,10 +31,14 @@ const remoteObjectStore: SignalProtocolRemoteObjectStore = {
 };
 ```
 
-The backend must scope `requestId` to the authenticated principal, return the
-same reservation for retries, generate the canonical `objectId`, keep the
-provider key private, enforce size/content-type policy, and authorize every
-download, completion, and deletion.
+The backend must:
+
+- scope `requestId` to the authenticated principal
+- return the same reservation for retries
+- generate the canonical `objectId`
+- keep the provider key private
+- enforce size and content-type policy
+- authorize every download, completion, and deletion
 
 Provider adapters:
 

@@ -453,7 +453,7 @@ export class KeyStorage {
         [now, identityType, cutoff, identityType]
       );
     } catch (error) {
-      // Log but don't throw - cleanup is best-effort
+      // Log but do not throw - cleanup is best-effort
       this.logger.warn('Failed to cleanup expired EC signed prekeys', {
         category: 'E2EE',
         data: { error, identityType },
@@ -600,7 +600,7 @@ export class KeyStorage {
   }
 
   /**
-   * Mark Kyber prekey as used — PQXDH replay detection
+   * Mark Kyber prekey as used: PQXDH replay detection
    *
    * Inserts a (kyberPreKeyId, signedPreKeyIdentity, signedPreKeyId, baseKey) tuple.
    * Duplicate tuple = replay attack -> throws ReusedBaseKeyError.
@@ -970,7 +970,7 @@ export class KeyStorage {
     try {
       const db = getRawDatabase();
 
-      // Wrap all DELETEs in transaction to ensure atomic operation
+      // Wrap all DELETEs in one transaction, so the operation is atomic
       // If any DELETE fails, entire operation is rolled back
       await db.withTransactionAsync(async () => {
         await db.runAsync(`DELETE FROM identity_keys`);
@@ -1012,7 +1012,7 @@ export class KeyStorage {
 
       const db = getRawDatabase();
 
-      // Wrap all DELETEs in transaction to ensure atomic operation
+      // Wrap all DELETEs in one transaction, so the operation is atomic
       // If any DELETE fails, entire operation is rolled back
       await db.withTransactionAsync(async () => {
         await db.runAsync(`DELETE FROM identity_keys`);

@@ -6,8 +6,8 @@
  *
  * This module addresses Bug #7: MAC verification failures due to key pair
  * mismatch. If storage corruption or race conditions occur, the receiver
- * may use a private key that doesn't match the public key the sender used,
- * causing different shared secrets and permanent MAC failures.
+ * may use a private key that does not match the public key the sender used.
+ * The shared secrets then differ, and MAC verification fails permanently.
  *
  * @see https://signal.org/docs/specifications/x3dh/ - X3DH key exchange
  */
@@ -22,7 +22,7 @@ import type { Base64 } from '../../types';
  *
  * This is a critical integrity check for X25519 key pairs. When keys are
  * retrieved from storage, corruption or race conditions could result in
- * a private key that doesn't correspond to the stored public key.
+ * a private key that does not correspond to the stored public key.
  *
  * If this validation fails:
  * - The stored keys are corrupted or mismatched
@@ -32,7 +32,7 @@ import type { Base64 } from '../../types';
  * @param publicKey Base64-encoded public key from storage
  * @param privateKey Base64-encoded private key from storage
  * @param context Description for error message (e.g., "signedPreKey:42537")
- * @throws {EncryptionError} If keys don't form a valid pair
+ * @throws {EncryptionError} If keys do not form a valid pair
  *
  * @example
  * ```typescript

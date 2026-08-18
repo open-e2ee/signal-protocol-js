@@ -10,8 +10,8 @@
 
 Archive the current session and optionally set a new one.
 
-The current session is moved to archivedSessions indexed by its baseKey.
-Old archived sessions are trimmed if we exceed maxArchived.
+The function moves the current session to archivedSessions, keyed by its
+baseKey. It trims old archived sessions if we exceed maxArchived.
 
 ## Parameters
 

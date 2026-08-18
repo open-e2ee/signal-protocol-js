@@ -25,7 +25,7 @@ const GENERIC_ERROR = 'Sealed sender verification failed';
  * The derived access key proves a sender knows the recipient's profile key
  * without revealing that profile key to the server.
  *
- * Uses AES-256-GCM through Web Crypto to obtain one counter-mode block:
+ * Uses AES-256-GCM through Web Crypto to get one counter-mode block:
  * ```
  * nonce = zeros[12]
  * plaintext = zeros[16]
@@ -34,7 +34,7 @@ const GENERIC_ERROR = 'Sealed sender verification failed';
  * ```
  *
  * For one 16-byte block, the ciphertext portion is the required counter-mode
- * output; the GCM authentication tag is discarded.
+ * output. The GCM authentication tag is discarded.
  *
  * @param profileKey 32-byte profile key (shared by recipient with contacts)
  * @returns 16-byte (128-bit) access key

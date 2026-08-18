@@ -4,14 +4,14 @@
  *
  * When a client wishes to use a credential, it generates a _presentation
  * proof_ over the same attributes that went into the original credential.
- * This allows the client to demonstrate that it holds a credential over
+ * This allows the client to prove that it holds a credential over
  * certain attributes without actually revealing those attributes. The
  * verifying server checks the proof against the encrypted forms of those
- * attributes and is thus assured the client holds a credential from the
+ * attributes. It is thus assured the client holds a credential from the
  * issuing server.
  *
- * Credential presentation is defined in Chase-Perrin-Zaverucha section 3.2;
- * proofs for verifiable encryption are defined in section 4.1.
+ * Chase-Perrin-Zaverucha section 3.2 defines credential presentation.
+ * Section 4.1 defines the proofs for verifiable encryption.
  *
  * @see https://eprint.iacr.org/2019/1416.pdf -- Signal Private Group System
  */
@@ -44,7 +44,7 @@ const Fn = Point.Fn;
 // Exported types
 // ---------------------------------------------------------------------------
 
-/** Demonstrates to the verifying server that the client holds a credential. */
+/** Proves to the verifying server that the client holds a credential. */
 export interface PresentationProof {
   C_x0: RistrettoPoint;
   C_x1: RistrettoPoint;
@@ -112,7 +112,7 @@ function getPokshoStatement(
     const keyId = key.id;
     const a1Name = `a1_${keyId}`;
 
-    // Trevor Perrin addition: ensure encryption keys are valid
+    // Trevor Perrin addition: check that the encryption keys are valid
     // 0 = z1_{id} * I + a1_{id} * Z
     st.add('0', [
       [`z1_${keyId}`, 'I'],
@@ -258,16 +258,16 @@ function addAttributeCore(
 /**
  * Used to generate presentation proofs.
  *
- * Public attributes are not included in the presentation proof; when the
+ * Public attributes are not included in the presentation proof. When the
  * proof is verified, the verifying server provides its own copy of the
- * public attributes to ensure they have not been tampered with.
+ * public attributes, so a tampered copy cannot pass.
  *
  * @see PresentationProofVerifier
  */
 export class PresentationProofBuilder {
   private encryptionKeys: AnyKeyInfo[] = [];
   private attributes: AttributeRef[] = [];
-  /** Index 0 is reserved for the public attribute point (identity). */
+  /** Index 0 always holds the public attribute point (identity). */
   private attrPoints: RistrettoPoint[];
   private authenticatedMessage: Uint8Array;
 
@@ -312,10 +312,10 @@ export class PresentationProofBuilder {
 
   /**
    * Add an attribute to the proof, encrypted under `keyPair`, but without
-   * proving which key performed the encryption.
+   * proving which key encrypted it.
    *
    * The verifying server still checks that the attribute was correctly
-   * encrypted; it just cannot enforce which key did so.
+   * encrypted. It just cannot enforce which key did so.
    *
    * Order-sensitive.
    */
@@ -340,8 +340,8 @@ export class PresentationProofBuilder {
   /**
    * Add a revealed (unencrypted) attribute to check against the credential.
    *
-   * In practice `attr` is ignored in favor of letting the verifying server
-   * check the attribute itself, but this method must be called to indicate
+   * In practice `attr` is ignored, in favor of letting the verifying server
+   * check the attribute itself. This method must still be called to indicate
    * that there *is* an attribute.
    *
    * Order-sensitive.
@@ -378,7 +378,7 @@ export class PresentationProofBuilder {
     sho.absorbAndRatchet(randomness);
     const z = sho.getScalar();
 
-    // C_y[i] = z * G_y[i] + M[i]
+    // `C_y[i] = z * G_y[i] + M[i]`.
     // For public attrs (index 0) and revealed attrs, M is identity, so this
     // simplifies to z * G_y[i] as in Chase-Perrin-Zaverucha section 3.2.
     const C_y = sys.G_y.slice(0, this.attrPoints.length).map((G_yn, i) =>
@@ -434,7 +434,7 @@ export class PresentationProofBuilder {
           C_y[secondPointIndex].subtract(E_A2)
         );
       }
-      // For revealed attrs, the point is identity; the server incorporates
+      // For revealed attrs, the point is identity. The server incorporates
       // the real value during verification.
     }
 
@@ -466,16 +466,16 @@ export class PresentationProofBuilder {
  * generated and verified with parallel invocations. The size of the proof
  * scales linearly with the number of attributes.
  *
- * Public attributes are not included in the presentation proof; the
- * verifying server provides its own copy to ensure they have not been
- * tampered with (Chase-Perrin-Zaverucha section 3.2).
+ * Public attributes are not included in the presentation proof. The
+ * verifying server provides its own copy, so a tampered copy cannot
+ * pass (Chase-Perrin-Zaverucha section 3.2).
  *
  * @see PresentationProofBuilder
  */
 export class PresentationProofVerifier {
   private encryptionKeys: AnyKeyInfo[] = [];
   private attributes: AttributeRef[] = [];
-  /** Index 0 is reserved for public attributes (initially identity). */
+  /** Index 0 always holds the public attributes (initially identity). */
   private attrPoints: RistrettoPoint[];
   private publicAttrs: ShoHmacSha256;
   private authenticatedMessage: Uint8Array;

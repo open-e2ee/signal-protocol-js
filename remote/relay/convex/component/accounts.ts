@@ -58,28 +58,29 @@ export async function rememberAccount(
     pniBytes: input.callerPniBytes,
   });
   // One ACI, one account. The ACI is what sealed-sender authorization and
-  // group endorsements actually name — a second userId claiming the same ACI
+  // group endorsements actually name. A second userId claiming the same ACI
   // would inherit every authorization decision made about the first. The
-  // host's identify hook owns the userId↔ACI mapping; this enforces that the
+  // host's identify hook owns the userId↔ACI mapping. This enforces that the
   // mapping is a function, at write time, on every mutation that passes
   // through here.
   //
   // This is a write-time guard only: it keeps a duplicate from ever being
   // written, but it does not repair one that already exists. If two rows
   // somehow shared an ACI, `authorizeGroupSendToken` binds by reading
-  // `by_user_id` and comparing the stored ACI, so a token naming that ACI
-  // would bind for both userIds — the very inheritance this prevents. A
+  // `by_user_id` and comparing the stored ACI. A token naming that ACI would
+  // then bind for both userIds, the very inheritance this prevents. A
   // duplicate must therefore never be allowed to exist. It cannot arise
   // here: the check postdates the table, but no deployment carried data
   // across that window.
   //
   // `.first()`, not `.unique()`: fail closed without an untyped throw. Were a
   // duplicate ever present, `.unique()` would throw on *every* mutation from
-  // that ACI — and rememberAccount fronts nearly all of them, so the losing
-  // account (whichever this index happens to return second, not whoever
-  // registered first) would be locked out of sends, prekey uploads, device
-  // and provisioning operations alike until an operator deleted the row.
-  // `.first()` degrades that to a clean 409 on the same broad surface.
+  // that ACI, and rememberAccount fronts nearly all of them. The losing
+  // account would then be locked out of sends, prekey uploads, device and
+  // provisioning operations alike, until an operator deleted the row. The
+  // loser is whichever this index happens to return second, not whoever
+  // registered first. Using `.first()` degrades that to a clean 409 on the
+  // same broad surface.
   const claimant = await ctx.db
     .query('accounts')
     .withIndex('by_aci_bytes', (q) => q.eq('aciBytes', input.callerAciBytes))
@@ -96,12 +97,12 @@ export async function rememberAccount(
     .withIndex('by_user_id', (q) => q.eq('userId', userId))
     .unique();
   if (existing) {
-    // Skip the write when the identity is unchanged. rememberAccount runs
-    // at the top of essentially every mutation, and the same row is read
-    // by sealed-sender authorization on the recipient side — an
-    // unconditional freshness patch would turn this one document into an
-    // OCC conflict hotspot between a user's own concurrent mutations and
-    // every sealed send addressed to them.
+    // Skip the write when the identity is unchanged. The rememberAccount
+    // mutation runs at the top of essentially every mutation, and
+    // sealed-sender authorization reads the same row on the recipient side.
+    // An unconditional freshness patch would turn this one document into an
+    // OCC conflict hotspot. The conflicts would be between a user's own
+    // concurrent mutations and every sealed send addressed to them.
     if (
       sameBytes(existing.aciBytes, input.callerAciBytes) &&
       sameBytes(existing.pniBytes, input.callerPniBytes)
@@ -183,21 +184,23 @@ export interface GroupSendRecipient {
  * Authorize a sealed send by group-send token, verifying before reading.
  *
  * The token endorses a set of ACIs, and the caller supplies the ACI it
- * claims for each recipient, so the entire cryptographic check — parse,
- * expiration, key derivation, signature over the claimed set — runs before
- * this function touches the database. That ordering is what the reference
- * implementation gets by construction (its sealed payloads name recipients
- * by service ID), and it is load-bearing here: with the lookups first, an
- * anonymous caller holding a garbage token could bill the deployment up to
- * one indexed read per named recipient per call, and this path is
- * deliberately exempt from the per-recipient send budget because the token
- * is supposed to be the gate.
+ * claims for each recipient. The entire cryptographic check runs before this
+ * function touches the database: parse, expiration, key derivation, and
+ * signature over the claimed set.
  *
- * Only after the token verifies are the claims bound: each recipient's
+ * That ordering is what the reference implementation gets by construction,
+ * because its sealed payloads name recipients by service ID. It is
+ * load-bearing here. With the lookups first, an anonymous caller holding a
+ * garbage token could bill the deployment. The cost is up to one indexed
+ * read per named recipient per call. This path is deliberately exempt from
+ * the per-recipient send budget, because the token is supposed to be the
+ * gate.
+ *
+ * Only after the token verifies are the claims bound. Each recipient's
  * stored account must carry exactly the ACI the caller supplied for it. A
- * caller who lies about a binding fails here — and has necessarily already
- * presented a token our own group server issued over the claimed set, so
- * the reads it spent were an authenticated member's to spend.
+ * caller who lies about a binding fails here. Such a caller has necessarily
+ * already presented a token our own group server issued over the claimed
+ * set. The reads it spent were an authenticated member's to spend.
  */
 export async function authorizeGroupSendToken(
   ctx: QueryCtx | MutationCtx,

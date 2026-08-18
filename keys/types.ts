@@ -10,7 +10,7 @@
 
 import type { PublicKey, PrivateKey, Signature, KeyPair } from './branded';
 
-/** Signal Protocol identity type — ACI (account) or PNI (discoverable identifier). */
+/** Signal Protocol identity type: ACI (account) or PNI (discoverable identifier). */
 export {};
 export type IdentityType = 'aci' | 'pni';
 
@@ -92,7 +92,7 @@ export interface EcOneTimePreKey {
 /**
  * ML-KEM-1024 prekey (historical public name, rotates weekly)
  *
- * `KyberPreKey` is retained as an API identifier, but the bytes are standardized
+ * `KyberPreKey` survives as an API identifier, but the bytes are standard
  * ML-KEM-1024 with the profile's mandatory `0x0A` serialization.
  */
 export interface KyberPreKey {
@@ -106,7 +106,7 @@ export interface KyberPreKey {
 /**
  * KEM one-time prekey (consumed on use, post-quantum)
  *
- * Per PQXDH spec Section 3.2, these are signed one-time pqkem prekeys
+ * Per PQXDH spec Section 3.2, the identity key signs these one-time pqkem prekeys
  * that provide per-session post-quantum forward secrecy.
  * Server prefers these over the last-resort KEM prekey.
  */
@@ -152,7 +152,7 @@ export interface KemOneTimePreKey {
  *
  * These inputs support the profile's conditional hybrid-security and
  * one-time-prekey properties. See `docs/SECURITY.md` for their assumptions and
- * limits; this data shape alone is not a security proof.
+ * limits. This data shape alone is not a security proof.
  *
  * @see https://signal.org/docs/specifications/pqxdh/
  * @see https://signal.org/docs/specifications/x3dh/
@@ -172,14 +172,14 @@ export interface PreKeyBundle {
    * - Primary device: 1
    * - Linked devices: 2-5 (max 5 devices per user)
    *
-   * Used for multi-device fanout - messages are encrypted separately
+   * Used for multi-device fanout. The client encrypts messages separately
    * for each of the recipient's devices.
    */
   deviceId: number;
 
   /**
    * Versioned per-user identity trust object. ACI and PNI are independent.
-   * Linked devices expose the same tuple; registration IDs and prekeys remain
+   * Linked devices expose the same tuple. Registration IDs and prekeys remain
    * device-specific. Consumers derive commitments locally.
    */
   identity: CompositeIdentityV1;
@@ -194,7 +194,7 @@ export interface PreKeyBundle {
    * ID, and public key in the profile's domain-separated context.
    */
   ecSignedPreKey: {
-    /** Key ID for tracking which key was used */
+    /** Key ID for tracking which key the session used */
     keyId: number;
     /** X25519 public key (32 bytes, base64) */
     publicKey: PublicKey;
@@ -208,11 +208,11 @@ export interface PreKeyBundle {
    * Single-use key consumed atomically on fetch. Provides additional
    * forward secrecy - if compromised, only affects one session.
    *
-   * May be null/undefined if the server has exhausted the prekey pool.
+   * May be null/undefined if the server exhausted the prekey pool.
    * Session establishment still works without it (degraded to 3-DH).
    */
   ecOneTimePreKey?: {
-    /** Key ID for tracking which key was consumed */
+    /** Key ID for tracking which key the session consumed */
     keyId: number;
     /** X25519 public key (32 bytes, base64) */
     publicKey: PublicKey;
@@ -224,11 +224,11 @@ export interface PreKeyBundle {
    * Post-quantum key encapsulation mechanism. Provides protection against
    * "harvest now, decrypt later" attacks from quantum computers.
    *
-   * Reusable KEM prekey used when the server has exhausted the one-time KEM pool.
-   * Server and relay adapters must not place one-time KEM material in this field;
-   * use `kemOneTimePreKey` for consumed one-time KEM material.
+   * Reusable KEM prekey used when the server exhausted the one-time KEM pool.
+   * Server and relay adapters must not place one-time KEM material in this field.
+   * Use `kemOneTimePreKey` for consumed one-time KEM material.
    *
-   * - Public key: 1569 bytes (`0x0A` plus 1568 raw bytes; base64 encoded)
+   * - Public key: 1569 bytes (`0x0A` plus 1568 raw bytes, base64 encoded)
    * - Ciphertext: 1569 bytes (`0x0A` plus 1568 raw bytes)
    * - Shared secret: 32 bytes
    *
@@ -249,20 +249,20 @@ export interface PreKeyBundle {
   /**
    * KEM One-Time PreKey (ML-KEM-1024 + Ed25519 signature, optional).
    *
-   * Per PQXDH spec Section 3.2, these are signed one-time pqkem prekeys
+   * Per PQXDH spec Section 3.2, the identity key signs these one-time pqkem prekeys
    * that provide per-session post-quantum forward secrecy.
    *
    * Server prefers these over the last-resort KEM prekey. Consumed atomically on
    * fetch (like EC one-time prekeys). A bundle should contain either this field
    * or `kemLastResortPreKey` as the selected KEM material for PQXDH.
    *
-   * May be null/undefined if the server has exhausted the prekey pool.
+   * May be null/undefined if the server exhausted the prekey pool.
    * Session establishment still works without it (falls back to last-resort).
    *
    * @see https://signal.org/docs/specifications/pqxdh/#sending-the-initial-message
    */
   kemOneTimePreKey?: {
-    /** Key ID for tracking which key was consumed */
+    /** Key ID for tracking which key the session consumed */
     keyId: number;
     /** Tagged ML-KEM-1024 public key (1569 bytes, base64) */
     publicKey: PublicKey;

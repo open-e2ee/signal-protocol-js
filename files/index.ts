@@ -7,7 +7,7 @@
  * Use this alongside `SignalProtocolRemoteObjectStore` implementations for the common
  * two-layer attachment flow:
  * 1. Encrypt file bytes with streaming AEAD
- * 2. Upload ciphertext through remote object storage
+ * 2. Upload ciphertext through the remote object store
  * 3. Exchange metadata and keys through Signal Protocol
  * 4. Download and decrypt ciphertext locally
  */

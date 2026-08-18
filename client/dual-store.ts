@@ -1,5 +1,5 @@
 /**
- * Dual Protocol Store — ACI/PNI Identity Router
+ * Dual Protocol Store: ACI/PNI Identity Router
  *
  * Thin wrapper providing .aci() and .pni() views over KeyStorage,
  * each pre-filling identityType for all operations.
@@ -132,7 +132,7 @@ export class IdentityTypedStore {
 }
 
 /**
- * Dual protocol store — routes operations to ACI or PNI identity stores.
+ * Dual protocol store. Routes operations to ACI or PNI identity stores.
  *
  * Usage:
  * ```typescript

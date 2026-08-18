@@ -5,9 +5,9 @@
  * They prevent accidentally mixing different kinds of base64 strings
  * (public keys, private keys, signatures, etc.).
  *
- * All key types extend Base64 (include the base64 brand), so they can be
- * passed to functions expecting Base64 strings while still maintaining
- * their specific type identity.
+ * Every key type extends Base64 and includes the base64 brand. A function that
+ * expects a Base64 string accepts them, and each one keeps its specific type
+ * identity.
  *
  * @example
  * ```typescript
@@ -37,20 +37,20 @@ declare const __brand_ciphertext: unique symbol;
 /**
  * Base64-encoded public key.
  *
- * Branded type prevents accidentally using a private key where a public key
- * is expected, or vice versa. TypeScript will catch these errors at compile time.
+ * Branded type prevents accidentally using a private key where the API needs a
+ * public key, or vice versa. TypeScript catches these errors at compile time.
  *
- * Extends Base64, so can be passed to functions expecting Base64.
+ * Extends Base64, so a function that expects Base64 accepts it.
  */
 export type PublicKey = Base64 & { readonly [__brand_public]: true };
 
 /**
  * Base64-encoded private key (stored only in SecureStore).
  *
- * Branded type ensures private keys aren't accidentally passed where
- * public keys are expected.
+ * Branded type prevents a private key from reaching a parameter that needs a
+ * public key.
  *
- * Extends Base64, so can be passed to functions expecting Base64.
+ * Extends Base64, so a function that expects Base64 accepts it.
  */
 export type PrivateKey = Base64 & { readonly [__brand_private]: true };
 
@@ -59,16 +59,16 @@ export type PrivateKey = Base64 & { readonly [__brand_private]: true };
  *
  * Branded type prevents mixing signatures with keys or ciphertext.
  *
- * Extends Base64, so can be passed to functions expecting Base64.
+ * Extends Base64, so a function that expects Base64 accepts it.
  */
 export type Signature = Base64 & { readonly [__brand_signature]: true };
 
 /**
  * Base64-encoded ciphertext.
  *
- * Branded type ensures ciphertext isn't confused with keys or signatures.
+ * Branded type keeps ciphertext distinct from keys and signatures.
  *
- * Extends Base64, so can be passed to functions expecting Base64.
+ * Extends Base64, so a function that expects Base64 accepts it.
  */
 export type Ciphertext = Base64 & { readonly [__brand_ciphertext]: true };
 

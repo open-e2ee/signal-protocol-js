@@ -10,10 +10,10 @@
 
 Base64-encoded public key.
 
-Branded type prevents accidentally using a private key where a public key
-is expected, or vice versa. TypeScript will catch these errors at compile time.
+Branded type prevents accidentally using a private key where the API needs a
+public key, or vice versa. TypeScript catches these errors at compile time.
 
-Extends Base64, so can be passed to functions expecting Base64.
+Extends Base64, so a function that expects Base64 accepts it.
 
 ## Type Declaration
 

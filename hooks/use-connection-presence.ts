@@ -49,7 +49,7 @@ import { resolveSignalProtocolLogger, type ILogger } from '../logger';
 /**
  * Heartbeat interval for presence keep-alive.
  * Server has 30-second timeout, so we send heartbeat every 10 seconds
- * to ensure we refresh `lastSeen` before the timeout fires.
+ * so we refresh `lastSeen` before the timeout fires.
  */
 export {};
 const HEARTBEAT_INTERVAL_MS = 10 * 1000;
@@ -139,7 +139,7 @@ export function useConnectionPresence({
           level: 'debug',
           data: { deviceId: currentDeviceId },
         });
-        // May fail if network is down - that's OK, server timeout will catch it
+        // May fail if network is down - that is OK, server timeout will catch it
         markDisconnected(currentDeviceId).catch(() => {
           logger.warn('Failed to mark disconnected', {
             category: 'E2EE',
@@ -185,7 +185,7 @@ export function useConnectionPresence({
       // App returning to foreground
       if (wasInBackground && nextAppState === 'active') {
         // Query ACTUAL connection state, not the potentially stale ref
-        // After long background, WebSocket may have reconnected but ref wasn't updated
+        // After long background, WebSocket may have reconnected but ref was not updated
         const actuallyConnected = forceConnectionCheck?.() ?? wasConnectedRef.current;
 
         // Log to native logger (visible in Console.app)
@@ -264,7 +264,7 @@ export function useConnectionPresence({
           return;
         }
 
-        // Lightweight heartbeat — writes only to heartbeats table, triggers 0 query reruns
+        // Lightweight heartbeat. Writes only to heartbeats table, triggers 0 query reruns
         relayRef.current.heartbeat(currentDeviceId).catch((err) => {
           logger.warn('Failed to send presence heartbeat', {
             category: 'Device',
@@ -316,9 +316,9 @@ export function useConnectionPresence({
 
     // Subscribe to app lifecycle state changes
     const appStateSubscription = AppState.addEventListener('change', (nextState) => {
-      // Pass a function that returns the actual connection state
-      // This is critical after long background - the ref may be stale but
-      // lastKnownConnectionState is updated by the subscription callback
+      // Pass a function that returns the actual connection state.
+      // This is critical after a long background period. The ref may be stale,
+      // but lastKnownConnectionState is updated by the subscription callback.
       handleAppStateChange(nextState, () => lastKnownConnectionState);
 
       // Manage heartbeat based on app state
@@ -330,7 +330,7 @@ export function useConnectionPresence({
       }
     });
 
-    // When the effect enables (for example after unlock), seed presence from the
+    // When the effect enables (for example after the device unlocks), seed presence from the
     // actual socket state instead of assuming "enabled" means "online".
     const freshAppState = AppState.currentState;
     const inBackground = freshAppState !== 'active';

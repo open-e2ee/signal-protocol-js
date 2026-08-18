@@ -2,7 +2,7 @@
  * Signal Protocol Key Generation
  *
  * Pure functions for generating Signal Protocol keys.
- * These are stateless and don't interact with storage.
+ * These are stateless and do not interact with storage.
  *
  * @see https://signal.org/docs/specifications/x3dh/#keys
  */
@@ -130,7 +130,7 @@ export async function generateEcSignedPreKey(
  * Generate batch of EC one-time prekeys
  *
  * Creates multiple EC one-time prekeys for X3DH.
- * Each key can only be used once for forward secrecy.
+ * Each key serves only one use, for forward secrecy.
  *
  * @param count Number of prekeys to generate
  * @param startId Starting ID for sequential assignment
@@ -204,9 +204,9 @@ export async function generateKyberLastResortPreKey(
  * Generate batch of KEM one-time prekeys (post-quantum)
  *
  * Creates multiple one-time Kyber prekeys for PQXDH.
- * Each key can only be used once for per-session post-quantum forward secrecy.
+ * Each key serves only one use, for per-session post-quantum forward secrecy.
  *
- * Per PQXDH spec Section 3.2, these are signed one-time pqkem prekeys
+ * Per PQXDH spec Section 3.2, the identity key signs these one-time pqkem prekeys
  * that the server prefers over the last-resort KEM prekey.
  *
  * Uses the same batch size as EC one-time prekeys (the reference implementation uses 100 for both).

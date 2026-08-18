@@ -11,7 +11,7 @@ SESAME store interface for multi-device session management.
 Implements the SESAME algorithm for automatic session convergence
 across multiple devices.
 
-Session state is stored directly on each `DeviceRecord`.
+Each `DeviceRecord` holds its session state directly.
 
 ## See
 

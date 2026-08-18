@@ -111,6 +111,8 @@ async function markDeliveredSilently(
  * (ContentHint classification, retry requests, stale prekey handling).
  *
  * MESSAGE ROUTING ARCHITECTURE (profile):
+ *
+ * ```
  * ┌─────────────────────────────────────────────────────────────────┐
  * │ All messages arrive as 'ciphertext' envelopes (or 'prekey_bundle')
  * │ The relay contract carries only the outer ciphertext type.      │
@@ -120,6 +122,7 @@ async function markDeliveredSilently(
  * │   → receiptMessage: Receipt → handleDeliveryReceipt             │
  * │   → typingMessage: Typing → handleTypingIndicator               │
  * └─────────────────────────────────────────────────────────────────┘
+ * ```
  *
  * Why receipts/typing bypass ContentRouter:
  * - Receipts update message STATUS, not create new content
@@ -157,7 +160,7 @@ async function handleDecryptionSuccess(
   callbacks: RelaySubscriptionCallbacks
 ): Promise<void> {
   // Route by decrypted content type, not the outer relay-envelope type.
-  // Parse content to determine if it's a receipt, typing indicator, or data message.
+  // Parse content to determine if it is a receipt, typing indicator, or data message.
   const inspectedContent = ctx.contentAdapter.inspectContent(decryptedEnvelope.content);
   const { receipt, typing } = inspectedContent;
 
@@ -291,7 +294,7 @@ async function handleDecryptionError(
 
   // Early exit: Implicit messages (typing indicators, receipts) should be
   // silently discarded without ERROR-level logs. This prevents log spam
-  // for expected failures on messages that won't be retried anyway.
+  // for expected failures on messages that will not be retried anyway.
   if (isImplicitContentType(envelope)) {
     ctx.logger.debug('Discarding undecryptable protocol message (IMPLICIT)', {
       category: 'E2EE',
@@ -429,7 +432,7 @@ async function sendRetryRequest(
         },
       });
 
-      // Mark failed message as delivered so it doesn't reappear
+      // Mark failed message as delivered so it does not reappear
       if (envelope.id) {
         try {
           await ctx.relay.markDelivered(envelope.id);
@@ -466,7 +469,7 @@ async function sendRetryRequest(
  * identifier collisions.
  *
  * Triggers on:
- * 1. PREKEY_NOT_FOUND - server doesn't have the key we expect
+ * 1. PREKEY_NOT_FOUND - server does not have the key we expect
  * 2. DECRYPTION_FAILED on PreKeyMessage - MAC failure on fresh session
  */
 async function handleStalePreKeyIndicator(

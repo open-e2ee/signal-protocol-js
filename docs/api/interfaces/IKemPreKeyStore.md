@@ -9,8 +9,8 @@
 Kyber One-Time PreKey store interface (post-quantum security).
 
 Manages one-time ML-KEM-1024 (Kyber) prekeys for per-session post-quantum forward secrecy.
-One-time KEM prekeys are consumed after use and provide additional security layer
-beyond the last-resort Kyber prekey.
+The protocol consumes a one-time KEM prekey after use. Each one adds a
+security layer beyond the last-resort Kyber prekey.
 
 Naming convention matches EC prekeys:
 - `IEcOneTimePreKeyStore` → one-time EC prekeys (`ecPreKeys`)
@@ -96,9 +96,9 @@ Retrieve all one-time KEM prekeys.
 
 > **removeKemOneTimePreKey**(`keyId`, `identityType?`): `Promise`\<`void`\>
 
-Remove a one-time KEM prekey after it has been used.
+Remove a one-time KEM prekey after a session uses it.
 
-CRITICAL: Must be called immediately after successful decapsulation
+CRITICAL: Call this immediately after successful decapsulation
 to provide per-session post-quantum forward secrecy.
 
 #### Parameters

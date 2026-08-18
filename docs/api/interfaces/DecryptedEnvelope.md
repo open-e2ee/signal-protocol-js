@@ -52,7 +52,7 @@ Message type hint (if available from envelope) - apps define their own type unio
 
 > **receivedAt**: `number`
 
-When the message was received locally
+When the device received the message locally
 
 ***
 

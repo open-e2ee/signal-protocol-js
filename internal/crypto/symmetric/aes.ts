@@ -44,9 +44,9 @@ function buf(value: Uint8Array | undefined): Uint8Array<ArrayBuffer> | undefined
  * value, so the call fails with `AeadParams: additionalData: Not a BufferSource`.
  *
  * Every AES-GCM caller that passes no AAD therefore worked under Node and threw
- * in a browser — including device provisioning and device transfer, neither of
- * which passes AAD at all. Building the parameters in one place is what keeps
- * the next call site from reintroducing it.
+ * in a browser. Device provisioning and device transfer are two such callers,
+ * and neither passes AAD at all. Building the parameters in one place is what
+ * keeps the next call site from reintroducing it.
  */
 function gcmParams(iv: Uint8Array, additionalData?: Uint8Array): AesGcmParams {
   return {
@@ -595,5 +595,5 @@ export const DECRYPT = aesCbcHmacDecrypt;
 
 // Note: The Signal Protocol Section 3 ENCRYPT/DECRYPT functions include
 // identity-bound MAC (AD includes sender/receiver identity keys). The raw
-// aesCbcHmacEncrypt/aesCbcHmacDecrypt functions are primitives that don't
+// aesCbcHmacEncrypt/aesCbcHmacDecrypt functions are primitives that do not
 // include this binding. Use the cipher layer for full protocol compliance.

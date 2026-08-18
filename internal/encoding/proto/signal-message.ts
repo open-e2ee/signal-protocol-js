@@ -37,7 +37,7 @@
  * encrypted PreKeySignalProtocolMessage.
  *
  * The pq_ratchet field (field 5) carries opaque SPQR binary data encoded
- * via encodeSPQRWire/decodeSPQRWire in pq-ratchet-serialize.ts — NOT protobuf.
+ * via encodeSPQRWire/decodeSPQRWire in pq-ratchet-serialize.ts. NOT protobuf.
  *
  * @internal
  */
@@ -241,8 +241,8 @@ export function signalProtocolMessageAddressesEqual(
  * - counter -> counter (field 2, uint32)
  * - previousCounter -> previous_counter (field 3, uint32)
  * - ciphertext -> ciphertext (field 4, bytes)
- * - pqRatchet -> pq_ratchet (field 5, bytes) — opaque SPQR binary
- * - addresses -> addresses (field 6, bytes) — sender/recipient address binding
+ * - pqRatchet -> pq_ratchet (field 5, bytes): opaque SPQR binary
+ * - addresses -> addresses (field 6, bytes): sender/recipient address binding
  */
 export interface SignalProtocolMessageFields {
   /** Current ratchet public key (field 1) */
@@ -268,12 +268,12 @@ export interface SignalProtocolMessageFields {
  * [field1: ratchet_key] [field2: counter] [field3: previous_counter]
  * [field4: ciphertext] [field5: pq_ratchet] [field6: addresses]
  *
- * This produces the **protobuf bytes only** — no version byte or MAC.
+ * This produces the **protobuf bytes only**. No version byte or MAC.
  * Use `frameSignalProtocolMessage()` from `envelope.ts` for the complete wire format.
  *
- * Presence, not proto3 defaults, decides what reaches the wire: a field the
- * caller set is written even when it equals the type's zero value, so a
- * counter of 0 and a key id of 0 are distinguishable from absent. Fields are
+ * Presence, not proto3 defaults, decides what reaches the wire. A field the
+ * caller set is written even when it equals the type's zero value. A counter
+ * of 0 and a key id of 0 are therefore distinguishable from absent. Fields are
  * written in ascending field-number order.
  *
  * @param msg - Message fields to encode
@@ -323,7 +323,7 @@ export function encodeSignalProtocolMessage(msg: SignalProtocolMessageFields): U
  * Decode a SignalProtocolMessage from protobuf bytes.
  *
  * Handles unknown fields gracefully (skips them) for forward compatibility.
- * Expects raw protobuf bytes — strip the version byte and MAC first using
+ * Expects raw protobuf bytes. Strip the version byte and MAC first using
  * `parseSignalProtocolMessageEnvelope()` from `envelope.ts`.
  *
  * @param bytes - Protobuf-encoded bytes (no version byte or MAC)
@@ -435,9 +435,9 @@ export interface PreKeySignalProtocolMessageFields {
   kemLastResortPreKeyId?: number;
   /** KEM last-resort encapsulated ciphertext (wire: kyberCiphertext, field 8, optional) */
   kemLastResortCiphertext?: Uint8Array;
-  /** KEM one-time prekey ID (field 100, optional — custom extension) */
+  /** KEM one-time prekey ID (field 100, optional, custom extension) */
   kemOneTimePreKeyId?: number;
-  /** KEM one-time encapsulated ciphertext (field 101, optional — custom extension) */
+  /** KEM one-time encapsulated ciphertext (field 101, optional, custom extension) */
   kemOneTimeCiphertext?: Uint8Array;
   /** Recipient identity namespace: ACI=1 or PNI=2 (SDK field 102). */
   recipientIdentityType: number;
@@ -446,9 +446,9 @@ export interface PreKeySignalProtocolMessageFields {
 /**
  * Encode a PreKeySignalProtocolMessage to protobuf bytes.
  *
- * Fields 1-8 are the base protobuf fields; 100-102 are SDK extensions.
+ * Fields 1-8 are the base protobuf fields. Fields 100-102 are SDK extensions.
  *
- * This produces the **protobuf bytes only** — no version byte.
+ * This produces the **protobuf bytes only**. No version byte.
  * Use `framePreKeySignalProtocolMessage()` from `envelope.ts` for the complete wire format.
  *
  * @param msg - PreKey message fields to encode
@@ -513,7 +513,7 @@ export function encodePreKeySignalProtocolMessage(msg: PreKeySignalProtocolMessa
  * Decode a PreKeySignalProtocolMessage from protobuf bytes.
  *
  * Handles unknown fields gracefully (skips them) for forward compatibility.
- * Expects raw protobuf bytes — strip the version byte first using
+ * Expects raw protobuf bytes. Strip the version byte first using
  * `parsePreKeySignalProtocolMessageEnvelope()` from `envelope.ts`.
  *
  * @param bytes - Protobuf-encoded bytes (no version byte)
@@ -522,21 +522,22 @@ export function encodePreKeySignalProtocolMessage(msg: PreKeySignalProtocolMessa
 export function decodePreKeySignalProtocolMessage(bytes: Uint8Array): PreKeySignalProtocolMessageFields {
   assertWireMessageSize(bytes, 'PreKeySignalProtocolMessage');
 
-  // Every field is tracked by presence, so an absent field stays undefined
-  // while a present one keeps its value — including 0. Proto2 optional
-  // presence makes value 0 a valid key ID, distinct from "field not set".
+  // Every field is tracked by presence. An absent field stays undefined, while
+  // a present one keeps its value, zero included. Proto2 optional presence
+  // makes value 0 a valid key ID, distinct from "field not set".
   const wireMessage: {
-    oneTimePreKeyId?: number; // wire field 1
-    baseKey?: Uint8Array; // wire field 2
-    identityKey?: Uint8Array; // wire field 3
-    message?: Uint8Array; // wire field 4
-    registrationId?: number; // wire field 5
-    signedPreKeyId?: number; // wire field 6
-    kyberPreKeyId?: number; // wire field 7
-    kyberCiphertext?: Uint8Array; // wire field 8
-    kemOneTimePreKeyId?: number; // wire field 100
-    kemOneTimeCiphertext?: Uint8Array; // wire field 101
-    recipientIdentityType?: number; // wire field 102
+    oneTimePreKeyId?: number; // Wire field 1.
+    baseKey?: Uint8Array; // Wire field 2.
+    identityKey?: Uint8Array; // Wire field 3.
+    message?: Uint8Array; // Wire field 4.
+    registrationId?: number; // Wire field 5.
+    signedPreKeyId?: number; // Wire field 6.
+
+    kyberPreKeyId?: number; // Wire field 7.
+    kyberCiphertext?: Uint8Array; // Wire field 8.
+    kemOneTimePreKeyId?: number; // Wire field 100.
+    kemOneTimeCiphertext?: Uint8Array; // Wire field 101.
+    recipientIdentityType?: number; // Wire field 102.
   } = {};
 
   const reader = new ProtoReader(bytes);
@@ -625,7 +626,7 @@ export function decodePreKeySignalProtocolMessage(bytes: Uint8Array): PreKeySign
     result.kemLastResortCiphertext = wireMessage.kyberCiphertext; // wire kyberCiphertext → TS kemLastResortCiphertext
   }
 
-  // Optional custom extension fields (100-101) — already use correct names
+  // Optional custom extension fields (100-101). Already use correct names
   if (wireMessage.kemOneTimePreKeyId !== undefined) {
     result.kemOneTimePreKeyId = wireMessage.kemOneTimePreKeyId;
   }

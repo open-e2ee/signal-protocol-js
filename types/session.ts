@@ -33,9 +33,9 @@ import type { ResolvedSPQRLimits, SCKAMode } from './protocol-config';
 /**
  * Persisted record version for the composite-identity session profile.
  *
- * Version 4 is a deliberate pre-1.0 format break: version 3 records did not bind
- * the ACI/PNI namespaces of both endpoint identity tuples and must be reset,
- * never migrated or interpreted as version 4.
+ * Version 4 is a deliberate pre-1.0 format break. Version 3 records did not
+ * bind the ACI/PNI namespaces of both endpoint identity tuples. Such records
+ * must be reset, never migrated or interpreted as version 4.
  */
 export const CURRENT_SESSION_RECORD_VERSION = 4;
 
@@ -58,7 +58,7 @@ export interface StoredMessageKey {
   /**
    * 32-byte seed for key derivation (proto: seed, field 2).
    *
-   * The seed is used to derive the full message key (cipher_key, mac_key, iv)
+   * Callers derive the full message key (cipher_key, mac_key, iv) from the seed
    * on demand. This is 3x more storage efficient than storing pre-computed keys.
    */
   seed: Base64;
@@ -97,8 +97,8 @@ export interface ReceiverChain {
   /**
    * Skipped message keys (proto: message_keys, field 3).
    *
-   * Keys are stored when messages arrive out of order. When the skipped
-   * message arrives, its key is consumed (removed) from this array.
+   * This array holds keys for messages that arrive out of order. When the
+   * skipped message arrives, decryption consumes (removes) its key.
    */
   messageKeys: StoredMessageKey[];
 }
@@ -127,7 +127,7 @@ export interface SessionState {
    * Session state identifier - initiator's ephemeral public key (EKA).
    *
    * The initiator's ephemeral public key is the unique identifier for this
-   * session state. It is named "baseKey" because:
+   * session state. This field takes the name "baseKey" because:
    * - "ephemeral" describes the key's LIFECYCLE (temporary, single-use)
    * - "base" describes the key's ROLE (foundation for SK derivation in X3DH/PQXDH)
    *
@@ -135,8 +135,8 @@ export interface SessionState {
    * For responder (Bob): Set to senderEphemeralKey from PreKeyMessage
    *
    * CRITICAL: This is different from sessionId/ProtocolAddress lookup.
-   * Sessions are LOOKED UP by ProtocolAddress (userId:deviceId), but
-   * session STATES are IDENTIFIED by baseKey (ephemeral public key).
+   * A ProtocolAddress (userId:deviceId) LOOKS UP a session, but a baseKey
+   * (ephemeral public key) IDENTIFIES a session STATE.
    *
    */
   baseKey: Base64;
@@ -153,14 +153,14 @@ export interface SessionState {
   /**
    * Our registration ID (from our IdentityKeyPair).
    *
-   * Generated once per app install. Used to detect if we've reinstalled.
+   * Generated once per app install. Detects a reinstall on our side.
    */
   localRegistrationId: number;
 
   /**
    * Remote party's registration ID (from their PreKeyBundle).
    *
-   * If this changes, they've reinstalled their app and we should
+   * If this changes, they reinstalled their app and we should
    * archive the old session and establish a new one.
    */
   remoteRegistrationId: number;
@@ -172,15 +172,16 @@ export interface SessionState {
   // Root key for deriving new chain keys (spec name)
   RK: Base64; // Root Key
 
-  // Chain keys - symmetric ratchet (spec names)
-  // Per Signal Protocol Section 3.3, responder's chain keys are undefined until first DHRatchet
-  CKs: Base64 | undefined; // Sending Chain Key (undefined for lazy init)
-  CKr: Base64 | undefined; // Receiving Chain Key (undefined for lazy init)
+  // Chain keys - symmetric ratchet (spec names).
+  // Per Signal Protocol Section 3.3, the responder's chain keys are undefined
+  // until the first DHRatchet.
+  CKs: Base64 | undefined; // Sending Chain Key (undefined for lazy init).
+  CKr: Base64 | undefined; // Receiving Chain Key (undefined for lazy init).
 
-  // Message counters (spec names)
-  Ns: number; // Number of messages sent in current sending chain
-  Nr: number; // Number of messages received in current receiving chain
-  PN: number; // Previous chain length (sent in header)
+  // Message counters (spec names).
+  Ns: number; // Number of messages sent in current sending chain.
+  Nr: number; // Number of messages received in current receiving chain.
+  PN: number; // Previous chain length (sent in header).
 
   /**
    * Receiver chains with skipped message keys (v3 format).
@@ -209,27 +210,27 @@ export interface SessionState {
    * to detect replay attacks. If a message arrives with an old DHr:
    * - If in receiverChains: decrypt (out-of-order message)
    * - If in processedChains but not receiverChains: replay attack (already processed)
-   * - If not in either: new chain (perform DH ratchet)
+   * - If not in either: new chain (run the DH ratchet)
    *
    * Key: DHr (Base64 DH public key)
    * Value: { lastNr: number, timestamp: number }
    */
   processedChains?: Record<string, { lastNr: number; timestamp: number }>;
 
-  // X3DH prekey tracking (for PreKeyMessage - only set for initiator)
+  // X3DH prekey tracking (for PreKeyMessage - only set for initiator).
   /** Explicit remote identity namespace included in authenticated PreKeyMessages. */
   recipientIdentityType?: IdentityType;
-  usedSignedPreKeyId?: number; // ID of remote party's signed prekey used in X3DH
-  usedOneTimePreKeyId?: number; // ID of remote party's one-time prekey used in X3DH (if available)
-  usedKyberPreKeyId?: number; // ID of remote party's Kyber prekey used in PQXDH (if available)
-  usedKemOneTimePreKeyId?: number; // ID of remote party's one-time KEM prekey used in PQXDH (if available)
+  usedSignedPreKeyId?: number; // ID of remote party's signed prekey used in X3DH.
+  usedOneTimePreKeyId?: number; // ID of remote party's one-time prekey used in X3DH (if available).
+  usedKyberPreKeyId?: number; // ID of remote party's Kyber prekey used in PQXDH (if available).
+  usedKemOneTimePreKeyId?: number; // ID of remote party's one-time KEM prekey used in PQXDH (if available).
 
   /**
    * Prekey IDs pending deletion after first successful decryption.
    *
-   * One-time prekeys are deleted after decryption succeeds, not after session
+   * The client deletes one-time prekeys after decryption succeeds, not after session
    * establishment. This prevents
-   * irrecoverable failure if the inner message is corrupted (the sender can
+   * irrecoverable failure if the inner message arrives corrupted (the sender can
    * retry with the same prekey).
    *
    * Set during performX3DHResponder() and cleared after the first successful
@@ -253,11 +254,11 @@ export interface SessionState {
   /**
    * Whether this session still needs to send PreKeyMessages.
    *
-   * Set to true when the session is created as initiator. Remains true until
-   * the first message is received from the responder, which proves the
+   * Set to true when the client creates the session as initiator. Remains true
+   * until the first message arrives from the responder, which proves the
    * responder successfully processed the PreKeyMessage.
    *
-   * This ensures that if the first PreKeyMessage is lost, subsequent messages
+   * If the first PreKeyMessage is lost, subsequent messages
    * are still sent as PreKeyMessages so the responder can establish the session.
    *
    * @default undefined (treated as false for responder sessions)
@@ -265,7 +266,7 @@ export interface SessionState {
   unacknowledgedPreKeyMessage?: boolean;
 
   /**
-   * Whether we've received at least one message in this session.
+   * Whether we received at least one message in this session.
    *
    * Unacknowledged PreKey sessions (where the initiator has not received a
    * reply) expire after 30 days (MAX_UNACKNOWLEDGED_SESSION_AGE).
@@ -365,7 +366,7 @@ export interface SCKAState {
   /** Current epoch number (increments with each DH ratchet) */
   epoch: number;
 
-  /** Direction of communication ('A2B' = Alice to Bob, 'B2A' = Bob to Alice) */
+  /** Which way messages flow ('A2B' = Alice to Bob, 'B2A' = Bob to Alice) */
   direction: 'A2B' | 'B2A';
 
   /** Our current Kyber private key (for receiving) */
@@ -440,7 +441,7 @@ export interface SPQRState {
    * Signal Protocol Section 8.4:
    * "A recommended policy is to delete message keys more than one week old"
    *
-   * Note: Using Record for JSON serialization. Keys are stored as strings
+   * Note: Using Record for JSON serialization. The map holds keys as strings
    * in format "epoch:index" -> { key: Base64, timestamp: number }
    */
   MKSKIPPED: Record<
@@ -448,7 +449,7 @@ export interface SPQRState {
     {
       /** Message key */
       key: Base64;
-      /** Timestamp when key was stored (for expiration) */
+      /** Timestamp of when this key entered the store (for expiration) */
       timestamp: number;
     }
   >;
@@ -465,8 +466,8 @@ export interface SPQRState {
    * - `'braid'` (default): specification-defined ML-KEM Braid profile
    * - `'direct'`: Explicit direct ML-KEM-768 encapsulation mode
    *
-   * Once set during session establishment, the mode is fixed for the
-   * lifetime of the session to ensure protocol consistency.
+   * Once set during session establishment, the mode stays fixed for the
+   * lifetime of the session, which keeps the protocol consistent.
    *
    * @default 'braid'
    */
@@ -482,7 +483,7 @@ export interface SPQRState {
   /**
    * Pending outgoing Braid chunks.
    *
-   * Only present when mode is `braid` and the state machine has queued chunks
+   * Only present when mode is `braid` and the state machine holds queued chunks
    * for future message headers.
    */
   pendingOutgoingChunks?: MLKEMBraidMessage[];
@@ -491,7 +492,7 @@ export interface SPQRState {
    * Version negotiation state for this session.
    *
    * Tracks the negotiation process with the peer to agree on a protocol version.
-   * Once negotiation completes, the version is locked for the session lifetime.
+   * Once negotiation completes, the version stays locked for the session lifetime.
    *
    * @see VersionNegotiationState
    */
@@ -514,7 +515,7 @@ export interface SPQRState {
    * and during bootstrap. Cleared by spqrSend() after performing the
    * encapsulation/keypair generation.
    *
-   * `send()` decides whether to perform a KEM exchange from this state; callers
+   * `send()` decides whether to run a KEM exchange from this state. Callers
    * do not trigger the exchange separately.
    */
   needsSendRatchet?: boolean;
@@ -524,14 +525,15 @@ export interface SPQRState {
  * Triple Ratchet state (Signal Protocol Section 6).
  *
  * Signal Protocol Section 6:
- * "The Triple Ratchet provides hybrid security by running two ratchets in parallel:
- * 1. Elliptic Curve Double Ratchet (Section 3) - Classical security
- * 2. Sparse Post-Quantum Ratchet (Section 5) - Post-quantum security
  *
- * Message keys are derived by combining both ratchets using KDF_HYBRID(),
- * ensuring security if EITHER ratchet remains secure."
+ * > "The Triple Ratchet provides hybrid security by running two ratchets in parallel:
+ * > 1. Elliptic Curve Double Ratchet (Section 3) - Classical security
+ * > 2. Sparse Post-Quantum Ratchet (Section 5) - Post-quantum security
+ * >
+ * > Message keys are derived by combining both ratchets using KDF_HYBRID(),
+ * > ensuring security if EITHER ratchet remains secure."
  *
- * Security boundary: hybrid confidentiality is intended to survive failure of
+ * Security boundary: hybrid confidentiality aims to survive failure of
  * one contribution only if the other contribution and the surrounding
  * authenticated protocol assumptions remain secure. Percentages and absolute
  * "quantum safe" guarantees are deliberately not assigned here.
@@ -546,7 +548,7 @@ export interface TripleRatchetState {
   /**
    * SPQR state for post-quantum security.
    *
-   * Note: EC Double Ratchet state is stored in the main SessionState fields
+   * Note: the main SessionState fields hold EC Double Ratchet state
    * (DHs, DHr, RK, CKs, CKr, Ns, Nr, PN, receiverChains, etc.)
    *
    * This separation keeps the module boundary explicit:
@@ -558,13 +560,13 @@ export interface TripleRatchetState {
   /**
    * Flag indicating if Triple Ratchet is active.
    *
-   * Set to true once PQXDH has produced the SPQR root material and the
-   * manager has initialized SPQR v1 state for the session.
+   * Set to true once PQXDH produced the SPQR root material and the
+   * manager initialized SPQR v1 state for the session.
    */
   enabled: boolean;
 
   /**
-   * Timestamp when Triple Ratchet was enabled.
+   * Timestamp of the moment Triple Ratchet became active.
    *
    * Used for metrics, debugging, and gradual rollout tracking.
    */
@@ -576,7 +578,7 @@ export interface TripleRatchetState {
  */
 export interface SessionConfig {
   maxMessageKeys: number; // Max number of message keys to store for out-of-order messages
-  sessionTimeout: number; // Milliseconds before session is considered stale
+  sessionTimeout: number; // Milliseconds before a session counts as stale
 }
 
 /**
@@ -587,12 +589,13 @@ export interface SessionConfig {
  * sessions for handling race conditions and out-of-order establishment.
  *
  * From Signal Protocol:
- * "A device might have multiple sessions for the same remote device.
- * The Sesame algorithm ensures convergence to a single active session."
+ *
+ * > "A device might have multiple sessions for the same remote device.
+ * > The Sesame algorithm ensures convergence to a single active session."
  *
  * Session Lookup Architecture:
- * 1. Sessions are LOOKED UP by ProtocolAddress (userId:deviceId)
- * 2. Within a SessionRecord, session states are IDENTIFIED by baseKey
+ * 1. A ProtocolAddress (userId:deviceId) LOOKS UP a session
+ * 2. Within a SessionRecord, a baseKey IDENTIFIES a session state
  * 3. The baseKey is the initiator's ephemeral public key from X3DH/PQXDH
  *
  * @see https://signal.org/docs/specifications/sesame/
@@ -602,15 +605,15 @@ export interface SessionRecord {
    * Current active session state.
    *
    * This is the session used for encrypting new messages.
-   * May be null if all sessions have been archived (rare edge case).
+   * May be null when no session remains outside the archive (rare edge case).
    */
   currentSession: SessionState | null;
 
   /**
    * Archived sessions indexed by baseKey for O(1) lookup.
    *
-   * Session states are identified by the initiator's ephemeral public key
-   * (`baseKey`).
+   * The initiator's ephemeral public key (`baseKey`) identifies a session
+   * state.
    *
    * Used for:
    * - Handling race conditions during session establishment
@@ -620,7 +623,7 @@ export interface SessionRecord {
    * Key: Base64-encoded baseKey (initiator's ephemeral public key)
    * Value: SessionState
    *
-   * Session records are keyed by baseKey for fast lookup and spec-aligned
+   * baseKey keys session records for fast lookup and spec-aligned
    * session recovery behavior.
    */
   archivedSessions: Record<Base64, SessionState>;
@@ -628,7 +631,7 @@ export interface SessionRecord {
   /**
    * Protocol version for this persisted session record shape.
    *
-   * The current format is version 4. Older versions are rejected and force
+   * The current format is version 4. The store rejects older versions and forces
    * session re-establishment instead of compatibility migration.
    */
   version: typeof CURRENT_SESSION_RECORD_VERSION;
@@ -645,8 +648,8 @@ export interface SessionRecord {
  * Metadata for a session record.
  *
  * Combines UI/management metadata with SESAME session lifecycle tracking.
- * This enables SessionRecord to be used directly by the SESAME layer without
- * needing a separate SesameSessionRecord wrapper.
+ * This lets the SESAME layer use SessionRecord directly, without a separate
+ * SesameSessionRecord wrapper.
  *
  * @see https://signal.org/docs/specifications/sesame/
  */
@@ -660,7 +663,7 @@ export interface SessionRecordMetadata {
   /** Total number of messages received in current session */
   messagesReceived?: number;
 
-  /** Whether this session is considered active */
+  /** Whether this session counts as active */
   isActive?: boolean;
 
   /** Human-readable label for debugging */
@@ -672,7 +675,7 @@ export interface SessionRecordMetadata {
   // ============================================================================
 
   /**
-   * Timestamp when this session was created (milliseconds since epoch).
+   * Timestamp of the moment this session began (milliseconds since epoch).
    * Used for session expiration calculations (MAXSEND, MAXRECV thresholds).
    *
    * @see SESAME spec Section 4.2 (Session expiration)
@@ -696,7 +699,7 @@ export interface SessionRecordMetadata {
   lastReceivedAt?: number | null;
 
   /**
-   * Whether this session was created by us (initiating) or them (responding).
+   * Whether we created this session (initiating) or they did (responding).
    * Initiator sends PreKeyMessages until first response received.
    *
    * @see SESAME spec Section 2.2 (Session creation for senders/recipients)
@@ -775,8 +778,7 @@ export function assertCurrentSessionRecord(record: unknown): asserts record is S
 /**
  * Helper functions for working with SessionRecords.
  *
- * Session states are identified by `baseKey`, the initiator's ephemeral public
- * key.
+ * `baseKey`, the initiator's ephemeral public key, identifies a session state.
  */
 export namespace SessionRecord {
   /**
@@ -804,8 +806,8 @@ export namespace SessionRecord {
   /**
    * Archive the current session and optionally set a new one.
    *
-   * The current session is moved to archivedSessions indexed by its baseKey.
-   * Old archived sessions are trimmed if we exceed maxArchived.
+   * The function moves the current session to archivedSessions, keyed by its
+   * baseKey. It trims old archived sessions if we exceed maxArchived.
    *
    * @param record - SessionRecord to modify
    * @param newSession - Optional new session to set as current
@@ -864,8 +866,8 @@ export namespace SessionRecord {
   /**
    * Find a session by baseKey.
    *
-   * Session states are identified by the initiator's ephemeral public key
-   * (`baseKey`).
+   * The initiator's ephemeral public key (`baseKey`) identifies a session
+   * state.
    *
    * @param record - SessionRecord
    * @param baseKey - Base64-encoded baseKey to find
@@ -898,7 +900,7 @@ export namespace SessionRecord {
    *
    * @param record - SessionRecord
    * @param baseKey - Base64-encoded baseKey of session to promote
-   * @returns true if session was found and promoted
+   * @returns true if the function found and promoted the session
    */
   export function promoteSession(record: SessionRecord, baseKey: Base64): boolean {
     const sessionToPromote = record.archivedSessions[baseKey];
@@ -939,11 +941,11 @@ export namespace SessionRecord {
    * A session is usable for sending if:
    * 1. It has a current session
    * 2. The current session has sending chain keys (CKs)
-   * 3. The session hasn't expired for sending (per SESAME MAXSEND threshold)
+   * 3. The session has not expired for sending (per SESAME MAXSEND threshold)
    *
    * @param record - SessionRecord to check
    * @param now - Current time (default: Date.now())
-   * @returns true if session can be used for sending
+   * @returns true if the record can send with this session
    *
    */
   export function hasUsableSenderChain(record: SessionRecord, now: number = Date.now()): boolean {
@@ -974,7 +976,7 @@ export namespace SessionRecord {
    *
    * - Move the current session to archived (if it exists)
    * - Clear the current session slot
-   * - The new session from PreKeyMessage will be set separately
+   * - A separate step sets the new session from PreKeyMessage
    *
    * Called when:
    * - Receiving a PreKeyMessage from a device we already have a session with
@@ -1009,7 +1011,7 @@ export namespace SessionRecord {
    *
    * @param buffer - Serialized bytes
    * @returns Deserialized SessionRecord
-   * @throws Error if buffer cannot be parsed
+   * @throws Error if the buffer does not parse
    *
    */
   export function deserialize(buffer: Uint8Array): SessionRecord {

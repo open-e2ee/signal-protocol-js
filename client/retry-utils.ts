@@ -27,20 +27,15 @@ export function determineRetryReason(error: Error): RetryReason {
       case EncryptionErrorCode.SESSION_CORRUPTED:
       case EncryptionErrorCode.DECRYPTION_FAILED:
       case EncryptionErrorCode.INVALID_CIPHERTEXT:
-      case EncryptionErrorCode.RATCHET_ERROR:
       case EncryptionErrorCode.PREKEY_NOT_FOUND:
         // PREKEY_NOT_FOUND maps to DECRYPTION_FAILED because the sender
         // needs to fetch a fresh prekey bundle and create a new session.
         // This happens after device reinstall when sender used stale bundle.
         return RetryReason.DECRYPTION_FAILED;
-      case EncryptionErrorCode.IDENTITY_KEY_CHANGED:
       case EncryptionErrorCode.UNTRUSTED_IDENTITY:
         return RetryReason.IDENTITY_KEY_MISMATCH;
-      case EncryptionErrorCode.MESSAGE_TOO_OLD:
       case EncryptionErrorCode.TOO_MANY_SKIPPED_MESSAGES:
         return RetryReason.SESSION_EXPIRED;
-      case EncryptionErrorCode.INVALID_MESSAGE_VERSION:
-        return RetryReason.INVALID_MESSAGE;
       default:
         return RetryReason.DECRYPTION_FAILED;
     }
@@ -52,20 +47,19 @@ export function determineRetryReason(error: Error): RetryReason {
 /**
  * Check if an error represents an expected "needs retry" case.
  *
- * These are errors that trigger the SESAME retry flow - they're not
+ * These are errors that trigger the SESAME retry flow - they are not
  * unexpected failures but rather expected recovery scenarios:
  * - Session too old (MAXRECV exceeded)
  * - No session found
  * - Session expired
  *
- * Note: Identity key changes (IDENTITY_KEY_CHANGED, UNTRUSTED_IDENTITY)
- * are NOT included here because they are security events that should
- * log at ERROR level and require user verification of safety numbers.
- * A retry request is still sent for these cases, but they warrant
+ * Note: an identity change (UNTRUSTED_IDENTITY) is NOT included here. It is a
+ * security event that should log at ERROR level and require user verification
+ * of safety numbers. A retry request is still sent for it, but it warrants
  * higher visibility logging.
  *
  * Expected retry cases should be logged at INFO level, not ERROR,
- * since they're part of the normal recovery flow per SESAME spec §6.2.
+ * since they are part of the normal recovery flow per SESAME spec §6.2.
  *
  * @param error - The error to check
  * @returns true if this is an expected retry case, false if unexpected failure
@@ -92,7 +86,6 @@ export function isRetryableDecryptionError(error: Error): boolean {
       EncryptionErrorCode.SESSION_NOT_FOUND,
       EncryptionErrorCode.SESSION_CORRUPTED,
       EncryptionErrorCode.DECRYPTION_FAILED,
-      EncryptionErrorCode.MESSAGE_TOO_OLD,
       EncryptionErrorCode.TOO_MANY_SKIPPED_MESSAGES,
       // PREKEY_NOT_FOUND is expected after device reinstall when sender
       // used a stale prekey bundle. The retry flow will fix this by having

@@ -17,5 +17,5 @@ Use when you need:
 - Advanced operations (QR code scanning, etc.)
 
 These classes expose single-key fingerprint primitives. Composite contact
-verification must use SignalProtocolClient.verify() so both composite components and
-the locally pinned trust record are authenticated.
+verification must use SignalProtocolClient.verify(), which authenticates both
+composite components and the locally pinned trust record.

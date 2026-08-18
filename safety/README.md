@@ -35,7 +35,7 @@ Use the composite safety-number API for contact verification in this SDK
 profile. The single-key helper is a lower-level reference primitive and does
 not authenticate the complete composite identity.
 
-The SDK creates comparison data; the application owns QR rendering, scanning,
+The SDK creates comparison data. The application owns QR rendering, scanning,
 the verification user experience, and storage of the user's trust decision.
 
 See the [keys guide](../keys/README.md) and

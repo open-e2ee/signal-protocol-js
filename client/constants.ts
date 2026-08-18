@@ -9,8 +9,8 @@ import { ContentHint } from '../types/messages';
 /**
  * 14-day TTL for MessageRecords (SESAME spec Section 6.2)
  *
- * Messages older than this are cleaned up since they're unlikely
- * to be needed for retry requests. This value is used in:
+ * A retry request is unlikely to need a message older than this, so `stop()`
+ * discards it. Two call sites use this value:
  * - handleRetryRequestAndResend() to reject expired messages
  * - stop() to clean up old MessageRecords
  */
@@ -28,14 +28,14 @@ export const MESSAGE_RECORD_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 export const MAX_RETRY_RESPONSES_PER_MESSAGE = 5;
 
 /**
- * Envelope types that should be handled with ContentHint.Implicit behavior.
- * Server-generated receipts are implicit; client-to-client implicit types
+ * Envelope types that take ContentHint.Implicit behavior.
+ * Server-generated receipts are implicit. Client-to-client implicit types
  * (typing indicators, delivery receipts) use ContentHint.Implicit on the envelope.
  */
 export const IMPLICIT_ENVELOPE_TYPES = ['server_delivery_receipt'] as const;
 
 /**
- * Check if a message should be handled with ContentHint.Implicit behavior.
+ * Check if a message takes ContentHint.Implicit behavior.
  *
  * Implicit messages are ephemeral (typing indicators, receipts) and should be
  * silently discarded on decryption failure - no ERROR logs, no retry requests.
@@ -44,7 +44,8 @@ export const IMPLICIT_ENVELOPE_TYPES = ['server_delivery_receipt'] as const;
  * Server-generated delivery receipts are also implicit by envelope type.
  *
  * @param envelope - Message envelope with optional contentHint and messageType
- * @returns true if the message is implicit and should be discarded on failure
+ * @returns true if the message is implicit, and the caller should discard it
+ * on failure
  */
 export function isImplicitContentType(envelope: {
   contentHint?: ContentHint;

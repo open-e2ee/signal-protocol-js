@@ -28,7 +28,7 @@ Exact encrypted object length in bytes.
 
 > **contentType**: `string`
 
-MIME type of the encrypted bytes being uploaded.
+MIME type of the encrypted bytes in the upload.
 
 ***
 
@@ -39,4 +39,4 @@ MIME type of the encrypted bytes being uploaded.
 Stable idempotency key for retries of one logical upload.
 
 The backend must scope this untrusted value to the authenticated principal
-and return the same object reservation when the request is retried.
+and return the same object reservation when the caller retries the request.

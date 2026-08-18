@@ -29,7 +29,7 @@ const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 /**
  * The `id` this relay stamps on its server certificate.
  *
- * One signing key, so one identifier; revocation lists are keyed by it.
+ * One signing key, so one identifier. Revocation lists are keyed by it.
  */
 const SERVER_CERTIFICATE_ID = 1;
 

@@ -15,12 +15,12 @@ import { relayError } from './errors';
  * Rows a single teardown transaction will delete from the unbounded tables
  * before handing the rest to a scheduled continuation.
  *
- * A device's one-time prekeys and queued messages have no fixed ceiling: the
+ * A device's one-time prekeys and queued messages have no fixed ceiling. The
  * component marks a consumed prekey rather than deleting it, and no cron
- * reclaims consumed rows, so a long-lived device accumulates them for its
- * whole lifetime. Any single `.take(n)` therefore truncates rather than
+ * reclaims consumed rows. A long-lived device accumulates them for its whole
+ * lifetime. Any single `.take(n)` therefore truncates rather than
  * drains for some device, which is what left orphaned key material behind a
- * removed device — rows keyed to a deviceId that a later link can reuse.
+ * removed device. Rows keyed to a deviceId that a later link can reuse.
  */
 export const PURGE_BUDGET = 512;
 
@@ -157,7 +157,7 @@ export const registerDevice = mutation({
       createdAt: now,
       linkedAt: assigned === 1 ? undefined : now,
       // Minted on every registration, including one that replaces a row in
-      // a freed slot, so a pending provisioning session's teardown cannot
+      // a freed slot. A pending provisioning session's teardown then cannot
       // mistake this device for the one it linked.
       linkToken: crypto.randomUUID(),
     };
@@ -185,23 +185,24 @@ async function deleteRows(
 /**
  * Delete every row keyed to a device: identity registrations, all four
  * prekey kinds, sender certificates, queued messages, and heartbeats.
- * Shared by `removeDevice` and the provisioning teardown paths so a
- * device can never be deleted while its key material keeps serving
- * prekey bundles for a device that no longer exists.
+ * Shared by `removeDevice` and the provisioning teardown paths. A device can
+ * never be deleted while its key material keeps serving prekey bundles for a
+ * device that no longer exists.
  *
- * Deletes at most {@link PURGE_BUDGET} rows from the unbounded tables and
- * schedules itself to continue when it hits that budget, so a device with
- * more accumulated key material than one transaction can delete converges
- * across ticks instead of leaving the remainder orphaned.
+ * Deletes at most {@link PURGE_BUDGET} rows from the unbounded tables, and
+ * schedules itself to continue when it hits that budget. A device with more
+ * accumulated key material than one transaction can delete therefore
+ * converges across ticks, instead of leaving the remainder orphaned.
  *
- * The bounded rows — identity registrations, signed and last-resort prekeys,
- * sender certificates, heartbeats — are always deleted in this first pass,
+ * The bounded rows (identity registrations, signed and last-resort prekeys,
+ * sender certificates, heartbeats) are always deleted in this first pass,
  * before any budget is spent. That ordering is what makes the continuation
- * safe to defer: `fetchPreKeyBundle` gates on the `identityRegistrations`
- * row, so once this returns, no bundle can be served for the device no
- * matter how many one-time prekeys are still queued for deletion.
+ * safe to defer. The `fetchPreKeyBundle` path gates on the
+ * `identityRegistrations` row. Once this returns, no bundle can be served for
+ * the device, no matter how many one-time prekeys are still queued for
+ * deletion.
  *
- * @returns `drained` — false when a continuation was scheduled.
+ * @returns `drained`, false when a continuation was scheduled.
  */
 export async function purgeDeviceStorage(
   ctx: MutationCtx,
@@ -274,8 +275,8 @@ export async function purgeDeviceStorage(
   }
 
   // Budget left over means every query returned short of what it was
-  // allowed, so nothing remains. Spending it exactly is inconclusive —
-  // there may or may not be more — so schedule and let the continuation
+  // allowed, so nothing remains. Spending it exactly is inconclusive.
+  // There may or may not be more, so schedule and let the continuation
   // find out. A continuation that finds nothing simply drains.
   if (budget > 0) {
     return { drained: true };
@@ -289,9 +290,9 @@ export async function purgeDeviceStorage(
 
 /**
  * Continuation for a {@link purgeDeviceStorage} that exhausted its budget.
- * Re-entrant and idempotent: the device row is already gone, so this only
- * ever finds leftover key material and queued messages, and it reschedules
- * itself until none remains.
+ * Re-entrant and idempotent. The device row is already gone, so this only
+ * ever finds leftover key material and queued messages. It reschedules itself
+ * until none remains.
  */
 export const continuePurge = internalMutation({
   args: {

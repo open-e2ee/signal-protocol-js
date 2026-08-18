@@ -17,8 +17,8 @@ The two onboarding operations are deliberately separate:
 - **Transfer** migrates local cryptographic state to replacement hardware. It
   can include identity keys, prekeys, and sessions in an encrypted backup.
 
-The primary device uses ID `1`. Linked device IDs are allocated by the backend
-from `2` through `5`; a client must not choose its own linked-device ID.
+The primary device uses ID `1`. The backend allocates linked device IDs from
+`2` through `5`. A client must not choose its own linked-device ID.
 
 ## Platform requirements
 
@@ -127,8 +127,8 @@ const provisioning = await receiveProvisioningMessage(
 console.log(provisioning.deviceId);
 ```
 
-Provisioning requires an ACI identity. PNI identity and group/username state
-are included only when the host application enables and supplies them.
+Provisioning requires an ACI identity. It includes PNI identity and
+group/username state only when the host application enables and supplies them.
 
 ## Transfer cryptographic state
 
@@ -147,18 +147,18 @@ const backup = await sending.getBackup(sessionIds);
 
 The application owns transport selection, peer confirmation, progress UI,
 interruption recovery, and wiping old-device state after a successful
-replacement. Do not erase the old device before the new device has validated
-and durably restored the backup.
+replacement. Do not erase the old device before the new device validates and
+durably restores the backup.
 
 ## Security boundaries
 
 - Provisioning sessions expire after five minutes.
 - Ephemeral ECDH keys derive the provisioning/transfer encryption keys.
-- Identity and backup material is encrypted before it reaches a relay or
+- The SDK encrypts identity and backup material before it reaches a relay or
   transport.
 - The QR channel authenticates the session only to the extent that the
   application protects what the user scans or shares.
-- Device names are encrypted for backend storage.
+- The SDK encrypts device names for backend storage.
 - Backend authentication must bind registration, provisioning, unlink, and
   removal to the owning account.
 - Account reset must clear the device-ID cache, platform secret storage, and

@@ -20,14 +20,14 @@
 
 /**
  * SecureStore key for persisting the device ID.
- * Its lifecycle is platform-dependent; see the module boundary above.
+ * Its lifecycle is platform-dependent. See the module boundary above.
  */
 export {};
 export const DEVICE_ID_KEY = 'signal_device_id';
 
 /**
  * SecureStore key for persisting the device name.
- * Its lifecycle is platform-dependent; see the module boundary above.
+ * Its lifecycle is platform-dependent. See the module boundary above.
  */
 export const DEVICE_NAME_KEY = 'signal_device_name';
 
@@ -41,7 +41,7 @@ export const LOCAL_IDENTITY_KEY = 'signal_identity_public_key';
 
 /**
  * SecureStore key for tracking which user registered this device.
- * Its lifecycle is platform-dependent; see the module boundary above.
+ * Its lifecycle is platform-dependent. See the module boundary above.
  *
  * Used to detect when a different account signs into a device with existing
  * encrypted data. A missing ownership sentinel means retained secure-storage
@@ -71,6 +71,6 @@ export const MAX_DEVICES = 5;
 
 /**
  * Provisioning session QR code expires after 5 minutes.
- * Short TTL ensures QR codes cannot be reused after the linking window.
+ * The short TTL blocks reuse of a QR code after the linking window.
  */
 export const PROVISIONING_SESSION_TTL_MS = 5 * 60 * 1000;

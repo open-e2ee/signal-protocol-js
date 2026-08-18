@@ -3,11 +3,11 @@
  *
  * @module spqr/serialize
  *
- * Provides serialization and deserialization of SPQR state for persistence.
+ * Serializes and deserializes SPQR state for persistence.
  * Extracted from spqr.ts for modularity (target: 400 LOC).
  *
  * WARNING: Serialized state contains sensitive cryptographic material.
- * Ensure it is stored securely (encrypted at rest).
+ * Store it securely (encrypted at rest).
  */
 
 import { base64ToBytes, bytesToBase64, type ResolvedSPQRInfoStrings } from '../../crypto';
@@ -197,7 +197,7 @@ function validateSPQRStateJSON(value: unknown): asserts value is SPQRStateJSON {
 // ============================================================================
 
 /**
- * JSON representation of a KDF chain
+ * JSON view of a KDF chain
  */
 export {};
 export interface KDFChainJSON {
@@ -206,7 +206,7 @@ export interface KDFChainJSON {
 }
 
 /**
- * JSON representation of epoch chains
+ * JSON view of epoch chains
  */
 export interface EpochChainsJSON {
   send: KDFChainJSON;
@@ -214,7 +214,7 @@ export interface EpochChainsJSON {
 }
 
 /**
- * JSON representation of a skipped SPQR key
+ * JSON view of a skipped SPQR key
  */
 export interface SkippedSPQRKeyJSON {
   /** Message key (Base64 string) */
@@ -223,7 +223,7 @@ export interface SkippedSPQRKeyJSON {
 }
 
 /**
- * JSON representation of SCKA state
+ * JSON view of SCKA state
  */
 export interface SCKAStateJSON {
   epoch: number;
@@ -235,7 +235,7 @@ export interface SCKAStateJSON {
 }
 
 /**
- * JSON representation of pending braid message
+ * JSON view of a pending braid message
  */
 export interface PendingBraidMessageJSON {
   epoch: string;
@@ -245,7 +245,7 @@ export interface PendingBraidMessageJSON {
 }
 
 /**
- * JSON representation of version negotiation state
+ * JSON view of version negotiation state
  */
 export interface VersionNegotiationStateJSON {
   status: 'negotiating' | 'complete';
@@ -256,7 +256,7 @@ export interface VersionNegotiationStateJSON {
 }
 
 /**
- * JSON representation of full SPQR state for persistence.
+ * JSON view of the full SPQR state for persistence.
  *
  * This interface captures the complete SPQR state including:
  * - Root key and epoch
@@ -312,10 +312,10 @@ export interface SPQRStateJSON {
  * Serialize SPQR state to JSON for persistence.
  *
  * This enables full state persistence for app backgrounding/restoration.
- * Both direct and braid modes are supported.
+ * Works in both direct and braid modes.
  *
  * WARNING: The serialized state contains sensitive cryptographic material
- * (keys, chain state). Ensure it is stored securely (encrypted at rest).
+ * (keys, chain state). Store it securely (encrypted at rest).
  *
  * @param state - SPQR state to serialize
  * @returns JSON string representation
@@ -418,7 +418,7 @@ export async function serializeSPQRState(state: SPQRState): Promise<string> {
  * Deserialize SPQR state from JSON.
  *
  * Restores full SPQR state for resuming after app backgrounding.
- * Both direct and braid modes are supported.
+ * Works in both direct and braid modes.
  *
  * @param jsonStr - JSON string from serializeSPQRState
  * @returns Restored SPQR state

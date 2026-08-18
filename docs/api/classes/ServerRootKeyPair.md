@@ -8,8 +8,8 @@
 
 A server's root secret key for issuing and verifying endorsements.
 
-Endorsements are not issued directly with this key. Instead, a
-[ServerDerivedKeyPair](ServerDerivedKeyPair.md) is derived for domain separation, rotation,
+Endorsements are not issued directly with this key. Instead, the server
+derives a [ServerDerivedKeyPair](ServerDerivedKeyPair.md) for domain separation, rotation,
 and additional authenticated info.
 
 ## Properties
@@ -33,7 +33,7 @@ and additional authenticated info.
 Derives a specific key for issuing endorsements.
 
 The `tagInfoSho` should have already absorbed domain separation and
-any "public attributes" specific to the endorsements being issued.
+any "public attributes" specific to the endorsements it issues.
 
 #### Parameters
 

@@ -10,9 +10,9 @@
 
 Base64-encoded ciphertext.
 
-Branded type ensures ciphertext isn't confused with keys or signatures.
+Branded type keeps ciphertext distinct from keys and signatures.
 
-Extends Base64, so can be passed to functions expecting Base64.
+Extends Base64, so a function that expects Base64 accepts it.
 
 ## Type Declaration
 

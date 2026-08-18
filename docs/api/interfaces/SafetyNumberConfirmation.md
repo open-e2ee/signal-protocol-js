@@ -8,7 +8,7 @@
 
 Exact safety-number comparison evidence.
 
-Strings are used instead of mutable Uint8Array instances so application code
+This uses strings instead of mutable Uint8Array instances, so application code
 cannot accidentally change the value between display and confirmation.
 
 ## Properties

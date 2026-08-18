@@ -5,8 +5,9 @@
  * GroupSendEndorsement is a MAC over:
  *  - a ServiceId (computed from ciphertexts on the group server at issuance,
  *    passed decrypted to the chat server for verification)
- *  - an expiration timestamp, truncated to day granularity (chosen by the group
- *    server at issuance, passed publicly to the chat server for verification)
+ *  - an expiration timestamp, truncated to day granularity. The group server
+ *    chooses it at issuance, and passes it publicly to the chat server for
+ *    verification.
  *
  * At a high level:
  *   1. Server derives daily key from root key + expiration
@@ -111,10 +112,10 @@ export function deriveForExpiration(
 /**
  * Compute the default expiration for endorsements issued at `currentTime`.
  *
- * Returns the end of the next UTC day, unless that is less than 25 hours
- * away, in which case it returns the end of the following day.
+ * Returns the end of the next UTC day. If that is less than 25 hours away, it
+ * returns the end of the following day.
  *
- * This ensures endorsements are always valid for at least 25 hours,
+ * Endorsements therefore stay valid for at least 25 hours,
  * providing a comfortable buffer for clock skew and timezone issues.
  *
  * @param currentTime - Current time in epoch seconds
@@ -186,9 +187,9 @@ function sortPointsByKeys(points: Array<[number, RistrettoPoint]>, sortKeys: Uin
 /**
  * Issue endorsements for all group members.
  *
- * Takes an array of UID encryption ciphertexts (one per member), sorts
- * them deterministically, extracts the E_A1 points, and issues
- * endorsements over those points using the derived key pair.
+ * Takes an array of UID encryption ciphertexts, one per member. Sorts them
+ * deterministically, extracts the E_A1 points, and issues endorsements over
+ * those points using the derived key pair.
  *
  * @param memberCiphertexts - Encrypted UIDs of group members
  * @param derivedKeyPair - Key pair derived for the target expiration
@@ -415,7 +416,7 @@ export function removeEndorsement(combined: Endorsement, unwanted: Endorsement):
  * A bearer token representing an endorsement.
  *
  * This can be cached by the client for repeatedly sending to the same
- * recipient(s), but must be combined with an expiration to form a
+ * recipient(s). It must be combined with an expiration to form a
  * {@link GroupSendFullToken} before sending to the chat server.
  */
 export interface GroupSendToken {

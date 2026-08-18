@@ -30,15 +30,15 @@ const client = await createSignalProtocolClient({
 The injected backend's `atomicWrite()` is a security boundary. It must evaluate
 compare-and-swap checks and commit all writes, removals, and exact per-user
 session deletion atomically and durably, including across process termination.
-A batched sequence of independent writes is not sufficient.
+Independent writes committed one after another are not sufficient.
 
 ## Verifying your backend
 
 The adapter's guarantees hold only over a backend that honors the
 `ReactNativeKeyValueStorage` contract, and the SDK cannot test the backend
 your application supplies. The package therefore exports a
-backend-conformance kit — run it against your backend from your
-application's own tests:
+backend-conformance kit. Run it against your backend from your application's
+own tests:
 
 ```ts
 import {
@@ -54,17 +54,19 @@ await assertBackendConformance({
 });
 ```
 
-`assertBackendConformance` throws one error naming every failing case;
-`runBackendConformance` returns the structured result instead.
-`createReferenceReactNativeBackend` is the executable specification of the
-contract: an in-memory backend that passes the kit, useful as a comparison
-point and as a test double. Continuous integration runs the kit against the
-reference backend on the Hermes engine, and drives the adapter over it
-through interruption and storage-pressure suites; the checklist that
-graduated this adapter is in the parent [storage guide](../README.md).
+The function `assertBackendConformance` throws one error that names every
+failing case. The function `runBackendConformance` returns the structured
+result instead. The SDK also ships `createReferenceReactNativeBackend`, which
+specifies the contract in executable form. It is an in-memory backend that
+passes the kit, and it is useful as a comparison point and as a test double.
+
+Continuous integration runs the kit against the reference backend on the Hermes
+engine. It also drives the adapter over that backend through interruption and
+storage-pressure suites. The parent [storage guide](../README.md) holds the
+checklist that graduated this adapter.
 
 Key custody, crash durability, and backup behavior remain properties of your
-chosen native storage engine — the kit verifies contract semantics, and your
+chosen native storage engine. The kit verifies contract semantics, and your
 deployment review must still cover the engine itself.
 
 See the parent [storage guide](../README.md), [adapter guide](../../../ADAPTERS.md),

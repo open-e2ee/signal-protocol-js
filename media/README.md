@@ -6,12 +6,13 @@ cleanup.
 
 ## Why it exists
 
-Signal Protocol messages are suited to small encrypted payloads, not large
-binary objects. Media therefore uses two encryption layers:
+Signal Protocol messages suit small encrypted payloads, not large binary
+objects. Media therefore uses two encryption layers:
 
-1. file bytes are encrypted locally and only ciphertext enters remote storage;
-2. the key, digest, sizes, and opaque object identifier are carried inside the
-   end-to-end encrypted message.
+1. the SDK encrypts file bytes locally, and only ciphertext enters the remote
+   object store.
+2. the end-to-end encrypted message carries the key, digest, sizes, and opaque
+   object identifier.
 
 The remote object store never receives the media key or plaintext.
 

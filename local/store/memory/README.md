@@ -3,7 +3,8 @@
 `InMemorySignalProtocolStore` implements `ISignalProtocolLocalStore` in memory for examples, local
 development, and deterministic application prototypes.
 
-Real protocol and cryptography; simulated in-memory infrastructure.
+The protocol and cryptography are real. The adapter simulates the
+infrastructure in memory.
 
 ## Why it exists
 
@@ -24,8 +25,8 @@ const client = await createSignalProtocolClient({
 });
 ```
 
-All keys, sessions, and trust decisions disappear when the process or adapter
-is discarded. Never use this adapter for production accounts.
+All keys, sessions, and trust decisions disappear when the process ends or the
+application discards the adapter. Never use this adapter for production accounts.
 
 ## Deterministic storage failures
 

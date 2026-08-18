@@ -66,7 +66,7 @@ this callback instead of hidden package storage.
 
 > `optional` **maxAttempts?**: `number`
 
-Maximum attempts before a failing job is removed.
+Maximum attempts before the queue removes a failing job.
 
 #### Default
 

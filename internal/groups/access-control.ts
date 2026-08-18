@@ -22,7 +22,7 @@ import { constantTimeEqual as bytesEqual } from '../crypto/utils';
 import { SERVICE_ID_ACI, SERVICE_ID_PNI } from '../protocol/zk/groups/uid-struct';
 
 /**
- * Actions that can be performed on a group.
+ * Actions that a member can take on a group.
  * Each action has specific authorization requirements.
  */
 export {};
@@ -161,11 +161,11 @@ export function meetsAccessRequirement(
       return memberRole === MemberRole.DEFAULT || memberRole === MemberRole.ADMINISTRATOR;
 
     case AccessRequired.ADMINISTRATOR:
-      // Only administrators can perform the action
+      // Only administrators can take the action
       return memberRole === MemberRole.ADMINISTRATOR;
 
     case AccessRequired.UNSATISFIABLE:
-      // Feature is disabled, no one can perform the action
+      // The feature is off, so no one can take the action
       return false;
 
     case AccessRequired.UNKNOWN:
@@ -233,14 +233,14 @@ function meetsRoleAccessRequirement(
 }
 
 /**
- * Check if a member can perform a specific action on the group.
+ * Check whether a member can take a specific action on the group.
  * Core authorization function for all group operations.
  *
  * @param group - Decrypted group state
  * @param requesterServiceIdBytes - Requester's 17-byte ServiceId
  * @param action - The action to check
  * @param context - Target and invite-link facts required by some actions
- * @returns True if the member is authorized to perform the action
+ * @returns True if the member may take the action
  */
 export function canPerformAction(
   group: DecryptedGroup,
@@ -417,11 +417,11 @@ export function isPending(group: DecryptedGroup, serviceIdBytes: Uint8Array): bo
 }
 
 /**
- * Check if a user is banned from the group.
+ * Check whether the group bans a user.
  *
  * @param group - Decrypted group state
  * @param serviceIdBytes - User's service ID (ACI or PNI) as bytes
- * @returns True if the user is banned
+ * @returns True if the group bans the user
  */
 export function isBanned(group: DecryptedGroup, serviceIdBytes: Uint8Array): boolean {
   return group.bannedMembers.some((banned) => bytesEqual(banned.serviceIdBytes, serviceIdBytes));

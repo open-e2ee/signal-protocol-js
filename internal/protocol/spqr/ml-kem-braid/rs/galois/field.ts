@@ -144,7 +144,7 @@ class GaloisField16 implements GaloisField {
   div(x: number, y: number): number {
     if (y === 0) throw new Error('Division by zero in GF(2^16)');
     // These table indices and branches depend only on public erasure-coded
-    // transcript bytes. JavaScript/JIT execution is variable-time; no
+    // transcript bytes. JavaScript/JIT execution is variable-time. No
     // confidentiality claim relies on this selection pattern.
     const safeX = x === 0 ? 1 : x; // Use 1 as placeholder to avoid invalid lookup
     const computedResult = this.expTable[this.logTable[safeX] + 65535 - this.logTable[y]];

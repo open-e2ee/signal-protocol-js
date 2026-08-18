@@ -9,7 +9,7 @@
 > `const` **MIN\_REGISTRATION\_ID**: `1` = `1`
 
 Minimum registration ID value
-Registration IDs are generated randomly in range [1, 16380]
+The client generates registration IDs randomly in range [1, 16380]
 
 ## See
 

@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.3.0
+
+- **Breaking: seven error classes and sixteen `EncryptionErrorCode` members are
+  removed, because nothing in the library ever threw them.** Each class was
+  exported and paired with a type guard, so an application could branch on it —
+  but no code path constructed any of them, which made every one of those
+  branches dead code that read as handled. Removed, with their `is*` guards:
+  `IdentityKeyChangedError`, `SessionConflictError`,
+  `RegistrationIdChangedError`, and the four intermediate classes
+  `CryptoError`, `SessionError`, `ProtocolError` and `ClientError`. Removed
+  codes: `IDENTITY_KEY_CHANGED`, `IDENTITY_KEY_ERROR`, `SESSION_CONFLICT`,
+  `REGISTRATION_ID_CHANGED`, `INVALID_REGISTRATION_ID`, `MESSAGE_TOO_OLD`,
+  `INVALID_MESSAGE_VERSION`, `RATCHET_ERROR`, `DATABASE_ERROR`,
+  `DATABASE_LOCKED`, `KYBER_ERROR`, `KDF_ERROR`, `HMAC_VERIFICATION_FAILED`,
+  `SPQR_KEY_ALREADY_USED`, `SPQR_EPOCH_REGRESSION` and `UNKNOWN_ERROR`. The
+  enum goes from 49 members to 33.
+
+  What to use instead: an identity that changed is an identity that is not
+  trusted, and the library throws `UntrustedIdentityError` /
+  `UNTRUSTED_IDENTITY` for it from five sites on the session and sending
+  paths. Code branching on `isIdentityKeyChangedError` or on
+  `IDENTITY_KEY_CHANGED` was never reached and should branch on
+  `isUntrustedIdentityError` instead. The other removed names have no
+  replacement, because there was no event behind them.
+
+- **`UntrustedIdentityError` and `isUntrustedIdentityError` are exported from
+  the package root.** They were reachable only from
+  `@open-e2ee/signal-protocol-sdk/types/errors`, while the error-handling guide
+  imported them from the root — so the first thing a reader copied did not
+  resolve. `StorageQuotaExceededError` also gains the
+  `isStorageQuotaExceededError` guard its five siblings already had.
+
+- **Every documented error code is now traceable to a construction site.** A
+  check parses the library for the sites that decide whether a class can be
+  thrown, and fails the build when an exported error class or a declared code
+  survives with none — so the surface cannot drift back. Being named in a
+  `switch` counted as use before, which is what hid `IDENTITY_KEY_CHANGED`
+  through all nineteen releases that declared it and never threw it.
+
 ## 0.2.3
 
 - **`@noble/post-quantum` 0.6.1 → 0.7.0.** Upstream hardening of the

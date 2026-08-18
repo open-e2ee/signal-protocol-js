@@ -1,5 +1,5 @@
 /**
- * KyberPreKeyUsed — PQXDH replay detection
+ * KyberPreKeyUsed: PQXDH replay detection
  *
  * Stores (kyberPreKeyId, signedPreKeyIdentity, signedPreKeyId, baseKey) tuples.
  * Duplicate insert = replay attack -> throw ReusedBaseKeyError.
@@ -13,10 +13,10 @@ import { getDrizzle, kyberPreKeyUsed } from '../db';
 // ============================================================================
 
 /**
- * Thrown when a PQXDH base key reuse is detected.
+ * The store throws this when it detects a PQXDH base key reuse.
  *
- * This indicates a replay attack: the same (kyberPreKeyId, signedPreKeyIdentity,
- * signedPreKeyId, baseKey) tuple has been seen before.
+ * This indicates a replay attack. The table already holds the same
+ * `(kyberPreKeyId, signedPreKeyIdentity, signedPreKeyId, baseKey)` tuple.
  */
 export {};
 export class ReusedBaseKeyError extends Error {
@@ -37,9 +37,9 @@ export class ReusedBaseKeyError extends Error {
  *
  * Inserts a (kyberPreKeyId, signedPreKeyIdentity, signedPreKeyId, baseKey) tuple.
  * If the tuple already exists (PRIMARY KEY constraint violation), throws
- * ReusedBaseKeyError — indicating a PQXDH replay attack.
+ * ReusedBaseKeyError, indicating a PQXDH replay attack.
  *
- * @param kyberPreKeyId - The Kyber prekey ID that was used
+ * @param kyberPreKeyId - The Kyber prekey ID that the session used
  * @param signedPreKeyId - The signed prekey ID used in the session
  * @param baseKeyBytes - The sender's ephemeral base key
  * @param identityType - 'aci' or 'pni' (defaults to 'aci')

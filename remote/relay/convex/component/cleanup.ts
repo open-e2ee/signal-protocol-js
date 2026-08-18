@@ -5,12 +5,12 @@ import { teardownLinkedDevice } from './provisioning';
 
 const CLEANUP_BATCH_SIZE = 100;
 /**
- * The provisioning sweep is the one cron whose per-row work is unbounded: a
+ * The provisioning sweep is the one cron with unbounded per-row work: a
  * `linked_pending_ack` row cascades into a full device teardown. Sweeping
  * 100 of those in one transaction can exceed Convex's per-mutation limits,
- * and a cron that fails does not degrade — it stalls, and expired sessions
- * stop being reaped at all. A smaller batch keeps each tick inside the
- * limits; the self-reschedule below is what preserves throughput.
+ * and a cron that fails does not degrade. It stalls, and nothing reaps
+ * expired sessions at all. A smaller batch keeps each tick inside the
+ * limits. The self-reschedule below is what preserves throughput.
  */
 const PROVISIONING_CLEANUP_BATCH_SIZE = 10;
 const STALE_KEM_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -107,9 +107,9 @@ export const cleanupExpiredProvisioningSessions = internalMutation({
       if (row.status === 'linked_pending_ack') {
         // A linked-but-never-acknowledged session past its (extended) ack
         // window is a rolled-back link: tear down the device it created.
-        // teardownLinkedDevice matches the recorded link token so a device
-        // legitimately re-registered into the freed slot survives, and
-        // cascades the device's key material and queues.
+        // The teardownLinkedDevice helper matches the recorded link token, so a
+        // device legitimately re-registered into the freed slot survives. It
+        // also cascades the device's key material and queues.
         await teardownLinkedDevice(ctx, row);
       }
       await ctx.db.delete(row._id);

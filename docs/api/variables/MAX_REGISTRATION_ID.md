@@ -9,7 +9,7 @@
 > `const` **MAX\_REGISTRATION\_ID**: `16380` = `16380`
 
 Maximum registration ID value
-Registration IDs are generated randomly in range [1, 16380]
+The client generates registration IDs randomly in range [1, 16380]
 
 ## See
 

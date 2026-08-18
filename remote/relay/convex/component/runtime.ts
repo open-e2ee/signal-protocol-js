@@ -29,7 +29,7 @@ let testDependencies: {
  * only inside a recognized test runner (and never when CONVEX_CLOUD_URL
  * marks a deployment). Component isolates see only their declared
  * environment variables, so a permissive env-based check could be inert in
- * exactly the environment it must protect — an unrecognized environment
+ * exactly the environment it must protect. An unrecognized environment
  * therefore refuses injection rather than allowing it.
  */
 export function configureConvexSignalProtocolComponentForTest(config: {
@@ -59,7 +59,7 @@ function defaultConvexRuntime(): GroupServerEngineRuntime {
 /**
  * Derived server parameters, cached per isolate and keyed by the exact
  * environment value so a rotated secret is picked up on the next request.
- * Derivation costs tens of milliseconds; without the cache every query and
+ * Derivation costs tens of milliseconds. Without the cache every query and
  * mutation would pay it before doing any work.
  */
 let cachedSecretParams: {
@@ -71,9 +71,11 @@ function secretParamsFromEnvironment(): ServerSecretParams {
   // Read through the component's *declared* environment (convex.config.ts).
   // Component isolates cannot see undeclared app deployment variables, so
   // the app must forward the secret at mount time:
+  // ```ts
   //   app.use(signalProtocol, {
   //     env: { OE_GROUPS_SERVER_SECRET: app.env.OE_GROUPS_SERVER_SECRET },
   //   });
+  // ```
   const encoded = env.OE_GROUPS_SERVER_SECRET;
   if (!encoded) {
     throw new Error(

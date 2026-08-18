@@ -48,15 +48,15 @@ export interface SenderKeyState {
    * Opaque random UUID identifying this sender key.
    *
    * Written to the wire as the SenderKeyMessage `distribution_uuid`, which
-   * sits in the *unencrypted* frame — a relay reads it off every group
+   * sits in the *unencrypted* frame. A relay reads it off every group
    * message. It therefore carries no derivable content: no group, no sender,
    * no device, no timestamp. Matching the reference, which likewise uses a
    * random UUID distinct from the group identifier.
    *
    * Randomness also makes rotation unambiguous. Receivers detect a rotation by
-   * comparing this value against their stored state, so an identifier built
-   * from a millisecond clock would collide for two rotations inside the same
-   * millisecond and hide the second one.
+   * comparing this value against their stored state. An identifier built from a
+   * millisecond clock would collide for two rotations inside the same
+   * millisecond, and hide the second one.
    */
   senderKeyId: string;
 
@@ -76,16 +76,16 @@ export interface SenderKeyState {
    */
   chainId: number;
 
-  generation: number; // Key generation (increments on rotation)
-  chainKey: string; // Current chain key (ratchets forward on each message) - Base64
-  signatureKey: string; // Ed25519 private key for signing - Base64
-  publicSignatureKey: string; // Ed25519 public key for verification - Base64
-  chainIndex: number; // Current message number in chain
+  generation: number; // Key generation, incremented on rotation.
+  chainKey: string; // Current chain key, base64 encoded, ratcheted forward per message.
+  signatureKey: string; // Ed25519 private key for signing, base64 encoded.
+  publicSignatureKey: string; // Ed25519 public key for verification, base64 encoded.
+  chainIndex: number; // Current message number in the chain.
 
   /**
    * Creation timestamp (ms since epoch) for time-based rotation.
    *
-   * Only locally created encryption keys are checked for expiration. Received
+   * The manager checks only locally created encryption keys for expiry. Received
    * decryption keys remain usable for delayed messages.
    */
   createdAt: number;
@@ -115,11 +115,12 @@ export interface EncryptedGroupMessage {
 /**
  * Signal Protocol KDF constants for chain key derivation.
  *
- * From Double Ratchet spec Section 7.2 -
- * "HMAC with SHA-256 or SHA-512 is recommended, using ck as the HMAC key
- * and using separate constants as input (e.g. a single byte 0x01 as input
- * to produce the message key, and a single byte 0x02 as input to produce
- * the next chain key)."
+ * From Double Ratchet spec Section 7.2:
+ *
+ * > "HMAC with SHA-256 or SHA-512 is recommended, using ck as the HMAC key
+ * > and using separate constants as input (e.g. a single byte 0x01 as input
+ * > to produce the message key, and a single byte 0x02 as input to produce
+ * > the next chain key)."
  *
  * @see https://signal.org/docs/specifications/doubleratchet/#external-functions
  */
@@ -138,17 +139,17 @@ const CHAIN_KEY_CONSTANT = new Uint8Array([0x02]);
  *
  * An age above {@link SENDER_KEY_AGE_CEILING}, or below
  * {@link SENDER_KEY_AGE_FLOOR}, is a coherent policy that reaches past what
- * the implementation can honour — too long to bound a key's life, or too short
- * for the rotate-and-redistribute path to beat — so the bound it passed is
- * used and the direction of its intent is kept.
+ * the implementation can honour. It is either too long to bound a key's life,
+ * or too short for the rotate-and-redistribute path to beat. The bound it
+ * passed is used, and the direction of its intent is kept.
  *
- * A value that is not a positive finite number is not a policy at all, and
- * unlike an out-of-range one it does not say which way the host wanted to
- * move. A zero in particular is far more often an absent or uninitialised
- * field than a request to rotate constantly, and reading it as the latter
- * would impose the tightest rotation the SDK allows on a host that asked for
- * nothing. So it falls back to the default; a host that genuinely wants
- * maximal rotation can say so with any positive value and get the floor.
+ * A value that is not a positive finite number is not a policy at all. Unlike
+ * an out-of-range one, it does not say which way the host wanted to move. A
+ * zero in particular is far more often an absent or uninitialised field than a
+ * request to rotate constantly. Reading it as the latter would impose the
+ * tightest rotation the SDK allows on a host that asked for nothing. So it
+ * falls back to the default. A host that genuinely wants maximal rotation can
+ * say so with any positive value and get the floor.
  *
  * All three are logged: a silent clamp would leave a host believing a rotation
  * interval it is not getting.
@@ -261,7 +262,7 @@ export class SenderKeyManager {
       hash ^= senderKeyId.charCodeAt(i);
       hash = Math.imul(hash, 0x01000193); // FNV prime
     }
-    return hash >>> 0; // Ensure unsigned 32-bit
+    return hash >>> 0; // Force unsigned 32-bit
   }
 
   /**
@@ -431,9 +432,9 @@ export class SenderKeyManager {
           return;
         }
         // Same generation but distribution has higher chainIndex:
-        // This is a re-broadcast. Keep existing chain progress if it's more advanced,
+        // This is a re-broadcast. Keep existing chain progress if it is more advanced,
         // The existing state may have advanced beyond the distribution's chainIndex
-        // via message decryption, so don't overwrite.
+        // via message decryption, so do not overwrite.
         this.logger.debug(
           'Received re-broadcast distribution (same gen, higher chain), keeping existing state',
           {
@@ -456,7 +457,7 @@ export class SenderKeyManager {
       chainId: message.chainId,
       generation: message.generation,
       chainKey: message.chainKey,
-      signatureKey: '', // Don't store sender's private key
+      signatureKey: '', // Do not store sender's private key
       publicSignatureKey: message.publicSignatureKey,
       chainIndex: message.chainIndex ?? 0,
       createdAt: Date.now(), // Received keys track when we got them (not checked for expiration)
@@ -520,11 +521,11 @@ export class SenderKeyManager {
     if (state.signatureKey) {
       // A locally created key always records when it was created, at creation
       // and again at every rotation. One that does not is damaged or predates
-      // the field, and its age cannot be established — which is the single
-      // thing this bound exists to establish, so skipping the check on it
-      // would exempt the only keys whose life is genuinely unbounded. Treat it
-      // as expired instead: the caller answers that by rotating, which costs a
-      // redistribution and restores a key whose age is known.
+      // the field, so its age cannot be established. Establishing the age is
+      // the single thing this bound exists for. Skipping the check would
+      // exempt the only keys whose life is genuinely unbounded. Treat such a
+      // key as expired instead. The caller answers that by rotating, which
+      // costs a redistribution and restores a key whose age is known.
       if (!Number.isFinite(state.createdAt) || state.createdAt <= 0) {
         throw new EncryptionError(
           'Sender key has no usable creation time, so its age cannot be checked. Auto-rotation required.',
@@ -628,18 +629,18 @@ export class SenderKeyManager {
    * Resolve the group a framed SenderKeyMessage belongs to.
    *
    * A group envelope names no group. It carries the sender's identity and an
-   * opaque distribution identifier inside the frame, and the receiver maps
-   * that identifier back to a group through its own sender key store — the
-   * store is the only thing that knows the association, which is why the
-   * relay cannot learn it.
+   * opaque distribution identifier inside the frame. The receiver maps that
+   * identifier back to a group through its own sender key store. The store is
+   * the only thing that knows the association, which is why the relay cannot
+   * learn it.
    *
    * Parsing here reads unauthenticated bytes: the signature is not checked
    * until `decryptGroupMessage`. That is safe because the only thing taken
    * from them is an identifier used as a lookup key. A forged identifier
-   * either matches no record, or matches one — and matching one is not an
-   * escalation, since the caller's own state already binds that identifier to
-   * a public signature key, which the subsequent verification will reject the
-   * forgery against.
+   * either matches no record, or matches one. Matching one is not an
+   * escalation. The caller's own state already binds that identifier to a
+   * public signature key, and the subsequent verification rejects the forgery
+   * against it.
    *
    * @param framedMessage - Framed SenderKeyMessage bytes from the envelope
    * @param senderId - Sender user identifier, from the envelope
@@ -695,7 +696,7 @@ export class SenderKeyManager {
       throw new Error(`SENDER_KEY_NOT_FOUND: No sender key for ${senderId}.${senderDeviceId}`);
     }
 
-    // M11: If current state doesn't match, try previous states (rotation window)
+    // M11: If current state does not match, try previous states (rotation window)
     // This allows decryption of in-flight messages encrypted with a previous key.
     if (state.senderKeyId !== message.senderKeyId) {
       const prevResult = await this.tryDecryptWithPreviousState(
@@ -1216,7 +1217,7 @@ export class SenderKeyManager {
    * Signal Protocol spec: Next Chain Key = HMAC-SHA256(Chain Key, 0x02)
    *
    * This provides forward secrecy - old chain keys cannot be derived from
-   * current chain key, so compromising current state doesn't reveal past
+   * current chain key, so compromising current state does not reveal past
    * messages.
    *
    * @see https://signal.org/docs/specifications/doubleratchet/#external-functions
@@ -1245,12 +1246,14 @@ export class SenderKeyManager {
    * The Ed25519 signature covers the version byte and protobuf message bytes.
    *
    * Proto schema (wire.proto):
+   * ```proto
    *   message SenderKeyMessage {
    *     optional bytes  distribution_uuid = 1;  // our senderKeyId
    *     optional uint32 chain_id          = 2;  // FNV-1a hash of senderKeyId
    *     optional uint32 iteration         = 3;  // our chainIndex
    *     optional bytes  ciphertext        = 4;
    *   }
+   * ```
    *
    * The senderKeyId is encoded as distribution_uuid (field 1) which binds
    * the signature to the distribution, preventing cross-session replay.

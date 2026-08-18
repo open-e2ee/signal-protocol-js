@@ -3,7 +3,8 @@
 `InMemorySignalProtocolRelayServer` implements `ISignalProtocolRelayServer` in memory for examples
 and local application development.
 
-Real protocol and cryptography; simulated in-memory infrastructure.
+The protocol and cryptography are real. The adapter simulates the
+infrastructure in memory.
 
 ## Why it exists
 
@@ -29,8 +30,8 @@ await client.syncToServer();
 ```
 
 All registered devices, public keys, mailboxes, and provisioning state disappear
-with the adapter. It performs no real account authentication, rate limiting,
-abuse prevention, or durable delivery and must not be used in production.
+with the adapter. It does not authenticate accounts, limit rates, prevent
+abuse, or deliver durably. Never use it in production.
 
 ## Deterministic failure and recovery exercises
 
@@ -61,8 +62,8 @@ relay.failures.reconnect("bob", 1);
 a scenario without rebuilding clients. Authorization rejection raises
 `SealedSenderAuthError`, allowing the client's documented identified-delivery
 fallback. One-time-prekey exhaustion withholds both EC and KEM one-time keys but
-keeps the KEM last-resort key, so strict-PQ examples exercise the intended
-post-quantum recovery path rather than a silent classical downgrade. Failure
+keeps the KEM last-resort key. Strict-PQ examples therefore exercise the
+intended post-quantum recovery path rather than a silent classical downgrade. Failure
 selection uses the configured seed and delivery count, never `Math.random()` or
 wall-clock time.
 

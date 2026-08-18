@@ -13,7 +13,7 @@ Transitions from StillNegotiating to NegotiationComplete exactly once.
 
 With the binary wire format, version is implicit in byte 0 of every
 message, so negotiation completes on first message received from the
-peer. No separate capability exchange is needed.
+peer. The protocol needs no separate capability exchange.
 
 ## Example
 
@@ -39,7 +39,7 @@ processVersionFromByte(versionNegotiation, peerVersionByte);
 
 Our maximum supported version.
 
-Advertised to peer; negotiated version will be min(ours, theirs).
+Advertised to peer. The negotiated version will be min(ours, theirs).
 
 ***
 

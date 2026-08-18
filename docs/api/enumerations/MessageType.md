@@ -26,4 +26,4 @@ needed for responder to establish session using X3DH/PQXDH.
 Regular Double Ratchet message.
 
 Standard encrypted message using the Double Ratchet algorithm.
-Used after session has been established.
+Use this after the session exists.

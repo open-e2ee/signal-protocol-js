@@ -38,7 +38,7 @@ export interface IConvexClient {
  * App-owned Convex function references required by DeviceLifecycleManager.
  *
  * Kept as opaque values because the manager only forwards them to the injected
- * Convex client; it does not depend on generated Convex types directly.
+ * Convex client. It does not depend on generated Convex types directly.
  */
 export interface DeviceLifecycleApi {
   devices: {
@@ -164,7 +164,7 @@ export interface ServerDeviceInfo {
 export interface DeviceInfo {
   /** Device ID (1-5) */
   deviceId: number;
-  /** Human-readable device name (e.g., "iPhone 15 Pro") — plaintext for local display */
+  /** Human-readable device name (e.g., "iPhone 15 Pro"), plaintext for local display */
   deviceName?: string;
   /** Device type */
   deviceType?: 'mobile' | 'desktop' | 'tablet' | 'web';
@@ -221,7 +221,7 @@ export type InitializationResult =
  * Used to determine if re-registration is needed.
  *
  * Reasons:
- * - 'not-found': Device record doesn't exist in backend
+ * - 'not-found': Device record does not exist in backend
  * - 'removed': Device exists but registered=false (soft deleted)
  * - 'unlinked': Secondary device exists but linked=false (detached from primary)
  * - 'disabled': Device exists but enabled=false (user paused message delivery)
@@ -319,16 +319,16 @@ export interface DeviceChoice {
 /**
  * Device registration state machine states.
  *
- * STATE 1: loading - Initial state while gathering data
- * STATE 2a: verified_return - IDFV matches, keys match → auto-proceed
- * STATE 2b: reclaim_reinstall - IDFV matches, no local key → reinstall reclaim
- * STATE 2c: key_mismatch - IDFV matches, keys differ → security alert
- * STATE 3: first_device - No devices exist → auto-register as primary
- * STATE 4: orphan_state - Devices exist but none are primary → reset needed
- * STATE 5: unknown_device - Unknown device, primary exists → user choice
- * STATE 6: orphaned_linked_device - Linked device with stale primary → attention needed
- * STATE 7: choice_required - User must make a choice
- * STATE 8: complete - Registration complete
+ * - STATE 1: loading - Initial state while gathering data
+ * - STATE 2a: verified_return - IDFV matches, keys match → auto-proceed
+ * - STATE 2b: reclaim_reinstall - IDFV matches, no local key → reinstall reclaim
+ * - STATE 2c: key_mismatch - IDFV matches, keys differ → security alert
+ * - STATE 3: first_device - No devices exist → auto-register as primary
+ * - STATE 4: orphan_state - Devices exist but none are primary → reset needed
+ * - STATE 5: unknown_device - Unknown device, primary exists → user choice
+ * - STATE 6: orphaned_linked_device - Linked device with stale primary → attention needed
+ * - STATE 7: choice_required - User must make a choice
+ * - STATE 8: complete - Registration complete
  */
 export type DeviceRegistrationState =
   | { status: 'loading' }

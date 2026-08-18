@@ -1,12 +1,12 @@
 /**
- * ProfileKeyStruct — profile key as two Ristretto points
+ * ProfileKeyStruct: profile key as two Ristretto points
  *
  *
  * Converts a 32-byte profile key + 16-byte UID into a pair of Ristretto points:
  *  - M3 = SHO(label || profile_key_bytes || uid_bytes).getPointSingleElligator()
  *  - M4 = fromUniformBytesSingleElligator(masked_profile_key_bytes)
  *
- * @see https://eprint.iacr.org/2019/1416.pdf — Signal Private Group System
+ * @see https://eprint.iacr.org/2019/1416.pdf (Signal Private Group System)
  */
 
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';

@@ -68,20 +68,22 @@ export const PROTOCOL_CONSTANTS = {
  *
  */
 export type MLKEMBraidState =
-  // Alice's states (initiator)
-  | 'KeysUnsampled' // Ready to sample new keypair
-  | 'KeysSampled' // Sending header, awaiting ct1
-  | 'HeaderSent' // Sending ek_vector, receiving ct1
-  | 'Ct1Received' // Received ct1, still sending ek_vector
-  | 'EkSentCt1Received' // Sent ek_vector, receiving ct2
+  // Alice's states (initiator).
 
-  // Bob's states (responder)
-  | 'NoHeaderReceived' // Awaiting header from next epoch
-  | 'HeaderReceived' // Received header, ready to sample ct1
-  | 'Ct1Sampled' // Sending ct1, receiving ek_vector
-  | 'EkReceivedCt1Sampled' // Received ek_vector, still sending ct1
-  | 'Ct1Acknowledged' // CT1 acknowledged, receiving ek_vector
-  | 'Ct2Sampled'; // Sending ct2 chunks
+  | 'KeysUnsampled' // Ready to sample a new keypair.
+  | 'KeysSampled' // Sending header, awaiting the ct1 chunks.
+  | 'HeaderSent' // Sending ek_vector, receiving the ct1 chunks.
+  | 'Ct1Received' // Received ct1, still sending the ek_vector.
+  | 'EkSentCt1Received' // Sent ek_vector, receiving the ct2 chunks.
+
+  // Bob's states (responder).
+
+  | 'NoHeaderReceived' // Awaiting header from the next epoch.
+  | 'HeaderReceived' // Received header, ready to sample the ct1 chunks.
+  | 'Ct1Sampled' // Sending ct1, receiving the ek_vector.
+  | 'EkReceivedCt1Sampled' // Received ek_vector, still sending the ct1 chunks.
+  | 'Ct1Acknowledged' // CT1 acknowledged, receiving the ek_vector.
+  | 'Ct2Sampled'; // Sending the ct2 chunks.
 
 /** States where the agent is in Alice (key generator) role */
 export const ALICE_STATES: ReadonlySet<MLKEMBraidState> = new Set([
@@ -261,7 +263,7 @@ export interface MLKEMBraidAgentState extends MLKEMBraidBaseState {
 
   // ----- Encapsulation State (populated in Bob role states) -----
 
-  /** One-shot Encaps1 state; owned bytes are consumed and best-effort overwritten by Encaps2. */
+  /** One-shot Encaps1 state. Encaps2 consumes the owned bytes and overwrites them best-effort. */
   encaps_secret?: Uint8Array;
   /** First ciphertext component (960 bytes) */
   ct1?: Uint8Array;
@@ -324,7 +326,7 @@ export function isInBobRole(state: MLKEMBraidAgentState): boolean {
 export interface OutputKey {
   /** Epoch this key is associated with */
   epoch: bigint;
-  /** 32-byte epoch secret after KDF_OK; this is not raw ML-KEM output */
+  /** 32-byte epoch secret after KDF_OK. This is not raw ML-KEM output */
   epoch_secret: Uint8Array;
 }
 

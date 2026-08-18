@@ -90,4 +90,4 @@ Opaque remote object identifier for the encrypted attachment
 
 > **timestamp**: `number`
 
-Server timestamp when message was accepted
+Server timestamp when the relay accepted the message

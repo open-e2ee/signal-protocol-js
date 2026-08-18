@@ -18,7 +18,7 @@
  * - Network requests completing out of order
  *
  * The lock wraps the entire check → generate → upload → store sequence
- * to ensure atomic key rotation operations.
+ * to make key rotation atomic.
  *
  * ## Transactional Pattern
  *
@@ -28,8 +28,8 @@
  * 3. Upload to server (may fail - local state unchanged)
  * 4. Store locally only after successful upload
  *
- * This ensures client and server stay in sync. If upload fails,
- * local state is unchanged and rotation can be safely retried.
+ * This keeps client and server in sync. If upload fails, local state does not
+ * change, and the caller can safely retry rotation.
  */
 
 import AsyncLock from 'async-lock';
@@ -52,7 +52,7 @@ import {
  * Prevents concurrent callers from both generating and uploading different keys,
  * which would result in one upload overwriting the other.
  *
- * Uses per-key-type locks so signed and Kyber rotations don't block each other.
+ * Uses per-key-type locks so signed and Kyber rotations do not block each other.
  */
 export {};
 const rotationLock = new AsyncLock({
@@ -131,7 +131,7 @@ async function withRotationLock<T>(
 }
 
 /**
- * Check if rotation is needed based on metadata
+ * Check whether the metadata calls for rotation
  */
 interface KeyMetadata {
   createdAt: number;
@@ -166,8 +166,9 @@ function checkRotationNeeded(
 // ============================================================================
 
 /**
- * Minimum one-time prekeys before replenishment is triggered.
- * When count drops below this threshold, new prekeys are generated and uploaded.
+ * Minimum one-time prekeys before replenishment starts.
+ * When the count drops below this threshold, the client generates and uploads
+ * new prekeys.
  */
 export const MIN_PREKEY_REPLENISHMENT_THRESHOLD = 10;
 
@@ -175,13 +176,13 @@ export const MIN_PREKEY_REPLENISHMENT_THRESHOLD = 10;
  * Check if a key needs rotation based on age
  *
  * Used for BOTH signed and Kyber prekeys. Per PQXDH spec Section 3.2,
- * both key types use identical rotation thresholds to ensure synchronized
+ * both key types use identical rotation thresholds, which synchronizes
  * post-quantum security maintenance.
  *
  * @param createdAt - Key creation timestamp (milliseconds)
  * @param expiresAt - Key expiration timestamp (milliseconds)
  * @param refreshIntervalMs - Custom refresh interval (defaults to 2 days)
- * @returns true if key should be rotated
+ * @returns true if the key needs rotation
  *
  * @see https://signal.org/docs/specifications/pqxdh/#publishing-keys
  */
@@ -198,10 +199,10 @@ export function shouldRotateKey(
 }
 
 /**
- * Check if prekeys have exceeded maximum allowed age.
+ * Check whether prekeys exceed the maximum allowed age.
  *
- * If prekeys are older than MAX_PREKEY_AGE_MS (14 days), message sending
- * should be blocked until rotation succeeds.
+ * If prekeys are older than MAX_PREKEY_AGE_MS (14 days), the caller must block
+ * message sending until rotation succeeds.
  *
  * This provides a 12-day safety buffer above the 2-day refresh interval.
  *
@@ -230,7 +231,7 @@ export function isPreKeyExpired(
  * @param deviceId - Device identifier
  * @param providedStorage - Local store instance for the current runtime
  * @param refreshIntervalMs - Custom refresh interval (defaults to 2 days)
- * @returns true if rotation was performed
+ * @returns true if the function rotated the key
  */
 export async function rotateEcSignedPreKeyCore(
   relay: ISignalProtocolRelayServer,
@@ -241,10 +242,11 @@ export async function rotateEcSignedPreKeyCore(
   identityTypes: readonly IdentityType[] = ['aci', 'pni'],
   logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<boolean> {
-  // Rotate for active identity types (the reference implementation rotates PNI on the same schedule as ACI)
+  // Rotate for active identity types. The reference implementation rotates PNI
+  // on the same schedule as ACI.
   // Use && so the function only returns true when ALL identities succeed.
-  // The reference implementation uses exception propagation — if any identity fails, the entire job
-  // fails and is retried on the next rotation cycle.
+  // The reference implementation uses exception propagation. If any identity fails, the entire job
+  // fails, and the next rotation cycle retries it.
   let allRotated = true;
   for (const type of identityTypes) {
     const rotated = await rotateEcSignedPreKeyForIdentity(
@@ -270,7 +272,7 @@ export async function rotateEcSignedPreKeyCore(
  * @param identityType - 'aci' or 'pni'
  * @param providedStorage - Optional storage instance
  * @param refreshIntervalMs - Custom refresh interval
- * @returns true if rotation was performed
+ * @returns true if the function rotated the key
  */
 async function rotateEcSignedPreKeyForIdentity(
   relay: ISignalProtocolRelayServer,
@@ -286,7 +288,7 @@ async function rotateEcSignedPreKeyForIdentity(
     deviceId,
     `signed:${identityType}` as KeyType,
     async () => {
-      // Check if rotation is needed for this identity type
+      // Check whether this identity type needs rotation
       const metadata = await relay.getEcSignedPreKeyMetadata(userId, deviceId, identityType);
       if (
         !checkRotationNeeded(
@@ -308,11 +310,11 @@ async function rotateEcSignedPreKeyForIdentity(
       const storage = await resolveStorage(providedStorage, logger);
       const identityKey = await getRequiredIdentityKey(storage, identityType);
 
-      // Generate new EC signed prekey (but don't store yet)
+      // Generate new EC signed prekey (but do not store yet)
       const newSignedPreKey = await generateEcSignedPreKey(identityKey);
 
       // TRANSACTIONAL PATTERN: Upload first, then commit locally
-      // If upload fails, local state is unchanged - safe to retry.
+      // If upload fails, local state does not change, so a retry is safe.
       await relay.uploadEcSignedPreKey(
         userId,
         {
@@ -351,7 +353,7 @@ async function rotateEcSignedPreKeyForIdentity(
  * @param deviceId - Device identifier
  * @param providedStorage - Local store instance for the current runtime
  * @param refreshIntervalMs - Custom refresh interval (defaults to 2 days)
- * @returns true if rotation was performed
+ * @returns true if the function rotated the key
  */
 export async function rotateKyberPreKeyCore(
   relay: ISignalProtocolRelayServer,
@@ -362,10 +364,11 @@ export async function rotateKyberPreKeyCore(
   identityTypes: readonly IdentityType[] = ['aci', 'pni'],
   logger: Required<ILogger> = defaultSignalProtocolLogger
 ): Promise<boolean> {
-  // Rotate for active identity types (the reference implementation rotates PNI on the same schedule as ACI)
+  // Rotate for active identity types. The reference implementation rotates PNI
+  // on the same schedule as ACI.
   // Use && so the function only returns true when ALL identities succeed.
-  // The reference implementation uses exception propagation — if any identity fails, the entire job
-  // fails and is retried on the next rotation cycle.
+  // The reference implementation uses exception propagation. If any identity fails, the entire job
+  // fails, and the next rotation cycle retries it.
   let allRotated = true;
   for (const type of identityTypes) {
     const rotated = await rotateKyberPreKeyForIdentity(
@@ -391,7 +394,7 @@ export async function rotateKyberPreKeyCore(
  * @param identityType - 'aci' or 'pni'
  * @param providedStorage - Optional storage instance
  * @param refreshIntervalMs - Custom refresh interval
- * @returns true if rotation was performed
+ * @returns true if the function rotated the key
  */
 async function rotateKyberPreKeyForIdentity(
   relay: ISignalProtocolRelayServer,
@@ -407,7 +410,7 @@ async function rotateKyberPreKeyForIdentity(
     deviceId,
     `kyber:${identityType}` as KeyType,
     async () => {
-      // Check if rotation is needed for this identity type
+      // Check whether this identity type needs rotation
       const metadata = await relay.getKemLastResortPreKeyMetadata(userId, deviceId, identityType);
       if (
         !checkRotationNeeded(metadata, refreshIntervalMs, `Kyber prekey (${identityType})`, logger)
@@ -427,7 +430,7 @@ async function rotateKyberPreKeyForIdentity(
       const kyberPreKey = await generateKyberLastResortPreKey(identityKey, 1);
 
       // TRANSACTIONAL PATTERN: Upload first, then commit locally
-      // If upload fails, local state is unchanged - safe to retry.
+      // If upload fails, local state does not change, so a retry is safe.
       const publicKyberPreKey = {
         keyId: kyberPreKey.keyId,
         publicKey: kyberPreKey.publicKey,
@@ -476,7 +479,7 @@ async function rotateKyberPreKeyForIdentity(
  * @param deviceId - Device identifier
  * @param storage - Key storage for local persistence
  * @param threshold - Minimum number of prekeys before replenishment (default: 10)
- * @returns true if replenishment was performed for both identity types
+ * @returns true if the function replenished both identity types
  */
 export async function replenishOneTimePreKeysCore(
   relay: ISignalProtocolRelayServer,
@@ -515,7 +518,7 @@ export async function replenishOneTimePreKeysCore(
  * @param storage - Key storage for local persistence
  * @param threshold - Minimum number of prekeys before replenishment
  * @param identityType - 'aci' or 'pni'
- * @returns true if replenishment was performed
+ * @returns true if the function replenished the prekeys
  */
 async function replenishOneTimePreKeysForIdentity(
   relay: ISignalProtocolRelayServer,
@@ -592,7 +595,7 @@ async function replenishOneTimePreKeysForIdentity(
 export interface PreKeySendCheckResult {
   /** Whether sending should proceed */
   canSend: boolean;
-  /** Whether rotation was attempted */
+  /** Whether the check attempted a rotation */
   rotationAttempted: boolean;
   /** Whether rotation succeeded (if attempted) */
   rotationSucceeded: boolean;
@@ -603,8 +606,9 @@ export interface PreKeySendCheckResult {
 /**
  * Check prekey age and rotate if needed before sending a message.
  *
- * If prekeys exceed MAX_PREKEY_AGE_MS (14 days), rotation is attempted.
- * If rotation fails, sending should be blocked to maintain security.
+ * If prekeys exceed MAX_PREKEY_AGE_MS (14 days), this function attempts a
+ * rotation. If rotation fails, the caller must block sending to maintain
+ * security.
  *
  * @param relay - Signal Protocol relay server interface
  * @param userId - User identifier
@@ -644,7 +648,7 @@ export async function ensurePreKeysValid(
   const kyberMetadata = await relay.getKemLastResortPreKeyMetadata(userId, deviceId, identityType);
   const kyberExpired = kyberMetadata ? isPreKeyExpired(kyberMetadata.createdAt, maxAgeMs) : true;
 
-  // If neither is expired, sending can proceed
+  // If neither key expired, sending can proceed
   if (!signedExpired && !kyberExpired) {
     return {
       canSend: true,
@@ -653,7 +657,7 @@ export async function ensurePreKeysValid(
     };
   }
 
-  // Prekeys are expired - attempt rotation (rotate before blocking)
+  // The prekeys expired - attempt rotation (rotate before blocking)
   logger.warn('Prekeys expired, attempting rotation before send', {
     category: 'E2EE',
     data: {

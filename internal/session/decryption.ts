@@ -95,7 +95,7 @@ export async function performReplayRejectionWork(): Promise<void> {
   try {
     await CryptoUtils.aesCbcEncrypt(dummyKey, dummyData, dummyIV);
   } catch {
-    // Expected to fail - we're just burning CPU time
+    // Expected to fail - we are just burning CPU time
   }
 
   // Best-effort overwrite of owned temporary arrays.
@@ -119,7 +119,7 @@ export async function performReplayRejectionWork(): Promise<void> {
  * @returns Decrypted plaintext or null if no skipped key matches
  *
  * An early return after a successful key lookup does not depend on secret
- * comparison work; MAC verification remains the timing-sensitive path.
+ * comparison work. MAC verification remains the timing-sensitive path.
  *
  * @internal
  * @see https://signal.org/docs/specifications/doubleratchet/#handling-missing-messages
@@ -159,9 +159,10 @@ export async function trySkippedMessageKeys(
   const finalMessageKeyBytes = messageKeyBytes;
   let pqMessageKeySalt: Uint8Array | undefined;
 
-  // Triple Ratchet: If enabled, combine EC key with PQ key
-  // The stored key is EC-only, but Alice encrypted with combined key
-  // Decode SPQR epoch/messageNumber from opaque pqRatchet bytes (without advancing the main chain)
+  // Triple Ratchet: if enabled, combine the EC key with the PQ key.
+  // The stored key is EC-only, but Alice encrypted with the combined key.
+  // Decode the SPQR epoch and message number from the opaque pqRatchet bytes,
+  // without advancing the main chain.
   if (session.tripleRatchet?.enabled && session.tripleRatchet.spqrState && pqRatchetBytes?.length) {
     const pqr = decodeSPQRWire(pqRatchetBytes);
     const spqrEpoch = pqr.epoch === undefined ? undefined : spqrWireEpochToInternalEpoch(pqr.epoch);
@@ -278,7 +279,7 @@ export async function decryptWithKey(
         protobufMacContext.mac
       );
     } else {
-      // Alpha profile break: retained only for internal unit callers,
+      // The non-protobuf header path, retained only for internal unit callers,
       // using the same composite commitment authority as protobuf messages.
       const serializedHeader = CryptoUtils.serializeHeader(
         message.ratchetKey,
@@ -297,9 +298,10 @@ export async function decryptWithKey(
 
     if (!macValid) {
       // Log diagnostic data at WARN level (not ERROR) because:
-      // - For implicit messages (typing indicators, receipts), this is expected and will be discarded
-      // - For real messages, handleDecryptionError will log at ERROR level after this
-      // This prevents ERROR log spam for ephemeral messages that can't be decrypted
+      // - For implicit messages (typing indicators, receipts), this is expected and discarded.
+      // - For real messages, handleDecryptionError logs at ERROR level after this point.
+      //
+      // This prevents ERROR log spam for ephemeral messages that cannot be decrypted.
       logger.warn('MAC verification failed - diagnostic data', {
         category: 'E2EE',
         data: {

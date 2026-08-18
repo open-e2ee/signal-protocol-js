@@ -10,7 +10,7 @@ Brokered remote storage for encrypted byte objects.
 
 Implementations request narrowly scoped, short-lived operations from an
 authenticated application backend. Cloud credentials and unrestricted
-storage clients must not be placed in an app runtime.
+storage clients must never reach an app runtime.
 
 ## Methods
 

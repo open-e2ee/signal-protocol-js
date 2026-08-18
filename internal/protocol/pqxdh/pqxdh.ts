@@ -4,12 +4,12 @@
  * Implements the PQXDH key agreement protocol which extends X3DH with
  * standardized ML-KEM-1024 for the post-quantum contribution.
  *
- * The negotiated PQXDH mode performs X3DH plus ML-KEM-1024:
+ * The negotiated PQXDH mode runs X3DH plus ML-KEM-1024:
  * - All X3DH DH operations (DH1-DH4)
  * - ML-KEM encapsulation/decapsulation
  * - Combines both secrets with HKDF for hybrid security
  *
- * The intended hybrid property is conditional: confidentiality survives a
+ * The intended hybrid property is conditional. Confidentiality survives a
  * break of one contribution only while the other contribution and the wider
  * authenticated protocol assumptions remain secure. See docs/SECURITY.md.
  *
@@ -101,7 +101,7 @@ export interface PQXDHResult {
   kemOneTimePreKeyCiphertext?: Base64;
   /** ID of the KEM one-time prekey we used (if any) */
   usedKemOneTimePreKeyId?: number;
-  /** Whether PQXDH was used (always true for this type) */
+  /** Whether the session used PQXDH (always true for this type) */
   usedPQXDH: boolean;
 }
 
@@ -116,7 +116,7 @@ export interface PQXDHResponderResult {
    * Only present when derived with extended output size.
    */
   additionalDerivedBytes?: Uint8Array;
-  /** Whether PQXDH was used */
+  /** Whether the session used PQXDH */
   usedPQXDH: boolean;
 }
 
@@ -128,23 +128,23 @@ export interface PQXDHResponderInput {
   senderIdentityKey: PublicKey;
   /** Sender's ephemeral public key from PreKeyMessage */
   senderEphemeralKey: PublicKey;
-  /** ID of our signed prekey that was used */
+  /** ID of our signed prekey for this session */
   usedSignedPreKeyId: number;
-  /** ID of our one-time prekey that was used (if any) */
+  /** ID of our one-time prekey for this session (if any) */
   usedOneTimePreKeyId?: number;
   /**
    * Kyber ciphertext for PQXDH last-resort prekey (fallback)
    * Per PQXDH spec: use EITHER this OR kemOneTimePreKeyCiphertext, not both
    */
   kyberCiphertext?: Base64;
-  /** ID of our Kyber last-resort prekey that was used */
+  /** ID of our Kyber last-resort prekey for this session */
   usedKyberPreKeyId?: number;
   /**
    * Kyber ciphertext for one-time KEM prekey (preferred)
    * Per PQXDH spec: use EITHER this OR kyberCiphertext, not both
    */
   kemOneTimePreKeyCiphertext?: Base64;
-  /** ID of our one-time KEM prekey that was used (if any) */
+  /** ID of our one-time KEM prekey for this session (if any) */
   usedKemOneTimePreKeyId?: number;
 }
 
@@ -153,18 +153,19 @@ export interface PQXDHResponderInput {
 // ============================================================================
 
 /**
- * Perform PQXDH key agreement as initiator (Alice)
+ * Run the PQXDH key agreement as initiator (Alice)
  *
  * This extends X3DH with Kyber post-quantum security.
- * Alice uses Bob's prekey bundle (including Kyber prekey) to perform the key agreement.
+ * Alice uses Bob's prekey bundle (including Kyber prekey) for the key agreement.
  *
  * @param myIdentityKey My identity key pair
  * @param theirBundle Partner's prekey bundle (must include Kyber prekey)
  * @param infoString HKDF info string for key derivation
  * @returns PQXDH result containing shared secret and metadata.
  *   **Caller must zero** `sharedSecret` and `additionalDerivedBytes` after use
- *   (e.g., via `secureZeroBytes()`). The source `derivedKeys` buffer is zeroed
- *   internally, but the returned slices are the caller's responsibility.
+ *   (e.g., via `secureZeroBytes()`). This function zeroes the source
+ *   `derivedKeys` buffer internally, but the returned slices are the caller's
+ *   responsibility.
  *
  * @see https://signal.org/docs/specifications/pqxdh/#the-pqxdh-protocol
  */
@@ -181,7 +182,7 @@ export async function performPQXDH(
   });
 
   // PQXDH requires one signed KEM prekey - either one-time or last-resort.
-  // Fallback to X3DH is handled by session/handshake.ts orchestration layer.
+  // The session/handshake.ts orchestration layer handles fallback to X3DH.
   if (!theirBundle.kemOneTimePreKey && !theirBundle.kemLastResortPreKey) {
     logger.breadcrumb('PQXDH: KEM prekey missing from bundle', {
       category: 'E2EE',
@@ -237,7 +238,7 @@ export async function performPQXDH(
 
   try {
 
-  // Step 4: Perform ECDH operations (same as X3DH)
+  // Step 4: ECDH operations (same as X3DH)
 
   // DH1: My identity DH private key × Their signed prekey public key
   const dh1 = trackSecret(await computeSharedSecret(
@@ -270,10 +271,12 @@ export async function performPQXDH(
   const F = new Uint8Array(32).fill(0xff);
   let ikm = trackSecret(concatBytes(F, ...dhOutputs));
 
-  // Step 6: Perform KEM encapsulation
-  // Per PQXDH spec Section 3.3 - Use EITHER one-time (preferred) OR last-resort (fallback)
-  // Signal Protocol PQXDH design: "One of either Bob's signed one-time pqkem prekey... or Bob's
-  // last-resort signed pqkem prekey if no signed one-time pqkem prekey remains"
+  // Step 6: KEM encapsulation.
+  // Per PQXDH spec Section 3.3, use EITHER one-time (preferred) OR last-resort
+  // (fallback). From the Signal Protocol PQXDH design:
+  //
+  // > "One of either Bob's signed one-time pqkem prekey... or Bob's
+  // > last-resort signed pqkem prekey if no signed one-time pqkem prekey remains"
   let kyberSharedSecret: Uint8Array;
   let kyberCiphertext: Base64 | undefined;
   let kemOneTimePreKeyCiphertext: Base64 | undefined;
@@ -362,15 +365,15 @@ export async function performPQXDH(
     });
   }
 
-  // Step 7: Append single Kyber shared secret to IKM per PQXDH specification
-  // IKM = F || DH1 || DH2 || DH3 || [DH4] || SS
-  // The Signal Protocol PQXDH flow performs one KEM encapsulation per session.
-  // Only the KEM shared secret enters IKM; the public key is not additional data.
+  // Step 7: Append single Kyber shared secret to IKM per PQXDH specification,
+  // where IKM = F || DH1 || DH2 || DH3 || [DH4] || SS.
+  // The Signal Protocol PQXDH flow runs one KEM encapsulation per session.
+  // Only the KEM shared secret enters IKM. The public key is not additional data.
   ikm = trackSecret(concatPQXDHSecrets(ikm, kyberSharedSecret));
 
-  // Step 8: Single HKDF derivation per PQXDH spec
-  // SK = KDF(F || DH1 || DH2 || DH3 || [DH4] || SS, zero_salt, info)
-  // Per Signal Protocol spec: Use zero-filled salt
+  // Step 8: Single HKDF derivation per PQXDH spec, where
+  // SK = KDF(F || DH1 || DH2 || DH3 || [DH4] || SS, zero_salt, info).
+  // Per Signal Protocol spec: Use zero-filled salt.
   const salt = new Uint8Array(32); // 32 bytes of zeros
 
   // Use the configured session-derivation domain string.
@@ -396,10 +399,10 @@ export async function performPQXDH(
   secureZeroBytes(derivedKeys); // Zero derivedKeys after slicing
 
   // Note: The ephemeral private key (ephemeralKey.privateKey) is an immutable
-  // Base64 string that cannot be zeroed in JavaScript. The byte-form copies
+  // Base64 string, and JavaScript cannot zero it. The byte-form copies
   // created internally by computeSharedSecret() are local variables that go
-  // out of scope but are not explicitly zeroed. This is an inherent limitation
-  // of the JS/TS runtime. Callers that decode the key pair to bytes for session
+  // out of scope, and nothing zeroes them explicitly. The JS/TS runtime
+  // imposes this limit. Callers that decode the key pair to bytes for session
   // initialization should zero their own decoded copies when done.
 
   logger.breadcrumb('PQXDH initiator key agreement complete', {
@@ -420,8 +423,8 @@ export async function performPQXDH(
     ephemeralKeyPair: ephemeralKey,
     usedSignedPreKeyId: theirBundle.ecSignedPreKey.keyId,
     usedOneTimePreKeyId: theirBundle.ecOneTimePreKey?.keyId,
-    // Per PQXDH spec: only one KEM key is used per session
-    // Set the ID for whichever key type was used
+    // Per PQXDH spec: the session uses only one KEM key
+    // Set the ID for whichever key type the session used
     kyberCiphertext,
     usedKyberPreKeyId:
       usedKemPreKeyType === 'last-resort' ? theirBundle.kemLastResortPreKey!.keyId : undefined,
@@ -435,24 +438,26 @@ export async function performPQXDH(
 }
 
 /**
- * Perform PQXDH key agreement as responder (Bob)
+ * Run the PQXDH key agreement as responder (Bob)
  *
- * This is called when Bob receives Alice's PreKeyMessage with KEM ciphertext.
+ * The caller invokes this when Bob receives Alice's PreKeyMessage with KEM
+ * ciphertext.
  * Bob uses his own prekeys and Alice's keys to derive the same shared secret.
  *
  * Supports exactly one KEM mode per session: one-time KEM or last-resort KEM.
  *
  * @param myIdentityKey My identity key pair
- * @param mySignedPreKey My signed prekey that was used
- * @param myOneTimePreKey My one-time prekey that was used (if any)
+ * @param mySignedPreKey My signed prekey for this session
+ * @param myOneTimePreKey My one-time prekey for this session (if any)
  * @param myKyberPreKey My Kyber last-resort prekey for decapsulation
  * @param myKemOneTimePreKey My one-time KEM prekey for decapsulation (if any)
  * @param input Information from Alice's PreKeyMessage
  * @param infoString HKDF info string for key derivation
  * @returns PQXDH responder result containing shared secret.
  *   **Caller must zero** `sharedSecret` and `additionalDerivedBytes` after use
- *   (e.g., via `secureZeroBytes()`). The source `derivedKeys` buffer is zeroed
- *   internally, but the returned slices are the caller's responsibility.
+ *   (e.g., via `secureZeroBytes()`). This function zeroes the source
+ *   `derivedKeys` buffer internally, but the returned slices are the caller's
+ *   responsibility.
  *
  * @see https://signal.org/docs/specifications/pqxdh/#the-pqxdh-protocol
  */
@@ -484,7 +489,7 @@ export async function performPQXDHResponder(
 
   try {
 
-  // Step 1: Perform ECDH operations (same as X3DH)
+  // Step 1: ECDH operations (same as X3DH)
 
   // DH1: Bob's signed prekey private × Alice's identity public
   const dh1 = trackSecret(await computeSharedSecret(mySignedPreKey.privateKey, input.senderIdentityKey));
@@ -513,16 +518,17 @@ export async function performPQXDHResponder(
   const F = new Uint8Array(32).fill(0xff);
   let ikm = trackSecret(concatBytes(F, ...dhOutputs));
 
-  // Step 3: Perform Kyber KEM decapsulation
-  // Per PQXDH spec Section 3.3 - EITHER one-time (preferred) OR last-resort (fallback)
-  // The initiator uses one KEM key per session, we must match their choice
+  // Step 3: Kyber KEM decapsulation.
+  // Per PQXDH spec Section 3.3, EITHER one-time (preferred) OR last-resort
+  // (fallback). The initiator uses one KEM key per session, so we must match
+  // their choice.
   let kyberSharedSecret: Uint8Array;
   let kyberCiphertextBytes: Uint8Array;
   let kyberPrivateKeyBytes: Uint8Array;
   let usedKemPreKeyType: 'one-time' | 'last-resort';
 
   if (input.kemOneTimePreKeyCiphertext && myKemOneTimePreKey) {
-    // One-time KEM prekey was used (preferred path)
+    // The initiator used the one-time KEM prekey (preferred path)
     logger.breadcrumb('PQXDH: Responder decapsulating Kyber ciphertext (one-time)', {
       category: 'E2EE',
       level: 'info',
@@ -547,7 +553,7 @@ export async function performPQXDHResponder(
     // from storage immediately after this function returns successfully.
     // This provides per-session post-quantum forward secrecy.
   } else if (input.kyberCiphertext) {
-    // Last-resort KEM prekey was used (fallback when one-time exhausted)
+    // The initiator used the last-resort KEM prekey (fallback when one-time exhausted)
     if (!myKyberPreKey) {
       logger.breadcrumb('PQXDH: Last-resort Kyber prekey required but not provided', {
         category: 'E2EE',
@@ -583,9 +589,9 @@ export async function performPQXDHResponder(
     );
   }
 
-  // Step 4: Append single Kyber shared secret to IKM per PQXDH specification
-  // IKM = F || DH1 || DH2 || DH3 || [DH4] || SS
-  // The Signal Protocol PQXDH flow performs one KEM encapsulation per session.
+  // Step 4: Append single Kyber shared secret to IKM per PQXDH specification,
+  // where IKM = F || DH1 || DH2 || DH3 || [DH4] || SS.
+  // The Signal Protocol PQXDH flow runs one KEM encapsulation per session.
   ikm = trackSecret(concatPQXDHSecrets(ikm, kyberSharedSecret));
 
   logger.breadcrumb('PQXDH: Responder completed post-quantum key agreement', {
@@ -598,9 +604,9 @@ export async function performPQXDHResponder(
     },
   });
 
-  // Step 5: Single HKDF derivation per PQXDH spec
-  // SK = KDF(F || DH1 || DH2 || DH3 || [DH4] || SS, zero_salt, info)
-  // Per Signal Protocol spec: Use zero-filled salt
+  // Step 5: Single HKDF derivation per PQXDH spec, where
+  // SK = KDF(F || DH1 || DH2 || DH3 || [DH4] || SS, zero_salt, info).
+  // Per Signal Protocol spec: Use zero-filled salt.
   const salt = new Uint8Array(32); // 32 bytes of zeros
 
   // Use the configured session-derivation domain string.

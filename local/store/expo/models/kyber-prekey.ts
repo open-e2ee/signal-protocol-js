@@ -159,7 +159,7 @@ export async function deleteAllKyberPreKeys(identityType: IdentityType = 'aci'):
  * Get the maximum prekey ID across ALL prekeys (active + stale).
  * Used for key recovery to avoid identifier collisions (PQXDH §4.13).
  *
- * NOTE: Intentionally includes stale prekeys — a stale prekey still
+ * NOTE: Intentionally includes stale prekeys. A stale prekey still
  * occupies its ID until purged, so reusing that ID would cause a collision.
  *
  * @returns Maximum key ID or 0 if none exist

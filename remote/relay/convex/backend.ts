@@ -15,10 +15,10 @@ import type { ComponentApi } from './component/_generated/component';
  * Authorization is **account-scoped**: there is no device field, so every
  * `deviceId` argument on the relay surface is a caller-chosen routing
  * selector, not an authenticated claim. Any session for an account can drain
- * any of that account's device queues, send as any of its device IDs, and
- * rotate key material for any of its devices. Deployments needing isolation
- * between an account's own devices must enforce it in their own `identify`
- * wrapper.
+ * any of that account's device queues and send as any of its device IDs. It
+ * can also rotate key material for any of its devices. Deployments needing
+ * isolation between an account's own devices must enforce it in their own
+ * `identify` wrapper.
  */
 export interface ConvexSignalProtocolBackendIdentity {
   /** Application-owned account identifier used by relay routing. */
@@ -834,10 +834,10 @@ export function defineConvexSignalProtocolBackend<
         },
       }),
     },
-    // Group wrappers pass client arguments through untouched: group reads
+    // Group wrappers pass client arguments through untouched. Group reads
     // and writes are authorized solely by the zero-knowledge presentation,
-    // so no caller identity is resolved or forwarded for them. identify()
-    // drives credential issuance (zkAuth) only.
+    // so no caller identity is resolved or forwarded for them. The identify()
+    // wrapper drives credential issuance (zkAuth) only.
     groups: {
       createGroup: mutationGeneric({
         args: {

@@ -6,8 +6,9 @@ that support authenticated sender-anonymous envelope delivery.
 ## Why it exists
 
 A relay may need to authorize delivery without learning sender identity from
-the outer request. The access key is derived from profile-key material and can
-be presented through the relay's sealed-sender authorization contract.
+the outer request. The module derives the access key from profile-key material.
+A sender can present it through the relay's sealed-sender authorization
+contract.
 
 ## Usage
 

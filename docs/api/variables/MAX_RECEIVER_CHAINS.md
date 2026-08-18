@@ -11,4 +11,4 @@
 Maximum number of receiver chains to store.
 
 The reference implementation maintains up to 5 receiver chains for handling out-of-order
-DH ratchets. When a 6th chain would be added, the oldest is evicted.
+DH ratchets. A 6th chain evicts the oldest.

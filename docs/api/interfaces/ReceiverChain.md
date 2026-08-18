@@ -29,8 +29,8 @@ May be null if chain key is no longer needed (all expected messages received).
 
 Skipped message keys (proto: message_keys, field 3).
 
-Keys are stored when messages arrive out of order. When the skipped
-message arrives, its key is consumed (removed) from this array.
+This array holds keys for messages that arrive out of order. When the
+skipped message arrives, decryption consumes (removes) its key.
 
 ***
 

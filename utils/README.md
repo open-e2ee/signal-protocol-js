@@ -26,11 +26,11 @@ const bundle = await withRetry(
 );
 ```
 
-`withRetry()` uses bounded exponential backoff with optional jitter. Known
-protocol and identity failures are not retried; transient network, timeout,
-database-lock, and concurrency failures are.
+`withRetry()` uses bounded exponential backoff with optional jitter. It does not
+retry known protocol and identity failures. It does retry transient network,
+timeout, database-lock, and concurrency failures.
 
-Retrying is only safe when the operation is read-only or idempotent. The caller
+Retry only a read-only or idempotent operation. The caller
 must not wrap an arbitrary mutation without an idempotency contract.
 
 See the [error-handling guide](../docs/ERROR_HANDLING.md) and

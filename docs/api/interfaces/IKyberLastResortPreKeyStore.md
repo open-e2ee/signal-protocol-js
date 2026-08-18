@@ -54,8 +54,8 @@ Retrieve Kyber prekey.
 
 Mark a Kyber prekey as used.
 
-Kyber prekeys can be reused (unlike one-time prekeys) but should be
-tracked to ensure proper rotation.
+Callers may reuse Kyber prekeys (unlike one-time prekeys), and the store
+must track them so rotation stays correct.
 
 #### Parameters
 
@@ -63,7 +63,7 @@ tracked to ensure proper rotation.
 
 `number`
 
-ID of the Kyber prekey that was used
+ID of the Kyber prekey the session used
 
 ##### signedPreKeyId
 

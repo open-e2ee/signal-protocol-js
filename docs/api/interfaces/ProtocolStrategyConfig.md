@@ -44,11 +44,32 @@ Future automatic SCKA mode selection hints.
 
 ***
 
+### onBraidProgress?
+
+> `optional` **onBraidProgress?**: (`event`) => `void`
+
+Called after each ML-KEM Braid send or receive, in braid mode only.
+
+A direct-mode session never raises it, because direct mode carries no
+chunks.
+
+#### Parameters
+
+##### event
+
+`BraidProgressEvent`
+
+#### Returns
+
+`void`
+
+***
+
 ### onProtocolSelected?
 
 > `optional` **onProtocolSelected?**: (`event`) => `void`
 
-Called after key exchange completes, before the first message is encrypted.
+Called after key exchange completes, before the client encrypts the first message.
 
 #### Parameters
 

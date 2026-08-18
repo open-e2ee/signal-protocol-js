@@ -160,10 +160,10 @@ export async function decryptFile(
       asBase64(encrypted.authTag)
     );
 
-    // Convert Uint8Array to Blob with correct MIME type from encrypted metadata
-    // Use ArrayBuffer slice to satisfy TypeScript's strict BlobPart types
-    // (Uint8Array.buffer may be larger than the view, so we slice to exact bounds)
-    // Cast needed because .slice() returns ArrayBufferLike which includes SharedArrayBuffer
+    // Convert Uint8Array to Blob with correct MIME type from encrypted metadata.
+    // Use ArrayBuffer slice to satisfy TypeScript's strict BlobPart types.
+    // (Uint8Array.buffer may be larger than the view, so we slice to exact bounds).
+    // Cast needed because .slice() returns ArrayBufferLike, which includes SharedArrayBuffer.
     const finalMimeType = keyMetadata.mimeType || 'application/octet-stream';
     const arrayBuffer = fileBytes.buffer.slice(
       fileBytes.byteOffset,

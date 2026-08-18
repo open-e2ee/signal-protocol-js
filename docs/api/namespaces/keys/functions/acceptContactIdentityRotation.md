@@ -8,7 +8,7 @@
 
 > **acceptContactIdentityRotation**(`record`, `candidate`, `now`, `suppliedCommitment?`): [`ContactIdentityRecord`](../interfaces/ContactIdentityRecord.md)
 
-Explicit user/application acceptance path; automatic save must not call this.
+Explicit user/application acceptance path. An automatic save must not call this.
 
 ## Parameters
 

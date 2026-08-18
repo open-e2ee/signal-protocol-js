@@ -5,7 +5,7 @@
 > [Client Composition](./CLIENT_COMPOSITION.md) |
 > [Protocol Policy](./PROTOCOL_POLICY.md)
 
-Working shapes for the operations applications perform most often. Each example
+Working shapes for the tasks applications do most often. Each example
 uses public exports only.
 
 ## Two local clients
@@ -90,8 +90,8 @@ bob decrypted: alice: hello
 
 The first message usually uses a `prekey_bundle` envelope because it establishes
 the session. Later messages on the same session use `ciphertext`. In both cases
-the relay sees encrypted envelope bytes; decrypted content is only surfaced to
-Bob through the `onMessageDecrypted` hook.
+the relay sees encrypted envelope bytes. Bob receives decrypted content only
+through the `onMessageDecrypted` hook.
 
 ## Production composition with Convex + Expo
 
@@ -389,5 +389,5 @@ await signal.media.cleanup(
 ```
 
 See the [encrypted media guide](../media/README.md) and
-[remote object storage](../remote/README.md) for the transfer and object-store
+[remote object store](../remote/README.md) for the transfer and object-store
 contracts these examples compose.

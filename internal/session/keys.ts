@@ -67,7 +67,7 @@ export type RootKey = Base64 & {
  * - CKr: Receiving chain key (for incoming messages)
  *
  * Security: Intermediate key material. Used only for deriving message keys.
- * Ratcheted after each use to ensure forward secrecy.
+ * Ratcheted after each use to give forward secrecy.
  *
  * Size: 32 bytes (256 bits), stored as Base64
  */
@@ -231,9 +231,8 @@ export interface SkippedMessageKeyEntry {
  *
  * Key format: "DHr:N" where DHr is Base64 DH public key and N is message number.
  *
- * Signal Protocol Section 3.5 -
- * "When receiving a message, if it's out of order, store the skipped
- * message keys for later decryption."
+ * Signal Protocol Section 3.5 covers out-of-order messages. When a message
+ * arrives out of order, store the skipped message keys for later decryption.
  *
  * Note: We use DHr-based keys (Section 3) instead of HKr-based keys (Section 4).
  */

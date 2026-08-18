@@ -222,7 +222,7 @@ export function createInitiatorSession(input: InitiatorSessionInput): SessionSta
     unacknowledgedPreKeyMessage: true,
 
     // Unacknowledged session tracking
-    // Initiator hasn't received any message yet
+    // Initiator has not received any message yet
     hasReceivedMessage: false,
 
     // Metadata

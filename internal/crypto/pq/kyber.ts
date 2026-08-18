@@ -133,7 +133,7 @@ export const KYBER_768_SHARED_SECRET_BYTES = 32;
 /**
  * Generate Kyber-1024 key pair for post-quantum security
  *
- * Uses @noble/post-quantum implementation of ML-KEM-1024 (NIST FIPS 203).
+ * Uses @noble/post-quantum for ML-KEM-1024 (NIST FIPS 203).
  * Uses the standardized ML-KEM-1024 parameter set. This package is not a
  * FIPS-validated module and makes no standalone end-to-end security claim.
  *
@@ -209,7 +209,7 @@ export async function generateMlKem1024KeyPair(): Promise<{
 /**
  * Kyber KEM Encapsulation
  *
- * Performs ML-KEM-1024 encapsulation to derive shared secret.
+ * Runs ML-KEM-1024 encapsulation to derive shared secret.
  * Used by initiator (Alice) to establish shared secret with responder (Bob).
  *
  * Security Note: The returned KyberSharedSecret is RAW key material and MUST
@@ -237,7 +237,7 @@ export async function mlKem1024Encapsulate(serializedPublicKey: Uint8Array): Pro
 /**
  * Kyber KEM Decapsulation
  *
- * Performs ML-KEM-1024 decapsulation to recover shared secret.
+ * Runs ML-KEM-1024 decapsulation to recover shared secret.
  * Used by responder (Bob) to recover shared secret from initiator's ciphertext.
  *
  * Security Note: The returned KyberSharedSecret is RAW key material and MUST
@@ -261,7 +261,7 @@ export async function mlKem1024Decapsulate(
     );
   }
 
-  // Perform ML-KEM-1024 decapsulation
+  // ML-KEM-1024 decapsulation
   const sharedSecret = ml_kem1024.decapsulate(ciphertext, privateKey);
 
   return asKyberSharedSecret(sharedSecret); // 32 bytes
@@ -274,7 +274,7 @@ export async function mlKem1024Decapsulate(
 /**
  * Generate ML-KEM-768 key pair for SPQR post-quantum ratchet
  *
- * Uses @noble/post-quantum implementation of ML-KEM-768 (NIST FIPS 203).
+ * Uses @noble/post-quantum for ML-KEM-768 (NIST FIPS 203).
  * Provides NIST Level 3 (192-bit) security against quantum computers.
  *
  * Key Sizes:
@@ -306,7 +306,7 @@ export async function generateKyber768KeyPair(): Promise<{
 /**
  * ML-KEM-768 KEM Encapsulation for SPQR
  *
- * Performs ML-KEM-768 encapsulation to derive shared secret.
+ * Runs ML-KEM-768 encapsulation to derive shared secret.
  * Used by SPQR initiator during post-quantum ratchet step.
  *
  * Bandwidth: 1088 bytes ciphertext (vs 1568 for ML-KEM-1024)
@@ -330,7 +330,7 @@ export async function kyber768Encapsulate(kyberPublicKey: Uint8Array): Promise<{
     );
   }
 
-  // Perform ML-KEM-768 encapsulation
+  // ML-KEM-768 encapsulation
   const result = ml_kem768.encapsulate(kyberPublicKey);
 
   return {
@@ -342,7 +342,7 @@ export async function kyber768Encapsulate(kyberPublicKey: Uint8Array): Promise<{
 /**
  * ML-KEM-768 KEM Decapsulation for SPQR
  *
- * Performs ML-KEM-768 decapsulation to recover shared secret.
+ * Runs ML-KEM-768 decapsulation to recover shared secret.
  * Used by SPQR responder to recover shared secret from ratchet ciphertext.
  *
  * Security Note: The returned shared secret is RAW key material and MUST
@@ -372,7 +372,7 @@ export async function kyber768Decapsulate(
     );
   }
 
-  // Perform ML-KEM-768 decapsulation
+  // ML-KEM-768 decapsulation
   const sharedSecret = ml_kem768.decapsulate(ciphertext, kyberPrivateKey);
 
   return asKyberSharedSecret(sharedSecret); // 32 bytes
@@ -390,7 +390,7 @@ export async function kyber768Decapsulate(
  *
  * IMPORTANT: Caller MUST pass the result to HKDF. This function only
  * performs concatenation - the final key derivation is the caller's
- * responsibility to ensure single-step KDF per spec.
+ * responsibility to run a single-step KDF per spec.
  *
  * Security: The hybrid approach provides security if EITHER X25519 OR
  * Kyber-1024 remains secure - a "belt and suspenders" defense.

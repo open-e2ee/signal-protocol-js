@@ -26,4 +26,4 @@ Deserialized SessionRecord
 
 ## Throws
 
-Error if buffer cannot be parsed
+Error if the buffer does not parse

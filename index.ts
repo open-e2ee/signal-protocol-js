@@ -43,7 +43,7 @@
  *
  * - **SignalProtocolClient**: Primary API (factory pattern, type-safe initialization)
  * - **Namespaces**: Organized utilities (safety, keys, encoding)
- * - **Types**: Comprehensive TypeScript definitions
+ * - **Types**: TypeScript definitions
  * - **Internal Protocol**: SCREAMING_SNAKE_CASE matching Signal Protocol notation
  *
  * See ARCHITECTURE.md for package boundaries and naming conventions.
@@ -197,7 +197,8 @@ export { ProtocolAddress } from './types/address';
  * The bounds applied to `SenderKeysConfig.maxSenderKeyAge`.
  *
  * Exported so a host that configures a rotation interval can read the range
- * its value is clamped into rather than discovering it from a log line.
+ * its value is clamped into. The alternative is discovering it from a log
+ * line.
  */
 export { SENDER_KEY_AGE_CEILING, SENDER_KEY_AGE_FLOOR } from './types/protocol-config';
 
@@ -454,9 +455,10 @@ export type {
   RatchetMessage,
   PreKeyMessage,
 
-  // NOTE: EncryptedFile, FileEncryptionKey, EncryptedPhoto, PhotoEncryptionKey
-  // were removed - these are app-domain types that should be defined in the app
-  // layer, alongside whatever encryption wrappers the application needs.
+  // NOTE: EncryptedFile, FileEncryptionKey, EncryptedPhoto, and
+  // PhotoEncryptionKey are not exported. These are app-domain types that
+  // belong in the app layer, alongside whatever encryption wrappers the
+  // application needs.
 
   // API types
   ISignalProtocolClient,
@@ -535,8 +537,30 @@ export {
   TrustDirection,
 } from './types';
 
-// Sealed-sender authorization errors
-export { SealedSenderAuthError, isSealedSenderAuthError } from './types/errors';
+/*
+ * Errors an application is expected to catch and branch on, each beside its
+ * type guard.
+ *
+ * The rule this list follows has two clauses. An error reaches the barrel when
+ * the SDK throws it, and when handling it is a decision the application has to
+ * make. Verify a safety
+ * number, re-authorize a sealed send. Errors that only report a failure the
+ * application cannot act on differently stay on `/types`, which re-exports every
+ * one of them.
+ *
+ * The first clause is not decoration. Two of the errors this list originally
+ * named are thrown nowhere in the SDK. Promoting them would have advertised a
+ * branch that can never be taken. An error-surface check in the engineering
+ * repository decides that question by parsing for construction sites, and holds
+ * this list to its answer. It is one of the checks `docs/ASSURANCE.md` describes,
+ * and like the rest of them it is not part of the published export.
+ */
+export {
+  SealedSenderAuthError,
+  isSealedSenderAuthError,
+  UntrustedIdentityError,
+  isUntrustedIdentityError,
+} from './types/errors';
 
 // NOTE: Cryptographic constants moved to internal. Import from './internal/crypto' if needed.
 

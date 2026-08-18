@@ -11,7 +11,7 @@ not want to learn protocol internals before sending a message.
 npm install @open-e2ee/signal-protocol-sdk
 ```
 
-In this monorepo the package is consumed as a workspace package. App consumers
+In this monorepo, consumers use the package as a workspace package. App consumers
 should also install any runtime dependencies their chosen adapters need, such as
 Expo or Convex client packages.
 
@@ -22,7 +22,7 @@ Every client needs:
 - a stable `userId` from your app,
 - local `storage` for that user's encrypted protocol state,
 - usually a `relay` for server sync and encrypted message delivery,
-- remote encrypted object storage when sending attachments,
+- an encrypted remote object store when sending attachments,
 - device registration or provisioning with that relay for each active device.
 
 The default security policy requires the package's post-quantum Signal Protocol
@@ -32,7 +32,7 @@ path.
 This guide uses the current stable API names. The target message-first DX groups
 local persistence under `deviceStorage.{protocol,messages,files}` and calls the
 remote encrypted byte adapter `remoteObjectStore`. Current `signal.media.*`
-examples are transition-only lower-level APIs; the target public API sends
+examples are transition-only lower-level APIs. The target public API sends
 message attachments through `signal.messages.send({ attachments })` and advanced
 helpers, if needed, under a message-scoped API.
 
@@ -99,12 +99,12 @@ flowchart LR
   decrypts or stages them.
 - The relay connects devices, stores public keys, and carries encrypted
   envelopes.
-- Remote object storage carries encrypted attachment/media bytes only.
+- The remote object store carries encrypted attachment/media bytes only.
 
 ## Target Message-First API Preview
 
-This is the target DX the package is moving toward. It is shown here so app
-developers can understand the intended mental model while the current stable API
+This is the target DX the package moves toward. It appears here so app
+developers can understand the intended mental model. The current stable API
 still uses `storage`, `remoteObjectStore`, hooks, and transition-only media helpers.
 
 <!-- doc-snippet:skip target-message-api-not-yet-shipped -->
@@ -181,9 +181,9 @@ const signal = await createSignalProtocolClient({
 });
 ```
 
-Attachments use the same message API. On Expo, pass the picker URI; the Signal
+Attachments use the same message API. On Expo, pass the picker URI. The Signal
 Protocol client copies or persists the bytes through `deviceStorage.files`
-before upload so retry can continue after restart:
+before upload, so retry can continue after restart:
 
 ```ts
 await signal.messages.send({
@@ -224,9 +224,9 @@ current `signal.media.*` examples into lower-level transition or migration docs.
 
 ## Current Stable Local Clients
 
-Use the in-memory adapters for local examples and development:
-the demo sends while Bob is offline, inspects the relay-visible ciphertext, and
-then starts Bob's subscription to show the decrypted plaintext entering the app.
+Use the in-memory adapters for local examples and development. The demo sends
+while Bob is offline, inspects the relay-visible ciphertext, and then starts
+Bob's subscription to show the decrypted plaintext entering the app.
 
 <!-- doc-snippet:run getting-started-stable-local-clients expect="bob decrypted: alice: hello" -->
 ```ts
@@ -304,7 +304,7 @@ bob decrypted: alice: hello
 ```
 
 The in-memory relay lets the example inspect what a server can see. The relay sees
-metadata plus encrypted envelope bytes; it does not receive Bob's decrypted
+metadata plus encrypted envelope bytes. It does not receive Bob's decrypted
 message content. The first message often uses `prekey_bundle` to establish a
 session, and later messages use `ciphertext`.
 
@@ -397,7 +397,7 @@ Add a remote object store when your app sends encrypted attachments. The
 `remoteObjectStore` adapter brokers encrypted byte objects rather than
 plaintext files.
 The final public DX should not expose both `signal.media.*` and message
-attachment helpers; the planned replacement is message-scoped attachment
+attachment helpers. The planned replacement is message-scoped attachment
 handling.
 
 ```ts
@@ -448,8 +448,7 @@ Keep AWS credentials and AWS SDK clients on that backend. The app should
 receive only narrowly scoped, short-lived upload, download, and delete
 operations.
 
-Send bytes when the attachment should be delivered as its own encrypted
-message:
+Send bytes when the attachment travels as its own encrypted message:
 
 ```ts
 const controller = new AbortController();
@@ -510,7 +509,7 @@ a generic transient failure.
 
 `attachment.transfer` is where production apps plug in their foreground or
 background transfer adapter. The Signal Protocol client still owns encryption, digest
-verification, retries, and pointer metadata; the adapter owns how bytes move
+verification, retries, and pointer metadata. The adapter owns how bytes move
 over the network.
 
 If your object store returns TUS credentials, including `protocol: 'tus'`, the
@@ -520,14 +519,14 @@ useful when the app needs custom chunk sizing or a platform-specific `fetch`.
 
 For downloads in JavaScript runtimes, `media.createByteRangeMediaAttachmentTransfer()`
 provides a reviewed HTTP `Range` adapter. It validates `Content-Range`, forwards
-signed download headers from the object store, emits checkpoints, and only resumes
-from a non-zero offset when your app provides the partial ciphertext prefix via a
-partial-byte store. Native background download code should implement the same
+signed download headers from the object store, and emits checkpoints. It resumes
+from a non-zero offset only when your app provides the partial ciphertext prefix
+through a partial-byte store. Native background download code should implement the same
 `MediaAttachmentTransfer` interface.
 
 For background-safe uploads, use the durable client operation. The current API
 persists bounded recovery metadata through the existing Signal Protocol storage
-adapter; the target message-first API moves that responsibility behind
+adapter. The target message-first API moves that responsibility behind
 `deviceStorage.messages`. The operation tries the upload when it is due and
 returns either a completed pointer or a pending job id for later recovery:
 
@@ -564,8 +563,8 @@ await signal.media.processPending({
 ```
 
 On receive, ask the media planner what work this device should do. Your app
-supplies the IDs it has already processed or cached; the Signal Protocol package
-returns the safe next step without taking ownership of your app database:
+supplies the IDs it has already processed or cached. The Signal Protocol package
+returns the safe next step, and it does not take ownership of your app database:
 
 ```ts
 const mediaWork = media.planMediaAttachmentProcessing({
@@ -661,8 +660,8 @@ if (opened.cleanup?.deleteRemoteBlob) {
 }
 ```
 
-When a message delete or expiration should remove media on this account's linked
-devices, plan and sync the deletion after your app applies the local cleanup:
+A message delete or expiration can remove media on this account's linked
+devices. Plan and sync the deletion after your app applies the local cleanup:
 
 ```ts
 const deleteSync = media.planMediaAttachmentDeleteSync({
@@ -675,7 +674,7 @@ await appMediaCache.delete(deleteSync.storageId);
 await signal.syncMediaAttachmentDeleteToLinkedDevices(deleteSync);
 ```
 
-When cleanup should be performed by a worker, use the durable client operation:
+When a worker must do the cleanup, use the durable client operation:
 
 ```ts
 await signal.media.cleanup(

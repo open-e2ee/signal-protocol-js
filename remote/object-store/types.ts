@@ -10,10 +10,10 @@ export type RemoteObjectUploadRequest = {
    * Stable idempotency key for retries of one logical upload.
    *
    * The backend must scope this untrusted value to the authenticated principal
-   * and return the same object reservation when the request is retried.
+   * and return the same object reservation when the caller retries the request.
    */
   requestId: string;
-  /** MIME type of the encrypted bytes being uploaded. */
+  /** MIME type of the encrypted bytes in the upload. */
   contentType: string;
   /** Exact encrypted object length in bytes. */
   contentLength: number;
@@ -29,7 +29,7 @@ export interface RemoteObjectUpload {
   expiresAt: number;
   /** Request headers that must accompany the upload. */
   headers?: Record<string, string>;
-  /** Upload protocol. Direct PUT is used when omitted. */
+  /** Upload protocol. Direct PUT applies when omitted. */
   protocol?: 'put' | 'tus';
 }
 
@@ -66,7 +66,7 @@ export type RemoteObjectDeleteRequest = {
  *
  * Implementations request narrowly scoped, short-lived operations from an
  * authenticated application backend. Cloud credentials and unrestricted
- * storage clients must not be placed in an app runtime.
+ * storage clients must never reach an app runtime.
  */
 export interface SignalProtocolRemoteObjectStore {
   /** Create a short-lived direct upload operation. */

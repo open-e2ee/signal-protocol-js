@@ -34,14 +34,14 @@ Two auth paths for anonymous delivery:
 
 > **recipientAciBytes**: `Map`\<`string`, `Uint8Array`\>
 
-ACI bytes per recipient user ID — the identities the token endorses.
+ACI bytes per recipient user ID. The identities the token endorses.
 
 The token is a signature over ACIs, not user IDs, and the relay
 verifies it before reading any account. It therefore needs the
-claimed ACI for each recipient up front; it then binds each claim to
+claimed ACI for each recipient up front. It then binds each claim to
 the recipient's stored account after the token checks out. The
 endorsement manager supplies these from its cache, which records the
-exact identities the endorsements were issued over.
+exact identities that the endorsements cover.
 
 #### type
 

@@ -6,8 +6,9 @@ to `ISignalProtocolRelayServer`.
 ## Why it exists
 
 Convex generated references retain precise query and mutation types but do not
-implement the SDK relay contract directly. The adapter performs that client-side
-mapping while leaving backend registration and policy in the application.
+implement the SDK relay contract directly. The adapter maps those references
+onto the contract on the client, and leaves backend registration and policy in
+the application.
 
 ## Ownership boundary
 
@@ -48,9 +49,8 @@ without widening the generated references.
 
 To serve groups from this deployment, also mount the
 [Convex Signal Protocol component](./component/README.md) inside the same namespace
-(`convex/signal/groups.ts` and `convex/signal/zkAuth.ts`); the relay
-advertises its `groupServer` capability only when both modules are
-configured.
+(`convex/signal/groups.ts` and `convex/signal/zkAuth.ts`). The relay
+advertises its `groupServer` capability only when you configure both modules.
 
 Public-key reads may be available to authenticated peers, but every write must
 derive ownership from server-side authentication rather than trusting a

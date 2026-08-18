@@ -109,7 +109,7 @@ export async function hasSession(
  * Delete a session
  *
  * Use this to reset encryption for a session (e.g., after a security incident).
- * You'll need to establish a new session before sending/receiving messages.
+ * You will need to establish a new session before sending/receiving messages.
  *
  * @param ctx - Client context with dependencies
  * @param remoteAddress - Remote device's protocol address
@@ -140,7 +140,7 @@ export async function deleteSession(
 /**
  * Explicitly accept a changed per-user composite identity and discard every
  * local session bound to the superseded tuple. Detection alone never mutates
- * trust; callers must authenticate the replacement out of band first.
+ * trust. Callers must authenticate the replacement out of band first.
  */
 export async function acceptIdentityRotation(
   ctx: SignalProtocolClientContext,

@@ -10,8 +10,8 @@
 
 Find a session by baseKey.
 
-Session states are identified by the initiator's ephemeral public key
-(`baseKey`).
+The initiator's ephemeral public key (`baseKey`) identifies a session
+state.
 
 ## Parameters
 

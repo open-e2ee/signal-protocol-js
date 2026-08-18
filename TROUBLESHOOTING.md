@@ -98,12 +98,12 @@ await signal.encryptMessage('bob:2', 'Hello'); // Secondary device
 
 ### Out-of-Order Messages
 
-The protocol handles out-of-order messages automatically via MKSKIPPED. If you're seeing failures:
+The protocol handles out-of-order messages automatically via MKSKIPPED. For failures:
 
-1. Check that both parties have established sessions
-2. Verify message counters aren't too far apart (maxSkip limit: 1000)
-3. Ensure messages aren't being duplicated
-4. Check that skipped keys haven't expired (7-day default)
+1. Check that both parties established sessions
+2. Verify message counters are not too far apart (maxSkip limit: 1000)
+3. Check that no sender or transport duplicates messages
+4. Check that skipped keys did not expire (7-day default)
 
 ### Decryption Failures
 

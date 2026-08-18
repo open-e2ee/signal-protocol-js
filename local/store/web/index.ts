@@ -2,7 +2,7 @@
  * Web Storage Package
  *
  * Storage for web browsers using IndexedDB. Implements the full core
- * store contract; see local/store/web/README.md for the security
+ * store contract. See local/store/web/README.md for the security
  * boundary and the gates that verify it.
  */
 export {};

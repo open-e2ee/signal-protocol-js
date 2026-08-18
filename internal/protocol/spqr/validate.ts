@@ -21,7 +21,7 @@ import { SPQR_LIMITS_DEFAULTS } from '../../../types/protocol-config';
 /**
  * Validate SPQR state before operations.
  *
- * Ensures state is internally consistent and safe to use.
+ * Checks that the state is internally consistent and safe to use.
  * Called at the start of SPQR operations for defense-in-depth.
  *
  * @param spqrState - Current SPQR state

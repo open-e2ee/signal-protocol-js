@@ -12,12 +12,13 @@ import { EncryptionError, EncryptionErrorCode } from '../types';
 import type { SignalProtocolClientContext } from './types';
 
 /**
- * Send message to all devices of a user (multi-device support)
+ * Send message to all devices of a user (multi-device support).
  *
  * Implements the 3-phase sending process from SESAME spec:
- *   Phase 1: Identify devices with non-stale active sessions
- *   Phase 2: Encrypt message for each device using Double Ratchet
- *   Phase 3: Validate device list is current before sending
+ *
+ * - Phase 1: Identify devices with non-stale active sessions
+ * - Phase 2: Encrypt message for each device using Double Ratchet
+ * - Phase 3: Validate device list is current before sending
  *
  * Returns an OutgoingMessageBatch that separates:
  * - deviceMessages: Messages for recipient's devices

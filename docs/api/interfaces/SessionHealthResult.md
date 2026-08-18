@@ -17,7 +17,7 @@ and any issues that may affect encryption.
 
 > **checkedAt**: `number`
 
-When this check was performed
+When the client ran this check
 
 ***
 

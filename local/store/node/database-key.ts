@@ -47,7 +47,7 @@ const SECURE_FILE_MODE = 0o600;
  * Node.js Database Key Manager
  *
  * Handles generation, storage, and retrieval of the database encryption key.
- * This key is used to encrypt/decrypt all Signal Protocol keys in storage.
+ * This key encrypts and decrypts all Signal Protocol keys in storage.
  */
 export class NodeDatabaseKeyManager {
   private cachedKey: Uint8Array | null = null;
@@ -60,10 +60,10 @@ export class NodeDatabaseKeyManager {
   /**
    * Initialize the database encryption key
    *
-   * Generates and stores a new 32-byte key if one doesn't exist.
-   * This should be called once on app initialization.
+   * Generates and stores a new 32-byte key if one does not exist.
+   * Callers should run this once on app start.
    *
-   * @returns true if key was generated, false if already exists
+   * @returns true if the method generated a key, false if one already exists
    */
   async initialize(): Promise<boolean> {
     try {
@@ -73,7 +73,7 @@ export class NodeDatabaseKeyManager {
         return false;
       }
 
-      // Ensure directory exists
+      // Create the directory if it is missing
       await mkdir(dirname(this.keyFilePath), { recursive: true, mode: 0o700 });
 
       // Generate cryptographically secure random 32-byte key
@@ -102,7 +102,7 @@ export class NodeDatabaseKeyManager {
    * Get the database encryption key
    *
    * Retrieves the key from filesystem (or cache if available).
-   * Returns null if key doesn't exist (needs initialization).
+   * Returns null if key does not exist (needs initialization).
    *
    * @returns Database encryption key or null
    */
@@ -113,7 +113,7 @@ export class NodeDatabaseKeyManager {
         return this.cachedKey;
       }
 
-      // Read key from file; a missing file surfaces as ENOENT below. A
+      // Read key from file. A missing file surfaces as ENOENT below. A
       // separate access() pre-check would race against concurrent
       // creation or deletion of the key file.
       const keyBuffer = await readFile(this.keyFilePath);
@@ -145,10 +145,10 @@ export class NodeDatabaseKeyManager {
   /**
    * Get the database encryption key (throws if not initialized)
    *
-   * Convenience method that ensures the key exists.
+   * Convenience method that throws when the key is missing.
    * Use this when you expect the key to be initialized.
    *
-   * @throws EncryptionError if key doesn't exist
+   * @throws EncryptionError if key does not exist
    * @returns Database encryption key
    */
   async getKeyOrThrow(): Promise<Uint8Array> {
@@ -185,7 +185,7 @@ export class NodeDatabaseKeyManager {
    * - Factory reset
    * - Controlled local reset
    *
-   * @returns true if key was deleted, false if didn't exist
+   * @returns true if the method deleted a key, false if none existed
    */
   async deleteKey(): Promise<boolean> {
     try {

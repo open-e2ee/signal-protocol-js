@@ -2,7 +2,7 @@
  * Polynomial Operations over Galois Fields
  *
  * Implements polynomial representation and operations for Reed-Solomon
- * systematic encoding. Polynomials are represented as arrays of coefficients
+ * systematic encoding. A polynomial takes the form of an array of coefficients
  * where coefficients[i] is the coefficient of x^i.
  *
  * @module rs/polynomial
@@ -14,10 +14,10 @@ import type { GaloisField } from './galois';
 /**
  * Polynomial over a Galois field
  *
- * Coefficients are stored in ascending order: [c0, c1, c2, ...] represents
+ * Coefficients sit in ascending order: [c0, c1, c2, ...] represents
  * c0 + c1*x + c2*x^2 + ...
  *
- * All arithmetic operations are performed in the associated Galois field.
+ * All arithmetic runs in the associated Galois field.
  */
 export {};
 export class Polynomial {

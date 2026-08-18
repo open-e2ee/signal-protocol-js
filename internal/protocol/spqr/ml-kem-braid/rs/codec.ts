@@ -114,7 +114,7 @@ export interface ErasureConfig {
  * Data chunk counts for the standard ML-KEM-768 components.
  *
  * Each count is `ceil(component bytes / CHUNK_SIZE)`. The header and CT2 byte
- * strings include a 32-byte MAC; the EK vector and CT1 carry none, and
+ * strings include a 32-byte MAC. The EK vector and CT1 carry none, and
  * `state-machine.ts` records why. Parity chunks are not counted here.
  */
 export const CHUNK_COUNTS = {
@@ -428,13 +428,21 @@ export class PolyEncoder implements Encoder {
    * Algorithm: Given y-values at consecutive integer points [0, 1, ..., k-1],
    * computes coefficients of the unique interpolating polynomial.
    *
-   * The algorithm has two phases:
-   * 1. Divided Differences Table: Compute d[i][j] = (d[i][j-1] - d[i-1][j-1]) / (x[i] - x[i-j])
-   *    In GF(2^n), subtraction is XOR and division uses field.div()
+   * The algorithm has two phases.
    *
-   * 2. Newton-to-Standard Conversion: Expand Newton form into standard coefficients
-   *    Newton: f(x) = d_0 + d_1(x-0) + d_2(x-0)(x-1) + ...
-   *    Standard: f(x) = c_0 + c_1*x + c_2*x^2 + ...
+   * Phase 1 builds the divided differences table. In GF(2^n), subtraction is
+   * XOR and division uses field.div().
+   *
+   * ```
+   * d[i][j] = (d[i][j-1] - d[i-1][j-1]) / (x[i] - x[i-j])
+   * ```
+   *
+   * Phase 2 expands the Newton form into standard coefficients.
+   *
+   * ```
+   * Newton:   f(x) = d_0 + d_1(x-0) + d_2(x-0)(x-1) + ...
+   * Standard: f(x) = c_0 + c_1*x + c_2*x^2 + ...
+   * ```
    *
    * Time complexity: O(k^2)
    * Space complexity: O(k)

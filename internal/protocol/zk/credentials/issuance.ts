@@ -1,5 +1,5 @@
 /**
- * Credential issuance — plain and blinded
+ * Credential issuance: plain and blinded
  *
  *
  * When the issuing server issues a credential, it also generates a proof that
@@ -125,16 +125,20 @@ const M_NAMES = ['M0', 'M1', 'M2', 'M3', 'M4', 'M5', 'M6'] as const;
  * Builder for issuing and verifying credential issuance proofs.
  *
  * Usage (server, issuing):
+ * ```ts
  *   const builder = new IssuanceProofBuilder(label);
  *   builder.addPublicAttribute(attr);
  *   builder.addAttribute(attr);
  *   const proof = builder.issue(keyPair, randomness);
+ * ```
  *
  * Usage (client, verifying):
+ * ```ts
  *   const builder = new IssuanceProofBuilder(label);
  *   builder.addPublicAttribute(attr);
  *   builder.addAttribute(attr);
  *   const credential = builder.verify(publicKey, proof);
+ * ```
  */
 export class IssuanceProofBuilder {
   private publicAttrs: ShoHmacSha256;

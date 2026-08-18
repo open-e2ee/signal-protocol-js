@@ -1,5 +1,5 @@
 /**
- * Provider-neutral remote object storage contract.
+ * Provider-neutral remote object store contract.
  *
  * Provider adapters are intentionally exported from explicit sibling paths:
  * `remote/object-store/convex-r2` and `remote/object-store/s3`.

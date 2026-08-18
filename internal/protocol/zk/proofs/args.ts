@@ -2,8 +2,8 @@
  * Type-safe argument containers for ZK proof statements
  *
  *
- * ScalarArgs and PointArgs are string-keyed maps for named scalars/points
- * used when instantiating a Statement with concrete values.
+ * ScalarArgs and PointArgs are string-keyed maps for named scalars/points.
+ * A Statement uses them when it takes concrete values.
  */
 
 import type { RistrettoPoint } from './sho';
@@ -36,7 +36,7 @@ export class ScalarArgs {
 /**
  * Named point arguments for proof generation/verification.
  * Maps variable names (e.g., "A", "public_key") to Ristretto points.
- * Note: "G" (base point) is implicit and should NOT be included.
+ * Note: "G" (base point) is implicit. Do NOT include it.
  */
 export class PointArgs {
   readonly map: Map<string, RistrettoPoint>;

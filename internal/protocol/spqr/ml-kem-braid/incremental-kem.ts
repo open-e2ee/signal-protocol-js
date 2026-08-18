@@ -142,7 +142,7 @@ export class IncrementalMLKEM768 implements IIncrementalKEM {
 
     const ct2 = IncrementalEncaps2(encaps_secret, ek_seed, ek_vector, hek);
 
-    // Clear cached hek reference after use (defense-in-depth)
+    // Clear cached hek reference after use (defense-in-depth).
     // Note: we only null the reference, not zero the bytes, because the caller
     // may hold the same Uint8Array reference (e.g., reusing hek across rounds).
     this.currentHek = null;

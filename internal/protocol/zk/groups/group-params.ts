@@ -1,5 +1,5 @@
 /**
- * Group parameters — GroupMasterKey, GroupSecretParams, GroupPublicParams
+ * Group parameters: GroupMasterKey, GroupSecretParams, GroupPublicParams
  *
  *
  * The GroupMasterKey is the root secret for a group. From it, all group
@@ -9,7 +9,7 @@
  *  - uidEncKeyPair: ElGamal keypair for UID encryption
  *  - profileKeyEncKeyPair: ElGamal keypair for profile key encryption
  *
- * @see https://eprint.iacr.org/2019/1416.pdf — Signal Private Group System
+ * @see https://eprint.iacr.org/2019/1416.pdf (Signal Private Group System)
  */
 
 import { gcmsiv } from '@noble/ciphers/aes.js';

@@ -45,9 +45,11 @@ export function scalarIsInRange(keyBytes: Uint8Array): boolean {
   if ((keyBytes[31] & 0x80) !== 0) return false;
 
   // Reject non-canonical values in [p, 2^255).
-  // p in LE = [0xED, 0xFF, ..., 0xFF, 0x7F]
+  // In LE, p = [0xED, 0xFF, ..., 0xFF, 0x7F].
   // Values >= p but < 2^255 have:
-  //   byte[31] = 0x7F, bytes[1..30] = 0xFF, byte[0] >= 0xED (237)
+  // - byte[31] = 0x7F
+  // - bytes[1..30] = 0xFF
+  // - byte[0] >= 0xED (237)
   if (keyBytes[31] === 0x7f) {
     let allFF = true;
     for (let i = 1; i < 31; i++) {

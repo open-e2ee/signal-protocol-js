@@ -8,7 +8,7 @@
 
 Options for processing incoming message envelopes.
 
-Used when SignalProtocolClient doesn't have a relay (e.g., background tasks).
+Used when SignalProtocolClient does not have a relay (e.g., background tasks).
 Provides callbacks for sending retry requests and marking messages delivered.
 
 ## Properties
@@ -17,11 +17,11 @@ Provides callbacks for sending retry requests and marking messages delivered.
 
 > `optional` **forcePreKeyRotation?**: () => `Promise`\<`void`\>
 
-Force prekey rotation when stale prekey is detected.
+Force prekey rotation when the client detects a stale prekey.
 
 Generate new keys, clear stale KEM prekeys, and upload fresh bundle.
 
-Required for background processing where there's no relay.
+Required for background processing where there is no relay.
 Called before sending retry request when PREKEY_NOT_FOUND or MAC_FAILED
 on PreKeyMessage indicates stale/corrupted keys.
 
@@ -37,7 +37,7 @@ on PreKeyMessage indicates stale/corrupted keys.
 
 Callback to mark message as delivered when no relay is available.
 
-Called after retry request is sent to prevent the failed message
+Call this after sending a retry request, to prevent the failed message
 from being re-fetched indefinitely.
 
 #### Parameters
@@ -58,7 +58,7 @@ from being re-fetched indefinitely.
 
 Callback to send retry requests when no relay is available.
 
-Required for background processing where there's no WebSocket relay.
+Required for background processing where there is no WebSocket relay.
 The callback receives a fully-formed RetryRequest created by SesameManager.
 
 #### Parameters

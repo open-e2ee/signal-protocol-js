@@ -1,13 +1,13 @@
 /**
- * ZK Statement DSL — Schnorr/Sigma protocol for arbitrary linear relations
+ * ZK Statement DSL: Schnorr/Sigma protocol for arbitrary linear relations
  *
  *
  * Implements the "Sigma protocol for arbitrary linear relations" described in
  * section 19.5.3 of Boneh-Shoup's cryptography textbook.
  *
- * Proves knowledge of the preimage of a group homomorphism from G1 → G2,
- * where G1 elements are vectors of scalars and G2 elements are vectors of
- * Ristretto points.
+ * Proves knowledge of the preimage of a group homomorphism (G1 → G2). In this
+ * statement, G1 elements are vectors of scalars, and G2 elements are vectors
+ * of Ristretto points.
  *
  * Example: A = a*G + b*H (prove knowledge of a,b given A,G,H)
  *
@@ -63,10 +63,12 @@ interface Equation {
  * A ZK proof statement: a system of linear equations over scalars and points.
  *
  * Usage:
+ * ```ts
  *   const st = new Statement();
  *   st.add("A", [["a", "G"], ["b", "H"]]);  // A = a*G + b*H
  *   const proof = st.prove(scalarArgs, pointArgs, message, randomness);
  *   st.verifyProof(proof, pointArgs, message);
+ * ```
  */
 export class Statement {
   private equations: Equation[] = [];
@@ -227,10 +229,10 @@ export class Statement {
   /**
    * Serialize the statement description to bytes.
    * Format:
-   *   Ne (1 byte) — number of equations
+   *   Ne (1 byte): number of equations
    *   for each equation:
    *     lhs_point_index (1 byte)
-   *     Nt (1 byte) — number of terms
+   *     Nt (1 byte): number of terms
    *     for each term:
    *       scalar_index (1 byte)
    *       point_index (1 byte)

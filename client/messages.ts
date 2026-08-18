@@ -319,7 +319,7 @@ export async function sendTypingIndicator(
     // Create address for the recipient
     const address = ProtocolAddress.create(recipientUserId, recipientDeviceId);
 
-    // Check if we have a session - if not, we can't send the indicator
+    // Check if we have a session - if not, we cannot send the indicator
     const hasSession = await SessionOps.hasSession(ctx, address);
     if (!hasSession) {
       ctx.logger.debug('Cannot send typing indicator: no session with recipient', {
@@ -330,8 +330,8 @@ export async function sendTypingIndicator(
     }
 
     // Wrap in Content proto (Signal Protocol wire format: {typingMessage: {timestamp, action, groupId}})
-    // DM conversationId dropped from wire — receiver derives from envelope sender
-    // Group conversationId passed as groupId — the Signal Protocol proto requires it for group routing
+    // DM conversationId dropped from wire. Receiver derives from envelope sender
+    // Group conversationId passed as groupId. The Signal Protocol proto requires it for group routing
     const effectiveGroupId =
       groupId ?? (conversationId.startsWith('group:') ? conversationId : undefined);
     const encrypted = await encryptMessage(
@@ -343,7 +343,7 @@ export async function sendTypingIndicator(
     // Serialize like SESAME: JSON → bytes → base64
     const ciphertextBase64 = CryptoUtils.bytesToBase64(new TextEncoder().encode(encrypted));
 
-    // Send as ciphertext — typing indicators are encrypted Content inside
+    // Send as ciphertext. Typing indicators are encrypted Content inside
     // a ciphertext envelope. The relay contract carries only the outer type.
     await ctx.relay.send({
       targetUserId: recipientUserId,
@@ -397,7 +397,7 @@ export async function handleTypingIndicator(
   envelope: Envelope,
   typingMsg: ParsedTypingContent | null
 ): Promise<void> {
-  // Check privacy setting - if disabled, don't process incoming indicators
+  // Check privacy setting - if disabled, do not process incoming indicators
   const enabled = await ctx.contentAdapter.areTypingIndicatorsEnabled();
   if (!enabled) {
     ctx.logger.debug('Typing indicators disabled, ignoring incoming indicator', {
@@ -568,7 +568,7 @@ async function sendReceiptToDeviceInner(
   // Serialize like SESAME: JSON → bytes → base64
   const ciphertextBase64 = CryptoUtils.bytesToBase64(new TextEncoder().encode(encrypted));
 
-  // Send as ciphertext — receipts are encrypted Content inside a ciphertext
+  // Send as ciphertext. Receipts are encrypted Content inside a ciphertext
   // envelope. The relay contract carries only the outer type.
   await ctx.relay!.send({
     targetUserId: recipientUserId,
@@ -640,9 +640,11 @@ export async function handleDeliveryReceipt(
     const isViewedReceipt = receipt.type === ReceiptType.VIEWED;
     const receiptTypeName = isReadReceipt ? 'read' : isViewedReceipt ? 'viewed' : 'delivery';
 
-    // For read/viewed receipts: Check privacy setting - if disabled, don't process incoming receipts
-    // This implements SDK mutual opt-in: if you disable read receipts, you won't see
-    // when others read your messages (and they won't know when you read theirs)
+    // For read/viewed receipts: check the privacy setting. If it is disabled, do
+    // not process incoming receipts.
+    // This implements SDK mutual opt-in. If you disable read receipts, you will
+    // not see when others read your messages, and they will not know when you
+    // read theirs.
     if (isReadReceipt || isViewedReceipt) {
       const enabled = await ctx.contentAdapter.areReadReceiptsEnabled();
       if (!enabled) {
@@ -653,13 +655,13 @@ export async function handleDeliveryReceipt(
       }
     }
 
-    // SessionId for the sender of the receipt (they're confirming delivery/read of our messages)
+    // SessionId for the sender of the receipt (they are confirming delivery/read of our messages)
     const sessionId = `${envelope.senderUserId}:${envelope.senderDeviceId}`;
 
     let deletedCount = 0;
 
     // Delete MessageRecords for each confirmed timestamp (only for delivery receipts)
-    // Read receipts don't need to delete message records since delivery already did
+    // Read receipts do not need to delete message records since delivery already did
     if (!isReadReceipt && !isViewedReceipt) {
       for (const timestamp of receipt.timestamps) {
         try {

@@ -1,10 +1,11 @@
 /**
  * Shared Protobuf Encoding Primitives
  *
- * Low-level protobuf wire format encoding/decoding. Two kinds of caller use it:
- * binary formats that aren't full protobuf messages (MAC headers, safety number
- * fingerprints, sealed sender envelope framing), and the hand-written static
- * codecs for the message schemas in this package.
+ * Low-level protobuf wire format encoding/decoding. Two kinds of caller use
+ * it:
+ * - binary formats that are not full protobuf messages (MAC headers, safety
+ *   number fingerprints, sealed sender envelope framing)
+ * - the hand-written static codecs for the message schemas in this package
  *
  * Implements a subset of the Protocol Buffers encoding spec:
  * - Varint encoding (wire type 0), 32-bit and 64-bit
@@ -14,10 +15,13 @@
  * - Unknown field skipping
  *
  * The subset is chosen by what the schemas here actually use. Deliberately
- * absent: groups (wire types 3 and 4, deprecated and used by nothing here),
- * packed repeated scalars (no schema here repeats a scalar), sint/zigzag, and
- * negative enum values — each of which would need sign-extended 10-byte
- * varints. `ProtoReader` rejects rather than misreads what it does not cover.
+ * absent:
+ * - groups (wire types 3 and 4, deprecated and used by nothing here)
+ * - packed repeated scalars (no schema here repeats a scalar)
+ * - sint/zigzag and negative enum values, each of which would need
+ *   sign-extended 10-byte varints
+ *
+ * `ProtoReader` rejects rather than misreads what it does not cover.
  *
  * @see https://protobuf.dev/programming-guides/encoding/
  * @internal
@@ -54,14 +58,16 @@ export const UINT32_MAX = 0xffffffff;
  * Supports values 0 to 2^32-1 (uint32 range).
  *
  * Anything outside that range is rejected rather than coerced into it. The
- * shift this loop uses is a 32-bit operation, so a larger value used to be
- * truncated to its low 32 bits and emitted as a non-canonical encoding —
+ * shift this loop uses is a 32-bit operation. A larger value used to be
+ * truncated to its low 32 bits and emitted as a non-canonical encoding.
  * 2^32 came out as `80 00`, which `decodeVarint64` then refuses, leaving the
  * package writing bytes it cannot read back. A non-integer was worse still:
  * `NaN` encoded as 0 and `1.5` as 1, silently. protobufjs coerced all of
- * these with `>>> 0` and said nothing; nothing in this package has ever had a
- * reason to hand any of them over, so the coercion only ever hid a defect at
- * the call site. Values above uint32 belong in `encodeVarint64`.
+ * these with `>>> 0` and said nothing.
+ *
+ * Nothing in this package has ever had a reason to hand any of them over.
+ * The coercion only ever hid a defect at the call site. Values above uint32
+ * belong in `encodeVarint64`.
  *
  * @param value - Integer in the uint32 range
  * @returns Varint-encoded bytes
@@ -140,7 +146,7 @@ export const MAX_VARINT64_BYTES = 10;
  *
  * Byte-compatible with `encodeVarint` over the uint32 range: both emit the
  * minimal base-128 little-endian form, so a value below 2^32 encodes
- * identically either way. Use this one wherever the schema says uint64 — the
+ * identically either way. Use this one wherever the schema says uint64. The
  * SPQR epoch is the case in this package.
  *
  * @param value - Non-negative integer, at most 2^64-1
@@ -169,16 +175,20 @@ export function encodeVarint64(value: bigint): Uint8Array {
 /**
  * Decode a 64-bit varint from bytes at the given offset.
  *
- * Canonical encoding is required: a varint longer than one byte whose last
+ * Canonical encoding is required. A varint longer than one byte whose last
  * byte is 0x00 encodes a value that fits in fewer bytes, and is rejected. The
  * contract is stricter than protobufjs, which accepts the redundant forms and
- * silently truncates a uint32 field to 32 bits. Two reasons to be strict here:
- * these bytes are signed and MAC'd (SenderKeyMessage signing, sealed sender
- * certificates), and accepting several encodings of one value makes the
- * signed byte string malleable; and byte identity is only checkable when
- * decode-then-encode is the identity function. Every encoder — protobufjs
- * included — emits the canonical form, so nothing this package has ever
- * written is rejected by it.
+ * silently truncates a uint32 field to 32 bits.
+ *
+ * Two reasons to be strict here:
+ * - these bytes are signed and MAC'd (SenderKeyMessage signing, sealed
+ *   sender certificates)
+ * - accepting several encodings of one value makes the signed byte string
+ *   malleable
+ *
+ * Byte identity is only checkable when decode-then-encode is the identity
+ * function. Every encoder (protobufjs included) emits the canonical form, so
+ * nothing this package has ever written is rejected by it.
  *
  * @param bytes - Buffer containing varint
  * @param offset - Starting offset in buffer
@@ -201,10 +211,11 @@ export function decodeVarint64(
     bytesRead++;
 
     // Nine bytes carry bits 0..62, so the tenth contributes bit 63 and no
-    // more: a payload above 0x01 would carry the value past 2^64-1. The
-    // continuation bit is not part of that judgement — a tenth byte that asks
-    // for an eleventh is too long, which the check at the foot of the loop
-    // reports instead.
+    // more. A payload above 0x01 would carry the value past 2^64-1.
+    //
+    // The continuation bit is not part of that judgement. A tenth byte that
+    // asks for an eleventh is too long, which the check at the foot of the
+    // loop reports instead.
     if (bytesRead === MAX_VARINT64_BYTES && (byte & 0x7f) > 0x01) {
       throw new Error('Varint value exceeds uint64 range');
     }
@@ -319,7 +330,7 @@ export function encodeUint64Field(fieldNumber: number, value: bigint): Uint8Arra
 /**
  * Encode a bool protobuf field (tag + varint 1 or 0).
  *
- * `false` is encoded, not omitted. Presence is the caller's decision — a
+ * `false` is encoded, not omitted. Presence is the caller's decision. A
  * schema with proto2 optional semantics distinguishes a set `false` from an
  * absent field, so this helper never drops a value it was handed.
  *
@@ -416,9 +427,9 @@ export function encodeMessageField(fieldNumber: number, encodedMessage: Uint8Arr
  * @returns Encoded field bytes
  */
 export function encodeRepeatedBytesField(fieldNumber: number, values: Uint8Array[]): Uint8Array {
-  // Concatenated from a list rather than by spreading it into `concatFields`:
-  // a repeated field's element count is bounded by the message, not by us,
-  // and a long list would spread into more arguments than a call accepts.
+  // Concatenated from a list rather than by spreading it into `concatFields`.
+  // A repeated field's element count is bounded by the message, not by us.
+  // A long list would spread into more arguments than a call accepts.
   return concatAll(values.map((value) => encodeBytesField(fieldNumber, value)));
 }
 
@@ -440,7 +451,7 @@ export function encodeRepeatedMessageField(
 /**
  * Skip an unknown field in a protobuf message.
  *
- * Used during decoding to skip fields we don't recognize, enabling
+ * Used during decoding to skip fields we do not recognize, enabling
  * forward compatibility with newer message versions.
  *
  * Handles the two wire types the non-message binary formats use. The static
@@ -508,8 +519,8 @@ const MAX_FIELD_NUMBER = 536870911n;
 /**
  * Cursor over one encoded protobuf message.
  *
- * Every message decoder is the same loop — read a tag, dispatch on the field
- * number, skip what it does not know — and this owns that loop's bookkeeping
+ * Every message decoder is the same loop: read a tag, dispatch on the field
+ * number, then skip what it does not know. This owns that loop's bookkeeping,
  * so seventeen hand-written codecs do not each repeat it:
  *
  * ```ts
@@ -525,9 +536,9 @@ const MAX_FIELD_NUMBER = 536870911n;
  * ```
  *
  * The read methods check the tag's wire type against the type they are being
- * asked to read and throw on a mismatch, so a field that arrives with the
- * wrong wire type is rejected instead of misparsed. (protobufjs reads the
- * declared type regardless and can silently produce nonsense.) That is why
+ * asked to read, and throw on a mismatch. A field that arrives with the wrong
+ * wire type is therefore rejected instead of misparsed. (protobufjs reads the
+ * declared type regardless and can silently produce nonsense). That is why
  * `readTag` must precede every read: the wire type it recorded is what the
  * next read validates against.
  *
@@ -569,7 +580,7 @@ export class ProtoReader {
     const wireType = Number(tag & 0x07n);
 
     // Neither 0 nor anything above 2^29-1 is an assignable field number, so a
-    // tag carrying one is a corrupt stream rather than an unknown field to be
+    // tag carrying one is a corrupt stream. It is not an unknown field to be
     // skipped. Checking the bound also keeps the conversion below exact.
     if (number === 0n || number > MAX_FIELD_NUMBER) {
       throw new Error(`Invalid protobuf field number: ${number}`);
@@ -602,7 +613,7 @@ export class ProtoReader {
   /**
    * Read an enum field value.
    *
-   * Enums are varints. Values outside the uint32 range are rejected — they can
+   * Enums are varints. Values outside the uint32 range are rejected. They can
    * only be the sign-extended negatives this package's schemas never declare.
    */
   readEnum(): number {
@@ -628,8 +639,8 @@ export class ProtoReader {
   /**
    * Read a bytes field value.
    *
-   * The result is a copy, so the decoded message does not alias — and cannot
-   * be mutated through — the input buffer.
+   * The result is a copy, so the decoded message neither aliases the input
+   * buffer nor can be mutated through it.
    */
   readBytes(): Uint8Array {
     this.expectWireType(WIRE_TYPE_LENGTH_DELIMITED);
@@ -648,7 +659,7 @@ export class ProtoReader {
    * Read an embedded-message field value as its encoded bytes.
    *
    * Hand the result to the child message's decoder. Identical on the wire to
-   * `readBytes`; the name says which the schema meant.
+   * `readBytes`. The name says which the schema meant.
    */
   readMessage(): Uint8Array {
     return this.readBytes();
@@ -657,8 +668,8 @@ export class ProtoReader {
   /**
    * Skip the field whose tag was just read.
    *
-   * Groups (wire types 3 and 4) are rejected rather than skipped: they are
-   * deprecated, no schema here uses them, and skipping them correctly means
+   * Groups (wire types 3 and 4) are rejected rather than skipped. They are
+   * deprecated, and no schema here uses them. Skipping them correctly means
    * matching nested end-group tags, which is machinery with no caller.
    */
   skipField(): void {

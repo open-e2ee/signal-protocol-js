@@ -9,8 +9,8 @@
 Metadata for a session record.
 
 Combines UI/management metadata with SESAME session lifecycle tracking.
-This enables SessionRecord to be used directly by the SESAME layer without
-needing a separate SesameSessionRecord wrapper.
+This lets the SESAME layer use SessionRecord directly, without a separate
+SesameSessionRecord wrapper.
 
 ## See
 
@@ -22,7 +22,7 @@ https://signal.org/docs/specifications/sesame/
 
 > `optional` **createdAt?**: `number`
 
-Timestamp when this session was created (milliseconds since epoch).
+Timestamp of the moment this session began (milliseconds since epoch).
 Used for session expiration calculations (MAXSEND, MAXRECV thresholds).
 
 #### See
@@ -35,7 +35,7 @@ SESAME spec Section 4.2 (Session expiration)
 
 > `optional` **isActive?**: `boolean`
 
-Whether this session is considered active
+Whether this session counts as active
 
 ***
 
@@ -43,7 +43,7 @@ Whether this session is considered active
 
 > `optional` **isInitiator?**: `boolean`
 
-Whether this session was created by us (initiating) or them (responding).
+Whether we created this session (initiating) or they did (responding).
 Initiator sends PreKeyMessages until first response received.
 
 #### See

@@ -9,7 +9,7 @@ support.
 ## Why it exists
 
 Signal Protocol protects message content but does not provide account
-authentication, device discovery, mailbox delivery, or remote object storage.
+authentication, device discovery, mailbox delivery, or a remote object store.
 Explicit relay and object-store contracts keep those application services
 replaceable and prevent them from owning private keys or plaintext.
 
@@ -21,7 +21,7 @@ replaceable and prevent them from owning private keys or plaintext.
 - `InMemorySignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
 - custom implementations via `ISignalProtocolRelayServer`
 
-### Remote object storage
+### Remote object store
 
 - `ConvexR2ObjectStore` from `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`
 - `S3ObjectStore` from `@open-e2ee/signal-protocol-sdk/remote/object-store/s3`
@@ -76,13 +76,12 @@ Bundle fetch must preserve one-time-prekey consumption semantics for concurrent 
 - readers need public-key access for session establishment
 - writers must only mutate their own account/device state
 
-## Remote Object Storage
+## Remote Object Store
 
 `SignalProtocolRemoteObjectStore` is optional and only needed for encrypted attachment/file flows.
 
 In practice, attachment and encrypted file support is a common consumer path,
-so object-store adapters should be treated as first-class integrations
-alongside relay adapters.
+so give object-store adapters the same standing as relay adapters.
 
 The port is deliberately brokered. An authenticated application backend maps a
 retry-stable `requestId` to a canonical `objectId` and a private provider key,
@@ -111,9 +110,10 @@ const signal = await SignalProtocolClient.create(userId, {
 });
 ```
 
-The generated module is accepted directly. `createDownload` and
-`completeUpload` are actions because they produce time-sensitive credentials or
-await provider metadata; `createUpload` and `deleteObject` are mutations.
+The adapter accepts the generated module directly. The functions
+`createDownload` and `completeUpload` are actions, because they produce
+time-sensitive credentials or await provider metadata. The functions
+`createUpload` and `deleteObject` are mutations.
 
 The optional server entry point removes repetitive broker plumbing without
 taking ownership away from the application:
@@ -154,20 +154,22 @@ The application defines the referenced internal functions in
 - `resolve` authorizes `download` or `complete` and returns the provider key
   plus the reserved content type and length.
 - `complete` re-authorizes the caller and idempotently marks an upload complete
-  after the helper verifies synchronized R2 metadata. This second authorization
-  is required because the action's query and mutation are separate transactions.
-- `remove` authorizes deletion, records the logical removal, and returns the
-  stable provider key so component deletion can be scheduled transactionally.
+  after the helper verifies synchronized R2 metadata. The action needs this
+  second authorization because its query and mutation are separate
+  transactions.
+- `remove` authorizes deletion and records the logical removal. It returns the
+  stable provider key, so the caller can schedule component deletion
+  transactionally.
 
-The helper supplies public validators, extracts expiry from the actual
-Signature Version 4 URLs, verifies uploaded size and content type, and calls
-the R2 component with the correct Convex contexts. It has no runtime import of
-`@convex-dev/r2`; S3-only consumers do not load the component.
+The helper supplies public validators and extracts expiry from the actual
+Signature Version 4 URLs. It verifies uploaded size and content type, and it
+calls the R2 component with the correct Convex contexts. It has no runtime
+import of `@convex-dev/r2`. S3-only consumers do not load the component.
 
 ### Amazon S3 and S3-compatible storage
 
 `S3ObjectStore` is framework-neutral. Supply an authenticated backend broker
-that creates presigned operations; AWS SDK clients and AWS credentials remain
+that creates presigned operations. AWS SDK clients and AWS credentials remain
 on that backend. The broker follows the same identity contract: it receives a
 retry-stable `requestId`, reserves the private provider key, and returns the
 canonical `objectId`.

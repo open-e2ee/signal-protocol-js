@@ -13,7 +13,7 @@ Responsibilities:
 - Device registry (multi-device support, max 5 devices per user)
 - Prekey management (X3DH/PQXDH key exchange)
 
-Backed by the 16 tables the Convex component owns; `docs/SCHEMA.md` covers
+Backed by the 16 tables the Convex component owns. `docs/SCHEMA.md` covers
 what each stores and for how long.
 
 ## Example
@@ -325,7 +325,7 @@ Target device ID
 
 `string`
 
-Deprecated, ignored. Fetcher identity is derived from auth server-side.
+Deprecated, ignored. The server derives fetcher identity from auth.
 
 ##### identityType?
 
@@ -454,11 +454,11 @@ Metadata with timestamps and publicKey, or null if no key exists
 Get one page of group change log entries after a given version.
 Used for incremental state synchronization.
 
-Authorization is evaluated at the `fromVersion` snapshot, and the
+Authorization runs at the `fromVersion` snapshot, and the
 requester must be a member there. Serve through the first transition
 that makes the requester unreadable, inclusive, and do not serve later
-transitions under that request. A page cut for size sets `hasMore`;
-the client resumes from the last served version.
+transitions under that request. A page cut for size sets `hasMore`.
+The client resumes from the last served version.
 
 #### Parameters
 
@@ -684,7 +684,7 @@ Status and encrypted message (if ready)
 
 > **heartbeat**(`deviceId`): `Promise`\<`void`\>
 
-Lightweight heartbeat — writes only to heartbeat table, triggers 0 query reruns
+Lightweight heartbeat. Writes only to heartbeat table, triggers 0 query reruns
 
 #### Parameters
 
@@ -747,7 +747,7 @@ ID from send() or subscription
 
 Mark device as connected (online).
 Called when WebSocket connects.
-userId is derived from JWT server-side.
+The server derives userId from the JWT.
 
 #### Parameters
 
@@ -769,7 +769,7 @@ Device ID (1-5)
 
 Mark device as disconnected (offline).
 Called when WebSocket disconnects gracefully.
-userId is derived from JWT server-side.
+The server derives userId from the JWT.
 
 #### Parameters
 
@@ -1048,7 +1048,7 @@ AES-GCM encrypted payload (JSON string with ciphertext, iv, authTag)
 
 Send retry request to the original sender.
 
-Called by recipient when decryption fails. The retry request is
+The recipient calls this when decryption fails. The retry request stays
 unencrypted (per SESAME spec) and contains only the message ID
 and reason. Transport is TLS-secured.
 

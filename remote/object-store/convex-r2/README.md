@@ -69,10 +69,10 @@ export const {
 
 The callbacks must authenticate and authorize each operation and persist the
 `requestId -> objectId -> providerKey` mapping. The helper derives expiry from
-the actual signed operation, synchronizes provider metadata in an action, and
-checks the reserved content type and byte length before completion.
+the actual signed operation and synchronizes provider metadata in an action. It
+also checks the reserved content type and byte length before completion.
 
-Deletion is asynchronous at the provider boundary: the public mutation
+Deletion is asynchronous at the provider boundary. The public mutation
 atomically records the application removal and asks the R2 component to schedule
 its retried deletion action. Applications that need confirmed physical removal
 must track that completion separately.

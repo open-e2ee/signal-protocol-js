@@ -42,11 +42,12 @@ The server must enforce authenticated access and version sequencing without
 receiving plaintext group attributes or group master keys. Membership removal
 must also invalidate or rotate group messaging state through the callbacks
 required by `GroupManagerOptions`. Every `getGroup()` response must include a
-baseline signature over the group ID, version, and exact encrypted-state bytes;
-the client verifies it before installing a first or post-revocation baseline.
+baseline signature over the group ID, version, and exact encrypted-state bytes.
+The client verifies that signature before installing a first or post-revocation
+baseline.
 
 Deployments whose server does not yet sign group changes must opt in explicitly
-with `allowUnauthenticatedGroupHistory: true`; the SDK emits a security warning
+with `allowUnauthenticatedGroupHistory: true`. The SDK emits a security warning
 because that mode has no authenticated group history.
 
 See the [API reference](../docs/api/README.md) and

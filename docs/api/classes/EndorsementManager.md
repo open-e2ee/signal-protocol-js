@@ -167,7 +167,7 @@ Serialized 24-byte full token and expiration, or null if unavailable
 
 > **isExpired**(`expiration`): `boolean`
 
-Check if cached endorsements are expired.
+Check whether cached endorsements expired.
 
 #### Parameters
 
@@ -189,7 +189,7 @@ true if endorsements are past expiration
 
 > **isMissingAnyEndorsements**(`groupId`, `memberUserIds`): `Promise`\<`boolean`\>
 
-Check if any group member is missing a cached endorsement.
+Check whether any group member lacks a cached endorsement.
 
 Used in the pre-send endorsement refresh check.
 
@@ -211,7 +211,7 @@ User IDs of all group members (excluding self)
 
 `Promise`\<`boolean`\>
 
-true if any member is missing, false if all present or no cache
+true if any member lacks one, false if all present or no cache
 
 ***
 
@@ -297,12 +297,12 @@ VerificationFailure if batch proof validation fails
 
 > **shouldRefreshEndorsements**(`groupId`, `memberUserIds`): `Promise`\<\{ `needsRefresh`: `boolean`; `reason?`: `"missing_cache"` \| `"expiring_soon"` \| `"missing_members"`; \}\>
 
-Check whether endorsements should be refreshed before sending.
+Check whether endorsements need a refresh before sending.
 
 Checks three conditions:
  1. No endorsements cached at all
  2. Endorsements expire within 2 hours
- 3. Any group member is missing an endorsement
+ 3. Any group member lacks an endorsement
 
 #### Parameters
 
@@ -322,4 +322,4 @@ User IDs of all group members (excluding self)
 
 `Promise`\<\{ `needsRefresh`: `boolean`; `reason?`: `"missing_cache"` \| `"expiring_soon"` \| `"missing_members"`; \}\>
 
-Object indicating if refresh is needed and why
+Object indicating whether a refresh applies, and why

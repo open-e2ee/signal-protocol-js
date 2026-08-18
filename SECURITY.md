@@ -7,8 +7,8 @@ backports.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.2.x   | :white_check_mark: |
-| < 0.2.0 | :x:                |
+| 0.3.x   | :white_check_mark: |
+| < 0.3.0 | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -22,7 +22,7 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
      the repository's [Security tab](https://github.com/open-e2ee/signal-protocol-js/security)
    - Email: security@open-e2ee.dev
 3. Include the following information:
-   - Description of the vulnerability
+   - What the vulnerability is
    - Steps to reproduce
    - Potential impact
    - Suggested fix (if any)
@@ -30,13 +30,16 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
 ### Safe Harbor
 
 We will not pursue legal action or law-enforcement referral against
-good-faith security research on this codebase. Good faith means: make every
-effort to avoid privacy violations and data destruction, use your own accounts
-and devices for testing, do not exploit a finding beyond what is needed to
-demonstrate it, and give us a reasonable window to remediate before public
-disclosure. This applies to research on the SDK itself; testing deployed
-third-party applications that use the SDK is governed by those applications'
-own policies.
+good-faith security research on this codebase. Good faith means all of the
+following:
+
+- Make every effort to avoid privacy violations and data destruction.
+- Use your own accounts and devices for testing.
+- Do not exploit a finding beyond what you need to show it.
+- Give us a reasonable window to remediate before public disclosure.
+
+This applies to research on the SDK itself. Those applications' own policies
+govern testing of deployed third-party applications that use the SDK.
 
 ### What to Expect
 
@@ -51,7 +54,7 @@ own policies.
 ### Disclosure Policy
 
 - We follow responsible disclosure practices
-- We will credit reporters (unless anonymity is requested)
+- We will credit reporters, unless a reporter requests anonymity
 - We aim to release patches before public disclosure
 - Public disclosure occurs after patch is available
 
@@ -112,7 +115,7 @@ write or that no copies exist.
 However, JIT compilers may:
 
 - Optimize away the zeroing before our check runs
-- Copy values to CPU registers that aren't zeroed
+- Copy values to CPU registers that are not zeroed
 - Leave copies in garbage-collected heap memory
 
 **Garbage Collection**: Sensitive data in JavaScript objects may persist in heap memory until GC runs. We cannot force immediate collection or guarantee cleanup timing.
@@ -131,7 +134,7 @@ However, JIT compilers may:
 Browser/runtime timing attacks are possible. Current source-level mitigations include:
 
 - Full-scan equal-length comparison helpers on selected MAC/ciphertext paths
-- Fixed-work derivation of both decapsulation candidates before masked selection
+- Fixed work on both decapsulation candidates, then a masked choice between them
 - Fixed-work rejection handling on selected authentication paths
 
 These are not hard constant-time guarantees. Ed25519 signature verification

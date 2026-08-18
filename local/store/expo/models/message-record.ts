@@ -49,7 +49,7 @@ export interface StoredMessageRecord {
   recipientDeviceId: number;
   plaintext: string;
   createdAt: number;
-  /** Sender's ratchet key (DHs.publicKey) at send time — for retry session matching */
+  /** Sender's ratchet key (DHs.publicKey) at send time, for retry session matching */
   sessionStateId: string;
 }
 
@@ -268,7 +268,7 @@ export class MessageRecord {
     return this.data.createdAt;
   }
 
-  /** Sender's ratchet key (DHs.publicKey) at send time — for retry session matching */
+  /** Sender's ratchet key (DHs.publicKey) at send time, for retry session matching */
   get sessionStateId(): string {
     return this.data.sessionStateId;
   }

@@ -6,10 +6,10 @@ The local secret vault stores small bootstrap secrets through a minimal
 ## Why it exists
 
 Platform secret managers are appropriate for tiny keys and bootstrap values,
-but not full session databases. Separating the vault from
-`ISignalProtocolLocalStore` keeps platform limits explicit and lets a local store use a
-vault-held wrapping key without placing every protocol record in the platform
-keychain.
+but not full session databases. A vault separate from
+`ISignalProtocolLocalStore` keeps platform limits explicit. A local store can
+then use a vault-held wrapping key without placing every protocol record in the
+platform keychain.
 
 ## Expo usage
 

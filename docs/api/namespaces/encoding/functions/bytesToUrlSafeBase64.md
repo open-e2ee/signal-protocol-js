@@ -15,8 +15,8 @@ URL-safe Base64 uses:
 - `_` instead of `/`
 - No padding (`=`)
 
-Used for R2 storage keys (attachments, profiles), which must survive being
-placed in a URL path without escaping.
+Used for R2 storage keys (attachments, profiles), which must survive a URL
+path without escaping.
 
 ## Parameters
 

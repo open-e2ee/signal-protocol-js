@@ -222,7 +222,7 @@ export class DeviceLifecycleManager {
       });
 
       // Clear orphaned crypto state from previous installation
-      // Server already cleared prekeys; local sessions are now invalid
+      // Server already cleared prekeys. Local sessions are now invalid
       await this.clearLocalCryptoState();
 
       return {
@@ -273,7 +273,7 @@ export class DeviceLifecycleManager {
    * Check if stored device ID is still valid in backend.
    *
    * A device is considered stale if:
-   * - 'not-found': Device record doesn't exist in backend
+   * - 'not-found': Device record does not exist in backend
    * - 'removed': Device exists but registered=false (soft deleted)
    * - 'unlinked': Secondary device exists but linked=false (detached from primary)
    * - 'disabled': Device exists but enabled=false (user paused message delivery)
@@ -335,13 +335,13 @@ export class DeviceLifecycleManager {
    *
    * This path is intentionally limited to auth-based primary bootstrap and
    * primary recovery. Linked devices must already have been provisioned from an
-   * existing device; they must not self-register from app auth alone.
+   * existing device. They must not self-register from app auth alone.
    *
    * Uses the application-provided device fingerprint (or the platform value
    * returned by `react-native-device-info`) as a reclaim hint. If the backend
    * accepts that hint, it can reclaim an existing device instead of allocating
    * another one. Fingerprint stability varies by platform, install lifecycle,
-   * backup policy, and application configuration; it is not an authentication
+   * backup policy, and application configuration. It is not an authentication
    * credential by itself.
    *
    * @param options - Registration options
@@ -497,7 +497,7 @@ export class DeviceLifecycleManager {
    * Handle stale device: cleanup and re-register.
    *
    * Per SESAME spec: when device state is deleted, old sessions become invalid.
-   * Primary devices can self-recover; linked devices must be re-linked via QR.
+   * Primary devices can self-recover. Linked devices must be re-linked via QR.
    *
    * @param staleDeviceId - The stale device ID
    * @param options - Options for handling
@@ -659,7 +659,7 @@ export class DeviceLifecycleManager {
   }
 
   /**
-   * Ensure identity keys exist for all identity types.
+   * Create identity keys for every identity type if they are missing.
    * Generates and stores keys if missing (generate at registration).
    * Saves ACI public key to SecureStore for device verification on subsequent launches.
    */
@@ -1301,7 +1301,7 @@ export class DeviceLifecycleManager {
    * 2. Clear local crypto state
    * 3. Return user_choice_required for QR code linking flow
    *
-   * Note: This doesn't complete registration - user needs to scan QR code.
+   * Note: This does not complete registration - user needs to scan QR code.
    */
   async handleOrphanedLinkedDevice(): Promise<ActionResult> {
     try {

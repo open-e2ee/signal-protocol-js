@@ -23,7 +23,7 @@ message resendability and storage without decrypting the message."
 
 Default behavior - no special handling.
 
-Message is treated as a normal user message with standard
+The client treats the message as a normal user message, with standard
 retry and storage policies.
 
 ***
@@ -32,7 +32,7 @@ retry and storage policies.
 
 > **Implicit**: `2`
 
-Implicit/ephemeral message - don't store long-term.
+Implicit/ephemeral message - do not store long-term.
 
 Examples:
 - Typing indicators
@@ -42,9 +42,9 @@ Examples:
 
 Implicit messages:
 - Should not be resent if delivery fails
-- Can be discarded to save storage space
+- The store may discard them to save storage space
 - Have lower priority in delivery queue
-- Don't contribute to unread counts
+- Do not contribute to unread counts
 
 ***
 
@@ -57,7 +57,7 @@ Message can be safely resent if delivery fails.
 Examples:
 - Text messages
 - Media with permanent URLs
-- Messages that aren't time-sensitive
+- Messages that are not time-sensitive
 
-Resendable messages can be retried multiple times with exponential
+The client can retry a resendable message multiple times with exponential
 backoff if delivery fails.

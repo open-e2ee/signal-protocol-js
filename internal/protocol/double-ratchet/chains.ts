@@ -130,9 +130,10 @@ export async function deriveReceivingKey(
 /**
  * Store skipped message keys when advancing receiving chain
  *
- * If we receive message N+5 but haven't received N+1 through N+4,
- * we need to store the keys for those missing messages so we can
- * decrypt them if they arrive later (out-of-order delivery).
+ * Suppose we receive message N+5 without having received the N+1 through N+4
+ * messages.
+ * The keys for those missing messages are stored, so we can decrypt them if
+ * they arrive later (out-of-order delivery).
  *
  * Uses the nested receiverChains structure (v3 format) for protobuf compatibility.
  *
@@ -173,7 +174,7 @@ export async function storeSkippedKeys(
     );
   }
 
-  // Ensure receiverChains exists (v3 format)
+  // Create receiverChains if it is missing (v3 format)
   if (!state.receiverChains) {
     state.receiverChains = [];
   }
@@ -229,9 +230,10 @@ export function tryGetSkippedKey(
  * Clean up expired message keys from receiverChains
  *
  * Signal Protocol Section 8.4 -
- * "To avoid excessive storage, parties SHOULD delete keys for messages
- * that have been received or that have been skipped for too long.
- * A recommended policy is to delete message keys more than one week old."
+ *
+ * > "To avoid excessive storage, parties SHOULD delete keys for messages
+ * > that have been received or that have been skipped for too long.
+ * > A recommended policy is to delete message keys more than one week old."
  *
  * Also cleans up expired entries from processedChains (replay detection).
  *
@@ -350,7 +352,7 @@ export function getOrCreateReceiverChain(
   senderRatchetKey: Base64,
   logger: Required<ILogger> = defaultSignalProtocolLogger
 ): ReceiverChain {
-  // Ensure receiverChains exists
+  // Create receiverChains if it is missing
   if (!state.receiverChains) {
     state.receiverChains = [];
   }

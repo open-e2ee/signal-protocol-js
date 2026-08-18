@@ -106,7 +106,7 @@ export function resetPreKeyCheckThrottle(): void {
 /**
  * Sync the public prekey bundle to the configured relay.
  *
- * Performs:
+ * Steps:
  * 1. Generates prekey bundle if not already present (identity, signed, one-time prekeys)
  * 2. Generates KEM prekey material if not already present
  * 3. Uploads public keys to the relay server
@@ -150,7 +150,7 @@ export async function syncToServer(
       message: 'Creating your encryption keys...',
     });
 
-    // Sync active identity types (ACI always; PNI only for phone-number apps)
+    // Sync active identity types (ACI always, PNI only for phone-number apps)
     for (const identityType of getActiveIdentityTypes(ctx.config)) {
       await syncIdentityToServer(ctx, identityType, onProgress);
     }
@@ -182,12 +182,12 @@ export async function syncToServer(
 /**
  * Sync the public prekey bundle for a specific identity type to the relay.
  *
- * Performs per-identity-type:
+ * Steps per identity type:
  * 1. Generates prekey bundle if not already present
  * 2. Generates KEM prekey material if not already present
  * 3. Uploads public keys to the relay
  *
- * ACI and PNI inventories are synchronized independently.
+ * ACI and PNI inventories synchronize independently.
  *
  * @param ctx - Prekey context with dependencies
  * @param identityType - 'aci' or 'pni'
@@ -200,7 +200,7 @@ export async function syncIdentityToServer(
 ): Promise<void> {
   const preKeyMaintenance = ctx.config.preKeyMaintenance;
 
-  // Generate prekey bundle if signed prekey doesn't exist
+  // Generate prekey bundle if signed prekey does not exist
   // Note: initialize() generates identity key, but generatePreKeyBundle()
   // is needed to create signed prekey and one-time prekeys
   const existingSignedPreKey = await ctx.storage.getEcSignedPreKey(undefined, identityType);
@@ -451,7 +451,7 @@ export async function syncIdentityToServer(
         identityType
       );
     } catch {
-      // Best-effort cleanup — non-critical
+      // Best-effort cleanup. Non-critical
     }
   }
 
@@ -720,8 +720,8 @@ export async function forceCompleteKeyReset(
  * MAC failures when remote clients fetch stale bundles.
  *
  * @param ctx - Prekey context with dependencies
- * @param signedPreKey - The signed prekey that was uploaded
- * @param kyberPreKey - Optional Kyber prekey that was uploaded
+ * @param signedPreKey - The signed prekey the client uploaded
+ * @param kyberPreKey - Optional Kyber prekey the client uploaded
  * @param operation - Operation name for logging context
  * @throws EncryptionError if verification fails
  */
@@ -814,10 +814,10 @@ export interface PreKeyStatusResult {
 }
 
 /**
- * Check prekey status and determine if replenishment is needed
+ * Check prekey status and decide whether the client must replenish
  *
  * @param ctx - Client context with dependencies
- * @param threshold - Threshold below which replenishment is needed (default: 50)
+ * @param threshold - Threshold below which the client replenishes (default: 50)
  * @param onPreKeyLow - Optional callback when prekeys are low
  * @param identityType - Identity type to check (default: 'aci')
  * @param options - Optional options (e.g., force to bypass throttle)

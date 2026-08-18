@@ -22,7 +22,7 @@ assumptions. See docs/SECURITY.md.
 
 > **direction**: `"A2B"` \| `"B2A"`
 
-Direction of communication ('A2B' = Alice to Bob, 'B2A' = Bob to Alice)
+Which way messages flow ('A2B' = Alice to Bob, 'B2A' = Bob to Alice)
 
 ***
 

@@ -49,7 +49,7 @@ export interface SignalProtocolClientContext {
   /** Optional relay server for server sync */
   readonly relay?: ISignalProtocolRelayServer;
 
-  /** Optional brokered remote object storage for encrypted attachments. */
+  /** Optional brokered remote object store for encrypted attachments. */
   readonly remoteObjectStore?: SignalProtocolRemoteObjectStore;
 
   /** Client configuration */
@@ -153,7 +153,7 @@ export interface SendOptions {
 
   /**
    * Client timestamp for receipt matching.
-   * Same timestamp should be stored locally for delivery receipt lookup.
+   * Store the same timestamp locally for delivery receipt lookup.
    */
   timestamp?: number;
 
@@ -170,18 +170,18 @@ export interface SendOptions {
    * Content hint for recipient retry behavior.
    *
    * Used for protocol/no-op payloads (for example NullMessage resend responses)
-   * that should be treated as IMPLICIT and silently discarded on failure.
+   * that the client treats as IMPLICIT and silently discards on failure.
    */
   contentHint?: ContentHint;
 
   /**
    * Application user IDs of the group's members, for local-first fan-out.
    *
-   * **Required for every group send** — a group send without it throws rather
+   * **Required for every group send**. A group send without it throws rather
    * than delivering to nobody. The relay keeps no `groupId -> member` map by
-   * design, so it cannot supply the roster, and the SDK cannot derive it
-   * either: decrypted group state identifies members by ACI
-   * (`DecryptedMember.aciBytes`) while the relay routes by application
+   * design, so it cannot supply the roster. The SDK cannot derive it either.
+   * Decrypted group state identifies members by ACI
+   * (`DecryptedMember.aciBytes`), while the relay routes by application
    * `userId`, and only the application holds that mapping.
    *
    * Resolve the roster from local group state, map each member's ACI to your
@@ -214,7 +214,7 @@ export interface SendResult {
   /** Server-assigned message ID for tracking and markAsRead() */
   messageId: string;
 
-  /** Server timestamp when message was accepted */
+  /** Server timestamp when the relay accepted the message */
   timestamp: number;
 
   /**
@@ -277,7 +277,7 @@ export interface SafetyNumber {
 /**
  * Exact safety-number comparison evidence.
  *
- * Strings are used instead of mutable Uint8Array instances so application code
+ * This uses strings instead of mutable Uint8Array instances, so application code
  * cannot accidentally change the value between display and confirmation.
  */
 export interface SafetyNumberConfirmation {
@@ -348,7 +348,7 @@ export interface SessionHealthResult {
     messagesReceived: number;
   };
 
-  /** When this check was performed */
+  /** When the client ran this check */
   checkedAt: number;
   /** Summary message for UI display */
   message: string;
@@ -480,15 +480,15 @@ export interface IncomingEnvelope {
    */
   timestamp: number;
 
-  /** Server timestamp when message was received */
+  /** Server timestamp when the relay received the message */
   serverTimestamp?: number;
 
   /**
    * Message type for filtering (ciphertext, prekey_bundle, etc.).
    *
    * `sender_key` marks group traffic: the payload is a framed
-   * SenderKeyMessage. It names no group — no envelope does — and the group is
-   * resolved from the frame's opaque distribution identifier against the
+   * SenderKeyMessage. It names no group (no envelope does), and the receiver
+   * resolves the group from the frame's opaque distribution identifier against the
    * local sender key store.
    */
   messageType?: string;
@@ -500,7 +500,7 @@ export interface IncomingEnvelope {
    * - RESENDABLE: Content messages - can trigger retry requests
    * - DEFAULT: Standard handling
    *
-   * If not set, behavior is inferred from messageType via IMPLICIT_ENVELOPE_TYPES.
+   * If not set, the client infers behavior from messageType via IMPLICIT_ENVELOPE_TYPES.
    */
   contentHint?: ContentHint;
 }
@@ -508,14 +508,14 @@ export interface IncomingEnvelope {
 /**
  * Options for processing incoming message envelopes.
  *
- * Used when SignalProtocolClient doesn't have a relay (e.g., background tasks).
+ * Used when SignalProtocolClient does not have a relay (e.g., background tasks).
  * Provides callbacks for sending retry requests and marking messages delivered.
  */
 export interface ProcessEnvelopeOptions {
   /**
    * Callback to send retry requests when no relay is available.
    *
-   * Required for background processing where there's no WebSocket relay.
+   * Required for background processing where there is no WebSocket relay.
    * The callback receives a fully-formed RetryRequest created by SesameManager.
    */
   sendRetryRequest?: (request: import('../internal/sesame/types').RetryRequest) => Promise<void>;
@@ -523,17 +523,17 @@ export interface ProcessEnvelopeOptions {
   /**
    * Callback to mark message as delivered when no relay is available.
    *
-   * Called after retry request is sent to prevent the failed message
+   * Call this after sending a retry request, to prevent the failed message
    * from being re-fetched indefinitely.
    */
   markDelivered?: (messageId: string) => Promise<void>;
 
   /**
-   * Force prekey rotation when stale prekey is detected.
+   * Force prekey rotation when the client detects a stale prekey.
    *
    * Generate new keys, clear stale KEM prekeys, and upload fresh bundle.
    *
-   * Required for background processing where there's no relay.
+   * Required for background processing where there is no relay.
    * Called before sending retry request when PREKEY_NOT_FOUND or MAC_FAILED
    * on PreKeyMessage indicates stale/corrupted keys.
    *

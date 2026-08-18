@@ -76,9 +76,9 @@
  * ## Security Properties
  *
  * - **Post-Quantum Contribution**: standardized ML-KEM-768 feeds each eligible
- *   epoch; the end-to-end claim remains conditional on the full protocol
+ *   epoch. The end-to-end claim remains conditional on the full protocol
  * - **Forward Secrecy**: Old state is pruned and owned byte buffers are cleared
- *   on a best-effort basis; JavaScript cannot guarantee physical erasure
+ *   on a best-effort basis. JavaScript cannot guarantee physical erasure
  * - **Hybrid intent**: a later EC break alone should not recover epochs whose
  *   ML-KEM contribution and surrounding protocol assumptions remain secure
  * - **Sparse Ratcheting**: Only ratchets on DH steps (reduces overhead)
@@ -145,7 +145,7 @@ import {
 // Validation functions (extracted for modularity)
 import { validateSPQRState, trimSkippedKeys } from './validate';
 
-// SPQR wire format serialization (no circular dependency — pure encode/decode module)
+// SPQR wire format serialization (no circular dependency, pure encode/decode module)
 import {
   encodeSPQRWire,
   decodeSPQRWire,
@@ -265,7 +265,7 @@ export interface SPQRState {
    * - `'direct'`: Explicit direct ML-KEM-768 encapsulation mode
    *
    * Once set during session establishment, the mode is fixed for the
-   * lifetime of the session to ensure protocol consistency.
+   * lifetime of the session, which keeps the protocol consistent.
    *
    * @default 'braid'
    */
@@ -413,13 +413,13 @@ export interface SPQRKeyResult {
  *
  */
 /**
- * Epochs to retain prior to send epoch.
+ * Epochs to retain before the send epoch.
  *
  * This is a protocol constant, not configurable. The reference implementation hardcodes this value
  * as `EPOCHS_TO_KEEP_PRIOR_TO_SEND_EPOCH: usize = 1` in the profile.
  * Keeping 1 previous epoch means current epoch + 1 previous = 2 total epochs
- * in memory, providing fast forward secrecy while allowing in-flight messages
- * from the previous epoch to be decrypted.
+ * in memory. That gives fast forward secrecy, and still lets in-flight
+ * messages from the previous epoch be decrypted.
  */
 const EPOCHS_TO_KEEP_PRIOR_TO_SEND_EPOCH = 1;
 
@@ -433,7 +433,7 @@ export const SPQR_CONFIG = {
   /** Maximum out-of-order keys to store (limits memory usage) */
   MAX_OOO_KEYS: SPQR_LIMITS_DEFAULTS.maxOutOfOrderKeys,
 
-  /** Maximum old epochs to keep prior to send epoch */
+  /** Maximum old epochs to keep before the send epoch */
   MAX_EPOCHS_TO_KEEP: EPOCHS_TO_KEEP_PRIOR_TO_SEND_EPOCH,
 
   // ===== Internal Limits (not configurable) =====
@@ -449,9 +449,9 @@ export const SPQR_CONFIG = {
   MAX_SKIPPED_KEY_AGE: 7 * 24 * 60 * 60 * 1000,
 
   // ===== ML-KEM-768 Sizes (NIST FIPS 203) =====
-  // Note: SPQR uses ML-KEM-768 for bandwidth efficiency
-  // PQXDH uses ML-KEM-1024 for maximum security (see crypto/kyber.ts)
-  // Values are literals to ensure `as const` works correctly for module exports
+  // Note: SPQR uses ML-KEM-768 for bandwidth efficiency, and PQXDH uses
+  // ML-KEM-1024 for maximum security (see crypto/kyber.ts).
+  // Values are literals so `as const` works correctly for module exports.
 
   /** ML-KEM-768 ciphertext size in bytes */
   MLKEM768_CIPHERTEXT_SIZE: 1088,
@@ -479,7 +479,7 @@ export const SPQR_CONFIG = {
  *
  * SPQR bootstrap is considered **complete** when:
  * 1. `theirKyberPublicKey` is set (we can encapsulate TO them)
- * 2. Version negotiation is complete (we've received their first message)
+ * 2. Version negotiation is complete (we have received their first message)
  *
  * When bootstrap is incomplete, SPQR key derivation functions return `null`,
  * and the Triple Ratchet uses bootstrap EC keys until SPQR can contribute.
@@ -543,9 +543,10 @@ export async function initializeSPQRState(
   // Resolve info strings (use provided or pinned-reference defaults)
   const resolvedInfoStrings = infoStrings ?? resolveSPQRInfoStrings();
 
-  // Per the SPQR specification: Initialize chains using profile KDF
-  // Uses info string "Signal PQ Ratchet V1 Chain  Start" (TWO spaces) with 96-byte output:
-  // [0:32] = new root key, [32:64] = A2B chain, [64:96] = B2A chain
+  // Per the SPQR specification: Initialize chains using profile KDF.
+  // Uses info string "Signal PQ Ratchet V1 Chain  Start" (TWO spaces) with a
+  // 96-byte output: [0:32] = new root key, [32:64] = A2B chain, [64:96] = B2A
+  // chain.
   const {
     rootKey: newRootKey,
     a2bChainKey,
@@ -555,7 +556,7 @@ export async function initializeSPQRState(
   // Per Signal Protocol Section 5.4 (Output Reordering):
   // - Alice (A2B): send = A2B, receive = B2A (natural order)
   // - Bob (B2A): send = B2A, receive = A2B (swapped order)
-  // This ensures Alice's send chain = Bob's receive chain (same bytes)
+  // Alice's send chain then equals Bob's receive chain (same bytes)
   const sendChainKey = direction === 'A2B' ? a2bChainKey : b2aChainKey;
   const receiveChainKey = direction === 'A2B' ? b2aChainKey : a2bChainKey;
   let encodedRootKey: Base64;
@@ -739,7 +740,7 @@ async function addSPQREpochSecret(
  * Direct mode does not have a Braid state machine to apply KDF_OK, so it must
  * derive the epoch secret here before invoking the chain-add operation.
  *
- * @internal Deterministic epoch-transition seam; not part of the public API.
+ * @internal Deterministic epoch-transition seam. It is not part of the public API.
  */
 export async function advanceSPQREpochFromRawSecret(
   spqrState: SPQRState,
@@ -760,10 +761,10 @@ export async function advanceSPQREpochFromRawSecret(
  * Consume an OutputKey produced by ML-KEM Braid without applying KDF_OK again.
  *
  * Ownership transfers to this function. The caller must not reuse
- * `outputKey.epoch_secret`; it is cleared on both success and failure after the
+ * `outputKey.epoch_secret`. It is cleared on both success and failure after the
  * epoch check and candidate derivation have completed.
  *
- * @internal Deterministic epoch-transition seam; not part of the public API.
+ * @internal Deterministic epoch-transition seam. It is not part of the public API.
  */
 export async function addSPQRBraidEpoch(
   spqrState: SPQRState,
@@ -835,7 +836,7 @@ export async function performSPQRRatchetStep(spqrState: SPQRState): Promise<SPQR
   try {
     spqrState.sckaState.ourKyberPrivateKey = bytesToBase64(newKyberKeyPair.privateKey);
   } finally {
-    // The persisted base64 string is immutable; clear the temporary byte key.
+    // The persisted base64 string is immutable. Clear the temporary byte key.
     secureZeroBytes(newKyberKeyPair.privateKey);
   }
 
@@ -1126,7 +1127,7 @@ export async function deriveSPQRReceiveKey(
   // Return null so the Triple Ratchet keeps using its bootstrap EC key.
   //
   // This handles the asymmetric bootstrap scenario after device reset where
-  // one party might have advanced their SPQR state but the other hasn't.
+  // one party might have advanced their SPQR state but the other has not.
   if (!isSpqrBootstrapComplete(spqrState)) {
     logger.debug('SPQR bootstrap incomplete, using bootstrap EC key for decryption', {
       category: 'E2EE',
@@ -1154,8 +1155,9 @@ export async function deriveSPQRReceiveKey(
     },
   });
 
-  // Check MKSKIPPED first - if this key was already derived and stored (out-of-order),
-  // return it directly instead of re-advancing the chain (which would fail for old indices).
+  // Check MKSKIPPED first. If this key was already derived and stored
+  // (out-of-order), return it directly instead of re-advancing the chain,
+  // which would fail for old indices.
   const skipKey = `${epoch}:${index}`;
   if (spqrState.MKSKIPPED[skipKey]) {
     const storedKey = base64ToBytes(spqrState.MKSKIPPED[skipKey].key);
@@ -1326,7 +1328,7 @@ export async function tryGetSkippedSPQRKey(
 //
 // Version negotiation functions have been moved to ../version.ts
 // Import them from there:
-//   import { initVersionNegotiation, processVersionCapability, ... } from '../version';
+//   `import { initVersionNegotiation, processVersionCapability, ... } from '../version';`
 //
 // Or use the re-exports from ./index.ts.
 //
@@ -1369,8 +1371,8 @@ export async function cleanupSPQRState(spqrState: SPQRState, maxAge?: number): P
 // implement that pattern so cipher.ts only needs to call spqrSend/spqrRecv.
 // ============================================================================
 
-// Cached braid state machine singleton. The state machine is stateless — all
-// mutable state is passed as arguments to Send/Receive — so a single instance
+// Cached braid state machine singleton. The state machine is stateless (all
+// mutable state is passed as arguments to Send/Receive), so a single instance
 // is safe to reuse across calls.
 import type { IMLKEMBraidStateMachine } from './ml-kem-braid/types';
 import { createStateMachine, MessageType } from './ml-kem-braid';
@@ -1380,7 +1382,7 @@ let braidStateMachine: IMLKEMBraidStateMachine | undefined;
  * Report braid chunk progress to the host's diagnostic hook.
  *
  * The hook is diagnostic, so a consumer that throws must not take the ratchet
- * down with it; this mirrors how the handshake guards `onProtocolSelected`.
+ * down with it. This mirrors how the handshake guards `onProtocolSelected`.
  *
  * @param braidState - Braid state as it stands after the send or receive
  * @param emittedEpochKey - Whether that operation produced the epoch secret
@@ -1465,7 +1467,7 @@ export async function spqrSend(
   let kyberCiphertextToSend: Uint8Array | undefined;
   let kyberPublicKeyToSend: Uint8Array | undefined;
   // Direct mode only: needsSendRatchet triggers KEM ratchet step.
-  // Braid mode doesn't use this flag — the state machine handles KEM internally,
+  // Braid mode does not use this flag. The state machine handles KEM internally,
   // matching the profile, where send() inspects state rather than an external flag.
   if (state.needsSendRatchet && state.mode !== 'braid') {
     if (state.sckaState.theirKyberPublicKey) {
@@ -1487,15 +1489,17 @@ export async function spqrSend(
     | { type: number; epoch: bigint; chunkIndex?: number; data?: Uint8Array }
     | undefined;
   // The epoch the peer can still follow. The state machine reports it on every
-  // Send, including the ones that carry no chunk, and it advances only when
-  // that side's transfer completes — so it stays behind `state.epoch` for the
-  // whole stretch where this side holds an epoch secret the peer cannot derive
-  // yet. The outgoing chunk cannot stand in for it: a sender that has had its
-  // ciphertext acknowledged but cannot yet build the next one has no chunk to
-  // read an epoch from, which is exactly when the two sides are furthest apart.
+  // Send, including the ones that carry no chunk. It advances only when that
+  // side's transfer completes. So it stays behind `state.epoch` for the whole
+  // stretch where this side holds an epoch secret the peer cannot derive yet.
+  //
+  // The outgoing chunk cannot stand in for it. A sender that has had its
+  // ciphertext acknowledged, but cannot yet build the next one, has no chunk
+  // to read an epoch from. That is exactly when the two sides are furthest
+  // apart.
   let braidSendingEpoch: bigint | undefined;
   if (state.mode === 'braid' && state.braidState) {
-    // Stateless singleton — all state is passed as arguments to Send/Receive
+    // Stateless singleton. All state is passed as arguments to Send/Receive
     const sm = (braidStateMachine ??= createStateMachine());
     const result = await sm.Send(state.braidState);
     braidSendingEpoch = result.sending_epoch;
@@ -1524,7 +1528,7 @@ export async function spqrSend(
     braidSendingEpoch !== undefined ? spqrWireEpochToInternalEpoch(braidSendingEpoch) : undefined;
   const spqrKeyResult = await deriveSPQRSendKey(state, logger, sendKeyEpoch);
 
-  // Check if there's any data to send
+  // Check if there is any data to send
   const hasData = spqrKeyResult || kyberCiphertextToSend || kyberPublicKeyToSend || braidMessage;
 
   if (!hasData) {
@@ -1536,9 +1540,9 @@ export async function spqrSend(
   const isDirect = !!(kyberCiphertextToSend || kyberPublicKeyToSend);
   const mode: 'braid' | 'direct' | 'none' = isBraid ? 'braid' : isDirect ? 'direct' : 'none';
 
-  // Encode to compact binary wire format (replaces protobuf envelope)
+  // Encode to compact binary wire format (replaces protobuf envelope).
   // In braid mode, use the epoch the state machine is sending under, whether or
-  // not this message carries a chunk; the receiver reads it either way.
+  // not this message carries a chunk. The receiver reads it either way.
   // In direct/none mode, convert the zero-based internal SPQR KDF epoch to
   // the `SPQR` one-based wire epoch.
   const wireEpoch =
@@ -1578,7 +1582,7 @@ export async function spqrSend(
  * - SPQR key derivation (epoch/index)
  * - Sets needsSendRatchet flag for next spqrSend()
  *
- * The cipher layer treats this as an opaque black box — it passes in bytes
+ * The cipher layer treats this as an opaque black box. It passes in bytes
  * and gets back an optional key. No SPQR internals leak to the cipher.
  *
  * @param state - SPQR state (mutated: version negotiation, sckaState, chains, needsSendRatchet)
@@ -1620,7 +1624,7 @@ export async function spqrRecv(
     }
   } else if (pqr.mode === 'braid' && state.mode === 'braid' && state.braidState) {
     // Process braid chunk directly from wire fields (no intermediate serialization)
-    // Stateless singleton — all state is passed as arguments to Send/Receive
+    // Stateless singleton. All state is passed as arguments to Send/Receive
     const sm = (braidStateMachine ??= createStateMachine());
 
     const chunk = {
@@ -1637,14 +1641,15 @@ export async function spqrRecv(
     }
 
     reportBraidProgress(state.braidState, !!result.output_key, logger, config);
-    // No needsSendRatchet flag — braid state machine drives send behavior
+    // No needsSendRatchet flag. Braid state machine drives send behavior
     // via its own state transitions, matching the profile pattern.
   }
 
-  // 3. Derive receive key (epoch now correct after step 2)
-  // Only derive when chainIndex >= 1 — SPQR uses 1-indexed counters (pre-incremented
-  // per the profile). chainIndex 0 means the sender had no SPQR key
-  // result (bootstrap phase), so there's no message key to derive.
+  // 3. Derive receive key (epoch now correct after step 2).
+  //    Only derive when `chainIndex >= 1`, because SPQR uses 1-indexed
+  //    counters, pre-incremented per the profile. A `chainIndex` of 0 means
+  //    the sender had no SPQR key result, in the bootstrap phase. There is
+  //    then no message key to derive.
   let messageKey: Uint8Array | null = null;
   if (pqr.epoch !== undefined && pqr.chainIndex !== undefined && pqr.chainIndex >= 1) {
     const internalEpoch = spqrWireEpochToInternalEpoch(pqr.epoch);

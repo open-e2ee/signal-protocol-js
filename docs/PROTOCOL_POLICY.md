@@ -2,11 +2,11 @@
 
 > Navigation: [README](../README.md) | [ARCHITECTURE](../ARCHITECTURE.md) | [Security](./SECURITY.md) | [Getting Started](./GETTING_STARTED.md) | **Protocol Policy** | [Deviations](./DEVIATIONS.md)
 
-This document covers **which protocol modes run** and which fail closed. For
-**how the profile differs from the published specifications and from
-`libsignal`** — the composite identity, the Ed25519-instead-of-XEdDSA signature
-scheme, the ML-KEM Braid `hek` operand order, and the rest — see
-[Deviations](./DEVIATIONS.md).
+This document covers **which protocol modes run** and which fail closed.
+[Deviations](./DEVIATIONS.md) covers **how the profile differs from the
+published specifications and from `libsignal`**. That includes the composite
+identity, the Ed25519-instead-of-XEdDSA signature scheme, the ML-KEM Braid
+`hek` operand order, and every other difference.
 
 The public Signal Protocol client policy is:
 
@@ -70,11 +70,13 @@ await createSignalProtocolClient({
 ```
 
 `braid: 'required'` uses the specification-defined ML-KEM Braid SPQR profile
-and is the default. HEK is `SHA3-256(ek_seed || ek_vector)`; that operand order
+and is the default. HEK is `SHA3-256(ek_seed || ek_vector)`. That operand order
 is part of the public compatibility boundary. It follows the ML-KEM Braid
-specification text and is the reverse of `libsignal`'s implementation, which means
-braid sessions do not interoperate with `libsignal`'s and the KEM in this mode is not
-stock FIPS 203 — see [Deviations §4.1](./DEVIATIONS.md#41-the-hek-operand-order-diverges).
+specification text and reverses `libsignal`'s implementation. Braid sessions
+therefore do not interoperate with `libsignal`'s, and the KEM in this mode is
+not stock FIPS 203.
+
+See [Deviations §4.1](./DEVIATIONS.md#41-the-hek-operand-order-diverges).
 
 ```ts
 await createSignalProtocolClient({
@@ -115,10 +117,14 @@ compatibility fallback. Do not set `protocolStrategy.allowClassicalFallback`
 when `protocol.postQuantum` is present.
 
 The advanced `protocolStrategy.onBraidProgress` callback reports ML-KEM Braid
-chunk progress after every braid-mode send and receive: the chunks this side has
-carried in the current epoch, the chunks the open transfers account for, the
-epoch, and whether the operation produced the epoch secret. A direct-mode
-session never raises it.
+chunk progress after every braid-mode send and receive:
+
+- the chunks this side carried in the current epoch
+- the chunks the open transfers account for
+- the epoch
+- whether the operation produced the epoch secret
+
+A direct-mode session never raises it.
 
 Do not set `protocolStrategy.sckaMode` when `protocol` is present. Use
 `protocol.braid` so the public product policy owns the direct-vs-Braid choice.

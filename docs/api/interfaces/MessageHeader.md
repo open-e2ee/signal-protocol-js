@@ -9,7 +9,7 @@
 Double Ratchet message header
 
 Contains metadata needed for DH ratcheting and out-of-order message handling.
-This header is sent with every encrypted message.
+Every encrypted message carries this header.
 
 Field names reflect the SignalProtocolMessage wire fields:
 
@@ -35,7 +35,7 @@ Increments with each message sent. Used for:
 Number of messages in the previous sending chain (proto: previous_counter, field 3).
 
 When a DH ratchet occurs, this tells the recipient how many messages
-were sent in the previous chain, allowing them to store skipped keys.
+the previous chain carried, allowing them to store skipped keys.
 
 ***
 
@@ -46,4 +46,4 @@ were sent in the previous chain, allowing them to store skipped keys.
 Sender's current ratchet public key (proto: ratchet_key, field 1).
 
 This is the ephemeral DH public key used in the Double Ratchet algorithm.
-When this changes, the recipient performs a DH ratchet step.
+When this changes, the recipient runs a DH ratchet step.

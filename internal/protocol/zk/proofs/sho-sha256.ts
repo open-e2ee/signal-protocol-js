@@ -1,9 +1,9 @@
 /**
- * Stateful Hash Object (SHO) — SHA-256 "innerpad" variant
+ * Stateful Hash Object (SHO): SHA-256 "innerpad" variant
  *
  *
  * Uses plain SHA-256 (not HMAC) with an "innerpad" domain separation.
- * Used for deterministic system parameter generation where HMAC keying isn't needed.
+ * Used for deterministic system parameter generation where HMAC keying is not needed.
  *
  */
 
@@ -20,7 +20,7 @@ const enum Mode {
 }
 
 /**
- * ShoSha256 — Stateful Hash Object built on plain SHA-256.
+ * ShoSha256: Stateful Hash Object built on plain SHA-256.
  *
  * Same state machine as ShoHmacSha256, but uses SHA-256 with "innerpad"
  * domain separation instead of HMAC.

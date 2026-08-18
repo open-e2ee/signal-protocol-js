@@ -145,7 +145,7 @@ export interface SignalProtocolClientMediaConfig {
   maxJobs?: number;
 
   /**
-   * Maximum attempts before a failing job is removed.
+   * Maximum attempts before the queue removes a failing job.
    *
    * @default 5
    */

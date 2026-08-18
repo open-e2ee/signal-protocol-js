@@ -40,7 +40,7 @@ The identity key involved (for trust/verification errors)
 
 > `optional` **operation?**: `string`
 
-The operation being performed when the error occurred
+The operation in progress when the error occurred
 
 ***
 

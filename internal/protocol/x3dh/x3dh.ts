@@ -4,7 +4,7 @@
  * Implements the X3DH key agreement protocol for establishing shared secrets
  * between two parties. X3DH provides mutual authentication and forward secrecy.
  *
- * X3DH performs 3-4 ECDH operations:
+ * X3DH runs 3-4 ECDH operations:
  * - DH1: Initiator's identity key × Responder's signed prekey
  * - DH2: Initiator's ephemeral key × Responder's identity key
  * - DH3: Initiator's ephemeral key × Responder's signed prekey
@@ -57,7 +57,7 @@ export interface X3DHResult {
   /**
    * Additional derived bytes from HKDF for compatibility.
    * Bytes 32-64: Reserved by this wire format
-   * Bytes 64-96: Compatibility receiving chain key (will be replaced on DH ratchet)
+   * Bytes 64-96: Compatibility receiving chain key (the DH ratchet replaces it)
    *
    * Only present when derived with extended output size.
    */
@@ -70,11 +70,11 @@ export interface X3DHResult {
   usedSignedPreKeyId: number;
   /** ID of the one-time prekey we used (if any) */
   usedOneTimePreKeyId?: number;
-  /** Kyber ciphertext for PQXDH (if Kyber was used) */
+  /** Kyber ciphertext for PQXDH (Kyber sessions only) */
   kyberCiphertext?: Base64;
   /** ID of the Kyber prekey we used (if any) */
   usedKyberPreKeyId?: number;
-  /** Whether PQXDH was used */
+  /** Whether the session used PQXDH */
   usedPQXDH: boolean;
 }
 
@@ -89,7 +89,7 @@ export interface X3DHResponderResult {
    * Only present when derived with extended output size.
    */
   additionalDerivedBytes?: Uint8Array;
-  /** Whether PQXDH was used */
+  /** Whether the session used PQXDH */
   usedPQXDH: boolean;
 }
 
@@ -101,13 +101,13 @@ export interface X3DHResponderInput {
   senderIdentityKey: PublicKey;
   /** Sender's ephemeral public key from PreKeyMessage */
   senderEphemeralKey: PublicKey;
-  /** ID of our signed prekey that was used */
+  /** ID of our signed prekey for this session */
   usedSignedPreKeyId: number;
-  /** ID of our one-time prekey that was used (if any) */
+  /** ID of our one-time prekey for this session (if any) */
   usedOneTimePreKeyId?: number;
   /** Kyber ciphertext for PQXDH (if any) */
   kyberCiphertext?: Base64;
-  /** ID of our Kyber prekey that was used (if any) */
+  /** ID of our Kyber prekey for this session (if any) */
   usedKyberPreKeyId?: number;
 }
 
@@ -116,10 +116,10 @@ export interface X3DHResponderInput {
 // ============================================================================
 
 /**
- * Perform X3DH key agreement as initiator (Alice)
+ * Run the X3DH key agreement as initiator (Alice)
  *
- * This is called when Alice wants to establish a session with Bob.
- * Alice uses Bob's prekey bundle to perform the key agreement.
+ * The caller invokes this when Alice wants to establish a session with Bob.
+ * Alice uses Bob's prekey bundle for the key agreement.
  *
  * @param myIdentityKey My identity key pair
  * @param theirBundle Partner's prekey bundle
@@ -140,7 +140,7 @@ export async function performX3DH(
     data: { operation: 'x3dh', role: 'initiator' },
   });
 
-  // H4: Validate incoming public keys are canonical X25519 points
+  // H4: Validate incoming public keys are canonical X25519 points.
   // Must reject low-order/torsion points BEFORE any DH operations to prevent
   // small-subgroup attacks that force all-zero shared secrets.
   validateX25519PublicKey(theirBundle.identity.x25519PublicKey, 'remote identity key', logger);
@@ -192,7 +192,7 @@ export async function performX3DH(
   };
 
   try {
-  // Step 3: Perform ECDH operations
+  // Step 3: ECDH operations
 
   // DH1: My identity DH private key × Their signed prekey public key
   const dh1 = trackSecret(await computeSharedSecret(
@@ -250,10 +250,10 @@ export async function performX3DH(
   secureZeroBytes(derivedKeys); // Zero derivedKeys after slicing
 
   // Note: The ephemeral private key (ephemeralKey.privateKey) is an immutable
-  // Base64 string that cannot be zeroed in JavaScript. The byte-form copies
+  // Base64 string, and JavaScript cannot zero it. The byte-form copies
   // created internally by computeSharedSecret() are local variables that go
-  // out of scope but are not explicitly zeroed. This is an inherent limitation
-  // of the JS/TS runtime. Callers that decode the key pair to bytes for session
+  // out of scope, and nothing zeroes them explicitly. The JS/TS runtime
+  // imposes this limit. Callers that decode the key pair to bytes for session
   // initialization should zero their own decoded copies when done.
 
   logger.breadcrumb('X3DH initiator key agreement complete', {
@@ -277,14 +277,14 @@ export async function performX3DH(
 }
 
 /**
- * Perform X3DH key agreement as responder (Bob)
+ * Run the X3DH key agreement as responder (Bob)
  *
- * This is called when Bob receives Alice's PreKeyMessage.
+ * The caller invokes this when Bob receives Alice's PreKeyMessage.
  * Bob uses his own prekeys and Alice's keys to derive the same shared secret.
  *
  * @param myIdentityKey My identity key pair
- * @param mySignedPreKey My signed prekey that was used
- * @param myOneTimePreKey My one-time prekey that was used (if any)
+ * @param mySignedPreKey My signed prekey for this session
+ * @param myOneTimePreKey My one-time prekey for this session (if any)
  * @param input Information from Alice's PreKeyMessage
  * @param infoString HKDF info string for key derivation
  * @returns X3DH responder result containing shared secret
@@ -327,7 +327,7 @@ export async function performX3DHResponder(
 
   try {
 
-  // Step 1: Perform ECDH operations (same as initiator but using Bob's private keys)
+  // Step 1: ECDH operations (same as initiator but using Bob's private keys)
 
   // DH1: Bob's signed prekey private × Alice's identity public
   const dh1 = trackSecret(await computeSharedSecret(mySignedPreKey.privateKey, input.senderIdentityKey));
@@ -397,7 +397,7 @@ export async function performX3DHResponder(
  * Calculate X3DH shared secret from DH outputs
  *
  * This is a lower-level function that takes pre-computed DH outputs
- * and derives the shared secret. Useful when DH operations are performed
+ * and derives the shared secret. Useful when a caller runs the DH operations
  * separately (e.g., with hardware security modules).
  *
  * @param dh1 DH1 output (IKa × SPKb or SPKb × IKa)

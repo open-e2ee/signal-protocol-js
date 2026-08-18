@@ -5,13 +5,13 @@
  * Implements the ExpiringProfileKeyCredential flow for group member verification:
  *  1. Server issues a credential over (ACI, ProfileKey, redemptionTime)
  *  2. Client receives and verifies the issuance proof
- *  3. Client presents the credential to a group, encrypting ACI under the
- *     group's UID encryption key and ProfileKey under the group's profile
- *     key encryption key (two different ElGamal domains)
+ *  3. Client presents the credential to a group. ACI is encrypted under the
+ *     group's UID encryption key, and ProfileKey under the group's profile
+ *     key encryption key. These are two different ElGamal domains.
  *  4. Server verifies the presentation proof
  *
  * The redemption time is a public attribute (visible to both issuer and
- * verifier); ACI and ProfileKey are hidden attributes encrypted under
+ * verifier). ACI and ProfileKey are hidden attributes encrypted under
  * different group encryption keys during presentation.
  *
  * Key difference from AuthCredentialWithPni:
@@ -120,12 +120,12 @@ export interface ExpiringProfileKeyCredential {
 // ---------------------------------------------------------------------------
 
 /**
- * A presentation proof demonstrating possession of an ExpiringProfileKeyCredential,
- * with ACI encrypted under the group's UID encryption key and ProfileKey
- * encrypted under the group's profile key encryption key.
+ * A presentation proof demonstrating possession of an
+ * ExpiringProfileKeyCredential. ACI is encrypted under the group's UID
+ * encryption key, and ProfileKey under the group's profile key encryption key.
  *
  * Sent to the server during group creation or member addition. The server
- * verifies the ZK proof to ensure the encrypted member data is valid
+ * verifies the ZK proof, which shows the encrypted member data is valid
  * without being able to decrypt it.
  */
 export interface ProfileKeyCredentialPresentation {
@@ -255,9 +255,9 @@ export function receiveProfileKeyCredential(
 /**
  * Present an ExpiringProfileKeyCredential to a group for member verification.
  *
- * Called by the client. Generates a ZK presentation proof that encrypts the
- * ACI under the group's UID encryption key and ProfileKey under the group's
- * profile key encryption key, allowing the server to verify the encrypted
+ * Called by the client. Generates a ZK presentation proof. The proof encrypts
+ * the ACI under the group's UID encryption key, and ProfileKey under the
+ * group's profile key encryption key. The server can then verify the encrypted
  * data is valid without decrypting it.
  *
  * KEY DIFFERENCE FROM AUTH: Uses TWO different encryption domains:

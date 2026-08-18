@@ -38,7 +38,7 @@ Canonical opaque identifier assigned to the uploaded object.
 
 > `optional` **protocol?**: `"put"` \| `"tus"`
 
-Upload protocol. Direct PUT is used when omitted.
+Upload protocol. Direct PUT applies when omitted.
 
 ***
 

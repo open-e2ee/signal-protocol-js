@@ -1,29 +1,27 @@
 /**
- * Error type definitions for Signal Protocol
+ * Error type definitions for Signal Protocol.
  *
- * Implements a tiered error system aligned with the layered architecture:
+ * Every error the SDK throws is an `EncryptionError` carrying an
+ * `EncryptionErrorCode`. A subclass exists only where the caller needs typed
+ * data off the error to recover. Examples are the peer's address and identity
+ * to verify a safety number, and the counter and epoch of a duplicate. Each
+ * subclass fixes its own code in its constructor.
  *
- * ```
- * Layer      Error Class          Use Case
- * ──────────────────────────────────────────────────────
- * Layer 1    CryptoError         Low-level crypto failures
- * Layer 5    SessionError        Session operations
- * Layer 6    ProtocolError       Protocol-level errors
- * Client     ClientError         User-facing errors
- * Base       EncryptionError     Generic encryption errors
- * ```
- *
- * Error Hierarchy:
  * ```
  * Error
- *   └── EncryptionError (base for all Signal Protocol errors)
- *         ├── CryptoError (Layer 1)
- *         ├── SessionError (Layer 5)
- *         ├── ProtocolError (Layer 6)
- *         ├── ClientError (User-facing)
- *         └── Specialized errors (UntrustedIdentityError, etc.)
+ *   └── EncryptionError            code + context, thrown directly for most failures
+ *         ├── UntrustedIdentityError    address + identity, for safety-number verification
+ *         ├── DuplicatedMessageError    counter + epoch of the replayed message
+ *         ├── SealedSenderAuthError     the rejected sealed-sender credential
+ *         ├── PQXDHRequiredError        which post-quantum key the peer is missing
+ *         └── StorageQuotaExceededError the store that ran out of room
  * ```
  *
+ * A code or a subclass belongs here only if production code can produce it. An
+ * error-surface check in the engineering repository parses for the construction
+ * sites that decide that. It fails the build when this module declares
+ * something nothing throws. A `switch` arm or a non-retryable set only reads a
+ * code. It does not produce one, so it does not keep a code alive.
  */
 
 import type { ProtocolAddress } from './address';
@@ -40,7 +38,7 @@ export interface EncryptionErrorContext {
   /** The protocol address involved in the error (if applicable) */
   address?: ProtocolAddress;
 
-  /** The operation being performed when the error occurred */
+  /** The operation in progress when the error occurred */
   operation?: string;
 
   /** The identity key involved (for trust/verification errors) */
@@ -113,22 +111,14 @@ export enum EncryptionErrorCode {
   /** Session not found for the given address */
   SESSION_NOT_FOUND = 'SESSION_NOT_FOUND',
 
-  /** Session data is corrupted or invalid */
+  /** Damaged or invalid session data */
   SESSION_CORRUPTED = 'SESSION_CORRUPTED',
-
-  /**
-   * Multiple active sessions detected (race condition).
-   *
-   * Occurs when both parties try to establish sessions simultaneously.
-   * Requires session archiving and convergence.
-   */
-  SESSION_CONFLICT = 'SESSION_CONFLICT',
 
   /**
    * Recipient has not registered encryption keys.
    *
    * The target user has no prekey bundle available on the server.
-   * They may not have completed encryption setup.
+   * Their encryption setup may be incomplete.
    */
   RECIPIENT_NOT_REGISTERED = 'RECIPIENT_NOT_REGISTERED',
 
@@ -161,16 +151,9 @@ export enum EncryptionErrorCode {
   /**
    * Duplicate message detected (replay attack).
    *
-   * Message number has already been processed.
+   * The session already processed this message number.
    */
   MESSAGE_DUPLICATE = 'MESSAGE_DUPLICATE',
-
-  /**
-   * Message arrived too old to decrypt.
-   *
-   * Message keys have been deleted due to age or count limits.
-   */
-  MESSAGE_TOO_OLD = 'MESSAGE_TOO_OLD',
 
   /**
    * Too many messages skipped (DoS protection).
@@ -181,7 +164,7 @@ export enum EncryptionErrorCode {
   TOO_MANY_SKIPPED_MESSAGES = 'TOO_MANY_SKIPPED_MESSAGES',
 
   /**
-   * Replay attack detected: envelope.timestamp doesn't match dataMessage.timestamp.
+   * Replay attack detected: envelope.timestamp does not match dataMessage.timestamp.
    *
    * After decryption, the envelope timestamp must match the timestamp inside the encrypted
    * content. A mismatch indicates an attacker may have re-sent old encrypted content
@@ -191,14 +174,7 @@ export enum EncryptionErrorCode {
   REPLAY_DETECTED = 'REPLAY_DETECTED',
 
   /**
-   * Invalid message version or protocol mismatch.
-   *
-   * Message was encrypted with an incompatible protocol version.
-   */
-  INVALID_MESSAGE_VERSION = 'INVALID_MESSAGE_VERSION',
-
-  /**
-   * Sender key has expired based on time-based rotation policy.
+   * The sender key expired under the time-based rotation policy.
    *
    * The default policy rotates sender keys every two weeks.
    * The caller should auto-rotate the sender key and redistribute to group members.
@@ -210,22 +186,15 @@ export enum EncryptionErrorCode {
   /**
    * Identity key is not trusted.
    *
-   * User has not verified the identity or it has changed without confirmation.
+   * The user did not verify the identity, or the identity changed without
+   * confirmation.
    */
   UNTRUSTED_IDENTITY = 'UNTRUSTED_IDENTITY',
 
   /**
-   * Identity key changed (possible MITM attack).
-   *
-   * Remote party's identity key differs from previously saved value.
-   * Could be legitimate (reinstall) or an attack.
-   */
-  IDENTITY_KEY_CHANGED = 'IDENTITY_KEY_CHANGED',
-
-  /**
    * Sender identity mismatch.
    *
-   * The sender address in the message doesn't match the expected address.
+   * The sender address in the message does not match the expected address.
    * This indicates a session hijacking attempt where an attacker tries to
    * inject their messages under a different identity.
    */
@@ -245,42 +214,20 @@ export enum EncryptionErrorCode {
   /**
    * PreKey rotation required before sending.
    *
-   * Signed prekeys or Kyber prekeys have exceeded the maximum allowed age
-   * (14 days by default). Message sending is blocked until rotation succeeds
-   * to maintain forward-secrecy guarantees.
+   * Signed prekeys or Kyber prekeys are past the maximum allowed age
+   * (14 days by default). The client blocks message sending until rotation
+   * succeeds, which maintains the forward-secrecy guarantees.
    *
    * @see https://signal.org/docs/specifications/pqxdh/#publishing-keys
    */
   PREKEY_ROTATION_REQUIRED = 'PREKEY_ROTATION_REQUIRED',
 
-  /**
-   * Invalid registration ID.
-   *
-   * Registration ID is 0 or doesn't match expected format.
-   */
-  INVALID_REGISTRATION_ID = 'INVALID_REGISTRATION_ID',
-
-  /**
-   * Registration ID changed (session reset detected).
-   *
-   * Remote party's registration ID changed, indicating app reinstall.
-   * Old sessions should be archived.
-   */
-  REGISTRATION_ID_CHANGED = 'REGISTRATION_ID_CHANGED',
-
   // ===== Ratchet Errors =====
-
-  /**
-   * DH ratchet error.
-   *
-   * Diffie-Hellman key exchange failed or produced invalid output.
-   */
-  RATCHET_ERROR = 'RATCHET_ERROR',
 
   /**
    * Message counter overflow.
    *
-   * Counter has reached MAX_SAFE_INTEGER - session must be rotated.
+   * The counter reached MAX_SAFE_INTEGER, so the caller must rotate the session.
    * This is a safety check to prevent cryptographic issues from counter wrap-around.
    */
   COUNTER_OVERFLOW = 'COUNTER_OVERFLOW',
@@ -288,7 +235,7 @@ export enum EncryptionErrorCode {
   /**
    * Invalid DH public key.
    *
-   * DH public key is malformed or fails validation.
+   * A malformed DH public key, or one that fails validation.
    */
   INVALID_DH_KEY = 'INVALID_DH_KEY',
 
@@ -297,21 +244,11 @@ export enum EncryptionErrorCode {
   /** Key storage operation failed */
   KEY_STORAGE_ERROR = 'KEY_STORAGE_ERROR',
 
-  /** Database operation failed */
-  DATABASE_ERROR = 'DATABASE_ERROR',
-
   /**
-   * Database is locked or unavailable.
+   * The storage backend rejected a write because the origin ran out of
+   * storage quota.
    *
-   * Encrypted database cannot be accessed (wrong password, corruption, etc.)
-   */
-  DATABASE_LOCKED = 'DATABASE_LOCKED',
-
-  /**
-   * The storage backend rejected a write because the origin's storage
-   * quota is exhausted.
-   *
-   * The rejected write did not persist: storage adapters commit each
+   * The rejected write did not persist. Storage adapters commit each
    * write in an atomic transaction, so quota exhaustion rolls the whole
    * transaction back instead of leaving a subset. The application should
    * free space or request more from the platform, then retry.
@@ -323,15 +260,12 @@ export enum EncryptionErrorCode {
   /** Signal Protocol initialization failed */
   INITIALIZATION_FAILED = 'INITIALIZATION_FAILED',
 
-  /** Identity key pair generation or loading failed */
-  IDENTITY_KEY_ERROR = 'IDENTITY_KEY_ERROR',
-
   // ===== Protocol Strategy Errors =====
 
   /**
-   * PQXDH (post-quantum key exchange) is required but partner lacks Kyber keys.
+   * PQXDH (post-quantum key exchange) applies, but the partner lacks Kyber keys.
    *
-   * Thrown when partner doesn't support the required PQXDH handshake.
+   * Thrown when partner does not support the required PQXDH handshake.
    * Application can catch this to notify user or queue message for retry.
    */
   PQXDH_REQUIRED = 'PQXDH_REQUIRED',
@@ -339,13 +273,13 @@ export enum EncryptionErrorCode {
   /**
    * PQXDH key exchange failed during handshake.
    *
-   * The post-quantum key exchange encountered an error. The session is aborted
-   * rather than downgraded to classical X3DH.
+   * The post-quantum key exchange encountered an error. The SDK aborts the
+   * session instead of a downgrade to classical X3DH.
    */
   PQXDH_FAILED = 'PQXDH_FAILED',
 
   /**
-   * Triple Ratchet is required but PQXDH was not used.
+   * Triple Ratchet applies, but the session did not use PQXDH.
    *
    * Triple Ratchet requires post-quantum material from PQXDH.
    * Cannot enable Triple Ratchet with classical X3DH handshake.
@@ -371,18 +305,9 @@ export enum EncryptionErrorCode {
   SPQR_MESSAGE_JUMP_TOO_LARGE = 'SPQR_MESSAGE_JUMP_TOO_LARGE',
 
   /**
-   * Attempted to use a message key that was already consumed.
-   *
-   * Indicates replay attack or duplicate message.
-   *
-   * Reserved: Reserved for future use when replay detection is implemented.
-   */
-  SPQR_KEY_ALREADY_USED = 'SPQR_KEY_ALREADY_USED',
-
-  /**
    * SPQR message counter overflow.
    *
-   * Counter has reached maximum value - epoch must be rotated.
+   * The counter reached its maximum value, so the caller must rotate the epoch.
    */
   SPQR_COUNTER_OVERFLOW = 'SPQR_COUNTER_OVERFLOW',
 
@@ -394,16 +319,6 @@ export enum EncryptionErrorCode {
   SPQR_INVALID_CIPHERTEXT = 'SPQR_INVALID_CIPHERTEXT',
 
   /**
-   * SPQR epoch regression detected.
-   *
-   * Received message claims an epoch earlier than current - possible replay.
-   *
-   * Reserved: Reserved for future use. Currently epoch regression is handled
-   * via SPQR_EPOCH_OUT_OF_RANGE with oldestEpoch context.
-   */
-  SPQR_EPOCH_REGRESSION = 'SPQR_EPOCH_REGRESSION',
-
-  /**
    * SPQR version negotiation failed.
    *
    * Peer's maximum supported version is below our minimum required version.
@@ -411,23 +326,12 @@ export enum EncryptionErrorCode {
    */
   SPQR_VERSION_MISMATCH = 'SPQR_VERSION_MISMATCH',
 
-  // ===== Cryptographic Errors =====
-
-  /** Post-quantum (Kyber) operation failed */
-  KYBER_ERROR = 'KYBER_ERROR',
-
-  /** Key derivation function failed */
-  KDF_ERROR = 'KDF_ERROR',
-
-  /** HMAC verification failed (message tampering detected) */
-  HMAC_VERIFICATION_FAILED = 'HMAC_VERIFICATION_FAILED',
-
   // ===== Sealed Sender Errors =====
 
   /**
    * Sealed sender authentication failed.
    *
-   * The unidentified access key was rejected by the server. This may trigger
+   * The server rejected the unidentified access key. This may trigger
    * fallback to identified sender delivery.
    */
   SEALED_SENDER_AUTH_FAILED = 'SEALED_SENDER_AUTH_FAILED',
@@ -436,9 +340,6 @@ export enum EncryptionErrorCode {
 
   /** Invalid operation or state */
   INVALID_STATE = 'INVALID_STATE',
-
-  /** Unknown or unexpected error */
-  UNKNOWN_ERROR = 'UNKNOWN_ERROR',
 }
 
 // ===== Specialized Error Classes =====
@@ -471,69 +372,12 @@ export class UntrustedIdentityError extends EncryptionError {
 }
 
 /**
- * Error thrown when an identity key has changed.
- *
- * This could indicate:
- * - Legitimate: Device reinstall, new device, backup restoration
- * - Attack: Man-in-the-middle attack
- *
- * Requires prominent user warning and safety number verification.
- *
- * @example
- * ```typescript
- * throw new IdentityKeyChangedError(address, oldKey, newKey);
- * ```
- */
-export class IdentityKeyChangedError extends EncryptionError {
-  public readonly changedAddress: ProtocolAddress;
-  public readonly oldIdentityKey: PublicKey;
-  public readonly newIdentityKey: PublicKey;
-
-  constructor(address: ProtocolAddress, oldIdentityKey: PublicKey, newIdentityKey: PublicKey) {
-    super(
-      `Identity key changed for ${address.userId}.${address.deviceId}`,
-      EncryptionErrorCode.IDENTITY_KEY_CHANGED,
-      { address, identityKey: newIdentityKey }
-    );
-    this.name = 'IdentityKeyChangedError';
-    this.changedAddress = address;
-    this.oldIdentityKey = oldIdentityKey;
-    this.newIdentityKey = newIdentityKey;
-  }
-}
-
-/**
- * Error thrown when multiple active sessions are detected (race condition).
- *
- * Occurs when both parties try to establish sessions simultaneously.
- * Requires session archiving and convergence using Sesame algorithm.
- *
- * @example
- * ```typescript
- * throw new SessionConflictError(address);
- * ```
- */
-export class SessionConflictError extends EncryptionError {
-  public readonly conflictAddress: ProtocolAddress;
-
-  constructor(address: ProtocolAddress) {
-    super(
-      `Session conflict detected for ${address.userId}.${address.deviceId}`,
-      EncryptionErrorCode.SESSION_CONFLICT,
-      { address }
-    );
-    this.name = 'SessionConflictError';
-    this.conflictAddress = address;
-  }
-}
-
-/**
- * Error thrown when a duplicate message is detected (replay attack).
+ * Error thrown when the session detects a duplicate message (replay attack).
  *
  * This is a security-critical error indicating:
  * - Network replay (attacker re-sent a captured message)
  * - Client bug (accidentally decrypting same message twice)
- * - Storage corruption (message key index was corrupted)
+ * - Storage corruption (a damaged message key index)
  *
  * Metadata should support diagnostics without exposing secret material.
  *
@@ -544,9 +388,9 @@ export class SessionConflictError extends EncryptionError {
  */
 export class DuplicatedMessageError extends EncryptionError {
   public readonly duplicatedAddress: ProtocolAddress;
-  /** Message counter that was duplicated (if known) - matches the reference implementation's proto field name */
+  /** The duplicate message counter (if known) - matches the reference implementation's proto field name */
   public readonly counter?: number;
-  /** Epoch (for Triple Ratchet) where duplicate was detected */
+  /** Epoch (for Triple Ratchet) of the duplicate */
   public readonly epoch?: number;
   /** Fingerprint of the duplicate ciphertext (truncated for logging) */
   public readonly fingerprintPreview?: string;
@@ -589,40 +433,10 @@ export function isDuplicatedMessageError(error: unknown): error is DuplicatedMes
 }
 
 /**
- * Error thrown when registration ID has changed (session reset).
- *
- * Indicates the remote party has reinstalled their app.
- * Old sessions should be archived and new session established.
- *
- * @example
- * ```typescript
- * throw new RegistrationIdChangedError(address, oldId, newId);
- * ```
- */
-export class RegistrationIdChangedError extends EncryptionError {
-  public readonly resetAddress: ProtocolAddress;
-  public readonly oldRegistrationId: number;
-  public readonly newRegistrationId: number;
-
-  constructor(address: ProtocolAddress, oldRegistrationId: number, newRegistrationId: number) {
-    super(
-      `Registration ID changed for ${address.userId}.${address.deviceId} ` +
-        `(${oldRegistrationId} → ${newRegistrationId})`,
-      EncryptionErrorCode.REGISTRATION_ID_CHANGED,
-      { address }
-    );
-    this.name = 'RegistrationIdChangedError';
-    this.resetAddress = address;
-    this.oldRegistrationId = oldRegistrationId;
-    this.newRegistrationId = newRegistrationId;
-  }
-}
-
-/**
  * Error thrown when sealed sender (anonymous delivery) authentication fails.
  *
- * The unidentified access key was rejected by the server, either because:
- * - The access key doesn't match the recipient's stored key
+ * The server rejected the unidentified access key, for one of these reasons:
+ * - The access key does not match the recipient's stored key
  * - The recipient's account was not found
  * - The recipient disabled unrestricted unidentified access
  *
@@ -664,7 +478,7 @@ export function isSealedSenderAuthError(error: unknown): error is SealedSenderAu
  * Fallback type categories for PQXDH errors.
  *
  * Distinguishes between different types of fallback scenarios:
- * - `missing_keys`: Partner doesn't have Kyber prekeys (expected compatibility issue)
+ * - `missing_keys`: Partner does not have Kyber prekeys (expected compatibility issue)
  * - `crypto_failure`: Kyber operation failed (decapsulation, signature, etc.)
  * - `protocol_mismatch`: Version or format incompatibility
  */
@@ -674,7 +488,7 @@ export type PQXDHFallbackType = 'missing_keys' | 'crypto_failure' | 'protocol_mi
  * Options for PQXDHRequiredError constructor.
  */
 export interface PQXDHRequiredErrorOptions {
-  /** Whether the operation can be retried (e.g., after partner updates keys) */
+  /** Whether the caller can retry the operation (e.g., after partner updates keys) */
   retryable?: boolean;
   /** Suggested delay before retry in milliseconds */
   suggestedRetryDelay?: number;
@@ -685,7 +499,7 @@ export interface PQXDHRequiredErrorOptions {
 }
 
 /**
- * Error thrown when PQXDH is required but partner lacks Kyber keys.
+ * Error thrown when PQXDH applies, but the partner lacks Kyber keys.
  *
  * This is a recoverable error - applications can:
  * - Notify user that partner needs to update their app
@@ -693,7 +507,7 @@ export interface PQXDHRequiredErrorOptions {
  * - Fall back to classical encryption with user consent
  *
  * Recovery metadata:
- * - `retryable`: Whether the operation can be retried
+ * - `retryable`: Whether the caller can retry the operation
  * - `suggestedRetryDelay`: Recommended delay before retry (ms)
  * - `fallbackType`: Category of fallback for analytics
  *
@@ -724,7 +538,7 @@ export interface PQXDHRequiredErrorOptions {
 export class PQXDHRequiredError extends EncryptionError {
   public readonly remoteAddress: string;
   public readonly reason: 'no_kyber_prekey' | 'pqxdh_failed';
-  /** Whether the operation can be retried */
+  /** Whether the caller can retry the operation */
   public readonly retryable: boolean;
   /** Suggested delay before retry in milliseconds */
   public readonly suggestedRetryDelay?: number;
@@ -757,16 +571,16 @@ export class PQXDHRequiredError extends EncryptionError {
     // Set recovery metadata with sensible defaults
     this.fallbackType =
       opts.fallbackType ?? (reason === 'no_kyber_prekey' ? 'missing_keys' : 'crypto_failure');
-    this.retryable = opts.retryable ?? reason === 'no_kyber_prekey'; // Missing keys can be retried after partner updates
+    this.retryable = opts.retryable ?? reason === 'no_kyber_prekey'; // The caller can retry missing keys after partner updates
     this.suggestedRetryDelay = opts.suggestedRetryDelay ?? (this.retryable ? 30000 : undefined); // 30s default for retryable
   }
 }
 
 /**
- * Error thrown when the storage backend rejects a write because the
- * origin's storage quota is exhausted.
+ * Error thrown when the storage backend rejects a write because the origin
+ * ran out of storage quota.
  *
- * The rejected write did not persist: storage adapters commit each write
+ * The rejected write did not persist. Storage adapters commit each write
  * in an atomic transaction, so quota exhaustion rolls the whole
  * transaction back instead of leaving a subset. The application should
  * free space or request more from the platform, then retry the write.
@@ -794,6 +608,18 @@ export class StorageQuotaExceededError extends EncryptionError {
 }
 
 /**
+ * Type guard to check if an error is a StorageQuotaExceededError.
+ *
+ * @param error - Error to check
+ * @returns true if error is StorageQuotaExceededError
+ */
+export function isStorageQuotaExceededError(
+  error: unknown
+): error is StorageQuotaExceededError {
+  return error instanceof StorageQuotaExceededError;
+}
+
+/**
  * Type guard to check if an error is a PQXDHRequiredError.
  *
  * @param error - Error to check
@@ -811,379 +637,6 @@ export function isPQXDHRequiredError(error: unknown): error is PQXDHRequiredErro
  */
 export function isUntrustedIdentityError(error: unknown): error is UntrustedIdentityError {
   return error instanceof UntrustedIdentityError;
-}
-
-/**
- * Type guard to check if an error is an IdentityKeyChangedError.
- *
- * @param error - Error to check
- * @returns true if error is IdentityKeyChangedError
- */
-export function isIdentityKeyChangedError(error: unknown): error is IdentityKeyChangedError {
-  return error instanceof IdentityKeyChangedError;
-}
-
-/**
- * Type guard to check if an error is a SessionConflictError.
- *
- * @param error - Error to check
- * @returns true if error is SessionConflictError
- */
-export function isSessionConflictError(error: unknown): error is SessionConflictError {
-  return error instanceof SessionConflictError;
-}
-
-/**
- * Type guard to check if an error is a RegistrationIdChangedError.
- *
- * @param error - Error to check
- * @returns true if error is RegistrationIdChangedError
- */
-export function isRegistrationIdChangedError(error: unknown): error is RegistrationIdChangedError {
-  return error instanceof RegistrationIdChangedError;
-}
-
-// ============================================================================
-// Tiered Error Classes (Layer-Aligned)
-// ============================================================================
-
-/**
- * Error codes for cryptographic layer (Layer 1) errors.
- *
- * These errors occur in low-level cryptographic operations.
- */
-export enum CryptoErrorCode {
-  /** Random number generation failed */
-  RNG_FAILURE = 'CRYPTO_RNG_FAILURE',
-  /** ECDH key agreement failed */
-  ECDH_FAILURE = 'CRYPTO_ECDH_FAILURE',
-  /** Kyber (ML-KEM) operation failed */
-  KYBER_FAILURE = 'CRYPTO_KYBER_FAILURE',
-  /** Key derivation function failed */
-  KDF_FAILURE = 'CRYPTO_KDF_FAILURE',
-  /** AES encryption/decryption failed */
-  AES_FAILURE = 'CRYPTO_AES_FAILURE',
-  /** HMAC computation or verification failed */
-  HMAC_FAILURE = 'CRYPTO_HMAC_FAILURE',
-  /** Digital signature failed */
-  SIGNATURE_FAILURE = 'CRYPTO_SIGNATURE_FAILURE',
-  /** Hash computation failed */
-  HASH_FAILURE = 'CRYPTO_HASH_FAILURE',
-  /** Invalid key format or length */
-  INVALID_KEY = 'CRYPTO_INVALID_KEY',
-  /** Invalid ciphertext format */
-  INVALID_CIPHERTEXT = 'CRYPTO_INVALID_CIPHERTEXT',
-}
-
-/**
- * Cryptographic layer error (Layer 1).
- *
- * Thrown when low-level cryptographic operations fail.
- * These errors are typically unrecoverable and indicate
- * fundamental issues with crypto primitives.
- *
- * @example
- * ```typescript
- * throw new CryptoError(
- *   'ECDH key agreement produced invalid output',
- *   CryptoErrorCode.ECDH_FAILURE,
- *   { operation: 'computeSharedSecret' }
- * );
- * ```
- */
-export class CryptoError extends EncryptionError {
-  public readonly cryptoCode: CryptoErrorCode;
-
-  constructor(message: string, code: CryptoErrorCode, context?: EncryptionErrorContext) {
-    // Map to base EncryptionErrorCode for compatibility
-    const baseCode = mapCryptoToEncryptionCode(code);
-    super(message, baseCode, context);
-    this.name = 'CryptoError';
-    this.cryptoCode = code;
-  }
-}
-
-/**
- * Error codes for session layer (Layer 5) errors.
- *
- * These errors occur during session operations.
- */
-export enum SessionErrorCode {
-  /** Session not found */
-  NOT_FOUND = 'SESSION_NOT_FOUND',
-  /** Session is corrupted or invalid */
-  CORRUPTED = 'SESSION_CORRUPTED',
-  /** Session has expired */
-  EXPIRED = 'SESSION_EXPIRED',
-  /** Session conflict (race condition) */
-  CONFLICT = 'SESSION_CONFLICT',
-  /** Invalid session state for operation */
-  INVALID_STATE = 'SESSION_INVALID_STATE',
-  /** Session ratchet step failed */
-  RATCHET_FAILED = 'SESSION_RATCHET_FAILED',
-  /** Too many skipped messages */
-  TOO_MANY_SKIPPED = 'SESSION_TOO_MANY_SKIPPED',
-  /** Message key not found (message too old) */
-  MESSAGE_KEY_NOT_FOUND = 'SESSION_MESSAGE_KEY_NOT_FOUND',
-  /** Session establishment failed */
-  ESTABLISHMENT_FAILED = 'SESSION_ESTABLISHMENT_FAILED',
-}
-
-/**
- * Session layer error (Layer 5).
- *
- * Thrown when session operations fail. Includes session ID
- * for debugging and potentially recovery.
- *
- * @example
- * ```typescript
- * throw new SessionError(
- *   'Session not found for decryption',
- *   SessionErrorCode.NOT_FOUND,
- *   'session-123',
- *   { operation: 'decrypt' }
- * );
- * ```
- */
-export class SessionError extends EncryptionError {
-  public readonly sessionCode: SessionErrorCode;
-  public readonly sessionId?: string;
-
-  constructor(
-    message: string,
-    code: SessionErrorCode,
-    sessionId?: string,
-    context?: EncryptionErrorContext
-  ) {
-    // Map to base EncryptionErrorCode for compatibility
-    const baseCode = mapSessionToEncryptionCode(code);
-    super(message, baseCode, context);
-    this.name = 'SessionError';
-    this.sessionCode = code;
-    this.sessionId = sessionId;
-  }
-}
-
-/**
- * Error codes for protocol layer (Layer 6) errors.
- *
- * These errors occur at the protocol level (Sesame, message routing).
- */
-export enum ProtocolErrorCode {
-  /** Invalid message format */
-  INVALID_MESSAGE = 'PROTOCOL_INVALID_MESSAGE',
-  /** Invalid prekey bundle */
-  INVALID_BUNDLE = 'PROTOCOL_INVALID_BUNDLE',
-  /** Protocol version mismatch */
-  VERSION_MISMATCH = 'PROTOCOL_VERSION_MISMATCH',
-  /** Device not found in device list */
-  DEVICE_NOT_FOUND = 'PROTOCOL_DEVICE_NOT_FOUND',
-  /** Stale device list */
-  STALE_DEVICE_LIST = 'PROTOCOL_STALE_DEVICE_LIST',
-  /** Retry request required */
-  RETRY_REQUIRED = 'PROTOCOL_RETRY_REQUIRED',
-  /** Sender key distribution failed */
-  SENDER_KEY_FAILED = 'PROTOCOL_SENDER_KEY_FAILED',
-}
-
-/**
- * Protocol layer error (Layer 6).
- *
- * Thrown for protocol-level issues like message format errors,
- * version mismatches, or multi-device coordination failures.
- *
- * @example
- * ```typescript
- * throw new ProtocolError(
- *   'Device list is stale, retry required',
- *   ProtocolErrorCode.STALE_DEVICE_LIST,
- *   { operation: 'sendGroupMessage', context: { groupId } }
- * );
- * ```
- */
-export class ProtocolError extends EncryptionError {
-  public readonly protocolCode: ProtocolErrorCode;
-  public readonly protocolContext?: object;
-
-  constructor(
-    message: string,
-    code: ProtocolErrorCode,
-    context?: EncryptionErrorContext & { protocolContext?: object }
-  ) {
-    // Map to base EncryptionErrorCode for compatibility
-    const baseCode = mapProtocolToEncryptionCode(code);
-    super(message, baseCode, context);
-    this.name = 'ProtocolError';
-    this.protocolCode = code;
-    this.protocolContext = context?.protocolContext;
-  }
-}
-
-/**
- * Error codes for client-facing errors.
- *
- * These errors should be displayed to users (with appropriate messaging).
- */
-export enum ClientErrorCode {
-  /** Network error during key exchange */
-  NETWORK_ERROR = 'CLIENT_NETWORK_ERROR',
-  /** User identity verification required */
-  VERIFICATION_REQUIRED = 'CLIENT_VERIFICATION_REQUIRED',
-  /** Recipient not found */
-  RECIPIENT_NOT_FOUND = 'CLIENT_RECIPIENT_NOT_FOUND',
-  /** Message delivery failed */
-  DELIVERY_FAILED = 'CLIENT_DELIVERY_FAILED',
-  /** Encryption unavailable (keys not initialized) */
-  ENCRYPTION_UNAVAILABLE = 'CLIENT_ENCRYPTION_UNAVAILABLE',
-  /** Session needs reset */
-  SESSION_RESET_NEEDED = 'CLIENT_SESSION_RESET_NEEDED',
-}
-
-/**
- * Client-facing error.
- *
- * These errors are intended to be shown to users with
- * appropriate messaging. Includes optional user-facing
- * message that can be displayed directly in UI.
- *
- * @example
- * ```typescript
- * throw new ClientError(
- *   'Failed to send encrypted message',
- *   ClientErrorCode.DELIVERY_FAILED,
- *   'Message could not be delivered. Please try again.',
- *   { operation: 'sendMessage' }
- * );
- * ```
- */
-export class ClientError extends EncryptionError {
-  public readonly clientCode: ClientErrorCode;
-  public readonly userFacingMessage?: string;
-
-  constructor(
-    message: string,
-    code: ClientErrorCode,
-    userFacingMessage?: string,
-    context?: EncryptionErrorContext
-  ) {
-    // Map to base EncryptionErrorCode for compatibility
-    const baseCode = mapClientToEncryptionCode(code);
-    super(message, baseCode, context);
-    this.name = 'ClientError';
-    this.clientCode = code;
-    this.userFacingMessage = userFacingMessage;
-  }
-}
-
-// ============================================================================
-// Error Code Mapping (Record-based with compile-time exhaustiveness)
-// ============================================================================
-
-/**
- * Map CryptoErrorCode to EncryptionErrorCode.
- *
- * Using Record type ensures compile-time exhaustiveness - TypeScript will
- * error if we add a new CryptoErrorCode without adding a mapping.
- */
-const cryptoToEncryptionCodeMap: Record<CryptoErrorCode, EncryptionErrorCode> = {
-  [CryptoErrorCode.RNG_FAILURE]: EncryptionErrorCode.ENCRYPTION_FAILED,
-  [CryptoErrorCode.ECDH_FAILURE]: EncryptionErrorCode.ENCRYPTION_FAILED,
-  [CryptoErrorCode.KYBER_FAILURE]: EncryptionErrorCode.KYBER_ERROR,
-  [CryptoErrorCode.KDF_FAILURE]: EncryptionErrorCode.KDF_ERROR,
-  [CryptoErrorCode.AES_FAILURE]: EncryptionErrorCode.ENCRYPTION_FAILED,
-  [CryptoErrorCode.HMAC_FAILURE]: EncryptionErrorCode.HMAC_VERIFICATION_FAILED,
-  [CryptoErrorCode.SIGNATURE_FAILURE]: EncryptionErrorCode.SIGNATURE_VERIFICATION_FAILED,
-  [CryptoErrorCode.HASH_FAILURE]: EncryptionErrorCode.ENCRYPTION_FAILED,
-  [CryptoErrorCode.INVALID_KEY]: EncryptionErrorCode.INVALID_DH_KEY,
-  [CryptoErrorCode.INVALID_CIPHERTEXT]: EncryptionErrorCode.INVALID_CIPHERTEXT,
-};
-
-function mapCryptoToEncryptionCode(code: CryptoErrorCode): EncryptionErrorCode {
-  return cryptoToEncryptionCodeMap[code];
-}
-
-/**
- * Map SessionErrorCode to EncryptionErrorCode.
- */
-const sessionToEncryptionCodeMap: Record<SessionErrorCode, EncryptionErrorCode> = {
-  [SessionErrorCode.NOT_FOUND]: EncryptionErrorCode.SESSION_NOT_FOUND,
-  [SessionErrorCode.CORRUPTED]: EncryptionErrorCode.SESSION_CORRUPTED,
-  [SessionErrorCode.EXPIRED]: EncryptionErrorCode.SESSION_NOT_FOUND, // Treat expired as not found
-  [SessionErrorCode.CONFLICT]: EncryptionErrorCode.SESSION_CONFLICT,
-  [SessionErrorCode.INVALID_STATE]: EncryptionErrorCode.INVALID_STATE,
-  [SessionErrorCode.RATCHET_FAILED]: EncryptionErrorCode.RATCHET_ERROR,
-  [SessionErrorCode.TOO_MANY_SKIPPED]: EncryptionErrorCode.TOO_MANY_SKIPPED_MESSAGES,
-  [SessionErrorCode.MESSAGE_KEY_NOT_FOUND]: EncryptionErrorCode.MESSAGE_TOO_OLD,
-  [SessionErrorCode.ESTABLISHMENT_FAILED]: EncryptionErrorCode.SESSION_NOT_FOUND,
-};
-
-function mapSessionToEncryptionCode(code: SessionErrorCode): EncryptionErrorCode {
-  return sessionToEncryptionCodeMap[code];
-}
-
-/**
- * Map ProtocolErrorCode to EncryptionErrorCode.
- */
-const protocolToEncryptionCodeMap: Record<ProtocolErrorCode, EncryptionErrorCode> = {
-  [ProtocolErrorCode.INVALID_MESSAGE]: EncryptionErrorCode.INVALID_CIPHERTEXT,
-  [ProtocolErrorCode.INVALID_BUNDLE]: EncryptionErrorCode.INVALID_PREKEY_BUNDLE,
-  [ProtocolErrorCode.VERSION_MISMATCH]: EncryptionErrorCode.INVALID_MESSAGE_VERSION,
-  [ProtocolErrorCode.DEVICE_NOT_FOUND]: EncryptionErrorCode.SESSION_NOT_FOUND,
-  [ProtocolErrorCode.STALE_DEVICE_LIST]: EncryptionErrorCode.INVALID_STATE,
-  [ProtocolErrorCode.RETRY_REQUIRED]: EncryptionErrorCode.INVALID_STATE,
-  [ProtocolErrorCode.SENDER_KEY_FAILED]: EncryptionErrorCode.ENCRYPTION_FAILED,
-};
-
-function mapProtocolToEncryptionCode(code: ProtocolErrorCode): EncryptionErrorCode {
-  return protocolToEncryptionCodeMap[code];
-}
-
-/**
- * Map ClientErrorCode to EncryptionErrorCode.
- */
-const clientToEncryptionCodeMap: Record<ClientErrorCode, EncryptionErrorCode> = {
-  [ClientErrorCode.NETWORK_ERROR]: EncryptionErrorCode.UNKNOWN_ERROR,
-  [ClientErrorCode.VERIFICATION_REQUIRED]: EncryptionErrorCode.UNTRUSTED_IDENTITY,
-  [ClientErrorCode.RECIPIENT_NOT_FOUND]: EncryptionErrorCode.SESSION_NOT_FOUND,
-  [ClientErrorCode.DELIVERY_FAILED]: EncryptionErrorCode.ENCRYPTION_FAILED,
-  [ClientErrorCode.ENCRYPTION_UNAVAILABLE]: EncryptionErrorCode.INITIALIZATION_FAILED,
-  [ClientErrorCode.SESSION_RESET_NEEDED]: EncryptionErrorCode.SESSION_NOT_FOUND,
-};
-
-function mapClientToEncryptionCode(code: ClientErrorCode): EncryptionErrorCode {
-  return clientToEncryptionCodeMap[code];
-}
-
-// ============================================================================
-// Type Guards for Tiered Errors
-// ============================================================================
-
-/**
- * Type guard to check if an error is a CryptoError.
- */
-export function isCryptoError(error: unknown): error is CryptoError {
-  return error instanceof CryptoError;
-}
-
-/**
- * Type guard to check if an error is a SessionError.
- */
-export function isSessionError(error: unknown): error is SessionError {
-  return error instanceof SessionError;
-}
-
-/**
- * Type guard to check if an error is a ProtocolError.
- */
-export function isProtocolError(error: unknown): error is ProtocolError {
-  return error instanceof ProtocolError;
-}
-
-/**
- * Type guard to check if an error is a ClientError.
- */
-export function isClientError(error: unknown): error is ClientError {
-  return error instanceof ClientError;
 }
 
 /**

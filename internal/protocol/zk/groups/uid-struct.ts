@@ -1,5 +1,5 @@
 /**
- * UidStruct — UUID-based user identifier as two Ristretto points
+ * UidStruct: UUID-based user identifier as two Ristretto points
  *
  *
  * Converts a ServiceId (ACI or PNI) into a pair of Ristretto points (M1, M2)
@@ -7,7 +7,7 @@
  *  - M1 = SHO(label || service_id_binary).getPoint()
  *  - M2 = lizardEncode(raw_uuid_bytes)
  *
- * @see https://eprint.iacr.org/2019/1416.pdf — Signal Private Group System
+ * @see https://eprint.iacr.org/2019/1416.pdf (Signal Private Group System)
  */
 
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
@@ -17,7 +17,7 @@ export {};
 const enc = new TextEncoder();
 
 // ---------------------------------------------------------------------------
-// ServiceId — ACI/PNI identifier
+// ServiceId: ACI/PNI identifier
 // ---------------------------------------------------------------------------
 
 export const SERVICE_ID_ACI = 0x00 as const;

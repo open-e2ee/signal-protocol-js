@@ -10,7 +10,7 @@
  *  4. Server verifies the presentation proof
  *
  * The redemption time is a public attribute (visible to both issuer and
- * verifier); ACI and PNI are hidden attributes encrypted under the group's
+ * verifier). ACI and PNI are hidden attributes encrypted under the group's
  * UID encryption key during presentation.
  *
  * @see https://eprint.iacr.org/2019/1416.pdf -- Signal Private Group System
@@ -125,9 +125,10 @@ export interface AuthCredentialWithPni {
  * with ACI and PNI encrypted under the group's UID encryption key.
  *
  * Sent to the server for anonymous group authentication. The server verifies
- * the ZK proof — establishing that the credential was validly issued and that
- * the ciphertexts encrypt the identifiers it was issued over — without learning
- * which member is authenticating. The ACI and PNI ciphertexts are decryptable
+ * the ZK proof without learning which member is authenticating. The proof
+ * establishes that the credential was validly issued, and that the
+ * ciphertexts encrypt the identifiers it was issued over. The ACI and PNI
+ * ciphertexts are decryptable
  * only with the group's secret params, which the server does not hold.
  */
 export interface AuthCredentialPresentation {
@@ -253,8 +254,9 @@ export function receiveAuthCredential(
  * Present an AuthCredentialWithPni to a group for anonymous authentication.
  *
  * Called by the client. Generates a ZK presentation proof that encrypts the
- * ACI and PNI under the group's UID encryption key, allowing the server to
- * identify the member while proving the credential was validly issued.
+ * ACI and PNI under the group's UID encryption key. The proof allows the
+ * server to identify the member while proving the credential was validly
+ * issued.
  *
  * CRITICAL: Use different randomness for each presentation. Reusing randomness
  * allows different presentations to be linked and effectively reveals hidden
@@ -300,10 +302,11 @@ export function presentAuthCredential(
  * Verify an AuthCredentialPresentation against the server's key pair and
  * the group's public parameters.
  *
- * Called by the server. Checks that the presentation proof is valid, meaning
- * the client holds a credential that was issued by this server over a valid
- * (ACI, PNI, redemptionTime) tuple, and that the ACI/PNI ciphertexts in the
- * presentation are consistent with those in the credential.
+ * Called by the server. Checks that the presentation proof is valid. A valid
+ * proof means the client holds a credential that was issued by this server
+ * over a valid (ACI, PNI, redemptionTime) tuple. It also means the ACI/PNI
+ * ciphertexts in the presentation are consistent with those in the
+ * credential.
  *
  * Applies an asymmetric redemption window:
  * `[redemptionTime - 1 day, redemptionTime + 2 days]` (inclusive).
@@ -416,12 +419,15 @@ export function deserializeAuthCredentialResponse(
  * Serialize an AuthCredentialPresentation to bytes.
  *
  * Format:
- *   [redemptionTime: 8 bytes BE u64]
- *   [C_x0: 32] [C_x1: 32] [C_V: 32]
- *   [C_y_count: 4 LE u32] [C_y[]: 32 * n]
- *   [proofLen: 4 LE u32] [pokshoProof: proofLen]
- *   [aci.E_A1: 32] [aci.E_A2: 32]
- *   [pni.E_A1: 32] [pni.E_A2: 32]   // present only when credential has PNI
+ *
+ * ```
+ * [redemptionTime: 8 bytes BE u64]
+ * [C_x0: 32] [C_x1: 32] [C_V: 32]
+ * [C_y_count: 4 LE u32] [C_y[]: 32 * n]
+ * [proofLen: 4 LE u32] [pokshoProof: proofLen]
+ * [aci.E_A1: 32] [aci.E_A2: 32]
+ * [pni.E_A1: 32] [pni.E_A2: 32]   // present only when credential has PNI
+ * ```
  */
 export function serializeAuthCredentialPresentation(
   presentation: AuthCredentialPresentation
@@ -483,7 +489,7 @@ export function serializeAuthCredentialPresentation(
 export function deserializeAuthCredentialPresentation(
   bytes: Uint8Array
 ): AuthCredentialPresentation {
-  // Minimum tail is the two-point ACI ciphertext; PNI adds two more points.
+  // Minimum tail is the two-point ACI ciphertext. PNI adds two more points.
   const MIN_LEN = 176;
   if (bytes.length < MIN_LEN) {
     throw new Error('deserializeAuthCredentialPresentation: too short');

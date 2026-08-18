@@ -45,14 +45,14 @@ export interface DecryptionCandidate {
  *
  * **insertSession**: When establishing a new session, the current session
  * is archived and the new session becomes active. This handles the case
- * where we initiate a session while the other party also initiates one.
+ * where we start a session while the other party also starts one.
  *
  * **findDecryptingSessions**: Returns an ordered list of sessions to try
  * for decryption. Current session is tried first, then archived sessions.
  *
  * **promoteSession**: When we successfully decrypt on an archived session,
  * that session becomes the new active session (session convergence).
- * This ensures both parties eventually converge to the same session.
+ * Both parties therefore converge to the same session.
  *
  * **archiveCurrentSession**: Moves the current session to archived without
  * replacing it. Used when handling retry requests.
@@ -85,7 +85,7 @@ export class SessionResolver {
    * Insert a new session, archiving the current one if present.
    *
    * This is called when establishing a new session via X3DH/PQXDH.
-   * If there's an existing session, it's moved to the archived list
+   * If there is an existing session, it is moved to the archived list
    * to handle race conditions (both parties initiating simultaneously).
    *
    * @param sessionRecord - Current SessionRecord (or null for first session)
@@ -139,7 +139,7 @@ export class SessionResolver {
    *
    * Note: Archived sessions are returned in object iteration order, which
    * is insertion order in modern JS engines. Ideally they would be sorted
-   * by recency, but archived sessions don't have individual timestamps.
+   * by recency, but archived sessions do not have individual timestamps.
    * In practice, this is acceptable because:
    * 1. The current session handles 99%+ of decryptions
    * 2. Archived sessions are only tried for race condition edge cases
@@ -182,7 +182,7 @@ export class SessionResolver {
    *
    * When we successfully decrypt a message using an archived session,
    * that session should become the new active session. This is the
-   * SESAME "convergence" mechanism that ensures both parties end up
+   * SESAME "convergence" mechanism that leaves both parties
    * using the same session.
    *
    * The current session is moved to archived, and the specified
@@ -217,7 +217,7 @@ export class SessionResolver {
    * Archive the current session without replacing it.
    *
    * Used when handling retry requests - the sender archives their
-   * current session so they'll create a new one on the next send.
+   * current session so they will create a new one on the next send.
    *
    * @param sessionRecord - The SessionRecord to update
    * @param maxArchived - Maximum archived sessions to retain

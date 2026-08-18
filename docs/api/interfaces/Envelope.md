@@ -27,15 +27,15 @@ Encrypted payload (base64 or Uint8Array)
 Stable client-generated send identifier for idempotent retry.
 
 If a client retries after an unknown relay result, it should reuse the
-same value so the relay can return the original accept metadata instead
+same value. The relay then returns the original accept metadata, instead
 of inserting a duplicate pending envelope.
 
-MUST be globally unique — a UUID, not a counter or timestamp. On the
-identified path the relay scopes deduplication by sender, but a sealed
-sender is anonymous by design, so every sealed send to a device shares
-one dedup namespace: two sealed senders reusing the same value would
-silently collapse into one stored message, with the second sender
-handed the first message's receipt.
+MUST be globally unique. A UUID, not a counter or timestamp. On the
+identified path the relay scopes deduplication by sender. A sealed sender
+is anonymous by design, so every sealed send to a device shares one dedup
+namespace. Two sealed senders reusing the same value would silently
+collapse into one stored message. The second sender would receive the
+first message's receipt.
 
 ***
 
@@ -74,9 +74,9 @@ Server-assigned envelope ID (set by server)
 > **messageType**: `"ciphertext"` \| `"prekey_bundle"` \| `"sender_key"` \| `"server_delivery_receipt"` \| `"unidentified_sender"`
 
 Relay-visible envelope type.
-Client-to-client types (delivery_receipt, typing_indicator, sender_key_distribution)
-are encrypted content types inside a ciphertext envelope; the relay
-contract carries only the outer envelope type.
+A ciphertext envelope holds the client-to-client types (delivery_receipt,
+typing_indicator, sender_key_distribution) as encrypted content types. The
+relay contract carries only the outer envelope type.
 
 - ciphertext: Standard Double Ratchet message (contains encrypted Content)
 - prekey_bundle: Session initiation (X3DH/PQXDH)

@@ -477,7 +477,7 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
       throw new Error('Atomic session/trust commit cannot consume a missing KEM one-time prekey');
     }
 
-    // Map mutations cannot fail after validation; this is one synchronous commit point.
+    // Map mutations cannot fail after validation. This is one synchronous commit point.
     if (newContact) this.contactIdentities.set(contactKey, cloneStored(newContact));
     this.sessionRecords.set(sessionKey, cloneStored(commit.record));
     if (ecKey) this.ecOneTimePreKeys.delete(ecKey);
@@ -605,16 +605,16 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
       return cloneStored({
         userId,
         deviceId,
-        // Session state is re-read from the live session record, but the
-        // identity pin and its verification flag are trust decisions: they come
-        // from what was persisted, not from whichever session happens to be
-        // current. Re-deriving them would silently unpin a device as soon as its
-        // session is archived.
+        // Session state is re-read from the live session record. The identity
+        // pin and its verification flag are trust decisions. They come from
+        // what was persisted, not from whichever session happens to be current.
+        // Re-deriving them would silently unpin a device as soon as its session
+        // is archived.
         //
         // Generic SESAME session records are permitted to omit this SDK's
-        // composite profile, in which case the device is left unpinned rather
-        // than pinned to a partial key. DeviceRecord identity bytes never
-        // mutate the account-scoped composite trust store.
+        // composite profile. The device is then left unpinned, rather than
+        // pinned to a partial key. DeviceRecord identity bytes never mutate the
+        // account-scoped composite trust store.
         identityKey: stored?.identityKey.length
           ? stored.identityKey
           : sessionRecord.currentSession?.remoteIdentity
@@ -708,7 +708,7 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
       for (const [deviceId, deviceRecord] of userRecord.devices.entries()) {
         // A record is stale if:
         // 1. It has no session (or session has no currentSession and no archived)
-        // 2. It's older than maxLatency
+        // 2. It is older than maxLatency
         const hasNoSessions =
           !deviceRecord.session ||
           (!deviceRecord.session.currentSession &&
@@ -1176,7 +1176,7 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
 
   /**
    * Get the maximum EC signed prekey ID in storage.
-   * Used to generate new keyIds that won't collide with existing ones.
+   * Used to generate new keyIds that will not collide with existing ones.
    *
    * @returns The highest EC signed prekey ID, or 0 if none exist
    */
@@ -1195,7 +1195,7 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
 
   /**
    * Get the maximum Kyber prekey ID in storage.
-   * Used to generate new keyIds that won't collide with existing ones.
+   * Used to generate new keyIds that will not collide with existing ones.
    *
    * @returns The highest Kyber prekey ID, or 0 if none exist
    */

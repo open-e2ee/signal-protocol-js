@@ -1,11 +1,11 @@
 /**
- * Profile Key Commitment — Ristretto25519 commitment
+ * Profile Key Commitment: Ristretto25519 commitment
  *
  *
  * Commits a profile key to a user identity, producing a 96-byte value
  * (J1 || J2 || J3) that can be verified without knowing the profile key.
  *
- * @see https://eprint.iacr.org/2019/1416.pdf — Signal Private Group System
+ * @see https://eprint.iacr.org/2019/1416.pdf (Signal Private Group System)
  */
 
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
@@ -53,7 +53,7 @@ function getCommitmentSystemParams(): {
 
 /**
  * Verify that generating system params from scratch matches the hardcoded values.
- * This ensures no tampering with the system parameters.
+ * A tampered system parameter therefore fails this check.
  */
 export function verifyCommitmentSystemParams(): boolean {
   const sho = new ShoHmacSha256(

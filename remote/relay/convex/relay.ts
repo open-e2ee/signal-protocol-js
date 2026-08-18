@@ -80,12 +80,13 @@ const MAX_BATCH_WINDOW_MS = 5000;
  * Whether a rejection is the component's structured `UNAUTHORIZED`.
  *
  * Reads the `ConvexError` payload rather than matching on the message text.
- * A substring test for `'Unauthorized'` was wrong in both directions: any
+ *
+ * A substring test for `'Unauthorized'` was wrong in both directions. Any
  * unrelated failure whose message happened to contain the word downgraded a
- * sealed send to identified delivery — disclosing the sender to the relay to
- * work around an error that was never an authorization failure — while a
- * genuine `code: 'UNAUTHORIZED'` rejection whose message did not spell the
- * word went undetected and surfaced as a hard send failure.
+ * sealed send to identified delivery. That disclosed the sender to the relay,
+ * to work around an error that was never an authorization failure. A genuine
+ * `code: 'UNAUTHORIZED'` rejection whose message did not spell the word went
+ * undetected, and surfaced as a hard send failure.
  */
 function isUnauthorizedRejection(error: unknown): boolean {
   const data =
@@ -139,10 +140,10 @@ type SignalProtocolBackendApi = ApiFromModules<{
  * The app-side function references this adapter calls.
  *
  * Every reference carries the argument and return types Convex derives from
- * the component's own validators, so a call site that disagrees with the
- * component fails to compile here rather than at runtime in the deployment.
+ * the component's own validators. A call site that disagrees with the
+ * component fails to compile here, rather than at runtime in the deployment.
  * The types are *derived* from {@link defineConvexSignalProtocolBackend}
- * rather than restated, which is what makes the check meaningful — a
+ * rather than restated, which is what makes the check meaningful. A
  * hand-written contract can drift from the functions it describes, and this
  * one previously had.
  *
@@ -406,7 +407,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     this.getSubscriptionClient().then((client) => {
       // Check if already unsubscribed before setting up listener
       if (!isActive) {
-        return; // Don't set up anything if already cancelled
+        return; // Do not set up anything if already cancelled
       }
 
       if (!client) {
@@ -723,7 +724,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     }
 
     // Cast to branded types - data crosses wire boundary as plain strings
-    // Adapters handle the casting internally so callers don't need to
+    // Adapters handle the casting internally so callers do not need to
     return {
       registrationId: bundle.registrationId,
       deviceId: bundle.deviceId,
@@ -823,7 +824,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // GROUP MEMBER RESOLUTION (Sender Keys) — local-first; no membership map
+  // GROUP MEMBER RESOLUTION (Sender Keys): local-first. No membership map
   // ════════════════════════════════════════════════════════════════════════════
 
   async getActiveDevices(userId: string): Promise<GroupMemberDevice[]> {
@@ -1085,7 +1086,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
                 reason: req.reason as RetryReason,
               });
             } catch (handlerError) {
-              // Handler failed — safe to retry on next update
+              // Handler failed. Safe to retry on next update
               processedIds.delete(req.id);
               this.logger.error('Error in retry request handler', {
                 category: 'E2EE',
@@ -1095,7 +1096,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
               continue;
             }
 
-            // Handler succeeded — mark as handled on server (best-effort)
+            // Handler succeeded. Mark as handled on server (best-effort)
             try {
               await this.convex.mutation(this.api.messages.markRetryRequestHandled, {
                 requestId: req.id,
@@ -1105,7 +1106,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
                 data: { requestId: req.id, failedTimestamp: req.failedTimestamp },
               });
             } catch (markError) {
-              // Mark failed but handler already ran — keep in processedIds to prevent duplicate
+              // Mark failed but handler already ran. Keep in processedIds to prevent duplicate
               this.logger.warn('Failed to mark retry request as handled (handler already ran)', {
                 category: 'E2EE',
                 data: { requestId: req.id },
@@ -1150,7 +1151,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     const key = `retry:${userId}:${deviceId}`;
     let isActive = true;
 
-    // Use stable set that accumulates processed IDs (don't replace on each poll)
+    // Use stable set that accumulates processed IDs (do not replace on each poll)
     // This prevents both duplicate processing and lost requests
     const processedIds = new Set<string>();
 
@@ -1187,7 +1188,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
               reason: req.reason as RetryReason,
             });
           } catch (handlerError) {
-            // Handler failed — safe to retry on next poll
+            // Handler failed. Safe to retry on next poll
             processedIds.delete(req.id);
             this.logger.error('Error in retry request handler', {
               category: 'E2EE',
@@ -1196,13 +1197,13 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
             continue;
           }
 
-          // Handler succeeded — mark as handled on server (best-effort)
+          // Handler succeeded. Mark as handled on server (best-effort)
           try {
             await this.convex.mutation(this.api.messages.markRetryRequestHandled, {
               requestId: req.id,
             });
           } catch (markError) {
-            // Mark failed but handler already ran — keep in processedIds to prevent duplicate
+            // Mark failed but handler already ran. Keep in processedIds to prevent duplicate
             this.logger.warn('Failed to mark retry request as handled (handler already ran)', {
               category: 'E2EE',
               error: markError as Error,
@@ -1474,7 +1475,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     inviteLinkPassword: Uint8Array,
     authorization: GroupAuthorization
   ): Promise<GroupChangeEntry> {
-    // S13: the server derives the change epoch from the accepted actions; a
+    // S13: the server derives the change epoch from the accepted actions. A
     // legacy caller-supplied epoch must be rejected, matching
     // ConvexGroupServer.submitGroupChange.
     if (arguments.length !== 5) {
@@ -1501,7 +1502,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
   }
 
   async issueAuthCredential(_userId: string): Promise<Uint8Array> {
-    // userId kept for ISignalProtocolRelayServer interface compat; server uses auth session
+    // userId kept for ISignalProtocolRelayServer interface compat. The server uses the auth session
     const api = this.requireGroupServerApi();
     const result = await this.convex.mutation(api.zkAuth.issueAuthCredentialMutation, {});
     return new Uint8Array(result);

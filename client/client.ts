@@ -145,7 +145,7 @@ const storageLock = new AsyncLock({
 
 /**
  * Type guard: DataMessage is a plain object (not string or Uint8Array).
- * TypeScript enforces correct content types at compile time; this routes at runtime.
+ * TypeScript enforces correct content types at compile time. This routes at runtime.
  */
 function isDataMessage(
   content: DataMessageInput | string | Uint8Array
@@ -505,7 +505,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
       this.cipher.setEndorsementManager(config.groups.endorsementManager);
     }
 
-    // Set up group secret params provider — derives params from master key in store
+    // Set up group secret params provider. Derives params from master key in store
     if (this.groupStore) {
       const store = this.groupStore;
       this.cipher.setGroupSecretParamsProvider(async (groupId: string) => {
@@ -555,7 +555,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
         const state = await groupStore.getGroupState(groupId);
         if (!state || state.members.length === 0) return false;
 
-        // 6. Build ACI→userId mapping from known members + self
+        // 6. Build ACI→userId mapping from known members + self.
         //    Endorsements are issued in group-state member order, so we must
         //    build parallel arrays matching that order.
         const { SERVICE_ID_ACI } = await import('../internal/protocol/zk/groups/uid-struct');
@@ -581,7 +581,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
             .map((b) => b.toString(16).padStart(2, '0'))
             .join('');
           const userId = aciHexToUserId.get(hex);
-          if (!userId) continue; // Unknown member — skip
+          if (!userId) continue; // Unknown member. Skip
           memberServiceIds.push({
             kind: SERVICE_ID_ACI,
             uuid: member.aciBytes,
@@ -636,7 +636,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   }
 
   /**
-   * Whether sealed sender is enabled and configured.
+   * Whether the client enables and configures sealed sender.
    */
   get isSealedSenderEnabled(): boolean {
     const ss = this.config.sealedSender;
@@ -756,11 +756,11 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Create and initialize a new SignalProtocolClient instance.
    *
-   * This low-level factory ensures the client is fully initialized before it is
-   * returned. Most app code should prefer `createSignalProtocolClient()` so identity,
-   * adapters, and protocol policy are grouped in one object.
+   * This low-level factory fully initializes the client before it returns
+   * it. Most app code should prefer `createSignalProtocolClient()`, which
+   * groups identity, adapters, and protocol policy in one object.
    *
-   * If `relay` is provided in config, the client automatically uploads the
+   * If config provides `relay`, the client automatically uploads the
    * public prekey bundle needed for end-to-end encrypted messaging.
    *
    * @param userId - User identifier for this device/client
@@ -818,7 +818,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     const deviceId = config?.deviceId ?? 1; // Default to primary device
 
     // Use locking to prevent race conditions when multiple create() calls happen concurrently.
-    // This ensures only one storage instance per userId is created, preventing database lock
+    // The lock allows only one storage instance per userId, which prevents database lock
     // contention and session state corruption.
     return storageLock.acquire(`storage-init-${userId}`, async () => {
       // Storage is required - SignalProtocolClient is platform-agnostic
@@ -856,8 +856,8 @@ export class SignalProtocolClient implements ISignalProtocolClient {
       await client.hydratePersistedState();
 
       // Cleanup expired sessions and message records on startup.
-      // The reference implementation relies on event-driven cleanup (identity change, retry, end-session);
-      // we additionally enforce our maxRecv TTL here to prevent unbounded session growth.
+      // The reference implementation relies on event-driven cleanup (identity change, retry, end-session).
+      // We also enforce our maxRecv TTL here to prevent unbounded session growth.
       try {
         await client.sesameManager.cleanupExpiredSessions();
         await client._storage.deleteExpiredMessageRecords(MESSAGE_RECORD_TTL_MS);
@@ -926,7 +926,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Initialize the Signal Protocol on this device (private - called by create())
    *
-   * Generates identity keys if they don't exist and prepares the client for use.
+   * Generates identity keys if they do not exist and prepares the client for use.
    */
   private async initialize(): Promise<void> {
     try {
@@ -954,8 +954,8 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Sync the public prekey bundle to the configured relay.
    *
-   * Called automatically by create() when a relay is configured.
-   * Can also be called manually to retry after a failed initial sync.
+   * create() calls this automatically when config names a relay.
+   * Callers can also run it manually to retry after a failed initial sync.
    *
    * Delegates to PreKeyOps.syncToServer for implementation.
    */
@@ -1001,7 +1001,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
       this._syncStatus = 'synced';
     } catch (error) {
       // A relay may have committed the CAS rotation before a later prekey
-      // upload failed. Keep the client explicitly offline; syncToServer() is
+      // upload failed. Keep the client explicitly offline. syncToServer() is
       // the idempotent recovery operation for that availability-only gap.
       this._syncStatus = 'failed';
       throw error;
@@ -1046,7 +1046,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     await PreKeyOps.regeneratePreKeysWithFreshIds(this.ctx);
     const now = Date.now();
     // Update debounce timestamp so concurrent call sites (relay-subscription + retry.ts)
-    // don't both trigger rotation for the same stale prekey event.
+    // do not both trigger rotation for the same stale prekey event.
     this.state.setLastPreKeyRotationTime(now);
     // Persist the debounce timestamp across application restarts.
     await this._storage.setMetadata('lastForcedPreKeyRotation', String(now));
@@ -1080,7 +1080,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   }
 
   /**
-   * Check if client is initialized
+   * Check whether the client completed initialization
    *
    * @returns True if identity keys exist and client is ready to use
    */
@@ -1135,8 +1135,8 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Establish a new session with a specific remote device.
    *
-   * Advanced direct-device API. Normal app code can call `send(recipientUserId, content)`;
-   * the client will fetch remote device bundles through the configured relay and
+   * Advanced direct-device API. Normal app code can call `send(recipientUserId, content)`.
+   * The client will fetch remote device bundles through the configured relay and
    * use the selected protocol policy. Direct callers must provide the remote
    * device's prekey bundle themselves.
    *
@@ -1180,7 +1180,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * Delete a session
    *
    * Use this to reset encryption for a session (e.g., after a security incident).
-   * You'll need to establish a new session before sending/receiving messages.
+   * You will need to establish a new session before sending/receiving messages.
    *
    * @param remoteAddress - Remote device's protocol address
    */
@@ -1194,8 +1194,8 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * Moves current session to inactive list, preserving it for delayed message decryption.
    * Per SESAME §3.2: "previously active session is moved to the head of the inactive sessions list"
    *
-   * Use this when handling stale device errors (410) - the old session may still be needed
-   * to decrypt messages that were in-flight during the session refresh.
+   * Use this when handling stale device errors (410). The old session may still
+   * decrypt messages that were in-flight during the session refresh.
    *
    * @param remoteAddress - Remote device's protocol address
    */
@@ -1262,8 +1262,8 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * Encrypt multiple messages in batch
    *
    * More efficient than calling encryptMessage() multiple times.
-   * Operations are performed atomically - if any encryption fails,
-   * none of the messages are encrypted.
+   * The method runs all operations atomically. If any encryption fails,
+   * it encrypts none of the messages.
    *
    * @param remoteAddress - Remote device's protocol address
    * @param plaintexts - Array of messages to encrypt
@@ -1336,7 +1336,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
       );
 
       // Process the inner envelope with revealed sender identity. The inner
-      // type travels inside the seal — nothing outside it distinguishes a
+      // type travels inside the seal. Nothing outside it distinguishes a
       // group message from a pairwise one. The same mapping serves the other
       // receive path via `reconstructEnvelope`.
       return this.processIncomingEnvelope(
@@ -1352,7 +1352,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     }
 
     // Route group messages to sender key decryption. `sender_key` says the
-    // payload is a framed SenderKeyMessage; it does not say which group, so
+    // payload is a framed SenderKeyMessage. It does not say which group, so
     // the group comes from the frame's distribution identifier resolved
     // against the local sender key store.
     if (envelope.messageType === 'sender_key') {
@@ -1408,9 +1408,9 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * 2. Processing each envelope in order
    * 3. Collecting results/errors for caller to handle
    *
-   * The sorting ensures PreKeyMessages (which establish sessions) are processed
-   * before ciphertexts that depend on those sessions. This is required for
-   * SESAME Section 3.4 session convergence when archived sessions are promoted.
+   * The sorting processes PreKeyMessages (which establish sessions)
+   * before ciphertexts that depend on those sessions. SESAME Section 3.4
+   * session convergence requires this when the client promotes archived sessions.
    *
    * @param envelopes - Array of encrypted message envelopes
    * @param options - Transport callbacks for background scenarios
@@ -1440,7 +1440,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     >
   > {
     // Sort PreKeyMessages first - they establish sessions needed by subsequent ciphertexts
-    // This is internal - callers don't need to know about SESAME session convergence
+    // This is internal - callers do not need to know about SESAME session convergence
     const sorted = sortEnvelopesForDecryption(envelopes);
 
     const results: Array<
@@ -1587,7 +1587,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * - User recipients: Encrypts for all user's devices via SESAME
    * - Group recipients: Uses Sender Keys for O(1) encryption
    *
-   * All inputs are normalized to Uint8Array before reaching the cipher layer.
+   * The client normalizes all inputs to Uint8Array before they reach the cipher layer.
    *
    * @param recipientId - User ID or group ID (groups use the package group ID prefix)
    * @param content - DataMessageInput, string, or Uint8Array to encrypt and send
@@ -1690,7 +1690,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Generate safety number for verifying identity with another user
    *
-   * Safety numbers allow users to verify they're communicating with the
+   * Safety numbers allow users to verify they communicate with the
    * intended person and detect man-in-the-middle attacks.
    *
    * @param userId - The user ID to generate safety number for
@@ -1736,7 +1736,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
 
     // A retry that first discovered the changed tuple may already have failed
     // closed and entered the short-lived dedup window. Explicit acceptance is
-    // the authority to try those still-pending requests again; it is never
+    // the authority to try those still-pending requests again. It is never
     // inferred from the retry request itself.
     const retryPrefix = `${userId}:`;
     for (const key of this.retryDedupState.recentRetryRequests.keys()) {
@@ -1790,8 +1790,8 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Register a hook callback after construction
    *
-   * Enables dependency injection patterns where hooks are registered
-   * after SignalProtocolClient is created. This is used by ServicesProvider
+   * Enables dependency injection patterns where callers register hooks
+   * after the SignalProtocolClient exists. ServicesProvider uses this
    * to wire up ContentManager's decryption hook.
    *
    * @param name - The hook name to register
@@ -1837,7 +1837,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * This enables ContentManager to store decrypted content in an encrypted SQLite
    * database without any knowledge of cryptography.
    *
-   * Can be called manually after registering hooks via registerHook().
+   * Callers can run this manually after registering hooks via registerHook().
    * Called automatically by create() when relay + hook configured.
    *
    * @see ISignalProtocolClient.startRelaySubscription
@@ -1900,7 +1900,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * Stop the relay subscription
    *
    * Pauses message processing via the relay subscription without destroying
-   * SignalProtocolClient state. The subscription can be restarted with startRelaySubscription().
+   * SignalProtocolClient state. startRelaySubscription() restarts the subscription.
    *
    * Use this when the app backgrounds to let the background task handle messages.
    * Resume when the app foregrounds for real-time message delivery.
@@ -1939,7 +1939,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * by resending the original message with a new session.
    *
    * Automatically started if relay.subscribeRetryRequests is available.
-   * Can be called manually if you need to restart the subscription.
+   * Call this manually if you need to restart the subscription.
    */
   public startRetryRequestSubscription(): void {
     if (!this.relay || !this.relay.subscribeRetryRequests) {
@@ -2010,7 +2010,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    *
    * Multi-device: fans out to all known devices for the sender.
    *
-   * @param recipientUserId - The sender's user ID (we're receipting TO them)
+   * @param recipientUserId - The sender's user ID (we are receipting TO them)
    * @param timestamps - Array of message timestamps that have been delivered
    *
    */
@@ -2024,11 +2024,11 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * Called when the user views messages in a conversation.
    * Similar to delivery receipts but indicates message was actually read.
    *
-   * Respects SDK privacy settings: if read receipts are disabled,
+   * Respects SDK privacy settings: if the configuration disables read receipts,
    * this method returns early without sending.
    *
    * @param recipientUserId - Original sender's user ID
-   * @param timestamps - Server timestamps of messages that were read
+   * @param timestamps - Server timestamps of the messages the user read
    */
   async sendReadReceipt(recipientUserId: string, timestamps: number[]): Promise<void> {
     // Check privacy setting at protocol layer
@@ -2122,8 +2122,8 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Sync local safety-number verification state to our other linked devices.
    *
-   * Only explicit `verified` and cleared-to-`default` states are synced;
-   * key-conflict/untrusted state remains local and derived from identity-key
+   * The client syncs only explicit `verified` and cleared-to-`default` states.
+   * Key-conflict/untrusted state remains local and derived from identity-key
    * changes.
    */
   async syncVerificationStateToLinkedDevices(
@@ -2218,7 +2218,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Stop the Signal Protocol client and clean up resources
    *
-   * Call this when the user logs out or the app is being destroyed.
+   * Call this when the user logs out or the app shuts down.
    * Unsubscribes from relay server and cleans up any pending operations.
    *
    * @example
@@ -2264,7 +2264,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
         });
       }
     } catch (error) {
-      // Log but don't fail stop
+      // Log but do not fail stop
       this.logger.warn('Error cleaning up message records', {
         category: 'E2EE',
         data: { error: (error as Error).message },
@@ -2307,7 +2307,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * Cleanup expired Sesame sessions
    *
    * Removes inactive sessions that are older than the configured TTL.
-   * Should be called periodically (e.g., daily) to prevent database bloat.
+   * Call this periodically (e.g., daily) to prevent database bloat.
    *
    * @returns Number of sessions cleaned up
    */
@@ -2355,11 +2355,12 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * Rotate EC signed prekey
    *
    * Rotates only once the current prekey is older than the configured refresh
-   * interval ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default), so
-   * it is safe to call more often than that. Generates a new EC signed prekey
+   * interval ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default). It
+   * is therefore safe to call more often than that. Generates a new EC signed
+   * prekey
    * and uploads it to the relay if configured.
    *
-   * @returns True if rotation was performed, false if not needed yet
+   * @returns True if the client rotated the key, false if not needed yet
    */
   async rotateEcSignedPreKey(): Promise<boolean> {
     return KeyRotationOps.rotateEcSignedPreKey(this.ctx);
@@ -2370,10 +2371,10 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    *
    * Shares the signed prekey's refresh interval
    * ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default) and rotates
-   * only once that interval has elapsed. Generates fresh ML-KEM/Kyber-compatible
+   * only after that interval elapses. Generates fresh ML-KEM/Kyber-compatible
    * key material and uploads it to the relay if configured.
    *
-   * @returns True if rotation was performed, false if not needed yet
+   * @returns True if the client rotated the key, false if not needed yet
    */
   async rotateKyberPreKey(): Promise<boolean> {
     return KeyRotationOps.rotateKyberPreKey(this.ctx);
@@ -2386,7 +2387,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Create a new sender key for group messaging
    *
-   * Call this when joining a group or when key rotation is needed.
+   * Call this when joining a group or when the group needs key rotation.
    * Distribute the returned message to all group members via pairwise sessions.
    *
    * @param groupId - Unique identifier for the group
@@ -2489,7 +2490,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * Decrypt a group message from a sender
    *
    * Use this to decrypt messages from other group members.
-   * You must have processed the sender's distribution message first.
+   * You must process the sender's distribution message first.
    *
    * @param groupId - Group identifier
    * @param senderId - Sender's user ID
@@ -2542,8 +2543,8 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    *
    * ## Why Rotate on Member Removal?
    *
-   * When a member is removed, they still have the old sender key and could decrypt
-   * future messages if the key isn't rotated. ALL remaining members must generate
+   * After the group removes a member, they still hold the old sender key and could decrypt
+   * future messages if nothing rotates the key. ALL remaining members must generate
    * new sender keys to prevent the removed member from reading future messages.
    *
    * @param groupId - Group identifier
@@ -2628,7 +2629,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Distribute sender key to a specific user via pairwise encryption.
    *
-   * Distribution messages are transmitted through authenticated, encrypted
+   * Distribution messages travel through authenticated, encrypted
    * pairwise channels.
    *
    * This method:
@@ -2646,7 +2647,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * ```
    */
   async distributeSenderKeyToUser(groupId: string, recipientUserId: string): Promise<void> {
-    // Don't distribute to self
+    // Do not distribute to self
     if (recipientUserId === this.userId) {
       return;
     }
@@ -2766,8 +2767,8 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Check prekey status and trigger warning if running low
    *
-   * Returns the current prekey count and whether replenishment is needed.
-   * If configured with `onPreKeyLow` callback, it will be called when
+   * Returns the current prekey count and whether the client needs to replenish.
+   * If config supplies an `onPreKeyLow` callback, the client calls it when
    * the count drops below the threshold.
    *
    * @returns Prekey status with remaining count and replenishment flag

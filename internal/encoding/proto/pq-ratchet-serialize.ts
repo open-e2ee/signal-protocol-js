@@ -1,26 +1,36 @@
 /**
- * SPQR Wire Format — profile binary serialization
+ * SPQR Wire Format: profile binary serialization
  *
  * Uses the compact SPQR binary format. Raw SPQR bytes are stored directly in the
  * pq_ratchet field (field 5)
- * of SignalProtocolMessage — no protobuf envelope.
+ * of SignalProtocolMessage. No protobuf envelope.
  *
  * `SPQR` V1 format:
- *   VERSION(1) | VARINT(epoch) | VARINT(chain_index) | MSG_TYPE(1) | [VARINT(chunk_index) | CHUNK_DATA(32)]
- *   Chunks are required for Hdr, Ek, EkCt1Ack, Ct1, and Ct2. None and Ct1Ack
- *   are header-only, with trailing data allowed for future protocol upgrades.
+ *
+ * ```
+ * VERSION(1) | VARINT(epoch) | VARINT(chain_index) | MSG_TYPE(1) | [VARINT(chunk_index) | CHUNK_DATA(32)]
+ * ```
+ *
+ * Chunks are required for Hdr, Ek, EkCt1Ack, Ct1, and Ct2. None and Ct1Ack
+ * are header-only, with trailing data allowed for future protocol upgrades.
  *
  * Mode byte values (MSG_TYPE):
- *   0x00 = None (header-only, no PQ data for this message)
- *   0x01-0x06 = Braid message types (Hdr through Ct2)
- *   0x80 = Direct mode: ML-KEM-768 ciphertext follows
- *   0x81 = Direct mode: ML-KEM-768 public key follows
- *   0x82 = Direct mode: ML-KEM-768 ciphertext + public key both follow
+ *
+ * ```
+ * 0x00 = None (header-only, no PQ data for this message)
+ * 0x01-0x06 = Braid message types (Hdr through Ct2)
+ * 0x80 = Direct mode: ML-KEM-768 ciphertext follows
+ * 0x81 = Direct mode: ML-KEM-768 public key follows
+ * 0x82 = Direct mode: ML-KEM-768 ciphertext + public key both follow
+ * ```
  *
  * Version byte:
- *   0x01 = V1 (SPQR active)
  *
- * Version negotiation is implicit in byte 0 — replaces the JSON
+ * ```
+ * 0x01 = V1 (SPQR active)
+ * ```
+ *
+ * Version negotiation is implicit in byte 0. Replaces the JSON
  * versionCapability field that added 30-50 bytes per message.
  *
  * @internal
@@ -79,7 +89,7 @@ export type SPQRWireEpoch = number | bigint;
 export interface SPQRWireMessage {
   /** Protocol version: V1 SPQR active */
   version: 1;
-  /** SPQR wire epoch (one-based; may use u64-width values in braid mode) */
+  /** SPQR wire epoch (one-based, and braid mode may use u64-width values) */
   epoch?: SPQRWireEpoch;
   /** Message index within epoch (varint-encoded, replaces messageNumber) */
   chainIndex?: number;
@@ -102,7 +112,7 @@ export interface SPQRWireMessage {
 }
 
 // ============================================================================
-// Varint encoding (LEB128 — matches the SPQR wire format)
+// Varint encoding (LEB128, matches the SPQR wire format)
 // ============================================================================
 
 function assertUint64(name: string, value: SPQRWireEpoch, min: bigint = 0n): bigint {
@@ -260,9 +270,11 @@ export function spqrWireEpochToBigInt(wireEpoch: SPQRWireEpoch): bigint {
 /**
  * Encode an SPQRWireMessage to compact binary format.
  *
- * For V1 braid: VERSION(1) | VARINT(epoch) | VARINT(chainIndex) | MSG_TYPE(1) | [VARINT(chunkIndex) | CHUNK(32)]
- * For V1 direct: VERSION(1) | VARINT(epoch) | VARINT(chainIndex) | MODE(1) | payload
- * For V1 none: VERSION(1) | VARINT(epoch) | VARINT(chainIndex) | 0x00
+ * ```
+ * V1 braid:  VERSION(1) | VARINT(epoch) | VARINT(chainIndex) | MSG_TYPE(1) | [VARINT(chunkIndex) | CHUNK(32)]
+ * V1 direct: VERSION(1) | VARINT(epoch) | VARINT(chainIndex) | MODE(1) | payload
+ * V1 none:   VERSION(1) | VARINT(epoch) | VARINT(chainIndex) | 0x00
+ * ```
  *
  * @param msg - Message to encode
  * @returns Encoded bytes
@@ -416,7 +428,7 @@ export function decodeSPQRWire(bytes: Uint8Array): SPQRWireMessage {
   const modeByte = bytes[cursor.value++];
 
   // Direct mode (0x80, 0x81, 0x82 only)
-  // The reference implementation validates this enum strictly — reject unknown values
+  // The reference implementation validates this enum strictly. Reject unknown values
   if (
     modeByte === DIRECT_CIPHERTEXT ||
     modeByte === DIRECT_PUBLIC_KEY ||
@@ -470,7 +482,7 @@ export function decodeSPQRWire(bytes: Uint8Array): SPQRWireMessage {
   };
 
   // The reference Ct1Ack payload is a bare acknowledgement. It intentionally has no
-  // chunk; trailing bytes are allowed for future protocol upgrades.
+  // chunk. Trailing bytes are allowed for future protocol upgrades.
   if (!braidMessageTypeRequiresChunk(modeByte)) {
     return msg;
   }

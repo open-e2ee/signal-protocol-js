@@ -5,9 +5,9 @@
  * session establishment via X3DH/PQXDH key agreement.
  *
  * Session Identification:
- * - Sessions are LOOKED UP by ProtocolAddress (userId:deviceId)
- * - Session STATES are IDENTIFIED by baseKey (initiator's ephemeral public key)
- * - sessionId has been removed - use remoteAddress for lookup, baseKey for state ID
+ * - A ProtocolAddress (userId:deviceId) LOOKS UP a session
+ * - A baseKey (initiator's ephemeral public key) IDENTIFIES a session STATE
+ * - No sessionId remains. Use remoteAddress for lookup, baseKey for state ID
  *
  * @see https://signal.org/docs/specifications/x3dh/
  * @see https://signal.org/docs/specifications/pqxdh/
@@ -34,7 +34,7 @@ import type { ILogger } from '../../logger';
 /**
  * Input for building an initiator (Alice) session
  *
- * Note: sessionId has been removed. Sessions are identified by:
+ * Note: no sessionId remains. Two values identify a session:
  * - Lookup: remoteAddress (ProtocolAddress)
  * - State ID: baseKey (set automatically from ephemeral key)
  */
@@ -59,7 +59,7 @@ export interface SessionBuilderInitiatorInput {
 /**
  * Input for building a responder (Bob) session
  *
- * Note: sessionId has been removed. Sessions are identified by:
+ * Note: no sessionId remains. Two values identify a session:
  * - Lookup: remoteAddress (ProtocolAddress)
  * - State ID: baseKey (set from PreKeyMessage.senderEphemeralKey)
  */
@@ -96,9 +96,9 @@ export interface SessionBuilderResponderInput {
 export interface SessionBuilderInitiatorResult {
   /** The created session state */
   sessionState: SessionState;
-  /** Kyber ciphertext to include in PreKeyMessage (if PQXDH was used) */
+  /** Kyber ciphertext to include in PreKeyMessage (PQXDH sessions only) */
   kyberCiphertext?: string;
-  /** ID of Kyber prekey used (if PQXDH was used) */
+  /** ID of Kyber prekey used (PQXDH sessions only) */
   kyberPreKeyId?: number;
   /**
    * Original X3DH/PQXDH shared secret (SK) for Triple Ratchet initialization.
@@ -110,9 +110,9 @@ export interface SessionBuilderInitiatorResult {
    * Owned byte storage must be best-effort overwritten after use.
    */
   initialRootKeyForSPQR?: Uint8Array;
-  /** Whether PQXDH (post-quantum) was used */
+  /** Whether the session used PQXDH (post-quantum) */
   usedPQXDH: boolean;
-  /** Whether explicit X3DH compatibility fallback was used */
+  /** Whether the session used the explicit X3DH compatibility fallback */
   usedClassicalFallback?: boolean;
 }
 
@@ -122,13 +122,13 @@ export interface SessionBuilderInitiatorResult {
 export interface SessionBuilderResponderResult {
   /** The created session state */
   sessionState: SessionState;
-  /** Whether PQXDH (post-quantum) was used */
+  /** Whether the session used PQXDH (post-quantum) */
   usedPQXDH: boolean;
-  /** Whether explicit X3DH compatibility fallback was used */
+  /** Whether the session used the explicit X3DH compatibility fallback */
   usedClassicalFallback?: boolean;
   /**
    * Original X3DH/PQXDH shared secret (SK) for Triple Ratchet initialization.
-   * Only present if PQXDH was used.
+   * Only present if the session used PQXDH.
    */
   initialRootKeyForSPQR?: Uint8Array;
 }
@@ -151,7 +151,7 @@ export interface KeyAgreementResult {
   usedSignedPreKeyId: number;
   /** ID of one-time prekey used (if any) */
   usedOneTimePreKeyId?: number;
-  /** Kyber ciphertext (if PQXDH was used) */
+  /** Kyber ciphertext (PQXDH sessions only) */
   kyberCiphertext?: string;
   /** ID of Kyber prekey used (if any) */
   usedKyberPreKeyId?: number;
@@ -159,9 +159,9 @@ export interface KeyAgreementResult {
   kemOneTimePreKeyCiphertext?: string;
   /** ID of KEM one-time prekey used (if any) */
   usedKemOneTimePreKeyId?: number;
-  /** Whether PQXDH was used */
+  /** Whether the session used PQXDH */
   usedPQXDH: boolean;
-  /** Whether explicit X3DH compatibility fallback was used */
+  /** Whether the session used the explicit X3DH compatibility fallback */
   usedClassicalFallback?: boolean;
 }
 
@@ -173,9 +173,9 @@ export interface ResponderKeyAgreementResult {
   sharedSecret: Uint8Array;
   /** Additional derived bytes from HKDF */
   additionalDerivedBytes?: Uint8Array;
-  /** Whether PQXDH was used */
+  /** Whether the session used PQXDH */
   usedPQXDH: boolean;
-  /** Whether explicit X3DH compatibility fallback was used */
+  /** Whether the session used the explicit X3DH compatibility fallback */
   usedClassicalFallback?: boolean;
 }
 
@@ -192,7 +192,7 @@ export interface ResponderKeyAgreementResult {
  * This pattern keeps session establishment logic in the manager/orchestrator
  * while allowing SessionCipher to handle the decryption flow.
  *
- * Note: sessionId has been removed. Sessions are looked up by remoteAddress.
+ * Note: no sessionId remains. A remoteAddress looks up a session.
  */
 export type SessionEstablishmentCallback = (
   remoteAddress: ProtocolAddress,
@@ -226,8 +226,8 @@ export interface SessionCipherConfig {
   /**
    * Protocol strategy configuration.
    *
-   * The cipher does not choose protocol behavior — session establishment
-   * already did — but it is the layer that drives SPQR on every message, so
+   * The cipher does not choose protocol behavior, because session establishment
+   * already did. The cipher is the layer that drives SPQR on every message, so
    * the strategy's per-message diagnostic hooks are reported from here.
    */
   protocolStrategy?: ProtocolStrategyConfig;

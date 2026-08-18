@@ -10,7 +10,7 @@
 
 Encode a group trust root into its versioned binary representation.
 
-Version 1 is fixed-width:
+Version 1 uses a fixed width:
 `version || signing-key length || credential key || signing key ||
 profile-key credential key || endorsement root`.
 

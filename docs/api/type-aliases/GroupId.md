@@ -10,7 +10,7 @@
 
 Branded type for prefixed group IDs
 
-Ensures compile-time safety for group ID handling.
+Gives compile-time safety for group ID handling.
 A GroupId is always a string with the OpenE2EE group prefix.
 
 ## Type Declaration

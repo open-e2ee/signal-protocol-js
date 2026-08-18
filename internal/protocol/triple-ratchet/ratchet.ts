@@ -15,8 +15,8 @@
  * 1. **EC Double Ratchet**: X25519 Diffie-Hellman key agreement
  * 2. **SPQR**: ML-KEM-768 (CRYSTALS-Kyber) key encapsulation
  *
- * Message keys from both ratchets are combined via KDF_HYBRID, ensuring
- * security even if one cryptographic primitive is broken.
+ * Message keys from both ratchets are combined via KDF_HYBRID, so security
+ * holds even if one cryptographic primitive is broken.
  *
  * ## Security Guarantee
  *
@@ -120,9 +120,9 @@ export interface TripleRatchetState {
   ec_state: DoubleRatchetState;
   /** SPQR state for post-quantum security */
   spqrState: SPQRState;
-  /** Whether Triple Ratchet is enabled */
+  /** Whether Triple Ratchet is active */
   enabled: boolean;
-  /** Timestamp when Triple Ratchet was enabled */
+  /** Timestamp of the moment Triple Ratchet became active */
   enabledAt: number;
   /**
    * Version negotiation state.
@@ -343,17 +343,17 @@ export async function deriveTripleRatchetReceiveKey(
 }
 
 /**
- * Perform Triple Ratchet step (EC DH ratchet only — purely classical).
+ * Run the Triple Ratchet step (EC DH ratchet only, purely classical).
  *
  * Called when receiving a message with a new DH public key.
  * The DH ratchet has no interaction with PQ/SPQR state. All post-quantum work
  * happens in `spqrSend()` and `spqrRecv()`.
  *
  * @param ecState EC Double Ratchet state
- * @param _spqrState SPQR state (unused — PQ handled by spqrSend/spqrRecv)
+ * @param _spqrState SPQR state (unused, PQ handled by spqrSend/spqrRecv)
  * @param receivedDHPublicKey Partner's new DH public key
- * @param _receivedKyberCiphertext Unused — PQ handled by spqrRecv
- * @param _versionNegotiation Unused — PQ handled by spqrRecv
+ * @param _receivedKyberCiphertext Unused, PQ handled by spqrRecv
+ * @param _versionNegotiation Unused, PQ handled by spqrRecv
  */
 export async function performTripleRatchetStep(
   ecState: DoubleRatchetState,
@@ -373,19 +373,19 @@ export async function performTripleRatchetStep(
     },
   });
 
-  // Purely classical EC DH ratchet — no PQ involvement
+  // Purely classical EC DH ratchet. No PQ involvement
   await performDHRatchetStep(ecState, receivedDHPublicKey, logger);
 }
 
 /**
- * Check if Triple Ratchet step is needed
+ * Check whether the session needs a Triple Ratchet step
  *
- * A Triple Ratchet step is needed when:
- * - EC DH ratchet is needed (new DH public key received)
+ * A Triple Ratchet step happens when:
+ * - The EC DH ratchet must step (new DH public key received)
  *
  * @param ecState EC Double Ratchet state
  * @param receivedDHPublicKey Partner's DH public key from message
- * @returns true if ratchet step is needed
+ * @returns true if the session needs a ratchet step
  */
 export function needsTripleRatchetStep(
   ecState: DoubleRatchetState,

@@ -53,7 +53,7 @@ export { validateSPQRState, trimSkippedKeys } from './validate';
 // Serialization functions
 export { serializeSPQRState, deserializeSPQRState } from './serialize';
 
-// Version negotiation re-exports removed — use triple-ratchet barrel or import ../version directly.
+// Version negotiation re-exports removed. Use triple-ratchet barrel or import ../version directly.
 // These are re-exported via ./triple-ratchet to avoid TS2308 duplicate export errors.
 
 // Core types
@@ -298,7 +298,7 @@ export async function initializeSPQR(options: SPQRInitOptions): Promise<SPQRStat
     // Use the specification-defined ML-KEM Braid state machine.
     const { initializeSPQRBraid } = await import('./braid');
     const braidState = await initializeSPQRBraid(options);
-    // Ensure info strings and limits are set for braid mode too
+    // Set info strings and limits for braid mode too
     return {
       ...braidState,
       infoStrings: resolvedInfoStrings,

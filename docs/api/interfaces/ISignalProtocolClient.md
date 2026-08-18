@@ -194,8 +194,8 @@ Group identifier
 
 Delete the encrypted remote object referenced by an attachment pointer.
 
-This only touches remote object storage. App-owned local message rows and
-local media caches must be deleted by the application.
+This only touches the remote object store. The application must delete
+app-owned local message rows and local media caches.
 
 #### Parameters
 
@@ -452,7 +452,7 @@ Distribution message or null if no key exists
 Get health status for encryption sessions with a specific user.
 
 Checks session existence, key validity, key freshness, and expiration.
-This is a client-side check that doesn't require server calls.
+This is a client-side check that does not require server calls.
 
 #### Parameters
 
@@ -675,7 +675,7 @@ signal.registerHook('onMessageDecrypted', async (envelope) => {
 
 > **rotateAccountIdentity**(`expectedCurrentCommitment`, `identityType?`): `Promise`\<`void`\>
 
-Explicit compare-and-swap rotation of the account-level relay identity.
+Explicitly rotate the account-level relay identity with compare-and-swap.
 
 #### Parameters
 
@@ -848,7 +848,7 @@ Original sender's user ID
 
 `number`[]
 
-Server timestamps of messages that were read
+Server timestamps of the messages the user read
 
 #### Returns
 
@@ -937,7 +937,7 @@ attachments. This follows the same privacy gate as read receipts.
 Start the relay subscription for receiving encrypted messages.
 
 Startup is explicit so applications can register hooks before delivery
-begins.
+starts.
 
 #### Returns
 
@@ -951,7 +951,7 @@ begins.
 
 Stop the client and cleanup resources
 
-Should be called on logout or app shutdown.
+Call this on logout or app shutdown.
 
 #### Returns
 
@@ -1002,7 +1002,7 @@ instead of applying deltas.
 
 Sync account-level communication/privacy configuration to linked devices.
 
-This is linked-device state, not a sender-facing receipt. It should carry
+This holds linked-device state, not a sender-facing receipt. It should carry
 the current local snapshot for supported fields.
 
 #### Parameters
@@ -1045,7 +1045,7 @@ remains responsible for applying the delete to its local media cache.
 Sync local read state to the account's other linked devices.
 
 This is separate from read receipts: it updates our own devices so they
-stay in sync even when remote read receipts are disabled.
+stay in sync even when the configuration disables remote read receipts.
 
 #### Parameters
 
@@ -1126,8 +1126,8 @@ This is account-local state, not sender-facing content.
 
 Sync explicit safety-number verification state to the account's other linked devices.
 
-Only explicit `verified` and cleared-to-`default` states belong here;
-conflict/untrusted state is still derived locally from identity-key changes.
+Only explicit `verified` and cleared-to-`default` states belong here.
+Conflict and untrusted state is still derived locally from identity-key changes.
 
 #### Parameters
 

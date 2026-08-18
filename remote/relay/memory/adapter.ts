@@ -478,7 +478,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
   }
 
   async heartbeat(_deviceId: number): Promise<void> {
-    // No-op in the in-memory adapter; heartbeats do not affect local state.
+    // No-op in the in-memory adapter. Heartbeats do not affect local state.
   }
 
   // ============================================================================
@@ -620,7 +620,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     const deviceKey = this.storageKey(userId, deviceId, identityType);
     const accountKey = this.identityStorageKey(userId, identityType);
 
-    // Identity keys are account-level; registration IDs are device-level.
+    // Identity keys are account-level. Registration IDs are device-level.
     const encodedIdentity = this.identityKeys.get(accountKey);
     const registrationId = this.registrationIds.get(deviceKey);
     if (!encodedIdentity || registrationId === undefined) {
@@ -682,7 +682,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     const kemLastResortPreKey = this.kemLastResortPreKeys.get(deviceKey) || null;
 
     // Cast to branded types - ISignalProtocolRelayServer returns PreKeyBundle with branded types
-    // Adapters handle the casting internally so callers don't need to
+    // Adapters handle the casting internally so callers do not need to
     return cloneRelayValue({
       registrationId,
       deviceId,
@@ -896,7 +896,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
       return { status: 'expired', message: null, expiresAt: null };
     }
 
-    // Expiry is a computed status, never a stored one — reads do not mutate.
+    // Expiry is a computed status, never a stored one. Reads do not mutate.
     // Mirrors the Convex component, where a `patch` before a throw would be
     // rolled back anyway and the cleanup cron deletes expired rows outright.
     if (
@@ -930,7 +930,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     if (!session) {
       throw new Error(`Provisioning session ${sessionId} not found`);
     }
-    // Reject completion of an expired session — including one already in
+    // Reject completion of an expired session. Including one already in
     // `linked_pending_ack`, whose device the cleanup cron is entitled to reap.
     requireLiveProvisioningSession(session, sessionId);
     if (session.status !== 'ready' && session.status !== 'linked_pending_ack') {
@@ -1074,8 +1074,8 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     if (this.failures.shouldRejectAuthorization()) {
       throw new SealedSenderAuthError();
     }
-    // Pass through without validation; callers can override if needed.
-    void auth; // Accept but don't validate in the in-memory relay
+    // Pass through without validation. Callers can override if needed.
+    void auth; // Accept but do not validate in the in-memory relay
     return this.send({
       ...envelope,
       senderUserId: '',
@@ -1096,7 +1096,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     recipientUserIds?: string[],
     clientMessageId?: string
   ): Promise<{ messageId: string; serverTimestamp: number; uuids404: string[] }> {
-    void auth; // Accept but don't validate in the in-memory relay
+    void auth; // Accept but do not validate in the in-memory relay
 
     const { base64ToBytes, bytesToBase64 } = await import('../../../internal/crypto');
     const { asBase64 } = await import('../../../types/utils');
@@ -1285,7 +1285,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
   private getOrCreateIdentity(userId: string): { uuid: string; phoneNumberIdentifier?: string } {
     let identity = this.userIdentities.get(userId);
     if (!identity) {
-      // No phoneNumberIdentifier — matches the username-based (non-phone) app pattern
+      // No phoneNumberIdentifier. Matches the username-based (non-phone) app pattern
       identity = { uuid: crypto.randomUUID() };
       this.userIdentities.set(userId, identity);
     }

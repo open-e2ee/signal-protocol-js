@@ -5,12 +5,12 @@
  * Sender Keys enable efficient O(1) group encryption.
  *
  * A row is the whole `SenderKeyState[]` record for one (group, sender, device)
- * triple, serialized into the `record` column: current state first, then the
- * superseded states the rotation window still needs. Primary key:
+ * triple, serialized into the `record` column. Current state comes first, then
+ * the superseded states the rotation window still needs. Primary key:
  * (groupId, senderId, deviceId).
  *
  * The chain keys and the sender's private signature key are in that column.
- * They stay on the device — the database file is SQLCipher-encrypted with an
+ * They stay on the device. The database file is SQLCipher-encrypted with an
  * application-supplied key, and this material is never sent to a server.
  */
 
@@ -115,14 +115,15 @@ export async function getSenderKeysByGroup(groupId: string): Promise<SenderKey[]
 /**
  * Find the group whose sender key record contains an id, for one sender device.
  *
- * A received group message names its sender key by an opaque `senderKeyId` and
- * carries no group, so this is the receiver's only route back to a group.
+ * A received group message names its sender key by an opaque `senderKeyId`,
+ * and carries no group. This is the receiver's only route back to a group.
  *
  * The lookup is a scan of that sender device's records rather than an index on
- * the id. Records here are stored as plaintext JSON — SQLCipher encrypts the
- * file, not the row — so a scan reads them directly, and it is bounded by the
- * groups shared with that one device. Indexing the ids would mean a second
- * table that can disagree with the records it points at; the correctness that
+ * the id. Records here are stored as plaintext JSON, because SQLCipher
+ * encrypts the file and not the row. A scan therefore reads them directly,
+ * bounded by the groups shared with that one device. Indexing the ids would
+ * mean a second
+ * table that can disagree with the records it points at. The correctness that
  * buys back is worth more than the lookup it saves.
  *
  * Superseded states count as matches. A message encrypted just before a
@@ -409,7 +410,7 @@ export class SenderKey {
     return this.data.record;
   }
 
-  /** Parsed states, current state first; empty if the column is corrupt */
+  /** Parsed states, current state first. Empty if the column is corrupt */
   get states(): SenderKeyState[] {
     return parseSenderKeyRecord(this.data.record);
   }

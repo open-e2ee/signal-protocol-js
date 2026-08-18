@@ -87,7 +87,7 @@ interface SessionMetadataBase {
 /**
  * Uninitialized session state.
  *
- * Session has been created but no key exchange has started.
+ * The session exists, and no key exchange started yet.
  * Only valid operation: initialize()
  */
 export interface UninitializedSession extends SessionMetadataBase {
@@ -155,7 +155,7 @@ export interface ActiveSession extends SessionMetadataBase {
   /** Last activity timestamp */
   lastUsedAt: number;
   /**
-   * Whether we've received at least one message in this session.
+   * Whether we received at least one message in this session.
    *
    * Unacknowledged PreKey sessions expire after 30 days
    * (MAX_UNACKNOWLEDGED_SESSION_AGE).
@@ -168,7 +168,7 @@ export interface ActiveSession extends SessionMetadataBase {
 /**
  * Rekeying session state.
  *
- * Session is undergoing key rotation.
+ * The session rotates its keys.
  * Limited operations until rotation completes.
  *
  * Note: Uses Section 3 variant (plaintext headers + MAC authentication).
@@ -178,7 +178,7 @@ export interface ActiveSession extends SessionMetadataBase {
  */
 export interface RekeyingSession extends Omit<ActiveSession, 'phase'> {
   phase: 'rekeying';
-  /** Old keys being phased out */
+  /** Old keys that the session phases out */
   previousDHr?: PublicKey;
   previousCKr?: ChainKey;
   /** Rekey initiated timestamp */
@@ -188,7 +188,7 @@ export interface RekeyingSession extends Omit<ActiveSession, 'phase'> {
 /**
  * Expired session state.
  *
- * Session has timed out or been explicitly closed.
+ * The session timed out, or the caller closed it explicitly.
  * No operations allowed except archive/delete.
  *
  * Valid operations: archive(), delete()
@@ -248,7 +248,7 @@ export function isRekeying(state: TypedSessionState): state is RekeyingSession {
 }
 
 /**
- * Check if session is expired.
+ * Check whether the session expired.
  */
 export function isExpired(state: TypedSessionState): state is ExpiredSession {
   return state.phase === 'expired';
@@ -273,9 +273,9 @@ export function canDecrypt(state: TypedSessionState): state is ActiveSession | R
 }
 
 /**
- * Check if session is established (can communicate).
+ * Check whether the session can communicate.
  *
- * Active and rekeying sessions are established.
+ * Active and rekeying sessions can communicate.
  */
 export function isEstablished(state: TypedSessionState): state is ActiveSession | RekeyingSession {
   return state.phase === 'active' || state.phase === 'rekeying';
@@ -289,7 +289,7 @@ export function needsInitialization(state: TypedSessionState): state is Uninitia
 }
 
 /**
- * Check if session is waiting for first message.
+ * Check whether the session waits for the first message.
  */
 export function awaitingFirstMessage(state: TypedSessionState): state is PendingSession {
   return state.phase === 'pending';
@@ -342,16 +342,16 @@ export const DEFAULT_SESSION_TIMEOUT_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * Rekey timeout (5 minutes in milliseconds).
  *
- * If rekey doesn't complete within this time, session should error.
+ * If rekey does not complete within this time, session should error.
  */
 export const REKEY_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
- * Check if session has timed out.
+ * Check whether the session timed out.
  *
  * @param state - Session state
  * @param timeout - Timeout duration in ms (default: 30 days)
- * @returns true if session has exceeded timeout
+ * @returns true if the session exceeded the timeout
  */
 export function hasTimedOut(
   state: TypedSessionState,

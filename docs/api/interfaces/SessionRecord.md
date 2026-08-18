@@ -13,12 +13,13 @@ for automatic session convergence. Maintains current session plus archived
 sessions for handling race conditions and out-of-order establishment.
 
 From Signal Protocol:
-"A device might have multiple sessions for the same remote device.
-The Sesame algorithm ensures convergence to a single active session."
+
+> "A device might have multiple sessions for the same remote device.
+> The Sesame algorithm ensures convergence to a single active session."
 
 Session Lookup Architecture:
-1. Sessions are LOOKED UP by ProtocolAddress (userId:deviceId)
-2. Within a SessionRecord, session states are IDENTIFIED by baseKey
+1. A ProtocolAddress (userId:deviceId) LOOKS UP a session
+2. Within a SessionRecord, a baseKey IDENTIFIES a session state
 3. The baseKey is the initiator's ephemeral public key from X3DH/PQXDH
 
 ## See
@@ -33,8 +34,8 @@ https://signal.org/docs/specifications/sesame/
 
 Archived sessions indexed by baseKey for O(1) lookup.
 
-Session states are identified by the initiator's ephemeral public key
-(`baseKey`).
+The initiator's ephemeral public key (`baseKey`) identifies a session
+state.
 
 Used for:
 - Handling race conditions during session establishment
@@ -44,7 +45,7 @@ Used for:
 Key: Base64-encoded baseKey (initiator's ephemeral public key)
 Value: SessionState
 
-Session records are keyed by baseKey for fast lookup and spec-aligned
+baseKey keys session records for fast lookup and spec-aligned
 session recovery behavior.
 
 ***
@@ -56,7 +57,7 @@ session recovery behavior.
 Current active session state.
 
 This is the session used for encrypting new messages.
-May be null if all sessions have been archived (rare edge case).
+May be null when no session remains outside the archive (rare edge case).
 
 ***
 
@@ -76,5 +77,5 @@ Useful for UI, logging, and session management.
 
 Protocol version for this persisted session record shape.
 
-The current format is version 4. Older versions are rejected and force
+The current format is version 4. The store rejects older versions and forces
 session re-establishment instead of compatibility migration.

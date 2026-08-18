@@ -60,7 +60,7 @@ export interface DecryptedEnvelope {
   timestamp: number;
   /** Relay server timestamp when available */
   serverTimestamp?: number;
-  /** When the message was received locally */
+  /** When the device received the message locally */
   receivedAt: number;
   /** Whether this is a group message */
   isGroup: boolean;
@@ -69,7 +69,7 @@ export interface DecryptedEnvelope {
 }
 
 /**
- * Event hooks that can be registered with SignalProtocolClient
+ * Event hooks that SignalProtocolClient accepts
  *
  * All hooks are optional and support both sync and async implementations.
  */
@@ -93,9 +93,9 @@ export interface SignalProtocolClientHooks {
   onSessionEstablished?: (sessionId: string, remoteAddress: string) => void | Promise<void>;
 
   /**
-   * Called after a session is deleted
+   * Runs after the client deletes a session
    *
-   * @param sessionId - The session identifier that was deleted
+   * @param sessionId - The identifier of the deleted session
    *
    * @example
    * ```typescript
@@ -110,13 +110,13 @@ export interface SignalProtocolClientHooks {
   onSessionDeleted?: (sessionId: string) => void | Promise<void>;
 
   /**
-   * Called after a session is archived (moved to inactive list)
+   * Runs after the client archives a session (moved to inactive list)
    *
    * Stale-device recovery archives the session so delayed messages can still
    * attempt decryption.
    * Per SESAME §3.2: "previously active session is moved to the head of the inactive sessions list"
    *
-   * @param sessionId - The session identifier that was archived
+   * @param sessionId - The identifier of the archived session
    *
    * @example
    * ```typescript
@@ -130,7 +130,7 @@ export interface SignalProtocolClientHooks {
   /**
    * Called after a key rotation completes successfully
    *
-   * @param keyType - Type of key that was rotated
+   * @param keyType - Type of the rotated key
    *
    * @example
    * ```typescript
@@ -255,13 +255,13 @@ export interface SignalProtocolClientHooks {
   onKeysCleanedUp?: (sessionId: string, removedCount: number) => void | Promise<void>;
 
   /**
-   * Called when a delivery receipt is received
+   * Runs when the client receives a delivery receipt
    *
    * Allows the app to update message status from 'sent' to 'delivered'.
    * The timestamps array contains server timestamps of delivered messages.
    *
    * @param senderId - The user who sent the delivery receipt (message recipient)
-   * @param timestamps - Array of message timestamps that were delivered
+   * @param timestamps - Array of message timestamps for the delivered messages
    *
    * @example
    * ```typescript
@@ -275,13 +275,13 @@ export interface SignalProtocolClientHooks {
   onDeliveryReceiptReceived?: (senderId: string, timestamps: number[]) => void | Promise<void>;
 
   /**
-   * Called when a read receipt is received
+   * Runs when the client receives a read receipt
    *
    * Allows the app to update message status from 'delivered' to 'read'.
    * The timestamps array contains server timestamps of read messages.
    *
    * @param senderId - The user who sent the read receipt (message recipient who viewed messages)
-   * @param timestamps - Array of message timestamps that were read
+   * @param timestamps - Array of message timestamps for the read messages
    *
    * @example
    * ```typescript
@@ -295,13 +295,13 @@ export interface SignalProtocolClientHooks {
   onReadReceiptReceived?: (senderId: string, timestamps: number[]) => void | Promise<void>;
 
   /**
-   * Called when a viewed receipt is received (e.g., view-once media)
+   * Runs when the client receives a viewed receipt (e.g., view-once media)
    *
    * Allows the app to update message status to 'viewed'.
    * The timestamps array contains server timestamps of viewed messages.
    *
    * @param senderId - The user who sent the viewed receipt (message recipient who viewed media)
-   * @param timestamps - Array of message timestamps that were viewed
+   * @param timestamps - Array of message timestamps for the viewed messages
    *
    * @example
    * ```typescript
@@ -315,13 +315,13 @@ export interface SignalProtocolClientHooks {
   onViewedReceiptReceived?: (senderId: string, timestamps: number[]) => void | Promise<void>;
 
   /**
-   * Called when a typing indicator is received
+   * Runs when the client receives a typing indicator
    *
-   * Allows the app to update UI to show who is typing.
+   * Allows the app to update UI with the users who type.
    * Typing indicators are transient - they auto-expire after 15 seconds.
    *
    * @param senderId - The user who sent the typing indicator
-   * @param conversationId - The conversation where typing is occurring
+   * @param conversationId - The conversation the typing indicator belongs to
    * @param action - Whether user STARTED or STOPPED typing
    *
    * @example
@@ -370,7 +370,7 @@ export async function callHook<T extends HookName>(
       Reflect.apply(hook as (...hookArgs: unknown[]) => unknown, undefined, args as unknown[])
     );
   } catch (error) {
-    // Log hook error but don't let it break core functionality
+    // Log hook error but do not let it break core functionality
     console.error(`Hook ${hookName} failed:`, error);
   }
 }

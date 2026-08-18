@@ -31,7 +31,7 @@ Content hint for retry behavior per Signal Protocol.
 - RESENDABLE: Content messages - can trigger retry requests
 - DEFAULT: Standard handling
 
-If not set, behavior is inferred from messageType via IMPLICIT_ENVELOPE_TYPES.
+If not set, the client infers behavior from messageType via IMPLICIT_ENVELOPE_TYPES.
 
 ***
 
@@ -50,8 +50,8 @@ Server-assigned message ID
 Message type for filtering (ciphertext, prekey_bundle, etc.).
 
 `sender_key` marks group traffic: the payload is a framed
-SenderKeyMessage. It names no group — no envelope does — and the group is
-resolved from the frame's opaque distribution identifier against the
+SenderKeyMessage. It names no group (no envelope does), and the receiver
+resolves the group from the frame's opaque distribution identifier against the
 local sender key store.
 
 ***
@@ -76,7 +76,7 @@ Sender's user ID (Convex _id)
 
 > `optional` **serverTimestamp?**: `number`
 
-Server timestamp when message was received
+Server timestamp when the relay received the message
 
 ***
 

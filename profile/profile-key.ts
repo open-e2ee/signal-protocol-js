@@ -105,7 +105,7 @@ export class ProfileKeyRotationError extends Error {
 /**
  * Get the current user's profile key from the configured profile-key storage.
  *
- * The default React Native path uses `expo-secure-store`; the browser fallback
+ * The default React Native path uses `expo-secure-store`. The browser fallback
  * uses JavaScript-accessible localStorage and should be replaced when the host
  * requires a stronger storage boundary.
  *
@@ -176,7 +176,7 @@ export async function getOwnProfileKeyBase64(): Promise<string> {
  * 2. Re-encrypt and re-upload avatar with new key (mustReuploadAvatar: true)
  * 3. Only AFTER successful upload, store new key in secure storage
  *
- * This ensures the blocked user can't decrypt any future profile fetches.
+ * The blocked user therefore cannot decrypt any future profile fetches.
  *
  * @param convex - Convex client for avatar re-upload
  * @returns New profile key (base64)
@@ -260,7 +260,7 @@ export async function rotateOwnProfileKey(
  * Re-encrypt current avatar with new profile key
  *
  * Reference pattern: Must re-upload avatar immediately during rotation
- * so blocked user can't decrypt any future profile fetches.
+ * so blocked user cannot decrypt any future profile fetches.
  *
  * If user has no avatar, this is a no-op.
  *
@@ -287,8 +287,9 @@ async function reencryptAndUploadAvatar(
   });
 
   if (!downloadUrl) {
-    // Must throw - if we can't re-encrypt the avatar, we can't complete rotation
-    // Returning silently would leave avatar encrypted with old key while new key is stored
+    // Must throw. If we cannot re-encrypt the avatar, we cannot complete rotation.
+    // Returning silently would leave the avatar encrypted with the old key while
+    // the new key is stored.
     logger.error('Could not get download URL for own avatar during rotation', {
       category: 'Profile',
       data: { avatarKey },
@@ -301,7 +302,7 @@ async function reencryptAndUploadAvatar(
 
   // 3. Decrypt with OLD key
   if (!oldKey) {
-    // This shouldn't happen - if we have an avatar, we should have a key
+    // This should not happen - if we have an avatar, we should have a key
     logger.error('No old profile key for avatar decryption during rotation', {
       category: 'Profile',
     });

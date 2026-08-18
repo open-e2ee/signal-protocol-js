@@ -27,7 +27,7 @@ This is the interface that local store adapters should implement.
 > **acceptContactIdentityRotation**(`address`, `identity`, `identityType?`, `suppliedCommitment?`): `Promise`\<[`ContactIdentityRecord`](../namespaces/keys/interfaces/ContactIdentityRecord.md)\>
 
 Explicitly accept a changed tuple and atomically delete every session for
-that user; the previous tuple becomes rollback history.
+that user. The previous tuple becomes rollback history.
 
 #### Parameters
 
@@ -154,7 +154,7 @@ Delete expired sessions (sessions older than MAXRECV threshold).
 
 Clear all encryption keys (use with caution!).
 
-This should only be used for:
+Use this only for:
 - Account deletion
 - Reset after security incident
 - Local development
@@ -281,7 +281,7 @@ Counts of deleted prekeys by type
 
 > **deleteAllSenderKeysForGroup**(`groupId`): `Promise`\<`number`\>
 
-Delete all sender keys for a group (when group is deleted).
+Delete all sender keys for a group (when the caller deletes the group).
 
 #### Parameters
 
@@ -403,7 +403,7 @@ Delete all message records for a session
 
 Delete oldest skipped keys to make room for new ones.
 
-Called when maxSkippedKeys limit is reached.
+The store calls this when the chain reaches the maxSkippedKeys limit.
 
 #### Parameters
 
@@ -633,7 +633,7 @@ Get all user IDs with SESAME records.
 
 Get a contact's saved identity key.
 
-Returns null if no identity key has been saved for this address.
+Returns null if the store holds no identity key for this address.
 
 #### Parameters
 
@@ -786,7 +786,7 @@ The EC signed prekey, or null if not found
 > **getEcSignedPreKeyMaxId**(`identityType?`): `Promise`\<`number`\>
 
 Get the maximum EC signed prekey ID in storage.
-Used to generate new keyIds that won't collide with existing ones.
+Used to generate new keyIds that will not collide with existing ones.
 
 #### Parameters
 
@@ -935,7 +935,7 @@ Retrieve Kyber prekey.
 > **getKyberPreKeyMaxId**(`identityType?`): `Promise`\<`number`\>
 
 Get the maximum Kyber prekey ID in storage.
-Used to generate new keyIds that won't collide with existing ones.
+Used to generate new keyIds that will not collide with existing ones.
 
 #### Parameters
 
@@ -960,7 +960,7 @@ The highest Kyber prekey ID, or 0 if none exist
 Get our local registration ID.
 
 Registration ID is a random 16-bit integer generated once per install.
-Used to detect session resets when app is reinstalled.
+Detects session resets when the user reinstalls the app.
 
 #### Parameters
 
@@ -986,7 +986,7 @@ Used to detect session resets when app is reinstalled.
 
 Get a message record by session and timestamp (PRIMARY lookup method).
 
-Per Signal Protocol, messages are identified by client timestamp.
+Per Signal Protocol, the client timestamp identifies a message.
 
 #### Parameters
 
@@ -1063,7 +1063,7 @@ Retrieve sender key state for a group member device.
 
 Retrieve all sender key states (current + previous) for a group member device.
 
-First element is the current state; remaining are previous states.
+First element is the current state. The remaining entries are previous states.
 
 #### Parameters
 
@@ -1311,10 +1311,10 @@ true if session exists
 
 > **isTrustedIdentity**(`address`, `identity`, `direction`, `identityType?`): `Promise`\<`boolean`\>
 
-Check if a contact's identity key is trusted.
+Check whether the store trusts a contact's identity key.
 
 Trust verification behavior depends on direction:
-- SENDING: Stricter - don't send to untrusted identities
+- SENDING: Stricter - do not send to untrusted identities
 - RECEIVING: More permissive - allow receiving but warn user
 
 From Signal Protocol:
@@ -1338,7 +1338,7 @@ Complete composite identity candidate
 
 [`TrustDirection`](../enumerations/TrustDirection.md)
 
-Whether we're sending or receiving
+Whether the local device sends or receives
 
 ##### identityType?
 
@@ -1350,7 +1350,7 @@ ACI or PNI trust namespace
 
 `Promise`\<`boolean`\>
 
-true if identity is trusted
+true if the store trusts the identity
 
 #### Inherited from
 
@@ -1364,8 +1364,8 @@ true if identity is trusted
 
 Mark a Kyber prekey as used.
 
-Kyber prekeys can be reused (unlike one-time prekeys) but should be
-tracked to ensure proper rotation.
+Callers may reuse Kyber prekeys (unlike one-time prekeys), and the store
+must track them so rotation stays correct.
 
 #### Parameters
 
@@ -1373,7 +1373,7 @@ tracked to ensure proper rotation.
 
 `number`
 
-ID of the Kyber prekey that was used
+ID of the Kyber prekey the session used
 
 ##### signedPreKeyId
 
@@ -1407,7 +1407,7 @@ Base key bytes for the session
 
 > **removeEcOneTimePreKey**(`preKeyId`, `identityType?`): `Promise`\<`void`\>
 
-Remove an EC one-time prekey after it has been used.
+Remove an EC one-time prekey after a session uses it.
 
 #### Parameters
 
@@ -1470,9 +1470,9 @@ The key ID to remove
 
 > **removeKemOneTimePreKey**(`keyId`, `identityType?`): `Promise`\<`void`\>
 
-Remove a one-time KEM prekey after it has been used.
+Remove a one-time KEM prekey after a session uses it.
 
-CRITICAL: Must be called immediately after successful decapsulation
+CRITICAL: Call this immediately after successful decapsulation
 to provide per-session post-quantum forward secrecy.
 
 #### Parameters
@@ -1507,13 +1507,13 @@ Resolve the group a sender key belongs to, given only the identifier that
 travels on the wire.
 
 A received group message names its sender key by `senderKeyId` and nothing
-else — the identifier is opaque, and the envelope no longer carries a
+else. The identifier is opaque, and the envelope no longer carries a
 group. This is the receiver's only way back to a group, so it is what
 decides which sender key state to decrypt against.
 
 Searches previous states as well as current ones. A message encrypted just
 before a rotation is still in flight when the rotation lands, and its
-`senderKeyId` names the superseded key; resolving only against current
+`senderKeyId` names the superseded key. Resolving only against current
 state would strand exactly the messages the rotation window exists to
 cover.
 
@@ -1555,7 +1555,7 @@ The group ID, or null if this device has no such sender key
 
 Save a contact's identity key and detect changes.
 
-This is used for Trust On First Use (TOFU) and post-pinning change
+This supports Trust On First Use (TOFU) and post-pinning change
 detection. Returns whether either composite component changed.
 
 #### Parameters
@@ -1663,7 +1663,7 @@ This updates DeviceRecord.session.
 
 Set our local registration ID.
 
-Should only be called once during initialization.
+Call this only once, during initialization.
 
 #### Parameters
 
@@ -1771,8 +1771,8 @@ Store EC one-time prekeys.
 
 Store EC signed prekey.
 
-When storing a new EC signed prekey (rotation), the old one should be
-archived (not deleted) to handle in-flight messages.
+When storing a new EC signed prekey (rotation), archive the old one
+instead of deleting it, to handle in-flight messages.
 
 #### Parameters
 
@@ -1944,7 +1944,7 @@ Store sender key state for a group member device.
 
 Store all sender key states (current + previous) for a group member device.
 
-The first element is the current state; remaining are previous states
+The first element is the current state. The remaining entries are previous states
 retained during the rotation window for decrypting in-flight messages.
 
 Per Sender Keys spec Section 5.1: "Implementations MUST store sender key
@@ -2025,8 +2025,8 @@ SessionRecord containing current and archived sessions
 
 Store skipped message key for out-of-order decryption.
 
-When chain is advanced past a message (gap in chainIndex),
-store the derived key so the skipped message can be decrypted later.
+When the chain advances past a message (gap in chainIndex),
+store the derived key so a later call can decrypt the skipped message.
 
 #### Parameters
 

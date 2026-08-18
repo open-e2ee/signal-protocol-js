@@ -67,7 +67,7 @@ export async function generateRandomBytes(size: number): Promise<Uint8Array> {
  * Generate a random RFC 4122 version 4 UUID.
  *
  * Built from {@link generateRandomBytes} rather than `crypto.randomUUID`, which
- * is absent from some React Native runtimes this package supports — the same
+ * is absent from some React Native runtimes this package supports, the same
  * reason `generateRandomBytes` resolves its source across three runtimes. All
  * 122 free bits come from the secure random source.
  */

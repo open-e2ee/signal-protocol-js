@@ -24,11 +24,16 @@ const remoteObjectStore = s3ObjectStore({
 });
 ```
 
-The broker must authenticate the caller, make upload reservation idempotent,
-generate opaque object identifiers and private provider keys, restrict signed
-operations to the reserved key and expected method, and enforce content length
-and content type. Bucket names, credentials, and unrestricted SDK clients must
-not cross into the application client.
+The broker must:
+
+- authenticate the caller
+- make upload reservation idempotent
+- generate opaque object identifiers and private provider keys
+- restrict signed operations to the reserved key and expected method
+- enforce content length and content type
+
+Bucket names, credentials, and unrestricted SDK clients must not cross into the
+application client.
 
 See the [object-store guide](../README.md) and
 [media guide](../../../media/README.md).

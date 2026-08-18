@@ -11,8 +11,8 @@ boundaries explicitly through `createSignalProtocolClient()`.
 
 ## Creation
 
-`storage` is required. `relay` is optional for local use and expected for real
-messaging. `protocol.postQuantum` and `protocol.braid` both default to
+Every client needs `storage`. Local use can omit `relay`, and real messaging
+needs it. `protocol.postQuantum` and `protocol.braid` both default to
 `'required'`.
 
 ```ts
@@ -157,8 +157,8 @@ const result = await rotateKeysHeadless(relay, userId, deviceId, { storage });
 ## Linked Devices
 
 - device `1` is the primary device
-- devices `2-5` are linked devices
-- linked devices must already have provisioned identity material in the provided storage before `SignalProtocolClient.create(..., { deviceId: 2 })`
+- linked devices use device IDs `2-5`
+- provision linked-device identity material into the provided storage before `SignalProtocolClient.create(..., { deviceId: 2 })`
 
 ## Notes
 
@@ -166,4 +166,4 @@ const result = await rotateKeysHeadless(relay, userId, deviceId, { storage });
 - `createSignalProtocolClient()` is the preferred generic composition helper for app
   setup code.
 - App-specific React hooks and DB-backed view-state helpers should stay outside this module.
-- Use the root package or explicit subpaths for utilities; do not import from `internal/*`.
+- Use the root package or explicit subpaths for utilities. Do not import from `internal/*`.

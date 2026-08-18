@@ -224,7 +224,7 @@ Provides integration points for applications to react to:
 - Errors and cleanup operations
 
 All hooks are optional and support both sync and async implementations.
-Hook errors are caught internally and won't affect core functionality.
+Hook errors are caught internally and will not affect core functionality.
 
 Common use cases:
 - Cache invalidation (ContentManager, React Query)
@@ -283,7 +283,7 @@ const signal = await SignalProtocolClient.create(userId, {
 
 Key refresh interval in milliseconds.
 
-Controls how often signed prekeys and Kyber (last-resort) prekeys are rotated.
+Controls how often the client rotates signed prekeys and Kyber (last-resort) prekeys.
 Per PQXDH specification Section 3.2, both key types use the same rotation
 schedule for synchronized post-quantum security.
 
@@ -388,7 +388,7 @@ const signal = await SignalProtocolClient.create(userId, {
 
 Maximum allowed prekey age in milliseconds.
 
-If prekeys exceed this age, message sending should be blocked to force
+If prekeys exceed this age, the app should block message sending to force
 key rotation. Provides a safety buffer above keyRefreshIntervalMs.
 
 With the default two-day refresh interval, the default maximum age leaves
@@ -427,10 +427,10 @@ https://signal.org/docs/specifications/pqxdh/#publishing-keys
 
 App-owned media lifecycle callbacks for the SignalProtocolClient media queue.
 
-The queue itself is persisted through the existing Signal Protocol local storage
-adapter. These callbacks keep local bytes, plaintext caches, and product
-state in the app layer where they can share file permissions, UI state, and
-app database ownership.
+The existing Signal Protocol local storage adapter persists the queue
+itself. These callbacks keep local bytes, plaintext caches, and product
+state in the app layer. There they can share file permissions, UI state,
+and app database ownership.
 
 #### Example
 
@@ -459,10 +459,10 @@ const signal = await createSignalProtocolClient({
 
 > `optional` **onGroupSenderKeyRotated?**: (`groupId`, `newGeneration`) => `void`
 
-Called when a group sender key is rotated.
+Runs after the client rotates a group sender key.
 
 Useful for logging, analytics, or triggering UI updates when
-sender keys are rotated due to membership changes.
+the client rotates sender keys after membership changes.
 
 #### Parameters
 
@@ -470,7 +470,7 @@ sender keys are rotated due to membership changes.
 
 `string`
 
-The group whose sender key was rotated
+The group whose sender key changed
 
 ##### newGeneration
 
@@ -504,7 +504,7 @@ const signal = await SignalProtocolClient.create(userId, {
 
 > `optional` **onPreKeyLow?**: (`remaining`) => `void`
 
-Callback when one-time prekeys are running low
+Callback for the moment one-time prekeys run low
 
 Called when prekey count drops below the threshold (default: 50).
 Use this to trigger prekey replenishment to prevent session
@@ -574,7 +574,7 @@ const signal = await createSignalProtocolClient({
 
 Prekey check throttle interval in milliseconds.
 
-Controls how often prekey count checks are performed on app activation.
+Controls how often the client checks the prekey count on app activation.
 Prevents unnecessary server queries when the app is repeatedly foregrounded.
 
 #### Default
@@ -645,19 +645,19 @@ Double Ratchet algorithm configuration
 
 Sealed Sender configuration for anonymous message delivery.
 
-When configured, messages are wrapped with sealed sender encryption
+When configured, the client wraps messages in sealed sender encryption
 that hides the sender's identity from the server. The recipient can
 still verify the sender via the embedded certificate.
 
 Requires:
 - A relay deployment secret (`OE_GROUPS_SERVER_SECRET`), from which the
-  certificate signing keys are derived — there is no separate signing-key
+  relay derives the certificate signing keys. There is no separate signing-key
   variable.
 - The deployment's Ed25519 sender-certificate root public key pinned in
   `trustRoots` at build time. Print it with `npx oe-groups trust-root`,
   which reports it as `sealed sender trust root` alongside the group trust
-  root. Never fetch it from a relay at runtime: a relay that can choose the
-  root it is validated against can mint certificates for any sender.
+  root. Never fetch it from a relay at runtime. A relay that can choose
+  the root that validates it can mint certificates for any sender.
 
 With `trustRoots` empty, inbound sealed-sender validation stays disabled
 and sends fall back to identified delivery, which deanonymizes the sender

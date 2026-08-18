@@ -154,7 +154,7 @@ export function parseSignalProtocolMessageEnvelope(bytes: Uint8Array): {
  *
  * Concatenates: `[version_byte] [protobuf_bytes]`
  *
- * No trailing MAC — the inner SignalProtocolMessage (in the `message` field)
+ * No trailing MAC. The inner SignalProtocolMessage (in the `message` field)
  * carries its own MAC.
  *
  * @param protobufBytes - Protobuf-encoded PreKeySignalProtocolMessage (from `encodePreKeySignalProtocolMessage()`)

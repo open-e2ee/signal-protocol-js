@@ -8,7 +8,7 @@
 
 ML-KEM-1024 prekey (historical public name, rotates weekly)
 
-`KyberPreKey` is retained as an API identifier, but the bytes are standardized
+`KyberPreKey` survives as an API identifier, but the bytes are standard
 ML-KEM-1024 with the profile's mandatory `0x0A` serialization.
 
 ## Properties

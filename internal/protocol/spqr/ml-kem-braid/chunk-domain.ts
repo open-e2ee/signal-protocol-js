@@ -4,10 +4,10 @@
  * The pinned SPQR reference stores `Chunk.index` as a
  * `u16`, accepts every value through `u16::MAX`, and uses that value directly
  * as the GF(2^16) evaluation point. GF(2^16) therefore supplies 65,536 chunk
- * indexes, 0...65,535. The encoder cursor is the next index to emit, so its
- * terminal value is one past the maximum chunk index.
+ * indexes, numbered 0 through 65,535 inclusive. The encoder cursor is the next
+ * index to emit, so its terminal value is one past the maximum chunk index.
  *
- * The pinned reference's `next_chunk` casts its wider cursor to `u16`; another
+ * The pinned reference's `next_chunk` casts its wider cursor to `u16`. Another
  * call after index 65,535 could therefore wrap to a duplicate index zero. This
  * SDK deliberately fails closed at the terminal cursor instead of reproducing
  * that unchecked wrap. It does not exclude any distinct GF(2^16) point.

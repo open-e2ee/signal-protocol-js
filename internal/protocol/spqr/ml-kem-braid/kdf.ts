@@ -19,7 +19,7 @@ import { concatBytes, secureZeroBytes } from '../../../crypto/utils';
  *
  * Uses HKDF with profile parameters matching the profile:
  *   IKM  = root_key || update_key  (64 bytes concatenated)
- *   Salt = [0; 32]                 (32 zero bytes)
+ *   Salt = `[0; 32]`                 (32 zero bytes)
  *   Info = PROTOCOL_INFO || ":Authenticator Update" || epoch_be_bytes
  *
  * @param root_key - Current root key (32 bytes)
@@ -47,7 +47,7 @@ export async function KDF_AUTH(
 
   // Per profile:
   //   IKM  = root_key || update_key (concatenated)
-  //   Salt = [0u8; 32] (32 zero bytes)
+  //   Salt = `[0u8; 32]` (32 zero bytes)
   const ikm = concatBytes(root_key, update_key);
   const salt = new Uint8Array(32);
 

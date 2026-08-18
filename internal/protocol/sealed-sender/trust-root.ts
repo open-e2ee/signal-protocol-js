@@ -1,17 +1,18 @@
 /**
  * Sealed-sender certificate trust root for one relay deployment.
  *
- * The relay signs sender certificates with an Ed25519 key pair derived from
- * the same 32-byte deployment secret that seeds the group server parameters,
- * domain-separated from the group signing key — and from each other — by
- * distinct KDF labels. Clients verify inbound sealed-sender certificates
+ * The relay signs sender certificates with an Ed25519 key pair. That key pair
+ * derives from the same 32-byte deployment secret that seeds the group server
+ * parameters. Distinct KDF labels domain-separate the derived keys from the
+ * group signing key, and from each other. Clients verify inbound
+ * sealed-sender certificates
  * against the **root** public key, which they pin at build time. It is never
  * discovered from a relay at runtime.
  *
  * This module is the single definition of that derivation. The relay backend
- * derives signing keys from it and the `oe-groups trust-root` command derives
- * the pinned public key from it, so an operator's printed root and the key the
- * deployment actually signs with cannot drift apart.
+ * derives signing keys from it, and the `oe-groups trust-root` command derives
+ * the pinned public key from it. An operator's printed root and the key the
+ * deployment actually signs with therefore cannot drift apart.
  */
 
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -28,8 +29,8 @@ const textEncoder = new TextEncoder();
 /**
  * Encode a scalar as 32 big-endian bytes.
  *
- * The width is fixed rather than minimal: a length-varying encoding would
- * make the KDF input ambiguous and leak the scalar's magnitude through the
+ * The width is fixed rather than minimal. A length-varying encoding would
+ * make the KDF input ambiguous, and leak the scalar's magnitude through the
  * derived key's provenance.
  */
 export function scalarBytes(value: bigint): Uint8Array {

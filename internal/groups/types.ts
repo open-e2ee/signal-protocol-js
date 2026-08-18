@@ -63,9 +63,9 @@ export interface EncryptedMember {
   /** Credential presentation bytes. */
   presentation: Uint8Array;
   joinedAtVersion: number;
-  /** Encrypted blob — decrypts to UTF-8 string. */
+  /** Encrypted blob. Decrypts to UTF-8 string. */
   labelEmoji: Uint8Array;
-  /** Encrypted blob — decrypts to UTF-8 string. */
+  /** Encrypted blob. Decrypts to UTF-8 string. */
   labelString: Uint8Array;
 }
 
@@ -235,7 +235,7 @@ export interface DecryptedAddPendingMember {
   role: MemberRole;
   addedByAci?: Uint8Array;
   timestamp?: number;
-  /** Locally preserved ciphertext; not a distinct wire field. */
+  /** Locally preserved ciphertext. It is not a distinct wire field. */
   serviceIdCipherText?: Uint8Array;
   /** The target could not be safely decrypted and is inert under §9.5. */
   quarantined?: true;
@@ -325,7 +325,7 @@ export interface DecryptedModifyMemberLabel {
 /**
  * Decrypted group state. Matches DecryptedGroup in DecryptedGroups.proto.
  *
- * This is the canonical local representation of group state. It is derived
+ * This holds the canonical local view of group state. It derives
  * from EncryptedGroup by decrypting with GroupSecretParams.
  */
 export interface DecryptedGroup {

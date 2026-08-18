@@ -115,7 +115,7 @@ function parseEnvelope(envelope: Uint8Array): {
   offset += 1;
 
   // The envelope is exactly its fields. Trailing bytes would make the format
-  // non-canonical — two distinct envelopes parsing to the same content.
+  // non-canonical. Two distinct envelopes parsing to the same content.
   if (offset !== envelope.length) {
     throw new Error(GENERIC_ERROR);
   }
@@ -205,7 +205,7 @@ export async function unsealV2(
 
     // ========================================================================
     // Step 3: Verify ephemeral public key consistency
-    // This authenticates the XOR decryption - if M was wrong, derived key won't match
+    // This authenticates the XOR decryption - if M was wrong, derived key will not match
     // ========================================================================
     const derivedEphemeralPrivate = await deriveEphemeralPrivateFromM(M);
     toZero.push(derivedEphemeralPrivate);
@@ -238,9 +238,9 @@ export async function unsealV2(
     const { certificate, message, contentType, contentHint } = parseEnvelope(envelope);
 
     // ========================================================================
-    // Step 7: Verify authentication tag (identity-to-identity ECDH)
-    // Now that we have sender's identity from certificate, verify auth tag
-    // This binds the sender's identity to the message
+    // Step 7: Verify authentication tag (identity-to-identity ECDH).
+    // Now that we have the sender's identity from the certificate, verify the
+    // auth tag. This binds the sender's identity to the message.
     // ========================================================================
     const senderIdentityPublic = base64ToBytes(certificate.senderIdentityKey);
 

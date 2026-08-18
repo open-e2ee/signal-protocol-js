@@ -8,7 +8,7 @@
 
 The public counterpart of [ServerRootKeyPair](ServerRootKeyPair.md).
 
-Verifying issuance must be done with a [ServerDerivedPublicKey](ServerDerivedPublicKey.md).
+Verify issuance with a [ServerDerivedPublicKey](ServerDerivedPublicKey.md).
 
 ## Constructors
 

@@ -224,7 +224,7 @@ export interface IGroupServer {
   /**
    * Get encrypted group state.
    *
-   * When `version` is supplied, the server must return that exact historical
+   * When the caller supplies `version`, the server must return that exact historical
    * snapshot or null. Versioned reads make the post-join baseline race-safe:
    * clients must not jump over unverified changes to a newer snapshot.
    */
@@ -244,11 +244,11 @@ export interface IGroupServer {
   /**
    * Get one page of the authorized change log after a historical version.
    *
-   * Authorization is evaluated at the `fromVersion` snapshot, and the
-   * requester must be a member there (S10; S10a governs how a refused
+   * Authorization runs at the `fromVersion` snapshot, and the
+   * requester must be a member there (S10, and S10a governs how a refused
    * pending requester advances instead). The page includes the first
    * transition whose post-state drops the requester from `members`, then
-   * stops; a requester who is not a member at that snapshot is refused.
+   * stops. The server refuses a requester who is not a member at that snapshot.
    * `hasMore` signals a page cut for size, resumable from the last served
    * version.
    */
@@ -288,8 +288,8 @@ export interface GroupChangeLogEntry {
  * One page of the change log.
  *
  * The log is served in bounded pages so one request cannot be made to carry
- * a group's whole history. `hasMore` is true only when the server stopped
- * for size with the requester still readable — the client resumes from the
+ * a group's whole history. The `hasMore` flag is true only when the server
+ * stopped for size with the requester still readable. The client resumes from the
  * version of the last entry served. A walk that ends at the log's tip, or
  * at the transition that revokes the requester, is complete and says so.
  */
@@ -315,7 +315,7 @@ export type OnSenderKeyRotation = (groupId: GroupId) => Promise<void>;
  *
  * Called by the manager when members are added, removed, or banned.
  * The implementation should delegate to the app-owned endorsement cache adapter.
- * Non-fatal — endorsements are lazily refreshed on next send.
+ * Non-fatal. Endorsements are lazily refreshed on next send.
  */
 export type OnEndorsementsInvalidated = (groupId: string) => Promise<void>;
 
@@ -373,7 +373,7 @@ export interface PresentedGroupMemberInput {
   role?: MemberRole;
 }
 
-/** A target invited without a profile key; they present when accepting. */
+/** A target invited without a profile key. They present when accepting. */
 export interface InvitedGroupMemberInput {
   serviceIdBytes: Uint8Array;
   role?: MemberRole;
@@ -572,7 +572,7 @@ export class GroupManager {
    * relay.refreshGroupSendEndorsements(). Safe because:
    *  - Credential is day-cached (one server round-trip per UTC day max)
    *  - Each presentation uses fresh randomness → unlinkable
-   *  - No secret material is exposed; only the ZK proof + group public params
+   *  - No secret material is exposed. Only the ZK proof + group public params
    */
   async getAuthorization(rawGroupId: string): Promise<GroupAuthorization> {
     const secretParams = await this.getSecretParams(rawGroupId);
@@ -648,9 +648,9 @@ export class GroupManager {
    * Execute a group server operation with one credential-refresh retry.
    * On `UNAUTHORIZED`, clears the credential cache and retries once.
    *
-   * This is an SDK transport convenience, not specified behaviour: day-aligned
-   * auth credentials can expire mid-flight, and one refresh is cheaper than
-   * surfacing a spurious authorization failure.
+   * This is an SDK transport convenience, not specified behaviour.
+   * Day-aligned auth credentials can expire mid-flight, and one refresh is
+   * cheaper than surfacing a spurious authorization failure.
    */
   private async withAuthRetry<T>(
     rawGroupId: string,
@@ -674,14 +674,14 @@ export class GroupManager {
    * Invalidate endorsement cache for a group (non-fatal).
    *
    * Called after membership changes. Failures are logged but do not
-   * propagate — endorsements are lazily refreshed on next send.
+   * propagate. Endorsements are lazily refreshed on next send.
    */
   private async invalidateEndorsements(rawGroupId: string): Promise<void> {
     if (!this.onEndorsementsInvalidated) return;
     try {
       await this.onEndorsementsInvalidated(rawGroupId);
     } catch {
-      // Non-fatal — endorsements will be refreshed on next send
+      // Non-fatal. Endorsements will be refreshed on next send
     }
   }
 
@@ -827,7 +827,7 @@ export class GroupManager {
         this.server.createGroup(secretParams.groupId, serialized, auth)
       );
     } catch (err) {
-      // Clean up orphan master key — server doesn't have this group
+      // Clean up orphan master key. Server does not have this group
       await this.store.deleteMasterKey(groupIdHex);
       throw err;
     }
@@ -910,11 +910,11 @@ export class GroupManager {
       }
 
       // A pending principal holds an entitlement to the current state, not a
-      // tenure: the server refuses them the change log outright, and C1/C3's
+      // tenure. The server refuses them the change log outright. C1/C3's
       // verified-transition requirement starts at the baseline their
       // acceptance will establish, not at the invitation (S10a). So they
       // catch up the way the reference ecosystem's clients do when the
-      // server does not recognize them as a member — a fresh signed
+      // server does not recognize them as a member. A fresh signed
       // snapshot, verified and installed whole.
       if (!isMember(cached!, this.aci.uuid)) {
         let result: GroupSnapshot | null;
@@ -946,7 +946,7 @@ export class GroupManager {
 
       // Once a member has a baseline it may advance only through
       // individually verified transitions. A full snapshot must never bypass
-      // a bad or missing log entry (C1/C3). The log arrives in pages; each
+      // a bad or missing log entry (C1/C3). The log arrives in pages. Each
       // page resumes from the last verified revision, so an aborted sync
       // resumes exactly where the applied prefix ends.
       let state = cached!;
@@ -959,7 +959,7 @@ export class GroupManager {
         }
         if (!page.hasMore) break;
         // hasMore with an empty page is a server that claims progress it
-        // did not make; looping on it would spin forever, and breaking
+        // did not make. Looping on it would spin forever, and breaking
         // would report a stale state as current.
         if (page.entries.length === 0) {
           throw new Error(
@@ -1384,7 +1384,7 @@ export class GroupManager {
    *
    * The pending entry carries no profile key. Acceptance introduces the
    * client's own profile-key ciphertext together with the mandatory S12
-   * presentation, using the PNI-to-ACI promotion when the invitation is
+   * presentation. It uses the PNI-to-ACI promotion when the invitation is
    * keyed by this account's PNI.
    */
   async acceptMemberInvitation(groupId: GroupId): Promise<void> {
@@ -1880,9 +1880,9 @@ export class GroupManager {
     };
 
     // Preserve idempotency without exposing member lists to non-members. The
-    // server either returns a full state because the authenticated requester is
-    // already readable under S10, or rejects with FORBIDDEN and the link flow
-    // continues using only GroupJoinInfo.
+    // server either returns a full state, because the authenticated requester
+    // is already readable under S10, or it rejects with FORBIDDEN. The link
+    // flow then continues using only GroupJoinInfo.
     let readableResult: GroupSnapshot | null = null;
     try {
       readableResult = await this.withAuthRetry(groupIdHex, (auth) =>
@@ -2058,21 +2058,24 @@ export class GroupManager {
       );
     } catch (error: unknown) {
       // This is a *versioned* read, so a 403 can carry three answers.
-      // `not_readable` is revocation outright. `not_a_member` means the
-      // membership the accepted self-add just established is already gone —
-      // the requester is at most pending again, so the join was revoked
-      // between acceptance and this read. `before_join` is the one benign
-      // 403 here: the engine raises it only for a requester holding a live
-      // tenure whose floor sits above the requested version, and
-      // translating that into GROUP_ACCESS_REVOKED would report a live
-      // member as removed — so it, like every unreasoned rejection,
-      // propagates untranslated.
+      //
+      // The `not_readable` reason is revocation outright.
+      //
+      // The `not_a_member` reason means the membership the accepted self-add
+      // just established is already gone. The requester is at most pending
+      // again, so the join was revoked between acceptance and this read.
+      //
+      // The `before_join` reason is the one benign 403 here. The engine
+      // raises it only for a requester holding a live tenure whose floor sits
+      // above the requested version. Translating that into
+      // GROUP_ACCESS_REVOKED would report a live member as removed, so it,
+      // like every unreasoned rejection, propagates untranslated.
       const reason = GroupManager.forbiddenReason(error);
       if (reason !== 'not_readable' && reason !== 'not_a_member') throw error;
-      // The join was accepted and signed, then revoked before this read: the
+      // The join was accepted and signed, then revoked before this read. The
       // server authorizes reads at the current state, and the current state
       // no longer lists us. Surface the revocation instead of claiming a
-      // membership we can neither read nor verify — no state is installed,
+      // membership we can neither read nor verify. No state is installed,
       // and from here this principal is the ordinary re-entitlement case: a
       // later re-add or approval serves a fresh signed baseline.
       throw new Error(
@@ -2101,14 +2104,15 @@ export class GroupManager {
   /**
    * Whether a server rejection means "you may not read this group at all".
    *
-   * Only the `not_readable` FORBIDDEN carries that meaning — it is what the
-   * server raises when the requester is banned or absent from the
-   * authorizing roster, and it is the sole rejection a client may interpret
-   * as revocation. The same code with reason `before_join` is the
-   * join-version floor: it refuses one historical version while saying
-   * nothing about current access, so treating it as revocation would
-   * mistranslate a live membership into "revoked". Anything else (bad
-   * presentation, malformed request) is not an access answer at all.
+   * Only the `not_readable` FORBIDDEN carries that meaning. It is what the
+   * server raises when the requester is banned or absent from the authorizing
+   * roster. It is the sole rejection a client may interpret as revocation.
+   *
+   * The same code with reason `before_join` is the join-version floor. It
+   * refuses one historical version while saying nothing about current access.
+   * Treating it as revocation would mistranslate a live membership into
+   * "revoked". Anything else (bad presentation, malformed request) is not an
+   * access answer at all.
    */
   private static isNotReadableRejection(error: unknown): boolean {
     return GroupManager.forbiddenReason(error) === 'not_readable';
@@ -2354,7 +2358,7 @@ export class GroupManager {
   /**
    * Mirror S3's deterministic pre-state attribution for ordinary actions.
    *
-   * ACI wins when both aliases occur in state; a PNI-only pending invitee is
+   * ACI wins when both aliases occur in state. A PNI-only pending invitee is
    * attributed to that PNI so self-decline remains possible.
    */
   private sourceServiceIdForState(state: DecryptedGroup): Uint8Array {
@@ -2691,7 +2695,7 @@ function encryptChangePendingMemberRemoval(
   secretParams: GroupSecretParams,
   removal: DecryptedPendingMemberRemoval
 ): EncryptedChangePendingMemberRemoval {
-  // Use the preserved ciphertext if available; otherwise encrypt from plaintext
+  // Use the preserved ciphertext if available. Otherwise encrypt from plaintext
   if (removal.serviceIdCipherText.length > 0) {
     return { serviceIdCiphertext: removal.serviceIdCipherText };
   }

@@ -1,11 +1,11 @@
 /**
- * UID encryption — ElGamal encryption of UIDs for group membership
+ * UID encryption: ElGamal encryption of UIDs for group membership
  *
  *
  * Provides domain-specific ElGamal encryption for UidStruct attributes.
  * Uses pinned, domain-separated system parameters.
  *
- * @see https://eprint.iacr.org/2019/1416.pdf — Signal Private Group System
+ * @see https://eprint.iacr.org/2019/1416.pdf (Signal Private Group System)
  */
 
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
@@ -51,7 +51,7 @@ function getSystemParams(): { G_a1: RistrettoPoint; G_a2: RistrettoPoint } {
 
 /**
  * Verify that generating system params from scratch matches the hardcoded values.
- * This ensures no tampering with the system parameters.
+ * A tampered system parameter therefore fails this check.
  */
 export function verifySystemParams(): boolean {
   const sho = new ShoHmacSha256(
@@ -103,7 +103,7 @@ export function encryptServiceId(keyPair: UidEncKeyPair, serviceId: ServiceId): 
  * comparing the computed M1 point to find the correct variant.
  *
  * @returns The decrypted ServiceId
- * @throws Error if decryption fails or the UUID doesn't match either ACI or PNI
+ * @throws Error if decryption fails or the UUID does not match either ACI or PNI
  */
 export function decryptServiceId(keyPair: UidEncKeyPair, ciphertext: UidEncCiphertext): ServiceId {
   // Recover M2 from ciphertext

@@ -30,7 +30,7 @@ import type { MLKEMBraidMessage, AuthenticatorState } from './types';
 // =============================================================================
 
 /**
- * JSON representation of version capability
+ * JSON view of version capability
  */
 export {};
 export interface VersionCapabilityJSON {
@@ -41,7 +41,7 @@ export interface VersionCapabilityJSON {
 }
 
 /**
- * JSON representation of a protocol message
+ * JSON view of a protocol message
  */
 export interface MLKEMBraidMessageJSON {
   /** Epoch as string (bigint serialization) */
@@ -57,7 +57,7 @@ export interface MLKEMBraidMessageJSON {
 }
 
 /**
- * JSON representation of an erasure-coded chunk
+ * JSON view of an erasure-coded chunk
  */
 export interface ChunkJSON {
   /** Chunk index */
@@ -67,7 +67,7 @@ export interface ChunkJSON {
 }
 
 /**
- * JSON representation of authenticator state
+ * JSON view of authenticator state
  */
 export interface AuthenticatorJSON {
   /** Root key as hex string */
@@ -77,7 +77,7 @@ export interface AuthenticatorJSON {
 }
 
 /**
- * JSON representation of polynomial encoder state
+ * JSON view of polynomial encoder state
  */
 export interface PolyEncoderJSON {
   /** Current chunk index */
@@ -91,7 +91,7 @@ export interface PolyEncoderJSON {
 }
 
 /**
- * JSON representation of polynomial decoder state
+ * JSON view of polynomial decoder state
  */
 export interface PolyDecoderJSON {
   /** Chunks needed for reconstruction */
@@ -374,10 +374,10 @@ export function deserializeMessageBinary(bytes: Uint8Array): MLKEMBraidMessage {
 // =============================================================================
 
 /**
- * Field numbers from `proto/pq_ratchet.proto`. They are frozen: the same wire
- * is read by the reference implementation, and `Authenticator`,
+ * Field numbers from `proto/pq_ratchet.proto`. They are frozen. The reference
+ * implementation reads the same wire, and `Authenticator`,
  * `PolynomialEncoder`, and `PolynomialDecoder` are the persisted ratchet
- * state, so an installed client must keep decoding what it wrote yesterday.
+ * state. An installed client must keep decoding what it wrote yesterday.
  */
 const V1MSG_FIELDS = {
   epoch: 1,
@@ -407,12 +407,12 @@ const POLYNOMIAL_DECODER_FIELDS = {
   messageSize: 5,
 } as const;
 
-/** `Version.V_1`; `V_0 = 0` is reserved and the runtime never emits it. */
+/** `Version.V_1`. The runtime never emits `V_0 = 0`, which stays reserved. */
 const VERSION_V1 = 1;
 
 /**
  * The `V1Msg.inner_msg` oneof, in field order. Setting one arm clears the
- * others, on encode and on decode alike: a message that arrives carrying two
+ * others, on encode and on decode alike. A message that arrives carrying two
  * arms keeps only the last one on the wire.
  */
 const V1MSG_ONEOF_ARMS = ['hdr', 'ek', 'ekCt1Ack', 'ct1Ack', 'ct1', 'ct2'] as const;
@@ -422,8 +422,8 @@ const V1MSG_ONEOF_ARMS = ['hdr', 'ek', 'ekCt1Ack', 'ct1Ack', 'ct1', 'ct2'] as co
  * only when the bytes carried it.
  *
  * Presence is the contract, not the value. A field explicitly set to its zero
- * value is written to the wire — `epoch: 0` is `08 00`, `isComplete: false` is
- * `20 00` — and an absent field decodes to `undefined` here so the public
+ * value is written to the wire (`epoch: 0` is `08 00`, `isComplete: false` is
+ * `20 00`). An absent field decodes to `undefined` here, so the public
  * functions below can apply their own defaults. Collapsing the two would
  * change the bytes for messages this package has already persisted.
  */
@@ -481,7 +481,7 @@ function assertProtoUint32(value: unknown, label: string): asserts value is numb
   }
 }
 
-/** Assign one oneof arm, clearing whichever sibling was set before. */
+/** Assign one oneof arm, and clear whichever sibling held a value before. */
 function setInnerMsg<K extends (typeof V1MSG_ONEOF_ARMS)[number]>(
   msg: V1MsgWire,
   arm: K,
@@ -764,8 +764,8 @@ function decodePolynomialDecoder(bytes: Uint8Array): PolynomialDecoderWire {
 export async function serializeMessageProto(msg: MLKEMBraidMessage): Promise<Uint8Array> {
   validateMessage(msg);
 
-  // Both scalars are written even at zero: the epoch and the chunk index are
-  // always set on the wire, never elided as proto3 defaults.
+  // The codec writes both scalars even at zero. The epoch and the chunk index
+  // always reach the wire, and the codec never elides them as proto3 defaults.
   const protoMsg: V1MsgWire = {
     epoch: msg.epoch,
     index: msg.chunkIndex ?? 0,
@@ -1116,8 +1116,8 @@ export async function deserializeEncoderProto(bytes: Uint8Array): Promise<{
 
   // Convert polys back to coefficient arrays. Each element is a run of
   // big-endian 16-bit coefficients, so an empty or odd-length run is not a
-  // polynomial. Odd length used to read one byte past the end and fold
-  // `undefined` into the low half of a coefficient, inventing a final
+  // polynomial. An odd length would read one byte past the end and fold
+  // `undefined` into the low half of a coefficient. That invents a final
   // coefficient the encoder never wrote.
   const polys = obj.polys.map((polyBytes: Uint8Array, position: number) => {
     if (polyBytes.length === 0 || polyBytes.length % 2 !== 0) {
@@ -1214,7 +1214,7 @@ export async function deserializeDecoderProto(bytes: Uint8Array): Promise<{
 /**
  * Initialize serialization module.
  *
- * Nothing is loaded any more — the codecs above are static functions, so there
+ * Nothing is loaded any more. The codecs above are static functions, so there
  * is no schema to build at runtime and no first-call latency to pay. Kept, and
  * kept async, because callers await it before serializing.
  */

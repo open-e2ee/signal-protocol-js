@@ -2,25 +2,25 @@
  * Wire Codec for Sealed Sender
  *
  * Hand-written static encoders and decoders for the sealed sender wire format,
- * built on the shared protobuf primitives. No code is generated at runtime, so
+ * built on the shared protobuf primitives. Nothing generates code at runtime, so
  * this path runs under `script-src 'self'`, in a Chrome MV3 extension, and
  * under `node --disallow-code-generation-from-strings`.
  *
- * Certificates are signed over their *serialized* inner bytes, so byte
+ * A certificate signature covers its *serialized* inner bytes, so byte
  * identity here is what keeps an already-issued certificate verifiable. Two
  * consequences run through the whole module:
  *
  * - Nothing re-encodes a signed region. Wherever the surface carries a signed
- *   payload it carries the raw bytes the signer saw — `certificate` in either
- *   wrapper, and `signerCertificate` inside the sender certificate — and the
- *   decoders hand those bytes straight through.
+ *   payload it carries the raw bytes the signer saw. That covers `certificate`
+ *   in either wrapper, and `signerCertificate` inside the sender certificate.
+ *   The decoders hand those bytes straight through.
  * - The encoders reproduce what this module emitted before, field for field
  *   and byte for byte, including writing an explicitly-set zero. The
  *   `sealed-sender` golden vectors pin every case in both directions. One
- *   input diverges: a string holding an unpaired surrogate encodes to the
- *   replacement character here, where reflection emitted the surrogate's own
- *   three bytes. `senderE164` and `senderUuid` are the only string fields,
- *   and no verification path re-encodes either.
+ *   input diverges. A string holding an unpaired surrogate encodes to the
+ *   replacement character here. Reflection emitted the surrogate's own three
+ *   bytes. The `senderE164` and `senderUuid` fields are the only string
+ *   fields, and no verification path re-encodes either.
  *
  * Field numbers are those this format has always written, and
  * `UnidentifiedDelivery.proto` alongside this file now records them.
@@ -29,7 +29,7 @@
 import type { Base64 } from '../../../../types';
 import { SealedSenderContentType } from '../types';
 /* The encoding helpers come from their own module rather than the crypto
- * barrel: the relay component bundles this codec, and the barrel also exports
+ * barrel. The relay component bundles this codec, and the barrel also exports
  * `generateRandomBytes`, whose third-choice runtime fallback is a dynamic
  * `import('expo-crypto')`. That fallback never runs on a server, but a bundler
  * still parses what it reaches, and the Expo package pulls in React Native. */
@@ -118,19 +118,19 @@ export interface UnidentifiedSenderMessageProto {
 // Field Numbers
 // ============================================================================
 
-/** `ServerCertificate.Certificate` — the signed inner server certificate. */
+/** `ServerCertificate.Certificate`: the signed inner server certificate. */
 const SERVER_CERTIFICATE_DATA = {
   id: 1,
   key: 2,
 } as const;
 
-/** `ServerCertificate` — the outer wrapper carrying the signature. */
+/** `ServerCertificate`: the outer wrapper carrying the signature. */
 const SERVER_CERTIFICATE = {
   certificate: 1,
   signature: 2,
 } as const;
 
-/** `SenderCertificate.Certificate` — the signed inner sender certificate. */
+/** `SenderCertificate.Certificate`: the signed inner sender certificate. */
 const SENDER_CERTIFICATE_DATA = {
   senderE164: 1,
   senderDevice: 2,
@@ -140,13 +140,13 @@ const SENDER_CERTIFICATE_DATA = {
   senderUuid: 6,
 } as const;
 
-/** `SenderCertificate` — the outer wrapper carrying the signature. */
+/** `SenderCertificate`: the outer wrapper carrying the signature. */
 const SENDER_CERTIFICATE = {
   certificate: 1,
   signature: 2,
 } as const;
 
-/** `UnidentifiedSenderMessage.Message` — the decrypted inner message. */
+/** `UnidentifiedSenderMessage.Message`: the decrypted inner message. */
 const UNIDENTIFIED_SENDER_MESSAGE_DATA = {
   type: 1,
   senderCertificate: 2,
@@ -155,7 +155,7 @@ const UNIDENTIFIED_SENDER_MESSAGE_DATA = {
   groupId: 5,
 } as const;
 
-/** `UnidentifiedSenderMessage` — the sealed envelope. */
+/** `UnidentifiedSenderMessage`: the sealed envelope. */
 const UNIDENTIFIED_SENDER_MESSAGE = {
   ephemeralPublic: 1,
   encryptedStatic: 2,
@@ -222,8 +222,8 @@ export function encodeServerCertificate(cert: ServerCertificateProto): Uint8Arra
 /**
  * Decode server certificate outer wrapper from protobuf bytes.
  *
- * `certificate` is returned exactly as it arrived — it is the byte string the
- * signature was computed over.
+ * `certificate` comes back exactly as it arrived. It is the byte string that
+ * the signature covers.
  */
 export function decodeServerCertificate(bytes: Uint8Array): ServerCertificateProto {
   const reader = new ProtoReader(bytes);
@@ -257,7 +257,7 @@ export function decodeServerCertificate(bytes: Uint8Array): ServerCertificatePro
  * Field numbers are part of the sealed-sender wire format.
  *
  * These are the bytes the issuing server signs. Fields are written in field
- * number order; `senderE164` is written only when the sender has one, which is
+ * number order. `senderE164` is written only when the sender has one, which is
  * the one field a certificate may legitimately omit.
  */
 export function encodeSenderCertificateData(data: SenderCertificateData): Uint8Array {
@@ -345,8 +345,8 @@ export function encodeSenderCertificate(cert: SenderCertificateProto): Uint8Arra
 /**
  * Decode sender certificate outer wrapper from protobuf bytes.
  *
- * `certificate` is returned exactly as it arrived — it is the byte string the
- * signature was computed over.
+ * `certificate` comes back exactly as it arrived. It is the byte string that
+ * the signature covers.
  */
 export function decodeSenderCertificate(bytes: Uint8Array): SenderCertificateProto {
   const reader = new ProtoReader(bytes);
@@ -378,7 +378,7 @@ export function decodeSenderCertificate(bytes: Uint8Array): SenderCertificatePro
 /**
  * Encode inner message data to bytes.
  *
- * `contentHint` is written whenever it is set, zero included — an absent hint
+ * `contentHint` is written whenever it is set, zero included. An absent hint
  * and a hint of zero are different statements. `groupId` follows the same rule.
  */
 export function encodeUnidentifiedSenderMessageData(
@@ -407,15 +407,17 @@ export function encodeUnidentifiedSenderMessageData(
 /**
  * Decode inner message data from bytes.
  *
- * `type` is returned as it arrived — 0 when the field is absent, and any
+ * `type` is returned as it arrived: 0 when the field is absent, and any
  * other value the wire carried, declared by the enum or not. Reflection
- * clamped every undeclared value to the enum's first arm, so both an absent
- * type and a type from a newer peer were reported as `PREKEY_MESSAGE`, which
- * the sender never wrote; preserving the value is also what the protobuf spec
- * asks of a decoder. The return type names the enum but nothing here narrows
- * to it, so a caller that routes on `type` must put it through
- * `isSealedSenderContentType` first. Neither decrypt path does today — both
- * read the content type from the envelope framing, not from this decoder.
+ * clamped every undeclared value to the enum's first arm. Both an absent type
+ * and a type from a newer peer were reported as `PREKEY_MESSAGE`, which the
+ * sender never wrote. Preserving the value is also what the protobuf spec
+ * asks of a decoder.
+ *
+ * The return type names the enum but nothing here narrows to it, so a caller
+ * that routes on `type` must put it through `isSealedSenderContentType`
+ * first. Neither decrypt path does today. Both read the content type from the
+ * envelope framing, not from this decoder.
  */
 export function decodeUnidentifiedSenderMessageData(
   bytes: Uint8Array

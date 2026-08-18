@@ -5,9 +5,9 @@ and optionally projects a snapshot to an application-owned mirror.
 
 ## Why it exists
 
-Blocking is a product decision with protocol consequences: blocked recipients
-must be rejected consistently without making a remote mirror a second,
-conflicting source of truth. `SignalProtocolBlockingManager` centralizes that ordering.
+Blocking is a product decision with protocol consequences. The client must
+reject blocked recipients consistently, and a remote mirror must not become a
+second, conflicting source of truth. `SignalProtocolBlockingManager` centralizes that ordering.
 
 ## Usage
 
@@ -34,8 +34,9 @@ if (await blocking.isBlocked("bob")) {
 }
 ```
 
-The local store is authoritative. Mirror failures are logged after the local
-mutation succeeds; they do not roll back the local decision. Applications
+The local store is authoritative. The blocking manager logs mirror failures
+after the local mutation succeeds. A mirror failure does not roll back the local
+decision. Applications
 should provide their own retry or reconciliation policy for the mirror.
 
 See the [API reference](../docs/api/namespaces/blocking/README.md) and

@@ -1,10 +1,9 @@
 /**
  * Encoding Module (Public API)
  *
- * Provides base64, hex, and byte encoding utilities for app code
- * outside of the public package This is the public boundary for encoding
- * functions -- app code should import from here rather than from
- * the public package
+ * Provides base64, hex, and byte encoding utilities for app code outside of
+ * the public package. This is the public boundary for encoding functions.
+ * App code should import from here rather than from the public package.
  *
  * @example
  * ```typescript

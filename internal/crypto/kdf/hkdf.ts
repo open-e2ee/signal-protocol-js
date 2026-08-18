@@ -71,7 +71,7 @@ export async function hkdf(
 
   try {
     // HKDF-Expand: expand PRK to desired length. The returned bytes are a
-    // separate allocation; this function owns and clears the PRK.
+    // separate allocation. This function owns and clears the PRK.
     return await hkdfExpand(prk, info, length);
   } finally {
     secureZeroBytes(prk);
@@ -172,9 +172,9 @@ export async function kdfRootKey(
  * - message_key = HMAC-SHA256(chain_key, 0x01)
  * - next_chain_key = HMAC-SHA256(chain_key, 0x02)
  *
- * Each message gets a unique key, and the chain key is ratcheted forward
- * so that past messages can't be decrypted even if the current chain key
- * is compromised (forward secrecy).
+ * Each message gets a unique key, and the chain key is ratcheted forward.
+ * Past messages cannot be decrypted even if the current chain key is
+ * compromised (forward secrecy).
  *
  * Returns: [chain_key (32 bytes), message_key (32 bytes)]
  *
@@ -250,14 +250,15 @@ export async function expandMessageKey(
  * KDF_HYBRID: Combine EC and post-quantum message keys (Section 6.3)
  *
  * Signal Protocol Section 6.3 -
- * "The Triple Ratchet combines message keys from both the EC Double Ratchet
- * and the Sparse Post-Quantum Ratchet using KDF_HYBRID(), which mixes the
- * keys using HKDF to provide hybrid security."
+ *
+ * > "The Triple Ratchet combines message keys from both the EC Double Ratchet
+ * > and the Sparse Post-Quantum Ratchet using KDF_HYBRID(), which mixes the
+ * > keys using HKDF to provide hybrid security."
  *
  * Security intent: the output combines independent EC and post-quantum
  * contributions. End-to-end hybrid guarantees remain conditional on correct
  * domain separation, authenticated protocol context, uncompromised state, and
- * at least one contribution remaining secret; this helper alone is not proof.
+ * at least one contribution remaining secret. This helper alone is not proof.
  *
  * Implementation:
  * - Uses HKDF with PQ key as salt and EC key as input material
@@ -309,7 +310,7 @@ export async function kdfHybrid(
   const info = stringToBytes(infoString ?? 'Signal Triple Ratchet V1');
 
   // HKDF with PQ key as salt and EC key as input material.
-  // This ensures security if EITHER key is compromised
+  // Security holds if EITHER key is compromised
   return await hkdf(
     ec_mk, // ikm: EC key as input key material
     pq_mk, // salt: PQ key as salt
@@ -423,7 +424,7 @@ export function resolveSPQRInfoStrings(config?: {
  *
  * Per the profile:
  * - IKM = chain_key (32 bytes)
- * - Salt = [0; 32] (32 zero bytes)
+ * - Salt = `[0; 32]` (32 zero bytes)
  * - Info = [4-byte BE counter] || info_string
  * - Output: 64 bytes split as [new_chain_key (32)] || [message_key (32)]
  *

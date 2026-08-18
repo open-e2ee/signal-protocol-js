@@ -38,7 +38,7 @@ export interface CombinedFingerprints {
 
 /**
  * Encode a LogicalFingerprint message.
- * message LogicalFingerprint { optional bytes content = 1; }
+ * `message LogicalFingerprint { optional bytes content = 1; }`
  */
 function encodeLogicalFingerprint(content: Uint8Array): Uint8Array {
   return encodeBytesField(1, content);
@@ -55,7 +55,7 @@ function decodeLogicalFingerprint(buffer: Uint8Array): Uint8Array {
   const { value: tag, bytesRead: tagBytes } = decodeVarint(buffer, offset);
   offset += tagBytes;
 
-  // Verify it's field 1, length-delimited
+  // Verify it is field 1, length-delimited
   const expectedFieldNumber = 1;
   const expectedWireType = WIRE_TYPE_LENGTH_DELIMITED;
   const fieldNumber = tag >>> 3;

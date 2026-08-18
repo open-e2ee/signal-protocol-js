@@ -70,9 +70,11 @@ function toBase37Scalar(nickname: string): bigint {
   const bytes = Array.from(lower, charToByte);
 
   // Horner with special first-byte handling:
-  // For bytes[1..N] in reverse: scalar = scalar * 37 + bytes[i]
-  // Final: scalar = scalar * 27 + bytes[0]
-  // First byte uses 27 (not 37) because first char can't be a digit (values 1-27 only)
+  // - For bytes[1..N] in reverse: scalar = scalar * 37 + bytes[i]
+  // - Final: scalar = scalar * 27 + bytes[0]
+  //
+  // The first byte uses 27 (not 37) because the first character cannot be a
+  // digit (values 1-27 only).
   let scalar = 0n;
   for (let i = bytes.length - 1; i >= 1; i--) {
     scalar = scalar * 37n + BigInt(bytes[i]);
@@ -97,7 +99,7 @@ function usernameShaScalar(nickname: string, discriminator: number): bigint {
 
   // discriminator as u64 big-endian (8 bytes)
   const dv = new DataView(input.buffer, input.byteOffset + nicknameBytes.length + 1, 8);
-  // Write as two 32-bit values (JS doesn't have native u64 write)
+  // Write as two 32-bit values (JS does not have native u64 write)
   dv.setUint32(0, 0, false); // high 32 bits = 0 (discriminator < 1B)
   dv.setUint32(4, discriminator, false); // low 32 bits
 

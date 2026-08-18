@@ -6,8 +6,8 @@ the local secret-vault boundary.
 
 ## Why it exists
 
-Signal Protocol state is larger and more transactional than platform keychains
-are designed to hold. The adapter keeps a small database key in secure storage
+Signal Protocol state is larger and more transactional than the values
+platform keychains hold. The adapter keeps a small database key in secure storage
 and stores protocol records in the application's encrypted SQLite database.
 The host owns database creation so it can compose these tables into its own
 schema and transaction lifecycle.
@@ -44,19 +44,24 @@ configureSignalProtocolExpoDbBindings({
 ```
 
 `appDatabase.openEncryptedSignalProtocolDatabase` represents application-owned database
-bootstrap. It must enable SQLCipher through the `expo-sqlite` native
-configuration, apply the supplied key before schema access, create or migrate
-the exported tables, and return the matching raw and Drizzle handles. SQLCipher
-requires a development build and is not available in Expo Go.
+bootstrap. It must:
+
+- enable SQLCipher through the `expo-sqlite` native configuration
+- apply the supplied key before schema access
+- create or migrate the exported tables
+- return the matching raw and Drizzle handles
+
+SQLCipher requires a development build and is not available in Expo Go.
 
 Every table this store exports holds material that must not leave the device.
-That includes the group `sender_keys` and `skipped_sender_keys` tables, whose
+That includes the group `sender_keys` and `skipped_sender_keys` tables. Their
 rows contain the sender chain key, the sender's private signature key, and
-individual message keys — enough to read and to forge a sender's group
-messages. They are stored unencrypted at the row level because SQLCipher
-encrypts the database file itself, so the database key is the only thing that
-protects them. Do not back these tables up to a server or sync them between
-devices.
+individual message keys. That material is enough to read and to forge a
+sender's group messages. The store writes those rows unencrypted at the row
+level, because SQLCipher encrypts the database file itself. The database key is
+therefore the only thing that protects them.
+
+Do not back these tables up to a server or sync them between devices.
 
 ## Client usage
 

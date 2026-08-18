@@ -104,7 +104,7 @@ const DP1_OVER_DM1 = fmul(fadd(D, _1n), finv(fsub(D, _1n)));
 // sqrt(i*d) where i = sqrt(-1)
 const SQRT_ID = (() => {
   const id = fmul(SQRT_M1, D);
-  // i*d is a square mod p; compute sqrt and ensure positive (even)
+  // i*d is a square mod p. Compute sqrt and force positive (even)
   const r = Fp.sqrt(id);
   return fisNeg(r) ? fneg(r) : r;
 })();
@@ -113,7 +113,7 @@ const SQRT_ID = (() => {
 const MDOUBLE_INVSQRT_A_MINUS_D = fneg(fmul(_2n, INVSQRT_A_MINUS_D));
 
 // -1/sqrt(1+d)
-// -1/sqrt(1+d) — negate the inverse of the canonical sqrt
+// -1/sqrt(1+d). Negate the inverse of the canonical sqrt
 const MINVSQRT_ONE_PLUS_D = fneg(finv(Fp.sqrt(fadd(_1n, D))));
 
 // -2*i/sqrt(a-d)
@@ -163,7 +163,7 @@ function sqrtRatioI(u: bigint, v: bigint): { isValid: boolean; value: bigint } {
 }
 
 /**
- * Computes sqrt(1/self) — the inverse square root.
+ * Computes sqrt(1/self). The inverse square root.
  *
  * Returns:
  * - { isValid: true, value: +sqrt(1/x) }   if x is a nonzero square
@@ -529,7 +529,7 @@ export function lizardEncode(data: Uint8Array): RistrettoPoint {
  * Inverts lizardEncode by finding a valid field element preimage and
  * extracting bytes 8..24.
  *
- * @returns The original 16 bytes, or null if the point doesn't encode valid data
+ * @returns The original 16 bytes, or null if the point does not encode valid data
  */
 export function lizardDecode(point: RistrettoPoint): Uint8Array | null {
   const result = new Uint8Array(16);

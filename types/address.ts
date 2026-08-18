@@ -222,8 +222,8 @@ export namespace ProtocolAddress {
   /**
    * Create a storage key for looking up SessionRecords by ProtocolAddress.
    *
-   * Sessions are looked up by ProtocolAddress, while individual states within
-   * a SessionRecord are identified by `baseKey`.
+   * A ProtocolAddress looks up a session, while a `baseKey` identifies an
+   * individual state within a SessionRecord.
    *
    * Format: `session:${userId}:${deviceId}`
    *

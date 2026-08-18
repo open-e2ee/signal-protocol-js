@@ -3,7 +3,7 @@
  *
  * Pure functions for applying DecryptedGroupChange operations to DecryptedGroup state.
  *
- * Operations are applied in the normative order from the group-system
+ * The code applies operations in the normative order from the group-system
  * specification: deletions, bans, promotions, additions, modifications,
  * then attributes and access control.
  *
@@ -482,7 +482,7 @@ export function validateChangeCanonicalFields(
 }
 
 /**
- * Deep clone a DecryptedGroup to ensure immutability.
+ * Deep clone a DecryptedGroup to keep it immutable.
  */
 export {};
 function cloneGroup(group: DecryptedGroup): DecryptedGroup {
@@ -533,7 +533,7 @@ function bannedTargetMatches(
  * Apply a DecryptedGroupChange to a DecryptedGroup state.
  *
  * This is a pure function that returns a new state object without mutating the input.
- * Changes are applied in the normative order from §7.4.
+ * The code applies changes in the normative order from §7.4.
  *
  * @param state - Current group state
  * @param change - Change to apply
@@ -955,7 +955,7 @@ function applyAttributesAndAccessControl(
  * Validate the structure of a DecryptedGroupChange against current group state.
  *
  * This answers only whether the change is well-formed. It does not determine
- * whether the editor was authorized to perform the actions.
+ * whether the editor had authority to take the actions.
  *
  * @param state - Current group state
  * @param change - Change to validate

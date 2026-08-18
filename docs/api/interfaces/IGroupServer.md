@@ -46,7 +46,7 @@ Create a new group on the server.
 
 Get encrypted group state.
 
-When `version` is supplied, the server must return that exact historical
+When the caller supplies `version`, the server must return that exact historical
 snapshot or null. Versioned reads make the post-join baseline race-safe:
 clients must not jump over unverified changes to a newer snapshot.
 
@@ -76,11 +76,11 @@ clients must not jump over unverified changes to a newer snapshot.
 
 Get one page of the authorized change log after a historical version.
 
-Authorization is evaluated at the `fromVersion` snapshot, and the
-requester must be a member there (S10; S10a governs how a refused
+Authorization runs at the `fromVersion` snapshot, and the
+requester must be a member there (S10, and S10a governs how a refused
 pending requester advances instead). The page includes the first
 transition whose post-state drops the requester from `members`, then
-stops; a requester who is not a member at that snapshot is refused.
+stops. The server refuses a requester who is not a member at that snapshot.
 `hasMore` signals a page cut for size, resumable from the last served
 version.
 

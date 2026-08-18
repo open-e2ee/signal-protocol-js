@@ -147,12 +147,12 @@ interface SignalProtocolDBSchema extends DBSchema {
       userId: string;
       deviceId: number;
       /**
-       * Every `senderKeyId` in this record, current and previous, kept in
-       * plaintext so an incoming group message can be routed to a group
-       * without decrypting every record on the device.
+       * Every `senderKeyId` in this record, current and previous. They are
+       * kept in plaintext so an incoming group message can be routed to a
+       * group without decrypting every record on the device.
        *
        * These are the identifiers that already travel unencrypted on the
-       * wire, so storing them in the clear on the local device discloses
+       * wire. Storing them in the clear on the local device discloses
        * nothing a relay could not already see. The key material stays inside
        * `data`.
        */
@@ -239,9 +239,8 @@ function isConstraintError(error: unknown): boolean {
 /**
  * A write that exhausts the origin's storage quota fails with
  * QuotaExceededError. Checked by name rather than instanceof, like
- * isConstraintError: engines differ on the constructor - a DOMException
- * today, an Error subclass in the newer storage spec - and the name is
- * the stable part.
+ * isConstraintError. Engines differ on the constructor: a DOMException today,
+ * an Error subclass in the newer storage spec. The name is the stable part.
  */
 function isQuotaExceededError(error: unknown): boolean {
   return (
@@ -262,15 +261,14 @@ function mapQuotaFailure(operation: string, error: unknown): unknown {
  * Rebinds every method of the store so a QuotaExceededError from
  * IndexedDB crosses the adapter boundary as the typed
  * StorageQuotaExceededError. Quota exhaustion can surface from any put,
- * add, or transaction commit, so the mapping lives at this one seam
- * instead of inside each of the adapter's write paths, and a method
- * added later is covered without a wrapper of its own. The failed
- * transaction rolls back whole, so the typed error always means the
- * write did not persist.
+ * add, or transaction commit. The mapping therefore lives at this one seam,
+ * instead of inside each of the adapter's write paths. A method added later
+ * is covered without a wrapper of its own. The failed transaction rolls back
+ * whole, so the typed error always means the write did not persist.
  *
- * The walk starts at the instance's own prototype rather than this
- * class's, so a subclass override is the method that gets wrapped
- * instead of being shadowed by a wrapper around the base method.
+ * The walk starts at the instance's own prototype rather than this class's.
+ * A subclass override is therefore the method that gets wrapped, instead of
+ * being shadowed by a wrapper around the base method.
  */
 function mapQuotaFailuresAtBoundary(store: IndexedDbSignalProtocolStore): void {
   const methods = new Map<string, (this: unknown, ...args: unknown[]) => unknown>();
@@ -362,8 +360,9 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
           db.createObjectStore('identity');
         }
 
-        // Alpha schema break. Never reinterpret legacy single-key
-        // rows as composite trust records.
+        // Rows written before schema version 5 hold a single public key where
+        // a composite trust record belongs. Dropping them is the only safe
+        // reading: a single-key row cannot be reinterpreted as composite.
         if (oldVersion > 0 && oldVersion < 5 && db.objectStoreNames.contains('contacts')) {
           db.deleteObjectStore('contacts');
         }
@@ -396,9 +395,9 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
           sesameStore.createIndex('by-updated', 'updatedAt');
         }
 
-        // Alpha schema break. A received group message names its sender key
+        // A received group message names its sender key
         // by an opaque `senderKeyId` and nothing else, so records need an
-        // index on that field; rows written before v6 do not carry it and
+        // index on that field. Rows written before v6 do not carry it and
         // cannot be indexed retroactively without decrypting each one. The
         // cost of dropping them is a round of sender key redistribution,
         // which the protocol already handles.
@@ -430,9 +429,9 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     if (storedKey) {
       this.databaseKey = storedKey as Uint8Array;
     } else {
-      // Generate new 32-byte key using Web Crypto. add() refuses to
+      // Generate new 32-byte key using Web Crypto. The add() call refuses to
       // overwrite, so when two connections bootstrap a fresh database
-      // concurrently exactly one key is ever stored - the loser adopts the
+      // concurrently, exactly one key is ever stored. The loser adopts the
       // winner's key instead of encrypting records nobody else can read.
       const candidate = crypto.getRandomValues(new Uint8Array(32));
       try {
@@ -459,8 +458,8 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
    * the database key.
    *
    * An open connection blocks both deletion and version upgrades of the
-   * database from any other connection, so an application that signs out,
-   * clears local state, or migrates must be able to close the store. After
+   * database from any other connection. An application that signs out, clears
+   * local state, or migrates must therefore be able to close the store. After
    * close(), call initialize() again before any other operation.
    */
   close(): void {
@@ -549,9 +548,9 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
         const created = createUnverifiedContactIdentityRecord(identity, Date.now());
         validateContactIdentityRecord(created);
         try {
-          // add() refuses to overwrite: if a concurrent connection pinned
-          // this contact first, re-evaluate the candidate against the record
-          // that won instead of silently replacing a TOFU pin.
+          // The add() call refuses to overwrite. If a concurrent connection
+          // pinned this contact first, re-evaluate the candidate against the
+          // record that won, instead of silently replacing a TOFU pin.
           await this.db!.add('contacts', {
             key: contactKey,
             userId: address.userId,
@@ -623,7 +622,7 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     // Read the doomed session keys before mutating, then enter every
     // mutation in one synchronous batch. A dying page closes its connection
     // gracefully, and a transaction that is idle at an await boundary then
-    // commits the writes it already holds — a cursor walk that deletes as
+    // commits the writes it already holds. A cursor walk that deletes as
     // it goes leaves windows where the new pin commits with sessions still
     // trusted under the old identity.
     const sessions = tx.objectStore('sessions');
@@ -786,7 +785,7 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     const tx = this.db!.transaction('prekeys', 'readonly');
     const store = tx.objectStore('prekeys');
 
-    // Get all keys - don't decrypt inside the iteration to avoid transaction timeout
+    // Get all keys - do not decrypt inside the iteration to avoid transaction timeout
     for await (const cursor of store.iterate()) {
       const key = cursor.key as string;
       if (key.startsWith(prefix)) {
@@ -1013,8 +1012,8 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     }
     // Every mutation must enter the transaction in one synchronous batch.
     // A dying page closes its connection gracefully, and a transaction that
-    // is idle at an await boundary then commits the writes it already holds
-    // — an await between mutations is a window for a partial commit.
+    // is idle at an await boundary then commits the writes it already holds.
+    // An await between mutations is a window for a partial commit.
     const writes: Promise<unknown>[] = [];
     if (newContact && encryptedContact) {
       writes.push(
@@ -1098,7 +1097,7 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     }
 
     if (corruptRows.length > 0) {
-      // Re-read and compare inside one readwrite transaction: a concurrent
+      // Re-read and compare inside one readwrite transaction. A concurrent
       // writer may have replaced the corrupt bytes with a valid record since
       // the snapshot above, and an unconditional delete would destroy it.
       // Every await here is an IDB request, so the transaction stays active.
@@ -1181,7 +1180,7 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
   // ============================================================================
 
   /**
-   * Ensure the adapter is initialized
+   * Throw when the adapter is not initialized
    * @throws Error if not initialized
    */
   private ensureInitialized(): void {
@@ -1415,7 +1414,7 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
       for (const [deviceId, deviceRecord] of userRecord.devices) {
         // Delete devices that:
         // 1. Have no session OR (no current session AND no archived sessions)
-        // 2. AND haven't been updated within maxLatency
+        // 2. AND have not been updated within maxLatency
         const hasNoSessions =
           !deviceRecord.session ||
           (!deviceRecord.session.currentSession &&
@@ -1572,8 +1571,8 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     const index = tx.objectStore('senderKeyRecords').index('by-sender-key-id');
 
     // An id is unique to one sender key, but the index is not scoped by
-    // sender, so the sender still has to match: another device claiming a
-    // known id must not resolve to that device's group.
+    // sender. The sender still has to match, because another device claiming
+    // a known id must not resolve to that device's group.
     for await (const cursor of index.iterate(senderKeyId)) {
       const row = cursor.value;
       if (row.userId === userId && row.deviceId === deviceId) {

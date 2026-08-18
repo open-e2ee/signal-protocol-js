@@ -83,23 +83,23 @@ export interface SealedSenderConfig {
    * Clients use these to validate the certificate chain:
    * trust_root signs ServerCertificate -> ServerCertificate signs SenderCertificate
    *
-   * Multiple roots are supported for key rotation scenarios.
+   * Multiple roots work for key rotation scenarios.
    */
   trustRoots: Uint8Array[];
 
   /**
    * Provider function that returns a serialized SenderCertificate (base64).
    *
-   * Called lazily when a sealed sender message is sent and the cached
-   * certificate has expired. The returned certificate is cached for its
-   * validity period (typically 24 hours).
+   * The client calls this lazily when it sends a sealed sender message and the
+   * cached certificate expired. The client caches the returned certificate for
+   * its validity period (typically 24 hours).
    *
    * @returns Base64-encoded serialized SenderCertificate
    */
   certificateProvider?: () => Promise<string>;
 
   /**
-   * Who is allowed to send sealed sender messages to this user.
+   * Who may send sealed sender messages to this user.
    *
    * @default 'unrestricted'
    */
@@ -108,9 +108,9 @@ export interface SealedSenderConfig {
   /**
    * Optional host-provided contact profile state store.
    *
-   * When present, the Signal Protocol client can use per-contact profile keys and
-   * unidentified-access mode for direct-message sealed sender sends
-   * without importing the host app's persistence layer.
+   * When present, the Signal Protocol client can use per-contact profile keys
+   * and unidentified-access mode for direct-message sealed sender sends. It
+   * does not import the host app's persistence layer.
    */
   contactStateStore?: import('../profile/contact-state').ContactProfileStateStore;
 }
@@ -146,7 +146,7 @@ export interface DoubleRatchetConfig {
  *
  * Application code should usually prefer `createSignalProtocolClient()`, which groups
  * account identity, adapters, and protocol policy into a friendlier shape. Use
- * this config directly when lower-level integration code already has flattened
+ * this config directly when lower-level integration code already flattened
  * client options.
  *
  * @example
@@ -191,10 +191,10 @@ export interface SignalProtocolClientConfig {
    * - 2-5 = Linked devices
    *
    * Device 1 bootstraps identity locally. Devices 2-5 must already have a
-   * provisioned identity imported into the provided storage before
-   * `SignalProtocolClient.create()` is called.
+   * provisioned identity imported into the provided storage before the app
+   * calls `SignalProtocolClient.create()`.
    *
-   * Prekeys and sessions remain device-specific; account identity is shared.
+   * Prekeys and sessions remain device-specific. Devices share account identity.
    * Maximum 5 devices per user (1 primary + 4 linked).
    *
    * @default 1 (primary device)
@@ -222,10 +222,10 @@ export interface SignalProtocolClientConfig {
    * When `true`, generates and syncs both ACI and PNI identity keys, prekeys,
    * and Kyber prekeys for applications that maintain both account identifiers.
    *
-   * When `false` (default), only ACI keys are generated and synchronized. Use
+   * When `false` (default), the client generates and synchronizes only ACI keys. Use
    * this for applications whose account model does not require PNI keys.
    *
-   * The PNI UUID on the users table is unaffected — it can still exist for ZK
+   * This leaves the PNI UUID on the users table alone. It can still exist for ZK
    * group credentials without generating cryptographic keys.
    *
    * @default false
@@ -235,7 +235,7 @@ export interface SignalProtocolClientConfig {
   /**
    * This account's ACI for Group System credential presentation.
    *
-   * Required when `groups` is configured.
+   * Required when you configure `groups`.
    */
   aci?: import('../internal/protocol/zk/groups/uid-struct').ServiceId;
 
@@ -273,7 +273,7 @@ export interface SignalProtocolClientConfig {
   relay?: ISignalProtocolRelayServer;
 
   /**
-   * Remote object storage adapter for encrypted file uploads (two-layer encryption)
+   * Remote object store adapter for encrypted file uploads (two-layer encryption)
    *
    * If provided, enables encrypted file upload (two-layer encryption):
    * 1. Generate AES-256-GCM key
@@ -309,10 +309,10 @@ export interface SignalProtocolClientConfig {
   /**
    * App-owned media lifecycle callbacks for the SignalProtocolClient media queue.
    *
-   * The queue itself is persisted through the existing Signal Protocol local storage
-   * adapter. These callbacks keep local bytes, plaintext caches, and product
-   * state in the app layer where they can share file permissions, UI state, and
-   * app database ownership.
+   * The existing Signal Protocol local storage adapter persists the queue
+   * itself. These callbacks keep local bytes, plaintext caches, and product
+   * state in the app layer. There they can share file permissions, UI state,
+   * and app database ownership.
    *
    * @example
    * ```typescript
@@ -548,7 +548,7 @@ export interface SignalProtocolClientConfig {
    * - Errors and cleanup operations
    *
    * All hooks are optional and support both sync and async implementations.
-   * Hook errors are caught internally and won't affect core functionality.
+   * Hook errors are caught internally and will not affect core functionality.
    *
    * Common use cases:
    * - Cache invalidation (ContentManager, React Query)
@@ -603,7 +603,7 @@ export interface SignalProtocolClientConfig {
   throwDetailedErrors?: boolean;
 
   /**
-   * Callback when one-time prekeys are running low
+   * Callback for the moment one-time prekeys run low
    *
    * Called when prekey count drops below the threshold (default: 50).
    * Use this to trigger prekey replenishment to prevent session
@@ -632,7 +632,7 @@ export interface SignalProtocolClientConfig {
   /**
    * Key refresh interval in milliseconds.
    *
-   * Controls how often signed prekeys and Kyber (last-resort) prekeys are rotated.
+   * Controls how often the client rotates signed prekeys and Kyber (last-resort) prekeys.
    * Per PQXDH specification Section 3.2, both key types use the same rotation
    * schedule for synchronized post-quantum security.
    *
@@ -661,7 +661,7 @@ export interface SignalProtocolClientConfig {
   /**
    * Maximum allowed prekey age in milliseconds.
    *
-   * If prekeys exceed this age, message sending should be blocked to force
+   * If prekeys exceed this age, the app should block message sending to force
    * key rotation. Provides a safety buffer above keyRefreshIntervalMs.
    *
    * With the default two-day refresh interval, the default maximum age leaves
@@ -684,7 +684,7 @@ export interface SignalProtocolClientConfig {
   /**
    * Prekey check throttle interval in milliseconds.
    *
-   * Controls how often prekey count checks are performed on app activation.
+   * Controls how often the client checks the prekey count on app activation.
    * Prevents unnecessary server queries when the app is repeatedly foregrounded.
    *
    * @default 43200000 (12 hours)
@@ -702,12 +702,12 @@ export interface SignalProtocolClientConfig {
   preKeyMaintenance?: PreKeyMaintenanceStore;
 
   /**
-   * Called when a group sender key is rotated.
+   * Runs after the client rotates a group sender key.
    *
    * Useful for logging, analytics, or triggering UI updates when
-   * sender keys are rotated due to membership changes.
+   * the client rotates sender keys after membership changes.
    *
-   * @param groupId - The group whose sender key was rotated
+   * @param groupId - The group whose sender key changed
    * @param newGeneration - The new generation number of the sender key
    *
    * @example
@@ -726,19 +726,19 @@ export interface SignalProtocolClientConfig {
   /**
    * Sealed Sender configuration for anonymous message delivery.
    *
-   * When configured, messages are wrapped with sealed sender encryption
+   * When configured, the client wraps messages in sealed sender encryption
    * that hides the sender's identity from the server. The recipient can
    * still verify the sender via the embedded certificate.
    *
    * Requires:
    * - A relay deployment secret (`OE_GROUPS_SERVER_SECRET`), from which the
-   *   certificate signing keys are derived — there is no separate signing-key
+   *   relay derives the certificate signing keys. There is no separate signing-key
    *   variable.
    * - The deployment's Ed25519 sender-certificate root public key pinned in
    *   `trustRoots` at build time. Print it with `npx oe-groups trust-root`,
    *   which reports it as `sealed sender trust root` alongside the group trust
-   *   root. Never fetch it from a relay at runtime: a relay that can choose the
-   *   root it is validated against can mint certificates for any sender.
+   *   root. Never fetch it from a relay at runtime. A relay that can choose
+   *   the root that validates it can mint certificates for any sender.
    *
    * With `trustRoots` empty, inbound sealed-sender validation stays disabled
    * and sends fall back to identified delivery, which deanonymizes the sender

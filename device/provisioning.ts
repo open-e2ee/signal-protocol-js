@@ -18,12 +18,13 @@
  *
  * Differences from Device Transfer:
  * - Shares identity key only (not full backup with sessions)
- * - Adds new device (doesn't migrate/wipe old device)
+ * - Adds new device (does not migrate/wipe old device)
  * - Multiple devices remain active
  *
  * This module is platform-free on purpose. The device's own description arrives
  * as a `LocalDeviceMetadata` parameter, so nothing here needs to ask a platform
- * what it is running on; `./expo-metadata` supplies that for Expo hosts.
+ * what it is running on. The `./expo-metadata` module supplies that for Expo
+ * hosts.
  */
 
 import type { IProvisioningService } from '../remote/relay/types';
@@ -50,7 +51,7 @@ export interface UserProfile {
 /**
  * Optional local group-state store used to sync group master keys during provisioning.
  *
- * The Signal Protocol SDK owns the provisioning semantics; the host app owns the concrete SQLite store.
+ * The Signal Protocol SDK owns the provisioning semantics. The host app owns the concrete SQLite store.
  */
 export interface ProvisioningGroupStateStore {
   getAllMasterKeys(): Promise<Array<{ groupId: string; masterKey: string }>>;
@@ -61,7 +62,7 @@ export interface ProvisioningGroupStateStore {
 /**
  * Identity-key storage used during provisioning.
  *
- * The Signal Protocol SDK owns the provisioning semantics; callers provide their concrete
+ * The Signal Protocol SDK owns the provisioning semantics. Callers provide their concrete
  * storage adapter so provisioning writes into the same key store used by the
  * runtime client.
  */
@@ -366,7 +367,7 @@ export async function provisionDevice(
     });
 
     // Wipe ephemeral keys for security
-    // Note: ephemeralPrivateKey is Base64 string, can't be securely zeroed
+    // Note: ephemeralPrivateKey is Base64 string, cannot be securely zeroed
     crypto.secureZeroBytes(sharedSecret);
     crypto.secureZeroBytes(encryptionKey);
   } catch (error) {
@@ -699,6 +700,6 @@ export async function cancelProvisioning(
     logger.info('[Provisioning] Session cancelled', { sessionId });
   } catch (error) {
     logger.error('[Provisioning] Failed to cancel session', error);
-    // Don't throw - cleanup is best-effort
+    // Do not throw - cleanup is best-effort
   }
 }

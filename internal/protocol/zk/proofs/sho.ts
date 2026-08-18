@@ -1,5 +1,5 @@
 /**
- * Stateful Hash Object (SHO) — HMAC-SHA256 variant
+ * Stateful Hash Object (SHO): HMAC-SHA256 variant
  *
  * + ShoExt trait from the profile
  *
@@ -9,7 +9,7 @@
  * The ShoExt extensions (getPoint/getScalar) are included here since SHO
  * is the natural home for these Ristretto group element generation methods.
  *
- * @see https://eprint.iacr.org/2019/1416.pdf — Signal Private Group System
+ * @see https://eprint.iacr.org/2019/1416.pdf (Signal Private Group System)
  */
 
 import { hmac } from '@noble/hashes/hmac.js';
@@ -51,13 +51,14 @@ const enum Mode {
 }
 
 /**
- * ShoHmacSha256 — Stateful Hash Object built on HMAC-SHA256
+ * ShoHmacSha256: Stateful Hash Object built on HMAC-SHA256
  *
  * State machine:
- *   new(label) → RATCHETED
- *   absorb() → ABSORBING (creates new HMAC from cv if was RATCHETED)
- *   ratchet() → RATCHETED (finalizes HMAC into cv)
- *   squeezeAndRatchet() → RATCHETED (only valid from RATCHETED state)
+ *
+ * - new(label) → RATCHETED
+ * - absorb() → ABSORBING (creates new HMAC from cv if was RATCHETED)
+ * - ratchet() → RATCHETED (finalizes HMAC into cv)
+ * - squeezeAndRatchet() → RATCHETED (only valid from RATCHETED state)
  */
 export class ShoHmacSha256 {
   private cv: Uint8Array;

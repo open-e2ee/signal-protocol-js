@@ -26,7 +26,7 @@ const urlToken = bytesToUrlSafeBase64(bytes);
 const roundTrip = hexToBytes(bytesToHex(bytes));
 ```
 
-Treat encoded cryptographic values as opaque. Encoding changes representation;
-it does not encrypt, authenticate, or validate the meaning of the bytes.
+Treat encoded cryptographic values as opaque. Encoding changes representation. It
+does not encrypt, authenticate, or validate the meaning of the bytes.
 
 See the [API reference](../docs/api/namespaces/encoding/README.md).

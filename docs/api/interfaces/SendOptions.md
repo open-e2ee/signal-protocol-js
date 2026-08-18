@@ -71,7 +71,7 @@ Optional client-generated media identifier for cross-device reconciliation
 Content hint for recipient retry behavior.
 
 Used for protocol/no-op payloads (for example NullMessage resend responses)
-that should be treated as IMPLICIT and silently discarded on failure.
+that the client treats as IMPLICIT and silently discards on failure.
 
 ***
 
@@ -113,11 +113,11 @@ Media attachment flags bitmap, for example MediaAttachmentFlag.VoiceMessage
 
 Application user IDs of the group's members, for local-first fan-out.
 
-**Required for every group send** — a group send without it throws rather
+**Required for every group send**. A group send without it throws rather
 than delivering to nobody. The relay keeps no `groupId -> member` map by
-design, so it cannot supply the roster, and the SDK cannot derive it
-either: decrypted group state identifies members by ACI
-(`DecryptedMember.aciBytes`) while the relay routes by application
+design, so it cannot supply the roster. The SDK cannot derive it either.
+Decrypted group state identifies members by ACI
+(`DecryptedMember.aciBytes`), while the relay routes by application
 `userId`, and only the application holds that mapping.
 
 Resolve the roster from local group state, map each member's ACI to your
@@ -180,7 +180,7 @@ Base64-encoded preview thumbnail stored inside encrypted attachment metadata
 > `optional` **timestamp?**: `number`
 
 Client timestamp for receipt matching.
-Same timestamp should be stored locally for delivery receipt lookup.
+Store the same timestamp locally for delivery receipt lookup.
 
 ***
 

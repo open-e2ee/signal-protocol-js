@@ -23,7 +23,7 @@
  *
  * - **Forward secrecy**: Ratchet advancement removes obsolete keys from live state
  * - **Break-in recovery**: An uncompromised DH ratchet step refreshes future keys
- * - **Best-effort cleanup**: Owned key buffers are cleared after use; JavaScript
+ * - **Best-effort cleanup**: Owned key buffers are cleared after use. JavaScript
  *   runtimes do not guarantee physical erasure
  *
  * ## Specification References
@@ -206,7 +206,7 @@ export const DEFAULT_RATCHET_CONFIG: DoubleRatchetConfig = {
  * Maximum number of receiver chains to store.
  *
  * The reference implementation maintains up to 5 receiver chains for handling out-of-order
- * DH ratchets. When a 6th chain would be added, the oldest is evicted.
+ * DH ratchets. A 6th chain evicts the oldest.
  *
  */
 export const MAX_RECEIVER_CHAINS = 5;
@@ -220,8 +220,8 @@ export const MAX_SKIP = 25000;
 /**
  * Maximum total message keys to store across all receiver chains.
  *
- * This is a global limit, not per-chain. When exceeded, oldest keys
- * are evicted using FIFO strategy.
+ * This is a global limit, not per-chain. Past it, a FIFO strategy evicts the
+ * oldest keys.
  *
  */
 export const MAX_MESSAGE_KEYS = 2000;
@@ -263,8 +263,8 @@ export interface DecryptInput {
 /**
  * Validate DH public key size
  *
- * Ensures received DH public key is exactly 32 bytes (X25519 requirement).
- * Prevents invalid point attacks and ensures protocol compliance.
+ * Checks that the received DH public key is exactly 32 bytes (X25519 requirement).
+ * Prevents invalid point attacks and keeps the protocol compliant.
  *
  * @param dhPublicKeyB64 Base64-encoded DH public key
  * @throws Error if key size is invalid

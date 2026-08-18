@@ -13,7 +13,7 @@
 // Specification Versions
 // =============================================================================
 // Which Signal Protocol specification versions the SDK implements.
-// These are for documentation/clarity - they don't go in wire messages.
+// These are for documentation/clarity - they do not go in wire messages.
 
 /** Signal Protocol X3DH key-agreement specification */
 export {};

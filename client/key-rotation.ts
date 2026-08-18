@@ -2,12 +2,12 @@
  * Key rotation operations for SignalProtocolClient
  *
  * Extracted from SignalProtocolClient class to reduce file size.
- * Handles rotation of EC signed prekeys and Kyber (post-quantum) prekeys.
+ * Rotates EC signed prekeys and Kyber (post-quantum) prekeys.
  *
  * With relay configured: Delegates to key-rotation-core.ts for metadata-based
  * rotation decisions (skips if key is fresh).
  *
- * Without relay (local-only): Always rotates unconditionally since we can't
+ * Without relay (local-only): Always rotates unconditionally since we cannot
  * check server metadata.
  */
 
@@ -25,14 +25,14 @@ import { rotateEcSignedPreKeyCore, rotateKyberPreKeyCore } from './key-rotation-
 /**
  * Rotate EC signed prekey
  *
- * Should be called periodically (default: every 2 days) to maintain forward secrecy.
+ * Call this periodically (default: every 2 days) to maintain forward secrecy.
  * Generates new EC signed prekey and uploads to relay server if configured.
  *
- * With relay: Checks if rotation is needed based on key age and config.keyRefreshIntervalMs.
+ * With relay: Checks key age and config.keyRefreshIntervalMs to decide on rotation.
  * Without relay: Always rotates (local-only development mode).
  *
  * @param ctx - Client context with dependencies
- * @returns True if rotation was performed, false if not needed yet
+ * @returns True if the function rotated the key, false if the key is still fresh
  */
 export {};
 export async function rotateEcSignedPreKey(ctx: SignalProtocolClientContext): Promise<boolean> {
@@ -74,7 +74,7 @@ export async function rotateEcSignedPreKey(ctx: SignalProtocolClientContext): Pr
 /**
  * Local-only EC signed prekey rotation (no relay)
  *
- * Always rotates unconditionally since we can't check server metadata.
+ * Always rotates unconditionally since we cannot check server metadata.
  * Used for local development without a backend.
  */
 async function rotateEcSignedPreKeyLocalOnly(
@@ -121,18 +121,18 @@ async function rotateEcSignedPreKeyLocalOnly(
 /**
  * Rotate the post-quantum KEM last-resort prekey.
  *
- * Should be called periodically (default: every 2 days) alongside signed prekey rotation.
+ * Call this periodically (default: every 2 days) alongside signed prekey rotation.
  * Generates fresh ML-KEM/Kyber-compatible key material and uploads it to the
  * relay if configured.
  *
  * Per PQXDH spec Section 3.2: Always use ID 1 (replaces previous).
  * Uses the same timing as signed prekey rotation for synchronized PQ security.
  *
- * With relay: Checks if rotation is needed based on key age and config.keyRefreshIntervalMs.
+ * With relay: Checks key age and config.keyRefreshIntervalMs to decide on rotation.
  * Without relay: Always rotates (local-only development mode).
  *
  * @param ctx - Client context with dependencies
- * @returns True if rotation was performed, false if not needed yet
+ * @returns True if the function rotated the key, false if the key is still fresh
  */
 export async function rotateKyberPreKey(ctx: SignalProtocolClientContext): Promise<boolean> {
   // Use config value if provided, otherwise use profile default (2 days)
@@ -173,7 +173,7 @@ export async function rotateKyberPreKey(ctx: SignalProtocolClientContext): Promi
 /**
  * Local-only Kyber prekey rotation (no relay)
  *
- * Always rotates unconditionally since we can't check server metadata.
+ * Always rotates unconditionally since we cannot check server metadata.
  * Used for local development without a backend.
  */
 async function rotateKyberPreKeyLocalOnly(
@@ -222,7 +222,7 @@ async function rotateKyberPreKeyLocalOnly(
 }
 
 /**
- * Cull replaced prekeys that have exceeded the grace period.
+ * Cull replaced prekeys that are past the grace period.
  * Best-effort: logs but never throws (culling is non-critical).
  */
 async function cullReplacedPreKeysQuietly(ctx: SignalProtocolClientContext): Promise<void> {

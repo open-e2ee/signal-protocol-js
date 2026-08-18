@@ -28,8 +28,8 @@ const signedPreKey = await generateEcSignedPreKey(identity);
 ```
 
 Ordinary application code usually lets `SignalProtocolClient` generate and
-persist this material. Direct key APIs are intended for adapter, provisioning,
-and advanced lifecycle integrations.
+persist this material. Direct key APIs serve adapter, provisioning, and
+advanced lifecycle integrations.
 
 ## Composite identity
 
@@ -47,7 +47,7 @@ The SDK provisions one tuple per `(userId, identityType)` across linked devices.
 ACI and PNI are independent identity types. Device registration IDs, prekeys,
 and sessions remain device-specific.
 
-The tuple is encoded as exactly 67 bytes:
+The tuple encodes to exactly 67 bytes:
 
 ```text
 0x01 || 0x01 || X25519 public key || 0x02 || Ed25519 public key
@@ -72,7 +72,7 @@ not make this profile interoperable with XEdDSA identity signatures.
 ML-KEM-1024 public keys use the mandatory `0x0A || raw` representation: one tag
 byte plus 1,568 raw bytes. The corresponding serialized ciphertext has the same
 1,569-byte size. A value with the deployed round-3 Kyber1024 `0x08` tag is a
-different profile and is rejected.
+different profile, and the SDK rejects it.
 
 Prekey signatures cover a domain-separated context, not only the raw key:
 
@@ -91,11 +91,12 @@ For ML-KEM-1024, `serialized public key` includes the `0x0A` tag.
 `PreKeyBundle` carries one composite identity and the device-specific material
 needed for X3DH/PQXDH session establishment:
 
-- registration ID and device ID;
-- composite identity tuple;
-- required signed EC prekey;
-- optional EC one-time prekey; and
-- either a one-time or last-resort signed ML-KEM-1024 prekey when PQXDH is used.
+- registration ID and device ID.
+- composite identity tuple.
+- required signed EC prekey.
+- optional EC one-time prekey.
+- either a one-time or last-resort signed ML-KEM-1024 prekey when the session
+  uses PQXDH.
 
 Relay and storage adapters carry the same canonical tuple. Consumers must reject
 an identity mismatch before consuming a one-time prekey or committing a session.
@@ -103,11 +104,11 @@ an identity mismatch before consuming a one-time prekey or committing a session.
 ## Secret ownership
 
 Private keys are Base64 strings in the current public types and therefore cannot
-be reliably erased by the SDK. Temporary mutable byte arrays owned by generation
-or crypto functions are overwritten after use where practical, but JavaScript
-does not guarantee physical zeroization, freedom from copies, or hard
-constant-time execution. Long-lived keys should be held by the strongest
-platform-backed storage available to the application.
+be reliably erased by the SDK. Generation and crypto functions overwrite their
+temporary mutable byte arrays after use, where practical. JavaScript still does
+not guarantee physical zeroization, freedom from copies, or hard constant-time
+execution. The strongest platform-backed storage available to the application
+should hold long-lived keys.
 
 ## Module boundaries
 

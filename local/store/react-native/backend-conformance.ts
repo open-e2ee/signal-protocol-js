@@ -4,16 +4,17 @@
  * `ReactNativeSignalProtocolStore` delegates persistence to a
  * `ReactNativeKeyValueStorage` backend the application provides, so the SDK
  * cannot exercise that backend itself. This kit is the executable form of the
- * backend contract: an application runs it against its own backend, and a
- * clean result is the precondition for every durability and atomicity promise
- * the store makes on top. The `atomicWrite` cases matter most — the store
- * commits identity trust, session state, and one-time-prekey consumption
- * through `atomicWrite` as one security transition, and a backend that
- * reorders, interleaves, or partially applies those batches silently breaks
- * that guarantee.
+ * backend contract. An application runs it against its own backend. A clean
+ * result is the precondition for every durability and atomicity promise the
+ * store makes on top.
  *
- * The kit has no framework or platform dependencies and avoids class syntax,
- * so it runs unchanged under jest, Node, a browser, or the Hermes engine that
+ * The `atomicWrite` cases matter most. The store commits identity trust,
+ * session state, and one-time-prekey consumption through `atomicWrite` as one
+ * security transition. A backend that reorders, interleaves, or partially
+ * applies those batches silently breaks that guarantee.
+ *
+ * The kit has no framework or platform dependencies, and avoids class syntax.
+ * It runs unchanged under jest, Node, a browser, or the Hermes engine that
  * ships with React Native.
  *
  * @example
@@ -32,7 +33,7 @@ import type { ReactNativeKeyValueStorage } from './storage';
 export interface BackendConformanceOptions {
   /**
    * Return a backend over fresh, empty storage. Called once per case so
-   * cases cannot contaminate each other; a real implementation typically
+   * cases cannot contaminate each other. A real implementation typically
    * opens a new namespace, file, or database per call.
    */
   createBackend(): ReactNativeKeyValueStorage | Promise<ReactNativeKeyValueStorage>;
@@ -68,7 +69,7 @@ const SESSION_PREFIX = '@signal:sessions:';
 
 /**
  * Session values under the prefix are JSON envelopes whose plaintext routing
- * metadata carries the exact userId; `removeSessionsForUser` must match on
+ * metadata carries the exact userId. `removeSessionsForUser` must match on
  * that field, never on the key. The `data` field is opaque to the backend.
  */
 function sessionEnvelope(userId: string, deviceId: number): string {
@@ -247,7 +248,7 @@ const CASES: ConformanceCase[] = [
     async run(backend) {
       await backend.setItem(SESSION_PREFIX + 'alice:1', sessionEnvelope('alice', 1));
       await backend.setItem(SESSION_PREFIX + 'alice:2', sessionEnvelope('alice', 2));
-      // 'alice2' begins with 'alice'; a substring or startsWith match on the
+      // 'alice2' starts with 'alice'. A substring or startsWith match on the
       // userId would delete an unrelated user's session.
       await backend.setItem(SESSION_PREFIX + 'alice2:1', sessionEnvelope('alice2', 1));
       await backend.setItem(SESSION_PREFIX + 'bob:1', sessionEnvelope('bob', 1));
@@ -335,7 +336,7 @@ const CASES: ConformanceCase[] = [
         { type: 'check', key: 'durable-batch', expectedValue: null },
         { type: 'set', key: 'durable-batch', value: 'also-kept' },
       ]);
-      // Deletions must be as durable as writes: a backend that persists sets
+      // Deletions must be as durable as writes. A backend that persists sets
       // but resurrects removed keys after reopen would leave sessions alive
       // that the store deleted during an identity rotation.
       await backend.setItem('durable-removed', 'doomed');

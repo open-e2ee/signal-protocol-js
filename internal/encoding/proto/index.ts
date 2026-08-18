@@ -2,16 +2,16 @@
  * Shared Protobuf Module
  *
  * Provides protobuf encoding/decoding for Signal Protocol messages.
- * All wire format encoding uses protobuf — there is no JSON wire format.
+ * All wire format encoding uses protobuf. There is no JSON wire format.
  *
  * ## Architecture
  *
  * The protocol uses protobuf for both:
  *
- * 1. **Signing format** — the canonical byte representation that Ed25519
- *    signatures cover. Stable; must never change without a protocol version bump.
+ * 1. **Signing format**: the canonical byte representation that Ed25519
+ *    signatures cover. Stable. It must never change without a protocol version bump.
  *
- * 2. **Transport format** — how encrypted messages are serialized for delivery
+ * 2. **Transport format**: how encrypted messages are serialized for delivery
  *    between client and server. Uses protobuf envelope framing (version byte +
  *    protobuf payload + MAC).
  * @internal

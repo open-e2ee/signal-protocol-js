@@ -119,7 +119,7 @@ import {
 } from '../protocol/double-ratchet';
 import { asBase64 } from '../../types/utils';
 // Black-box SPQR API
-// DH ratchet is purely classical; ALL PQ work happens inside spqrSend/spqrRecv
+// DH ratchet is purely classical. ALL PQ work happens inside spqrSend/spqrRecv
 import { spqrSend, spqrRecv } from '../protocol/spqr';
 import type { SessionEstablishmentCallback, SessionCipherConfig } from './types';
 import {
@@ -414,7 +414,7 @@ export class SessionCipher {
         }
 
         // Reject expired, unacknowledged PreKey sessions.
-        // PreKey sessions that haven't received a reply within 30 days are rejected
+        // PreKey sessions that have not received a reply within 30 days are rejected
         if (session.hasReceivedMessage === false) {
           const sessionAge = Date.now() - session.createdAt;
           if (sessionAge > MAX_UNACKNOWLEDGED_SESSION_AGE_MS) {
@@ -612,9 +612,10 @@ export class SessionCipher {
           if (iv) CryptoUtils.secureZeroBytes(iv);
         }
 
-        // Step 6: Check if this should be a PreKeyMessage
+        // Step 6: Check if this should be a PreKeyMessage.
         // Uses persistent flag so that if the first PreKeyMessage is lost,
-        // subsequent messages are still sent as PreKeyMessages until acknowledged
+        // subsequent messages are still sent as PreKeyMessages until
+        // acknowledged.
         const shouldSendPreKeyMessage = session.unacknowledgedPreKeyMessage === true;
 
         if (shouldSendPreKeyMessage) {
@@ -744,9 +745,9 @@ export class SessionCipher {
    *
    * ## Session Establishment
    *
-   * If the session doesn't exist and the message is a PreKeyMessage, this method
-   * will establish the session as the responder by calling the establishSession
-   * callback to perform X3DH key agreement.
+   * If the session does not exist and the message is a PreKeyMessage, this
+   * method establishes the session as the responder. It calls the
+   * establishSession callback to perform X3DH key agreement.
    *
    * ## Out-of-Order Handling
    *
@@ -783,9 +784,9 @@ export class SessionCipher {
           // Binary protobuf format (base64-encoded)
           const framedBytes = CryptoUtils.base64ToBytes(ciphertext as Base64);
 
-          // Detect message type from first protobuf tag (after version byte)
-          // SignalProtocolMessage field 1 (bytes) -> tag 0x0A
-          // PreKeySignalProtocolMessage field 1 (uint32) -> tag 0x08, or field 2 (bytes) -> tag 0x12
+          // Detect message type from first protobuf tag (after version byte):
+          // - SignalProtocolMessage field 1 (bytes) -> tag 0x0A
+          // - PreKeySignalProtocolMessage field 1 (uint32) -> tag 0x08, or field 2 (bytes) -> tag 0x12
           const firstProtoTag = framedBytes[1];
           const isBinaryPreKey = firstProtoTag === 0x08 || firstProtoTag === 0x12;
 
@@ -819,13 +820,13 @@ export class SessionCipher {
               signalFields.addresses
             );
 
-            // Keep raw pqRatchet bytes (opaque — decoded by spqrRecv later)
+            // Keep raw pqRatchet bytes (opaque, decoded by spqrRecv later)
             const pqRatchetRaw = signalFields.pqRatchet;
 
-            // Convert protobuf fields back to PreKeyMessage JS object
-            // ratchetKey: strip 0x05 prefix (33->32 bytes), convert to base64
-            // The ratchet key is a public header field, so its length check does
-            // not depend on secret data.
+            // Convert protobuf fields back to PreKeyMessage JS object. The
+            // ratchetKey strips its 0x05 prefix (33->32 bytes) and converts to
+            // a base64 string. The ratchet key is a public header field, so
+            // its length check does not depend on secret data.
             const ratchetKeyRaw =
               signalFields.ratchetKey.length === 33
                 ? CryptoUtils.deserializePublicKey(signalFields.ratchetKey)
@@ -874,7 +875,7 @@ export class SessionCipher {
               signalFields.addresses
             );
 
-            // Keep raw pqRatchet bytes (opaque — decoded by spqrRecv later)
+            // Keep raw pqRatchet bytes (opaque, decoded by spqrRecv later)
             const pqRatchetRaw = signalFields.pqRatchet;
 
             const ratchetKeyRaw =
@@ -920,8 +921,9 @@ export class SessionCipher {
             ? SessionResolver.findDecryptingSessions(existingRecord)
             : [];
         // Track which candidate index to try next on failure.
-        // If we already have a current session, we've effectively "used" index 0 (the current session),
-        // so on failure we should start from index 1 (archived sessions).
+        // If we already have a current session, we have effectively "used"
+        // index 0 (the current session). On failure we should therefore start
+        // from index 1 (archived sessions).
         let currentCandidateIndex = session ? 1 : 0;
         let usedArchivedCandidate: { baseKey: Base64 } | null = null;
 
@@ -990,9 +992,12 @@ export class SessionCipher {
           }
         }
 
-        // CRITICAL: Check for identity key change when receiving PreKeyMessage with existing session
-        // This handles the device reset scenario where the sender has reinstalled their app
-        // and generated a new identity key, but we have an old session that can't decrypt.
+        // CRITICAL: Check for identity key change when receiving
+        // PreKeyMessage with an existing session.
+        //
+        // This handles the device reset scenario. The sender has reinstalled
+        // their app and generated a new identity key, but we have an old
+        // session that cannot decrypt.
         if (session && prekeyMessage) {
           const storedIdentity = session.remoteIdentity;
           const incomingIdentity = prekeyMessage.senderIdentity;
@@ -1008,7 +1013,7 @@ export class SessionCipher {
               },
             });
 
-            // Discard old session (it's useless now - different identity key)
+            // Discard old session (it is useless now - different identity key)
             // Set session to null to trigger new session establishment below
             session = null;
 
@@ -1058,8 +1063,10 @@ export class SessionCipher {
         // Auto-recovery retry loop for:
         // 1. PreKeyMessage failures on existing sessions (archive and retry once) - needs max 2 attempts
         // 2. RatchetMessage failures (try all archived session candidates per SESAME §3.2)
-        // For RatchetMessages, we only need sessionCandidates.length attempts (or 1 if empty).
-        // For PreKeyMessages, we need at least 2 for the archive-and-retry pattern.
+        //
+        // For RatchetMessages, we only need sessionCandidates.length attempts
+        // (or 1 if empty). For PreKeyMessages, we need at least 2 for the
+        // archive-and-retry pattern.
         const maxAttempts = isPreKeyMessage ? 2 : Math.max(1, sessionCandidates.length);
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           try {
@@ -1109,7 +1116,7 @@ export class SessionCipher {
               session = await this.establishSession(prekeyRemoteProtocolAddress, prekeyMessage);
 
               // Note: Session is stored at line 1053 AFTER successful decryption.
-              // This ensures partial/incomplete sessions from failed decrypts don't pollute storage.
+              // Partial or incomplete sessions from failed decrypts therefore never reach storage.
 
               this.logger.breadcrumb('Session established from PreKeyMessage - ready to decrypt', {
                 category: 'E2EE',
@@ -1169,9 +1176,10 @@ export class SessionCipher {
               },
             });
 
-            // Step 1: Try all skipped message keys first (using DHr:N key format)
-            // Pass pqRatchetBytes so skipped key path can decode SPQR epoch/messageNumber
-            // for PQ key combination (without advancing the main SPQR receive chain)
+            // Step 1: Try all skipped message keys first (using DHr:N key
+            // format). Pass pqRatchetBytes so the skipped key path can decode
+            // the SPQR epoch and messageNumber for PQ key combination. That
+            // decode does not advance the main SPQR receive chain.
             const skippedPlaintext = await trySkippedMessageKeys(
               session,
               ratchetKeyFromMessage,
@@ -1228,25 +1236,26 @@ export class SessionCipher {
             // Per Signal Protocol Section 3.3 - DH ratchet is triggered when:
             // - DHr is undefined (lazy initialization - responder's first message)
             // - DHr differs from message's ratchet key (sender ratcheted)
-            // String equality is fine here — DHr is transmitted in plaintext message
+            // String equality is fine here. DHr is transmitted in plaintext message
             // headers and is not secret.
             //
             const isLazyInit = session.DHr === undefined;
             const dhChanged = !isLazyInit && ratchetKeyFromMessage !== session.DHr;
 
-            // SECURITY: Check if this is a replay from an old chain
-            // If ratchetKey is in processedChains but NOT in receiverChains, it's a replay attack
-            // (The message was already processed or all keys from that chain were consumed)
+            // SECURITY: Check if this is a replay from an old chain.
+            // If ratchetKey is in processedChains but NOT in receiverChains,
+            // it is a replay attack. The message was already processed, or
+            // all keys from that chain were consumed.
             if (dhChanged) {
               // Initialize processedChains if not present
               if (!session.processedChains) {
                 session.processedChains = {};
               }
 
-              // Check if this ratchet key was from a previous chain that we've already processed
+              // Check if this ratchet key was from a previous chain that we have already processed
               const previousChainInfo = session.processedChains[ratchetKeyFromMessage];
               if (previousChainInfo) {
-                // This is an old chain - if not in receiverChains, it's a replay
+                // This is an old chain - if not in receiverChains, it is a replay
                 // (trySkippedMessageKeys already checked receiverChains and returned null)
                 this.logger.warn('Replay attack detected: message from processed chain', {
                   category: 'E2EE',
@@ -1471,7 +1480,7 @@ export class SessionCipher {
             }
 
             // SESAME §3.4: Session Convergence - promote archived session to active if used
-            // This ensures both parties converge to the same session for future messages
+            // Both parties then converge to the same session for future messages
             let recordToStore: SessionRecord;
             if (usedArchivedCandidate && existingRecord) {
               const promotedRecord = SessionResolver.promoteSession(
@@ -1493,7 +1502,7 @@ export class SessionCipher {
                   }
                 );
               } else {
-                // Fallback if promotion fails (shouldn't happen)
+                // Fallback if promotion fails (should not happen)
                 recordToStore = { ...existingRecord, currentSession: session };
                 this.logger.warn('SESAME: Failed to promote archived session, using as-is', {
                   category: 'E2EE',
@@ -1541,9 +1550,11 @@ export class SessionCipher {
 
             return plaintext;
           } catch (innerError) {
-            // SECURITY: Never auto-recover from replay attacks (MESSAGE_DUPLICATE)
-            // Replaying a PreKeyMessage could allow an attacker to bypass fingerprint checks
-            // PREKEY_NOT_FOUND: Sender has stale bundle (e.g., Kyber prekey ID mismatch) - recovery via SESAME retry
+            // SECURITY: Never auto-recover from replay attacks
+            // (MESSAGE_DUPLICATE). Replaying a PreKeyMessage could allow an
+            // attacker to bypass fingerprint checks. A sender with a stale
+            // bundle raises PREKEY_NOT_FOUND, for example on a Kyber prekey ID
+            // mismatch, and SESAME retry recovers from it.
             if (
               innerError instanceof EncryptionError &&
               (innerError.code === EncryptionErrorCode.MESSAGE_DUPLICATE ||
@@ -1621,7 +1632,7 @@ export class SessionCipher {
           });
         }
 
-        // L7: Comprehensive decryption failure diagnostics
+        // L7: Decryption failure diagnostics
         // Log error details for debugging (variables in this outer scope only)
         this.logger.error('Decryption failed - diagnostic summary', {
           category: 'E2EE',

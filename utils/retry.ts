@@ -42,8 +42,8 @@ const SIGNAL_RETRY_CONFIG = {
  *
  * The second group are session-establishment failures. They reach this
  * classifier because a failed device now surfaces its error from inside the
- * retry callback, so a code that is permanent for the life of the request must
- * be listed here or it is attempted three times for no benefit:
+ * retry callback. A code that is permanent for the life of the request must be
+ * listed here, or it is attempted three times for no benefit:
  *
  * - UNTRUSTED_IDENTITY and SIGNATURE_VERIFICATION_FAILED are security events.
  *   They want a safety-number check, not another attempt, and retrying only
@@ -55,10 +55,8 @@ const SIGNAL_RETRY_CONFIG = {
  */
 const NON_RETRYABLE_ERROR_CODES = new Set([
   EncryptionErrorCode.INVALID_PREKEY_BUNDLE,
-  EncryptionErrorCode.SESSION_CONFLICT,
   EncryptionErrorCode.ENCRYPTION_FAILED,
   EncryptionErrorCode.TOO_MANY_SKIPPED_MESSAGES,
-  EncryptionErrorCode.IDENTITY_KEY_CHANGED,
   EncryptionErrorCode.KEY_STORAGE_ERROR,
 
   EncryptionErrorCode.UNTRUSTED_IDENTITY,

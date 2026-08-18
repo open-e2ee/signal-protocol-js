@@ -199,7 +199,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
         return this.aliceSendFromCt1Received(state);
 
       case 'EkSentCt1Received':
-        // Waiting for more CT2 chunks; send bare CT1 acknowledgements.
+        // Waiting for more CT2 chunks. Send bare CT1 acknowledgements.
         return this.aliceSendFromEkSentCt1Received(state);
 
       default:
@@ -435,7 +435,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
               candidateState.epoch += 1n;
               this.resetForNewEpoch(candidateState, candidateState.state);
 
-              // The candidate is now authenticated; commit it in one assignment boundary.
+              // The candidate is now authenticated. Commit it in one assignment boundary.
               Object.assign(state, candidateState);
               outputRetained = true;
             } finally {
@@ -611,7 +611,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
     }
 
     // Ct2Sampled: next-epoch message triggers role swap
-    // The reference implementation does NOT re-process the message — just transitions and returns
+    // The reference implementation does NOT re-process the message. Just transitions and returns
     if (state.state === 'Ct2Sampled' && message.epoch === state.epoch + 1n) {
       this.transition(state, 'BOB_NEW_EPOCH');
       state.epoch += 1n;
@@ -843,7 +843,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
       // Bob needs a header decoder immediately
       state.headerDecoder = this.createDecoderState(HEADER_SIZE);
     }
-    // Alice needs nothing — keys generated lazily on first Send()
+    // Alice needs nothing. Keys generated lazily on first Send()
   }
 
   // ===========================================================================
@@ -1039,7 +1039,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
    * @param ekVector - The received EK vector (tHat)
    * @param expectedHek - The hek from the authenticated header
    * @param epoch - Current epoch for error reporting
-   * @throws AuthenticatorError if hash doesn't match
+   * @throws AuthenticatorError if hash does not match
    */
   private verifyEkHashBinding(
     ekSeed: Uint8Array,
@@ -1049,7 +1049,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
   ): void {
     const computedHek = computeHek(ekSeed, ekVector);
 
-    // Best-effort full-scan comparison; JavaScript provides no timing guarantee.
+    // Best-effort full-scan comparison. JavaScript provides no timing guarantee.
     if (!constantTimeEqual(computedHek, expectedHek)) {
       throw AuthenticatorError.ekHashBindingFailed(epoch);
     }

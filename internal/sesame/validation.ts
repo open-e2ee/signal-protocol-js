@@ -2,7 +2,7 @@
  * SESAME Configuration Validation
  *
  * Validates SESAME configuration parameters per Signal Protocol specification.
- * Ensures threshold relationships and values are correct before use.
+ * Checks that threshold relationships and values are correct before use.
  *
  * @see https://signal.org/docs/specifications/sesame/
  */
@@ -31,7 +31,7 @@ export interface SesameConfigValidation {
  * 3. SESAME invariant: MAXRECV > MAXSEND + 2*MAXLATENCY
  * 4. maxInactiveSessions is at least 1
  *
- * The SESAME invariant ensures that messages in flight can still be
+ * The SESAME invariant lets messages in flight still be
  * decrypted even if they arrive after the send threshold.
  *
  * @param config Partial or full SESAME configuration to validate
@@ -91,7 +91,7 @@ export function validateSesameConfig(config?: Partial<SesameConfig>): SesameConf
   }
 
   // Validate SESAME invariant: MAXRECV > MAXSEND + 2*MAXLATENCY
-  // This ensures messages in flight can still be decrypted
+  // Messages in flight can then still be decrypted
   const minimumMaxRecv = maxSend + 2 * maxLatency;
   if (maxRecv <= minimumMaxRecv) {
     errors.push(

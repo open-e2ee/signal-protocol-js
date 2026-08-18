@@ -6,7 +6,7 @@
  * - Stage 2 (Sender): Encrypts certificate + message
  *
  * This provides binding between the ephemeral key and sender identity,
- * ensuring the sender cannot be impersonated even if the ephemeral key
+ * so the sender cannot be impersonated even if the ephemeral key
  * is somehow compromised.
  *
  * @see https://signal.org/blog/sealed-sender/
@@ -42,7 +42,7 @@ import { encodeVarint } from '../../encoding/proto/primitives';
  * Format: contentType(1) || varint(certLen) || certBytes || varint(msgLen) || msg || contentHint
  *
  * The content type leads because it is what the recipient needs before it can
- * do anything with the payload. No group identifier is serialized: a group
+ * do anything with the payload. No group identifier is serialized. A group
  * message says only that it is a framed SenderKeyMessage, and the recipient
  * resolves the group from the frame's opaque distribution identifier.
  *
@@ -198,7 +198,7 @@ export async function seal(options: SealOptions): Promise<UnidentifiedSenderMess
 
     // Step 2.3: Derive sender keys (96 bytes: discard + cipher + mac)
     // The first 32 bytes of the 96-byte derivation are domain-separated discard
-    // material; cipher and MAC keys occupy the remaining bytes.
+    // material. Cipher and MAC keys occupy the remaining bytes.
     const s_material = await hkdf(s_sharedSecret, s_salt, new Uint8Array(0), 96);
     toZero.push(s_material);
     // s_material[0:32] discarded (mirrors EphemeralKeys structure)

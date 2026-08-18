@@ -1,5 +1,5 @@
 /**
- * Profile key encryption — ElGamal encryption of profile keys for group membership
+ * Profile key encryption: ElGamal encryption of profile keys for group membership
  *
  *
  * Provides domain-specific ElGamal encryption for ProfileKeyStruct attributes.
@@ -11,7 +11,7 @@
  *  3. Brute-forcing the 3 masked bits (8 variations per candidate = 64 total)
  *  4. Checking which candidate matches the expected M3 point
  *
- * @see https://eprint.iacr.org/2019/1416.pdf — Signal Private Group System
+ * @see https://eprint.iacr.org/2019/1416.pdf (Signal Private Group System)
  */
 
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';

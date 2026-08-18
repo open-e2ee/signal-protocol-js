@@ -5,9 +5,9 @@
  * to provide forward secrecy and break-in recovery for message encryption.
  *
  * Key features:
- * - Forward secrecy: Past messages remain secure if current keys are compromised
+ * - Forward secrecy: Past messages remain secure if an attacker takes current keys
  * - Break-in recovery: Future messages become secure after key rotation
- * - Out-of-order message handling: Skipped message keys are stored for later
+ * - Out-of-order message handling: the session stores skipped message keys for later
  * - Identity-bound MAC: Message authentication with sender/receiver identity binding
  *
  * @see https://signal.org/docs/specifications/doubleratchet/

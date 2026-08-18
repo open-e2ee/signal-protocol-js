@@ -273,7 +273,7 @@ export const META_DIRECTORY_NAMES = ['types', 'internal', 'utils'] as const;
  * Validate that a source layer can import from a target layer.
  *
  * The dependency rule: Layer N can only import from Layer N+1 or higher.
- * This ensures dependencies always point inward toward the domain core.
+ * Dependencies therefore always point inward toward the domain core.
  *
  * @param sourceLayer - The layer doing the importing
  * @param targetLayer - The layer being imported from

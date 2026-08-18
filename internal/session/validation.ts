@@ -55,7 +55,7 @@ export function decodeIdentityKeyOrDummy(key: Base64 | undefined): Uint8Array {
  * 4. Exactly 32 bytes when decoded (256-bit key)
  *
  * NOTE: This throws on invalid keys, creating a timing side-channel.
- * Use only on the SEND path (where we're the sender and timing doesn't
+ * Use only on the SEND path (where we are the sender and timing does not
  * leak secrets). For the RECEIVE path, use decodeIdentityKeyOrDummy().
  *
  * @param key Base64-encoded identity key
@@ -121,7 +121,7 @@ export function validateSessionKeyOwnership(
   mySignedPreKeyPublic: Base64 | undefined,
   logger: Required<ILogger> = defaultSignalProtocolLogger
 ): void {
-  // Skip validation if we don't have a signed prekey to compare
+  // Skip validation if we do not have a signed prekey to compare
   if (!mySignedPreKeyPublic) {
     logger.warn('Cannot validate session key ownership: no signed prekey available', {
       category: 'E2EE',
@@ -137,7 +137,7 @@ export function validateSessionKeyOwnership(
 
     if (session.DHr !== undefined && session.DHr === mySignedPreKeyPublic) {
       // BUG DETECTED: DHr equals our own signed prekey
-      // This means keys are swapped - we're trying to compute DH with ourselves
+      // This means keys are swapped - we are trying to compute DH with ourselves
       logger.error('Session corrupted: DHr equals our own signed prekey (keys swapped)', {
         category: 'SECURITY',
         data: {
@@ -275,7 +275,7 @@ export function validateSessionStateIntegrity(
     );
   }
 
-  // DHr must not be an empty string if defined
+  // DHr must not be an empty string if defined.
   // Empty string DHr passes truthy checks but creates invalid keyIds for MKSKIPPED
   // (e.g., ":0" instead of "validKey:0"), corrupting skipped message key lookups.
   // An undefined/null DHr is valid (lazy init for responder's first message).

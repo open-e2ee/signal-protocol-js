@@ -10,5 +10,5 @@
 
 Maximum total message keys to store across all receiver chains.
 
-This is a global limit, not per-chain. When exceeded, oldest keys
-are evicted using FIFO strategy.
+This is a global limit, not per-chain. Past it, a FIFO strategy evicts the
+oldest keys.

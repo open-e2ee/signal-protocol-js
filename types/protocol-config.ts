@@ -38,7 +38,7 @@ export interface SignalProtocolConfig {
   /**
    * Post-quantum policy for session establishment.
    *
-   * - `required`: require post-quantum peers; peers without PQ material fail closed.
+   * - `required`: require post-quantum peers. Peers without PQ material fail closed.
    * - `compatible`: use post-quantum peers when available and allow classical
    *   compatibility only for peers with no PQ material at all.
    *
@@ -91,8 +91,9 @@ export function protocolConfigToStrategy(config?: SignalProtocolConfig): Protoco
  * Resolve public and advanced protocol configuration.
  *
  * Public `protocol` owns fallback and Braid semantics. Advanced strategy
- * options may still provide telemetry callbacks, SPQR limits, KDF strings, and
- * protocol diagnostic hooks, but they cannot also set fallback or SCKA mode behavior.
+ * options may still provide telemetry callbacks, SPQR limits, KDF strings,
+ * and protocol diagnostic hooks. They cannot also set fallback or SCKA mode
+ * behavior.
  */
 export function resolveSignalProtocolStrategy(config?: {
   protocol?: SignalProtocolConfig;
@@ -146,11 +147,11 @@ export interface ProtocolSelectionEvent {
 /**
  * ML-KEM Braid chunk progress, for diagnostics and progress display.
  *
- * Braid mode spreads an ML-KEM key agreement across many messages: each
+ * Braid mode spreads an ML-KEM key agreement across many messages. Each
  * message carries one erasure-coded chunk, and an epoch closes only once
  * enough chunks have travelled in both directions. Nothing outside the braid
- * state machine can otherwise observe that, so a host that wants to show or
- * log the ratchet's progress has no other source for it.
+ * state machine can otherwise observe that. A host that wants to show or log
+ * the ratchet's progress has no other source for it.
  */
 export interface BraidProgressEvent {
   /**
@@ -164,8 +165,8 @@ export interface BraidProgressEvent {
    *
    * This is not a target that {@link chunksCarried} settles on. Sending
    * capacity includes roughly 30% parity beyond the chunks a peer needs to
-   * reconstruct, and transfers open as the epoch advances rather than all at
-   * once, so the two counts converge only loosely.
+   * reconstruct. Transfers also open as the epoch advances rather than all at
+   * once. The two counts therefore converge only loosely.
    */
   chunksRequired: number;
 
@@ -177,8 +178,9 @@ export interface BraidProgressEvent {
    * secret.
    *
    * When that secret also ends the epoch, the state machine has already reset
-   * its counters, so {@link chunksCarried} and {@link chunksRequired} describe
-   * the epoch that has just begun rather than the one the secret closed.
+   * its counters. The counters {@link chunksCarried} and
+   * {@link chunksRequired} then describe the epoch that has just begun rather
+   * than the one the secret closed.
    */
   emittedEpochKey: boolean;
 }
@@ -258,7 +260,7 @@ export interface ProtocolStrategyConfig {
   networkConstraints?: NetworkConstraints;
 
   /**
-   * Called after key exchange completes, before the first message is encrypted.
+   * Called after key exchange completes, before the client encrypts the first message.
    */
   onProtocolSelected?: (event: ProtocolSelectionEvent) => void;
 
@@ -315,9 +317,9 @@ export interface SenderKeysConfig {
    * Maximum age for locally generated sender keys before rotation.
    *
    * Clamped to the range {@link SENDER_KEY_AGE_FLOOR} to
-   * {@link SENDER_KEY_AGE_CEILING}; a value outside it is treated as the bound
-   * it passed, and a value that is not a positive finite number falls back to
-   * the default.
+   * {@link SENDER_KEY_AGE_CEILING}. A value outside it becomes the bound it
+   * passed. A value that is not a positive finite number falls back
+   * to the default.
    *
    * @default 1209600000
    */
@@ -329,19 +331,19 @@ export interface SenderKeysConfig {
  * milliseconds.
  *
  * A sender key is the one piece of group key material that no ratchet
- * refreshes: it advances a chain forward on every send, so it gives forward
- * secrecy against a later compromise, but a member who holds the key at time
- * T can read everything sent under it afterwards. Only rotation ends that,
+ * refreshes. It advances a chain forward on every send, so it gives forward
+ * secrecy against a later compromise. A member who holds the key at time T
+ * can still read everything sent under it afterwards. Only rotation ends that,
  * and rotation is what this bound guarantees eventually happens. Membership
- * changes normally force it sooner; the age bound is what covers a group
+ * changes normally force it sooner. The age bound is what covers a group
  * whose membership never changes.
  *
  * Ninety days matches the ceiling the reference implementation applies to its
- * own remotely configured value. The difference here is who is being bounded:
- * the reference clamps a value it sets itself, whereas this SDK takes the
- * value from the host application, so the clamp is the only thing keeping a
- * deployment from disabling rotation outright by configuring an age no key
- * will reach.
+ * own remotely configured value. The difference here is whose value the bound covers.
+ * The reference clamps a value it sets itself, whereas this SDK takes the
+ * value from the host application. The clamp is therefore the only thing that
+ * keeps a deployment from disabling rotation outright by configuring an age
+ * no key will reach.
  */
 export const SENDER_KEY_AGE_CEILING = 90 * 24 * 60 * 60 * 1000;
 
@@ -349,25 +351,26 @@ export const SENDER_KEY_AGE_CEILING = 90 * 24 * 60 * 60 * 1000;
  * Hard lower bound on {@link SenderKeysConfig.maxSenderKeyAge}, in
  * milliseconds.
  *
- * Unlike the ceiling this is not a security bound — rotating sooner is
- * strictly safer — it is an availability one, and it exists because expiry is
- * enforced on a key that a *send* has to rotate and redistribute. When a key
- * expires the send path generates a new one, fans a distribution message out
- * to every other member over sequential network calls, then retries the
- * encrypt, which re-checks the age of the key it just created. If the
- * configured age is shorter than that fan-out takes, the retry finds the new
- * key already expired and the send fails permanently, having burned a rotation
- * and a message to every member on each attempt.
+ * Unlike the ceiling this is not a security bound, because rotating sooner is
+ * strictly safer. It is an availability one, and it exists because the expiry
+ * falls on a key that a *send* has to rotate and redistribute.
  *
- * An hour is well clear of that: even a group at the membership limit, with a
+ * When a key expires the send path generates a new one. It fans a
+ * distribution message out to every other member over sequential network
+ * calls, then retries the encrypt. That retry re-checks the age of the key it
+ * just created. If the configured age is shorter than the fan-out takes, the
+ * retry finds the new key already expired and the send fails permanently.
+ * Each attempt burns a rotation and a message to every member.
+ *
+ * An hour is well clear of that. Even a group at the membership limit, with a
  * distribution message to each member, finishes its fan-out in minutes at
  * worst. It is also low enough to leave deliberately aggressive rotation
  * policies intact, which a bound measured in days would not.
  *
- * A configured age below this is treated as the bound rather than rejected,
- * because the value that reaches it is usually a unit mistake — this field is
- * milliseconds, so a host that means fourteen days and passes `14` lands here
- * — and the safe reading of "rotate far more often than I asked" is to rotate
+ * A configured age below this becomes the bound, and does not raise an error.
+ * The value that reaches it is usually a unit mistake. This field is
+ * milliseconds, so a host that means fourteen days and passes `14` lands
+ * here. The safe reading of "rotate far more often than I asked" is to rotate
  * as often as the implementation can actually deliver.
  */
 export const SENDER_KEY_AGE_FLOOR = 60 * 60 * 1000;
@@ -408,7 +411,7 @@ export interface ReplacedOneTimePreKeyCullResult {
 /**
  * App-provided persistence helpers for prekey replacement bookkeeping.
  *
- * The Signal Protocol SDK owns rotation semantics; concrete storage adapters own
+ * The Signal Protocol SDK owns rotation semantics. Concrete storage adapters own
  * persistence.
  */
 export interface PreKeyMaintenanceStore {
@@ -423,7 +426,7 @@ export interface PreKeyMaintenanceStore {
   markKyberOneTimePreKeysReplaced(identityType?: IdentityType): Promise<void>;
 
   /**
-   * Delete replaced one-time prekeys that have exceeded the grace period.
+   * Delete replaced one-time prekeys past the grace period.
    */
   cullReplacedOneTimePreKeys(
     maxReplacedAgeMs: number,
@@ -431,7 +434,7 @@ export interface PreKeyMaintenanceStore {
   ): Promise<ReplacedOneTimePreKeyCullResult>;
 
   /**
-   * Delete all replaced prekeys that have exceeded the grace period.
+   * Delete all replaced prekeys past the grace period.
    */
   cullReplacedPreKeys(maxReplacedAgeMs: number): Promise<ReplacedPreKeyCullResult>;
 }
@@ -464,16 +467,16 @@ export const ARCHIVED_STATES_MAX_LENGTH = 40;
 /**
  * Default HKDF info string for PQXDH session initialization.
  *
- * PQXDH section 2.2 defines this as the four PQXDH parameters - `info`,
- * `curve`, `hash`, and `pqkem` - joined by `_`, with each parameter's string
- * representation chosen by the implementer. `info` is an application
- * identifier of at least 8 bytes (section 2.1); the other three must name what
- * the implementation actually runs, which here is X25519, SHA-256, and
- * ML-KEM-1024 (FIPS 203).
+ * PQXDH section 2.2 defines this as the four PQXDH parameters joined by `_`,
+ * which are `info`, `curve`, `hash`, and `pqkem`. Each parameter's string
+ * representation is chosen by the implementer. The `info` parameter is an
+ * application identifier of at least 8 bytes (section 2.1). The other three
+ * must name what the implementation actually runs, which here is X25519,
+ * SHA-256, and ML-KEM-1024 (FIPS 203).
  *
  * Naming a KEM that is not the one in use would derive a different shared
- * secret from an identical label, which is the one thing the info string
- * exists to prevent.
+ * secret from an identical label. Preventing that is what the info string
+ * exists for.
  */
 export const PQXDH_INFO_DEFAULT = 'OpenE2EE_X25519_SHA-256_ML-KEM-1024';
 
@@ -481,7 +484,7 @@ export const PQXDH_INFO_DEFAULT = 'OpenE2EE_X25519_SHA-256_ML-KEM-1024';
  * Default HKDF info string for X3DH session initialization.
  *
  * X3DH section 2.1 defines `info` as an ASCII string identifying the
- * application, and section 3.3 uses it as the HKDF info directly - unlike
+ * application. Section 3.3 uses it as the HKDF info directly, and unlike
  * PQXDH, no parameters are appended.
  */
 export const X3DH_INFO_DEFAULT = 'OpenE2EE';

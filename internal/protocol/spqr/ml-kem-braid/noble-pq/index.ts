@@ -339,7 +339,7 @@ const vecUCoder = vecCoder(polyDuCoder, K);
 /**
  * Enforce FIPS 203's public-key modulus check before KEM arithmetic:
  * ByteEncode12(ByteDecode12(ek_vector)) must reproduce the supplied bytes.
- * The decoded coefficients are public; the owned canonical byte copy is wiped.
+ * The decoded coefficients are public. The owned canonical byte copy is wiped.
  */
 function decodeCanonicalPublicVector(ek_vector: Uint8Array): Uint16Array[] {
   const decoded = vecTHatCoder.decode(ek_vector);
@@ -796,7 +796,7 @@ export function Decaps(dk: Uint8Array, ct1: Uint8Array, ct2: Uint8Array): Uint8A
     result = new Uint8Array(32);
 
     // 0xFF for valid, 0x00 for invalid. Selection has no validity-dependent
-    // branch or array bound; both candidate buffers are always read in full.
+    // branch or array bound. Both candidate buffers are always read in full.
     const candidateMask = (-validityBit & 0xff) >>> 0;
     const rejectionMask = candidateMask ^ 0xff;
     for (let i = 0; i < result.length; i++) {

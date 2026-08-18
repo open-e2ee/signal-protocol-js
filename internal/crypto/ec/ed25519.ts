@@ -31,7 +31,7 @@ export const ED25519_KEY_BYTES = 32;
 /**
  * Generate signing key pair using Ed25519
  *
- * Ed25519 is a modern EdDSA signature scheme using Curve25519.
+ * Ed25519 is a modern EdDSA signature scheme, using Curve25519 as its curve.
  * It provides deterministic signatures (no nonce reuse risk) and
  * is the signing algorithm selected by this SDK's composite-identity profile.
  *
@@ -39,9 +39,9 @@ export const ED25519_KEY_BYTES = 32;
  * - Private key: 32 bytes
  * - Public key: 32 bytes
  *
- * Note: Ed25519 private keys are sometimes represented as 64 bytes
- * (32-byte seed + 32-byte public key), but @noble/curves uses
- * 32-byte private keys with public key derived on-demand.
+ * Note: Ed25519 private keys are sometimes represented as 64 bytes, a 32-byte
+ * seed plus the 32-byte public key. The `@noble/curves` implementation uses
+ * 32-byte private keys, with the public key derived on demand.
  *
  * @returns {publicKey, privateKey} as branded types
  *
@@ -99,8 +99,8 @@ export async function sign(privateKeyB64: PrivateKey, data: Uint8Array): Promise
  * corresponding to the provided public key.
  *
  * Verification processes public key/signature inputs. JavaScript and the JIT do
- * not provide a hard constant-time contract. Malformed encodings return false;
- * no timing-equivalence claim is made for malformed and valid-but-wrong inputs.
+ * not provide a hard constant-time contract. Malformed encodings return false.
+ * No timing-equivalence claim is made for malformed and valid-but-wrong inputs.
  *
  * @param publicKeyB64 Ed25519 public key (32 bytes, branded PublicKey)
  * @param data Data that was signed

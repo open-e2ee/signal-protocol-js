@@ -1,10 +1,10 @@
 /**
- * EndorsementManager — client-side fetch, cache, and token generation
+ * EndorsementManager: client-side fetch, cache, and token generation
  * for GroupSendEndorsements.
  *
  * Lifecycle:
  *   1. Client calls fetchAndCacheEndorsements() after group state sync
- *   2. Endorsements are validated (batch proof) and cached to SQLite
+ *   2. The client validates endorsements (batch proof) and caches them to SQLite
  *   3. On send, getTokenForRecipient() produces a 24-byte bearer token
  *   4. For Sender Key multi-recipient sends, getCombinedToken() combines
  *      endorsements into a single token covering all recipients
@@ -50,18 +50,18 @@ const ENDORSEMENT_REFRESH_THRESHOLD_SECONDS = 2 * 60 * 60;
 // ---------------------------------------------------------------------------
 
 /**
- * One member's cached endorsement, paired with the ACI it was issued over.
+ * One member's cached endorsement, paired with the ACI the issuer endorsed.
  *
  * The ACI travels with the endorsement because the send path must tell the
- * relay which identities its token endorses — the relay verifies the token
- * against those before reading any account — and the identities that are
- * *correct* to claim are exactly the ones the endorsements were issued over
- * at refresh time, not whatever a later lookup would resolve.
+ * relay which identities its token endorses. The relay verifies the token
+ * against those before reading any account. The identities that are *correct*
+ * to claim are exactly the ones the issuer endorsed at refresh
+ * time. They are not whatever a later lookup would resolve.
  */
 export interface CachedMemberEndorsement {
   /** Compressed endorsement point bytes. */
   endorsement: Uint8Array;
-  /** 16-byte ACI the endorsement was issued over. */
+  /** 16-byte ACI the issuer endorsed. */
   aciBytes: Uint8Array;
 }
 
@@ -117,7 +117,7 @@ export class EndorsementManager {
   }
 
   /**
-   * Check if cached endorsements are expired.
+   * Check whether cached endorsements expired.
    *
    * @param expiration - Cached endorsement expiration in epoch seconds
    * @returns true if endorsements are past expiration
@@ -168,13 +168,13 @@ export class EndorsementManager {
     );
 
     // Build the compressed endorsement map without a self-endorsement. Each
-    // entry keeps the ACI it was issued over: the send path claims exactly
+    // entry keeps the ACI the issuer endorsed. The send path claims exactly
     // these identities to the relay, which verifies the token against them
     // before reading any account.
     const endorsementMap = new Map<string, CachedMemberEndorsement>();
     for (let i = 0; i < memberServiceIds.length; i++) {
       const userId = memberUserIds[i];
-      // Skip self — we never send sealed sender to ourselves
+      // Skip self. We never send sealed sender to ourselves
       if (userId === localUserId) {
         continue;
       }
@@ -230,7 +230,7 @@ export class EndorsementManager {
 
     const entry = cached.endorsements.get(recipientUserId);
     if (!entry) {
-      // Member may have been added after last endorsement fetch
+      // The group possibly added this member after the last endorsement fetch
       return null;
     }
 
@@ -285,13 +285,13 @@ export class EndorsementManager {
       return null;
     }
 
-    // Decompress all endorsements — if any member is missing, bail out
+    // Decompress all endorsements. If any member lacks one, bail out
     const endorsements: Endorsement[] = [];
     const aciBytesByUserId = new Map<string, Uint8Array>();
     for (const userId of recipientUserIds) {
       const entry = cached.endorsements.get(userId);
       if (!entry) {
-        // Missing member endorsement — can't produce valid combined token.
+        // Missing member endorsement. Cannot produce valid combined token.
         // Caller should use shouldRefreshEndorsements() pre-send to avoid this.
         this.logger.debug('Missing endorsement for member in getCombinedToken', {
           category: 'E2EE',
@@ -326,19 +326,19 @@ export class EndorsementManager {
   }
 
   /**
-   * Check if any group member is missing a cached endorsement.
+   * Check whether any group member lacks a cached endorsement.
    *
    * Used in the pre-send endorsement refresh check.
    *
    * @param groupId - Group identifier
    * @param memberUserIds - User IDs of all group members (excluding self)
-   * @returns true if any member is missing, false if all present or no cache
+   * @returns true if any member lacks one, false if all present or no cache
    */
   async isMissingAnyEndorsements(groupId: string, memberUserIds: string[]): Promise<boolean> {
     if (memberUserIds.length === 0) return false;
 
     const cached = await this.cache.getCachedEndorsements(groupId);
-    if (!cached) return true; // No cache at all — everything is missing
+    if (!cached) return true; // No cache at all. Nothing is present
 
     for (const userId of memberUserIds) {
       if (!cached.endorsements.has(userId)) {
@@ -349,16 +349,16 @@ export class EndorsementManager {
   }
 
   /**
-   * Check whether endorsements should be refreshed before sending.
+   * Check whether endorsements need a refresh before sending.
    *
    * Checks three conditions:
    *  1. No endorsements cached at all
    *  2. Endorsements expire within 2 hours
-   *  3. Any group member is missing an endorsement
+   *  3. Any group member lacks an endorsement
    *
    * @param groupId - Group identifier
    * @param memberUserIds - User IDs of all group members (excluding self)
-   * @returns Object indicating if refresh is needed and why
+   * @returns Object indicating whether a refresh applies, and why
    *
    */
   async shouldRefreshEndorsements(
@@ -380,7 +380,7 @@ export class EndorsementManager {
       return { needsRefresh: true, reason: 'expiring_soon' };
     }
 
-    // At least one current member is missing an endorsement.
+    // At least one current member lacks an endorsement.
     for (const userId of memberUserIds) {
       if (!cached.endorsements.has(userId)) {
         return { needsRefresh: true, reason: 'missing_members' };

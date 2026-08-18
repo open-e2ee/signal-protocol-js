@@ -54,7 +54,7 @@ export type NodeSenderKeyTree<T> = Record<string, Record<string, Record<string, 
  * Group-messaging namespaces, mutated together so a rotation is one commit.
  *
  * The fields are `readonly` because a mutation callback receives a view onto
- * the state document, not the document: replacing a field would update the
+ * the state document, not the document. Replacing a field would update the
  * view and commit nothing. Edit the dictionaries in place.
  */
 export interface NodeSenderKeyState<T> {
@@ -118,8 +118,8 @@ function createEmptySecurityState(): NodeAtomicSecurityState {
  * `JSON.parse` produces ordinary objects, on which `__proto__` and
  * `constructor` are not plain data keys: assigning to them either invokes an
  * inherited setter or is silently dropped. Every dictionary here is keyed by
- * identifiers the application supplies — user, group, device, session, and
- * metadata names — so each level is rebuilt before it is indexed.
+ * identifiers the application supplies: user, group, device, session, and
+ * metadata names. Each level is therefore rebuilt before it is indexed.
  */
 function toNullPrototype<T>(value: unknown, depth: number): T {
   const source = (value ?? {}) as Record<string, unknown>;
@@ -201,7 +201,7 @@ export class NodeEncryptedDatabase {
   }
 
   /**
-   * Ensure database is initialized
+   * Initialize the database if it is not initialized yet
    */
   private async ensureInitialized(): Promise<void> {
     if (!this.dbKey) {
@@ -272,7 +272,7 @@ export class NodeEncryptedDatabase {
     const decoded = decryptRecord<unknown>(encrypted, this.dbKey!);
     this.assertSecurityState(decoded);
     // A version 1 document predates the SESAME, group, message-record, and
-    // metadata namespaces. It is widened here rather than reset: discarding it
+    // metadata namespaces. It is widened here rather than reset. Discarding it
     // would drop pinned contact identities, and an unpinned contact is one
     // whose next identity change goes undetected.
     return {
@@ -746,9 +746,9 @@ export class NodeEncryptedDatabase {
   // ============================================================================
   // SESAME Device State
   //
-  // Device records and the sessions they own are one mutation domain: a device
-  // record naming a session that is not in `sessions` (or the reverse) is a
-  // divergence no later read can repair, so both move under one commit.
+  // Device records and the sessions they own are one mutation domain. A device
+  // record naming a session that is not in `sessions`, or the reverse, is a
+  // divergence no later read can repair. Both therefore move under one commit.
   // ============================================================================
 
   async readSesameState<T>(): Promise<NodeSesameState<T>> {
@@ -793,7 +793,7 @@ export class NodeEncryptedDatabase {
    * Atomically update the group-messaging namespaces.
    *
    * A rotation writes the new current state and the retained previous states
-   * together; a crash between them would leave a sender key whose in-flight
+   * together. A crash between them would leave a sender key whose in-flight
    * messages can no longer be resolved.
    */
   async mutateSenderKeyState<T, R>(mutation: (state: NodeSenderKeyState<T>) => R): Promise<R> {
@@ -1003,9 +1003,9 @@ export class NodeEncryptedDatabase {
    * Delete entire database (⚠️ DANGEROUS)
    *
    * Only for controlled local reset or factory reset.
-   * This method is safe to call even if database doesn't exist.
+   * This method is safe to call even if database does not exist.
    *
-   * @returns true if database was deleted, false if it didn't exist
+   * @returns true if database was deleted, false if it did not exist
    */
   async deleteDatabase(): Promise<boolean> {
     try {
@@ -1028,7 +1028,7 @@ export class NodeEncryptedDatabase {
       });
       return true;
     } catch (error) {
-      // Log error but don't throw - safe deletion should be idempotent
+      // Log error but do not throw - safe deletion should be idempotent
       this.logger.warn('[NodeEncryptedDatabase] Error during database deletion (safe to ignore)', {
         dataDir: this.dataDir,
         error: getErrorMessage(error),

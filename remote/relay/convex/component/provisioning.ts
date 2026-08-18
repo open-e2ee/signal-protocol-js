@@ -51,7 +51,7 @@ function requireOwner(
  * rolls the whole transaction back, so a `patch({status: 'expired'})`
  * before a throw would never persist. Expired rows are simply rejected
  * here and garbage-collected (with device teardown where owed) by the
- * every-minute cleanup cron; `getProvisioningMessage` reports expiry as
+ * every-minute cleanup cron. `getProvisioningMessage` reports expiry as
  * a computed status.
  */
 function requireLive(
@@ -225,9 +225,9 @@ export const getProvisioningMessage = query({
     // Expiry is a computed status: `expired` is never stored (a mutation
     // throw rolls back any patch, and the cleanup cron deletes expired rows
     // outright). Date.now() in a query is fixed per transaction and cached
-    // with the result, so a subscribed client will not observe this branch
-    // flip on wall-clock time alone — `expiresAt` is returned so clients can
-    // compute expiry locally; the cron's row deletion invalidates the
+    // with the result. A subscribed client will not observe this branch flip
+    // on wall-clock time alone. The response carries `expiresAt`, so clients
+    // can compute expiry locally. The cron's row deletion invalidates the
     // subscription as a backstop.
     if (
       row.status !== 'completed' &&
@@ -274,7 +274,7 @@ export const completeProvisioning = mutation({
       );
     }
     requireOwner(row, input.callerUserId);
-    // Reject completion of an expired session — including one already in
+    // Reject completion of an expired session. Including one already in
     // `linked_pending_ack`, whose device the cleanup cron is entitled to
     // reap. Waving expired sessions through here is exactly the stranded
     // device hazard: a success response for a device the server is about
@@ -336,14 +336,15 @@ export const completeProvisioning = mutation({
       await ctx.db.insert('devices', state);
     }
     // Grant the acknowledgment its own full TTL window. Without this the
-    // ack deadline is whatever remains of the original session TTL — a
+    // ack deadline is whatever remains of the original session TTL. A
     // session completed near the edge leaves the new device seconds before
-    // the cron deletes it, after the client has already persisted identity
-    // keys and group state. Record the device's link token so teardown
-    // deletes only the device this session created: device rows are reused
-    // across registrations (`db.replace` keeps the row id), so the token —
-    // not the row id, the slot number, or a wall-clock stamp two links can
-    // share — is the identity.
+    // the cron deletes it. The client has already persisted identity keys and
+    // group state by then.
+    //
+    // Record the device's link token so teardown deletes only the device this
+    // session created. Registrations reuse device rows, where
+    // `db.replace` keeps the row id. So the token is the identity, not the
+    // row id, the slot number, or a wall-clock stamp two links can share.
     await ctx.db.patch(row._id, {
       status: 'linked_pending_ack',
       expiresAt: now + PROVISIONING_SESSION_TTL_MS,
@@ -378,7 +379,7 @@ export const acknowledgeProvisioning = mutation({
       );
     }
     // An expired ack window is a rolled-back link, not a race the ack can
-    // win: without this guard, whether the device survives is decided by
+    // win. Without this guard, whether the device survives is decided by
     // whether the ack beats the next cleanup-cron tick.
     requireLive(row, input.sessionId);
     await ctx.db.patch(row._id, {
@@ -406,9 +407,9 @@ async function rollback(
 }
 
 /**
- * Delete the device a `linked_pending_ack` session created — and only that
- * device. The link token recorded at completion is the identity check:
- * device rows are reused across registrations, so matching on
+ * Delete the device a `linked_pending_ack` session created, and only that
+ * device. The link token recorded at completion is the identity check.
+ * Registrations reuse device rows. Matching on
  * (userId, deviceId) alone would delete an unrelated device that was
  * legitimately re-registered into the freed slot. Cascades through
  * `purgeDeviceStorage` so no key material survives a reaped device.

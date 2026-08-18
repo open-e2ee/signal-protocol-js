@@ -6,7 +6,7 @@
 
 # Interface: SignalProtocolClientHooks
 
-Event hooks that can be registered with SignalProtocolClient
+Event hooks that SignalProtocolClient accepts
 
 All hooks are optional and support both sync and async implementations.
 
@@ -57,7 +57,7 @@ onDecryptionError: (sessionId, error) => {
 
 > `optional` **onDeliveryReceiptReceived?**: (`senderId`, `timestamps`) => `void` \| `Promise`\<`void`\>
 
-Called when a delivery receipt is received
+Runs when the client receives a delivery receipt
 
 Allows the app to update message status from 'sent' to 'delivered'.
 The timestamps array contains server timestamps of delivered messages.
@@ -74,7 +74,7 @@ The user who sent the delivery receipt (message recipient)
 
 `number`[]
 
-Array of message timestamps that were delivered
+Array of message timestamps for the delivered messages
 
 #### Returns
 
@@ -145,7 +145,7 @@ Called after a key rotation completes successfully
 
 `"ecSignedPreKey"` \| `"kemLastResortPreKey"`
 
-Type of key that was rotated
+Type of the rotated key
 
 #### Returns
 
@@ -286,7 +286,7 @@ onMessageEncrypted: (sessionId, counter) => {
 
 > `optional` **onReadReceiptReceived?**: (`senderId`, `timestamps`) => `void` \| `Promise`\<`void`\>
 
-Called when a read receipt is received
+Runs when the client receives a read receipt
 
 Allows the app to update message status from 'delivered' to 'read'.
 The timestamps array contains server timestamps of read messages.
@@ -303,7 +303,7 @@ The user who sent the read receipt (message recipient who viewed messages)
 
 `number`[]
 
-Array of message timestamps that were read
+Array of message timestamps for the read messages
 
 #### Returns
 
@@ -325,7 +325,7 @@ onReadReceiptReceived: async (senderId, timestamps) => {
 
 > `optional` **onSessionArchived?**: (`sessionId`) => `void` \| `Promise`\<`void`\>
 
-Called after a session is archived (moved to inactive list)
+Runs after the client archives a session (moved to inactive list)
 
 Stale-device recovery archives the session so delayed messages can still
 attempt decryption.
@@ -337,7 +337,7 @@ Per SESAME §3.2: "previously active session is moved to the head of the inactiv
 
 `string`
 
-The session identifier that was archived
+The identifier of the archived session
 
 #### Returns
 
@@ -357,7 +357,7 @@ onSessionArchived: (sessionId) => {
 
 > `optional` **onSessionDeleted?**: (`sessionId`) => `void` \| `Promise`\<`void`\>
 
-Called after a session is deleted
+Runs after the client deletes a session
 
 #### Parameters
 
@@ -365,7 +365,7 @@ Called after a session is deleted
 
 `string`
 
-The session identifier that was deleted
+The identifier of the deleted session
 
 #### Returns
 
@@ -425,9 +425,9 @@ onSessionEstablished: (sessionId, remoteAddress) => {
 
 > `optional` **onTypingIndicatorReceived?**: (`senderId`, `conversationId`, `action`) => `void` \| `Promise`\<`void`\>
 
-Called when a typing indicator is received
+Runs when the client receives a typing indicator
 
-Allows the app to update UI to show who is typing.
+Allows the app to update UI with the users who type.
 Typing indicators are transient - they auto-expire after 15 seconds.
 
 #### Parameters
@@ -442,7 +442,7 @@ The user who sent the typing indicator
 
 `string`
 
-The conversation where typing is occurring
+The conversation the typing indicator belongs to
 
 ##### action
 
@@ -472,7 +472,7 @@ onTypingIndicatorReceived: async (senderId, conversationId, action) => {
 
 > `optional` **onViewedReceiptReceived?**: (`senderId`, `timestamps`) => `void` \| `Promise`\<`void`\>
 
-Called when a viewed receipt is received (e.g., view-once media)
+Runs when the client receives a viewed receipt (e.g., view-once media)
 
 Allows the app to update message status to 'viewed'.
 The timestamps array contains server timestamps of viewed messages.
@@ -489,7 +489,7 @@ The user who sent the viewed receipt (message recipient who viewed media)
 
 `number`[]
 
-Array of message timestamps that were viewed
+Array of message timestamps for the viewed messages
 
 #### Returns
 

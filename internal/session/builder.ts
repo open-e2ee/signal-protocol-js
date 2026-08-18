@@ -10,7 +10,7 @@
  * - Session state creation via factory.ts
  *
  * Note: Triple Ratchet (SPQR) initialization remains in the orchestrator
- * since it's a higher-level concern that depends on session state.
+ * since it is a higher-level concern that depends on session state.
  *
  * @see https://signal.org/docs/specifications/x3dh/
  * @see https://signal.org/docs/specifications/pqxdh/
@@ -37,9 +37,9 @@ import { asBase64 } from '../../types/utils';
  * session state.
  *
  * Session Identification:
- * - Sessions are LOOKED UP by ProtocolAddress (userId:deviceId)
- * - Session STATES are IDENTIFIED by baseKey (initiator's ephemeral public key)
- * - sessionId has been removed - use remoteAddress for lookup, baseKey for state ID
+ * - A ProtocolAddress (userId:deviceId) LOOKS UP a session
+ * - A baseKey (initiator's ephemeral public key) IDENTIFIES a session STATE
+ * - No sessionId remains. Use remoteAddress for lookup, baseKey for state ID
  *
  * @example
  * ```typescript
@@ -69,11 +69,11 @@ export class SessionBuilder {
    * Build a session as initiator (Alice)
    *
    * Implements Signal Protocol Section 3.3 RatchetInitAlice (with PQXDH extension).
-   * Performs X3DH/PQXDH key agreement and creates the initial session state.
+   * Completes the X3DH/PQXDH key agreement and creates the initial session state.
    *
    * Steps:
-   * 1. Perform X3DH/PQXDH key agreement (delegates to handshake module)
-   * 2. Perform initial DH ratchet step (per RatchetInitAlice)
+   * 1. Complete the X3DH/PQXDH key agreement (delegates to handshake module)
+   * 2. Take the initial DH ratchet step (per RatchetInitAlice)
    * 3. Create session state using factory
    * 4. Preserve original SK for Triple Ratchet initialization
    *
@@ -107,7 +107,7 @@ export class SessionBuilder {
     });
 
     // ========================================================================
-    // Step 1: Perform Key Agreement (X3DH or PQXDH)
+    // Step 1: Key Agreement (X3DH or PQXDH)
     // ========================================================================
 
     const keyAgreementResult = await performKeyAgreement(identityKeyPair, prekeyBundle, {
@@ -145,26 +145,26 @@ export class SessionBuilder {
         : undefined;
 
     // ========================================================================
-    // Step 3: Perform Initial DH Ratchet (RatchetInitAlice)
+    // Step 3: Initial DH Ratchet (RatchetInitAlice)
     // ========================================================================
 
     // Per Signal Protocol Section 3.3 - RatchetInitAlice:
-    // Alice MUST perform a DH ratchet step during initialization using KDF_RK
+    // Alice MUST take a DH ratchet step during initialization using KDF_RK
     // This derives: state.RK, state.CKs
     logger.debug('Alice performing initial DH ratchet (Section 3.3)', {
       category: 'E2EE',
       data: { operation: 'init-alice', step: 'dh-ratchet' },
     });
 
-    // Use the same ephemeral key from X3DH as our initial DH ratchet key (DHs)
-    // This ephemeral key will be sent in the PreKeyMessage so the responder can derive
-    // the same shared secret.
+    // Use the same ephemeral key from X3DH as our initial DH ratchet key (DHs).
+    // The PreKeyMessage carries this ephemeral key, so the responder can
+    // derive the same shared secret.
     const dhOutput = await CryptoUtils.computeSharedSecret(
       asBase64(ephemeralKey.privateKey), // DHs (Alice's ephemeral key from X3DH)
       prekeyBundle.ecSignedPreKey.publicKey // DHr (Bob's signed prekey)
     );
 
-    // Perform KDF_RK to derive new root key and sending chain key
+    // Call KDF_RK to derive new root key and sending chain key
     const { rootKey: ratchetedRootKey, chainKey: sendingChainKey } = await CryptoUtils.kdfRootKey(
       initialRootKey, // SK from X3DH
       dhOutput
@@ -187,7 +187,7 @@ export class SessionBuilder {
     // ========================================================================
 
     // Alice's receiving chain key (CKr):
-    // Per spec, Bob hasn't sent anything yet, so CKr could be undefined.
+    // Per spec, Bob has not sent anything yet, so CKr can stay undefined.
     // However, for compatibility, we derive it from X3DH HKDF.
     const receivingChainKey =
       additionalDerivedBytes?.slice(
@@ -246,7 +246,7 @@ export class SessionBuilder {
    * Called when Bob receives Alice's first PreKeyMessage.
    *
    * Key difference from initiator:
-   * - Bob does NOT perform a DH ratchet during initialization
+   * - Bob does NOT take a DH ratchet step during initialization
    * - Bob's RK = SK (not ratcheted like Alice's)
    * - Bob will ratchet when receiving Alice's first message
    *
@@ -293,7 +293,7 @@ export class SessionBuilder {
     const aliceEphemeralKey = prekeyMessage.senderEphemeralKey;
 
     // ========================================================================
-    // Step 2: Perform Key Agreement
+    // Step 2: Key Agreement
     // ========================================================================
 
     const keyAgreementResult = await performResponderKeyAgreement(
@@ -324,15 +324,15 @@ export class SessionBuilder {
     // ========================================================================
 
     // Per Signal Protocol Section 3.3 - RatchetInitBob:
-    // Bob's session initialization is LAZY - he does NOT perform the DH ratchet
-    // during session establishment.
+    // Bob's session initialization is LAZY - he does NOT take the DH ratchet
+    // step during session establishment.
     //
     // RatchetInitBob sets:
-    //   state.DHs = bob_dh_key_pair    (Bob's signed prekey)
-    //   state.DHr = None               (NOT set until first message decrypt)
-    //   state.RK = SK                  (NOT ratcheted - direct from X3DH/PQXDH)
-    //   state.CKs = None               (NOT set until DHRatchet)
-    //   state.CKr = None               (NOT set until DHRatchet)
+    // - state.DHs = bob_dh_key_pair    (Bob's signed prekey)
+    // - state.DHr = None               (NOT set until first message decrypt)
+    // - state.RK = SK                  (NOT ratcheted - direct from X3DH/PQXDH)
+    // - state.CKs = None               (NOT set until DHRatchet)
+    // - state.CKr = None               (NOT set until DHRatchet)
     //
     // The DHRatchet step happens DURING decrypt when Bob receives Alice's first
     // message. At that point:
@@ -359,7 +359,7 @@ export class SessionBuilder {
       localIdentityType: prekeyMessage.recipientIdentityType,
       ecSignedPreKey,
       rootKey, // SK directly - NOT ratcheted
-      // Chain keys are undefined - will be derived during DHRatchet in cipher.decrypt()
+      // Chain keys stay undefined - cipher.decrypt() derives them during DHRatchet
       logger,
     });
 

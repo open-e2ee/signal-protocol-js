@@ -68,7 +68,7 @@ when the app provides media lifecycle callbacks in `config.media`.
 
 > **get** **isSealedSenderEnabled**(): `boolean`
 
-Whether sealed sender is enabled and configured.
+Whether the client enables and configures sealed sender.
 
 ##### Returns
 
@@ -221,8 +221,8 @@ Archive a session after a stale-device response.
 Moves current session to inactive list, preserving it for delayed message decryption.
 Per SESAME §3.2: "previously active session is moved to the head of the inactive sessions list"
 
-Use this when handling stale device errors (410) - the old session may still be needed
-to decrypt messages that were in-flight during the session refresh.
+Use this when handling stale device errors (410). The old session may still
+decrypt messages that were in-flight during the session refresh.
 
 #### Parameters
 
@@ -244,8 +244,8 @@ Remote device's protocol address
 
 Check prekey status and trigger warning if running low
 
-Returns the current prekey count and whether replenishment is needed.
-If configured with `onPreKeyLow` callback, it will be called when
+Returns the current prekey count and whether the client needs to replenish.
+If config supplies an `onPreKeyLow` callback, the client calls it when
 the count drops below the threshold.
 
 #### Returns
@@ -300,7 +300,7 @@ true if cleanup succeeded, false otherwise
 Cleanup expired Sesame sessions
 
 Removes inactive sessions that are older than the configured TTL.
-Should be called periodically (e.g., daily) to prevent database bloat.
+Call this periodically (e.g., daily) to prevent database bloat.
 
 #### Returns
 
@@ -419,7 +419,7 @@ Create an invite link for a group.
 
 Create a new sender key for group messaging
 
-Call this when joining a group or when key rotation is needed.
+Call this when joining a group or when the group needs key rotation.
 Distribute the returned message to all group members via pairwise sessions.
 
 #### Parameters
@@ -552,7 +552,7 @@ Array of decrypted file blobs in the same order
 Decrypt a group message from a sender
 
 Use this to decrypt messages from other group members.
-You must have processed the sender's distribution message first.
+You must process the sender's distribution message first.
 
 #### Parameters
 
@@ -700,8 +700,8 @@ Group identifier
 
 Delete the encrypted remote object referenced by an attachment pointer.
 
-This only touches remote object storage. App-owned local message rows and
-local media caches must be deleted by the application.
+This only touches the remote object store. The application must delete
+app-owned local message rows and local media caches.
 
 #### Parameters
 
@@ -730,7 +730,7 @@ local media caches must be deleted by the application.
 Delete a session
 
 Use this to reset encryption for a session (e.g., after a security incident).
-You'll need to establish a new session before sending/receiving messages.
+You will need to establish a new session before sending/receiving messages.
 
 #### Parameters
 
@@ -797,7 +797,7 @@ await signal.distributeGroupSenderKey('group-123', memberIds);
 
 Distribute sender key to a specific user via pairwise encryption.
 
-Distribution messages are transmitted through authenticated, encrypted
+Distribution messages travel through authenticated, encrypted
 pairwise channels.
 
 This method:
@@ -1022,8 +1022,8 @@ MessageOps.encryptMessage
 Encrypt multiple messages in batch
 
 More efficient than calling encryptMessage() multiple times.
-Operations are performed atomically - if any encryption fails,
-none of the messages are encrypted.
+The method runs all operations atomically. If any encryption fails,
+it encrypts none of the messages.
 
 #### Parameters
 
@@ -1053,8 +1053,8 @@ Array of encrypted ciphertexts in the same order
 
 Establish a new session with a specific remote device.
 
-Advanced direct-device API. Normal app code can call `send(recipientUserId, content)`;
-the client will fetch remote device bundles through the configured relay and
+Advanced direct-device API. Normal app code can call `send(recipientUserId, content)`.
+The client will fetch remote device bundles through the configured relay and
 use the selected protocol policy. Direct callers must provide the remote
 device's prekey bundle themselves.
 
@@ -1404,7 +1404,7 @@ True if session exists
 
 > **isInitialized**(): `Promise`\<`boolean`\>
 
-Check if client is initialized
+Check whether the client completed initialization
 
 #### Returns
 
@@ -1606,9 +1606,9 @@ This is the preferred method for batch message processing. It handles:
 2. Processing each envelope in order
 3. Collecting results/errors for caller to handle
 
-The sorting ensures PreKeyMessages (which establish sessions) are processed
-before ciphertexts that depend on those sessions. This is required for
-SESAME Section 3.4 session convergence when archived sessions are promoted.
+The sorting processes PreKeyMessages (which establish sessions)
+before ciphertexts that depend on those sessions. SESAME Section 3.4
+session convergence requires this when the client promotes archived sessions.
 
 #### Parameters
 
@@ -1679,8 +1679,8 @@ Decrypted plaintext
 
 Register a hook callback after construction
 
-Enables dependency injection patterns where hooks are registered
-after SignalProtocolClient is created. This is used by ServicesProvider
+Enables dependency injection patterns where callers register hooks
+after the SignalProtocolClient exists. ServicesProvider uses this
 to wire up ContentManager's decryption hook.
 
 #### Type Parameters
@@ -1789,15 +1789,16 @@ Normal sync and linked-device provisioning never call this operation.
 Rotate EC signed prekey
 
 Rotates only once the current prekey is older than the configured refresh
-interval ([KEY\_REFRESH\_INTERVAL\_MS\_DEFAULT](../variables/KEY_REFRESH_INTERVAL_MS_DEFAULT.md), 2 days by default), so
-it is safe to call more often than that. Generates a new EC signed prekey
+interval ([KEY\_REFRESH\_INTERVAL\_MS\_DEFAULT](../variables/KEY_REFRESH_INTERVAL_MS_DEFAULT.md), 2 days by default). It
+is therefore safe to call more often than that. Generates a new EC signed
+prekey
 and uploads it to the relay if configured.
 
 #### Returns
 
 `Promise`\<`boolean`\>
 
-True if rotation was performed, false if not needed yet
+True if the client rotated the key, false if not needed yet
 
 #### Implementation of
 
@@ -1826,8 +1827,8 @@ Only rotate when membership changes to maintain forward secrecy.
 
 ## Why Rotate on Member Removal?
 
-When a member is removed, they still have the old sender key and could decrypt
-future messages if the key isn't rotated. ALL remaining members must generate
+After the group removes a member, they still hold the old sender key and could decrypt
+future messages if nothing rotates the key. ALL remaining members must generate
 new sender keys to prevent the removed member from reading future messages.
 
 #### Parameters
@@ -1892,14 +1893,14 @@ Rotate the post-quantum KEM last-resort prekey.
 
 Shares the signed prekey's refresh interval
 ([KEY\_REFRESH\_INTERVAL\_MS\_DEFAULT](../variables/KEY_REFRESH_INTERVAL_MS_DEFAULT.md), 2 days by default) and rotates
-only once that interval has elapsed. Generates fresh ML-KEM/Kyber-compatible
+only after that interval elapses. Generates fresh ML-KEM/Kyber-compatible
 key material and uploads it to the relay if configured.
 
 #### Returns
 
 `Promise`\<`boolean`\>
 
-True if rotation was performed, false if not needed yet
+True if the client rotated the key, false if not needed yet
 
 #### Implementation of
 
@@ -1947,7 +1948,7 @@ This is the ONE way to send content. Handles:
 - User recipients: Encrypts for all user's devices via SESAME
 - Group recipients: Uses Sender Keys for O(1) encryption
 
-All inputs are normalized to Uint8Array before reaching the cipher layer.
+The client normalizes all inputs to Uint8Array before they reach the cipher layer.
 
 #### Parameters
 
@@ -2008,7 +2009,7 @@ Send read receipt to original message sender (all devices)
 Called when the user views messages in a conversation.
 Similar to delivery receipts but indicates message was actually read.
 
-Respects SDK privacy settings: if read receipts are disabled,
+Respects SDK privacy settings: if the configuration disables read receipts,
 this method returns early without sending.
 
 #### Parameters
@@ -2023,7 +2024,7 @@ Original sender's user ID
 
 `number`[]
 
-Server timestamps of messages that were read
+Server timestamps of the messages the user read
 
 #### Returns
 
@@ -2118,7 +2119,7 @@ When configured with both `relay` and `onMessageDecrypted` hook, SignalProtocolC
 This enables ContentManager to store decrypted content in an encrypted SQLite
 database without any knowledge of cryptography.
 
-Can be called manually after registering hooks via registerHook().
+Callers can run this manually after registering hooks via registerHook().
 Called automatically by create() when relay + hook configured.
 
 #### Returns
@@ -2146,7 +2147,7 @@ This method subscribes to incoming retry requests and processes them
 by resending the original message with a new session.
 
 Automatically started if relay.subscribeRetryRequests is available.
-Can be called manually if you need to restart the subscription.
+Call this manually if you need to restart the subscription.
 
 #### Returns
 
@@ -2160,7 +2161,7 @@ Can be called manually if you need to restart the subscription.
 
 Stop the Signal Protocol client and clean up resources
 
-Call this when the user logs out or the app is being destroyed.
+Call this when the user logs out or the app shuts down.
 Unsubscribes from relay server and cleans up any pending operations.
 
 #### Returns
@@ -2187,7 +2188,7 @@ await signal.stop();
 Stop the relay subscription
 
 Pauses message processing via the relay subscription without destroying
-SignalProtocolClient state. The subscription can be restarted with startRelaySubscription().
+SignalProtocolClient state. startRelaySubscription() restarts the subscription.
 
 Use this when the app backgrounds to let the background task handle messages.
 Resume when the app foregrounds for real-time message delivery.
@@ -2373,8 +2374,8 @@ on a task reminder, the user's other devices should cancel their copies.
 
 Sync the public prekey bundle to the configured relay.
 
-Called automatically by create() when a relay is configured.
-Can also be called manually to retry after a failed initial sync.
+create() calls this automatically when config names a relay.
+Callers can also run it manually to retry after a failed initial sync.
 
 Delegates to PreKeyOps.syncToServer for implementation.
 
@@ -2421,8 +2422,8 @@ without rotating it.
 
 Sync local safety-number verification state to our other linked devices.
 
-Only explicit `verified` and cleared-to-`default` states are synced;
-key-conflict/untrusted state remains local and derived from identity-key
+The client syncs only explicit `verified` and cleared-to-`default` states.
+Key-conflict/untrusted state remains local and derived from identity-key
 changes.
 
 #### Parameters
@@ -2576,7 +2577,7 @@ atomically inside another message payload.
 
 Generate safety number for verifying identity with another user
 
-Safety numbers allow users to verify they're communicating with the
+Safety numbers allow users to verify they communicate with the
 intended person and detect man-in-the-middle attacks.
 
 #### Parameters
@@ -2617,11 +2618,11 @@ const qrCode = generateQR(safetyNum.fingerprint);
 
 Create and initialize a new SignalProtocolClient instance.
 
-This low-level factory ensures the client is fully initialized before it is
-returned. Most app code should prefer `createSignalProtocolClient()` so identity,
-adapters, and protocol policy are grouped in one object.
+This low-level factory fully initializes the client before it returns
+it. Most app code should prefer `createSignalProtocolClient()`, which
+groups identity, adapters, and protocol policy in one object.
 
-If `relay` is provided in config, the client automatically uploads the
+If config provides `relay`, the client automatically uploads the
 public prekey bundle needed for end-to-end encrypted messaging.
 
 #### Parameters

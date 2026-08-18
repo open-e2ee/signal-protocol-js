@@ -1,5 +1,5 @@
 /**
- * ZK Credential Attributes — ElGamal encryption over Ristretto255
+ * ZK Credential Attributes: ElGamal encryption over Ristretto255
  *
  *
  * Provides typed attribute encryption for anonymous credential systems.
@@ -7,9 +7,9 @@
  * under domain-specific ElGamal keypairs and proven in zero knowledge.
  *
  * The ElGamal scheme uses per-domain generator points G_a derived from a
- * domain identifier via SHO, ensuring cryptographic domain separation.
+ * domain identifier via SHO, which gives cryptographic domain separation.
  *
- * @see https://eprint.iacr.org/2019/1416.pdf — Signal Private Group System
+ * @see https://eprint.iacr.org/2019/1416.pdf (Signal Private Group System)
  */
 
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
@@ -211,10 +211,10 @@ export class KeyPair {
    *   a1' = invert(b1)
    *   a2' = -(b2 * invert(b1))
    *
-   * This is used to "undo" one layer of encryption: if you encrypt
-   * with the original keypair and then with its inverse, you get
-   * an identity transformation on the first point and a negation
-   * relationship on the second.
+   * This is used to "undo" one layer of encryption. Encrypt with the original
+   * keypair and then with its inverse. The result is an identity
+   * transformation on the first point, and a negation relationship on the
+   * second.
    *
    * @param other - The keypair to invert
    * @param newDomain - The domain for the resulting keypair

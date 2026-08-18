@@ -383,9 +383,9 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
   /**
    * Helper to get a contact's pinned identity as canonical DeviceRecord bytes.
    *
-   * Returns the whole composite tuple, not the X25519 half: a device pinned to
-   * the DH key alone would accept a peer that swapped its Ed25519 signing key,
-   * and would compare unequal against every other producer of these bytes.
+   * Returns the whole composite tuple, not the X25519 half. A device pinned to
+   * the DH key alone would accept a peer that swapped its Ed25519 signing key.
+   * It would also compare unequal against every other producer of these bytes.
    */
   private async getContactIdentityBytes(address: ProtocolAddress): Promise<Uint8Array | null> {
     const record = await this.getContactIdentity(address);
@@ -637,8 +637,8 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
   // Sender Keys Management (Group Messaging)
   // ============================================================================
   // Sender key state is device-local. The chain key and the sender's private
-  // signature key are enough to read and to forge every message on that chain,
-  // so they never leave the device — the reference keeps its sender key store
+  // signature key are enough to read and to forge every message on that chain.
+  // They never leave the device. The reference keeps its sender key store
   // local for the same reason. SQLCipher encrypts the database file that holds
   // them.
 
@@ -841,9 +841,9 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
    * Evict the oldest skipped keys for a sender, so a peer cannot grow this
    * table without bound by sending messages that skip ever further ahead.
    *
-   * Oldest by chain index, not by insertion time: index order is the order the
-   * sender ratcheted, so the lowest index is the key least likely to still
-   * have a message in flight behind it.
+   * Oldest by chain index, not by insertion time. Index order is the order the
+   * sender ratcheted. The lowest index is therefore the key least likely to
+   * still have a message in flight behind it.
    */
   async deleteOldestSkippedSenderKeys(
     groupId: string,
@@ -930,7 +930,7 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
 
   /**
    * Get the maximum EC signed prekey ID in storage.
-   * Used to generate new keyIds that won't collide with existing ones.
+   * Used to generate new keyIds that will not collide with existing ones.
    *
    * @returns The highest EC signed prekey ID, or 0 if none exist
    */
@@ -940,7 +940,7 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
 
   /**
    * Get the maximum Kyber prekey ID in storage.
-   * Used to generate new keyIds that won't collide with existing ones.
+   * Used to generate new keyIds that will not collide with existing ones.
    *
    * @returns The highest Kyber prekey ID, or 0 if none exist
    */

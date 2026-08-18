@@ -68,7 +68,7 @@ Secondary device linked to primary (always false for primary deviceId=1)
 
 > `optional` **linkedAt?**: `number`
 
-When the device was linked (for secondary devices)
+When the user linked the device (for secondary devices)
 
 ***
 

@@ -1,7 +1,7 @@
 /**
  * Single-Flight Hook
  *
- * Wraps an async function to ensure only one execution at a time.
+ * Wraps an async function so only one call runs at a time.
  * If called while in-flight, queues the latest call (drops intermediate ones).
  *
  * This prevents request spam during rapid state changes like network reconnects,
@@ -21,7 +21,7 @@
 import { useCallback, useRef } from 'react';
 
 /**
- * Wraps an async function to ensure only one execution at a time.
+ * Wraps an async function so only one call runs at a time.
  * If called while in-flight, queues the latest call (drops intermediate ones).
  *
  * @param fn - Async function to wrap

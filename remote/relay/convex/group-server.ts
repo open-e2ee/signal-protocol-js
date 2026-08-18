@@ -150,10 +150,10 @@ export class ConvexGroupServer implements IGroupServer {
    * Get one page of change log entries from a given version.
    *
    * Used for incremental group state sync. The enforcing backend authorizes
-   * at the requested snapshot, requires the requester to be a member there —
-   * pending principals catch up by snapshot instead (S10a) — and returns
+   * at the requested snapshot, requires the requester to be a member there.
+   * Pending principals catch up by snapshot instead (S10a). It returns
    * changes through the first transition that revokes the requester,
-   * inclusive. A page cut for size sets `hasMore`; resume from the last
+   * inclusive. A page cut for size sets `hasMore`. Resume from the last
    * served version.
    *
    * @param groupId - 32-byte group identifier

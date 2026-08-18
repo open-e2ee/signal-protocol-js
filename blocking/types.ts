@@ -2,8 +2,8 @@
  * Signal Protocol blocking contracts.
  *
  * Blocking is account/contact state, not message content. The core package owns
- * the local blocking workflow and lets each app choose whether blocked state is
- * purely local, linked-device synced, mirrored to a backend, or all three.
+ * the local blocking workflow. Each app chooses whether blocked state is purely
+ * local, linked-device synced, mirrored to a backend, or all three.
  */
 
 export interface BlockedRecipientEntry {

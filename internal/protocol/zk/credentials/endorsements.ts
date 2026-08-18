@@ -2,12 +2,12 @@
  * Group Send Endorsements -- lightweight alternative to credentials
  *
  *
- * An endorsement can be used instead of a full credential when there are no
- * attributes hidden from the verifying server, but exactly one attribute point
- * needs to be hidden from the issuing server.
+ * An endorsement can be used instead of a full credential when two conditions
+ * hold. No attributes are hidden from the verifying server, and exactly one
+ * attribute point is hidden from the issuing server.
  *
- * Endorsement issuance uses the same homogeneous elliptic-curve-based encryption
- * as the more powerful credential system, but verification is much cheaper, and
+ * Endorsement issuance uses the same homogeneous elliptic-curve-based
+ * encryption as the full credential system. Verification is much cheaper, and
  * the tokens generated from endorsements can be reused for multiple requests.
  *
  * At a high level:
@@ -52,8 +52,8 @@ const SMALL_SCALAR_BYTES = 16;
 /**
  * A server's root secret key for issuing and verifying endorsements.
  *
- * Endorsements are not issued directly with this key. Instead, a
- * {@link ServerDerivedKeyPair} is derived for domain separation, rotation,
+ * Endorsements are not issued directly with this key. Instead, the server
+ * derives a {@link ServerDerivedKeyPair} for domain separation, rotation,
  * and additional authenticated info.
  */
 export class ServerRootKeyPair {
@@ -97,7 +97,7 @@ export class ServerRootKeyPair {
    * Derives a specific key for issuing endorsements.
    *
    * The `tagInfoSho` should have already absorbed domain separation and
-   * any "public attributes" specific to the endorsements being issued.
+   * any "public attributes" specific to the endorsements it issues.
    */
   deriveKey(tagInfoSho: ShoHmacSha256): ServerDerivedKeyPair {
     const t = tagInfoSho.getScalar();
@@ -114,7 +114,7 @@ export class ServerRootKeyPair {
 /**
  * The public counterpart of {@link ServerRootKeyPair}.
  *
- * Verifying issuance must be done with a {@link ServerDerivedPublicKey}.
+ * Verify issuance with a {@link ServerDerivedPublicKey}.
  */
 export class ServerRootPublicKey {
   readonly PK: RistrettoPoint;
@@ -256,7 +256,7 @@ export class EndorsementResponse {
    * Issues an endorsement for every point in `hiddenAttributePoints`,
    * along with a batch proof of validity.
    *
-   * The order of the points matters; the endorsements eventually received
+   * The order of the points matters. The endorsements eventually received
    * by the client will be in the same order.
    */
   static issue(
@@ -300,7 +300,7 @@ export class EndorsementResponse {
    * server (blinded/encrypted), in the same order.
    *
    * Throws {@link VerificationFailure} if the proof fails to validate or
-   * if the number of points doesn't match the number of endorsements.
+   * if the number of points does not match the number of endorsements.
    */
   receive(
     hiddenAttributePoints: RistrettoPoint[],
@@ -536,9 +536,9 @@ function proofStatement(): Statement {
 /**
  * Generate weights for the random-linear-combination batch proof.
  *
- * Uses "RME+" approach: the first weight is implicitly 1 (not generated),
- * and the remaining N-1 weights are 16-byte scalars with bit 127 cleared
- * (< 2^127 for efficiency).
+ * Uses the "RME+" approach. The first weight is implicitly 1 and is not
+ * generated. The remaining N-1 weights are 16-byte scalars with bit 127
+ * cleared, which keeps them below 2^127 for efficiency.
  *
  * The weights are derived by hashing PK_prime, doubled E points, and R points.
  */

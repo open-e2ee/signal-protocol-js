@@ -18,7 +18,7 @@ https://signal.org/blog/sealed-sender/
 
 > `optional` **accessMode?**: `SealedSenderAccessMode`
 
-Who is allowed to send sealed sender messages to this user.
+Who may send sealed sender messages to this user.
 
 #### Default
 
@@ -34,9 +34,9 @@ Who is allowed to send sealed sender messages to this user.
 
 Provider function that returns a serialized SenderCertificate (base64).
 
-Called lazily when a sealed sender message is sent and the cached
-certificate has expired. The returned certificate is cached for its
-validity period (typically 24 hours).
+The client calls this lazily when it sends a sealed sender message and the
+cached certificate expired. The client caches the returned certificate for
+its validity period (typically 24 hours).
 
 #### Returns
 
@@ -52,9 +52,9 @@ Base64-encoded serialized SenderCertificate
 
 Optional host-provided contact profile state store.
 
-When present, the Signal Protocol client can use per-contact profile keys and
-unidentified-access mode for direct-message sealed sender sends
-without importing the host app's persistence layer.
+When present, the Signal Protocol client can use per-contact profile keys
+and unidentified-access mode for direct-message sealed sender sends. It
+does not import the host app's persistence layer.
 
 ***
 
@@ -67,4 +67,4 @@ Ed25519 trust root public keys for certificate validation.
 Clients use these to validate the certificate chain:
 trust_root signs ServerCertificate -> ServerCertificate signs SenderCertificate
 
-Multiple roots are supported for key rotation scenarios.
+Multiple roots work for key rotation scenarios.

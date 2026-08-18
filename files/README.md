@@ -5,7 +5,7 @@ files and attachments.
 
 ## Why it exists
 
-Large payloads should not be embedded directly in Signal Protocol messages.
+Do not embed large payloads directly in Signal Protocol messages.
 The application encrypts bytes locally, uploads only ciphertext, and sends the
 decryption key plus integrity metadata inside an end-to-end encrypted message.
 

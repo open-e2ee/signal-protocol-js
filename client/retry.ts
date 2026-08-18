@@ -134,7 +134,7 @@ export function checkRetryRateLimit(
     return true;
   }
 
-  // New sender — evict least-recently-used entry if at capacity
+  // New sender. Evict least-recently-used entry if at capacity
   if (rateLimitState.retryRateLimitCounts.size >= MAX_RATE_LIMIT_ENTRIES) {
     const oldestKey = rateLimitState.retryRateLimitCounts.keys().next().value;
     if (oldestKey) rateLimitState.retryRateLimitCounts.delete(oldestKey);
@@ -231,7 +231,7 @@ export async function sendRetryRequestInternal(
   options?: ProcessEnvelopeOptions
 ): Promise<void> {
   try {
-    // Implicit messages (typing indicators, receipts) don't store MessageRecords -
+    // Implicit messages (typing indicators, receipts) do not store MessageRecords -
     // retry would always fail. The Signal Protocol behavior is to discard it.
     if (isImplicitContentType(envelope)) {
       ctx.logger.debug('Skipping retry request for protocol message (IMPLICIT)', {
@@ -315,7 +315,7 @@ export async function sendRetryRequestInternal(
     try {
       failedCiphertext = base64ToBytes(envelope.ciphertext as Base64);
     } catch {
-      // Keep empty ciphertext for malformed envelopes; retry request still proceeds.
+      // Keep empty ciphertext for malformed envelopes. The retry request still proceeds.
     }
 
     const failedMessage: SesameMessage = {
@@ -353,7 +353,7 @@ export async function sendRetryRequestInternal(
       },
     });
 
-    // Mark failed message as delivered so it doesn't reappear
+    // Mark failed message as delivered so it does not reappear
     if (ctx.relay?.markDelivered) {
       await ctx.relay.markDelivered(envelope.id).catch((err) => {
         ctx.logger.warn('Failed to mark message delivered after retry request (relay)', {
@@ -564,8 +564,8 @@ export async function handleRetryRequestAndResend(
     );
 
     // Compare our current ratchet key (DHs) against the DHs stored at send time (sessionStateId).
-    // If DHs advanced (DH ratchet occurred), session is healthy — reuse it.
-    // If DHs matches or is missing, session hasn't advanced — needs fresh bundle.
+    // If DHs advanced (DH ratchet occurred), session is healthy. Reuse it.
+    // If DHs matches or is missing, session has not advanced. Needs fresh bundle.
     // The send record captures the local ratchet key because the retry request
     // does not carry a peer-authenticated copy.
     const senderRatchetKey = currentSession?.DHs?.publicKey as string | undefined;
@@ -659,6 +659,6 @@ export async function handleRetryRequestAndResend(
         failedTimestamp: retryRequest.failedTimestamp,
       },
     });
-    // Don't rethrow - let the subscription continue processing other requests
+    // Do not rethrow - let the subscription continue processing other requests
   }
 }

@@ -2,7 +2,7 @@
  * ML-KEM Braid chunk progress
  *
  * The state machine keeps its chunk counts on the encoders and decoders it
- * opens for an epoch, and nothing outside this module knows which of those are
+ * opens for an epoch. Nothing outside this module knows which of those are
  * live at a given state. Reading them belongs here, where the encoder and
  * decoder shapes are owned, rather than at the SPQR seam that reports them.
  *

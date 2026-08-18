@@ -118,12 +118,12 @@ export function compositeIdentitiesEqual(
 }
 
 /**
- * SESAME `DeviceRecord.identityKey` bytes for a device whose composite identity
- * has not been observed yet.
+ * SESAME `DeviceRecord.identityKey` bytes for a device with no observed
+ * composite identity yet.
  *
- * Zero length is the only representation of "not pinned". It must stay distinct
- * from a pinned tuple so that first contact performs a TOFU pin rather than
- * reporting an identity change, and it must never be a partial key: pinning
+ * Zero length is the only way to say "not pinned". It must stay distinct
+ * from a pinned tuple, so that first contact makes a TOFU pin rather than
+ * reporting an identity change. It must also never be a partial key. Pinning
  * only the X25519 half would silently accept a peer that kept its DH key and
  * swapped its Ed25519 signing key.
  */
@@ -163,7 +163,7 @@ export function canonicalizeDeviceIdentityKey(bytes: Uint8Array, label: string):
 /**
  * Compare two `DeviceRecord.identityKey` values.
  *
- * Returns `'unpinned'` when no identity has been observed for the device yet,
+ * Returns `'unpinned'` when the device has no observed identity yet,
  * which is first contact (a TOFU pin) and not a change.
  */
 export function compareDeviceIdentityKeys(
@@ -255,7 +255,7 @@ export function createUnverifiedContactIdentityRecord(
   };
 }
 
-/** Explicit user/application acceptance path; automatic save must not call this. */
+/** Explicit user/application acceptance path. An automatic save must not call this. */
 export function acceptContactIdentityRotation(
   record: ContactIdentityRecord,
   candidate: CompositeIdentityV1,

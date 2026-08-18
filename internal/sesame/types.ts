@@ -65,7 +65,7 @@ export type SessionID = string;
 export interface SesameConfig {
   /**
    * Maximum message latency (milliseconds)
-   * Messages older than MAXLATENCY are considered lost
+   * Messages older than MAXLATENCY count as lost
    * Used for stale record cleanup
    * Default: 30 days (2,592,000,000 ms)
    */
@@ -80,7 +80,7 @@ export interface SesameConfig {
 
   /**
    * Maximum receive age for sessions (milliseconds)
-   * Sessions older than MAXRECV are deleted entirely
+   * The store deletes sessions older than MAXRECV entirely
    * Default: 180 days (15,552,000,000 ms)
    */
   maxRecv: number;
@@ -146,7 +146,7 @@ export enum ComputedSessionState {
   /** Session can receive but not send (age > MAXSEND, age < MAXRECV) */
   SEND_EXPIRED = 'SEND_EXPIRED',
 
-  /** Session is archived (in archivedSessions collection, used for fallback decryption) */
+  /** Archived session (in archivedSessions collection, for fallback decryption) */
   ARCHIVED = 'ARCHIVED',
 
   /** Session/device record is stale and awaiting cleanup (age > MAXRECV) */
@@ -241,12 +241,12 @@ export interface OutgoingMessageBatch {
   syncMessages: SesameMessage[];
 
   /**
-   * Recipient user ID this batch is addressed to
+   * Recipient user ID for this batch
    */
   recipientUserId: UserID;
 
   /**
-   * Timestamp when this batch was created
+   * Timestamp of the moment this batch began
    */
   timestamp: number;
 
@@ -277,8 +277,8 @@ export interface OutgoingMessageBatch {
  * Record of a remote device and its session.
  *
  * Uses SessionRecord directly instead of a separate
- * SesameSessionRecord wrapper. Session archiving is handled by
- * SessionRecord.archivedSessions, eliminating the need for a separate
+ * SesameSessionRecord wrapper. SessionRecord.archivedSessions handles session
+ * archiving, which eliminates the need for a separate
  * inactiveSessions list.
  *
  * @see https://signal.org/docs/specifications/sesame/
@@ -308,7 +308,7 @@ export interface DeviceRecord {
    * - archivedSessions: Archived sessions for receiving (indexed by baseKey)
    * - metadata: SESAME lifecycle info (createdAt, lastSentAt, lastReceivedAt, isInitiator)
    *
-   * Null if no session has been established yet.
+   * Null if no session exists yet.
    *
    * Note: Session convergence (receive-activated switching) uses
    * SessionRecord.promoteSession() to swap archived ↔ current.
@@ -316,7 +316,7 @@ export interface DeviceRecord {
   session: SessionRecord | null;
 
   /**
-   * Timestamp when this device record was created
+   * Timestamp of the moment this device record began
    */
   createdAt: number;
 
@@ -328,7 +328,7 @@ export interface DeviceRecord {
   /**
    * Whether this device's identity key requires user verification.
    * Set to true when identity key changes unexpectedly.
-   * Messaging is blocked until user verifies safety numbers.
+   * The client blocks messaging until the user verifies safety numbers.
    */
   pendingVerification?: boolean;
 }
@@ -457,7 +457,7 @@ export interface UserRecord {
   devices: Map<DeviceID, DeviceRecord>;
 
   /**
-   * Timestamp when this user record was created
+   * Timestamp of the moment this user record began
    */
   createdAt: number;
 
@@ -475,7 +475,7 @@ export interface UserRecord {
 
   /**
    * Whether this UserRecord's device list is stale and needs a fresh fetch.
-   * Set to true when a StaleDeviceListError is encountered during sending.
+   * Set to true when sending meets a StaleDeviceListError.
    * When true, the next send operation should refetch the device list before proceeding.
    * Cleared after a successful device list sync.
    * @see SESAME spec §3.3 (Sending Messages - Phase 3)
@@ -745,7 +745,7 @@ export interface SesameSendOptions {
   localDeviceListVersion?: number;
   includeSyncMessages?: boolean;
   fetchDeviceList?: (userId: UserID) => Promise<DeviceListResponse>;
-  /** Explicit client timestamp — eliminates need to parse plaintext */
+  /** Explicit client timestamp. Eliminates need to parse plaintext */
   clientTimestamp?: number;
   /** Optional alternate payload for linked-device sync transcripts */
   syncPlaintext?: Uint8Array;
@@ -802,11 +802,13 @@ export interface ISesameManager {
   ): Promise<SesameMessage>;
 
   /**
-   * Send an encrypted message to all devices of a user
+   * Send an encrypted message to all devices of a user.
+   *
    * Implements the 3-phase sending process from SESAME spec:
-   *   Phase 1: Identify devices with non-stale active sessions
-   *   Phase 2: Encrypt message for each device using Double Ratchet
-   *   Phase 3: Validate device list is current before sending
+   *
+   * - Phase 1: Identify devices with non-stale active sessions
+   * - Phase 2: Encrypt message for each device using Double Ratchet
+   * - Phase 3: Validate device list is current before sending
    *
    * Returns an OutgoingMessageBatch that separates:
    * - deviceMessages: Messages for recipient's devices
@@ -828,7 +830,7 @@ export interface ISesameManager {
    * Encrypt a sync payload for this account's other linked devices.
    *
    * Excludes the current sending device and never recursively produces more
-   * sync messages. Used for first-class multi-device transcript fanout.
+   * sync messages. Used for multi-device transcript fanout.
    */
   sendToLocalOtherDevices(
     plaintext: Uint8Array,
@@ -836,9 +838,10 @@ export interface ISesameManager {
   ): Promise<SesameMessage[]>;
 
   /**
-   * Receive and decrypt an encrypted message
-   * Handles session convergence per SESAME spec - if decryption succeeds
-   * on an inactive session, that session becomes the new active session.
+   * Receive and decrypt an encrypted message.
+   *
+   * Handles session convergence per SESAME spec. If decryption succeeds on an
+   * inactive session, that session becomes the new active session.
    *
    * @param message - The received SESAME message
    * @returns Decrypted plaintext
@@ -863,7 +866,7 @@ export interface ISesameManager {
   /**
    * Create a retry request for a message that failed to decrypt
    *
-   * @param failedMessage - The message that couldn't be decrypted
+   * @param failedMessage - The message that could not be decrypted
    * @param reason - Why decryption failed
    * @returns The retry request to send
    */
@@ -920,13 +923,13 @@ export interface ISesameManager {
 
   /**
    * Delete sessions older than MAXRECV threshold
-   * Should be called periodically
+   * Callers should run this periodically
    */
   cleanupExpiredSessions(): Promise<number>;
 
   /**
    * Delete stale device records (orphaned sessions older than MAXLATENCY)
-   * Should be called periodically
+   * Callers should run this periodically
    */
   cleanupStaleRecords(): Promise<number>;
 
@@ -1098,7 +1101,7 @@ export class StaleDeviceListError extends SesameError {
 }
 
 /**
- * Thrown when session has expired and cannot be used
+ * Thrown when a session expired and no longer works
  */
 export class SessionExpiredError extends SesameError {
   constructor(sessionId: SessionID, age: number, threshold: number) {

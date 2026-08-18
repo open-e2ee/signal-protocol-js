@@ -8,7 +8,7 @@
 
 KEM one-time prekey (consumed on use, post-quantum)
 
-Per PQXDH spec Section 3.2, these are signed one-time pqkem prekeys
+Per PQXDH spec Section 3.2, the identity key signs these one-time pqkem prekeys
 that provide per-session post-quantum forward secrecy.
 Server prefers these over the last-resort KEM prekey.
 

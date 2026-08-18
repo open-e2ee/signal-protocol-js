@@ -12,7 +12,7 @@ Archive the current session state when receiving a new PreKeyMessage.
 
 - Move the current session to archived (if it exists)
 - Clear the current session slot
-- The new session from PreKeyMessage will be set separately
+- A separate step sets the new session from PreKeyMessage
 
 Called when:
 - Receiving a PreKeyMessage from a device we already have a session with

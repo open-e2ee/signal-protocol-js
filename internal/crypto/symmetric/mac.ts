@@ -220,7 +220,7 @@ export function deserializeHeader(bytes: Uint8Array): {
  *
  * Identity key binding provides:
  * - Session binding: MAC is only valid for this specific sender-receiver pair
- * - Replay prevention: Message can't be replayed to a different session
+ * - Replay prevention: Message cannot be replayed to a different session
  * - Authentication: Verifies sender possesses the chain key
  *
  * @param authKey - Authentication key (32 bytes, from expanded message key)
@@ -310,7 +310,7 @@ export function verifyMessageMac(
   //
   const expectedTruncated = expectedMac.slice(0, MAC_LENGTH_BYTES);
 
-  // Best-effort full-scan comparison; length mismatch handling is structural.
+  // Best-effort full-scan comparison. Length mismatch handling is structural.
   return constantTimeEqual(expectedTruncated, receivedMac);
 }
 
@@ -385,7 +385,7 @@ export function verifyProtobufMessageMac(
   receivedMac: Uint8Array
 ): boolean {
   // L2: Compute HMAC even when length is wrong (defense-in-depth)
-  // Normalize malformed lengths before comparison; no timing guarantee.
+  // Normalize malformed lengths before comparison. No timing guarantee.
   const expectedMac = computeProtobufMessageMac(
     macKey,
     senderIdentityKey,

@@ -2,7 +2,7 @@
  * V2 Multi-Recipient Sealed Sender Binary Serialization
  *
  * Implements custom binary wire format for V2 multi-recipient
- * sealed sender messages. This is NOT protobuf - it's a compact binary
+ * sealed sender messages. This is NOT protobuf - it is a compact binary
  * format designed for efficient multi-recipient fan-out.
  *
  * Wire format (sent message):
@@ -271,7 +271,7 @@ export function deserializeSentMessage(data: Uint8Array): DeserializedSentMessag
     offset += UUID_BYTES;
     const serviceId = bytesToServiceId(uuidBytes);
 
-    // First device byte — if 0x00, this is an excluded recipient
+    // First device byte. If 0x00, this is an excluded recipient
     if (offset >= data.length) {
       throw new Error('Truncated device list');
     }

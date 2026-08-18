@@ -10,6 +10,8 @@
  * Wire Format (Tink AES256_GCM_HKDF_1MB aligned):
  *
  * CIPHERTEXT STRUCTURE:
+ *
+ * ```
  * ┌─────────────────────────────────────────────────────────────┐
  * │ Header (40 bytes)                                           │
  * │ ├── length: 1 byte (always 40 for AES-256)                  │
@@ -25,16 +27,20 @@
  * │ Segment N (last): ciphertext || authTag (16 bytes)          │
  * │   Nonce has lastSegment=0x01 for truncation detection       │
  * └─────────────────────────────────────────────────────────────┘
+ * ```
  *
  * GCM NONCE (12 bytes):
+ *
+ * ```
  * ┌─────────────────┬──────────────────┬─────────────────┐
  * │ noncePrefix (7) │ segmentIndex (4) │ lastSegment (1) │
  * └─────────────────┴──────────────────┴─────────────────┘
+ * ```
  *
  * Security Properties:
  * - Authenticated encryption: Each chunk verified independently
  * - Truncation detection: Last segment flag in nonce
- * - Nonce uniqueness: Salt + counter + lastFlag ensures no reuse
+ * - Nonce uniqueness: Salt + counter + lastFlag prevents reuse
  * - Key separation: HKDF derives per-stream key from master key
  *
  * @see https://developers.google.com/tink/streaming-aead/aes_gcm_hkdf_streaming
@@ -139,9 +145,9 @@ export async function streamingEncrypt(
     header.set(salt, 1);
     header.set(noncePrefix, 1 + STREAMING_SALT_LENGTH);
 
-    // 4. Calculate segment parameters
-    // First segment: smaller due to header taking space in the first "block"
-    // Plaintext that fits in first segment = segmentSize - header - authTag
+    // 4. Calculate segment parameters.
+    // First segment: smaller due to header taking space in the first "block".
+    // Plaintext that fits in first segment = segmentSize - header - authTag.
     const firstSegmentPlaintext = segmentSize - STREAMING_HEADER_LENGTH - STREAMING_AUTH_TAG_LENGTH;
     // Subsequent segments: segmentSize - authTag
     const subsequentSegmentPlaintext = segmentSize - STREAMING_AUTH_TAG_LENGTH;

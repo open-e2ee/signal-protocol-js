@@ -8,7 +8,7 @@
 
 Configuration for safety-number verification deep links.
 
-Both fields are required so a config is always fully specified; use
+Both fields are mandatory, so a config always carries every value. Use
 [DEFAULT\_VERIFY\_LINK\_CONFIG](../variables/DEFAULT_VERIFY_LINK_CONFIG.md) as a base when overriding a single field.
 
 ## Properties

@@ -86,7 +86,7 @@ export class SignalProtocolClientState {
   // ============================================================================
 
   /**
-   * Tracks how many times we've responded to retry requests per message.
+   * Tracks how many times we have responded to retry requests per message.
    * Key: `${sessionId}:${failedTimestamp}` (same as dedup key)
    * Value: number of retry responses sent
    * Prevents infinite retry loops

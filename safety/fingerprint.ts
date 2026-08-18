@@ -4,9 +4,10 @@
  * Fingerprint/safety number types for identity verification in Signal Protocol.
  * Provides Fingerprint classes for structured TOFU verification.
  *
- * Safety numbers allow users to verify they're communicating with the correct
- * person and detect man-in-the-middle attacks through out-of-band verification
- * (comparing numbers in person, over the phone, via QR code, etc.).
+ * Safety numbers allow users to verify they are communicating with the correct
+ * person. They also detect man-in-the-middle attacks through out-of-band
+ * verification (comparing numbers in person, over the phone, via QR code, and
+ * so on).
  *
  * @see https://signal.org/docs/specifications/fingerprint/
  */
@@ -38,7 +39,7 @@ export type CompareResult = 'match' | 'no_match' | 'version_mismatch';
  * Contains both displayable (numeric) and scannable (QR code) representations
  * of the combined identity fingerprint. Provides Fingerprint class.
  *
- * Deterministic party ordering ensures both participants compute the same
+ * Deterministic party ordering makes both participants compute the same
  * fingerprint value.
  *
  * @example
@@ -369,8 +370,8 @@ export class ScannableFingerprint {
 /**
  * Fingerprint data for compatibility with existing function-based API.
  *
- * This interface matches the existing `SafetyNumber` interface but is
- * extended to support the new class-based API.
+ * This interface matches the existing `SafetyNumber` interface, and extends it
+ * to support the new class-based API.
  */
 export interface FingerprintData {
   /** 60-digit numeric fingerprint */

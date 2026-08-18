@@ -19,7 +19,7 @@ import {
  * object store.
  *
  * Implement this interface in app integration code. Generate presigned
- * operations on the backend; never ship AWS credentials in the app.
+ * operations on the backend. Never ship AWS credentials in the app.
  */
 export interface S3ObjectStoreBroker {
   /**

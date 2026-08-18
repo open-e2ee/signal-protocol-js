@@ -8,7 +8,7 @@
 
 App-provided persistence helpers for prekey replacement bookkeeping.
 
-The Signal Protocol SDK owns rotation semantics; concrete storage adapters own
+The Signal Protocol SDK owns rotation semantics. Concrete storage adapters own
 persistence.
 
 ## Methods
@@ -17,7 +17,7 @@ persistence.
 
 > **cullReplacedOneTimePreKeys**(`maxReplacedAgeMs`, `identityType?`): `Promise`\<`ReplacedOneTimePreKeyCullResult`\>
 
-Delete replaced one-time prekeys that have exceeded the grace period.
+Delete replaced one-time prekeys past the grace period.
 
 #### Parameters
 
@@ -39,7 +39,7 @@ Delete replaced one-time prekeys that have exceeded the grace period.
 
 > **cullReplacedPreKeys**(`maxReplacedAgeMs`): `Promise`\<`ReplacedPreKeyCullResult`\>
 
-Delete all replaced prekeys that have exceeded the grace period.
+Delete all replaced prekeys past the grace period.
 
 #### Parameters
 

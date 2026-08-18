@@ -31,9 +31,10 @@ export type { SessionRecord };
 
 /**
  * All durable trust/session effects of establishing or advancing a session.
- * Optional one-time-prekey identifiers are consumed in the same transaction
+ * The same transaction consumes optional one-time-prekey identifiers
  * for responder-side PreKey decrypts. The local identity namespace remains
- * explicit even when no prekey is consumed so every commit is fully scoped.
+ * explicit even when the transaction consumes no prekey, so every commit
+ * is fully scoped.
  */
 export interface SessionTrustCommit {
   address: ProtocolAddress;
@@ -41,7 +42,7 @@ export interface SessionTrustCommit {
   /** Sender tuple to pin or match in the same durable commit. */
   contactIdentity: CompositeIdentityV1;
   contactIdentityType: IdentityType;
-  /** Local identity namespace; also scopes any consumed recipient prekeys. */
+  /** Local identity namespace. It also scopes any consumed recipient prekeys. */
   localIdentityType: IdentityType;
   oneTimePreKeyId?: number;
   kemOneTimePreKeyId?: number;
@@ -110,7 +111,7 @@ export interface ISignalProtocolClient {
    * Start the relay subscription for receiving encrypted messages.
    *
    * Startup is explicit so applications can register hooks before delivery
-   * begins.
+   * starts.
    */
   startRelaySubscription(): void;
 
@@ -126,7 +127,7 @@ export interface ISignalProtocolClient {
   /**
    * Stop the client and cleanup resources
    *
-   * Should be called on logout or app shutdown.
+   * Call this on logout or app shutdown.
    */
   stop(): Promise<void>;
 
@@ -168,7 +169,7 @@ export interface ISignalProtocolClient {
    */
   rotateKyberPreKey(): Promise<boolean>;
 
-  /** Explicit compare-and-swap rotation of the account-level relay identity. */
+  /** Explicitly rotate the account-level relay identity with compare-and-swap. */
   rotateAccountIdentity(
     expectedCurrentCommitment: Uint8Array,
     identityType?: IdentityType
@@ -238,8 +239,8 @@ export interface ISignalProtocolClient {
   /**
    * Delete the encrypted remote object referenced by an attachment pointer.
    *
-   * This only touches remote object storage. App-owned local message rows and
-   * local media caches must be deleted by the application.
+   * This only touches the remote object store. The application must delete
+   * app-owned local message rows and local media caches.
    */
   deleteRemoteAttachment(
     attachment: import('../media').MediaAttachmentPointer,
@@ -358,7 +359,7 @@ export interface ISignalProtocolClient {
    * Get health status for encryption sessions with a specific user.
    *
    * Checks session existence, key validity, key freshness, and expiration.
-   * This is a client-side check that doesn't require server calls.
+   * This is a client-side check that does not require server calls.
    *
    * @param userId - The user ID to check session health for
    * @returns SessionHealthResult with status and detailed diagnostics
@@ -499,7 +500,7 @@ export interface ISignalProtocolClient {
    * Multi-device: fans out to all known devices for the sender.
    *
    * @param recipientUserId - Original sender's user ID
-   * @param timestamps - Server timestamps of messages that were read
+   * @param timestamps - Server timestamps of the messages the user read
    */
   sendReadReceipt(recipientUserId: string, timestamps: number[]): Promise<void>;
 
@@ -515,7 +516,7 @@ export interface ISignalProtocolClient {
    * Sync local read state to the account's other linked devices.
    *
    * This is separate from read receipts: it updates our own devices so they
-   * stay in sync even when remote read receipts are disabled.
+   * stay in sync even when the configuration disables remote read receipts.
    */
   syncReadToLinkedDevices(
     entries: import('../client/content-adapter').ReadSyncEntryInput[]
@@ -543,7 +544,7 @@ export interface ISignalProtocolClient {
   /**
    * Sync account-level communication/privacy configuration to linked devices.
    *
-   * This is linked-device state, not a sender-facing receipt. It should carry
+   * This holds linked-device state, not a sender-facing receipt. It should carry
    * the current local snapshot for supported fields.
    */
   syncConfigurationToLinkedDevices(
@@ -572,8 +573,8 @@ export interface ISignalProtocolClient {
   /**
    * Sync explicit safety-number verification state to the account's other linked devices.
    *
-   * Only explicit `verified` and cleared-to-`default` states belong here;
-   * conflict/untrusted state is still derived locally from identity-key changes.
+   * Only explicit `verified` and cleared-to-`default` states belong here.
+   * Conflict and untrusted state is still derived locally from identity-key changes.
    */
   syncVerificationStateToLinkedDevices(
     verificationState: import('../client/content-adapter').VerificationStateSyncInput
@@ -637,9 +638,9 @@ export interface ISignalProtocolManager {
   /**
    * Set local user and device identity.
    *
-   * This must be called before any session operations (encrypt/decrypt).
-   * It's normally called by generatePreKeyBundle, but can be called directly
-   * when keys already exist and don't need regeneration.
+   * Call this before any session operations (encrypt/decrypt).
+   * generatePreKeyBundle normally calls it. Callers can also call it directly
+   * when keys already exist and do not need regeneration.
    *
    * @param userId - User ID for this client
    * @param deviceId - Device ID (1 for primary, 2-5 for linked devices)
@@ -691,7 +692,7 @@ export interface ISignalProtocolManager {
    *
    * Used by SESAME to sync sessions after PreKeyMessage decryption.
    * Per SESAME specification, after the responder decrypts a PreKeyMessage,
-   * the session needs to be synced from KeyStorage to DeviceRecord.
+   * the session must sync from KeyStorage to DeviceRecord.
    *
    * @param remoteAddress - Remote party's protocol address (userId:deviceId)
    * @returns The session record, or null if no session exists
@@ -743,7 +744,7 @@ export interface ISignalProtocolManager {
  * Identity store with an SDK-oriented API and SDK composite-identity values.
  *
  * Manages local identity keys and contact identity verification. TOFU detects
- * changes after a tuple is pinned; it does not authenticate first contact.
+ * changes after the store pins a tuple. It does not authenticate first contact.
  *
  */
 export interface IIdentityKeyStore {
@@ -770,7 +771,7 @@ export interface IIdentityKeyStore {
    * Get our local registration ID.
    *
    * Registration ID is a random 16-bit integer generated once per install.
-   * Used to detect session resets when app is reinstalled.
+   * Detects session resets when the user reinstalls the app.
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
    */
   getLocalRegistrationId(identityType?: IdentityType): Promise<number>;
@@ -778,7 +779,7 @@ export interface IIdentityKeyStore {
   /**
    * Set our local registration ID.
    *
-   * Should only be called once during initialization.
+   * Call this only once, during initialization.
    * @param id - Registration ID
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
    */
@@ -787,7 +788,7 @@ export interface IIdentityKeyStore {
   /**
    * Save a contact's identity key and detect changes.
    *
-   * This is used for Trust On First Use (TOFU) and post-pinning change
+   * This supports Trust On First Use (TOFU) and post-pinning change
    * detection. Returns whether either composite component changed.
    *
    * @param address - Contact's protocol address
@@ -806,7 +807,7 @@ export interface IIdentityKeyStore {
   /**
    * Get a contact's saved identity key.
    *
-   * Returns null if no identity key has been saved for this address.
+   * Returns null if the store holds no identity key for this address.
    *
    * @param address - Contact's protocol address
    * @returns Contact's identity key or null
@@ -818,7 +819,7 @@ export interface IIdentityKeyStore {
 
   /**
    * Explicitly accept a changed tuple and atomically delete every session for
-   * that user; the previous tuple becomes rollback history.
+   * that user. The previous tuple becomes rollback history.
    */
   acceptContactIdentityRotation(
     address: ProtocolAddress,
@@ -836,10 +837,10 @@ export interface IIdentityKeyStore {
   ): Promise<ContactIdentityRecord>;
 
   /**
-   * Check if a contact's identity key is trusted.
+   * Check whether the store trusts a contact's identity key.
    *
    * Trust verification behavior depends on direction:
-   * - SENDING: Stricter - don't send to untrusted identities
+   * - SENDING: Stricter - do not send to untrusted identities
    * - RECEIVING: More permissive - allow receiving but warn user
    *
    * From Signal Protocol:
@@ -847,9 +848,9 @@ export interface IIdentityKeyStore {
    *
    * @param address - Contact's protocol address
    * @param identity - Complete composite identity candidate
-   * @param direction - Whether we're sending or receiving
+   * @param direction - Whether the local device sends or receives
    * @param identityType - ACI or PNI trust namespace
-   * @returns true if identity is trusted
+   * @returns true if the store trusts the identity
    */
   isTrustedIdentity(
     address: ProtocolAddress,
@@ -863,7 +864,7 @@ export interface IIdentityKeyStore {
  * EC one-time PreKey store with an SDK-oriented API.
  *
  * Manages EC one-time prekeys for forward secrecy.
- * One-time prekeys are consumed after use and cannot be reused.
+ * The protocol consumes a one-time prekey after use, and no caller may reuse it.
  *
  */
 export interface IEcOneTimePreKeyStore {
@@ -880,7 +881,7 @@ export interface IEcOneTimePreKeyStore {
   getEcOneTimePreKeys(identityType?: IdentityType): Promise<EcOneTimePreKey[]>;
 
   /**
-   * Remove an EC one-time prekey after it has been used.
+   * Remove an EC one-time prekey after a session uses it.
    *
    * @param preKeyId - ID of the prekey to remove
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
@@ -892,14 +893,15 @@ export interface IEcOneTimePreKeyStore {
  * EC Signed PreKey store with an SDK-oriented API.
  *
  * Manages rotating EC signed prekeys for medium-term forward secrecy.
- * EC signed prekeys are rotated on the configured refresh interval (2 days by
- * default), but OLD prekeys must be kept for a grace period (~30 days) to
- * handle in-flight messages.
+ * The client rotates EC signed prekeys on the configured refresh interval
+ * (2 days by default). The store must keep OLD prekeys for a grace period
+ * (~30 days) to handle in-flight messages.
  *
  * Per X3DH Spec Section 4.4:
- * "After uploading a new signed prekey, Bob may keep the private key
- * corresponding to the previous signed prekey around for some period
- * of time, to handle messages using it that have been delayed in transit."
+ *
+ * > "After uploading a new signed prekey, Bob may keep the private key
+ * > corresponding to the previous signed prekey around for some period
+ * > of time, to handle messages using it that have been delayed in transit."
  *
  * @see https://signal.org/docs/specifications/x3dh/
  */
@@ -907,8 +909,8 @@ export interface IEcSignedPreKeyStore {
   /**
    * Store EC signed prekey.
    *
-   * When storing a new EC signed prekey (rotation), the old one should be
-   * archived (not deleted) to handle in-flight messages.
+   * When storing a new EC signed prekey (rotation), archive the old one
+   * instead of deleting it, to handle in-flight messages.
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
    */
   storeEcSignedPreKey(signedPreKey: EcSignedPreKey, identityType?: IdentityType): Promise<void>;
@@ -973,10 +975,10 @@ export interface IKyberLastResortPreKeyStore {
   /**
    * Mark a Kyber prekey as used.
    *
-   * Kyber prekeys can be reused (unlike one-time prekeys) but should be
-   * tracked to ensure proper rotation.
+   * Callers may reuse Kyber prekeys (unlike one-time prekeys), and the store
+   * must track them so rotation stays correct.
    *
-   * @param kyberPreKeyId - ID of the Kyber prekey that was used
+   * @param kyberPreKeyId - ID of the Kyber prekey the session used
    * @param signedPreKeyId - ID of the signed prekey used in combination
    * @param baseKeyBytes - Base key bytes for the session
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
@@ -993,8 +995,8 @@ export interface IKyberLastResortPreKeyStore {
  * Kyber One-Time PreKey store interface (post-quantum security).
  *
  * Manages one-time ML-KEM-1024 (Kyber) prekeys for per-session post-quantum forward secrecy.
- * One-time KEM prekeys are consumed after use and provide additional security layer
- * beyond the last-resort Kyber prekey.
+ * The protocol consumes a one-time KEM prekey after use. Each one adds a
+ * security layer beyond the last-resort Kyber prekey.
  *
  * Naming convention matches EC prekeys:
  * - `IEcOneTimePreKeyStore` → one-time EC prekeys (`ecPreKeys`)
@@ -1023,9 +1025,9 @@ export interface IKemPreKeyStore {
   getKemOneTimePreKey(keyId: number, identityType?: IdentityType): Promise<KemOneTimePreKey | null>;
 
   /**
-   * Remove a one-time KEM prekey after it has been used.
+   * Remove a one-time KEM prekey after a session uses it.
    *
-   * CRITICAL: Must be called immediately after successful decapsulation
+   * CRITICAL: Call this immediately after successful decapsulation
    * to provide per-session post-quantum forward secrecy.
    *
    * @param keyId - ID of the prekey to remove
@@ -1120,7 +1122,7 @@ export interface ISessionStore {
  * Implements the SESAME algorithm for automatic session convergence
  * across multiple devices.
  *
- * Session state is stored directly on each `DeviceRecord`.
+ * Each `DeviceRecord` holds its session state directly.
  *
  * @see https://signal.org/docs/specifications/sesame/
  */
@@ -1215,13 +1217,13 @@ export interface ISenderKeyStore {
    * travels on the wire.
    *
    * A received group message names its sender key by `senderKeyId` and nothing
-   * else — the identifier is opaque, and the envelope no longer carries a
+   * else. The identifier is opaque, and the envelope no longer carries a
    * group. This is the receiver's only way back to a group, so it is what
    * decides which sender key state to decrypt against.
    *
    * Searches previous states as well as current ones. A message encrypted just
    * before a rotation is still in flight when the rotation lands, and its
-   * `senderKeyId` names the superseded key; resolving only against current
+   * `senderKeyId` names the superseded key. Resolving only against current
    * state would strand exactly the messages the rotation window exists to
    * cover.
    *
@@ -1242,7 +1244,7 @@ export interface ISenderKeyStore {
   getAllSenderKeysForGroup(groupId: string): Promise<SenderKeyState[]>;
 
   /**
-   * Delete all sender keys for a group (when group is deleted).
+   * Delete all sender keys for a group (when the caller deletes the group).
    */
   deleteAllSenderKeysForGroup(groupId: string): Promise<number>;
 
@@ -1253,7 +1255,7 @@ export interface ISenderKeyStore {
   /**
    * Store all sender key states (current + previous) for a group member device.
    *
-   * The first element is the current state; remaining are previous states
+   * The first element is the current state. The remaining entries are previous states
    * retained during the rotation window for decrypting in-flight messages.
    *
    * Per Sender Keys spec Section 5.1: "Implementations MUST store sender key
@@ -1274,7 +1276,7 @@ export interface ISenderKeyStore {
   /**
    * Retrieve all sender key states (current + previous) for a group member device.
    *
-   * First element is the current state; remaining are previous states.
+   * First element is the current state. The remaining entries are previous states.
    *
    * @param groupId - Group identifier
    * @param userId - User identifier
@@ -1294,8 +1296,8 @@ export interface ISenderKeyStore {
   /**
    * Store skipped message key for out-of-order decryption.
    *
-   * When chain is advanced past a message (gap in chainIndex),
-   * store the derived key so the skipped message can be decrypted later.
+   * When the chain advances past a message (gap in chainIndex),
+   * store the derived key so a later call can decrypt the skipped message.
    *
    * @param groupId - Group identifier
    * @param senderId - Sender user identifier
@@ -1361,7 +1363,7 @@ export interface ISenderKeyStore {
   /**
    * Delete oldest skipped keys to make room for new ones.
    *
-   * Called when maxSkippedKeys limit is reached.
+   * The store calls this when the chain reaches the maxSkippedKeys limit.
    *
    * @param groupId - Group identifier
    * @param senderId - Sender user identifier
@@ -1431,7 +1433,7 @@ export interface ISignalProtocolLocalStore
   /**
    * Clear all encryption keys (use with caution!).
    *
-   * This should only be used for:
+   * Use this only for:
    * - Account deletion
    * - Reset after security incident
    * - Local development
@@ -1445,7 +1447,7 @@ export interface ISignalProtocolLocalStore
 
   /**
    * Get the maximum EC signed prekey ID in storage.
-   * Used to generate new keyIds that won't collide with existing ones.
+   * Used to generate new keyIds that will not collide with existing ones.
    *
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
    * @returns The highest EC signed prekey ID, or 0 if none exist
@@ -1454,7 +1456,7 @@ export interface ISignalProtocolLocalStore
 
   /**
    * Get the maximum Kyber prekey ID in storage.
-   * Used to generate new keyIds that won't collide with existing ones.
+   * Used to generate new keyIds that will not collide with existing ones.
    *
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
    * @returns The highest Kyber prekey ID, or 0 if none exist
@@ -1541,18 +1543,21 @@ export interface ISignalProtocolLocalSecretVault {
  * MessageRecord for SESAME retry request resending
  *
  * Per SESAME Specification Section 4.1:
- * "Each MessageRecord stores the following values:
- *  - The plaintext of the encrypted message
- *  - The UserID for the recipient device
- *  - The SessionID for the session the message was encrypted with"
  *
- * The SessionID is used to detect orphaned sessions during resending:
- * "If the DeviceRecord's active session matches the SessionID from the relevant
- * MessageRecord, then the sending device creates a new initiating session...
- * This prevents the sending device from repeatedly sending a message using an
- * orphaned session which doesn't match any recipient session."
+ * > "Each MessageRecord stores the following values:
+ * >  - The plaintext of the encrypted message
+ * >  - The UserID for the recipient device
+ * >  - The SessionID for the session the message was encrypted with"
  *
- * Messages are indexed by the client timestamp assigned before encryption.
+ * The SessionID detects orphaned sessions during resending:
+ *
+ * > "If the DeviceRecord's active session matches the SessionID from the
+ * > relevant MessageRecord, then the sending device creates a new initiating
+ * > session... This prevents the sending device from repeatedly sending a
+ * > message using an orphaned session which does not match any recipient
+ * > session."
+ *
+ * The client timestamp assigned before encryption indexes a message.
  * Retry count enforces SESAME's bounded-resend requirement.
  */
 export interface MessageRecord {
@@ -1575,14 +1580,14 @@ export interface MessageRecord {
   /** Original plaintext message (stored for resending) */
   plaintext: string;
 
-  /** Timestamp when record was created */
+  /** Timestamp when the store created the record */
   createdAt: number;
 
   /**
-   * Sender's ratchet key (DHs.publicKey) at send time — for retry session matching.
+   * Sender's ratchet key (DHs.publicKey) at send time, for retry session matching.
    *
-   * If the sender's current DHs differs from this stored value, the DH ratchet has advanced
-   * and the session is healthy — reuse it. If it matches, the session hasn't
+   * If the sender's current DHs differs from this stored value, the DH ratchet
+   * advanced and the session is healthy. Reuse it. If it matches, the session has not
    * advanced and may need a fresh bundle.
    */
   sessionStateId: string;
@@ -1593,7 +1598,7 @@ export interface MessageRecord {
  *
  * Used by SESAME manager to store sent messages for potential retry.
  *
- * Messages are indexed by the client timestamp assigned before encryption. The
+ * The client timestamp assigned before encryption indexes a message. The
  * primary lookup method is getMessageRecord(sessionId, timestamp).
  */
 export interface IMessageRecordStore {
@@ -1603,7 +1608,7 @@ export interface IMessageRecordStore {
   /**
    * Get a message record by session and timestamp (PRIMARY lookup method).
    *
-   * Per Signal Protocol, messages are identified by client timestamp.
+   * Per Signal Protocol, the client timestamp identifies a message.
    */
   getMessageRecord(sessionId: string, timestamp: number): Promise<MessageRecord | null>;
 

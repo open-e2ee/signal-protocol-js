@@ -136,8 +136,8 @@ export function bytesToBase64(bytes: Uint8Array): Base64 {
  * - `_` instead of `/`
  * - No padding (`=`)
  *
- * Used for R2 storage keys (attachments, profiles), which must survive being
- * placed in a URL path without escaping.
+ * Used for R2 storage keys (attachments, profiles), which must survive a URL
+ * path without escaping.
  *
  * @see RFC 4648 Section 5 - Base 64 Encoding with URL and Filename Safe Alphabet
  */
@@ -245,7 +245,7 @@ export function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) {
     // Keep the mismatch path independent of either supplied length. The values
     // are volatile locals from the engine's point of view, but JS cannot promise
-    // that a JIT will preserve this work; see the function-level caveat above.
+    // that a JIT will preserve this work. See the function-level caveat above.
     const dummyA = new Uint8Array(32);
     const dummyB = new Uint8Array(32);
     let dummyDifference = 0;
@@ -269,13 +269,15 @@ let nativeCloneStaysInRealm = false;
 /**
  * Does the ambient structuredClone hand back objects this realm recognizes?
  *
- * A structuredClone reached across a realm boundary — the arrangement a Node vm
- * context produces, and one Jest builds for everything it runs — returns a working
- * Map whose prototype belongs to the other realm. `instanceof Map` then reports
- * false everywhere downstream: the session codec writes such a Map as `{}`, and
- * the portable clone below rebuilds it as a prototype-only husk whose `size`
- * getter throws. Both losses are silent. The portable path constructs its Maps
- * here, so use it whenever the native clone would leave the realm.
+ * A structuredClone reached across a realm boundary returns a working Map whose
+ * prototype belongs to the other realm. A Node vm context produces that
+ * arrangement, and Jest builds one for everything it runs. Downstream,
+ * `instanceof Map` then reports false. The session codec writes such a Map as
+ * `{}`, and the portable clone below rebuilds it as a prototype-only husk whose
+ * `size` getter throws.
+ *
+ * Both losses are silent. The portable path constructs its Maps here, so use it
+ * whenever the native clone would leave the realm.
  */
 function isNativeCloneUsable(nativeClone: <U>(input: U) => U): boolean {
   if (nativeClone !== checkedNativeClone) {
@@ -388,7 +390,7 @@ export function secureZero(base64Key: Base64 | string): void {
     const bytes = base64ToBytes(asBase64(base64Key));
 
     // Overwrite with zeros
-    // Note: In JavaScript, we can't guarantee this won't be optimized away,
+    // Note: In JavaScript, we cannot guarantee this will not be optimized away,
     // but we make a best effort by:
     // 1. Writing zeros to the Uint8Array
     // 2. Multiple passes to prevent compiler optimization
@@ -404,13 +406,13 @@ export function secureZero(base64Key: Base64 | string): void {
       sum += bytes[i] ?? 0;
     }
 
-    // Ensure sum is used (prevents optimization)
+    // Use sum here (prevents optimization)
     if (sum !== 0) {
       // This should never happen, but prevents optimizer from removing zeroing
       console.warn('[SecureZero] Warning: Zeroing may have been optimized away');
     }
   } catch (error) {
-    // If zeroing fails, log but don't throw (caller still needs to delete)
+    // If zeroing fails, log but do not throw (caller still needs to delete)
     console.error('[SecureZero] Failed to zero key material:', error);
   }
 }
@@ -423,7 +425,7 @@ export function secureZero(base64Key: Base64 | string): void {
 export function secureZeroBytes(bytes: Uint8Array): void {
   if (!bytes || bytes.length === 0) return;
 
-  // Use native fill(0) — harder for JIT to optimize away than a JS loop.
+  // Use native fill(0). Harder for JIT to optimize away than a JS loop.
   // Matches noble-hashes' approach (6 security audits).
   // Note: JS provides no guarantee against JIT dead-code elimination.
   bytes.fill(0);

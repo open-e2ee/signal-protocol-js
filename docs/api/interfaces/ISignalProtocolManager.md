@@ -139,7 +139,7 @@ Get the session record for a remote address.
 
 Used by SESAME to sync sessions after PreKeyMessage decryption.
 Per SESAME specification, after the responder decrypts a PreKeyMessage,
-the session needs to be synced from KeyStorage to DeviceRecord.
+the session must sync from KeyStorage to DeviceRecord.
 
 #### Parameters
 
@@ -219,9 +219,9 @@ Rotate Kyber prekey (post-quantum security, same interval as the signed prekey)
 
 Set local user and device identity.
 
-This must be called before any session operations (encrypt/decrypt).
-It's normally called by generatePreKeyBundle, but can be called directly
-when keys already exist and don't need regeneration.
+Call this before any session operations (encrypt/decrypt).
+generatePreKeyBundle normally calls it. Callers can also call it directly
+when keys already exist and do not need regeneration.
 
 #### Parameters
 

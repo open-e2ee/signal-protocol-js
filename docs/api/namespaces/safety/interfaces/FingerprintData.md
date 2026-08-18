@@ -8,8 +8,8 @@
 
 Fingerprint data for compatibility with existing function-based API.
 
-This interface matches the existing `SafetyNumber` interface but is
-extended to support the new class-based API.
+This interface matches the existing `SafetyNumber` interface, and extends it
+to support the new class-based API.
 
 ## Properties
 

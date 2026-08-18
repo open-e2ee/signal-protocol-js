@@ -4,7 +4,7 @@
 > [Adapters](../ADAPTERS.md)
 
 The Signal Protocol SDK keeps platform and backend infrastructure behind
-explicit TypeScript interfaces. The client owns protocol coordination; the host
+explicit TypeScript interfaces. The client owns protocol coordination. The host
 application owns persistence, authentication, authorization, and product
 policy.
 
@@ -46,15 +46,15 @@ const client = await createSignalProtocolClient({
 A production implementation must:
 
 - preserve compare-and-swap and transaction semantics for trust and session
-  transitions;
-- consume one-time prekeys atomically with the corresponding session commit;
-- persist exact device/session ownership metadata;
+  transitions.
+- consume one-time prekeys atomically with the corresponding session commit.
+- persist exact device/session ownership metadata.
 - treat account reset as a coordinated lifecycle across protocol records,
-  bootstrap secrets, backups, and application state; and
+  bootstrap secrets, backups, and application state.
 - avoid placing decrypted application messages in the protocol store.
 
-Available adapters and their status are documented in the
-[local-store guide](../local/store/README.md).
+The [local-store guide](../local/store/README.md) lists the available adapters
+and their status.
 
 ## `ISignalProtocolLocalSecretVault`
 
@@ -100,11 +100,16 @@ const relay: ISignalProtocolRelayServer = convexRelay({
 });
 ```
 
-The application backend must authenticate every caller, derive ownership from
-trusted server context, authorize reads and writes, atomically consume one-time
-prekeys, allocate linked-device identifiers, and apply retention and abuse
-controls. Client-supplied user identifiers are routing inputs, not proof of
-identity.
+The application backend must:
+
+- authenticate every caller
+- derive ownership from trusted server context
+- authorize reads and writes
+- atomically consume one-time prekeys
+- allocate linked-device identifiers
+- apply retention and abuse controls
+
+A client-supplied user identifier is a routing input, not proof of identity.
 
 The relay stores public protocol material, ciphertext, and required routing
 metadata. It must not require device private keys or decrypted message content.
@@ -136,10 +141,14 @@ authenticated principal + retry requestId
   -> private provider key
 ```
 
-It must keep provider credentials and keys off the client, enforce ciphertext
-size and content-type policy, make upload completion idempotent, and authorize
-every download and deletion. See the
-[remote object-store guide](../remote/object-store/README.md).
+It must:
+
+- keep provider credentials and keys off the client
+- enforce ciphertext size and content-type policy
+- make upload completion idempotent
+- authorize every download and deletion
+
+See the [remote object-store guide](../remote/object-store/README.md).
 
 ## Application callbacks
 
@@ -169,8 +178,8 @@ const client = await createSignalProtocolClient({
 ```
 
 Callbacks may update application databases, caches, UI state, and telemetry.
-They must not be treated as a transactional extension of a completed protocol
-state update unless the specific API says so.
+Never treat them as a transactional extension of a completed protocol state
+update, unless the specific API says so.
 
 ## Choosing an integration
 

@@ -99,7 +99,7 @@ to decrypt them later."
 Signal Protocol Section 8.4:
 "A recommended policy is to delete message keys more than one week old"
 
-Note: Using Record for JSON serialization. Keys are stored as strings
+Note: Using Record for JSON serialization. The map holds keys as strings
 in format "epoch:index" -> { key: Base64, timestamp: number }
 
 ***
@@ -113,8 +113,8 @@ SCKA mode used for this session.
 - `'braid'` (default): specification-defined ML-KEM Braid profile
 - `'direct'`: Explicit direct ML-KEM-768 encapsulation mode
 
-Once set during session establishment, the mode is fixed for the
-lifetime of the session to ensure protocol consistency.
+Once set during session establishment, the mode stays fixed for the
+lifetime of the session, which keeps the protocol consistent.
 
 #### Default
 
@@ -134,7 +134,7 @@ Set to true by spqrRecv() after decapsulating kyber ciphertext,
 and during bootstrap. Cleared by spqrSend() after performing the
 encapsulation/keypair generation.
 
-`send()` decides whether to perform a KEM exchange from this state; callers
+`send()` decides whether to run a KEM exchange from this state. Callers
 do not trigger the exchange separately.
 
 ***
@@ -145,7 +145,7 @@ do not trigger the exchange separately.
 
 Pending outgoing Braid chunks.
 
-Only present when mode is `braid` and the state machine has queued chunks
+Only present when mode is `braid` and the state machine holds queued chunks
 for future message headers.
 
 ***
@@ -184,7 +184,7 @@ chains needed for in-flight messages.
 Version negotiation state for this session.
 
 Tracks the negotiation process with the peer to agree on a protocol version.
-Once negotiation completes, the version is locked for the session lifetime.
+Once negotiation completes, the version stays locked for the session lifetime.
 
 #### See
 

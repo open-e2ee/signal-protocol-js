@@ -42,7 +42,7 @@ const PADDING_TERMINATOR = 0x80;
  */
 export function padMessage(message: Uint8Array): Uint8Array {
   // Calculate padded length (next bucket boundary)
-  // +1 ensures at least 1 byte of padding (the terminator)
+  // +1 gives at least 1 byte of padding (the terminator)
   const paddedLength = Math.ceil((message.length + 1) / PADDING_BUCKET_SIZE) * PADDING_BUCKET_SIZE;
 
   // Allocate padded buffer (Uint8Array initializes to zeros)

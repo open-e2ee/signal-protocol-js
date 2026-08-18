@@ -41,7 +41,7 @@ Use:
 - `InMemorySignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/memory`
 - or a custom implementation
 
-### Remote object storage: `SignalProtocolRemoteObjectStore`
+### Remote object store: `SignalProtocolRemoteObjectStore`
 
 Optional encrypted file upload/download support for two-layer attachment encryption.
 
@@ -54,10 +54,10 @@ Use:
 - or a custom implementation
 
 Both concrete adapters call an authenticated application-backend broker. The
-app runtime receives only narrowly scoped, short-lived operations; provider
+app runtime receives only narrowly scoped, short-lived operations. Provider
 credentials remain on the backend.
 
-Upload requests carry a retry/idempotency `requestId`; the backend returns the
+Upload requests carry a retry/idempotency `requestId`. The backend returns the
 canonical `objectId` used in encrypted attachment pointers. Provider keys stay
 private to the backend. The Convex server helper can supply generic validators,
 R2 calls, expiry parsing, and metadata verification, while app-owned internal
@@ -142,7 +142,7 @@ const bob = await createSignalProtocolClient({
 - Protect local key material at rest.
 - Keep contact identity trust decisions stable and explicit.
 - Persist linked-device identity state atomically enough that startup verification cannot enter a half-linked state.
-- Preserve session record semantics; do not treat sessions as opaque blobs without honoring update and archive behavior.
+- Preserve session record semantics. Do not treat sessions as opaque blobs without honoring update and archive behavior.
 
 ## Choosing a Shape
 

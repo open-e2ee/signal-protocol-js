@@ -37,7 +37,7 @@ export const AES_GCM_SIV_TAG_BYTES = 16;
 
 /**
  * Pre-allocated zero nonce for single-use key scenarios.
- * Safe to reuse because it's immutable and only used when key is single-use.
+ * Safe to reuse because it is immutable and only used when key is single-use.
  * GCM-SIV is nonce-misuse resistant (RFC 8452).
  */
 const ZERO_NONCE = new Uint8Array(AES_GCM_SIV_NONCE_BYTES);

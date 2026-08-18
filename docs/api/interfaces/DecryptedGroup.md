@@ -8,7 +8,7 @@
 
 Decrypted group state. Matches DecryptedGroup in DecryptedGroups.proto.
 
-This is the canonical local representation of group state. It is derived
+This holds the canonical local view of group state. It derives
 from EncryptedGroup by decrypting with GroupSecretParams.
 
 ## Properties

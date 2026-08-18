@@ -5,8 +5,8 @@
  * Multi-device session management for encrypted asynchronous messaging.
  *
  * Key Features:
- * - Generic support for SESAME's per-user and per-device identity-key models;
- *   the client provisions one composite tuple per user and identity type
+ * - Generic support for SESAME's per-user and per-device identity-key models.
+ *   The client provisions one composite tuple per user and identity type
  * - Session convergence through receive-activated switching
  * - 3-phase message sending process
  * - Automatic session expiration and cleanup
@@ -78,9 +78,12 @@ import {
 
 /**
  * Maximum number of retry attempts for the SESAME sending loop.
- * Per SESAME spec §3.3 and §6.5: "To avoid excessive looping in case of a
- * malicious or buggy server, devices should impose some limit on the number
- * of times they're willing to repeat the message sending loop for a recipient user."
+ *
+ * Per SESAME spec §3.3 and §6.5:
+ *
+ * > "To avoid excessive looping in case of a malicious or buggy server,
+ * > devices should impose some limit on the number of times they are willing
+ * > to repeat the message sending loop for a recipient user."
  */
 export {};
 export const MAX_SEND_RETRIES = 3;
@@ -105,9 +108,9 @@ function isPreKeyMessage(ciphertext: string): boolean {
     if (version < 2 || version > 15) return false;
 
     // Detect message type from first protobuf tag:
-    // PreKeySignalProtocolMessage wire field 1 (uint32, oneTimePreKeyId/ecOneTimePreKeyId) → wire type 0 → tag 0x08
-    // PreKeySignalProtocolMessage wire field 2 (bytes, baseKey) → wire type 2 → tag 0x12
-    // SignalProtocolMessage wire field 1 (bytes, ratchetKey) → wire type 2 → tag 0x0A
+    // - PreKeySignalProtocolMessage wire field 1 (uint32, oneTimePreKeyId/ecOneTimePreKeyId) → wire type 0 → tag 0x08
+    // - PreKeySignalProtocolMessage wire field 2 (bytes, baseKey) → wire type 2 → tag 0x12
+    // - SignalProtocolMessage wire field 1 (bytes, ratchetKey) → wire type 2 → tag 0x0A
     const firstTag = bytes[1];
     return firstTag === 0x08 || firstTag === 0x12;
   } catch {
@@ -471,7 +474,7 @@ export class SesameManager implements ISesameManager {
    * Any existing session is archived in SessionRecord.archivedSessions.
    *
    * This bridges the Double Ratchet layer with the SESAME multi-device layer,
-   * ensuring sessions established via SignalProtocolClient.establishSession() are
+   * so sessions established via SignalProtocolClient.establishSession() are
    * automatically tracked for multi-device messaging.
    *
    * @param userId - Remote user's ID
@@ -488,11 +491,11 @@ export class SesameManager implements ISesameManager {
     const address = ProtocolAddress.create(userId, deviceId);
     const sessionId = ProtocolAddress.toString(address);
 
-    // Ensure device record exists
+    // Create the device record if it is missing
     let deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
     if (!deviceRecord) {
-      // Auto-create device record if it doesn't exist. Pin the peer identity the
-      // session was actually negotiated against; a placeholder here would later
+      // Auto-create device record if it does not exist. Pin the peer identity the
+      // session was actually negotiated against. A placeholder here would later
       // compare unequal to that same identity and forge an identity-change event.
       await this.addDevice(
         userId,
@@ -535,9 +538,9 @@ export class SesameManager implements ISesameManager {
    * Implements SESAME 3-phase sending process
    *
    * SESAME 3-Phase Sending (from specification):
-   * Phase 1: Identify devices with non-stale active sessions
-   * Phase 2: Encrypt message for each device using Double Ratchet
-   * Phase 3: Validate device list is current before sending
+   * - Phase 1: Identify devices with non-stale active sessions
+   * - Phase 2: Encrypt message for each device using Double Ratchet
+   * - Phase 3: Validate device list is current before sending
    */
   async sendMessage(
     recipientUserId: UserID,
@@ -627,7 +630,7 @@ export class SesameManager implements ISesameManager {
       const ciphertextBytes = this.serializeCiphertext(ciphertext);
 
       // Client timestamp for envelope alignment (application send-pipeline ordering)
-      // Threaded explicitly via SesameSendOptions — no plaintext parsing needed
+      // Threaded explicitly via SesameSendOptions. No plaintext parsing needed
       const clientTimestamp = options?.clientTimestamp ?? Date.now();
 
       // Store MessageRecord for retry request support (SESAME spec §6.2)
@@ -647,7 +650,7 @@ export class SesameManager implements ISesameManager {
             sessionStateId: (activeSession.DHs?.publicKey as string) ?? '',
           });
         } catch (storeError) {
-          // CRITICAL: If this fails, retry requests won't work after reinstall
+          // CRITICAL: If this fails, retry requests will not work after reinstall
           // Upgraded from warn to error to track failures in Sentry
           this.logger.error('SESAME: Failed to store MessageRecord - retry flow may fail', {
             category: 'E2EE',
@@ -720,20 +723,21 @@ export class SesameManager implements ISesameManager {
   }
 
   /**
-   * Send an encrypted message to all devices of a user
+   * Send an encrypted message to all devices of a user.
+   *
    * Implements the 3-phase sending process from SESAME spec:
-   *   Phase 1: Identify devices with non-stale active sessions
-   *   Phase 2: Encrypt message for each device using Double Ratchet
-   *   Phase 3: Validate device list is current before sending
+   * - Phase 1: Identify devices with non-stale active sessions
+   * - Phase 2: Encrypt message for each device using Double Ratchet
+   * - Phase 3: Validate device list is current before sending
    *
    * Returns an OutgoingMessageBatch that separates:
    * - deviceMessages: Messages for recipient's devices
    * - syncMessages: Messages for our own other devices (multi-device sync)
    *
-   * Per SESAME spec §3.3: If Phase 3 device list validation fails with
-   * StaleDeviceListError, the device list is refetched and the send is retried
-   * (up to MAX_SEND_RETRIES attempts). The UserRecord is marked stale per §3.3
-   * to trigger a fresh fetch on next access.
+   * Per SESAME spec §3.3: if Phase 3 device list validation fails with
+   * StaleDeviceListError, the device list is refetched and the send is
+   * retried. Retries are bounded by MAX_SEND_RETRIES. The UserRecord is
+   * marked stale per §3.3 to trigger a fresh fetch on next access.
    *
    * @param recipientUserId - Target user ID
    * @param plaintext - Message to encrypt
@@ -759,9 +763,10 @@ export class SesameManager implements ISesameManager {
     }
 
     // M14: Retry loop for stale device list (SESAME spec §3.3 step 8 + §6.5)
-    // "To avoid excessive looping in case of a malicious or buggy server,
-    //  devices should impose some limit on the number of times they're willing
-    //  to repeat the message sending loop for a recipient user."
+    //
+    // > "To avoid excessive looping in case of a malicious or buggy server,
+    // > devices should impose some limit on the number of times they are
+    // > willing to repeat the message sending loop for a recipient user."
     let currentDeviceListVersion = options?.localDeviceListVersion;
     const fetchDeviceList = options?.fetchDeviceList;
 
@@ -892,15 +897,15 @@ export class SesameManager implements ISesameManager {
     options?: SesameSendOptions
   ): Promise<OutgoingMessageBatch> {
     const includeSyncMessages = options?.includeSyncMessages ?? true;
-    // M15: Check if UserRecord is marked stale and clear it for this attempt
-    // Per SESAME spec §3.3: stale records trigger a fresh device list fetch
+    // M15: Check if UserRecord is marked stale and clear it for this attempt.
+    // Per SESAME spec §3.3: stale records trigger a fresh device list fetch.
     const userRecord = await this.getUserRecord(recipientUserId);
     if (!userRecord) {
       throw new SesameError(`No user record found for ${recipientUserId}`, 'USER_NOT_FOUND');
     }
 
     if (userRecord.stale) {
-      // Clear stale flag since we're about to use this record
+      // Clear stale flag since we are about to use this record
       // (caller should have refreshed the device list before retrying)
       userRecord.stale = false;
       userRecord.updatedAt = Date.now();
@@ -961,9 +966,12 @@ export class SesameManager implements ISesameManager {
       } catch (error) {
         // M18: Re-throw StaleDeviceListError without wrapping so the retry
         // loop in send() can catch it and refetch the device list.
-        // Per SESAME spec §3.3: "If any error occurs in encrypting to a
-        // particular user, then the sending device shall discard any changes
-        // to the relevant UserRecord."
+        //
+        // Per SESAME spec §3.3:
+        //
+        // > "If any error occurs in encrypting to a particular user, then the
+        // > sending device shall discard any changes to the relevant
+        // > UserRecord."
         if (error instanceof StaleDeviceListError) {
           throw error;
         }
@@ -1195,9 +1203,11 @@ export class SesameManager implements ISesameManager {
       return decryptedPlaintext;
     }
 
-    // 6. All sessions failed - try PreKeyMessage handling as fallback
-    // This handles the device reset scenario where the sender has a new identity key
-    // and is sending a PreKeyMessage, but we have an old session that can't decrypt it.
+    // 6. All sessions failed - try PreKeyMessage handling as fallback.
+    //
+    // This handles the device reset scenario. The sender has a new identity
+    // key and is sending a PreKeyMessage, but we have an old session that
+    // cannot decrypt it.
     this.logger.debug('SESAME: All existing sessions failed, trying PreKeyMessage fallback', {
       category: 'E2EE',
       data: {
@@ -1445,8 +1455,9 @@ export class SesameManager implements ISesameManager {
     // Based on the retry reason, take appropriate action
     switch (retryRequest.reason) {
       case RetryReason.NO_SESSION:
-        // Requester has no session - archive our session and signal that a new session is needed
-        // The caller should establish a new session and resend the message
+        // Requester has no session - archive our session and signal that a
+        // new session is needed. The caller should establish a new session
+        // and resend the message.
         await this.archiveSessionForDevice(requesterUserId, requesterDeviceId);
         this.logger.info('SESAME: Session archived due to NO_SESSION retry request', {
           category: 'E2EE',
@@ -1463,7 +1474,7 @@ export class SesameManager implements ISesameManager {
         };
 
       case RetryReason.DECRYPTION_FAILED:
-        // Requester couldn't decrypt - session is likely desynchronized
+        // Requester could not decrypt - session is likely desynchronized
         // Archive our session so a new one will be established on next send
         await this.archiveSessionForDevice(requesterUserId, requesterDeviceId);
         this.logger.warn('SESAME: Session archived due to DECRYPTION_FAILED retry request', {
@@ -1579,9 +1590,9 @@ export class SesameManager implements ISesameManager {
     });
 
     // Snapshot SESAME state before protocol.decrypt() establishes a responder
-    // session. Some storage adapters synthesize DeviceRecord from live protocol
-    // state, so looking this up only after decrypt makes a brand-new session
-    // appear pre-existing and archives it into itself.
+    // session. Some storage adapters synthesize DeviceRecord from live
+    // protocol state. Looking this up only after decrypt would make a
+    // brand-new session appear pre-existing and archive it into itself.
     let deviceRecord = await this.getDeviceRecord(
       message.senderUserId,
       message.senderDeviceId
@@ -1662,9 +1673,10 @@ export class SesameManager implements ISesameManager {
       // Existing device record - compare the pinned identity against the one
       // this PreKeyMessage was authenticated with. Both sides are canonical
       // composite tuples, so a difference is a real identity change and not an
-      // encoding artifact. A record that carries no pinned identity yet (session
-      // bookkeeping created it before any identity was observed) is first
-      // contact: TOFU-pin it silently rather than reporting a change.
+      // encoding artifact. A record that carries no pinned identity yet is
+      // first contact, because session bookkeeping created it before any
+      // identity was observed. TOFU-pin it silently rather than reporting a
+      // change.
       const comparison = compareDeviceIdentityKeys(deviceRecord.identityKey, incomingIdentityKey);
 
       if (comparison === 'unpinned') {
@@ -1713,9 +1725,9 @@ export class SesameManager implements ISesameManager {
         );
       }
 
-      // Sync the new session from protocol layer to DeviceRecord
-      // This is needed whether identity changed or not - the PreKeyMessage
-      // established a new session that needs to be synced to SESAME layer
+      // Sync the new session from protocol layer to DeviceRecord.
+      // This is needed whether identity changed or not. The PreKeyMessage
+      // established a new session that needs to be synced to SESAME layer.
       if (sessionFromProtocol) {
         // If there was an old session, archive it before setting the new one
         // This preserves session history for convergence per SESAME spec
@@ -1733,7 +1745,7 @@ export class SesameManager implements ISesameManager {
             if (session) mergedArchived[key] = session;
           }
 
-          // Then add from protocol (only if not already present - don't overwrite history)
+          // Then add from protocol (only if not already present - do not overwrite history)
           for (const [key, session] of Object.entries(sessionFromProtocol.archivedSessions || {})) {
             if (session && !(key in mergedArchived)) {
               mergedArchived[key] = session;
@@ -1905,7 +1917,7 @@ export class SesameManager implements ISesameManager {
    *
    * Prefers SessionRecordMetadata.createdAt (set by SESAME registerSession),
    * then falls back to SessionState.createdAt (set by Double Ratchet init).
-   * Returns 0 only if neither is available (fail closed — treats session as
+   * Returns 0 only if neither is available (fail closed, treats session as
    * expired at Unix epoch).
    */
   private getSessionCreatedAt(session: SessionRecord): number {
@@ -1972,7 +1984,7 @@ export class SesameManager implements ISesameManager {
   /**
    * Find a session by ID using the O(1) session index.
    * Falls back to direct storage lookup (parsing the sessionId) if the index
-   * has no entry — this handles app restart where the in-memory index is empty
+   * has no entry. This handles app restart where the in-memory index is empty
    * but sessions are persisted in storage.
    */
   private async findSession(sessionId: SessionID): Promise<SessionRecord | null> {
@@ -1988,7 +2000,7 @@ export class SesameManager implements ISesameManager {
       return deviceRecord.session;
     }
 
-    // Index miss — parse sessionId and look up directly from storage.
+    // Index miss. Parse sessionId and look up directly from storage.
     // This covers the case where the app restarted and the in-memory index
     // was not rebuilt.
     let parsed: ProtocolAddress;
@@ -2114,9 +2126,10 @@ export class SesameManager implements ISesameManager {
         await this.addDevice(userId, device.deviceId, device.identityKey);
       } else if (device.identityKey.length > 0) {
         // Only a device list that actually carries an identity key can tell us
-        // the identity changed. A response that omits it carries no information
-        // about identity, and must not be read as a change: doing so would drop
-        // every live session and raise a security event on each sync.
+        // the identity changed. A response that omits it carries no
+        // information about identity, and must not be read as a change.
+        // Reading it as a change would drop every live session and raise a
+        // security event on each sync.
         const comparison = compareDeviceIdentityKeys(
           existingDevice.identityKey,
           device.identityKey
@@ -2211,7 +2224,7 @@ export class SesameManager implements ISesameManager {
           for (const archivedSession of Object.values(deviceRecord.session.archivedSessions)) {
             if (!archivedSession) continue;
             totalInactiveSessions++;
-            // Archived sessions don't have their own createdAt - use the session record's
+            // Archived sessions do not have their own createdAt - use the session record's
             const createdAt = deviceRecord.session.metadata?.createdAt ?? 0;
             const sessionAge = now - createdAt;
             if (sessionAge > this.config.maxRecv) {

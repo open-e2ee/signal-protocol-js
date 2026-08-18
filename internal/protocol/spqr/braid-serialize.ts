@@ -3,11 +3,11 @@
  *
  * @module spqr/braid-serialize
  *
- * Provides serialization and deserialization of ML-KEM Braid agent state
+ * Serializes and deserializes ML-KEM Braid agent state
  * for persistence. Extracted from braid.ts for modularity.
  *
  * WARNING: Serialized state contains sensitive cryptographic material.
- * Ensure it is stored securely (encrypted at rest).
+ * Store it securely (encrypted at rest).
  */
 
 import {
@@ -44,7 +44,7 @@ export { MLKEMBraidMessageJSON, serializeMessageJSON, deserializeMessageJSON };
 // =============================================================================
 
 /**
- * JSON representation of encoder state
+ * JSON view of encoder state
  */
 export interface EncoderStateJSON {
   /** Original data as hex */
@@ -58,7 +58,7 @@ export interface EncoderStateJSON {
 }
 
 /**
- * JSON representation of decoder state
+ * JSON view of decoder state
  */
 export interface DecoderStateJSON {
   /** Number of chunks received */
@@ -72,7 +72,7 @@ export interface DecoderStateJSON {
 }
 
 /**
- * JSON representation of ML-KEM Braid agent state
+ * JSON view of ML-KEM Braid agent state
  */
 export interface MLKEMBraidAgentStateJSON {
   /** State machine state name */
@@ -155,7 +155,7 @@ function validateEncoderStateJSON(value: unknown, label: string): void {
   if (data.length === 0 || data.length > 1152) {
     throw new Error(`${label}.data must contain between 1 and 1152 bytes`);
   }
-  // totalChunks is the initial delivery estimate; streaming parity generation
+  // totalChunks is the initial delivery estimate. Streaming parity generation
   // may advance currentChunk beyond it while waiting for peer acknowledgement.
   assertInteger(value.totalChunks, `${label}.totalChunks`, 1, BRAID_ENCODER_CURSOR_MAX);
   assertBraidEncoderCursor(value.currentChunk, `${label}.currentChunk`);
@@ -258,7 +258,7 @@ function deserializeEncoderState(json: EncoderStateJSON): EncoderState {
     currentChunk: json.currentChunk,
     totalChunks: json.totalChunks,
     isComplete: json.isComplete,
-    // encoder is recreated lazily - not persisted
+    // the code recreates encoder lazily and never persists it
   };
 }
 
@@ -311,7 +311,7 @@ function deserializeDecoderState(json: DecoderStateJSON): DecoderState {
  * - Cryptographic material (keys, ciphertexts)
  *
  * WARNING: The serialized state contains sensitive cryptographic material.
- * Ensure it is stored securely (encrypted at rest).
+ * Store it securely (encrypted at rest).
  *
  * @param state - Agent state to serialize
  * @returns JSON string representation

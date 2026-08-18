@@ -160,14 +160,14 @@ export const sessions = sqliteTable(
 /**
  * Sender key state for group messaging.
  *
- * `record` holds the whole `SenderKeyState[]` as JSON — current state first,
+ * `record` holds the whole `SenderKeyState[]` as JSON, current state first,
  * then the superseded states that the rotation window still needs. One column
  * rather than one per field, so a row can never disagree with itself about
  * which state is current.
  *
  * The chain key and the sender's private signature key live in this column.
  * They are stored in the clear because the database file itself is
- * SQLCipher-encrypted with an application-supplied key; they must never leave
+ * SQLCipher-encrypted with an application-supplied key. They must never leave
  * the device.
  */
 export const senderKeys = sqliteTable(

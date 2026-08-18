@@ -98,8 +98,8 @@
 
 Stable idempotency key for this logical upload.
 
-Supply the same value when restarting an interrupted upload. A random
-value is generated when omitted.
+Supply the same value when restarting an interrupted upload. The client
+generates a random value when you omit it.
 
 ***
 

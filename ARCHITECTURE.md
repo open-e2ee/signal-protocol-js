@@ -6,8 +6,9 @@
 versioned profile based on selected public Signal Protocol specifications. It
 owns client-side encryption, local protocol state, prekey lifecycle,
 multi-device session orchestration, group sender keys, sealed sender,
-profile/username helpers, and explicit local/remote adapter seams. Public
-security guarantees and protocol policy are documented in
+profile/username helpers, and explicit local/remote adapter seams.
+
+For public security guarantees and protocol policy, see
 [Security](./docs/SECURITY.md) and
 [Protocol Policy](./docs/PROTOCOL_POLICY.md).
 
@@ -22,9 +23,9 @@ compatibility shim when a boundary is wrong.
 
 - Crypto and protocol internals must be auditable from current code, not historical layout names.
 - Public APIs should be narrow and explicit. Platform and backend adapters live on subpaths.
-- Runtime dependencies point inward toward lower protocol layers. Type-only imports are allowed where they describe ports or public contracts.
+- Runtime dependencies point inward toward lower protocol layers. The rule allows type-only imports where they describe ports or public contracts.
 - Shared protocol strategy, reference-aligned limits, and HKDF info strings belong in `types/protocol-config.ts`, not in the client layer.
-- Session record resolution belongs to `internal/session/session-resolver.ts`; SESAME orchestrates it but does not own the shared active/archive helper.
+- Session record resolution belongs to `internal/session/session-resolver.ts`. SESAME orchestrates it but does not own the shared active/archive helper.
 
 ## Package Shape
 
@@ -96,7 +97,7 @@ The executable layer map lives in [layers.ts](./layers.ts).
 | 5     | Domain/Keys       | `keys/`                                                        | Key types and generation                                          |
 | 6     | Domain/Crypto     | `internal/crypto/`                                             | Cryptographic primitives and low-level KDF/encryption helpers     |
 
-Runtime imports must point inward, toward equal or higher layer numbers. For example, Layer 3 may import Layer 4, 5, or 6; Layer 4 must not import Layer 3.
+Runtime imports must point inward, toward equal or higher layer numbers. For example, Layer 3 may import Layer 4, 5, or 6. Layer 4 must not import Layer 3.
 
 Shared non-layer modules:
 
@@ -159,22 +160,22 @@ await createSignalProtocolClient({
 ```
 
 Strict post-quantum sessions and ML-KEM Braid are the defaults, so application
-code should leave `protocol` unset unless the product has made an explicit
+code should leave `protocol` unset unless the product made an explicit
 compatibility decision. Advanced strategy fields remain available for
-diagnostics, telemetry, and algorithm tuning, but compatibility fallback is selected
-through `protocol.postQuantum: 'compatible'`, and direct SPQR is selected
-through `protocol.braid: 'disabled'`.
+diagnostics, telemetry, and algorithm tuning. To choose compatibility fallback,
+set `protocol.postQuantum: 'compatible'`. To choose direct SPQR, set
+`protocol.braid: 'disabled'`.
 
-Two strategy hooks report protocol events. `onProtocolSelected` fires once per
-session establishment, from the handshake. `onBraidProgress` fires on every
-braid-mode send and receive, from the SPQR seam that holds the braid state; the
-manager carries the strategy into `SessionCipher`, which passes it to `spqrSend`
-and `spqrRecv`. Both hooks are guarded, so a consumer that throws cannot break
-the protocol path.
+Two strategy hooks report protocol events. The hook `onProtocolSelected` fires
+once per session establishment, from the handshake. The hook `onBraidProgress`
+fires on every braid-mode send and receive, from the SPQR seam that holds the
+braid state. The manager carries the strategy into `SessionCipher`, which passes
+it to `spqrSend` and `spqrRecv`. The SDK guards both hooks, so a consumer that
+throws cannot break the protocol path.
 
 ## Session Resolution
 
-Session convergence is a SESAME behavior, but active/archive record manipulation is shared session-domain logic.
+Session convergence is a SESAME behavior, but active/archive record manipulation belongs to shared session-domain logic.
 
 - Owner: [internal/session/session-resolver.ts](./internal/session/session-resolver.ts)
 - Consumed by: [internal/session/cipher.ts](./internal/session/cipher.ts) and [internal/sesame/manager.ts](./internal/sesame/manager.ts)

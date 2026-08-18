@@ -10,7 +10,7 @@
 
 Compare two `DeviceRecord.identityKey` values.
 
-Returns `'unpinned'` when no identity has been observed for the device yet,
+Returns `'unpinned'` when the device has no observed identity yet,
 which is first contact (a TOFU pin) and not a change.
 
 ## Parameters

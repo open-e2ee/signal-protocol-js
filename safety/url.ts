@@ -6,9 +6,9 @@
  * verification screen.
  *
  * The universal-link domain and custom scheme are **configurable**. They default
- * to the `open-e2ee.dev` domain, but every function accepts an optional
- * {@link VerifyLinkConfig} so a consuming application can route links through its
- * own domain and URL scheme.
+ * to the `open-e2ee.dev` domain. Every function accepts an optional
+ * {@link VerifyLinkConfig}, so a consuming application can route links through
+ * its own domain and URL scheme.
  *
  * Default URL Format:
  *   https://verify.open-e2ee.dev/safety-number?g={generatorId}&u={otherUserId}&t={type}&c={contextId}&d={data}
@@ -51,7 +51,7 @@ import { base64ToUrlSafe, urlSafeToBase64 } from '../internal/crypto';
 /**
  * Configuration for safety-number verification deep links.
  *
- * Both fields are required so a config is always fully specified; use
+ * Both fields are mandatory, so a config always carries every value. Use
  * {@link DEFAULT_VERIFY_LINK_CONFIG} as a base when overriding a single field.
  */
 export interface VerifyLinkConfig {
@@ -143,7 +143,7 @@ export function generateVerifyUrl(
 
 /**
  * Generate a verification URL using the custom scheme.
- * Useful for local development or when universal links aren't configured.
+ * Useful for local development or when universal links are not configured.
  *
  * @param params - Verification parameters to encode
  * @param config - Link configuration (defaults to {@link DEFAULT_VERIFY_LINK_CONFIG})
@@ -179,7 +179,7 @@ export function generateVerifySchemeUrl(
 /**
  * Structural match of a candidate URL against one configured target (the
  * universal-link base or the custom scheme). Requires protocol, host, and
- * pathname to match exactly and rejects embedded credentials and fragments — so
+ * pathname to match exactly and rejects embedded credentials and fragments. So
  * lookalikes like `…/safety-number.evil` or `signalprotocol://verify-evil` are
  * NOT accepted (a plain prefix check would accept both).
  */
@@ -192,7 +192,7 @@ function matchesTarget(candidate: URL, target: string): boolean {
   }
   if (candidate.protocol !== expected.protocol) return false;
   if (candidate.host !== expected.host) return false;
-  // Custom schemes yield an empty pathname; normalize "" and "/".
+  // Custom schemes yield an empty pathname. Normalize "" and "/".
   if ((candidate.pathname || '/') !== (expected.pathname || '/')) return false;
   if (candidate.username !== '' || candidate.password !== '') return false;
   if (candidate.hash !== '') return false;

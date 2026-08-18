@@ -25,7 +25,7 @@ Combines the five focused local-store responsibilities into one interface.
 > **acceptContactIdentityRotation**(`address`, `identity`, `identityType?`, `suppliedCommitment?`): `Promise`\<[`ContactIdentityRecord`](../namespaces/keys/interfaces/ContactIdentityRecord.md)\>
 
 Explicitly accept a changed tuple and atomically delete every session for
-that user; the previous tuple becomes rollback history.
+that user. The previous tuple becomes rollback history.
 
 #### Parameters
 
@@ -194,7 +194,7 @@ Used for cleanup and debugging.
 
 Get a contact's saved identity key.
 
-Returns null if no identity key has been saved for this address.
+Returns null if the store holds no identity key for this address.
 
 #### Parameters
 
@@ -409,7 +409,7 @@ Retrieve Kyber prekey.
 Get our local registration ID.
 
 Registration ID is a random 16-bit integer generated once per install.
-Used to detect session resets when app is reinstalled.
+Detects session resets when the user reinstalls the app.
 
 #### Parameters
 
@@ -555,10 +555,10 @@ true if session exists
 
 > **isTrustedIdentity**(`address`, `identity`, `direction`, `identityType?`): `Promise`\<`boolean`\>
 
-Check if a contact's identity key is trusted.
+Check whether the store trusts a contact's identity key.
 
 Trust verification behavior depends on direction:
-- SENDING: Stricter - don't send to untrusted identities
+- SENDING: Stricter - do not send to untrusted identities
 - RECEIVING: More permissive - allow receiving but warn user
 
 From Signal Protocol:
@@ -582,7 +582,7 @@ Complete composite identity candidate
 
 [`TrustDirection`](../enumerations/TrustDirection.md)
 
-Whether we're sending or receiving
+Whether the local device sends or receives
 
 ##### identityType?
 
@@ -594,7 +594,7 @@ ACI or PNI trust namespace
 
 `Promise`\<`boolean`\>
 
-true if identity is trusted
+true if the store trusts the identity
 
 #### Inherited from
 
@@ -608,8 +608,8 @@ true if identity is trusted
 
 Mark a Kyber prekey as used.
 
-Kyber prekeys can be reused (unlike one-time prekeys) but should be
-tracked to ensure proper rotation.
+Callers may reuse Kyber prekeys (unlike one-time prekeys), and the store
+must track them so rotation stays correct.
 
 #### Parameters
 
@@ -617,7 +617,7 @@ tracked to ensure proper rotation.
 
 `number`
 
-ID of the Kyber prekey that was used
+ID of the Kyber prekey the session used
 
 ##### signedPreKeyId
 
@@ -651,7 +651,7 @@ Base key bytes for the session
 
 > **removeEcOneTimePreKey**(`preKeyId`, `identityType?`): `Promise`\<`void`\>
 
-Remove an EC one-time prekey after it has been used.
+Remove an EC one-time prekey after a session uses it.
 
 #### Parameters
 
@@ -714,9 +714,9 @@ The key ID to remove
 
 > **removeKemOneTimePreKey**(`keyId`, `identityType?`): `Promise`\<`void`\>
 
-Remove a one-time KEM prekey after it has been used.
+Remove a one-time KEM prekey after a session uses it.
 
-CRITICAL: Must be called immediately after successful decapsulation
+CRITICAL: Call this immediately after successful decapsulation
 to provide per-session post-quantum forward secrecy.
 
 #### Parameters
@@ -749,7 +749,7 @@ ID of the prekey to remove
 
 Save a contact's identity key and detect changes.
 
-This is used for Trust On First Use (TOFU) and post-pinning change
+This supports Trust On First Use (TOFU) and post-pinning change
 detection. Returns whether either composite component changed.
 
 #### Parameters
@@ -796,7 +796,7 @@ IdentityKeyChange indicating if key is new or changed
 
 Set our local registration ID.
 
-Should only be called once during initialization.
+Call this only once, during initialization.
 
 #### Parameters
 
@@ -856,8 +856,8 @@ Store EC one-time prekeys.
 
 Store EC signed prekey.
 
-When storing a new EC signed prekey (rotation), the old one should be
-archived (not deleted) to handle in-flight messages.
+When storing a new EC signed prekey (rotation), archive the old one
+instead of deleting it, to handle in-flight messages.
 
 #### Parameters
 

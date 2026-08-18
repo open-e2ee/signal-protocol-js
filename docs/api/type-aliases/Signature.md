@@ -12,7 +12,7 @@ Base64-encoded signature.
 
 Branded type prevents mixing signatures with keys or ciphertext.
 
-Extends Base64, so can be passed to functions expecting Base64.
+Extends Base64, so a function that expects Base64 accepts it.
 
 ## Type Declaration
 

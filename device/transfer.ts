@@ -153,7 +153,7 @@ export function wipeTransferKeys(keyPair: TransferKeyPair, providedLogger?: ILog
  * - Physical proximity provides authentication (user scans in person)
  * - ECDH provides encryption of the actual transfer
  *
- * Old device scans this QR code to initiate transfer.
+ * Old device scans this QR code to start the transfer.
  */
 export async function generateTransferQRCode(
   keyPair: TransferKeyPair,
@@ -299,7 +299,7 @@ export async function deriveTransferKeys(
 /**
  * Validate backup structure
  *
- * Ensures backup contains all required fields and is well-formed
+ * Checks that the backup has all required fields and is well-formed
  */
 export function validateBackup(backup: DeviceBackup): void {
   const requiredFields = [
@@ -732,7 +732,7 @@ export async function addSessionToBackup(
       error: error as Error,
       data: { sessionId },
     });
-    // Don't throw - allow partial backup
+    // Do not throw - allow partial backup
   }
 }
 

@@ -1,5 +1,5 @@
 /**
- * ClientZkGroupCipher — client-side encryption/decryption of UIDs and profile keys
+ * ClientZkGroupCipher: client-side encryption/decryption of UIDs and profile keys
  *
  *
  * This is a convenience wrapper that provides named encrypt/decrypt operations
@@ -11,7 +11,7 @@
  *  - UuidCiphertext:       65 bytes = 1 byte ServiceIdKind + 32 bytes E_A1 + 32 bytes E_A2
  *  - ProfileKeyCiphertext: 65 bytes = 1 byte reserved (0x00) + 32 bytes E_A1 + 32 bytes E_A2
  *
- * @see https://eprint.iacr.org/2019/1416.pdf — Signal Private Group System
+ * @see https://eprint.iacr.org/2019/1416.pdf (Signal Private Group System)
  */
 
 import type { GroupSecretParams } from './group-params';
@@ -163,8 +163,8 @@ export function decryptUuid(
 /**
  * Encrypt a profile key under the group's profile key encryption key.
  *
- * The profile key is bound to a specific UUID so that the ciphertext can
- * only be decrypted with knowledge of both the group secret and the UUID.
+ * The profile key is bound to a specific UUID. The ciphertext can then only be
+ * decrypted with knowledge of both the group secret and the UUID.
  *
  * @param groupSecretParams - The group's secret parameters
  * @param profileKey - 32-byte profile key

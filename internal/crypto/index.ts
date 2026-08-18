@@ -28,6 +28,7 @@
  * Core protocol functions use SCREAMING_SNAKE_CASE (matches spec exactly) internally.
  * Public API exports provide camelCase wrappers for JavaScript convention.
  *
+ * ```
  *   Spec Function    | Public Export (camelCase)     | Section
  *   -----------------|-------------------------------|----------
  *   GENERATE_DH()    | generateECDHKeyPair()         | 2.1
@@ -37,6 +38,7 @@
  *   ENCRYPT(mk, pt)  | aesCbcHmacEncrypt() [note 1]  | 2.4
  *   DECRYPT(mk, ct)  | aesCbcHmacDecrypt() [note 1]  | 2.4
  *   KDF_HYBRID(ec,pq)| kdfHybrid()                   | 6.3
+ * ```
  *
  * [note 1] These are raw primitives. Signal Protocol Section 3 ENCRYPT/DECRYPT
  *          include identity-bound MAC in AD. Use cipher layer for full compliance.

@@ -2,20 +2,21 @@
  * Reference implementation of `ReactNativeKeyValueStorage`.
  *
  * This backend is the executable specification the backend-conformance kit is
- * written against: every semantic the contract requires — full serialization,
- * checks evaluated against pre-batch state, in-order application with
- * in-batch visibility, exact-userId session removal, and all-or-nothing
- * commit including under quota exhaustion — is implemented here in the
- * plainest form that satisfies it. It holds data in memory, so it is not a
- * production backend: a real application supplies storage that survives
- * process termination. Continuous integration runs the kit against this
- * backend on the Hermes engine React Native ships with, which is why the
- * module avoids class syntax.
+ * written against. The contract requires full serialization, checks evaluated
+ * against pre-batch state, in-order application with in-batch visibility, and
+ * exact-userId session removal. It also requires all-or-nothing commit,
+ * including under quota exhaustion. Every one of those semantics is
+ * implemented here in the plainest form that satisfies it.
+ *
+ * It holds data in memory, so it is not a production backend: a real
+ * application supplies storage that survives process termination. Continuous
+ * integration runs the kit against this backend on the Hermes engine React
+ * Native ships with, which is why the module avoids class syntax.
  *
  * Passing `state` lets separate instances share one persistence medium, which
- * models a process restart: create a second backend over the same map and the
+ * models a process restart. Create a second backend over the same map, and the
  * first instance's committed writes are visible to it. The model is
- * sequential — the old instance stops before the new one starts, as a killed
+ * sequential. The old instance stops before the new one starts, as a killed
  * process stops before its replacement launches. Serialization is per
  * instance, so two instances used concurrently over one map do not get the
  * single-winner guarantee.
@@ -27,7 +28,7 @@ export interface ReferenceReactNativeBackendOptions {
   /**
    * Reject any write that would grow the total stored bytes (UTF-8 keys plus
    * values) past this limit, with an error named `QuotaExceededError` and
-   * nothing committed — the quota signal the store's boundary maps to its
+   * nothing committed. The quota signal the store's boundary maps to its
    * typed `StorageQuotaExceededError`. Unlimited when omitted.
    */
   quotaBytes?: number;
@@ -48,7 +49,7 @@ function utf8ByteLength(value: string): number {
     } else if (code < 0x800) {
       bytes += 2;
     } else if (code >= 0xd800 && code <= 0xdbff) {
-      // A surrogate pair encodes as 4 bytes; an unpaired surrogate encodes
+      // A surrogate pair encodes as 4 bytes. An unpaired surrogate encodes
       // as the 3-byte replacement character either way.
       const next = index + 1 < value.length ? value.charCodeAt(index + 1) : 0;
       if (next >= 0xdc00 && next <= 0xdfff) {
@@ -83,7 +84,7 @@ function quotaError(): Error {
 /**
  * Create a reference backend. Every method is serialized through one internal
  * queue, so two in-flight `atomicWrite` calls can never interleave their
- * check and apply phases — the exclusion the contract's compare-and-swap
+ * check and apply phases. The exclusion the contract's compare-and-swap
  * guard depends on.
  */
 export function createReferenceReactNativeBackend(
@@ -140,7 +141,7 @@ export function createReferenceReactNativeBackend(
             userId = envelope === null ? null : envelope.userId;
           } catch {
             // A non-JSON value under the prefix is not a session envelope the
-            // store wrote; leave it for the owner to account for.
+            // store wrote. Leave it for the owner to account for.
             continue;
           }
           if (userId === operation.userId) doomed.push(entry[0]);

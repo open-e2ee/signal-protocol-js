@@ -25,7 +25,7 @@ const address = ProtocolAddress.create("bob", 1);
 const encodedKey = asBase64(valueFromValidatedStorage);
 ```
 
-TypeScript brands document validated representation; they do not validate at
+TypeScript brands document validated representation. They do not validate at
 runtime by themselves. Use the provided validators or validate at the
 untrusted boundary before applying a brand.
 

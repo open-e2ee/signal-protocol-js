@@ -2,7 +2,7 @@
  * Safety Number Generation
  *
  * Safety numbers (also called "fingerprints" or "verification codes") allow users
- * to verify they're communicating with the intended person and detect
+ * to verify they are communicating with the intended person and detect
  * man-in-the-middle attacks.
  *
  * Implementation follows Signal Protocol's safety number specification:
@@ -82,7 +82,7 @@ function getCacheKey(
   user1Identifier: string,
   user2Identifier: string
 ): string {
-  // Sort to ensure same key regardless of argument order
+  // Sort so the key is the same regardless of argument order
   const sorted = [
     `${user1Identifier}:${user1IdentityKey}`,
     `${user2Identifier}:${user2IdentityKey}`,
@@ -156,12 +156,13 @@ export interface SafetyNumber {
  * Generate a reference single-key fingerprint for two users.
  *
  * This low-level primitive does not authenticate the package's complete
- * X25519 + Ed25519 composite identity and MUST NOT be used for contact identity
+ * X25519 + Ed25519 composite identity. Callers MUST NOT use it for contact identity
  * verification. Applications must use SignalProtocolClient.verify(), or the explicitly
  * composite generateCompositeSafetyNumber() helper.
  *
  * Uses SHA-512 iteration with 5,200 iterations per Signal Protocol spec.
- * Results are cached for performance since the iteration is computationally expensive.
+ * The function caches results for performance, because the iteration costs a
+ * lot of computation.
  *
  * @param user1IdentityKey - User 1's identity public key (PublicKey branded type)
  * @param user2IdentityKey - User 2's identity public key (PublicKey branded type)
@@ -301,8 +302,8 @@ export { generateEmojiFingerprint, base64ToBytes, FINGERPRINT_ITERATIONS, FINGER
  * - Advanced operations (QR code scanning, etc.)
  *
  * These classes expose single-key fingerprint primitives. Composite contact
- * verification must use SignalProtocolClient.verify() so both composite components and
- * the locally pinned trust record are authenticated.
+ * verification must use SignalProtocolClient.verify(), which authenticates both
+ * composite components and the locally pinned trust record.
  */
 export {
   Fingerprint,

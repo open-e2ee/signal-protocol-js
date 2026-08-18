@@ -7,7 +7,7 @@
  *
  * ## When to Use ML-KEM Braid
  *
- * This mode is required by default. Direct SPQR is available only through
+ * This mode applies by default. Direct SPQR is available only through
  * explicit product policy when a reviewed constraint calls for it.
  *
  * ## How It Works
@@ -54,7 +54,7 @@ import { MessageType } from './ml-kem-braid/types';
  *
  * This is a safety limit to prevent infinite loops if the state machine
  * malfunctions. An epoch carries 74 data chunks, and about 30% more once
- * Reed-Solomon parity is included.
+ * the encoder adds Reed-Solomon parity.
  *
  * @internal
  */
@@ -107,15 +107,15 @@ export async function initializeSPQRBraid(options: SPQRInitOptions): Promise<SPQ
   const stateMachine = createStateMachine();
 
   // Initialize as Alice (A2B) or Bob (B2A) based on direction
-  // Alice initiates key exchange, Bob responds
+  // Alice starts the key exchange, Bob responds
   const braidState: MLKEMBraidAgentState =
     direction === 'A2B'
       ? await stateMachine.InitAlice(initialRootKey)
       : await stateMachine.InitBob(initialRootKey);
 
-  // Initialize SPQR KDF chains (same as direct mode for KDF_HYBRID compatibility)
-  // These chains are used for message key derivation once epoch keys are available
-  // M12: Pass custom info string (default: pinned-reference CHAIN_START)
+  // Initialize SPQR KDF chains (same as direct mode for KDF_HYBRID compatibility).
+  // These chains derive message keys once epoch keys are available.
+  // M12: pass custom info string (default: pinned-reference CHAIN_START).
   const resolvedInfoStrings = resolveSPQRInfoStrings(options.spqrInfoStrings);
   const chainStartInfo = resolvedInfoStrings.chainStart;
   const {
@@ -347,7 +347,7 @@ export function getNextBraidChunk(spqrState: SPQRState): MLKEMBraidMessage | nul
  * Check if there are pending chunks to send.
  *
  * @param spqrState - Current SPQR state
- * @returns true if there are chunks waiting to be sent
+ * @returns true if chunks wait to go out
  */
 export function hasPendingBraidChunks(spqrState: SPQRState): boolean {
   if (spqrState.mode !== 'braid') {
@@ -361,7 +361,7 @@ export function hasPendingBraidChunks(spqrState: SPQRState): boolean {
  * Check if SPQR state is using ML-KEM Braid mode.
  *
  * @param state - SPQR state to check
- * @returns true if state is configured for braid mode
+ * @returns true if the state uses braid mode
  */
 export function isBraidMode(state: SPQRState): boolean {
   return state.mode === 'braid';

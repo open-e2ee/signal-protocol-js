@@ -77,7 +77,7 @@ export class DatabaseKeyManager {
   /**
    * Initialize the database encryption key
    *
-   * Generates and stores a new 32-byte key if one doesn't exist.
+   * Generates and stores a new 32-byte key if one does not exist.
    * This should be called once on app initialization.
    * Uses initPromise pattern to prevent race conditions from concurrent calls.
    *
@@ -126,7 +126,7 @@ export class DatabaseKeyManager {
    * Get the database encryption key
    *
    * Retrieves the key from the configured secret vault (or cache if available).
-   * Returns null if key doesn't exist (needs initialization).
+   * Returns null if key does not exist (needs initialization).
    *
    * @returns Database encryption key or null
    */
@@ -165,10 +165,10 @@ export class DatabaseKeyManager {
   /**
    * Get the database encryption key (throws if not initialized)
    *
-   * Convenience method that ensures the key exists.
+   * Convenience method that throws when the key is missing.
    * Use this when you expect the key to be initialized.
    *
-   * @throws EncryptionError if key doesn't exist
+   * @throws EncryptionError if key does not exist
    * @returns Database encryption key
    */
   async getKeyOrThrow(): Promise<Uint8Array> {
@@ -188,7 +188,7 @@ export class DatabaseKeyManager {
    * Returns the database encryption key as a hex string for use with
    * SQLCipher's PRAGMA key. Uses hex format (x'...') for full 256-bit entropy.
    *
-   * @throws EncryptionError if key doesn't exist
+   * @throws EncryptionError if key does not exist
    * @returns SQLCipher-compatible password string
    */
   async getPassword(): Promise<string> {
@@ -227,7 +227,7 @@ export class DatabaseKeyManager {
    * - Factory reset
    * - Controlled local reset
    *
-   * @returns true if key was deleted, false if didn't exist
+   * @returns true if key was deleted, false if did not exist
    */
   async deleteKey(): Promise<boolean> {
     try {
@@ -371,7 +371,7 @@ export function resetDatabaseKeyManager(): void {
  * Call this when app goes to background to reduce attack surface.
  *
  * The key will be re-read from the configured secret vault on next access.
- * This is a no-op if the key manager hasn't been initialized.
+ * This is a no-op if the key manager has not been initialized.
  */
 export function clearDatabaseKeyCache(): void {
   if (dbKeyManagerInstance) {

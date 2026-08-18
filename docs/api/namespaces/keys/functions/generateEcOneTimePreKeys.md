@@ -11,7 +11,7 @@
 Generate batch of EC one-time prekeys
 
 Creates multiple EC one-time prekeys for X3DH.
-Each key can only be used once for forward secrecy.
+Each key serves only one use, for forward secrecy.
 
 ## Parameters
 

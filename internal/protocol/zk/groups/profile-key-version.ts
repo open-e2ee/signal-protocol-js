@@ -1,5 +1,5 @@
 /**
- * ProfileKeyVersion — SHO-based version string computation
+ * ProfileKeyVersion: SHO-based version string computation
  *
  *
  * Computes a deterministic 64-char hex string from (profileKey, uidBytes).
@@ -15,7 +15,7 @@ const enc = new TextEncoder();
  * Compute a profile key version from a profile key and UID.
  *
  * @param profileKey - 32-byte profile key
- * @param uidBytes - 16-byte raw UUID (not string — use uuidToBytes from uid-struct.ts)
+ * @param uidBytes - 16-byte raw UUID (not string, use uuidToBytes from uid-struct.ts)
  * @returns 64-character hex string
  */
 export function computeProfileKeyVersion(profileKey: Uint8Array, uidBytes: Uint8Array): string {

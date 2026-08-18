@@ -7,8 +7,8 @@ and single-flight helpers.
 ## Why it exists
 
 The core SDK is framework-neutral. React hooks live on a separate package
-subpath so non-React consumers do not load React and UI code can subscribe to
-SDK state without duplicating effect cleanup.
+subpath. Non-React consumers therefore do not load React, and UI code can
+subscribe to SDK state without duplicating effect cleanup.
 
 ## Usage
 

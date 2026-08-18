@@ -23,14 +23,14 @@ export const DEFAULT_DEVICE_ID = 1;
 
 /**
  * Minimum registration ID value
- * Registration IDs are generated randomly in range [1, 16380]
+ * The client generates registration IDs randomly in range [1, 16380]
  * @see https://signal.org/docs/specifications/x3dh/
  */
 export const MIN_REGISTRATION_ID = 1;
 
 /**
  * Maximum registration ID value
- * Registration IDs are generated randomly in range [1, 16380]
+ * The client generates registration IDs randomly in range [1, 16380]
  * @see https://signal.org/docs/specifications/x3dh/
  */
 export const MAX_REGISTRATION_ID = 16380;

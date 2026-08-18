@@ -11,9 +11,9 @@
 Generate batch of KEM one-time prekeys (post-quantum)
 
 Creates multiple one-time Kyber prekeys for PQXDH.
-Each key can only be used once for per-session post-quantum forward secrecy.
+Each key serves only one use, for per-session post-quantum forward secrecy.
 
-Per PQXDH spec Section 3.2, these are signed one-time pqkem prekeys
+Per PQXDH spec Section 3.2, the identity key signs these one-time pqkem prekeys
 that the server prefers over the last-resort KEM prekey.
 
 Uses the same batch size as EC one-time prekeys (the reference implementation uses 100 for both).

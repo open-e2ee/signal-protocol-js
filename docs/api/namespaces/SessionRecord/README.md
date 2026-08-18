@@ -8,8 +8,7 @@
 
 Helper functions for working with SessionRecords.
 
-Session states are identified by `baseKey`, the initiator's ephemeral public
-key.
+`baseKey`, the initiator's ephemeral public key, identifies a session state.
 
 ## Variables
 

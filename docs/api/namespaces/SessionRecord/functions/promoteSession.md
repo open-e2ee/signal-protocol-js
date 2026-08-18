@@ -31,4 +31,4 @@ Base64-encoded baseKey of session to promote
 
 `boolean`
 
-true if session was found and promoted
+true if the function found and promoted the session

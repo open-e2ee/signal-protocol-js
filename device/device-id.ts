@@ -15,7 +15,7 @@ let cachedDeviceId: number | null = null;
 /**
  * Get the current device ID
  *
- * This function can be called from anywhere, including non-React contexts
+ * Callers can run this function from anywhere, including non-React contexts
  * like ContentManager. It uses the same SecureStore as host lifecycle.
  *
  * @returns Device ID (1-5), or DEFAULT_DEVICE_ID if not yet initialized
@@ -60,8 +60,8 @@ export async function getDeviceId(providedLogger?: ILogger): Promise<number> {
 /**
  * Get device ID synchronously (uses cached value)
  *
- * WARNING: This will return DEFAULT_DEVICE_ID if getDeviceId() hasn't been called yet.
- * Use this only if you're sure the device ID has been loaded.
+ * WARNING: This returns DEFAULT_DEVICE_ID if nothing called getDeviceId() yet.
+ * Use this only if you are sure the device ID already loaded.
  *
  * @returns Cached device ID, or DEFAULT_DEVICE_ID if not cached
  */
@@ -87,7 +87,7 @@ export function clearDeviceIdCache(): void {
 /**
  * Preload device ID into cache
  *
- * Call this early in app initialization to ensure getDeviceIdSync() works correctly.
+ * Call this early in app initialization, so getDeviceIdSync() works correctly.
  */
 export async function preloadDeviceId(): Promise<void> {
   await getDeviceId();

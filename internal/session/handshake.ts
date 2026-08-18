@@ -2,10 +2,10 @@
  * Handshake - X3DH/PQXDH Key Agreement
  *
  * Handles the cryptographic key agreement phase of the Signal Protocol.
- * This module performs the X3DH (Extended Triple Diffie-Hellman) or PQXDH
+ * This module runs the X3DH (Extended Triple Diffie-Hellman) or PQXDH
  * (Post-Quantum Extended Diffie-Hellman) handshake to derive shared secrets.
  *
- * Used by establish.ts to perform key agreement before session creation.
+ * establish.ts calls this module for key agreement before it creates a session.
  *
  * @see https://signal.org/docs/specifications/x3dh/
  * @see https://signal.org/docs/specifications/pqxdh/
@@ -142,7 +142,7 @@ export function validatePreKeyBundle(prekeyBundle: PreKeyBundle): void {
 // ============================================================================
 
 /**
- * Perform key agreement as initiator (Alice)
+ * Run the key agreement as initiator (Alice)
  *
  * ORCHESTRATION LAYER: Requires PQXDH by default for session establishment.
  *
@@ -281,7 +281,7 @@ function invokeProtocolCallback(
 }
 
 /**
- * Perform key agreement as responder (Bob)
+ * Run the key agreement as responder (Bob)
  *
  * Requires PQXDH metadata by default and rejects malformed PQXDH metadata.
  * Explicit `allowClassicalFallback` permits X3DH only for X3DH-only

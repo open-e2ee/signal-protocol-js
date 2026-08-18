@@ -127,9 +127,9 @@ export interface IProvisioningService {
     /**
      * Absolute expiry of the session's current window, or null when the
      * session no longer exists. After completion this is the acknowledgment
-     * deadline, which is a fresh full TTL rather than the remainder of the
-     * original window, so clients must read it rather than compute it from
-     * the session's creation time.
+     * deadline. That deadline is a fresh full TTL, not the remainder of the
+     * original window. Clients must read it rather than compute it from the
+     * session's creation time.
      */
     expiresAt: number | null;
   }>;
@@ -239,7 +239,7 @@ export interface IKeyRotationService {
  * - Device registry (multi-device support, max 5 devices per user)
  * - Prekey management (X3DH/PQXDH key exchange)
  *
- * Backed by the 16 tables the Convex component owns; `docs/SCHEMA.md` covers
+ * Backed by the 16 tables the Convex component owns. `docs/SCHEMA.md` covers
  * what each stores and for how long.
  *
  * @example
@@ -354,7 +354,7 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
   /**
    * Mark device as connected (online).
    * Called when WebSocket connects.
-   * userId is derived from JWT server-side.
+   * The server derives userId from the JWT.
    *
    * @param deviceId - Device ID (1-5)
    */
@@ -363,13 +363,13 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
   /**
    * Mark device as disconnected (offline).
    * Called when WebSocket disconnects gracefully.
-   * userId is derived from JWT server-side.
+   * The server derives userId from the JWT.
    *
    * @param deviceId - Device ID (1-5)
    */
   markDeviceDisconnected(deviceId: number): Promise<void>;
 
-  /** Lightweight heartbeat — writes only to heartbeat table, triggers 0 query reruns */
+  /** Lightweight heartbeat. Writes only to heartbeat table, triggers 0 query reruns */
   heartbeat(deviceId: number): Promise<void>;
 
   // ════════════════════════════════════════════════════════════
@@ -432,7 +432,7 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
    *
    * @param userId - Target user ID
    * @param deviceId - Target device ID
-   * @param fetcherUserId - Deprecated, ignored. Fetcher identity is derived from auth server-side.
+   * @param fetcherUserId - Deprecated, ignored. The server derives fetcher identity from auth.
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
    * @returns Prekey bundle or null if device not found
    */
@@ -513,8 +513,8 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
   //
   // There is deliberately no getGroupMembers(groupId) endpoint: the relay
   // keeps no server-side membership map (it would reveal the social graph
-  // the zero-knowledge group design hides). Membership is local-first —
-  // callers resolve the roster from their own decrypted group state and
+  // the zero-knowledge group design hides). Membership is local-first.
+  // Callers resolve the roster from their own decrypted group state and
   // pass member user IDs, which the relay expands to devices.
   // ════════════════════════════════════════════════════════════
 
@@ -580,11 +580,11 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
    * Get one page of group change log entries after a given version.
    * Used for incremental state synchronization.
    *
-   * Authorization is evaluated at the `fromVersion` snapshot, and the
+   * Authorization runs at the `fromVersion` snapshot, and the
    * requester must be a member there. Serve through the first transition
    * that makes the requester unreadable, inclusive, and do not serve later
-   * transitions under that request. A page cut for size sets `hasMore`;
-   * the client resumes from the last served version.
+   * transitions under that request. A page cut for size sets `hasMore`.
+   * The client resumes from the last served version.
    *
    * @param groupId - 32-byte group identifier
    * @param fromVersion - Fetch changes with version > fromVersion
@@ -708,7 +708,7 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
   /**
    * Send retry request to the original sender.
    *
-   * Called by recipient when decryption fails. The retry request is
+   * The recipient calls this when decryption fails. The retry request stays
    * unencrypted (per SESAME spec) and contains only the message ID
    * and reason. Transport is TLS-secured.
    *
@@ -759,14 +759,14 @@ export type SealedSenderAuth =
       type: 'groupSendToken';
       groupSendToken: Uint8Array;
       /**
-       * ACI bytes per recipient user ID — the identities the token endorses.
+       * ACI bytes per recipient user ID. The identities the token endorses.
        *
        * The token is a signature over ACIs, not user IDs, and the relay
        * verifies it before reading any account. It therefore needs the
-       * claimed ACI for each recipient up front; it then binds each claim to
+       * claimed ACI for each recipient up front. It then binds each claim to
        * the recipient's stored account after the token checks out. The
        * endorsement manager supplies these from its cache, which records the
-       * exact identities the endorsements were issued over.
+       * exact identities that the endorsements cover.
        */
       recipientAciBytes: Map<string, Uint8Array>;
     };
@@ -792,9 +792,9 @@ export interface Envelope {
 
   /**
    * Relay-visible envelope type.
-   * Client-to-client types (delivery_receipt, typing_indicator, sender_key_distribution)
-   * are encrypted content types inside a ciphertext envelope; the relay
-   * contract carries only the outer envelope type.
+   * A ciphertext envelope holds the client-to-client types (delivery_receipt,
+   * typing_indicator, sender_key_distribution) as encrypted content types. The
+   * relay contract carries only the outer envelope type.
    *
    * - ciphertext: Standard Double Ratchet message (contains encrypted Content)
    * - prekey_bundle: Session initiation (X3DH/PQXDH)
@@ -839,15 +839,15 @@ export interface Envelope {
    * Stable client-generated send identifier for idempotent retry.
    *
    * If a client retries after an unknown relay result, it should reuse the
-   * same value so the relay can return the original accept metadata instead
+   * same value. The relay then returns the original accept metadata, instead
    * of inserting a duplicate pending envelope.
    *
-   * MUST be globally unique — a UUID, not a counter or timestamp. On the
-   * identified path the relay scopes deduplication by sender, but a sealed
-   * sender is anonymous by design, so every sealed send to a device shares
-   * one dedup namespace: two sealed senders reusing the same value would
-   * silently collapse into one stored message, with the second sender
-   * handed the first message's receipt.
+   * MUST be globally unique. A UUID, not a counter or timestamp. On the
+   * identified path the relay scopes deduplication by sender. A sealed sender
+   * is anonymous by design, so every sealed send to a device shares one dedup
+   * namespace. Two sealed senders reusing the same value would silently
+   * collapse into one stored message. The second sender would receive the
+   * first message's receipt.
    */
   clientMessageId?: string;
 
@@ -917,7 +917,7 @@ export interface DeviceInfo {
   active: boolean;
   lastSeen: number;
   createdAt: number;
-  /** When the device was linked (for secondary devices) */
+  /** When the user linked the device (for secondary devices) */
   linkedAt?: number;
 }
 
@@ -1016,7 +1016,7 @@ export interface GroupChangeEntry {
  * One page of the group change log, returned by getGroupChanges().
  *
  * `hasMore` is true only when the server cut the page for size with the
- * requester still readable; resume from the version of the last entry.
+ * requester still readable. Resume from the version of the last entry.
  */
 export interface GroupChangePage {
   entries: GroupChangeEntry[];

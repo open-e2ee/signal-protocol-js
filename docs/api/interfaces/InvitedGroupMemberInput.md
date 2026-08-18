@@ -6,7 +6,7 @@
 
 # Interface: InvitedGroupMemberInput
 
-A target invited without a profile key; they present when accepting.
+A target invited without a profile key. They present when accepting.
 
 ## Properties
 

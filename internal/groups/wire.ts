@@ -1,9 +1,9 @@
 /**
  * Group wire serialization
  *
- * The group transport uses JSON with explicit byte markers. These helpers are
- * shared by clients and the executable reference server so accepted Actions
- * can be stored and signed byte-for-byte.
+ * The group transport uses JSON with explicit byte markers. Clients and the
+ * executable reference server share these helpers, so they store and sign
+ * accepted Actions byte-for-byte.
  *
  * @module groups/wire
  */
@@ -258,9 +258,8 @@ export function countGroupChangeActions(
 /**
  * Reject unknown, missing-array, and actionless signed Actions values.
  *
- * This representation-level check is shared by the server and client so an
- * unknown field cannot be applied by one side and silently discarded by the
- * other.
+ * The server and client share this representation-level check. One side
+ * therefore cannot apply an unknown field that the other silently discards.
  */
 export function assertRecognizedEncryptedGroupChange(
   change: EncryptedGroupChange
@@ -477,7 +476,7 @@ function assertTimestamp(value: unknown, label: string): asserts value is number
 /**
  * Enforce Revision 16's complete encrypted Actions wire domain.
  *
- * This validator is shared by the accepting server and receiving client.
+ * The accepting server and the receiving client share this validator.
  */
 export function assertValidEncryptedGroupChangeWire(
   change: EncryptedGroupChange,

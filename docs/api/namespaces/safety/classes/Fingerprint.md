@@ -11,7 +11,7 @@ Fingerprint for identity verification between two parties.
 Contains both displayable (numeric) and scannable (QR code) representations
 of the combined identity fingerprint. Provides Fingerprint class.
 
-Deterministic party ordering ensures both participants compute the same
+Deterministic party ordering makes both participants compute the same
 fingerprint value.
 
 ## Example

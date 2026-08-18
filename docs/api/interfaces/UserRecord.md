@@ -15,7 +15,7 @@ Top-level organizational structure in SESAME
 
 > **createdAt**: `number`
 
-Timestamp when this user record was created
+Timestamp of the moment this user record began
 
 ***
 
@@ -46,7 +46,7 @@ Contains all known devices for this user
 > `optional` **stale?**: `boolean`
 
 Whether this UserRecord's device list is stale and needs a fresh fetch.
-Set to true when a StaleDeviceListError is encountered during sending.
+Set to true when sending meets a StaleDeviceListError.
 When true, the next send operation should refetch the device list before proceeding.
 Cleared after a successful device list sync.
 

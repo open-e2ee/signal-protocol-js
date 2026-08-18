@@ -31,20 +31,20 @@ const MAX_MULTI_RECIPIENT_DEVICES = 1000;
  * Ceiling on a single message's content, before base64 framing.
  *
  * 96 KiB, and the same 96 KiB for the shared multi-recipient ciphertext.
- * The reference validates what each recipient will *receive* — the
- * one-byte version, that recipient's key material, and the shared data —
- * against a single 96 KiB message-size constant, on the individual and
- * multi-recipient paths alike; its separate 256 KiB constant is an HTTP
- * entity-read cap on the whole request (shared payload plus every
- * recipient block), not a content ceiling, and an earlier version of this
- * file mistook it for one. The shared ciphertext is the dominant term of
+ * The reference validates what each recipient will *receive* against a
+ * single 96 KiB message-size constant. That view is the one-byte version,
+ * that recipient's key material, and the shared data, on the individual and
+ * multi-recipient paths alike. Its separate 256 KiB constant is an HTTP
+ * entity-read cap on the whole request, which is the shared payload plus
+ * every recipient block. That cap is not a content ceiling, and an earlier
+ * version of this file mistook it for one. The shared ciphertext is the dominant term of
  * the per-recipient view, so it is what the ceiling binds here.
  *
  * The columns are base64 strings, so the byte ceilings are enforced as
- * string-length ceilings: base64 emits 4 characters per started group of 3
- * bytes, which is 4 * ceil(n / 3) — the ceiling belongs inside the division,
- * or a payload whose size is not a multiple of 3 encodes 2 characters past
- * the advertised limit and full-size messages are refused.
+ * string-length ceilings. Base64 emits 4 characters per started group of 3
+ * bytes, which is 4 * ceil(n / 3). The ceiling belongs inside the division.
+ * Otherwise a payload whose size is not a multiple of 3 encodes 2 characters
+ * past the advertised limit, and full-size messages are refused.
  */
 const base64LengthOf = (byteLength: number): number =>
   4 * Math.ceil(byteLength / 3);
@@ -59,31 +59,31 @@ const MAX_MULTI_RECIPIENT_CIPHERTEXT_LENGTH = base64LengthOf(
  * Inbound budget per recipient, spent in ciphertext bytes.
  *
  * Keyed by the *target*, because that is the only stable identity on these
- * paths: a sealed sender is anonymous by design, so any per-sender limit is
+ * paths. A sealed sender is anonymous by design, so any per-sender limit is
  * either meaningless or a hole. The reference implementation bounds inbound
  * message bytes per destination the same way, on its identified and sealed
  * single-recipient paths alike.
  *
- * What this closes is unbounded queue flooding: without it, one anonymous
- * caller holding a valid access key — or any account-authenticated caller on
- * the identified path — can grow a victim's `messages` table without limit
- * for the whole retention window. The budget is generous for real traffic
- * (sealed envelopes run 1-2 KiB, so the sustained rate is hundreds of
- * messages a minute per recipient) and fatal for floods.
+ * What this closes is unbounded queue flooding. Without it, one anonymous
+ * caller holding a valid access key can grow a victim's `messages` table
+ * without limit for the whole retention window. Any account-authenticated
+ * caller on the identified path can do the same. The budget is generous for
+ * real traffic and fatal for floods. Sealed envelopes run 1-2 KiB, so the
+ * sustained rate is hundreds of messages a minute per recipient.
  *
  * The multi-recipient path is deliberately not metered, matching the
- * reference: a group-send token already prices that path, and a per-recipient
+ * reference. A group-send token already prices that path, and a per-recipient
  * budget there would let one noisy group partially starve delivery to its
  * quietest member. Verified against the reference's MessageController: its
  * inbound-bytes limiter is validated only in `sendIndividualMessage`, never
  * on the multi-recipient route. Metering here would also have to fail the
- * whole fan-out rather than one recipient, since the charge and the inserts
- * share a transaction — so a single recipient at their ceiling would block
- * delivery to everyone else in the call.
+ * whole fan-out rather than one recipient, because the charge and the
+ * inserts share a transaction. A single recipient at their ceiling would
+ * then block delivery to everyone else in the call.
  *
  * What the exemption assumes is that one call fans out to distinct devices.
  * The reference gets that from its wire format, which parses recipients into
- * a map keyed by service ID; the flat array here does not, so the handler
+ * a map keyed by service ID. The flat array here does not, so the handler
  * rejects a repeated device explicitly.
  */
 const rateLimiter = new RateLimiter(components.rateLimiter, {
@@ -94,10 +94,10 @@ const rateLimiter = new RateLimiter(components.rateLimiter, {
     capacity: 4 * 1024 * 1024,
   },
   // Sub-limit for the identified path, keyed by (sender, target). The
-  // shared per-target bucket is forced on the sealed path — there is no
-  // sender identity to key on — but on the identified path there is one,
-  // and without this a single authenticated account could drain a victim's
-  // whole shared budget and 429 every other sender indefinitely. A quarter
+  // shared per-target bucket is forced on the sealed path. There is no
+  // sender identity to key on there, but the identified path has one.
+  // Without this sub-limit a single authenticated account could drain a
+  // victim's whole shared budget and 429 every other sender indefinitely. A quarter
   // of the shared bucket keeps one sender from monopolizing it while
   // leaving any real conversation far below the ceiling.
   inboundMessageBytesPerSender: {
@@ -108,13 +108,15 @@ const rateLimiter = new RateLimiter(components.rateLimiter, {
   },
   // Counted, not metered by size: a retry request is a fixed-shape row. A
   // client coming back from a broken session legitimately asks for one per
-  // message it could not decrypt, so the burst allowance is generous. What
-  // this bounds is the *rate*, not the total: a refilling bucket never
-  // refuses a patient caller, so a hostile account can still accrete rows
-  // against a target at the refill rate for as long as it cares to, up to
-  // whatever the seven-day TTL retains. That is a storage-and-noise cost,
-  // not a denial — the target reads the oldest page first and can drain —
-  // and the row TTL, not this bucket, is what ultimately bounds it.
+  // message it could not decrypt, so the burst allowance is generous.
+  //
+  // What this bounds is the *rate*, not the total. A refilling bucket never
+  // refuses a patient caller. A hostile account can still accrete rows
+  // against a target at the refill rate. It can do that for as long as it
+  // cares to, up to whatever the seven-day TTL retains. That is a
+  // storage-and-noise cost, not a denial, because the target reads the
+  // oldest page first and can drain. The row TTL, not this bucket, is what
+  // ultimately bounds it.
   retryRequests: {
     kind: 'token bucket',
     rate: 120,
@@ -145,7 +147,7 @@ function requireCiphertextWithin(
  * Re-throw a limiter rejection as a 429, or pass anything else through.
  *
  * The component's limiter writes inside the caller's transaction, so this
- * only ever shapes the error — the charges themselves are undone by the
+ * only ever shapes the error. The charges themselves are undone by the
  * throw, whichever limit produced it.
  */
 function rethrowRateLimited(error: unknown, message: string): never {
@@ -173,7 +175,7 @@ async function chargeInboundBudget(
   senderUserId?: string
 ): Promise<void> {
   try {
-    // Order between the two buckets carries no meaning: both charges are
+    // Order between the two buckets carries no meaning. Both charges are
     // written in this mutation's transaction, so whichever limit throws
     // discards the other's spend along with everything else. The sub-limit
     // runs first only because it is the more specific diagnosis of the two.
@@ -201,8 +203,8 @@ async function chargeInboundBudget(
  * Bound how fast one account can create retry-request rows.
  *
  * These rows carry no caller-supplied content, so there is nothing to bound
- * by size — the cost is the row itself, held for the full retention window.
- * Nothing else on this path constrains them: the request names an original
+ * by size. The cost is the row itself, held for the full retention window.
+ * Nothing else on this path constrains them. The request names an original
  * sender it never has to have talked to, so there is no relationship to
  * check either.
  */
@@ -226,8 +228,8 @@ async function chargeRetryRequest(
  * The multi-recipient path already reports unknown devices through
  * `uuids404`, and the reference implementation refuses sealed sends to
  * unknown destinations outright. Without this check the path is a write
- * primitive for rows nothing will ever read: an anonymous caller can address
- * arbitrary device IDs and every insert sits in the table for the full
+ * primitive for rows nothing will ever read. An anonymous caller can address
+ * arbitrary device IDs, and every insert sits in the table for the full
  * retention window.
  */
 async function requireActiveDevice(
@@ -371,10 +373,10 @@ export const send = mutation({
         registration.registrationId !== input.recipientRegistrationId
       ) {
         // Names only the stale device, matching the reference's 410 body.
-        // The current registration ID stays out: the sender re-fetches the
-        // prekey bundle to recover, and that path is rate limited, whereas
-        // this one would otherwise hand any account-authenticated caller a
-        // free oracle for registration-ID changes on arbitrary devices.
+        // The current registration ID stays out. The sender re-fetches the
+        // prekey bundle to recover, and that path is rate limited. This one
+        // would otherwise hand any account-authenticated caller a free
+        // oracle for registration-ID changes on arbitrary devices.
         throw relayError(
           'STALE_DEVICE',
           410,
@@ -386,7 +388,7 @@ export const send = mutation({
         );
       }
     }
-    // Placed after the registration check for readability, not for safety: a
+    // Placed after the registration check for readability, not for safety. A
     // send that 410s could charge first and still cost nothing, because the
     // throw rolls the charge back with the rest of the mutation. Nothing on
     // this path depends on the order.
@@ -422,13 +424,14 @@ export const getPendingMessages = query({
     // rows, but until it runs they must neither be delivered nor consume
     // the pending-message budget.
     //
-    // Date.now() is fixed per transaction and cached with the query result,
-    // so a subscribed client does not see a row drop out the instant it
-    // expires — only when a write to this index range invalidates the
-    // subscription, which any new message for this device or the cron's
-    // delete does. Staleness is therefore bounded by the cron interval, and
-    // the effect is a message delivered late rather than one delivered
-    // wrongly: expiresAt is a retention bound, not an authorization gate.
+    // Date.now() is fixed per transaction and cached with the query result.
+    // A subscribed client therefore does not see a row drop out the instant
+    // it expires. It sees the drop when a write to this index range
+    // invalidates the subscription. Any new message for this device does
+    // that, and so does the cron's delete. Staleness is therefore bounded by
+    // the cron interval. The effect is a message delivered late rather than
+    // one delivered wrongly, because expiresAt is a retention bound, not an
+    // authorization gate.
     const now = Date.now();
     const rows = (
       await ctx.db
@@ -440,11 +443,11 @@ export const getPendingMessages = query({
         )
         .take(MAX_PENDING_MESSAGES)
     ).filter((row) => row.expiresAt > now);
-    // Multi-recipient rows store only their per-recipient prefix; the wire
+    // Multi-recipient rows store only their per-recipient prefix. The wire
     // form is reassembled here from the once-stored shared payload. The
     // payload shares the row's exact expiresAt, and the filter above has
     // already dropped expired rows, so a missing payload is not a benign
-    // expiry race — it is an integrity fault, and it is served as one.
+    // expiry race. It is an integrity fault, and it is served as one.
     const sharedByPayloadId = new Map<string, Uint8Array>();
     const wireCiphertext = async (row: {
       ciphertext: string;
@@ -541,26 +544,28 @@ export const markDelivered = mutation({
 });
 
 // There is deliberately no `getGroupMembers` endpoint, and the component
-// derives no membership map from group state: group authorization is proved
+// derives no membership map from group state. Group authorization is proved
 // entirely by zero-knowledge presentations, so `groups` rows never name an
-// account. Membership is local-first — senders resolve fan-out recipients
+// account. Membership is local-first. Senders resolve fan-out recipients
 // from their own decrypted group state and supply them to the send path.
 //
 // Nothing a `messages` row stores *names* a group either. The row carries a
 // `sender_key` message type, which says the payload is group traffic without
-// saying which group, and the distribution identifier inside the frame is
+// saying which group. The distribution identifier inside the frame is
 // opaque.
 //
 // That closes the group's name, not the group partition, and the difference is
 // easy to overstate. The distribution identifier is unencrypted, sits inside
-// the `ciphertext` column, and is stable for the life of a sender key — keys
-// rotate on membership change, never on a timer — so grouping rows by it
-// recovers a sender's group traffic. One send also produces byte-identical
-// ciphertext on every recipient row, and the multi-recipient sealed path is
-// handed the roster outright. An operator therefore sees who talked to whom
-// and can partition those pairs into unlabeled groups; what it cannot do is
-// put a meaningful, cross-send label on one. See the group metadata privacy
-// note in README.md, which states the remaining channels in full.
+// the `ciphertext` column, and is stable for the life of a sender key. Keys
+// rotate on membership change, never on a timer, so grouping rows by it
+// recovers a sender's group traffic.
+//
+// One send also produces byte-identical ciphertext on every recipient row, and
+// the multi-recipient sealed path is handed the roster outright. An operator
+// therefore sees who talked to whom and can partition those pairs into
+// unlabeled groups. What it cannot do is put a meaningful, cross-send label on
+// one. See the group metadata privacy note in README.md, which states the
+// remaining channels in full.
 
 export const getActiveDevices = query({
   args: {
@@ -603,8 +608,8 @@ async function authorizeUnidentified(
     );
   }
   if (auth.groupSendToken !== undefined) {
-    // The caller names the ACI it claims for each recipient so the token —
-    // which endorses ACIs, not user IDs — can be verified before any account
+    // The caller names the ACI it claims for each recipient. The token
+    // endorses ACIs, not user IDs, so it can be verified before any account
     // is read. See authorizeGroupSendToken for why that ordering matters.
     const named: Array<{ userId: string; aciBytes: ArrayBuffer }> = [];
     for (const recipient of recipients) {
@@ -634,7 +639,7 @@ export const sendUnidentified = mutation({
   args: {
     targetUserId: v.string(),
     targetDeviceId: v.number(),
-    /** The recipient ACI the caller claims; required with a group-send
+    /** The recipient ACI the caller claims. Required with a group-send
      * token, which endorses ACIs rather than user IDs. */
     targetAciBytes: v.optional(v.bytes()),
     ciphertext: v.string(),
@@ -678,7 +683,7 @@ const multiRecipientValidator = v.object({
   userId: v.string(),
   deviceId: v.number(),
   registrationId: v.number(),
-  /** The recipient ACI the caller claims; required with a group-send token,
+  /** The recipient ACI the caller claims. Required with a group-send token,
    * which endorses ACIs rather than user IDs. */
   aciBytes: v.optional(v.bytes()),
   encryptedMessageKeyBase64: v.string(),
@@ -712,16 +717,17 @@ export const sendMultiRecipientUnidentified = mutation({
       input.messageCiphertextBase64,
       MAX_MULTI_RECIPIENT_CIPHERTEXT_LENGTH
     );
-    // Per-recipient key material is a fixed-size key and tag; the reference
+    // Per-recipient key material is a fixed-size key and tag. The reference
     // budgets ~100 bytes per recipient block. 512 base64 characters is far
     // above any real encoding and far below a useful flood.
     //
     // One entry per (userId, deviceId). Each accepted entry stores only its
     // own key material next to a reference to the once-stored shared
-    // payload, but a repeat is still rejected rather than collapsed — a
+    // payload. A repeat is still rejected rather than collapsed. A
     // group-send token endorses the recipient *set*, saying nothing about
-    // how many times a member may appear in it, a repeat is a client bug,
-    // and quietly picking one of two conflicting key blocks would bury it.
+    // how many times a member may appear in it. A repeat is therefore a
+    // client bug, and quietly picking one of two conflicting key blocks
+    // would bury it.
     const seenDevices = new Set<string>();
     for (const recipient of input.recipients) {
       requireCiphertextWithin(recipient.encryptedMessageKeyBase64, 512);
@@ -750,13 +756,14 @@ export const sendMultiRecipientUnidentified = mutation({
     const messageCiphertext = base64ToBytes(
       asBase64(input.messageCiphertextBase64)
     );
-    // The shared remainder — ephemeral public key and message ciphertext —
-    // is stored once and referenced from every accepted recipient row,
-    // matching the reference's message store, which inserts one shared
-    // multi-recipient payload and hands each recipient a pointer. Storing
+    // The shared remainder is the ephemeral public key and the message
+    // ciphertext. It is stored once and referenced from every accepted
+    // recipient row. That matches the reference's message store, which
+    // inserts one shared multi-recipient payload and hands each recipient a
+    // pointer. Storing
     // a copy per row turns a ~100 KiB send into recipient-count times that
-    // in one transaction. Created lazily on the first accepted recipient;
-    // a request whose recipients all 404 (or all deduplicate) stores
+    // in one transaction. Created lazily on the first accepted recipient.
+    // A request whose recipients all 404 (or all deduplicate) stores
     // nothing new beyond, at worst, one TTL-reaped orphan payload.
     const sharedLength = ephemeralPublic.length + messageCiphertext.length;
     let sharedPayloadId: string | undefined;
@@ -808,8 +815,8 @@ export const sendMultiRecipientUnidentified = mutation({
         continue;
       }
       // The canonical serializer builds (and validates) the full wire
-      // form; the row keeps only the per-recipient prefix — version byte
-      // and key material — and delivery reattaches the shared suffix.
+      // form. The row keeps only the per-recipient prefix (version byte
+      // and key material), and delivery reattaches the shared suffix.
       const receivedMessage = serializeReceivedMessage(
         base64ToBytes(asBase64(recipient.encryptedMessageKeyBase64)),
         base64ToBytes(asBase64(recipient.authenticationTagBase64)),
@@ -892,7 +899,7 @@ export const getPendingRetryRequests = query({
   returns: v.array(retryRequestValidator),
   handler: async (ctx, input) => {
     // Same read-time expiry filter and the same transaction-fixed clock as
-    // getPendingMessages: an expired retry request may survive in a cached
+    // getPendingMessages. An expired retry request may survive in a cached
     // subscription until the hourly cron deletes it. Acting on a stale retry
     // request costs one redundant re-send, so the window is harmless.
     const now = Date.now();

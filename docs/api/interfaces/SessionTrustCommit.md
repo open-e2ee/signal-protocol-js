@@ -7,9 +7,10 @@
 # Interface: SessionTrustCommit
 
 All durable trust/session effects of establishing or advancing a session.
-Optional one-time-prekey identifiers are consumed in the same transaction
+The same transaction consumes optional one-time-prekey identifiers
 for responder-side PreKey decrypts. The local identity namespace remains
-explicit even when no prekey is consumed so every commit is fully scoped.
+explicit even when the transaction consumes no prekey, so every commit
+is fully scoped.
 
 ## Properties
 
@@ -43,7 +44,7 @@ Sender tuple to pin or match in the same durable commit.
 
 > **localIdentityType**: [`IdentityType`](../namespaces/keys/type-aliases/IdentityType.md)
 
-Local identity namespace; also scopes any consumed recipient prekeys.
+Local identity namespace. It also scopes any consumed recipient prekeys.
 
 ***
 

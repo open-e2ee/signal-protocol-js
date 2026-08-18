@@ -209,7 +209,7 @@ export enum SealedSenderContentType {
   SENDERKEY_MESSAGE = 7,
   /**
    * Unencrypted content. Listed to keep the enum a faithful record of the
-   * wire values, but **not supported** — see `isSealedSenderContentType`.
+   * wire values, but **not supported**. See `isSealedSenderContentType`.
    */
   PLAINTEXT_CONTENT = 8,
 }
@@ -219,16 +219,15 @@ export enum SealedSenderContentType {
  *
  * The envelope is authenticated before it is parsed, so a value outside this
  * set means a peer running a different version rather than an attacker.
- * Rejecting at the parse keeps the parse canonical: one byte, one meaning, and
- * no value that survives to be interpreted by a routing default further
- * downstream.
+ * Rejecting at the parse keeps the parse canonical: one byte, one meaning. No
+ * value survives to be interpreted by a routing default further downstream.
  *
  * `PLAINTEXT_CONTENT` is deliberately excluded. The reference uses it to carry
- * a decryption-error receipt when no session exists; this implementation
+ * a decryption-error receipt when no session exists. This implementation
  * delivers those over a dedicated relay channel instead (`retryRequests`), so
  * nothing here produces the type and no decrypt path consumes it. Accepting it
- * would mean routing an unauthenticated payload — the whole point of the type
- * is that it is not encrypted — through a path with no handler for it.
+ * would mean routing an unauthenticated payload through a path with no handler
+ * for it. The whole point of the type is that it is not encrypted.
  */
 export function isSealedSenderContentType(
   value: number
@@ -258,10 +257,10 @@ export interface UnidentifiedSenderMessageContent {
    * How to decrypt `signalProtocolMessage`.
    *
    * `SENDERKEY_MESSAGE` says the payload is a framed SenderKeyMessage. It
-   * does not say which group: the recipient reads the opaque distribution
-   * identifier out of the frame and resolves the group against its own sender
-   * key store, the same way it does for an unsealed group message. No group
-   * identifier travels in a sealed envelope at all.
+   * does not say which group. The recipient reads the opaque distribution
+   * identifier out of the frame, and resolves the group against its own sender
+   * key store. That is the same way it does for an unsealed group message. No
+   * group identifier travels in a sealed envelope at all.
    */
   contentType: SealedSenderContentType;
 
@@ -309,7 +308,7 @@ export interface SealOptions {
   /**
    * How the recipient should decrypt `signalProtocolMessage`.
    *
-   * Defaults to `MESSAGE`. Group traffic must pass `SENDERKEY_MESSAGE`: the
+   * Defaults to `MESSAGE`. Group traffic must pass `SENDERKEY_MESSAGE`. The
    * outer envelope is `unidentified_sender` for everything, so this is the
    * only thing that tells the recipient the payload is a framed
    * SenderKeyMessage.
@@ -477,7 +476,7 @@ export interface SealMultiRecipientOptions {
   /**
    * How the recipient should decrypt `signalProtocolMessage`.
    *
-   * Defaults to `MESSAGE`. Group traffic must pass `SENDERKEY_MESSAGE`: the
+   * Defaults to `MESSAGE`. Group traffic must pass `SENDERKEY_MESSAGE`. The
    * outer envelope is `unidentified_sender` for everything, so this is the
    * only thing that tells the recipient the payload is a framed
    * SenderKeyMessage.
@@ -616,7 +615,7 @@ export const EPHEMERAL_PUBLIC_KEY_BYTES = 32;
  * MAC size (truncated HMAC-SHA256).
  *
  * Sealed-sender MACs are truncated to 10 bytes (80 bits). The Double Ratchet
- * specification Section 8.6 sets the floor at 64 bits;
+ * specification Section 8.6 sets the floor at 64 bits.
  * 80 bits is comfortably above this while saving bandwidth.
  */
 export const MAC_BYTES = 10;

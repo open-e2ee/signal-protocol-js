@@ -9,18 +9,21 @@
 MessageRecord for SESAME retry request resending
 
 Per SESAME Specification Section 4.1:
-"Each MessageRecord stores the following values:
- - The plaintext of the encrypted message
- - The UserID for the recipient device
- - The SessionID for the session the message was encrypted with"
 
-The SessionID is used to detect orphaned sessions during resending:
-"If the DeviceRecord's active session matches the SessionID from the relevant
-MessageRecord, then the sending device creates a new initiating session...
-This prevents the sending device from repeatedly sending a message using an
-orphaned session which doesn't match any recipient session."
+> "Each MessageRecord stores the following values:
+>  - The plaintext of the encrypted message
+>  - The UserID for the recipient device
+>  - The SessionID for the session the message was encrypted with"
 
-Messages are indexed by the client timestamp assigned before encryption.
+The SessionID detects orphaned sessions during resending:
+
+> "If the DeviceRecord's active session matches the SessionID from the
+> relevant MessageRecord, then the sending device creates a new initiating
+> session... This prevents the sending device from repeatedly sending a
+> message using an orphaned session which does not match any recipient
+> session."
+
+The client timestamp assigned before encryption indexes a message.
 Retry count enforces SESAME's bounded-resend requirement.
 
 ## Properties
@@ -29,7 +32,7 @@ Retry count enforces SESAME's bounded-resend requirement.
 
 > **createdAt**: `number`
 
-Timestamp when record was created
+Timestamp when the store created the record
 
 ***
 
@@ -69,10 +72,10 @@ Device address (userId:deviceId format) for the recipient device
 
 > **sessionStateId**: `string`
 
-Sender's ratchet key (DHs.publicKey) at send time — for retry session matching.
+Sender's ratchet key (DHs.publicKey) at send time, for retry session matching.
 
-If the sender's current DHs differs from this stored value, the DH ratchet has advanced
-and the session is healthy — reuse it. If it matches, the session hasn't
+If the sender's current DHs differs from this stored value, the DH ratchet
+advanced and the session is healthy. Reuse it. If it matches, the session has not
 advanced and may need a fresh bundle.
 
 ***

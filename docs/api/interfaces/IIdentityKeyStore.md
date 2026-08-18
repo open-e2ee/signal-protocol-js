@@ -9,7 +9,7 @@
 Identity store with an SDK-oriented API and SDK composite-identity values.
 
 Manages local identity keys and contact identity verification. TOFU detects
-changes after a tuple is pinned; it does not authenticate first contact.
+changes after the store pins a tuple. It does not authenticate first contact.
 
 ## Extended by
 
@@ -22,7 +22,7 @@ changes after a tuple is pinned; it does not authenticate first contact.
 > **acceptContactIdentityRotation**(`address`, `identity`, `identityType?`, `suppliedCommitment?`): `Promise`\<[`ContactIdentityRecord`](../namespaces/keys/interfaces/ContactIdentityRecord.md)\>
 
 Explicitly accept a changed tuple and atomically delete every session for
-that user; the previous tuple becomes rollback history.
+that user. The previous tuple becomes rollback history.
 
 #### Parameters
 
@@ -54,7 +54,7 @@ that user; the previous tuple becomes rollback history.
 
 Get a contact's saved identity key.
 
-Returns null if no identity key has been saved for this address.
+Returns null if the store holds no identity key for this address.
 
 #### Parameters
 
@@ -103,7 +103,7 @@ Retrieve our identity key pair.
 Get our local registration ID.
 
 Registration ID is a random 16-bit integer generated once per install.
-Used to detect session resets when app is reinstalled.
+Detects session resets when the user reinstalls the app.
 
 #### Parameters
 
@@ -143,10 +143,10 @@ Check if identity key exists.
 
 > **isTrustedIdentity**(`address`, `identity`, `direction`, `identityType?`): `Promise`\<`boolean`\>
 
-Check if a contact's identity key is trusted.
+Check whether the store trusts a contact's identity key.
 
 Trust verification behavior depends on direction:
-- SENDING: Stricter - don't send to untrusted identities
+- SENDING: Stricter - do not send to untrusted identities
 - RECEIVING: More permissive - allow receiving but warn user
 
 From Signal Protocol:
@@ -170,7 +170,7 @@ Complete composite identity candidate
 
 [`TrustDirection`](../enumerations/TrustDirection.md)
 
-Whether we're sending or receiving
+Whether the local device sends or receives
 
 ##### identityType?
 
@@ -182,7 +182,7 @@ ACI or PNI trust namespace
 
 `Promise`\<`boolean`\>
 
-true if identity is trusted
+true if the store trusts the identity
 
 ***
 
@@ -192,7 +192,7 @@ true if identity is trusted
 
 Save a contact's identity key and detect changes.
 
-This is used for Trust On First Use (TOFU) and post-pinning change
+This supports Trust On First Use (TOFU) and post-pinning change
 detection. Returns whether either composite component changed.
 
 #### Parameters
@@ -235,7 +235,7 @@ IdentityKeyChange indicating if key is new or changed
 
 Set our local registration ID.
 
-Should only be called once during initialization.
+Call this only once, during initialization.
 
 #### Parameters
 

@@ -12,7 +12,7 @@ export default defineSchema({
     .index('by_user_id', ['userId'])
     // One ACI, one account: rememberAccount refuses a cross-account claim
     // over this index at write time. (Sealed-sender binding reads by user ID
-    // and compares the stored ACI; this index exists for the uniqueness
+    // and compares the stored ACI. This index exists for the uniqueness
     // check alone.)
     .index('by_aci_bytes', ['aciBytes']),
   devices: defineTable({
@@ -35,10 +35,10 @@ export default defineSchema({
     createdAt: v.number(),
     linkedAt: v.optional(v.number()),
     // Identifies *this* registration of the slot. Device rows are reused
-    // across registrations — `db.replace` keeps the row id and the deviceId
-    // is a small slot number — so neither identifies which link produced the
-    // current occupant. A fresh token is minted on every register and every
-    // link, and is never returned to clients.
+    // across registrations. The `db.replace` call keeps the row id, and the
+    // deviceId is a small slot number. Neither identifies which link produced
+    // the current occupant. Every register and every link mints a fresh
+    // token, and the server never returns it to clients.
     linkToken: v.optional(v.string()),
   })
     .index('by_user_id', ['userId'])
@@ -191,10 +191,10 @@ export default defineSchema({
     ])
     // Deduplication is per (recipient device, claimed sender): a
     // `clientMessageId` only ever collapses retries from the same sender.
-    // Without `senderUserId` two senders that mint non-random client message
-    // IDs (a counter, a timestamp) silently suppress each other's messages,
-    // and the suppressed sender is handed the other sender's message ID and
-    // server timestamp.
+    // Without `senderUserId`, two senders that mint non-random client message
+    // IDs, such as a counter or a timestamp, silently suppress each other's
+    // messages. The suppressed sender receives the other sender's message ID
+    // and server timestamp.
     .index('by_target_and_client_message_id', [
       'targetUserId',
       'targetDeviceId',
@@ -202,16 +202,17 @@ export default defineSchema({
       'clientMessageId',
     ])
     .index('by_expires_at', ['expiresAt']),
-  // The shared portion of a multi-recipient sealed-sender message —
-  // ephemeral public key and message ciphertext — stored once per send.
+  // The shared portion of a multi-recipient sealed-sender message
+  // (ephemeral public key and message ciphertext), stored once per send.
   // The per-recipient message rows carry only their 48 bytes of key
   // material plus a reference here, and delivery reassembles the wire
-  // form. This is the reference's shape: its message store inserts one
-  // shared multi-recipient payload and hands each recipient a pointer,
-  // because storing a copy per recipient turns one send into an
-  // amplification of itself. Rows share the message queue's retention
-  // and are reaped by TTL, not by delivery — the last reader must not
-  // have to know it is last.
+  // form. This is the reference's shape. Its message store inserts one
+  // shared multi-recipient payload and hands each recipient a pointer.
+  // Storing a copy per recipient turns one send into an amplification of
+  // itself.
+  //
+  // Rows share the message queue's retention and are reaped by TTL, not by
+  // delivery. The last reader must not have to know it is last.
   multiRecipientPayloads: defineTable({
     payloadId: v.string(),
     sharedBase64: v.string(),
@@ -260,16 +261,16 @@ export default defineSchema({
     ),
     encryptedMessage: v.optional(v.string()),
     assignedDeviceId: v.optional(v.number()),
-    // `linkToken` of the device row this session created at completion;
-    // teardown deletes a device only when the tokens match, so a device
+    // `linkToken` of the device row this session created at completion.
+    // Teardown deletes a device only when the tokens match, so a device
     // re-registered into the freed slot is never reaped. A millisecond
-    // timestamp was ambiguous here: two links landing in the same
-    // millisecond on the same reused slot produce equal stamps, and
-    // teardown would then reap the wrong link.
+    // timestamp is ambiguous here. Two links landing in the same millisecond
+    // on the same reused slot produce equal stamps, and teardown would then
+    // reap the wrong link.
     linkedDeviceToken: v.optional(v.string()),
     // `expired` is deliberately absent: it is never stored. Mutations
-    // reject expired sessions with a throw (which rolls back any patch),
-    // the cleanup cron deletes expired rows outright, and
+    // reject expired sessions with a throw, which rolls back any patch. The
+    // cleanup cron deletes expired rows outright, and
     // `getProvisioningMessage` reports expiry as a computed status.
     status: v.union(
       v.literal('waiting'),

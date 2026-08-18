@@ -19,7 +19,7 @@ Per X3DH spec: "Alice sends Bob an initial message containing:
 
 This allows Bob to:
 1. Extract Alice's keys from the message
-2. Perform X3DH as responder using Alice's ephemeral key
+2. Run X3DH as responder using Alice's ephemeral key
 3. Derive the same shared secret SK
 4. Decrypt the message and establish his session
 

@@ -9,7 +9,7 @@
 EC one-time PreKey store with an SDK-oriented API.
 
 Manages EC one-time prekeys for forward secrecy.
-One-time prekeys are consumed after use and cannot be reused.
+The protocol consumes a one-time prekey after use, and no caller may reuse it.
 
 ## Extended by
 
@@ -41,7 +41,7 @@ Retrieve all EC one-time prekeys.
 
 > **removeEcOneTimePreKey**(`preKeyId`, `identityType?`): `Promise`\<`void`\>
 
-Remove an EC one-time prekey after it has been used.
+Remove an EC one-time prekey after a session uses it.
 
 #### Parameters
 

@@ -10,10 +10,10 @@
 
 Base64-encoded private key (stored only in SecureStore).
 
-Branded type ensures private keys aren't accidentally passed where
-public keys are expected.
+Branded type prevents a private key from reaching a parameter that needs a
+public key.
 
-Extends Base64, so can be passed to functions expecting Base64.
+Extends Base64, so a function that expects Base64 accepts it.
 
 ## Type Declaration
 

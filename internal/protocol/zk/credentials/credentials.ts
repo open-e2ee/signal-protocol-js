@@ -55,7 +55,7 @@ let _systemParams: SystemParams | undefined;
 /**
  * Return the singleton SystemParams, generating on first call.
  *
- * Generation uses ShoSha256 with a fixed label; each point is produced by
+ * Generation uses ShoSha256 with a fixed label. Each point is produced by
  * `sho.getPoint()` in the canonical order defined by the profile.
  */
 export function getSystemParams(): SystemParams {

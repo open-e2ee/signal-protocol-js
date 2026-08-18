@@ -76,17 +76,18 @@ const STORAGE_KEYS = {
   SESAME_USER_PREFIX: '@signal:sesame:user:',
   SENDER_KEY_RECORD_PREFIX: '@signal:sender-key-record:',
   // Maps an opaque `senderKeyId` to the record that holds it. A received group
-  // message names its sender key by that id and nothing else, and this backend
-  // is a flat key-value store with no secondary indexes, so the reverse lookup
+  // message names its sender key by that id and nothing else. This backend is
+  // a flat key-value store with no secondary indexes, so the reverse lookup
   // has to be a stored pointer. The pointer value is a record key, not key
-  // material; the ids in it already travel unencrypted on the wire.
+  // material. The ids in it already travel unencrypted on the wire.
   //
   // The pointer is scoped by sender, not by id alone. A sender chooses its own
-  // id and announces it in a distribution message, so two senders can name the
-  // same one — by accident or deliberately, after reading a shared group's
-  // distribution. A single global slot per id would let the second writer
-  // silently take over the first's pointer, and every subsequent message from
-  // the first sender would fail to resolve. See `getSenderKeyIdPointerKey`.
+  // id and announces it in a distribution message. Two senders can therefore
+  // name the same one, by accident or deliberately, after reading a shared
+  // group's distribution. A single global slot per id would let the second
+  // writer silently take over the first's pointer. Every subsequent message
+  // from the first sender would then fail to resolve.
+  // See `getSenderKeyIdPointerKey`.
   SENDER_KEY_ID_INDEX_PREFIX: '@signal:sender-key-id:',
   SKIPPED_SENDER_KEY_PREFIX: '@signal:skipped-sender-key:',
   MESSAGE_RECORD_PREFIX: '@signal:message-record:',
@@ -96,13 +97,14 @@ const STORAGE_KEYS = {
 /**
  * Escape a value so it cannot contain the `:` that joins composite keys.
  *
- * Composite keys in this backend are `:`-joined strings, and the components
- * are identifiers the adapter does not get to choose: group IDs, sender key
- * IDs read straight off the wire, and user IDs handed over by the host
- * application's identify hook. None of them are validated, and a
- * tenant-scoped `tenant:alice` is an ordinary thing for a host to produce, so
- * "components contain no `:`" is an assumption rather than a fact and the
- * encoding has to make it one.
+ * Composite keys in this backend are `:`-joined strings. The components are
+ * identifiers the adapter does not get to choose. They are group IDs, sender
+ * key IDs read straight off the wire, and user IDs handed over by the host
+ * application's identify hook.
+ *
+ * None of them are validated, and a tenant-scoped `tenant:alice` is an
+ * ordinary thing for a host to produce. So "components contain no `:`" is an
+ * assumption rather than a fact, and the encoding has to make it one.
  *
  * `%` is escaped first so the escape character itself round-trips: without it
  * a literal `%3A` in an identifier would unescape into a separator. Values
@@ -113,7 +115,7 @@ function escapeKeyComponent(value: string): string {
   return value.replace(/%/g, '%25').replace(/:/g, '%3A');
 }
 
-/** Inverse of {@link escapeKeyComponent}; unescapes in the opposite order. */
+/** Inverse of {@link escapeKeyComponent}. It unescapes in the opposite order. */
 function unescapeKeyComponent(value: string): string {
   return value.replace(/%3A/g, ':').replace(/%25/g, '%');
 }
@@ -121,7 +123,7 @@ function unescapeKeyComponent(value: string): string {
 /**
  * A write the injected backend rejects for want of space fails with an error
  * named `QuotaExceededError`. Checked by name rather than instanceof, as in
- * the web adapter: the backend is application-supplied, so no error class is
+ * the web adapter. The backend is application-supplied, so no error class is
  * shared with it, and the name is the documented signal.
  */
 function isQuotaExceededError(error: unknown): boolean {
@@ -143,8 +145,8 @@ function mapQuotaFailure(operation: string, error: unknown): unknown {
  * Rebinds every method of the store so a QuotaExceededError from the
  * injected backend crosses the adapter boundary as the typed
  * StorageQuotaExceededError. Quota exhaustion can surface from any setItem
- * or atomicWrite the backend runs, so the mapping lives at this one seam
- * instead of inside each of the adapter's write paths, and a method added
+ * or atomicWrite the backend runs. The mapping therefore lives at this one
+ * seam, instead of inside each of the adapter's write paths. A method added
  * later is covered without a wrapper of its own. The backend contract
  * commits nothing from a rejected write, so the typed error always means
  * the write did not persist.
@@ -588,7 +590,7 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     identityType?: IdentityType
   ): Promise<void> {
     this.ensureInitialized();
-    // For simplicity, we'll store the usage record as metadata
+    // For simplicity, we will store the usage record as metadata
     const usageKey = `${STORAGE_KEYS.PREKEY_PREFIX}kyber-usage:${identityType ?? 'aci'}:${kyberPreKeyId}`;
     const usage = {
       kyberPreKeyId,
@@ -912,7 +914,7 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
   // ============================================================================
 
   /**
-   * Ensure the adapter is initialized
+   * Throw when the adapter is not initialized
    * @throws Error if not initialized
    */
   private ensureInitialized(): void {
@@ -942,7 +944,8 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
       this.getContactStorageKey(address, identityType)
     );
     if (!encrypted) {
-      // Alpha-format reset: delete the obsolete single-publicKey row.
+      // A miss here can still leave an obsolete single-publicKey row under the
+      // unsuffixed key, which no read path can interpret. Delete it.
       await this.storageBackend.removeItem(`${STORAGE_KEYS.CONTACT_PREFIX}${address.userId}`);
       return null;
     }
@@ -1400,9 +1403,9 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
    *
    * Scoped by sender, so one sender's id can never displace another's. That
    * scoping is only worth anything if the join is injective, and a
-   * `senderKeyId` is the component least entitled to trust — it is whatever
+   * `senderKeyId` is the component least entitled to trust. It is whatever
    * bytes the sender put in the frame's distribution field, validated
-   * nowhere — so it is escaped rather than reasoned about. With every
+   * nowhere, so it is escaped rather than reasoned about. With every
    * component escaped, no choice of id can synthesize another sender's
    * `:<deviceId>:<userId>` tail.
    */
@@ -1417,9 +1420,9 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
   /**
    * Drop the `senderKeyId` pointers a record owns, before the record goes.
    *
-   * Ordered that way deliberately: a pointer that outlives its record is
-   * self-healing (`resolveGroupForSenderKeyId` confirms and deletes it), while
-   * a record that outlives its pointers is simply unreachable by id.
+   * Ordered that way deliberately. A pointer that outlives its record is
+   * self-healing, because `resolveGroupForSenderKeyId` confirms and deletes
+   * it. A record that outlives its pointers is simply unreachable by id.
    */
   private async removeSenderKeyIdPointers(
     groupId: string,
@@ -1452,9 +1455,9 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
 
     // The pointer is a cache over the records, so it is confirmed against the
     // record rather than trusted. The sender check is an invariant assertion
-    // now that the pointer key is itself sender-scoped: a mismatch would mean
+    // now that the pointer key is itself sender-scoped. A mismatch would mean
     // the two disagree, so resolve to nothing rather than reaching into
-    // another sender's record. It is deliberately not deleted — the key
+    // another sender's record. It is deliberately not deleted. The key
     // belongs to this sender, and a wrong value is a bug to notice, not a
     // stale entry to sweep.
     const parsed = this.parseSenderKeyRecordStorageKey(recordKey);
@@ -1553,9 +1556,9 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
 
     const recordKey = this.getSenderKeyRecordStorageKey(groupId, userId, deviceId);
 
-    // Rotation drops the oldest state out of the record; its pointer has to go
-    // with it, or a replayed message naming a discarded key still resolves to
-    // a group and fails one layer deeper than it should.
+    // Rotation drops the oldest state out of the record. Its pointer has to go
+    // with it. Otherwise a replayed message naming a discarded key still
+    // resolves to a group, and fails one layer deeper than it should.
     const superseded = await this.getSenderKeyRecord(groupId, userId, deviceId);
     const retained = new Set(states.map((state) => state.senderKeyId));
     if (superseded) {

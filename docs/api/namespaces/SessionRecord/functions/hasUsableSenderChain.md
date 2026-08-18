@@ -13,7 +13,7 @@ Check if the session has a usable sender chain for encrypting messages.
 A session is usable for sending if:
 1. It has a current session
 2. The current session has sending chain keys (CKs)
-3. The session hasn't expired for sending (per SESAME MAXSEND threshold)
+3. The session has not expired for sending (per SESAME MAXSEND threshold)
 
 ## Parameters
 
@@ -33,4 +33,4 @@ Current time (default: Date.now())
 
 `boolean`
 
-true if session can be used for sending
+true if the record can send with this session

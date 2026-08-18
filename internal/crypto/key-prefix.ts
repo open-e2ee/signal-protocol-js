@@ -2,7 +2,7 @@
  * Signal Protocol Key Type Prefix
  *
  * The reference implementation uses 0x05 (DJB = Daniel J. Bernstein / Curve25519) as a type identifier
- * in serialized keys. Internal storage uses raw 32-byte keys; the prefix is added
+ * in serialized keys. Internal storage uses raw 32-byte keys. The prefix is added
  * only for wire format and safety number computation.
  *
  * Architecture:
@@ -99,7 +99,7 @@ export function isSerializedPublicKey(key: Uint8Array): boolean {
 }
 
 /**
- * Ensure a key is in serialized format (33 bytes with 0x05 prefix).
+ * Return a key in serialized format (33 bytes with 0x05 prefix).
  *
  * Accepts both formats:
  * - 32-byte raw key: adds prefix
@@ -129,7 +129,7 @@ export function ensureSerializedPublicKey(key: Uint8Array): Uint8Array {
 }
 
 /**
- * Ensure a key is in raw format (32 bytes, no prefix).
+ * Return a key in raw format (32 bytes, no prefix).
  *
  * Accepts both formats:
  * - 32-byte raw key: returns as-is

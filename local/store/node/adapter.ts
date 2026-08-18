@@ -536,9 +536,9 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
   }
 
   async getDeviceRecord(userId: string, deviceId: number): Promise<DeviceRecord | null> {
-    // The live session is read through `getSessionRecord` rather than out of the
-    // device record, so a session this store would refuse to hand the protocol
-    // layer is not handed to the SESAME layer either.
+    // The live session is read through `getSessionRecord` rather than out of
+    // the device record. A session this store would refuse to hand the protocol
+    // layer is therefore not handed to the SESAME layer either.
     const session = await this.getSessionRecord(ProtocolAddress.create(userId, deviceId));
     const { users } = await this.db.readSesameState<SerializedNodeUserRecord>();
     const stored = users[userId]?.devices.find(([id]) => id === deviceId)?.[1] ?? null;
@@ -961,7 +961,8 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
 
   async clearAllSessions(): Promise<void> {
     // A device record whose session is gone is not a device this store can
-    // reach, so the SESAME records go with the sessions in the same commit.
+    // reach. The SESAME records therefore go with the sessions in the same
+    // commit.
     await this.db.clearSesameState();
   }
 

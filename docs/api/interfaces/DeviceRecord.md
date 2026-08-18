@@ -9,8 +9,8 @@
 Record of a remote device and its session.
 
 Uses SessionRecord directly instead of a separate
-SesameSessionRecord wrapper. Session archiving is handled by
-SessionRecord.archivedSessions, eliminating the need for a separate
+SesameSessionRecord wrapper. SessionRecord.archivedSessions handles session
+archiving, which eliminates the need for a separate
 inactiveSessions list.
 
 ## See
@@ -23,7 +23,7 @@ https://signal.org/docs/specifications/sesame/
 
 > **createdAt**: `number`
 
-Timestamp when this device record was created
+Timestamp of the moment this device record began
 
 ***
 
@@ -50,7 +50,7 @@ Used for authentication and safety number generation
 
 Whether this device's identity key requires user verification.
 Set to true when identity key changes unexpectedly.
-Messaging is blocked until user verifies safety numbers.
+The client blocks messaging until the user verifies safety numbers.
 
 ***
 
@@ -65,7 +65,7 @@ Contains:
 - archivedSessions: Archived sessions for receiving (indexed by baseKey)
 - metadata: SESAME lifecycle info (createdAt, lastSentAt, lastReceivedAt, isInitiator)
 
-Null if no session has been established yet.
+Null if no session exists yet.
 
 Note: Session convergence (receive-activated switching) uses
 SessionRecord.promoteSession() to swap archived ↔ current.

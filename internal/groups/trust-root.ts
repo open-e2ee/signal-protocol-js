@@ -1,7 +1,7 @@
 /**
  * Serialized trust root for one group-server deployment.
  *
- * The blob is pinned by the application at build time. It is never discovered
+ * The application pins the blob at build time. It never comes
  * from a relay at runtime.
  */
 
@@ -39,7 +39,7 @@ export interface GroupTrustRoot {
 /**
  * Encode a group trust root into its versioned binary representation.
  *
- * Version 1 is fixed-width:
+ * Version 1 uses a fixed width:
  * `version || signing-key length || credential key || signing key ||
  * profile-key credential key || endorsement root`.
  *

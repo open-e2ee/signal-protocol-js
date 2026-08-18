@@ -39,7 +39,7 @@ SK = KDF(DH1 || DH2 || DH3 || DH4 || KEM_SS)
 
 These inputs support the profile's conditional hybrid-security and
 one-time-prekey properties. See `docs/SECURITY.md` for their assumptions and
-limits; this data shape alone is not a security proof.
+limits. This data shape alone is not a security proof.
 
 ## See
 
@@ -57,7 +57,7 @@ Device ID within this user's device set.
 - Primary device: 1
 - Linked devices: 2-5 (max 5 devices per user)
 
-Used for multi-device fanout - messages are encrypted separately
+Used for multi-device fanout. The client encrypts messages separately
 for each of the recipient's devices.
 
 ***
@@ -71,7 +71,7 @@ EC One-Time PreKey (X25519, optional).
 Single-use key consumed atomically on fetch. Provides additional
 forward secrecy - if compromised, only affects one session.
 
-May be null/undefined if the server has exhausted the prekey pool.
+May be null/undefined if the server exhausted the prekey pool.
 Session establishment still works without it (degraded to 3-DH).
 
 #### Union Members
@@ -84,7 +84,7 @@ Session establishment still works without it (degraded to 3-DH).
 
 > **keyId**: `number`
 
-Key ID for tracking which key was consumed
+Key ID for tracking which key the session consumed
 
 ##### publicKey
 
@@ -114,7 +114,7 @@ ID, and public key in the profile's domain-separated context.
 
 > **keyId**: `number`
 
-Key ID for tracking which key was used
+Key ID for tracking which key the session used
 
 #### publicKey
 
@@ -135,7 +135,7 @@ Ed25519 signature over publicKey bytes (64 bytes, base64)
 > **identity**: [`CompositeIdentityV1`](../namespaces/keys/interfaces/CompositeIdentityV1.md)
 
 Versioned per-user identity trust object. ACI and PNI are independent.
-Linked devices expose the same tuple; registration IDs and prekeys remain
+Linked devices expose the same tuple. Registration IDs and prekeys remain
 device-specific. Consumers derive commitments locally.
 
 ***
@@ -149,11 +149,11 @@ Last-resort KEM PreKey for PQXDH (ML-KEM-1024 + Ed25519 signature, optional).
 Post-quantum key encapsulation mechanism. Provides protection against
 "harvest now, decrypt later" attacks from quantum computers.
 
-Reusable KEM prekey used when the server has exhausted the one-time KEM pool.
-Server and relay adapters must not place one-time KEM material in this field;
-use `kemOneTimePreKey` for consumed one-time KEM material.
+Reusable KEM prekey used when the server exhausted the one-time KEM pool.
+Server and relay adapters must not place one-time KEM material in this field.
+Use `kemOneTimePreKey` for consumed one-time KEM material.
 
-- Public key: 1569 bytes (`0x0A` plus 1568 raw bytes; base64 encoded)
+- Public key: 1569 bytes (`0x0A` plus 1568 raw bytes, base64 encoded)
 - Ciphertext: 1569 bytes (`0x0A` plus 1568 raw bytes)
 - Shared secret: 32 bytes
 
@@ -200,14 +200,14 @@ https://signal.org/docs/specifications/pqxdh/
 
 KEM One-Time PreKey (ML-KEM-1024 + Ed25519 signature, optional).
 
-Per PQXDH spec Section 3.2, these are signed one-time pqkem prekeys
+Per PQXDH spec Section 3.2, the identity key signs these one-time pqkem prekeys
 that provide per-session post-quantum forward secrecy.
 
 Server prefers these over the last-resort KEM prekey. Consumed atomically on
 fetch (like EC one-time prekeys). A bundle should contain either this field
 or `kemLastResortPreKey` as the selected KEM material for PQXDH.
 
-May be null/undefined if the server has exhausted the prekey pool.
+May be null/undefined if the server exhausted the prekey pool.
 Session establishment still works without it (falls back to last-resort).
 
 #### Union Members
@@ -220,7 +220,7 @@ Session establishment still works without it (falls back to last-resort).
 
 > **keyId**: `number`
 
-Key ID for tracking which key was consumed
+Key ID for tracking which key the session consumed
 
 ##### publicKey
 

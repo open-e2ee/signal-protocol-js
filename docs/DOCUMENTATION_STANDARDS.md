@@ -6,32 +6,32 @@ application.
 
 ## Documentation hierarchy
 
-- The root [`README.md`](../README.md) introduces the package: what it is, how
-  it compares to the alternatives, how to install it, one working example, and
-  the evidence behind its security claims. It links onward rather than
-  documenting the full surface itself.
+- The root [`README.md`](../README.md) introduces the package. It says what
+  the package is, how it compares to the alternatives, and how to install it.
+  It also gives one working example and the evidence behind its security
+  claims. It links onward rather than documenting the full surface itself.
 - [`PACKAGE_SURFACE.md`](./PACKAGE_SURFACE.md) is the complete public surface:
   root exports, every subpath, adapter implementations, and core vocabulary.
 - [`RECIPES.md`](./RECIPES.md) holds the working shapes for common operations.
-- [`ASSURANCE.md`](./ASSURANCE.md) states what is verified, where, and what is
-  not published.
+- [`ASSURANCE.md`](./ASSURANCE.md) states what the project verifies, where it
+  verifies it, and what it does not publish.
 - A module README explains a meaningful exported domain or integration
   boundary. It answers what the module does, why it exists, and how to use it.
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) describes dependency direction and
   ownership across modules.
 - [`ADAPTERS.md`](../ADAPTERS.md) describes platform and backend composition.
-- `docs/api/` is generated from the exported TypeScript declarations and
+- A generator builds `docs/api/` from the exported TypeScript declarations and
   source documentation.
 
 A thin leaf module does not need its own README when its parent guide explains
-the complete contract. A first-class domain, platform boundary, or external
-provider integration does.
+the complete contract. A module that owns a domain, a platform boundary, or an
+external provider integration does.
 
 ## README structure
 
 Module READMEs should normally include:
 
-1. A plain-language statement of what the module does.
+1. What the module does, in plain language.
 2. Why the module is separate from the client or application layer.
 3. The canonical package import path.
 4. A minimal, complete example using public exports.
@@ -47,21 +47,21 @@ directly when that is the real integration shape.
 
 Public comments document the code that exists now. Prefer comments that explain:
 
-- invariants and validation rules;
-- who owns state or makes a security decision;
-- observable side effects and idempotency;
-- units, encodings, versioning, and expiry semantics;
-- why a boundary exists when the reason is not apparent from its type; and
+- invariants and validation rules.
+- who owns state or makes a security decision.
+- observable side effects and idempotency.
+- units, encodings, versioning, and expiry semantics.
+- why a boundary exists when the reason is not apparent from its type.
 - failure or retry behavior that a caller must handle.
 
 Avoid comments that:
 
-- repeat the implementation line by line;
-- describe old file locations, migrations, or application-specific paths;
+- repeat the implementation line by line.
+- describe old file locations, migrations, or application-specific paths.
 - narrate implementation provenance or point to another project's source
-  files;
-- use compatibility shorthand such as “Signal-style” or “Signal-aligned”;
-- expose internal assurance artifacts or their organization; or
+  files.
+- use compatibility shorthand such as “Signal-style” or “Signal-aligned”.
+- expose internal assurance artifacts or their organization.
 - promise behavior that belongs to an application, backend, or platform.
 
 Use public standards, RFCs, and project policy documents when an external
@@ -88,13 +88,13 @@ belongs in the public
 
 State boundaries directly:
 
-- device-local stores own private keys and session state;
+- device-local stores own private keys and session state.
 - relays own authenticated device/public-key records and encrypted-envelope
-  delivery;
+  delivery.
 - object-store brokers own authorization, canonical object identifiers, and
-  provider keys;
+  provider keys.
 - applications own product policy, account authorization, decrypted message
-  persistence, and user experience; and
+  persistence, and user experience.
 - generated framework APIs remain application-owned even when an SDK adapter
   consumes them.
 

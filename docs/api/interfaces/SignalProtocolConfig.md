@@ -39,7 +39,7 @@ Prefer `required` unless a product-reviewed constraint needs direct mode.
 
 Post-quantum policy for session establishment.
 
-- `required`: require post-quantum peers; peers without PQ material fail closed.
+- `required`: require post-quantum peers. Peers without PQ material fail closed.
 - `compatible`: use post-quantum peers when available and allow classical
   compatibility only for peers with no PQ material at all.
 

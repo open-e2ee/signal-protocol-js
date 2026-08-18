@@ -42,11 +42,11 @@ import {
  */
 export {};
 export interface HeadlessRotationResult {
-  /** Whether signed prekey was rotated */
+  /** Whether the call rotated the signed prekey */
   signedRotated: boolean;
-  /** Whether Kyber prekey was rotated */
+  /** Whether the call rotated the Kyber prekey */
   kyberRotated: boolean;
-  /** Whether one-time prekeys were replenished */
+  /** Whether the call replenished the one-time prekeys */
   oneTimeReplenished: boolean;
   /** Any errors that occurred (non-fatal) */
   errors: string[];
@@ -72,13 +72,13 @@ export interface HeadlessRotationOptions {
  * Per PQXDH spec Section 3.2, rotates BOTH signed and Kyber prekeys
  * together to maintain synchronized post-quantum forward secrecy.
  *
- * This function is designed for background tasks where no React
- * context is available. It uses the same core rotation logic
+ * This function suits background tasks that have no React
+ * context. It uses the same core rotation logic
  * as SignalProtocolClient but works with any ISignalProtocolRelayServer implementation.
  *
  * Features:
  * - Works with ConvexSignalProtocolRelayServer or any ISignalProtocolRelayServer implementation
- * - Checks if rotation is needed before performing it
+ * - Checks whether the keys need rotation before it rotates them
  * - Handles errors gracefully (returns partial success)
  * - Logs all operations for debugging
  *
@@ -213,7 +213,7 @@ export async function rotateKeysHeadless(
 /**
  * Check if any keys need rotation
  *
- * Lightweight check that doesn't perform rotation.
+ * Lightweight check that does not rotate anything.
  * Useful for deciding whether to run the full rotation.
  *
  * @param relay - Signal Protocol relay server interface

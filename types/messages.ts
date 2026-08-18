@@ -16,7 +16,7 @@ export enum MessageType {
    * Regular Double Ratchet message.
    *
    * Standard encrypted message using the Double Ratchet algorithm.
-   * Used after session has been established.
+   * Use this after the session exists.
    */
   RATCHET = 'ratchet',
 
@@ -44,7 +44,7 @@ export enum ContentHint {
   /**
    * Default behavior - no special handling.
    *
-   * Message is treated as a normal user message with standard
+   * The client treats the message as a normal user message, with standard
    * retry and storage policies.
    */
   Default = 0,
@@ -55,15 +55,15 @@ export enum ContentHint {
    * Examples:
    * - Text messages
    * - Media with permanent URLs
-   * - Messages that aren't time-sensitive
+   * - Messages that are not time-sensitive
    *
-   * Resendable messages can be retried multiple times with exponential
+   * The client can retry a resendable message multiple times with exponential
    * backoff if delivery fails.
    */
   Resendable = 1,
 
   /**
-   * Implicit/ephemeral message - don't store long-term.
+   * Implicit/ephemeral message - do not store long-term.
    *
    * Examples:
    * - Typing indicators
@@ -73,9 +73,9 @@ export enum ContentHint {
    *
    * Implicit messages:
    * - Should not be resent if delivery fails
-   * - Can be discarded to save storage space
+   * - The store may discard them to save storage space
    * - Have lower priority in delivery queue
-   * - Don't contribute to unread counts
+   * - Do not contribute to unread counts
    */
   Implicit = 2,
 }
@@ -84,7 +84,7 @@ export enum ContentHint {
  * Double Ratchet message header
  *
  * Contains metadata needed for DH ratcheting and out-of-order message handling.
- * This header is sent with every encrypted message.
+ * Every encrypted message carries this header.
  *
  * Field names reflect the SignalProtocolMessage wire fields:
  */
@@ -93,7 +93,7 @@ export interface MessageHeader {
    * Sender's current ratchet public key (proto: ratchet_key, field 1).
    *
    * This is the ephemeral DH public key used in the Double Ratchet algorithm.
-   * When this changes, the recipient performs a DH ratchet step.
+   * When this changes, the recipient runs a DH ratchet step.
    */
   ratchetKey: PublicKey;
 
@@ -111,7 +111,7 @@ export interface MessageHeader {
    * Number of messages in the previous sending chain (proto: previous_counter, field 3).
    *
    * When a DH ratchet occurs, this tells the recipient how many messages
-   * were sent in the previous chain, allowing them to store skipped keys.
+   * the previous chain carried, allowing them to store skipped keys.
    */
   previousCounter: number;
 }
@@ -123,10 +123,10 @@ export interface MessageHeader {
  * Uses AES-256-CBC + HMAC-SHA256 per Signal Protocol specification.
  *
  * Section 3 Variant (Plaintext Headers + MAC):
- * - DH public key is sent in plaintext (needed to determine key chain)
- * - Message counters are sent in plaintext (PN and N)
+ * - The header carries the DH public key in plaintext (needed to determine key chain)
+ * - The header carries the message counters in plaintext (PN and N)
  * - HMAC-SHA256 (truncated to 8 bytes) authenticates header + ciphertext
- * - Identity keys are included in MAC computation for session binding
+ * - The MAC computation includes identity keys for session binding
  *
  * @see https://signal.org/docs/specifications/doubleratchet/ (Section 3)
  */
@@ -158,15 +158,15 @@ export interface RatchetMessage {
 
   // Note: SPQR fields (epoch, messageNumber, kyberCiphertext, kyberPublicKey, versionCapability)
   // are opaque bytes in SignalProtocolMessage protobuf field 5 (pqRatchet). The cipher layer never
-  // unpacks them — spqrSend/spqrRecv handle all SPQR internals as a black box.
+  // unpacks them. spqrSend/spqrRecv handle all SPQR internals as a black box.
 
   /**
    * Content hint for delivery and retry behavior (optional).
    *
    * Helps optimize message handling without decrypting:
    * - DEFAULT: Normal message with standard policies
-   * - RESENDABLE: Can be retried if delivery fails
-   * - IMPLICIT: Ephemeral (typing, receipts) - don't store long-term
+   * - RESENDABLE: the client can retry it if delivery fails
+   * - IMPLICIT: Ephemeral (typing, receipts) - do not store long-term
    */
   contentHint?: ContentHint;
 }
@@ -185,7 +185,7 @@ export interface RatchetMessage {
  *
  * This allows Bob to:
  * 1. Extract Alice's keys from the message
- * 2. Perform X3DH as responder using Alice's ephemeral key
+ * 2. Run X3DH as responder using Alice's ephemeral key
  * 3. Derive the same shared secret SK
  * 4. Decrypt the message and establish his session
  */
@@ -216,22 +216,23 @@ export interface PreKeyMessage {
   /** HMAC-SHA256 truncated to 8 bytes (identity-bound: includes sender/receiver identity keys) */
   mac: Base64;
 
-  // PreKey-specific fields
-  senderId: string; // Sender's user ID (needed for responder to establish session)
-  senderDeviceId: number; // Sender's device ID (required for multi-device SESAME)
-  senderIdentity: CompositeIdentityV1; // Sender's canonical composite identity
-  senderEphemeralKey: PublicKey; // Sender's ephemeral DH public key - critical for responder X3DH
-  senderRegistrationId: number; // Sender's registration ID (for session reset detection)
+  // PreKey-specific fields.
+  senderId: string; // Sender's user ID (needed for responder to establish session).
+  senderDeviceId: number; // Sender's device ID (required for multi-device SESAME).
+  senderIdentity: CompositeIdentityV1; // Sender's canonical composite identity.
+  senderEphemeralKey: PublicKey; // Sender's ephemeral DH public key, critical for responder X3DH.
+  senderRegistrationId: number; // Sender's registration ID (for session reset detection).
+
   /** Explicit recipient account identity namespace, authenticated by the inner message MAC. */
   recipientIdentityType: IdentityType;
-  usedSignedPreKeyId?: number; // ID of recipient's signed prekey used (for one-time prekey removal)
-  usedOneTimePreKeyId?: number; // ID of recipient's one-time prekey used (if available)
+  usedSignedPreKeyId?: number; // ID of recipient's signed prekey used (for one-time prekey removal).
+  usedOneTimePreKeyId?: number; // ID of recipient's one-time prekey used (if available).
 
-  // PQXDH (Post-Quantum Extended Diffie-Hellman) fields
-  usedKyberPreKeyId?: number; // ID of recipient's Kyber last-resort prekey used
-  kyberCiphertext?: Base64; // ML-KEM-1024 ciphertext for last-resort prekey
-  usedKemOneTimePreKeyId?: number; // ID of recipient's one-time KEM prekey used
-  kemOneTimePreKeyCiphertext?: Base64; // ML-KEM-1024 ciphertext for one-time prekey
+  // PQXDH (Post-Quantum Extended Diffie-Hellman) fields.
+  usedKyberPreKeyId?: number; // ID of recipient's Kyber last-resort prekey used.
+  kyberCiphertext?: Base64; // ML-KEM-1024 ciphertext for a last-resort prekey.
+  usedKemOneTimePreKeyId?: number; // ID of recipient's one-time KEM prekey used.
+  kemOneTimePreKeyCiphertext?: Base64; // ML-KEM-1024 ciphertext for a one-time prekey.
 }
 
 /**

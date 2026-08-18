@@ -12,18 +12,18 @@
  */
 
 /**
- * Direction of message flow for trust verification context.
+ * Which way a message flows, for trust verification context.
  *
- * Trust verification behavior differs based on whether you're sending
- * or receiving a message:
+ * Trust verification behavior differs when you send a message and when you
+ * receive one:
  *
- * - SENDING: Stricter verification. Don't send to untrusted identities.
+ * - SENDING: Stricter verification. Do not send to untrusted identities.
  *   Prevent accidentally leaking information to attackers.
  *
  * - RECEIVING: More permissive. Allow receiving from changed identities
  *   but warn the user. Maintains communication while alerting to risks.
  *
- * Receiving and sending can use different product policies: sending to an
+ * Receiving and sending can use different product policies. Sending to an
  * untrusted identity risks disclosure, while receiving can surface the change
  * without releasing new plaintext to that identity.
  *
@@ -54,17 +54,17 @@
 export {};
 export enum TrustDirection {
   /**
-   * Message is being sent to the remote party.
+   * The client sends the message to the remote party.
    *
    * Use stricter verification:
    * - Require explicit user trust for new identities
-   * - Block sending if identity key has changed without user confirmation
+   * - Block sending if the identity key changed without user confirmation
    * - Prevent information leakage to potential attackers
    */
   SENDING = 'sending',
 
   /**
-   * Message is being received from the remote party.
+   * The client receives the message from the remote party.
    *
    * Use more permissive verification:
    * - Allow receiving from new identities (TOFU)
@@ -115,8 +115,8 @@ export enum IdentityKeyChange {
   ROLLBACK = 'rollback',
 }
 
-// TrustVerificationResult type alias was removed as it was just `boolean` with no
-// added type safety. Use `boolean` directly in function signatures.
+// No TrustVerificationResult type alias exists. It would be just `boolean` with
+// no added type safety. Use `boolean` directly in function signatures.
 
 /**
  * Options for trust verification behavior.

@@ -60,7 +60,7 @@ async function withRetry<T>(
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
 
-      // Don't retry on last attempt
+      // Do not retry on last attempt
       if (attempt === config.maxRetries) {
         break;
       }
@@ -78,7 +78,7 @@ async function withRetry<T>(
  * Application-provided relay connection.
  *
  * Both devices use a short-lived channel. The sender uploads an encrypted
- * transfer packet; the receiver validates it, marks the channel complete, and
+ * transfer packet. The receiver validates it, marks the channel complete, and
  * cleanup removes the channel. The configured operations determine the
  * backend provider and policy.
  */

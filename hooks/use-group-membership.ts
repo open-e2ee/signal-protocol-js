@@ -2,7 +2,7 @@
  * useGroupMembership Hook
  *
  * React hook for handling group membership changes and sender key rotation.
- * Removing a member rotates the sender key before it is redistributed to the
+ * Removing a member rotates the sender key, and only then does it reach the
  * remaining members.
  *
  * @example
@@ -48,7 +48,7 @@ export interface UseGroupMembershipResult {
    */
   handleMemberAdded: (groupId: string, newMemberId: string) => Promise<void>;
 
-  /** Whether a membership change is being processed */
+  /** Whether a membership change is under way */
   isProcessing: boolean;
 
   /** Last error that occurred, if any */
@@ -122,11 +122,11 @@ export function useGroupMembership({
           });
         }
 
-        // Clear endorsement cache — membership changed, endorsements are stale
+        // Clear endorsement cache. Membership changed, endorsements are stale
         try {
           await clearEndorsements(groupId);
         } catch (endorsementError) {
-          // Non-fatal — endorsements will be refreshed on next send
+          // Non-fatal. The next send refreshes endorsements
           logger.warn('Failed to clear endorsements on member removal', {
             category: 'E2EE',
             data: { groupId, error: (endorsementError as Error).message },
@@ -177,18 +177,18 @@ export function useGroupMembership({
             },
           });
         } else {
-          // We don't have a key yet - we'll create one when we send our first message
+          // We do not have a key yet - we will create one when we send our first message
           logger.debug('No sender key to distribute to new member - will create on first send', {
             category: 'E2EE',
             data: { groupId, newMemberId },
           });
         }
 
-        // Clear endorsement cache — membership changed, endorsements are stale
+        // Clear endorsement cache. Membership changed, endorsements are stale
         try {
           await clearEndorsements(groupId);
         } catch (endorsementError) {
-          // Non-fatal — endorsements will be refreshed on next send
+          // Non-fatal. The next send refreshes endorsements
           logger.warn('Failed to clear endorsements on member addition', {
             category: 'E2EE',
             data: { groupId, error: (endorsementError as Error).message },

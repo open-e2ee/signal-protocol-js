@@ -2,30 +2,19 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / SealedSenderAuthError
+[@open-e2ee/signal-protocol-sdk](../README.md) / UntrustedIdentityError
 
-# Class: SealedSenderAuthError
+# Class: UntrustedIdentityError
 
-Error thrown when sealed sender (anonymous delivery) authentication fails.
+Error thrown when an identity key is not trusted.
 
-The server rejected the unidentified access key, for one of these reasons:
-- The access key does not match the recipient's stored key
-- The recipient's account was not found
-- The recipient disabled unrestricted unidentified access
-
-This error triggers automatic fallback to identified sender delivery.
+This is a security-critical error that requires user intervention.
+The user must verify the safety number before continuing communication.
 
 ## Example
 
 ```typescript
-try {
-  await relay.sendUnidentified(envelope, accessKey);
-} catch (error) {
-  if (isSealedSenderAuthError(error)) {
-    // Fall back to identified delivery
-    await relay.send(envelope);
-  }
-}
+throw new UntrustedIdentityError(address, identityKey);
 ```
 
 ## Extends
@@ -36,17 +25,21 @@ try {
 
 ### Constructor
 
-> **new SealedSenderAuthError**(`cause?`): `SealedSenderAuthError`
+> **new UntrustedIdentityError**(`address`, `identity`): `UntrustedIdentityError`
 
 #### Parameters
 
-##### cause?
+##### address
 
-`Error`
+[`ProtocolAddress`](../interfaces/ProtocolAddress.md)
+
+##### identity
+
+[`CompositeIdentityV1`](../namespaces/keys/interfaces/CompositeIdentityV1.md)
 
 #### Returns
 
-`SealedSenderAuthError`
+`UntrustedIdentityError`
 
 #### Overrides
 
@@ -71,6 +64,18 @@ try {
 #### Inherited from
 
 [`EncryptionError`](EncryptionError.md).[`context`](EncryptionError.md#context)
+
+***
+
+### identity
+
+> `readonly` **identity**: [`CompositeIdentityV1`](../namespaces/keys/interfaces/CompositeIdentityV1.md)
+
+***
+
+### untrustedAddress
+
+> `readonly` **untrustedAddress**: [`ProtocolAddress`](../interfaces/ProtocolAddress.md)
 
 ## Accessors
 

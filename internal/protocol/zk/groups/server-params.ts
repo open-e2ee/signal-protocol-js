@@ -97,7 +97,7 @@ export interface ServerSecretParams {
  * Derive all server key material deterministically from randomness.
  *
  * Each key pair is derived from its own domain-separated SHO instance,
- * absorbing the provided randomness. This ensures independence between
+ * absorbing the provided randomness. That keeps independence between
  * the credential, endorsement, and signing keys.
  *
  * @param randomness - At least 32 bytes of cryptographically secure randomness

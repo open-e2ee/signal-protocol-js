@@ -55,7 +55,7 @@ Number of stored skipped keys for this sender
 
 > **deleteAllSenderKeysForGroup**(`groupId`): `Promise`\<`number`\>
 
-Delete all sender keys for a group (when group is deleted).
+Delete all sender keys for a group (when the caller deletes the group).
 
 #### Parameters
 
@@ -75,7 +75,7 @@ Delete all sender keys for a group (when group is deleted).
 
 Delete oldest skipped keys to make room for new ones.
 
-Called when maxSkippedKeys limit is reached.
+The store calls this when the chain reaches the maxSkippedKeys limit.
 
 #### Parameters
 
@@ -227,7 +227,7 @@ Retrieve sender key state for a group member device.
 
 Retrieve all sender key states (current + previous) for a group member device.
 
-First element is the current state; remaining are previous states.
+First element is the current state. The remaining entries are previous states.
 
 #### Parameters
 
@@ -305,13 +305,13 @@ Resolve the group a sender key belongs to, given only the identifier that
 travels on the wire.
 
 A received group message names its sender key by `senderKeyId` and nothing
-else — the identifier is opaque, and the envelope no longer carries a
+else. The identifier is opaque, and the envelope no longer carries a
 group. This is the receiver's only way back to a group, so it is what
 decides which sender key state to decrypt against.
 
 Searches previous states as well as current ones. A message encrypted just
 before a rotation is still in flight when the rotation lands, and its
-`senderKeyId` names the superseded key; resolving only against current
+`senderKeyId` names the superseded key. Resolving only against current
 state would strand exactly the messages the rotation window exists to
 cover.
 
@@ -379,7 +379,7 @@ Store sender key state for a group member device.
 
 Store all sender key states (current + previous) for a group member device.
 
-The first element is the current state; remaining are previous states
+The first element is the current state. The remaining entries are previous states
 retained during the rotation window for decrypting in-flight messages.
 
 Per Sender Keys spec Section 5.1: "Implementations MUST store sender key
@@ -423,8 +423,8 @@ Array of states (current first, then previous, capped at MAX_SENDER_KEY_STATES)
 
 Store skipped message key for out-of-order decryption.
 
-When chain is advanced past a message (gap in chainIndex),
-store the derived key so the skipped message can be decrypted later.
+When the chain advances past a message (gap in chainIndex),
+store the derived key so a later call can decrypt the skipped message.
 
 #### Parameters
 

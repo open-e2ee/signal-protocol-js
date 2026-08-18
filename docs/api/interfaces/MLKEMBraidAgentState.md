@@ -6,13 +6,17 @@
 
 # Interface: MLKEMBraidAgentState
 
-Unified ML-KEM Braid agent state
+The complete state of one ML-KEM Braid participant, in either role.
 
-The state name determines the current role — no `role` field needed.
-This matches the `SPQR` pattern where the state variant
-is the role.
+The ML-KEM Braid specification calls a protocol participant an agent,
+and this name follows it. The name also separates this type from
+`MLKEMBraidState`, which is the 11-state machine position that the
+`state` field holds.
 
-Use isInAliceRole(state) / isInBobRole(state) to check current role.
+The state name determines the current role, so this type carries no
+`role` field. This matches the `SPQR` pattern, where the state variant
+is the role. Call `isInAliceRole(state)` or `isInBobRole(state)` to read
+the role.
 
 ## Extends
 
@@ -140,7 +144,7 @@ EK vector encoder state
 
 > `optional` **encaps\_secret?**: `Uint8Array`\<`ArrayBufferLike`\>
 
-One-shot Encaps1 state; owned bytes are consumed and best-effort overwritten by Encaps2.
+One-shot Encaps1 state. Encaps2 consumes the owned bytes and overwrites them best-effort.
 
 ***
 

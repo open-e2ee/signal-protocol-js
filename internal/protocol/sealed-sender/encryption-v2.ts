@@ -172,7 +172,7 @@ export async function sealMultiRecipient(
     // ========================================================================
     const recipientEntries: SealedSenderV2Recipient[] = [];
 
-    // Group recipients by serviceId — all devices of the same user share one identity key
+    // Group recipients by serviceId. All devices of the same user share one identity key
     const groupedByUser = new Map<string, typeof recipients>();
     for (const recipient of recipients) {
       const group = groupedByUser.get(recipient.serviceId);

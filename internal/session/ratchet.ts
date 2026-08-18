@@ -33,7 +33,7 @@ import {
  *
  * TypeScript structural typing: When SessionState has non-null DHs/DHr,
  * it satisfies the DoubleRatchetState interface because:
- * - SessionState.DHs: { publicKey: string; privateKey: string } matches RatchetKeyPair
+ * - SessionState.DHs: `{ publicKey: string; privateKey: string }` matches RatchetKeyPair
  * - SessionState.DHr: string matches Base64 (which is string)
  * - All other ratchet fields (RK, CKs, CKr, etc.) have identical types
  *
@@ -44,15 +44,15 @@ export type ValidatedSessionState = SessionState & {
   DHs: NonNullable<SessionState['DHs']>;
   DHr: NonNullable<SessionState['DHr']>;
   CKs: NonNullable<SessionState['CKs']>;
-  // Note: CKr intentionally excluded — initiator sessions have CKr=undefined
-  // until first message received. CKr is validated at point of use in
-  // deriveReceivingKey() via length check (chains.ts:101-107).
+  // Note: CKr intentionally excluded. Initiator sessions have CKr=undefined
+  // until first message received. deriveReceivingKey() validates CKr at the
+  // point of use via a length check (chains.ts:101-107).
 };
 
 /**
  * Type guard that validates and narrows SessionState to ValidatedSessionState.
  *
- * After this check passes, the session can be passed directly to
+ * After this check passes, callers can pass the session directly to
  * DoubleRatchetState-accepting functions via TypeScript's structural typing.
  *
  * @param session SessionState to validate
@@ -64,14 +64,14 @@ export function isValidatedSession(session: SessionState): session is ValidatedS
 }
 
 /**
- * Assert that session is validated for encryption, throwing descriptive error if not.
+ * Assert that the session is valid for encryption, and throw a descriptive error if not.
  *
  * For encryption, the session must be fully initialized:
- * - DHs, DHr must be set (DH ratchet keys)
- * - CKs must be set (sending chain key for deriving message keys)
+ * - DHs, DHr must hold values (DH ratchet keys)
+ * - CKs must hold a value (sending chain key for deriving message keys)
  *
  * For lazy-initialized responder sessions, encrypt should fail until
- * the first message has been received and decrypted (which triggers
+ * the session receives and decrypts the first message (which triggers
  * DHRatchet and sets all required keys).
  *
  * @param session SessionState to validate
@@ -107,7 +107,7 @@ export function assertValidatedSession(
 // ============================================================================
 
 /**
- * Perform DH ratchet step (purely classical EC).
+ * Run the DH ratchet step (purely classical EC).
  *
  * The DH ratchet has no interaction with PQ/SPQR state. All post-quantum work
  * happens in `spqrSend()` and `spqrRecv()`.
@@ -149,9 +149,9 @@ export async function performDHRatchetStep(
     });
   }
 
-  // For lazy init, we need to create a temporary state with DHr set
-  // so it satisfies DoubleRatchetState interface
-  // The module will update DHr anyway, but we need valid types
+  // For lazy init, we need to create a temporary state with DHr set,
+  // so it satisfies the DoubleRatchetState interface.
+  // The module will update DHr anyway, but we need valid types.
   const stateForRatchet = session as unknown as DoubleRatchetState;
 
   // Pass session directly - mutations happen in place
@@ -222,7 +222,7 @@ export async function storeSkippedMessageKeys(
 /**
  * Clean up expired message keys from MKSKIPPED dictionary
  *
- * Design: For cleanup, we only need a validated session if we're going to
+ * Design: For cleanup, we only need a validated session if we are going to
  * run cleanup. If session is not validated, we silently skip (nothing to clean).
  *
  * Signal Protocol Section 8.4

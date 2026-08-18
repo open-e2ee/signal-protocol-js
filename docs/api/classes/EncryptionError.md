@@ -28,6 +28,7 @@ throw new EncryptionError(
 ## Extended by
 
 - [`SealedSenderAuthError`](SealedSenderAuthError.md)
+- [`UntrustedIdentityError`](UntrustedIdentityError.md)
 
 ## Constructors
 

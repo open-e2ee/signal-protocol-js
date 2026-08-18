@@ -6,9 +6,9 @@ Use `createSignalProtocolClient()` when app setup owns identity, local device st
 relay transport, remote encrypted object storage, logging, and protocol policy
 in one place.
 
-This guide documents the current stable composition API. Local persistence is
-grouped under device storage, while remote encrypted bytes are supplied by an
-explicit object-store adapter. The current API passes protocol storage as
+This guide documents the current stable composition API. It groups local
+persistence under device storage, and an explicit object-store adapter supplies
+remote encrypted bytes. The current API passes protocol storage as
 `adapters.storage` and remote attachment storage as `adapters.remoteObjectStore`.
 
 ## Local Client
@@ -93,9 +93,9 @@ const signal = await createSignalProtocolClient({
 
 The current durable media queue does not require a second queue adapter. It
 stores bounded job metadata in `adapters.storage` under SDK-owned namespaced
-keys. The intended future shape moves this behind grouped device storage — see
-[Future direction](#future-direction-not-shipped) — so app code does not have
-to compose queue callbacks for ordinary sends. Do not add a parallel public
+keys. The intended future shape moves this behind grouped device storage, so
+app code does not have to compose queue callbacks for ordinary sends. See
+[Future direction](#future-direction-not-shipped). Do not add a parallel public
 `signal.media.*` API once message attachment helpers exist.
 
 ## Direct Client Creation
@@ -134,12 +134,16 @@ const signal = await SignalProtocolClient.create(userId, {
 > them fails today. The shipped API is everything above this heading.
 
 The intended future shape makes platform setup a factory problem rather than a
-store-by-store wiring exercise: a grouped `deviceStorage` adapter with
-`protocol`, `messages`, and `files` facets in place of today's flat
-`adapters.storage`, a per-platform factory such as a future
-`createExpoDeviceStorage({ database, files })`, and a message-first receive
-path shaped like `signal.messages.subscribe({ conversationId }, handler)` in
-place of hook registration plus manual `startRelaySubscription()`. Low-level
-hooks would remain for advanced integrations. When this lands it will be a
-breaking change and this guide will lead with it; until then, wire the current
-API.
+store-by-store wiring exercise:
+
+- a grouped `deviceStorage` adapter with `protocol`, `messages`, and `files`
+  facets in place of today's flat `adapters.storage`
+- a per-platform factory such as a future
+  `createExpoDeviceStorage({ database, files })`
+- a message-first receive path shaped like
+  `signal.messages.subscribe({ conversationId }, handler)` in place of hook
+  registration plus manual `startRelaySubscription()`
+
+Low-level hooks would remain for advanced integrations. When this lands it will
+be a breaking change and this guide will lead with it. Until then, wire the
+current API.

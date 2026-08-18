@@ -28,7 +28,7 @@
  * ## Thread Safety
  *
  * Uses per-session AsyncLock to prevent race conditions during concurrent
- * encrypt/decrypt operations. Different sessions don't block each other.
+ * encrypt/decrypt operations. Different sessions do not block each other.
  *
  * ## Specification References
  *
@@ -156,7 +156,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
    *
    * Prevents race conditions when multiple encrypt/decrypt operations
    * happen concurrently on the same session. Uses per-session locks
-   * so different conversations don't block each other.
+   * so different conversations do not block each other.
    */
   private lock = new AsyncLock({
     timeout: 5000, // 5 second timeout prevents deadlocks
@@ -236,7 +236,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
    * @throws Error if session is not initialized (DHs or DHr is null)
    */
   private extractRatchetState(session: SessionState): DoubleRatchetState {
-    // Validate session has been fully initialized with DH keys and chain keys
+    // Validate session has been fully initialized with DH keys and chain keys.
     // For lazy initialization (responder), this should only be called AFTER
     // the first DHRatchet step has completed and set all keys.
     if (!session.DHs) {
@@ -334,8 +334,8 @@ export class SignalProtocolManager implements ISignalProtocolManager {
    * Set local user and device identity.
    *
    * This must be called before any session operations (encrypt/decrypt).
-   * It's normally called by generatePreKeyBundle, but can be called directly
-   * when keys already exist and don't need regeneration.
+   * It is normally called by generatePreKeyBundle, but can be called directly
+   * when keys already exist and do not need regeneration.
    *
    * @param userId - User ID for this client
    * @param deviceId - Device ID (1 for primary, 2-5 for linked devices)
@@ -394,7 +394,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
       }
 
       // One-time prekeys are generated exclusively by the sync/replenishment
-      // path; local session setup creates only a signed prekey and last-resort
+      // path. Local session setup creates only a signed prekey and last-resort
       // KEM prekey.
 
       this.logger.breadcrumb('Prekey bundle generated', {
@@ -403,7 +403,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
         data: { userId, identityType },
       });
       // NOTE: Prekey upload is handled at the SignalProtocolClient layer via ConvexBackendAdapter
-      // This low-level method only generates keys; upload happens in the higher layer
+      // This low-level method only generates keys. The upload happens in the higher layer
     } catch (error) {
       throw new EncryptionError(
         'Failed to generate prekey bundle',
@@ -441,7 +441,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
     // Derive sessionId from ProtocolAddress for storage/logging
     const sessionId = ProtocolAddress.toString(remoteAddress);
 
-    // Acquire lock for this session to ensure atomic session creation
+    // Take the lock for this session, so session creation is atomic
     return await this.lock.acquire(this.getLockKey(sessionId), async () => {
       try {
         if (!this.initialized) {
@@ -552,9 +552,10 @@ export class SignalProtocolManager implements ISignalProtocolManager {
             // Resolve SCKA mode from protocol strategy
             const sckaMode = resolveSCKAMode(this.protocolStrategy);
 
-            // SPQR Bootstrap (Section 3.10): Generate initial Kyber-768 key pair for Alice
-            // IMPORTANT: SPQR uses ML-KEM-768 (not 1024), separate from PQXDH's Kyber-1024
-            // Alice needs to send her public key in the first message so Bob can encapsulate to her
+            // SPQR Bootstrap (Section 3.10): Generate initial Kyber-768 key pair for Alice.
+            // IMPORTANT: SPQR uses ML-KEM-768, not 1024, and is separate from the
+            // Kyber-1024 of PQXDH. Alice needs to send her public key in the first
+            // message so Bob can encapsulate to her.
             const { generateKyber768KeyPair, bytesToBase64 } = await import('../crypto');
             const initialKyberKeyPair = await generateKyber768KeyPair();
             const ourKyberPrivateKey = bytesToBase64(initialKyberKeyPair.privateKey);
@@ -579,11 +580,11 @@ export class SignalProtocolManager implements ISignalProtocolManager {
             });
 
             // SPQR Bootstrap: flag that first spqrSend() should generate keypair
-            // spqrSend() handles lazy KEM — no pending fields needed
+            // spqrSend() handles lazy KEM. No pending fields needed
             spqrState.needsSendRatchet = true;
 
             // Add Triple Ratchet to session BEFORE zeroing the key
-            // This ensures we only zero after successful initialization
+            // We zero only after the initialization succeeds
             sessionState.tripleRatchet = {
               spqrState: spqrState,
               enabled: true,
@@ -729,7 +730,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
     // to handle in-flight messages that used the old key.
     if (!mySignedPreKey) {
       // CRITICAL: If Alice used a signed prekey we no longer have, the DH3 computation
-      // will fail because we can't compute DH(SPK_priv, alice_ephemeral_pub).
+      // will fail because we cannot compute DH(SPK_priv, alice_ephemeral_pub).
       //
       // This can happen when:
       // 1. Bob rotated his signed prekey AND the old one expired past the grace period
@@ -777,7 +778,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
 
       if (!myOneTimePreKey) {
         // CRITICAL: If Alice used an EC one-time prekey, Bob MUST have it for X3DH.
-        // If Bob doesn't have it, the IKM will be different and decryption will fail.
+        // If Bob does not have it, the IKM will be different and decryption will fail.
         //
         // This happens when:
         // 1. Bob reinstalled the app (local SQLite wiped, server had stale prekeys)
@@ -785,7 +786,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
         //
         // The correct behavior is to FAIL and trigger a retry request, which will:
         // 1. Ask Alice to re-encrypt with a fresh prekey bundle
-        // 2. After the server-side fix, the fresh bundle won't have stale prekeys
+        // 2. After the server-side fix, the fresh bundle will not have stale prekeys
         //
         // Note: While X3DH spec Section 3.3 allows optional one-time prekeys, if Alice
         // explicitly included one, Bob must have it - otherwise the IKM will differ.
@@ -819,9 +820,10 @@ export class SignalProtocolManager implements ISignalProtocolManager {
           data: { kyberPreKeyId: prekeyMessage.usedKyberPreKeyId },
         });
       } else {
-        // BUG #7 FIX: Validate that the Kyber prekey ID matches what Alice used
-        // If IDs don't match, Alice encapsulated to a DIFFERENT key than we have locally,
-        // which means decapsulation would produce wrong shared secret → MAC failure.
+        // BUG #7 FIX: Validate that the Kyber prekey ID matches what Alice used.
+        // If IDs do not match, Alice encapsulated to a DIFFERENT key than we
+        // have locally. Decapsulation would then produce a wrong shared secret
+        // and a MAC failure.
         // Instead of silently proceeding to fail, detect this early and trigger retry.
         const keyIdMatches = prekeyMessage.usedKyberPreKeyId === retrievedKyberPreKey.keyId;
 
@@ -894,7 +896,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
       );
       if (!myKemOneTimePreKey) {
         // CRITICAL: If Alice used a KEM one-time prekey, Bob MUST have it for decapsulation.
-        // If Bob doesn't have it, the IKM will be different and decryption will fail.
+        // If Bob does not have it, the IKM will be different and decryption will fail.
         //
         // This happens when:
         // 1. Bob reinstalled the app (local SQLite wiped, server had stale prekeys)
@@ -902,7 +904,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
         //
         // The correct behavior is to FAIL and trigger a retry request, which will:
         // 1. Ask Alice to re-encrypt with a fresh prekey bundle
-        // 2. After the server-side fix, the fresh bundle won't have stale prekeys
+        // 2. After the server-side fix, the fresh bundle will not have stale prekeys
         //
         // @see X3DH Spec Section 3.2 - one-time prekeys provide forward secrecy for first message
         throw new EncryptionError(
@@ -1009,9 +1011,10 @@ export class SignalProtocolManager implements ISignalProtocolManager {
         // Resolve SCKA mode from protocol strategy
         const sckaMode = resolveSCKAMode(this.protocolStrategy);
 
-        // SPQR Bootstrap (Section 3.10): Generate initial Kyber-768 key pair for Bob
-        // IMPORTANT: SPQR uses ML-KEM-768 (not 1024), separate from PQXDH's Kyber-1024
-        // Bob needs to send his public key in his first reply so Alice can encapsulate to him
+        // SPQR Bootstrap (Section 3.10): Generate initial Kyber-768 key pair for Bob.
+        // IMPORTANT: SPQR uses ML-KEM-768, not 1024, and is separate from the
+        // Kyber-1024 of PQXDH. Bob needs to send his public key in his first
+        // reply so Alice can encapsulate to him.
         const { generateKyber768KeyPair, bytesToBase64 } = await import('../crypto');
         const initialKyberKeyPair = await generateKyber768KeyPair();
         const ourKyberPrivateKey = bytesToBase64(initialKyberKeyPair.privateKey);
@@ -1025,10 +1028,11 @@ export class SignalProtocolManager implements ISignalProtocolManager {
           },
         });
 
-        // Initialize SPQR state for Bob (B2A direction)
-        // Per Signal Protocol Section 5.4 - Initialize epoch 0 chains only (no ratchet step yet)
-        // theirKyberPublicKey starts null — spqrRecv will populate it when decrypting
-        // Alice's first message (the pqRatchet field contains her Kyber public key)
+        // Initialize SPQR state for Bob (B2A direction).
+        // Per Signal Protocol Section 5.4, initialize epoch 0 chains only, with
+        // no ratchet step yet. The theirKyberPublicKey field starts null, and
+        // spqrRecv populates it when decrypting Alice's first message, whose
+        // pqRatchet field carries her Kyber public key.
         const spqrState = await SPQR.initializeSPQR({
           mode: sckaMode,
           initialRootKey: initialRootKeyForSPQR,
@@ -1039,11 +1043,11 @@ export class SignalProtocolManager implements ISignalProtocolManager {
         });
 
         // SPQR Bootstrap: flag that first spqrSend() should generate keypair
-        // spqrSend() handles lazy KEM — no pending fields needed
+        // spqrSend() handles lazy KEM. No pending fields needed
         spqrState.needsSendRatchet = true;
 
         // Add Triple Ratchet to session BEFORE zeroing the key
-        // This ensures we only zero after successful initialization
+        // We zero only after the initialization succeeds
         sessionState.tripleRatchet = {
           spqrState: spqrState,
           enabled: true,
@@ -1104,10 +1108,11 @@ export class SignalProtocolManager implements ISignalProtocolManager {
   /**
    * Clean up expired message keys from receiverChains
    *
-   * Signal Protocol Section 8.4 -
-   * "To avoid excessive storage, parties SHOULD delete keys for messages
-   * that have been received or that have been skipped for too long.
-   * A recommended policy is to delete message keys more than one week old."
+   * Signal Protocol Section 8.4:
+   *
+   * > "To avoid excessive storage, parties SHOULD delete keys for messages
+   * > that have been received or that have been skipped for too long.
+   * > A recommended policy is to delete message keys more than one week old."
    *
    * @param session Session state to clean
    * @param config Double Ratchet configuration with maxMessageKeyAge
@@ -1116,7 +1121,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
     session: SessionState,
     config: DoubleRatchetConfig = DEFAULT_RATCHET_CONFIG
   ): void {
-    // Can't extract ratchet state if session not fully initialized
+    // Cannot extract ratchet state if session not fully initialized
     if (!session.DHs || !session.DHr) {
       return; // Skip cleanup for uninitialized sessions
     }
@@ -1278,7 +1283,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
       }
 
       // Get current Kyber prekey's ID and increment for the new one
-      // This ensures unique IDs for mismatch detection during key rotation
+      // The new ID stays unique, so key rotation can detect a mismatch
       const currentKyber = await this.keyStorage.getKyberPreKey(identityType);
       const nextKeyId = (currentKyber?.keyId ?? 0) + 1;
 
@@ -1307,10 +1312,11 @@ export class SignalProtocolManager implements ISignalProtocolManager {
   /**
    * Clean up expired message keys for a session
    *
-   * Signal Protocol Section 8.4 - Deletion of Old Skipped Message Keys
-   * "To avoid excessive storage, parties SHOULD delete keys for messages that
-   * have been received or that have been skipped for too long. A recommended
-   * policy is to delete message keys more than one week old."
+   * Signal Protocol Section 8.4, Deletion of Old Skipped Message Keys:
+   *
+   * > "To avoid excessive storage, parties SHOULD delete keys for messages that
+   * > have been received or that have been skipped for too long. A recommended
+   * > policy is to delete message keys more than one week old."
    *
    * This method explicitly triggers cleanup of expired message keys.
    * Note: Cleanup also happens automatically during encrypt/decrypt operations.
@@ -1326,7 +1332,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
       const candidateRecord = record ? CryptoUtils.cloneProtocolState(record) : null;
       const session = candidateRecord?.currentSession;
       if (!session) {
-        // Session doesn't exist - nothing to clean up
+        // Session does not exist - nothing to clean up
         return;
       }
 

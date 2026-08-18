@@ -37,8 +37,8 @@ export async function getLocalDeviceMetadata(): Promise<DeviceMetadata> {
 }
 
 /**
- * Compute which metadata fields are missing from a device record.
- * Only returns fields that need to be sent in a heartbeat.
+ * Compute which metadata fields a device record lacks.
+ * Only returns fields that a heartbeat must carry.
  *
  * @param serverDevice - Device record from server (from getDevices query)
  * @param localMetadata - Current device metadata (from getLocalDeviceMetadata)
@@ -70,19 +70,19 @@ export function getMissingMetadata(
   const missing: DeviceMetadata = {};
   let hasMissing = false;
 
-  // IDFV: only send if server doesn't have it
+  // IDFV: only send if server does not have it
   if (!serverDevice.idfv && localMetadata.idfv) {
     missing.idfv = localMetadata.idfv;
     hasMissing = true;
   }
 
-  // Platform: only send if server doesn't have it
+  // Platform: only send if server does not have it
   if (!serverDevice.platform && localMetadata.platform) {
     missing.platform = localMetadata.platform;
     hasMissing = true;
   }
 
-  // OS Version: only send if server doesn't have it
+  // OS Version: only send if server does not have it
   if (!serverDevice.osVersion && localMetadata.osVersion) {
     missing.osVersion = localMetadata.osVersion;
     hasMissing = true;

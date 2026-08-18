@@ -133,7 +133,7 @@ function parseEnvelope(envelope: Uint8Array): {
   offset += 1;
 
   // The envelope is exactly its fields. Trailing bytes would make the format
-  // non-canonical — two distinct envelopes parsing to the same content.
+  // non-canonical. Two distinct envelopes parsing to the same content.
   if (offset !== envelope.length) {
     throw new Error(GENERIC_ERROR);
   }
@@ -236,15 +236,18 @@ export async function unseal(options: UnsealOptions): Promise<UnidentifiedSender
     const e_sharedSecret = await computeSharedSecret(recipientPrivateBase64, ephemeralPublicBase64);
     toZero.push(e_sharedSecret);
 
-    // Step 1.4: Build salt for Stage 1
-    // We need recipient's public key - derive it from private key
-    // Note: For X25519, we can't easily derive public from private without the curve library
-    // The recipient should provide their public key. For now, we'll need to add it to options.
-    // WORKAROUND: Use the certificate's expected sender identity to validate later
+    // Step 1.4: build the Stage 1 salt.
+    // We need the recipient's public key, so derive it from the private key.
+    // Note: for X25519, we cannot easily derive public from private without the
+    // curve library.
+    // The recipient should provide their public key. For now, we will need to
+    // add it to options.
+    // WORKAROUND: use the certificate's expected sender identity to validate
+    // later.
     const saltPrefix = stringToBytes(SEALED_SENDER_SALT);
 
     // Derive recipient's public key from private key for salt computation.
-    // The reference implementation uses the recipient's stored public key; we derive it from the private key.
+    // The reference implementation uses the recipient's stored public key. We derive it from the private key.
     const recipientIdentityPublic = x25519.getPublicKey(recipientIdentityPrivate);
 
     const e_salt = concatBytes(saltPrefix, recipientIdentityPublic, ephemeralPublicBytes);
@@ -299,7 +302,7 @@ export async function unseal(options: UnsealOptions): Promise<UnidentifiedSender
 
     // Step 2.4: Derive sender keys (96 bytes: discard + cipher + mac)
     // The first 32 bytes of the 96-byte derivation are domain-separated discard
-    // material; cipher and MAC keys occupy the remaining bytes.
+    // material. Cipher and MAC keys occupy the remaining bytes.
     const s_material = await hkdf(s_sharedSecret, s_salt, new Uint8Array(0), 96);
     toZero.push(s_material);
     // s_material[0:32] discarded (mirrors EphemeralKeys structure)

@@ -141,7 +141,7 @@ function parseServiceIdBytes(bytes: Uint8Array): ServiceId {
   return { kind, uuid: bytes.slice(1) };
 }
 
-// NOTE: serializeServiceId() removed — use serviceIdBinary() from uid-struct (DRY)
+// NOTE: serializeServiceId() removed. Use serviceIdBinary() from uid-struct (DRY)
 
 // ---------------------------------------------------------------------------
 // Attribute encryption/decryption (title, description, timer)

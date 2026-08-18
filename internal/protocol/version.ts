@@ -4,7 +4,7 @@
  * @module triple/version
  *
  * Handles SPQR version lock-in for the Triple Ratchet.
- * SPQR v1 is required; legacy EC-only v0 is rejected.
+ * SPQR v1 is required. Legacy EC-only v0 is rejected.
  *
  * ## Negotiation Flow
  *
@@ -46,7 +46,7 @@ type PeerSPQRVersion = SPQRVersion | 'v0';
  *
  * With the binary wire format, version is implicit in byte 0 of every
  * message, so negotiation completes on first message received from the
- * peer. No separate capability exchange is needed.
+ * peer. The protocol needs no separate capability exchange.
  *
  * @example
  * ```typescript
@@ -75,7 +75,7 @@ export interface VersionNegotiationState {
   /**
    * Our maximum supported version.
    *
-   * Advertised to peer; negotiated version will be min(ours, theirs).
+   * Advertised to peer. The negotiated version will be min(ours, theirs).
    */
   maxVersion: SPQRVersion;
 

@@ -9,7 +9,7 @@
 > **generateVerifySchemeUrl**(`params`, `config?`): `string`
 
 Generate a verification URL using the custom scheme.
-Useful for local development or when universal links aren't configured.
+Useful for local development or when universal links are not configured.
 
 ## Parameters
 

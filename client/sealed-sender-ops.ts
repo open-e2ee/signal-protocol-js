@@ -127,7 +127,7 @@ export async function unsealMessage(
     );
   }
 
-  // V1 path (0x11) — existing code
+  // V1 path (0x11). Existing code
   const { unseal, decodeUnidentifiedSenderMessage } =
     await import('../internal/protocol/sealed-sender');
 
@@ -209,7 +209,7 @@ async function unsealV2Message(
       {
         serviceId: recipientUuid,
         deviceId: recipientDeviceId,
-        registrationId: 0, // Not needed for unseal — only used in send path
+        registrationId: 0, // Not needed for unseal. Only used in send path
         encryptedMessageKey: bytesToBase64(deserialized.encryptedMessageKey) as Base64,
         authenticationTag: bytesToBase64(deserialized.authenticationTag) as Base64,
       },
@@ -278,13 +278,13 @@ export function reconstructEnvelope(
  * Map a sealed envelope's content type onto the envelope type the decrypt
  * path routes on.
  *
- * Exported because both receive paths need it — `SignalProtocolServiceCipher`
+ * Exported because both receive paths need it. `SignalProtocolServiceCipher`
  * via `reconstructEnvelope`, and `SignalProtocolClient.processIncomingEnvelope`
  * directly. Two copies of this mapping would drift.
  *
- * `SENDERKEY_MESSAGE` is the only case that matters here: it is what keeps
+ * `SENDERKEY_MESSAGE` is the only case that matters here. It is what keeps
  * group routing working now that no group identifier travels on an envelope,
- * sealed or otherwise. `PREKEY_MESSAGE` and `MESSAGE` both decrypt as pairwise
+ * sealed or otherwise. Both `PREKEY_MESSAGE` and `MESSAGE` decrypt as pairwise
  * ratchet messages, and the ratchet distinguishes them from the payload
  * itself.
  *

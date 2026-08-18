@@ -5,28 +5,29 @@
 > [Security Model](./SECURITY.md) | [API Reference](./api/README.md)
 
 This document is the complete public surface of
-`@open-e2ee/signal-protocol-sdk`: what the root package exports, every
-supported subpath, the adapter implementations that ship with the package, and
-the vocabulary the rest of the documentation assumes.
+`@open-e2ee/signal-protocol-sdk`. It lists what the root package exports, every
+supported subpath, and the adapter implementations that ship with the package.
+It also defines the vocabulary the rest of the documentation assumes.
 
 ## Core model
 
 - `createSignalProtocolClient()` is the recommended app-facing entry point.
 - `SignalProtocolClient` is the primary class returned by the factory.
-- `storage` is required and owns local encryption state for one user/device.
-- `relay` is optional for local development, but real messaging apps use it for
+- Every client requires `storage`, which owns local encryption state for one
+  user/device.
+- `relay` is optional for local development. Real messaging apps use it for
   key sync, message delivery, device fanout, and linked-device workflows.
-- Secure post-quantum defaults are enabled without extra configuration.
-- Identity trust is pinned to one versioned X25519 + Ed25519 composite tuple
-  per `(userId, identityType)`; first contact remains unverified TOFU.
+- The client enables secure post-quantum defaults without extra configuration.
+- The SDK pins identity trust to one versioned X25519 + Ed25519 composite tuple
+  per `(userId, identityType)`. First contact remains unverified TOFU.
 - The root package is intentionally core-only. Platform and backend adapters
   live on explicit subpaths.
 
-OpenE2EE is the project and package namespace; it is not the name of a single
+OpenE2EE is the project and package namespace. It is not the name of a single
 protocol client. The protocol-specific package and client names leave that
 namespace clear for other E2EE protocol implementations, such as a future
 [Messaging Layer Security (MLS)](https://www.rfc-editor.org/rfc/rfc9420.html)
-package, without implying that one client spans multiple protocols.
+package. They do not imply that one client spans multiple protocols.
 
 ## Setup sequence
 
@@ -131,7 +132,7 @@ Expo storage or Convex helpers.
 
 - **Client**: one running app instance for one account and one device.
 - **User ID**: your app's stable account identifier.
-- **Device ID**: `1` for the primary device; linked devices use `2-5`.
+- **Device ID**: `1` for the primary device. Linked devices use `2-5`.
 - **Storage**: local encrypted state needed to keep conversations working across
   restarts.
 - **Relay**: server-side public keys, device lists, encrypted envelope delivery,
@@ -169,7 +170,7 @@ Expo storage or Convex helpers.
 - `InMemorySignalProtocolStore` / `inMemoryStore()` for local development
 - custom implementations via `ISignalProtocolLocalStore`
 
-### Remote object storage
+### Remote object store
 
 - `ConvexR2ObjectStore` via
   `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`
@@ -182,13 +183,13 @@ Expo storage or Convex helpers.
 - custom implementations via `SignalProtocolRemoteObjectStore`
 
 `ConvexR2ObjectStore` is a client adapter for authenticated app-owned Convex
-functions that wrap `@convex-dev/r2`; it is not the Convex component itself.
+functions that wrap `@convex-dev/r2`. It is not the Convex component itself.
 The application continues to own component installation, mounting,
 configuration, authentication, authorization, persistence, credentials, and
 the R2 bucket. The optional server helper owns only generic broker mechanics.
 Both concrete adapters keep provider credentials in the application backend.
 
-Remote object storage is a normal first-class integration point for encrypted
+The remote object store is a normal integration point for encrypted
 attachments and files, not a niche or internal-only adapter. Use
 `attachment.transfer` when your app has a foreground, background, resumable, or
 platform-native byte transfer implementation. The Signal Protocol package still
@@ -198,12 +199,13 @@ Object stores can return signed upload headers, and stores that return
 `protocol: 'tus'` automatically use the built-in resumable TUS transfer helper.
 You can also pass `media.createTusMediaAttachmentTransfer()` explicitly when
 your app wants to tune the TUS fetch implementation or chunk size. Download
-credentials can also return signed headers. For JavaScript runtimes that need
-resumable downloads, `media.createByteRangeMediaAttachmentTransfer()` performs
-strict HTTP range requests, validates `Content-Range`, persists checkpoints, and
-resumes only when your app provides a partial-byte store for the previous
-ciphertext prefix. Native background download integrations should implement the
-same `MediaAttachmentTransfer` seam.
+credentials can also return signed headers.
+
+For JavaScript runtimes that need resumable downloads, use `media.createByteRangeMediaAttachmentTransfer()`. It
+makes strict HTTP range requests, validates `Content-Range`, and persists
+checkpoints. It resumes only when your app provides a partial-byte store for the
+previous ciphertext prefix. Native background download integrations should
+implement the same `MediaAttachmentTransfer` seam.
 
 ## Design notes
 
@@ -228,7 +230,7 @@ same `MediaAttachmentTransfer` seam.
 - [Keys and identity](../keys/README.md)
 - [Local stores](../local/store/README.md)
 - [Local secret vault](../local/vault/README.md)
-- [Remote relay and object storage](../remote/README.md)
+- [Relay and remote object store](../remote/README.md)
 - [Encrypted media](../media/README.md)
 - [Encrypted files](../files/README.md)
 - [Groups](../groups/README.md)

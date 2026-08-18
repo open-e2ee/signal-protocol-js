@@ -12,10 +12,10 @@ This is the wire format for messages using the full Double Ratchet.
 Uses AES-256-CBC + HMAC-SHA256 per Signal Protocol specification.
 
 Section 3 Variant (Plaintext Headers + MAC):
-- DH public key is sent in plaintext (needed to determine key chain)
-- Message counters are sent in plaintext (PN and N)
+- The header carries the DH public key in plaintext (needed to determine key chain)
+- The header carries the message counters in plaintext (PN and N)
 - HMAC-SHA256 (truncated to 8 bytes) authenticates header + ciphertext
-- Identity keys are included in MAC computation for session binding
+- The MAC computation includes identity keys for session binding
 
 ## See
 
@@ -39,8 +39,8 @@ Content hint for delivery and retry behavior (optional).
 
 Helps optimize message handling without decrypting:
 - DEFAULT: Normal message with standard policies
-- RESENDABLE: Can be retried if delivery fails
-- IMPLICIT: Ephemeral (typing, receipts) - don't store long-term
+- RESENDABLE: the client can retry it if delivery fails
+- IMPLICIT: Ephemeral (typing, receipts) - do not store long-term
 
 ***
 

@@ -12,7 +12,7 @@
 
 > **RECEIVING**: `"receiving"`
 
-Message is being received from the remote party.
+The client receives the message from the remote party.
 
 Use more permissive verification:
 - Allow receiving from new identities (TOFU)
@@ -25,9 +25,9 @@ Use more permissive verification:
 
 > **SENDING**: `"sending"`
 
-Message is being sent to the remote party.
+The client sends the message to the remote party.
 
 Use stricter verification:
 - Require explicit user trust for new identities
-- Block sending if identity key has changed without user confirmation
+- Block sending if the identity key changed without user confirmation
 - Prevent information leakage to potential attackers

@@ -27,7 +27,7 @@
  *
  * ## Current Usage
  *
- * These schemas are used today for the **signing format** — the bytes that
+ * These schemas are used today for the **signing format**, the bytes that
  * Ed25519 covers in `serializeForSigning` (sender-keys/manager.ts).
  *
  * ## Future Usage
@@ -103,7 +103,7 @@ export interface SenderKeyMessageFields {
  * [field1: distribution_uuid] [field3: iteration] [field4: ciphertext]
  *
  * Fields are encoded in field-number order per protobuf convention.
- * Optional fields (distributionUuid) are omitted when undefined; presence, not
+ * Optional fields (distributionUuid) are omitted when undefined. Presence, not
  * value, decides, so a field the caller set is written even when it is zero.
  *
  * @param msg - Message fields to encode

@@ -1,8 +1,8 @@
 /**
  * Encrypted-media message contracts.
  *
- * The package sends media as a two-layer encrypted attachment: encrypted bytes
- * live in remote object storage, while the pointer, key, and integrity metadata
+ * The package sends media as a two-layer encrypted attachment. Encrypted bytes
+ * live in a remote object store. The pointer, key, and integrity metadata
  * travel inside an end-to-end encrypted application message.
  */
 
@@ -326,8 +326,8 @@ export interface PrepareMediaAttachmentUploadOptions {
   /**
    * Stable idempotency key for this logical upload.
    *
-   * Supply the same value when restarting an interrupted upload. A random
-   * value is generated when omitted.
+   * Supply the same value when restarting an interrupted upload. The client
+   * generates a random value when you omit it.
    */
   requestId?: string;
   transfer?: MediaAttachmentTransfer;
@@ -2927,10 +2927,10 @@ async function assertDigestMatches(ciphertext: Uint8Array, expectedDigest: strin
 /**
  * Encrypt and upload media bytes, returning a SDK attachment pointer.
  *
- * The encrypted object digest and object ID are computed once. Upload
- * retries request fresh presigned URLs for that same key, which handles expired
- * upload URLs without changing the pointer metadata that will be encrypted into
- * the Signal Protocol message.
+ * The client computes the encrypted object digest and object ID once. Upload
+ * retries request fresh presigned URLs for that same key. This handles expired
+ * upload URLs without changing the pointer metadata that the client later
+ * encrypts into the Signal Protocol message.
  */
 export async function prepareMediaAttachmentUpload(
   data: Uint8Array,
@@ -3033,9 +3033,9 @@ export async function prepareMediaAttachmentUpload(
  * Download, verify, and decrypt a Signal Protocol media attachment pointer.
  *
  * This is the safe receive-side counterpart to attachment upload. It validates
- * pointer metadata, downloads opaque ciphertext from the object store, verifies
- * length and SHA-256 digest before decryption, then decrypts with the package's
- * streaming AEAD format.
+ * pointer metadata, downloads opaque ciphertext from the object store, and
+ * verifies length and SHA-256 digest before decryption. It then decrypts with
+ * the package's streaming AEAD format.
  */
 export async function resolveMediaAttachment(
   attachment: CreateMediaAttachmentPointerInput,

@@ -131,7 +131,7 @@ function useKeyRotationInternal(options: UseKeyRotationOptions): UseKeyRotationI
       const signedRotated = await signal.rotateEcSignedPreKey();
       const kyberRotated = await signal.rotateKyberPreKey();
 
-      // Don't invoke callbacks if unmounted during async operation
+      // Do not invoke callbacks if unmounted during async operation
       if (!isMountedRef.current) {
         return;
       }
@@ -145,7 +145,7 @@ function useKeyRotationInternal(options: UseKeyRotationOptions): UseKeyRotationI
 
       onRotationComplete?.({ signedRotated, kyberRotated });
     } catch (error) {
-      // Don't invoke error callback if unmounted during async operation
+      // Do not invoke error callback if unmounted during async operation
       if (!isMountedRef.current) {
         return;
       }
@@ -175,7 +175,7 @@ function useKeyRotationInternal(options: UseKeyRotationOptions): UseKeyRotationI
     }
 
     const handleAppStateChange = async (nextState: AppStateStatus) => {
-      // Don't rotate if unmounted (ServicesProvider cleanup race)
+      // Do not rotate if unmounted (ServicesProvider cleanup race)
       if (!isMountedRef.current) {
         return;
       }

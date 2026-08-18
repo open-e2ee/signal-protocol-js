@@ -34,9 +34,9 @@ import {
   translateEngineErrors,
 } from './runtime';
 
-// Group functions deliberately take NO caller identity: reads and writes are
-// authorized solely by the zero-knowledge presentation, so the server never
-// learns which account performed a group operation. Identity flows only into
+// Group functions deliberately take NO caller identity. The zero-knowledge
+// presentation alone authorizes reads and writes, so the server never
+// learns which account ran a group operation. Identity flows only into
 // the zkAuth issuance functions.
 
 const MAX_CHANGE_BATCH = 4096;
@@ -381,9 +381,9 @@ export const getGroupChanges = query({
       {
         snapshotVersions: [input.fromVersion],
         changesAfterVersion: input.fromVersion,
-        // One page plus the single look-ahead entry that decides hasMore:
-        // the engine caps its walk at the page limit, so restoring more
-        // than this is pure read amplification.
+        // One page plus the single look-ahead entry that decides hasMore. The
+        // engine caps its walk at the page limit, so restoring more than this
+        // is pure read amplification.
         changeLimit: GROUP_CHANGE_LOG_PAGE_LIMIT + 1,
       }
     );

@@ -33,7 +33,7 @@ Note: This uses Section 3 variant (plaintext headers + MAC) not Section 4
 Session state identifier - initiator's ephemeral public key (EKA).
 
 The initiator's ephemeral public key is the unique identifier for this
-session state. It is named "baseKey" because:
+session state. This field takes the name "baseKey" because:
 - "ephemeral" describes the key's LIFECYCLE (temporary, single-use)
 - "base" describes the key's ROLE (foundation for SK derivation in X3DH/PQXDH)
 
@@ -41,8 +41,8 @@ For initiator (Alice): Set to ephemeralKeyPair.publicKey from X3DH/PQXDH
 For responder (Bob): Set to senderEphemeralKey from PreKeyMessage
 
 CRITICAL: This is different from sessionId/ProtocolAddress lookup.
-Sessions are LOOKED UP by ProtocolAddress (userId:deviceId), but
-session STATES are IDENTIFIED by baseKey (ephemeral public key).
+A ProtocolAddress (userId:deviceId) LOOKS UP a session, but a baseKey
+(ephemeral public key) IDENTIFIES a session STATE.
 
 ***
 
@@ -80,7 +80,7 @@ session STATES are IDENTIFIED by baseKey (ephemeral public key).
 
 > `optional` **hasReceivedMessage?**: `boolean`
 
-Whether we've received at least one message in this session.
+Whether we received at least one message in this session.
 
 Unacknowledged PreKey sessions (where the initiator has not received a
 reply) expire after 30 days (MAX_UNACKNOWLEDGED_SESSION_AGE).
@@ -175,7 +175,7 @@ Identity namespaces are part of the session trust binding.
 
 Our registration ID (from our IdentityKeyPair).
 
-Generated once per app install. Used to detect if we've reinstalled.
+Generated once per app install. Detects a reinstall on our side.
 
 ***
 
@@ -197,9 +197,9 @@ Generated once per app install. Used to detect if we've reinstalled.
 
 Prekey IDs pending deletion after first successful decryption.
 
-One-time prekeys are deleted after decryption succeeds, not after session
+The client deletes one-time prekeys after decryption succeeds, not after session
 establishment. This prevents
-irrecoverable failure if the inner message is corrupted (the sender can
+irrecoverable failure if the inner message arrives corrupted (the sender can
 retry with the same prekey).
 
 Set during performX3DHResponder() and cleared after the first successful
@@ -237,7 +237,7 @@ When a DH ratchet occurs, we store the old DHr and its final Nr value
 to detect replay attacks. If a message arrives with an old DHr:
 - If in receiverChains: decrypt (out-of-order message)
 - If in processedChains but not receiverChains: replay attack (already processed)
-- If not in either: new chain (perform DH ratchet)
+- If not in either: new chain (run the DH ratchet)
 
 Key: DHr (Base64 DH public key)
 Value: { lastNr: number, timestamp: number }
@@ -307,7 +307,7 @@ Explicit remote identity namespace included in authenticated PreKeyMessages.
 
 Remote party's registration ID (from their PreKeyBundle).
 
-If this changes, they've reinstalled their app and we should
+If this changes, they reinstalled their app and we should
 archive the old session and establish a new one.
 
 ***
@@ -330,11 +330,11 @@ archive the old session and establish a new one.
 
 Whether this session still needs to send PreKeyMessages.
 
-Set to true when the session is created as initiator. Remains true until
-the first message is received from the responder, which proves the
+Set to true when the client creates the session as initiator. Remains true
+until the first message arrives from the responder, which proves the
 responder successfully processed the PreKeyMessage.
 
-This ensures that if the first PreKeyMessage is lost, subsequent messages
+If the first PreKeyMessage is lost, subsequent messages
 are still sent as PreKeyMessages so the responder can establish the session.
 
 #### Default
