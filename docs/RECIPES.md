@@ -95,6 +95,7 @@ through the `onMessageDecrypted` hook.
 
 ## Production composition with Convex + Expo
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import {
@@ -159,6 +160,7 @@ const bob = await createSignalProtocolClient({
 
 ## App message flow
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 const signal = await createSignalProtocolClient({
   identity: { userId },
@@ -189,6 +191,7 @@ message storage through hooks.
 
 ## Protocol policy
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
@@ -205,6 +208,7 @@ without post-quantum material fail closed, and PQ sessions use the SDK's
 ML-KEM Braid SPQR profile. See the [protocol policy](./PROTOCOL_POLICY.md) for
 supported choices.
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
@@ -220,6 +224,7 @@ await createSignalProtocolClient({
 supports them. It only allows classical compatibility for peers that advertise
 no post-quantum material at all.
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
@@ -237,6 +242,7 @@ PQXDH strictness.
 
 ## Multi-device send
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 const result = await signal.send(recipientUserId, "hello");
 await appMessages.insertOutgoing({
@@ -250,6 +256,7 @@ await appMessages.insertOutgoing({
 
 ## Direct device session
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { ProtocolAddress } from "@open-e2ee/signal-protocol-sdk";
 
@@ -260,6 +267,7 @@ await signal.encryptMessage(bob, "linked-device hello");
 
 ## Username and ZK helpers
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   hashUsername,
@@ -274,6 +282,7 @@ const version = computeProfileKeyVersion(profileKeyBytes, userIdBytes);
 
 ## Encrypted attachments
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { media } from "@open-e2ee/signal-protocol-sdk";
 

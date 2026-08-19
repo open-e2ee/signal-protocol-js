@@ -18,6 +18,7 @@ retry-stable requestId -> canonical objectId -> private provider key
 
 ## Custom broker usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import type {
   SignalProtocolRemoteObjectStore,

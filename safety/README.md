@@ -12,6 +12,7 @@ decision.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { generateCompositeSafetyNumber } from "@open-e2ee/signal-protocol-sdk/safety";
 

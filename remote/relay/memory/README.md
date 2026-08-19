@@ -14,6 +14,7 @@ authorization or durability boundary.
 
 ## Usage
 
+<!-- doc-snippet:run memory-relay-client expect="" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
@@ -38,6 +39,7 @@ abuse, or deliver durably. Never use it in production.
 Failure mode is opt-in and seeded. The default `inMemoryRelay()` remains the
 deterministic happy path:
 
+<!-- doc-snippet:run memory-relay-failure-injection expect="" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";

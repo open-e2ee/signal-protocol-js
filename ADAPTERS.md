@@ -67,7 +67,9 @@ functions retain authentication, authorization, and persistence.
 
 ### Minimal local client
 
+<!-- doc-snippet:run adapters-local-client expect="" -->
 ```ts
+// Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
 
@@ -79,6 +81,7 @@ const signal = await createSignalProtocolClient({
 
 ### Production client
 
+<!-- doc-snippet:skip requires-production-adapters -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import {
@@ -110,7 +113,9 @@ database and SQLCipher bootstrap.
 
 ### Local development with a shared relay
 
+<!-- doc-snippet:run adapters-shared-relay expect="" -->
 ```ts
+// Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
 import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
@@ -160,6 +165,7 @@ Prefer these composition patterns:
 
 Use the public interfaces:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import type { ISignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
@@ -169,6 +175,7 @@ import type { ISignalProtocolLocalStore } from "@open-e2ee/signal-protocol-sdk/l
 
 Then compose them through `createSignalProtocolClient()`:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 const signal = await createSignalProtocolClient({
   identity: { userId },

@@ -107,7 +107,7 @@ This is the target DX the package moves toward. It appears here so app
 developers can understand the intended mental model. The current stable API
 still uses `storage`, `remoteObjectStore`, hooks, and transition-only media helpers.
 
-<!-- doc-snippet:skip target-message-api-not-yet-shipped -->
+<!-- doc-snippet:planned target-message-api unshipped="@open-e2ee/signal-protocol-sdk/device/storage/memory" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
@@ -161,6 +161,7 @@ await delivered;
 
 The production shape uses the same message API with platform adapters:
 
+<!-- doc-snippet:planned target-message-api-platform-adapters unshipped="@open-e2ee/signal-protocol-sdk/device/storage/expo" -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { createExpoDeviceStorage } from "@open-e2ee/signal-protocol-sdk/device/storage/expo";
@@ -185,6 +186,7 @@ Attachments use the same message API. On Expo, pass the picker URI. The Signal
 Protocol client copies or persists the bytes through `deviceStorage.files`
 before upload, so retry can continue after restart:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await signal.messages.send({
   conversationId: "dm:alice_bob",
@@ -203,6 +205,7 @@ await signal.messages.send({
 
 On the web, pass the browser file object:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await signal.messages.send({
   conversationId,
@@ -314,6 +317,7 @@ Use the protocol storage adapter for your runtime and the relay adapter for your
 backend. For the Signal Protocol stack, that is Expo local storage and a Convex
 relay:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
@@ -353,6 +357,7 @@ provisioning belong to the application bootstrap.
 
 Register a receive hook before starting the relay subscription:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 signal.registerHook("onMessageDecrypted", async (message) => {
   // Decrypted content belongs in your app database, not in the relay.
@@ -377,12 +382,14 @@ and hands the app a `DecryptedEnvelope`.
 
 Send by recipient user ID for normal one-to-one and multi-device delivery:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await signal.send("bob", "hello");
 ```
 
 For structured app messages, pass an object:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await signal.send("bob", {
   body: "hello",
@@ -400,6 +407,7 @@ The final public DX should not expose both `signal.media.*` and message
 attachment helpers. The planned replacement is message-scoped attachment
 handling.
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { media } from "@open-e2ee/signal-protocol-sdk";
 import { convexR2ObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2";
@@ -431,6 +439,7 @@ const signal = await createSignalProtocolClient({
 For Amazon S3 or S3-compatible storage, use the framework-neutral adapter with
 an authenticated application-backend broker:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { s3ObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store/s3";
 
@@ -450,6 +459,7 @@ operations.
 
 Send bytes when the attachment travels as its own encrypted message:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 const controller = new AbortController();
 
@@ -481,6 +491,7 @@ await signal.send("bob", photoBytes, {
 Upload first when your app message format embeds the attachment pointer inside a
 larger payload:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 const attachment = await signal.uploadAttachment(photoBytes, {
   mimeType: "image/jpeg",
@@ -530,6 +541,7 @@ adapter. The target message-first API moves that responsibility behind
 `deviceStorage.messages`. The operation tries the upload when it is due and
 returns either a completed pointer or a pending job id for later recovery:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 const upload = await signal.media.upload(
   {
@@ -554,6 +566,7 @@ if (upload.status === "completed") {
 Run pending durable media work on app startup, foreground resume, or from a
 background task:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await signal.media.processPending({
   limit: 10,
@@ -566,6 +579,7 @@ On receive, ask the media planner what work this device should do. Your app
 supplies the IDs it has already processed or cached. The Signal Protocol package
 returns the safe next step, and it does not take ownership of your app database:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 const mediaWork = media.planMediaAttachmentProcessing({
   attachment,
@@ -609,6 +623,7 @@ If the planner says this device needs media bytes, pass the decrypted attachment
 pointer back to the client. The client downloads encrypted blob bytes, verifies
 the digest, authenticates the stream, and returns plaintext bytes:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 if (mediaWork.shouldDownload) {
   const downloaded = await signal.downloadAttachment(attachment, {
@@ -640,6 +655,7 @@ if (mediaWork.shouldDownload) {
 If the attachment is view-once, plan the local cleanup and linked-device sync
 after the user opens it:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 const opened = media.planMediaAttachmentOpen({
   attachment,
@@ -663,6 +679,7 @@ if (opened.cleanup?.deleteRemoteBlob) {
 A message delete or expiration can remove media on this account's linked
 devices. Plan and sync the deletion after your app applies the local cleanup:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 const deleteSync = media.planMediaAttachmentDeleteSync({
   attachment,
@@ -676,6 +693,7 @@ await signal.syncMediaAttachmentDeleteToLinkedDevices(deleteSync);
 
 When a worker must do the cleanup, use the durable client operation:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await signal.media.cleanup(
   {
@@ -697,6 +715,7 @@ await signal.media.cleanup(
 
 The default is:
 
+<!-- doc-snippet:illustrative config-object-fragment -->
 ```ts
 protocol: {
   postQuantum: 'required',

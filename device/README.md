@@ -26,6 +26,7 @@ The top-level device module currently uses Expo and React Native platform APIs.
 Install the optional peer dependencies required by the exports you use. The
 framework-neutral lifecycle core is available from:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   DeviceLifecycleManager,
@@ -40,6 +41,7 @@ placing initialization in its own startup lifecycle.
 
 ## Device ID access
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   getDeviceId,
@@ -57,6 +59,7 @@ it only after preload or in code that can safely tolerate that fallback.
 
 The primary device creates a short-lived provisioning session:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   generateProvisioningQR,
@@ -88,6 +91,7 @@ await provisionDevice(
 The new device parses the QR data, joins the session, and stores the encrypted
 provisioning result:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   connectToProvisioningSession,
@@ -132,6 +136,7 @@ group/username state only when the host application enables and supplies them.
 
 ## Transfer cryptographic state
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   prepareNewDeviceTransfer,

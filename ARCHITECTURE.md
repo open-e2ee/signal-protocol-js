@@ -56,6 +56,7 @@ modify the code.
 
 The root package is core-only:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   SignalProtocolClient,
@@ -152,6 +153,7 @@ This boundary prevents lower protocol/session layers from depending on the clien
 
 Application code should prefer:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await createSignalProtocolClient({
   identity: { userId },

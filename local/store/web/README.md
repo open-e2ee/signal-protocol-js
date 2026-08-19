@@ -11,6 +11,7 @@ the browser-origin threat model explicit.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { indexedDbStore } from "@open-e2ee/signal-protocol-sdk/local/store/web";

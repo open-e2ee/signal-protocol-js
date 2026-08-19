@@ -13,7 +13,9 @@ plaintext ownership to the backend.
 
 ## Local usage
 
+<!-- doc-snippet:run relay-memory-client expect="" -->
 ```ts
+// Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
 import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";

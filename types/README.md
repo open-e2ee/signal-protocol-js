@@ -12,6 +12,7 @@ contracts they validate.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import type {
   ISignalProtocolLocalStore,

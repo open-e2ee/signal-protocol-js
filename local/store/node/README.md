@@ -20,6 +20,7 @@ boundary while allowing each deployment to choose an explicit data directory.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { nodeStore } from "@open-e2ee/signal-protocol-sdk/local/store/node";

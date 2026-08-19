@@ -49,6 +49,7 @@ Error occurred?
 
 **"Identity key not found - client not initialized"**
 
+<!-- doc-snippet:illustrative elided-call-arguments -->
 ```typescript
 // ❌ Wrong: forgot to initialize
 const signal = new SignalProtocolClient(); // Don't use constructor directly!
@@ -65,6 +66,7 @@ await signal.encryptMessage(...); // Works!
 
 Make sure the prekey bundle is fresh and valid:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```typescript
 // Fetch the latest prekey bundle from server
 const bundle = await convex.mutation(api.signal.keys.fetchPreKeyBundle, {
@@ -87,6 +89,7 @@ await signal.establishSession(sessionId, bobId, bundle);
 
 Session IDs must be in `userId:deviceId` format:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```typescript
 // ❌ Wrong: missing device ID
 await signal.encryptMessage('bob', 'Hello');
@@ -122,6 +125,7 @@ The protocol handles out-of-order messages automatically via MKSKIPPED. For fail
 
 ### Check Client State
 
+<!-- doc-snippet:skip requires-external-context -->
 ```typescript
 // Get encryption statistics
 const stats = await signal.getStats();
@@ -132,6 +136,7 @@ console.log('OneTime prekeys remaining:', stats.oneTimePreKeysCount);
 
 ### Check Session Status
 
+<!-- doc-snippet:skip requires-external-context -->
 ```typescript
 // Check if session exists
 const hasSession = await signal.hasSession('bob:1');
@@ -140,6 +145,7 @@ console.log('Has session with bob:1:', hasSession);
 
 ### Enable Debug Logging
 
+<!-- doc-snippet:skip requires-external-context -->
 ```typescript
 const signal = await SignalProtocolClient.create(userId, {
   enableDebugLogging: true,
@@ -149,6 +155,7 @@ const signal = await SignalProtocolClient.create(userId, {
 
 ### Verify Identity Keys
 
+<!-- doc-snippet:skip requires-external-context -->
 ```typescript
 // Generate the composite safety number from the locally pinned identity.
 const safetyNumber = await signal.verify(theirUserId);

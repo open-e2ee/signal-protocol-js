@@ -10,6 +10,7 @@ identity, the Ed25519-instead-of-XEdDSA signature scheme, the ML-KEM Braid
 
 The public Signal Protocol client policy is:
 
+<!-- doc-snippet:illustrative config-object-fragment -->
 ```ts
 protocol: {
   postQuantum: 'required',
@@ -25,6 +26,7 @@ the current app.
 
 ## Required
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
@@ -39,6 +41,7 @@ closed.
 
 ## Compatible
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
@@ -61,6 +64,7 @@ Compatible mode does not allow downgrade recovery:
 
 ## Braid Policy
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
@@ -78,6 +82,7 @@ not stock FIPS 203.
 
 See [Deviations §4.1](./DEVIATIONS.md#41-the-hek-operand-order-diverges).
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
@@ -94,6 +99,7 @@ product-reviewed constraints, not downgrade recovery.
 
 Use string literals directly or the exported constant object:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { BraidPolicy, PostQuantumPolicy, createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 

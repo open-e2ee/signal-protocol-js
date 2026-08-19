@@ -13,6 +13,7 @@ prevents storage and relay adapters from inventing incompatible key shapes.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   createCompositeIdentityV1,
@@ -35,6 +36,7 @@ advanced lifecycle integrations.
 
 `CompositeIdentityV1` is the canonical public trust object:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 interface CompositeIdentityV1 {
   readonly version: 1;

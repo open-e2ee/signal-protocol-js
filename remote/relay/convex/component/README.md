@@ -16,6 +16,7 @@ public wrappers.
 
 Mount the component in the app's Convex configuration:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 // convex/convex.config.ts
 import { defineApp } from 'convex/server';
@@ -89,6 +90,7 @@ O(versions × state size) per group.
 Create the wrapper once with the mounted component reference and the app's
 authentication hook:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 // convex/relayBackend.ts
 import { components } from './_generated/api';
@@ -113,6 +115,7 @@ export const signalRelay = defineConvexSignalProtocolBackend(
 The relay reads these functions through `api.signal`, so the modules must live
 inside that namespace rather than at the top of `convex/`:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 // convex/signal/groups.ts
 import { signalRelay } from '../relayBackend';
@@ -127,6 +130,7 @@ export const {
 } = signalRelay.groups;
 ```
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 // convex/signal/zkAuth.ts
 import { signalRelay } from '../relayBackend';
@@ -139,6 +143,7 @@ export const {
 
 Mount the remaining relay namespaces alongside those group modules:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 // convex/signal/messages.ts
 import { signalRelay } from '../relayBackend';
@@ -155,6 +160,7 @@ export const {
 } = signalRelay.messages;
 ```
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 // convex/signal/devices.ts
 import { signalRelay } from '../relayBackend';
@@ -168,6 +174,7 @@ export const {
 } = signalRelay.devices;
 ```
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 // convex/signal/keys.ts
 import { signalRelay } from '../relayBackend';
@@ -185,12 +192,14 @@ export const {
 } = signalRelay.keys;
 ```
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 // convex/signal/certificates.ts
 import { signalRelay } from '../relayBackend';
 export const { issueSenderCertificate } = signalRelay.certificates;
 ```
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 // convex/signal/provisioning.ts
 import { signalRelay } from '../relayBackend';

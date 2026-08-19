@@ -37,6 +37,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Check the generated API reference
+        run: npm run docs:api:check
+
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=moderate
 
@@ -59,9 +62,9 @@ jobs:
           npm run build
           npm pack --pack-destination "$RUNNER_TEMP"
 
-      - name: Extract the Quick Start block from README.md
+      - name: Extract the local round-trip block from README.md
         run: |
-          awk '/^## Quick Start$/{flag=1} flag && /^```ts$/{code=1; next} code && /^```$/{exit} code{print}' README.md > "$RUNNER_TEMP/quickstart.mjs"
+          awk '/^## Run a local encrypted round trip$/{flag=1} flag && /^```ts$/{code=1; next} code && /^```$/{exit} code{print}' README.md > "$RUNNER_TEMP/quickstart.mjs"
           test -s "$RUNNER_TEMP/quickstart.mjs"
 
       - name: Run the quickstart against the packed package

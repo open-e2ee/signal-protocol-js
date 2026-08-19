@@ -18,6 +18,7 @@ Compose the exported table definitions into the application schema, configure
 the database bindings once during bootstrap, and apply the database key before
 the first query:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   configureSignalProtocolExpoDbBindings,
@@ -65,6 +66,7 @@ Do not back these tables up to a server or sync them between devices.
 
 ## Client usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";

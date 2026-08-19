@@ -13,6 +13,7 @@ and sender-key rotation.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   GroupManager,

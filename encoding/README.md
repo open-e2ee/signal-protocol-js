@@ -11,6 +11,7 @@ modules or silently mixing standard and URL-safe Base64.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   bytesToBase64,

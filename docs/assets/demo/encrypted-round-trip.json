@@ -1,0 +1,26 @@
+{
+  "sourceUrl": "https://open-e2ee.dev/#demo",
+  "capturedAt": "2026-08-19T15:34:54.361Z",
+  "viewport": {
+    "width": 640,
+    "height": 900,
+    "deviceScaleFactor": 1
+  },
+  "image": {
+    "width": 480,
+    "height": 676,
+    "frames": 7,
+    "durationMs": 13800,
+    "bytes": 70096,
+    "sha256": "8b7bfbdc8c0f98c5591e9b8c242e8da3c8c2fc1be23ef4d4173580d7602c7864"
+  },
+  "captions": [
+    "A real run, recorded in this tab",
+    "Alice uploads",
+    "Bob uploads",
+    "PQXDH spends a prekey",
+    "Only ciphertext leaves the phone.",
+    "Bob’s mailbox holds",
+    "Bob’s message keys open the envelope"
+  ]
+}

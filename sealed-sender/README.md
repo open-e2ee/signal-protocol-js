@@ -12,6 +12,7 @@ contract.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   ACCESS_KEY_BYTES,

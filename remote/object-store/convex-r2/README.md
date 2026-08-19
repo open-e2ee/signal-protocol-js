@@ -13,6 +13,7 @@ component ownership into the SDK.
 
 ## Client usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { convexR2ObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2";
@@ -40,6 +41,7 @@ by `ConvexR2ObjectStoreApi`.
 The server-only subpath supplies validators and broker mechanics while keeping
 authorization and persistence in application callbacks:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { R2 } from "@convex-dev/r2";
 import {

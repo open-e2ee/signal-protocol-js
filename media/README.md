@@ -18,6 +18,7 @@ The remote object store never receives the media key or plaintext.
 
 ## Upload and send
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   createMediaAttachmentMessage,
@@ -43,6 +44,7 @@ await signal.send(
 
 ## Receive and open
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   parseMediaAttachmentMessage,

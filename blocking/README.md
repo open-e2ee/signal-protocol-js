@@ -11,6 +11,7 @@ second, conflicting source of truth. `SignalProtocolBlockingManager` centralizes
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   SignalProtocolBlockingManager,

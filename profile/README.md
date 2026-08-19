@@ -12,6 +12,7 @@ encrypted fields and does not receive those keys.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   decryptProfileName,

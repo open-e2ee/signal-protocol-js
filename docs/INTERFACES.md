@@ -31,6 +31,7 @@ requirements described below.
 `ISignalProtocolLocalStore` persists the current device's identities, prekeys, sessions,
 sender keys, contact trust, retry records, and operational metadata.
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import type { ISignalProtocolLocalStore } from "@open-e2ee/signal-protocol-sdk/local/store";
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
@@ -62,6 +63,7 @@ and their status.
 secrets that must live outside the main local store, such as a database
 encryption key.
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import type { ISignalProtocolLocalSecretVault } from "@open-e2ee/signal-protocol-sdk";
 
@@ -83,6 +85,7 @@ selected platform service and host configuration. See the
 device registration, account identity state, public prekeys, encrypted-envelope
 delivery, provisioning, key rotation, and encrypted group coordination.
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import type { ISignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
 import {
@@ -120,6 +123,7 @@ See the [relay guide](../remote/relay/README.md).
 `SignalProtocolRemoteObjectStore` supplies short-lived upload and download operations
 for already encrypted objects. It is provider-neutral and optional.
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import type {
   SignalProtocolRemoteObjectStore,
@@ -155,6 +159,7 @@ See the [remote object-store guide](../remote/object-store/README.md).
 Application content remains outside the infrastructure adapters. Configure
 media lifecycle callbacks and client hooks at the client boundary:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 const client = await createSignalProtocolClient({
   identity: { userId },
