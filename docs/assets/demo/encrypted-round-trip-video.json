@@ -1,0 +1,52 @@
+{
+  "sourceUrl": "https://open-e2ee.dev/#demo",
+  "capturedAt": "2026-08-19T20:36:23.579Z",
+  "viewport": {
+    "width": 640,
+    "height": 900,
+    "deviceScaleFactor": 2
+  },
+  "video": {
+    "width": 960,
+    "height": 1354,
+    "displayWidth": 480,
+    "displayHeight": 676,
+    "frames": 993,
+    "frameRate": 15,
+    "durationMs": 66200,
+    "codec": "h264",
+    "pixelFormat": "yuv420p",
+    "bytes": 1336672,
+    "sha256": "f6f9f13aa6ae001d20078ec9e784685cadf457489219c5d1eeb64dfefc3ed45c"
+  },
+  "captions": [
+    "A real run, recorded in this tab and replayed at reading pace.",
+    "Alice’s device registers — the relay opens a mailbox.",
+    "Alice generates 200 key pairs, on the device.",
+    "Alice uploads 204 public prekeys. Nothing private leaves.",
+    "Bob’s device registers — the relay opens a mailbox.",
+    "Bob generates 200 key pairs, on the device.",
+    "Bob uploads 204 public prekeys. Nothing private leaves.",
+    "PQXDH spends a prekey — the triple ratchet runs on both devices.",
+    "Alice’s message keys seal the envelope — the ratchet steps.",
+    "Only ciphertext leaves the phone.",
+    "Bob’s mailbox holds 3.1 KB of ciphertext.",
+    "Bob’s device fetches the envelope.",
+    "Bob’s message keys open the envelope — decrypted on the device.",
+    "Bob’s message keys seal the envelope — the ratchet steps.",
+    "Only ciphertext leaves the phone.",
+    "Alice’s mailbox holds 2.5 KB of ciphertext.",
+    "Alice’s device fetches the envelope.",
+    "Alice’s message keys open the envelope — decrypted on the device.",
+    "Alice’s message keys seal the envelope — the ratchet steps.",
+    "Only ciphertext leaves the phone.",
+    "Bob’s mailbox holds 2.5 KB of ciphertext.",
+    "Bob’s device fetches the envelope.",
+    "Bob’s message keys open the envelope — decrypted on the device.",
+    "Bob’s message keys seal the envelope — the ratchet steps.",
+    "Only ciphertext leaves the phone.",
+    "Alice’s mailbox holds 2.5 KB of ciphertext.",
+    "Alice’s device fetches the envelope.",
+    "Alice’s message keys open the envelope — decrypted on the device."
+  ]
+}
