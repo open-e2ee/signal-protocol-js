@@ -11,6 +11,7 @@ returned by that backend.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { s3ObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store/s3";
 

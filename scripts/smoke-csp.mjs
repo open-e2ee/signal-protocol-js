@@ -45,19 +45,23 @@ function run(command, args, options = {}) {
 }
 
 /**
- * The first `ts` fence under `## Quick Start`. The published block is plain
+ * The first `ts` fence under `## Run a local encrypted round trip`. The published block is plain
  * ESM with type annotations nowhere in it, which is why CI can rename it to
  * `.mjs` and run it unmodified; this script holds it to the same bargain.
  */
 function readQuickStart() {
   const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
-  const section = readme.indexOf('\n## Quick Start\n');
+  const section = readme.indexOf('\n## Run a local encrypted round trip\n');
   if (section === -1) {
-    throw new Error('README.md has no `## Quick Start` section');
+    throw new Error(
+      'README.md has no `## Run a local encrypted round trip` section'
+    );
   }
   const fence = /```ts\r?\n([\s\S]*?)```/.exec(readme.slice(section));
   if (!fence || fence[1].trim() === '') {
-    throw new Error('README.md `## Quick Start` section has no non-empty ts block');
+    throw new Error(
+      'README.md `## Run a local encrypted round trip` section has no non-empty ts block'
+    );
   }
   return fence[1];
 }
@@ -100,9 +104,7 @@ try {
   );
   const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
 
-  // The quick start ends on a live relay subscription, so the process may still
-  // be holding handles when the round trip is already done. CI treats the
-  // delivered line as the contract; so does this gate.
+  // CI treats the delivered line as the contract; so does this gate.
   if (result.stdout.includes(QUICKSTART_EXPECTED_OUTPUT)) {
     process.stdout.write(`${output}\n`);
     process.stdout.write('smoke-csp:ok quickstart round trip completed without code generation\n');

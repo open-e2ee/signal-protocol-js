@@ -74,9 +74,10 @@ Coverage spans, in the terms this documentation uses elsewhere:
   backend.
 - **Public surface**. The exported API shape, and the quickstart printed in the
   [README](../README.md). CI runs that quickstart as written on every change.
-- **Error surface**. Every exported error class and every documented error code
-  traces back to a construction site in the library. An error the documentation
-  tells you to branch on is therefore one the library can throw.
+- **Error surface**. Every class in the exported `EncryptionError` family has a
+  construction site. Every `EncryptionErrorCode` and
+  `MediaAttachmentErrorCode` value also has one. The check rejects unresolved
+  code forwarding instead of treating it as proof.
 
 In every adapter case the assertions target the adapter's contract. The engines
 are the environment the adapter must honor that contract in, not the subject of
@@ -108,8 +109,13 @@ a badge on the README that you can click through to the run logs:
   and run against the packed package. A second run adds
   `--disallow-code-generation-from-strings`, which stands in for a strict
   `script-src` policy and for a Chrome MV3 extension.
-- every classified snippet in the shipped documentation, executed against the
-  packed package.
+- every TypeScript snippet in the shipped documentation, checked against the
+  packed package. The check runs each complete program and matches its output.
+  For a snippet that cannot run, it compiles every SDK name against the
+  package's types. A renamed or deleted export therefore fails the build in
+  every document that names it. A snippet that previews an unreleased API
+  declares which import paths do not exist yet. The build fails if one of them
+  resolves, and names each pseudocode block in its log.
 - every subpath in the package's export map. A consumer outside the repository
   imports each one, with all of the optional peer dependencies removed from
   its `node_modules`. The check itself names the platform-bound entry points,

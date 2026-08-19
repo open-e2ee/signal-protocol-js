@@ -21,6 +21,7 @@ functions, retention policy, and operational controls.
 Organize the application functions under one generated module namespace, then
 pass that namespace directly:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import {

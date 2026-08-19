@@ -470,7 +470,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "NO_SESSION"
             | "DECRYPTION_FAILED"
             | "SESSION_EXPIRED"
-            | "INVALID_MESSAGE"
             | "STALE_DEVICE_LIST"
             | "IDENTITY_KEY_MISMATCH";
           requesterDeviceId: number;
@@ -565,7 +564,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "NO_SESSION"
             | "DECRYPTION_FAILED"
             | "SESSION_EXPIRED"
-            | "INVALID_MESSAGE"
             | "STALE_DEVICE_LIST"
             | "IDENTITY_KEY_MISMATCH";
           requesterDeviceId: number;

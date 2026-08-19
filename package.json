@@ -1,6 +1,6 @@
 {
   "name": "@open-e2ee/signal-protocol-sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Signal Protocol E2EE SDK for TypeScript — Expo, React Native, browser, and Node. Post-quantum PQXDH and Double Ratchet.",
   "keywords": [
     "open-e2ee",
@@ -353,7 +353,8 @@
     "build:fix-esm": "node ./scripts/fix-esm-specifiers.mjs ./dist",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit -p tsconfig.build.json",
-    "docs:api": "npx -y -p typedoc@0.28 -p typedoc-plugin-markdown@4 -p typescript@5.8 typedoc && node ./scripts/normalize-api-doc-paths.mjs",
+    "docs:api": "npx -y -p typedoc@0.28.20 -p typedoc-plugin-markdown@4.12.0 -p typescript@5.8.3 typedoc && node ./scripts/normalize-api-doc-paths.mjs",
+    "docs:api:check": "npm run docs:api && git diff --exit-code -- docs/api && test -z \"$(git ls-files --others --exclude-standard docs/api)\"",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
@@ -435,6 +436,7 @@
   "devDependencies": {
     "@convex-dev/r2": "^0.10.2",
     "@convex-dev/rate-limiter": "^0.3.2",
+    "@swc/core": "^1.15.43",
     "@types/async-lock": "^1.4.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",

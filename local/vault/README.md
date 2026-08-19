@@ -13,6 +13,7 @@ platform keychain.
 
 ## Expo usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { ExpoSecureStoreSignalProtocolSecretVault } from "@open-e2ee/signal-protocol-sdk/local/vault/expo-secure-store";
 

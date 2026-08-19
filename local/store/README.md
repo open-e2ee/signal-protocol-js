@@ -142,6 +142,7 @@ state, retry message records, and recovery helpers.
 
 ## Composition
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { SignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 import { ExpoSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
@@ -169,6 +170,7 @@ An `ISignalProtocolLocalStore` implementation must preserve:
 
 The current persisted session record shape is version `4`:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 interface SessionRecord {
   currentSession: SessionState | null;

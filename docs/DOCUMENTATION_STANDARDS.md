@@ -101,6 +101,34 @@ State boundaries directly:
 Avoid absolute security claims. Describe the threat boundary and required host
 controls instead.
 
+## Code snippets
+
+Every TypeScript code block in the shipped documentation carries an HTML
+comment that says how the build checks it. A block with no marker fails the
+build, so a new snippet cannot enter the documentation unclassified.
+
+| Marker | What the build does | Use it for |
+| --- | --- | --- |
+| `doc-snippet:run <id> expect="<stdout>"` | Compiles the snippet against the packed package, runs it, and matches its output. | A complete program. |
+| `doc-snippet:skip <reason>` | Reconstructs every SDK name the snippet uses and compiles that against the packed package. | A snippet that needs a live client, a fixture, or a larger program around it. |
+| `doc-snippet:planned <id> unshipped="<specifier>[,…]"` | Checks the shipped part as `skip` does, and asserts that each declared specifier does **not** resolve. | A preview of an API the package has not released. |
+| `doc-snippet:illustrative <reason>` | Nothing. The build names the snippet on its own line. | Pseudocode, and only pseudocode. |
+
+`skip` is the default for a snippet that cannot run. It is not an exemption:
+a renamed or deleted export still fails the build, and the error names the
+document the snippet came from.
+
+`planned` states a negative, so the build fails when a declared specifier
+starts to resolve. Promote the snippet to `skip` or `run` in the release that
+ships the API, and the marker cannot outlive the claim it makes.
+
+`illustrative` is the one tier no compiler reads. Use it only when the snippet
+is not TypeScript: elided arguments, a bare object fragment, or control flow
+written for a person. Anything that parses belongs in another tier.
+
+`scripts/run-doc-snippets.mjs` runs all four. It reports each snippet by
+document and identifier, so the build log shows which check each snippet took.
+
 ## Generated API documentation
 
 Do not edit `docs/api/` by hand. Update exported JSDoc or public declarations,

@@ -605,9 +605,6 @@ export enum RetryReason {
   /** Session was deleted/expired before message arrived */
   SESSION_EXPIRED = 'SESSION_EXPIRED',
 
-  /** Corrupted message or invalid format */
-  INVALID_MESSAGE = 'INVALID_MESSAGE',
-
   /** Device list is out of date - resync required */
   STALE_DEVICE_LIST = 'STALE_DEVICE_LIST',
 

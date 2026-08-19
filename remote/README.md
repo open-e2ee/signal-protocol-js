@@ -29,6 +29,7 @@ replaceable and prevent them from owning private keys or plaintext.
 
 ## Composition
 
+<!-- doc-snippet:skip requires-production-adapters -->
 ```ts
 import { SignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import {
@@ -95,6 +96,7 @@ application installs, mounts, and configures `@convex-dev/r2`, owns the R2
 bucket and credentials, and exposes authenticated app-owned functions for
 create, download, completion, and deletion.
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { SignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { convexR2ObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2";
@@ -118,6 +120,7 @@ time-sensitive credentials or await provider metadata. The functions
 The optional server entry point removes repetitive broker plumbing without
 taking ownership away from the application:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 // convex/signalObjectStore.ts
 import { R2 } from "@convex-dev/r2";
@@ -174,6 +177,7 @@ on that backend. The broker follows the same identity contract: it receives a
 retry-stable `requestId`, reserves the private provider key, and returns the
 canonical `objectId`.
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { s3ObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store/s3";
 
@@ -194,7 +198,9 @@ needed to authorize and construct short-lived operations.
 
 Use `InMemorySignalProtocolRelayServer` when multiple clients need a shared in-memory relay:
 
+<!-- doc-snippet:run remote-shared-memory-relay expect="" -->
 ```ts
+// Real protocol and cryptography; simulated in-memory infrastructure.
 import { SignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { InMemorySignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
 import { InMemorySignalProtocolStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";

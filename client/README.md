@@ -15,6 +15,7 @@ Every client needs `storage`. Local use can omit `relay`, and real messaging
 needs it. `protocol.postQuantum` and `protocol.braid` both default to
 `'required'`.
 
+<!-- doc-snippet:skip requires-established-session -->
 ```ts
 import { createSignalProtocolClient, ProtocolAddress } from '@open-e2ee/signal-protocol-sdk';
 import { inMemoryStore } from '@open-e2ee/signal-protocol-sdk/local/store/memory';
@@ -32,6 +33,7 @@ await signal.encryptMessage(bob, 'hello');
 
 ### With relay
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 import { convexRelay, type ConvexSignalProtocolRelayApi } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
@@ -65,6 +67,7 @@ database-binding and SQLCipher bootstrap.
 
 Use product/security terms at the client seam:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
@@ -77,6 +80,7 @@ await createSignalProtocolClient({
 `compatible` only for an explicit product decision to support peers that
 publish no post-quantum material:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
@@ -87,6 +91,7 @@ await createSignalProtocolClient({
 
 Use direct SPQR only as an explicit product-reviewed escape hatch:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
@@ -99,6 +104,7 @@ await createSignalProtocolClient({
 
 Use typed device addresses instead of string session ids:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { ProtocolAddress } from '@open-e2ee/signal-protocol-sdk';
 
@@ -111,6 +117,7 @@ const asString = ProtocolAddress.toString(bob);
 
 ### Direct session control
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 const bob = ProtocolAddress.create('bob', 1);
 
@@ -122,6 +129,7 @@ const plaintext = await signal.decryptMessage(bob, ciphertext);
 
 ### Multi-device send
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 const result = await signal.send(recipientUserId, 'hello');
 
@@ -136,6 +144,7 @@ await appMessages.insertOutgoing({
 
 ### Server sync
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 // Publish fresh public prekeys and rotate long-lived prekeys on schedule.
 await signal.syncToServer();
@@ -148,6 +157,7 @@ await signal.rotateKyberPreKey();
 Use the dedicated headless entry point from a background task after restoring
 the same application-owned storage and relay boundaries:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { rotateKeysHeadless } from '@open-e2ee/signal-protocol-sdk/client/headless';
 

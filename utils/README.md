@@ -11,6 +11,7 @@ internals.
 
 ## Retry usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   isRetryableError,

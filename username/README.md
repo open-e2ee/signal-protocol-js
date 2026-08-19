@@ -11,6 +11,7 @@ helps applications avoid treating display text as a stable account identifier.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   formatUsername,

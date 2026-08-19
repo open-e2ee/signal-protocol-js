@@ -281,7 +281,6 @@ const retryReasonValidator = v.union(
   v.literal('NO_SESSION'),
   v.literal('DECRYPTION_FAILED'),
   v.literal('SESSION_EXPIRED'),
-  v.literal('INVALID_MESSAGE'),
   v.literal('STALE_DEVICE_LIST'),
   v.literal('IDENTITY_KEY_MISMATCH')
 );

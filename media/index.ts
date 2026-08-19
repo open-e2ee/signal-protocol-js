@@ -119,7 +119,6 @@ export type CreateMediaAttachmentPointerInput = Omit<MediaAttachmentPointer, 've
 };
 
 export const MediaAttachmentErrorCode = {
-  RemoteObjectStoreNotConfigured: 'remote-object-store-not-configured',
   UploadFailed: 'upload-failed',
   UploadIdentityChanged: 'upload-identity-changed',
   DownloadFailed: 'download-failed',

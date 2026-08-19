@@ -14,6 +14,7 @@ security or persistence boundary.
 
 ## Usage
 
+<!-- doc-snippet:run memory-store-client expect="" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
@@ -33,6 +34,7 @@ application discards the adapter. Never use this adapter for production accounts
 Failure mode is opt-in. A seed and cadence replay the same failing writes, or
 you can target the next named store operation:
 
+<!-- doc-snippet:run memory-store-failure-injection expect="" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
 import {

@@ -12,6 +12,7 @@ group secrets and profile keys on the service.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   computeProfileKeyVersion,

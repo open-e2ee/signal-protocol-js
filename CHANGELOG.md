@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.4.0
+
+- **The README now provides a runnable encrypted round trip and a current demo.**
+  The quickstart exercises two SDK clients through the in-memory relay. The new
+  recording shows the same two-device and relay flow as the live desktop and
+  mobile demo.
+
+- **Error-surface checks reject unresolved codes and cover media attachment
+  codes.** The analyser now reports forwarded code arguments in CI.
+  It also checks every `MediaAttachmentErrorCode` value.
+  This release removes `RemoteObjectStoreNotConfigured` because no media
+  operation could produce it.
+
+- **The retry-request wire surface no longer includes
+  `RetryReason.INVALID_MESSAGE`.** No local failure produced it. The incoming
+  retry handler did not support it. Malformed ciphertext failures use the supported
+  `DECRYPTION_FAILED` recovery path.
+
+- **Generated API pages and shipped documentation examples now have source
+  gates.** CI regenerates `docs/api` with pinned tool versions. It rejects a
+  diff. The snippet runner scans every packaged Markdown file and the internal
+  lifecycle docs. It executes every complete example and matches its output.
+  For an example that cannot run, it compiles every SDK name against the packed
+  package. A renamed or deleted export therefore fails the build in every
+  document that names it.
+
+  An example that previews an unreleased API declares the import paths that do
+  not exist yet. The build fails if one of them resolves. Only pseudocode is
+  exempt, and the build names each exempt block on its own line.
+
+- **The error guide now documents all 33 `EncryptionErrorCode` values.** Its
+  session examples also use the current `ProtocolAddress` method signatures.
+
 ## 0.3.0
 
 - **Breaking: seven error classes and sixteen `EncryptionErrorCode` members are

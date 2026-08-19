@@ -11,6 +11,7 @@ needed for trust, session, and one-time-prekey transitions.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import {
@@ -40,6 +41,7 @@ your application supplies. The package therefore exports a
 backend-conformance kit. Run it against your backend from your application's
 own tests:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   assertBackendConformance,

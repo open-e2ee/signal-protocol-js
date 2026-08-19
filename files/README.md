@@ -11,6 +11,7 @@ decryption key plus integrity metadata inside an end-to-end encrypted message.
 
 ## Usage
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   streamingDecrypt,

@@ -29,6 +29,7 @@ const signal = await createSignalProtocolClient({
 
 ## Expo + Convex Client
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
@@ -60,6 +61,7 @@ const signal = await createSignalProtocolClient({
 
 ## Attachments
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { convexR2ObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2";
 import { api } from "../convex/_generated/api";
@@ -103,6 +105,7 @@ app code does not have to compose queue callbacks for ordinary sends. See
 `SignalProtocolClient.create()` remains the low-level primitive. It uses the same
 developer-facing protocol config:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { SignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 

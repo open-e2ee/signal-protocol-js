@@ -117,7 +117,8 @@ function isRaceConditionError(error: unknown): boolean {
  * Check if an error is retryable for Signal Protocol operations
  *
  * Non-retryable:
- * - Encryption error codes (invalid prekey, session conflict, etc.)
+ * - The eight codes in NON_RETRYABLE_ERROR_CODES (invalid prekey bundle,
+ *   untrusted identity, and the rest)
  *
  * Retryable:
  * - Network/timeout errors

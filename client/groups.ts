@@ -382,12 +382,12 @@ export async function getGroupSenderKeyStats(
  * All group functions follow the same pattern: call manager, log success, throw
  * EncryptionError on failure. This helper eliminates that boilerplate.
  */
-async function wrapGroupOp<T>(
+async function runGroupOp<T>(
   label: string,
   logger: SignalProtocolClientContext['logger'],
   op: () => Promise<T>,
-  logData?: Record<string, unknown>,
-  errorCode: EncryptionErrorCode = EncryptionErrorCode.INVALID_STATE
+  logData: Record<string, unknown> | undefined,
+  wrapError: (error: Error) => EncryptionError
 ): Promise<T> {
   try {
     const result = await op();
@@ -400,8 +400,44 @@ async function wrapGroupOp<T>(
     ) {
       throw error;
     }
-    throw new EncryptionError(label, errorCode, { originalError: error as Error });
+    throw wrapError(error as Error);
   }
+}
+
+async function wrapGroupOp<T>(
+  label: string,
+  logger: SignalProtocolClientContext['logger'],
+  op: () => Promise<T>,
+  logData?: Record<string, unknown>
+): Promise<T> {
+  return runGroupOp(
+    label,
+    logger,
+    op,
+    logData,
+    (error) =>
+      new EncryptionError(label, EncryptionErrorCode.INVALID_STATE, {
+        originalError: error,
+      })
+  );
+}
+
+async function wrapGroupInitializationOp<T>(
+  label: string,
+  logger: SignalProtocolClientContext['logger'],
+  op: () => Promise<T>,
+  logData?: Record<string, unknown>
+): Promise<T> {
+  return runGroupOp(
+    label,
+    logger,
+    op,
+    logData,
+    (error) =>
+      new EncryptionError(label, EncryptionErrorCode.INITIALIZATION_FAILED, {
+        originalError: error,
+      })
+  );
 }
 
 /**
@@ -424,12 +460,11 @@ export async function createGroup(
     disappearingMessagesDuration?: number;
   }
 ): Promise<{ groupId: GroupId; masterKey: Uint8Array }> {
-  return wrapGroupOp(
+  return wrapGroupInitializationOp(
     `Created group "${title}"`,
     ctx.logger,
     () => manager.createGroup(creatorAci, creatorProfileKey, members, title, options),
-    { memberCount: members.length + 1, title },
-    EncryptionErrorCode.INITIALIZATION_FAILED
+    { memberCount: members.length + 1, title }
   );
 }
 
@@ -647,11 +682,10 @@ export async function joinGroupViaInviteLink(
   userAci: Uint8Array,
   userProfileKey: Uint8Array
 ): Promise<{ groupId: GroupId; status: 'joined' | 'pending_approval' }> {
-  return wrapGroupOp(
+  return wrapGroupInitializationOp(
     `Joined group via invite link`,
     ctx.logger,
     () => manager.joinViaInviteLink(url, userAci, userProfileKey),
-    {},
-    EncryptionErrorCode.INITIALIZATION_FAILED
+    {}
   );
 }

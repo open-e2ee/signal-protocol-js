@@ -44,6 +44,7 @@ For a production app, the normal startup shape is:
 
 Use the root package for core portable APIs:
 
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
 import {
   SignalProtocolClient,

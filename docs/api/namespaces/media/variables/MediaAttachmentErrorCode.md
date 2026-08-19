@@ -58,10 +58,6 @@
 
 > `readonly` **PolicyViolation**: `"policy-violation"` = `'policy-violation'`
 
-### RemoteObjectStoreNotConfigured
-
-> `readonly` **RemoteObjectStoreNotConfigured**: `"remote-object-store-not-configured"` = `'remote-object-store-not-configured'`
-
 ### ResumeStateInvalid
 
 > `readonly` **ResumeStateInvalid**: `"resume-state-invalid"` = `'resume-state-invalid'`

@@ -543,10 +543,9 @@ export {
  *
  * The rule this list follows has two clauses. An error reaches the barrel when
  * the SDK throws it, and when handling it is a decision the application has to
- * make. Verify a safety
- * number, re-authorize a sealed send. Errors that only report a failure the
- * application cannot act on differently stay on `/types`, which re-exports every
- * one of them.
+ * make. Verifying a safety number and re-authorizing a sealed send are two such
+ * decisions. Errors that only report a failure the application cannot act on
+ * differently stay on `/types`, which re-exports every one of them.
  *
  * The first clause is not decoration. Two of the errors this list originally
  * named are thrown nowhere in the SDK. Promoting them would have advertised a
