@@ -57,7 +57,7 @@ Deviations fall into three kinds:
   `libsignal` system.
 
 A fourth label, **faithful**, appears in the table for an area that follows the
-specification closely. Such a row is here only to delimit what the neighbouring
+specification closely. Such a row is here only to delimit what the neighboring
 deviations do and do not touch.
 
 Companion documents: [Protocol Policy](./PROTOCOL_POLICY.md) states which
@@ -88,7 +88,7 @@ model and what is out of scope.
 | **Delivery token** | `libsignal` `profile_key.rs` | **Faithful.** `deriveAccessKey` follows `libsignal`'s `ProfileKey::derive_access_key`, and reproduces `libsignal`'s published known-answer values | — | Not an SDK invention, despite what the module name suggests |
 | **Sender keys** | `libsignal` `sender_keys.rs` | **Deviation.** Protobuf field numbers and `0x33` framing match, and the `0x01`/`0x02` seeds match, but message-key derivation **omits HKDF-Extract**, signatures are Ed25519 not XEdDSA, and `distributionUuid` carries a UTF-8 string rather than 16 UUID bytes | The Ed25519 choice follows the identity profile; the missing Extract appears unintentional | Group message keys differ from `libsignal`'s for the same chain key. Confirmed numerically, not merely by inspection |
 | **Groups** | Signal Private Group System | **Independent design.** Real zkgroup primitives underneath; the server validates every change against zero-knowledge presentations and signs the accepted result, and clients verify those signatures. **Deviation:** profile-key credential issuance is not blinded — the issuing server sees the raw profile key at issuance time | Ships a validating group server with an enforcement contract (S1–S14) specified in-tree | Not wire-compatible with the Signal Private Group System; credentials are not interchangeable. The unblinded issuance path means a hostile issuance server learns profile keys, which the Signal Private Group System's blinded issuance prevents |
-| **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation is structured as four labelled derivations rather than one seeded derivation | Server keys are the deploying operator's own trust root (each deployment generates its own seed), not Signal Messenger's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal Messenger's |
+| **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation is structured as four labeled derivations rather than one seeded derivation | Server keys are the deploying operator's own trust root (each deployment generates its own seed), not Signal Messenger's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal Messenger's |
 | **Registration IDs** | `libsignal` `sealed_sender.rs` | **Faithful.** Generated in `[1, 16383]`, strictly inside the 14 bits the wire format reserves | — | — |
 
 ---
@@ -307,7 +307,7 @@ The SDK does not use `libsignal`'s labels, `WhisperText` and
 Inheriting them would be wrong on both parameters:
 
 1. **`pqkem` would name a KEM the SDK does not run**, violating §2.2. That is
-   worse than a labelling error. Two implementations feeding an identical label
+   worse than a labeling error. Two implementations feeding an identical label
    derive *different* shared secrets. The KEM underneath differs, and nothing at
    the KDF layer signals it. Domain separation is the one job the info string
    has.
@@ -538,7 +538,7 @@ independently and pinned against commit `fd32048`, which upstream tags
 - **ML-KEM-768 with the same incremental split** (32-byte seed, 1152-byte vector,
   960/128-byte ciphertext parts).
 
-The delta review that moved the pin forward from `f2589fef` found one behavioural
+The delta review that moved the pin forward from `f2589fef` found one behavioral
 change upstream. Decoding a chain epoch direction now rejects a `next` chain key
 whose length is neither zero nor 32 bytes. The internal next-key assertion checks
 that same exact length rather than mere non-emptiness.
@@ -548,7 +548,7 @@ key, root key, and skipped-message key to be canonical base64 for exactly 32
 bytes (`internal/protocol/spqr/serialize.ts:44-72`). The SDK has no state in
 which the key is absent. Two upstream error strings now name the value they
 reject. The rest of the delta is proof-assistant annotation and loop rewriting,
-which leaves behaviour unchanged.
+which leaves behavior unchanged.
 
 ### 4.1 The `hek` operand order diverges
 
@@ -982,7 +982,7 @@ system parameters against a hex string taken from `libsignal`'s own Rust test,
 and it passes.
 
 One deviation remains. The SDK derives server secret parameters through four
-separately labelled key derivations, where `libsignal` uses a single seeded
+separately labeled key derivations, where `libsignal` uses a single seeded
 derivation (`internal/protocol/zk/groups/server-params.ts:43-54`). The same
 randomness therefore yields different server keys.
 
@@ -1031,7 +1031,7 @@ confirm any of them in source.
   `libsignal` commits the new state only after the MAC and the decryption
   succeed. The SDK's receive
   path mutates state during decode, and this review did not trace the caller's
-  rollback behaviour.
+  rollback behavior.
 - **Does an equivalent of `libsignal`'s `promote_matching_session` exist?**
   `libsignal` matches archived sessions on `(version, base key)`. The SDK keys
   its map on the base key alone.

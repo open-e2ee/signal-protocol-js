@@ -64,6 +64,12 @@ round-3 Kyber1024 tagged `0x08`.
   using ML-KEM-768 and bounded Reed-Solomon decoding.
 - HEK follows the ML-KEM Braid specification:
   `SHA3-256(ek_seed || ek_vector)`.
+- FIPS 203 serializes the encapsulation key vector-first, and the braid HEK
+  order is seed-first. Braid mode therefore runs ML-KEM-768 with a modified
+  encapsulation-key commitment, and the SDK makes no FIPS 203 conformance claim
+  for that path.
+- The modification reaches only the braid path. Direct ML-KEM-768 SCKA uses
+  stock ML-KEM-768, and PQXDH uses standardized FIPS 203 ML-KEM-1024 behavior.
 - The SDK applies `KDF_OK` once when raw ML-KEM output enters the epoch
   boundary. Braid output is already an epoch secret and is not derived a second
   time.

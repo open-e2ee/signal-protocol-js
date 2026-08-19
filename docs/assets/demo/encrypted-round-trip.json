@@ -1,6 +1,6 @@
 {
   "sourceUrl": "https://open-e2ee.dev/#demo",
-  "capturedAt": "2026-08-19T15:34:54.361Z",
+  "capturedAt": "2026-08-19T19:17:55.201Z",
   "viewport": {
     "width": 640,
     "height": 900,
@@ -9,18 +9,25 @@
   "image": {
     "width": 480,
     "height": 676,
-    "frames": 7,
-    "durationMs": 13800,
-    "bytes": 70096,
-    "sha256": "8b7bfbdc8c0f98c5591e9b8c242e8da3c8c2fc1be23ef4d4173580d7602c7864"
+    "frames": 291,
+    "frameRate": 10,
+    "durationMs": 29100,
+    "bytes": 491365,
+    "sha256": "3980564850de7f5b30c415815e0d51677d036e47f83f2c7eb7c3f150edece905"
   },
   "captions": [
-    "A real run, recorded in this tab",
-    "Alice uploads",
-    "Bob uploads",
-    "PQXDH spends a prekey",
+    "A real run, recorded in this tab and replayed at reading pace.",
+    "Alice’s device registers — the relay opens a mailbox.",
+    "Alice generates 200 key pairs, on the device.",
+    "Alice uploads 204 public prekeys. Nothing private leaves.",
+    "Bob’s device registers — the relay opens a mailbox.",
+    "Bob generates 200 key pairs, on the device.",
+    "Bob uploads 204 public prekeys. Nothing private leaves.",
+    "PQXDH spends a prekey — the triple ratchet runs on both devices.",
+    "Alice’s message keys seal the envelope — the ratchet steps.",
     "Only ciphertext leaves the phone.",
-    "Bob’s mailbox holds",
-    "Bob’s message keys open the envelope"
+    "Bob’s mailbox holds 3.1 KB of ciphertext.",
+    "Bob’s device fetches the envelope.",
+    "Bob’s message keys open the envelope — decrypted on the device."
   ]
 }
