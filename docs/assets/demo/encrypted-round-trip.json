@@ -1,19 +1,21 @@
 {
   "sourceUrl": "https://open-e2ee.dev/#demo",
-  "capturedAt": "2026-08-19T19:17:55.201Z",
+  "capturedAt": "2026-08-19T20:12:11.869Z",
   "viewport": {
     "width": 640,
     "height": 900,
-    "deviceScaleFactor": 1
+    "deviceScaleFactor": 2
   },
   "image": {
-    "width": 480,
-    "height": 676,
-    "frames": 291,
+    "width": 960,
+    "height": 1354,
+    "displayWidth": 480,
+    "displayHeight": 676,
+    "frames": 289,
     "frameRate": 10,
-    "durationMs": 29100,
-    "bytes": 491365,
-    "sha256": "3980564850de7f5b30c415815e0d51677d036e47f83f2c7eb7c3f150edece905"
+    "durationMs": 28900,
+    "bytes": 1249673,
+    "sha256": "059577960adc8cdcb37b0ef93f5ba2f2b87611294f7c1cbd6bf304e7279593dd"
   },
   "captions": [
     "A real run, recorded in this tab and replayed at reading pace.",

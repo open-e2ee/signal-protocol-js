@@ -30,7 +30,15 @@ OpenE2EE implements a versioned profile of the published Signal Protocol specifi
 
 ## See an encrypted round trip
 
-[![Two devices exchange an end-to-end encrypted message through a relay. The relay handles public prekeys and ciphertext. Only the receiving device displays the plaintext.](https://raw.githubusercontent.com/open-e2ee/signal-protocol-js/main/docs/assets/demo/encrypted-round-trip.gif)](https://open-e2ee.dev/#demo)
+<p align="center">
+  <a href="https://open-e2ee.dev/#demo">
+    <img
+      src="https://raw.githubusercontent.com/open-e2ee/signal-protocol-js/main/docs/assets/demo/encrypted-round-trip.gif"
+      alt="Two devices exchange an end-to-end encrypted message through a relay. The relay handles public prekeys and ciphertext. Only the receiving device displays the plaintext."
+      width="480"
+    >
+  </a>
+</p>
 
 The [live demo](https://open-e2ee.dev/#demo) runs two SDK clients against an in-memory relay. On desktop, type a message and inspect the envelope, ratchets, relay mailbox, and decrypted result. On mobile, the same protocol run replays at reading pace. The protocol and cryptography are real. The example simulates infrastructure in memory. Displayed timings exclude network time.
 
