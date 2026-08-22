@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/open-e2ee/design/v0.8.0/brand/generated/open-e2ee-mark-adaptive.svg" alt="OpenE2EE" width="72" height="72">
+<img src="https://raw.githubusercontent.com/open-e2ee/design/v0.9.1/brand/generated/open-e2ee-mark-adaptive.svg" alt="OpenE2EE" width="72" height="72">
 
 # OpenE2EE Signal Protocol SDK
 
@@ -89,7 +89,7 @@ alice: hello
 
 The client factory creates or loads each device identity. When given a relay, it also publishes the public prekey bundle. `send()` fetches Bob's bundle and starts the required post-quantum session. It then gives ciphertext plus routing metadata to the relay. Bob's subscription retrieves and decrypts the envelope on his device.
 
-The in-memory store loses identities, sessions, and ratchet state on restart. The in-memory relay has no authentication, authorization, or durable storage. Do not ship either adapter. Continue with the [hosted Quickstart](https://docs.open-e2ee.dev/start/quickstart), which explains key custody, relay metadata, prekey replenishment, additional devices, and recovery policy.
+The in-memory store loses identities, sessions, and ratchet state on restart. The in-memory relay has no authentication, authorization, or durable storage. Do not ship either adapter. Continue with the [documentation quickstart](https://docs.open-e2ee.dev/start/quickstart), which explains key custody, relay metadata, prekey replenishment, additional devices, and recovery policy.
 
 ## Move to production storage
 

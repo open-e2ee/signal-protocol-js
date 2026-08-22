@@ -1,7 +1,7 @@
 # Third-party notices
 
 This file records third-party source distributed with or adapted by the
-OpenE2EE SDK. Dependency distributions may contain additional notices.
+OpenE2EE Signal Protocol SDK. Dependency distributions may contain additional notices.
 
 ## @noble/post-quantum
 
