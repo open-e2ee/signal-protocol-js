@@ -481,7 +481,7 @@ export function decodeSPQRWire(bytes: Uint8Array): SPQRWireMessage {
     braidMsgType: modeByte,
   };
 
-  // The reference Ct1Ack payload is a bare acknowledgement. It intentionally has no
+  // The reference Ct1Ack payload is a bare acknowledgment. It intentionally has no
   // chunk. Trailing bytes are allowed for future protocol upgrades.
   if (!braidMessageTypeRequiresChunk(modeByte)) {
     return msg;

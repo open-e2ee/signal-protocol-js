@@ -374,6 +374,10 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
     return this.storage.setMetadata(key, value);
   }
 
+  async deleteMetadata(key: string): Promise<void> {
+    return this.storage.deleteMetadata(key);
+  }
+
   // ============================================================================
   // SESAME Multi-Device Session Management
   // ============================================================================

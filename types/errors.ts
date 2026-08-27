@@ -336,6 +336,9 @@ export enum EncryptionErrorCode {
    */
   SEALED_SENDER_AUTH_FAILED = 'SEALED_SENDER_AUTH_FAILED',
 
+  /** Required anonymous delivery is unavailable or its authorization was rejected. */
+  SEALED_SENDER_REQUIRED = 'SEALED_SENDER_REQUIRED',
+
   // ===== Generic Errors =====
 
   /** Invalid operation or state */
@@ -445,7 +448,7 @@ export function isDuplicatedMessageError(error: unknown): error is DuplicatedMes
  * @example
  * ```typescript
  * try {
- *   await relay.sendUnidentified(envelope, accessKey);
+ *   await relay.sendMultiRecipientUnidentified(message, accessKey, timestamp);
  * } catch (error) {
  *   if (isSealedSenderAuthError(error)) {
  *     // Fall back to identified delivery
@@ -457,7 +460,7 @@ export function isDuplicatedMessageError(error: unknown): error is DuplicatedMes
 export class SealedSenderAuthError extends EncryptionError {
   constructor(cause?: Error) {
     super('Sealed sender authentication failed', EncryptionErrorCode.SEALED_SENDER_AUTH_FAILED, {
-      operation: 'sendUnidentified',
+      operation: 'sendMultiRecipientUnidentified',
       originalError: cause,
     });
     this.name = 'SealedSenderAuthError';
@@ -613,9 +616,7 @@ export class StorageQuotaExceededError extends EncryptionError {
  * @param error - Error to check
  * @returns true if error is StorageQuotaExceededError
  */
-export function isStorageQuotaExceededError(
-  error: unknown
-): error is StorageQuotaExceededError {
+export function isStorageQuotaExceededError(error: unknown): error is StorageQuotaExceededError {
   return error instanceof StorageQuotaExceededError;
 }
 

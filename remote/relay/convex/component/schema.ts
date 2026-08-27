@@ -291,6 +291,7 @@ export default defineSchema({
     identityType: v.union(v.literal('aci'), v.literal('pni')),
     identityKey: v.string(),
     certificate: v.string(),
+    certificateContract: v.literal('scoped'),
     issuedAt: v.number(),
     expiresAt: v.number(),
   })

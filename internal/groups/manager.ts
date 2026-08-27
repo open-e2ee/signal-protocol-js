@@ -130,8 +130,10 @@ import {
 } from '../protocol/zk/groups/auth-credential';
 import type { ExpiringProfileKeyCredential } from '../protocol/zk/groups/profile-key-credential';
 import {
+  createProfileKeyCredentialRequest,
   receiveProfileKeyCredential,
   deserializeProfileKeyCredentialResponse,
+  serializeProfileKeyCredentialRequest,
 } from '../protocol/zk/groups/profile-key-credential';
 import type { PresentationContext } from './encrypted-state';
 import { SECONDS_PER_DAY } from '../protocol/zk/groups/group-params';
@@ -357,8 +359,8 @@ export interface GroupManagerOptions {
   aci: ServiceId;
   /** User's PNI for credential presentation, when the account has one. */
   pni?: ServiceId;
-  /** Issue a fresh profile key credential from the server. Returns serialized response. */
-  issueProfileKeyCredential: () => Promise<Uint8Array>;
+  /** Send a blinded profile-key request and return the serialized issuer response. */
+  issueProfileKeyCredential: (request: Uint8Array) => Promise<Uint8Array>;
   /** Server's profile key credential public key. */
   profileKeyCredentialPublicKey: CredentialPublicKey;
   /** User's 32-byte profile key for profile key credential. */
@@ -505,7 +507,7 @@ export class GroupManager {
   private readonly serverSigningPublicKey?: Uint8Array;
   private readonly aci: ServiceId;
   private readonly pni?: ServiceId;
-  private readonly issueProfileKeyCredentialFn: () => Promise<Uint8Array>;
+  private readonly issueProfileKeyCredentialFn: (request: Uint8Array) => Promise<Uint8Array>;
   private readonly profileKeyCredentialPublicKey: CredentialPublicKey;
   private readonly profileKey: Uint8Array;
   private cachedCredential: { redemptionTime: number; credential: AuthCredentialWithPni } | null =
@@ -625,13 +627,19 @@ export class GroupManager {
       !this.cachedProfileKeyCredential ||
       this.cachedProfileKeyCredential.redemptionTime !== today
     ) {
-      const responseBytes = await this.issueProfileKeyCredentialFn();
+      const requestContext = createProfileKeyCredentialRequest(
+        this.aci,
+        this.profileKey,
+        crypto.getRandomValues(new Uint8Array(32))
+      );
+      const responseBytes = await this.issueProfileKeyCredentialFn(
+        serializeProfileKeyCredentialRequest(requestContext.request)
+      );
       const response = deserializeProfileKeyCredentialResponse(new Uint8Array(responseBytes));
       const credential = receiveProfileKeyCredential(
         this.profileKeyCredentialPublicKey,
         response,
-        this.aci,
-        this.profileKey,
+        requestContext,
         response.redemptionTime,
         Math.floor(Date.now() / 1000)
       );
@@ -648,7 +656,7 @@ export class GroupManager {
    * Execute a group server operation with one credential-refresh retry.
    * On `UNAUTHORIZED`, clears the credential cache and retries once.
    *
-   * This is an SDK transport convenience, not specified behaviour.
+   * This is an SDK transport convenience, not specified behavior.
    * Day-aligned auth credentials can expire mid-flight, and one refresh is
    * cheaper than surfacing a spurious authorization failure.
    */

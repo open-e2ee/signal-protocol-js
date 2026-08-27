@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { transformSync } from 'esbuild';
 
 import {
-  analyseSnippet,
+  analyzeSnippet,
   buildProbeModule,
   buildUnshippedProbe,
   isSdkSpecifier,
@@ -42,7 +42,6 @@ const markdownSources = [
     ...internalMarkdownSources,
   ]),
 ].filter((path) => existsSync(join(repoRoot, path)));
-const pricingSource = 'docs/pricing-preview.html';
 const infrastructureLabel =
   'Real protocol and cryptography; simulated in-memory infrastructure.';
 
@@ -131,63 +130,7 @@ function parseMarkdown(relativePath) {
   return snippets;
 }
 
-function decodeHtml(value) {
-  // Decode `&amp;` last: decoding it earlier turns `&amp;quot;` into
-  // `&quot;`, which the later replacements would then decode a second time.
-  return value
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&quot;', '"')
-    .replaceAll('&#39;', "'")
-    .replaceAll('&amp;', '&');
-}
-
-function stripHtmlTags(value) {
-  // Re-run until stable: one pass over `<<code>span>` leaves `<span>` behind.
-  let text = value;
-  for (let previous; text !== previous; ) {
-    previous = text;
-    text = text.replace(/<[^>]*>/g, '');
-  }
-  return text;
-}
-
-function parsePricingPreview() {
-  // The pricing preview is internal-only and excluded from the public export,
-  // but this script ships in both repositories. Validate its snippets when the
-  // file exists; skip cleanly where it was never published.
-  if (!existsSync(join(repoRoot, pricingSource))) {
-    return [];
-  }
-  const source = readFileSync(join(repoRoot, pricingSource), 'utf8');
-  const codeBlocks = [
-    ...source.matchAll(
-      /(?:(<!--\s*doc-snippet:(run|skip|illustrative|planned)\s+([^>]+?)\s*-->)\s*)?<pre><code[^>]*>([\s\S]*?)<\/code><\/pre>/g
-    ),
-  ];
-  const snippets = [];
-  for (const match of codeBlocks) {
-    const [, marker, mode, idOrReason, highlightedCode] = match;
-    const code = decodeHtml(stripHtmlTags(highlightedCode));
-    if (!marker) {
-      throw new Error(`${pricingSource} contains an unclassified doc snippet`);
-    }
-    const directive = parseDirective(pricingSource, mode, idOrReason);
-    snippets.push({
-      source: pricingSource,
-      mode,
-      ordinal: snippets.length + 1,
-      ...directive,
-      code,
-    });
-  }
-  return snippets;
-}
-
-const snippets = [
-  ...markdownSources.flatMap(parseMarkdown),
-  ...parsePricingPreview(),
-];
+const snippets = markdownSources.flatMap(parseMarkdown);
 
 if (snippets.length === 0) {
   throw new Error('No doc snippets were discovered');
@@ -318,7 +261,7 @@ try {
   for (const snippet of [...skipped, ...planned]) {
     let analysis;
     try {
-      analysis = analyseSnippet(snippet.code);
+      analysis = analyzeSnippet(snippet.code);
     } catch (error) {
       throw new Error(
         `${snippet.source}:${snippet.id} is not parseable TypeScript\n${error.message}`

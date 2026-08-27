@@ -94,7 +94,7 @@ async function printTrustRoot(args) {
   const [
     { generateServerSecretParams, getServerPublicParams },
     { encodeGroupTrustRoot },
-    { deriveSealedSenderRootPublicKey },
+    { deriveSealedSenderRootPublicKey, deriveSealedSenderScopeId },
   ] = await Promise.all([
     // pathToFileURL: dynamic import of a bare absolute path fails on
     // Windows, where the ESM loader requires a file:// URL.
@@ -136,6 +136,7 @@ async function printTrustRoot(args) {
   const sealedSenderRoot = await deriveSealedSenderRootPublicKey(
     secretParams.signingKeyPair.signingKey
   );
+  const sealedSenderScope = await deriveSealedSenderScopeId(sealedSenderRoot);
 
   // Two independently pinned roots, printed with labels because they go to
   // different places in the client build and are not interchangeable.
@@ -144,6 +145,9 @@ async function printTrustRoot(args) {
   );
   process.stdout.write(
     `sealed sender trust root: ${Buffer.from(sealedSenderRoot).toString('base64')}\n`
+  );
+  process.stdout.write(
+    `sealed sender relay scope: ${Buffer.from(sealedSenderScope).toString('base64')}\n`
   );
 }
 

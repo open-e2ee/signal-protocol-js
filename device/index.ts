@@ -34,7 +34,6 @@ export {
   createEmptyBackup,
   // Storage integration functions
   createDeviceBackup,
-  addSessionToBackup,
   restoreDeviceBackup,
   prepareOldDeviceTransferWithBackup,
 } from './transfer';
@@ -60,8 +59,6 @@ export type {
   TransferSession,
   TransferStatus,
   BackupIdentityKeyPair,
-  BackupSignedPreKey,
-  BackupOneTimePreKey,
   // Connection types
   LocalConnection,
   ConnectionConfig,

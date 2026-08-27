@@ -26,6 +26,10 @@ message ServerCertificate {
     optional uint32 id = 1;
     /** Ed25519 public key (32 bytes) */
     optional bytes key = 2;
+    /** Issuer validity start (Unix timestamp milliseconds) */
+    optional fixed64 notBefore = 3;
+    /** Issuer validity end (Unix timestamp milliseconds) */
+    optional fixed64 notAfter = 4;
   }
 
   /** Serialized Certificate message */
@@ -60,6 +64,8 @@ message SenderCertificate {
     optional ServerCertificate signer = 5;
     /** Sender's UUID (required) */
     optional string senderUuid = 6;
+    /** Opaque 16-byte Relay project-environment scope */
+    optional bytes relayScopeId = 7;
   }
 
   /** Serialized Certificate message */

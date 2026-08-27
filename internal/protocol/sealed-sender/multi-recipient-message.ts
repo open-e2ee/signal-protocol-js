@@ -15,6 +15,8 @@
  */
 
 import { encodeVarint, decodeVarint, concatFields } from '../../encoding/proto/primitives';
+import { base64ToBytes, urlSafeToBase64 } from '../../crypto/utils';
+import type { Base64 } from '../../../types';
 import { SEALED_SENDER_V2_UUID_VERSION, SEALED_SENDER_V2_SERVICE_ID_VERSION } from './types';
 
 // ============================================================================
@@ -56,19 +58,28 @@ const EXCLUDED_RECIPIENT_DEVICE_ID = 0x00;
 /**
  * Convert a service ID string to 16 bytes for wire format.
  *
- * ServiceIds must use UUID format (8-4-4-4-12 hexadecimal digits).
+ * ServiceIds must be either UUID text or the canonical base64url encoding of
+ * 16 account-address bytes.
  *
  */
 export function serviceIdToBytes(serviceId: string): Uint8Array {
   const hex = serviceId.replace(/-/g, '');
-  if (!/^[0-9a-f]{32}$/i.test(hex)) {
-    throw new Error('serviceId must be a valid UUID');
+  if (/^[0-9a-f]{32}$/i.test(hex)) {
+    const bytes = new Uint8Array(UUID_BYTES);
+    for (let i = 0; i < UUID_BYTES; i++) {
+      bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+    }
+    return bytes;
   }
-  const bytes = new Uint8Array(UUID_BYTES);
-  for (let i = 0; i < UUID_BYTES; i++) {
-    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+
+  if (/^[A-Za-z0-9_-]{22}$/.test(serviceId)) {
+    const bytes = base64ToBytes(urlSafeToBase64(serviceId) as Base64);
+    if (bytes.length === UUID_BYTES) {
+      return bytes;
+    }
   }
-  return bytes;
+
+  throw new Error('serviceId must encode exactly 16 bytes as UUID or base64url');
 }
 
 /**

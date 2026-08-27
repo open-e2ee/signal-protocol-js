@@ -68,7 +68,7 @@ const FUNCTION_TYPES = new Set([
  * object key costs nothing. Erring the other way -- resolving scopes here --
  * would trade a harmless surplus for missed references.
  */
-export function analyseSnippet(code) {
+export function analyzeSnippet(code) {
   const module = parseSync(code, {
     syntax: 'typescript',
     tsx: false,
@@ -186,7 +186,7 @@ export function analyseSnippet(code) {
  * `rootValueExports` names what the package's root entry point exports at
  * runtime. It resolves the bare identifiers in fragments that show a call
  * without repeating its import, and bounds the loose identifier collection in
- * `analyseSnippet` to names the package actually publishes.
+ * `analyzeSnippet` to names the package actually publishes.
  *
  * `excludeSpecifiers` drops the subpaths a snippet declares as not yet shipped.
  * Their bindings are still locals, so they raise no free identifier and take no

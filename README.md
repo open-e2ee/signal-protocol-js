@@ -13,18 +13,19 @@
 [Website](https://open-e2ee.dev) ·
 [Documentation](https://docs.open-e2ee.dev) ·
 [Live demo](https://open-e2ee.dev/#demo) ·
+[OpenE2EE Relay](https://open-e2ee.dev/relay) ·
 [API reference](https://docs.open-e2ee.dev/reference/api) ·
 [Security](./SECURITY.md)
 
 - **One TypeScript package.** Run the same protocol code in Expo, React Native, modern browsers, and Node.
 - **Post-quantum by default.** The default policy requires PQXDH session establishment and the ML-KEM Braid post-quantum ratchet. Required post-quantum operations fail closed.
 - **Messaging primitives included.** Build multi-device messaging, groups, sealed sender, encrypted attachments, and safety-number verification.
-- **Your infrastructure, behind explicit interfaces.** Your application owns device-local storage. The relay is an interface, not a hosted service. The relay never needs message plaintext or device private keys.
+- **Explicit infrastructure boundaries.** Your application owns device-local storage. Supply your own relay adapter or use [OpenE2EE Relay](https://open-e2ee.dev/relay) for managed encrypted delivery. The relay never needs message plaintext or device private keys.
 - **AGPLv3, or a commercial license.** Proprietary applications that cannot meet AGPLv3 obligations can use a [commercial license](./COMMERCIAL.md).
 
 The protocol code ships without a native crypto module or platform crypto binary. The Expo SQLCipher store requires a development build and native project configuration.
 
-Version `0.4.x`. Public APIs and persisted formats can change before `1.0`.
+Version `1.0.x`. Public APIs and persisted formats follow semantic versioning.
 
 OpenE2EE implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. Read the [full notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
@@ -93,7 +94,7 @@ The in-memory store loses identities, sessions, and ratchet state on restart. Th
 
 ## Move to production storage
 
-Choose the device-local store for your runtime, then supply a relay that authenticates each device and implements your product's access policy.
+Choose the device-local store for your runtime. Then supply a relay that authenticates each device and implements your product's access policy, or use [OpenE2EE Relay](https://open-e2ee.dev/relay) as the managed delivery path. The SDK does not require the managed service. [Review Relay plans and exact meter definitions.](https://open-e2ee.dev/relay/pricing)
 
 | Runtime | Storage path | Deployment boundary |
 |---|---|---|
@@ -114,7 +115,7 @@ Report a suspected vulnerability privately through the process in [SECURITY](./S
 
 ## Why developers choose this SDK
 
-The SDK gives TypeScript applications one maintained package for required post-quantum session establishment and ratcheting, multi-device messaging, groups, sealed sender, attachments, and safety numbers. It keeps protocol state on the device and leaves the relay implementation to the application.
+The SDK gives TypeScript applications one maintained package for required post-quantum session establishment and ratcheting, multi-device messaging, groups, sealed sender, attachments, and safety numbers. It keeps protocol state on the device. Applications can operate a relay adapter or use OpenE2EE Relay for managed delivery.
 
 [Compare maintained alternatives and their limits.](https://open-e2ee.dev/product/#how-it-compares)
 

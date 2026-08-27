@@ -14,6 +14,11 @@ import type { ParsedReceiptContent, ParsedTypingContent } from './content-adapte
 import type { SignalProtocolClientContext } from './types';
 import type { SesameMessage } from '../internal/sesame/types';
 import { base64ToBytes } from '../internal/crypto';
+import {
+  hasProcessedEnvelope,
+  storeProcessedEnvelope,
+  withProcessedEnvelopeLock,
+} from '../local/store/reliability';
 import { isImplicitContentType } from './constants';
 import type { SignalProtocolServiceCipher } from './signal-service-cipher';
 
@@ -136,6 +141,33 @@ export async function handleRelayMessage(
   callbacks: RelaySubscriptionCallbacks,
   config: RelaySubscriptionConfig
 ): Promise<void> {
+  if (!envelope.id) {
+    return handleRelayMessageLocked(ctx, envelope, state, callbacks, config);
+  }
+  return withProcessedEnvelopeLock(ctx.storage, envelope.id, () =>
+    handleRelayMessageLocked(ctx, envelope, state, callbacks, config)
+  );
+}
+
+async function handleRelayMessageLocked(
+  ctx: RelaySubscriptionContext,
+  envelope: Envelope,
+  state: RelaySubscriptionState,
+  callbacks: RelaySubscriptionCallbacks,
+  config: RelaySubscriptionConfig
+): Promise<void> {
+  if (envelope.id && (await hasProcessedEnvelope(ctx.storage, envelope.id))) {
+    ctx.logger.debug('Acknowledging previously processed relay envelope', {
+      category: 'E2EE',
+      data: {
+        envelopeId: envelope.id,
+        behavior: 'PERSISTENT_DUPLICATE_DISCARD',
+      },
+    });
+    await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+    return;
+  }
+
   try {
     // Delegate decryption to SignalProtocolServiceCipher
     // Pass sealed sender config for unidentified_sender envelope handling
@@ -146,7 +178,11 @@ export async function handleRelayMessage(
   } catch (error) {
     // ERROR: Handle decryption failure
     await handleDecryptionError(ctx, envelope, error as Error, state, callbacks, config);
+    return;
   }
+
+  if (envelope.id) await storeProcessedEnvelope(ctx.storage, envelope.id);
+  await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
 }
 
 /**
@@ -187,9 +223,6 @@ async function handleDecryptionSuccess(
       }
     }
   }
-
-  // Mark as delivered on relay
-  await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -275,10 +308,7 @@ async function handleDecryptionError(
   // An at-least-once relay may redeliver the same envelope. The session layer
   // has already rejected the replay, so acknowledge it without asking the
   // sender to create a fresh ciphertext for plaintext already delivered.
-  if (
-    error instanceof EncryptionError &&
-    error.code === EncryptionErrorCode.MESSAGE_DUPLICATE
-  ) {
+  if (error instanceof EncryptionError && error.code === EncryptionErrorCode.MESSAGE_DUPLICATE) {
     ctx.logger.debug('Discarding duplicate relay envelope without retry', {
       category: 'E2EE',
       data: {
@@ -397,7 +427,10 @@ async function sendRetryRequest(
     if (!checkRetryRateLimit(state, envelope.senderUserId)) {
       ctx.logger.warn('Retry rate limit exceeded for sender', {
         category: 'E2EE',
-        data: { senderId: envelope.senderUserId, windowMs: RETRY_REQUEST_WINDOW_MS },
+        data: {
+          senderId: envelope.senderUserId,
+          windowMs: RETRY_REQUEST_WINDOW_MS,
+        },
       });
       await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
       return;
@@ -443,12 +476,17 @@ async function sendRetryRequest(
         } catch (markError) {
           ctx.logger.warn('Failed to mark message as delivered after retry', {
             category: 'E2EE',
-            data: { envelopeId: envelope.id, error: (markError as Error).message },
+            data: {
+              envelopeId: envelope.id,
+              error: (markError as Error).message,
+            },
           });
         }
       }
     } else {
-      ctx.logger.debug('Relay does not support retry requests', { category: 'E2EE' });
+      ctx.logger.debug('Relay does not support retry requests', {
+        category: 'E2EE',
+      });
     }
   } catch (retryError) {
     ctx.logger.warn('Failed to send retry request', {

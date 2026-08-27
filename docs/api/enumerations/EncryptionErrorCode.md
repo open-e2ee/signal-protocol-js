@@ -202,6 +202,14 @@ fallback to identified sender delivery.
 
 ***
 
+### SEALED\_SENDER\_REQUIRED
+
+> **SEALED\_SENDER\_REQUIRED**: `"SEALED_SENDER_REQUIRED"`
+
+Required anonymous delivery is unavailable or its authorization was rejected.
+
+***
+
 ### SENDER\_KEY\_EXPIRED
 
 > **SENDER\_KEY\_EXPIRED**: `"SENDER_KEY_EXPIRED"`

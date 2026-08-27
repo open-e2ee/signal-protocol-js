@@ -48,6 +48,7 @@ import {
   serializeAuthCredentialResponse,
 } from '../../../internal/protocol/zk/groups/auth-credential';
 import {
+  deserializeProfileKeyCredentialRequest,
   issueProfileKeyCredential as issueProfileKeyCredentialZk,
   serializeProfileKeyCredentialResponse,
 } from '../../../internal/protocol/zk/groups/profile-key-credential';
@@ -69,10 +70,7 @@ import { Ciphertext } from '../../../internal/protocol/zk/credentials/attributes
 import { ristretto255 } from '@noble/curves/ed25519.js';
 import { MAX_DEVICES } from '../../../device/constants';
 import { SealedSenderAuthError } from '../../../types/errors';
-import {
-  RelayFailureController,
-  type RelayFailureOptions,
-} from './failures';
+import { RelayFailureController, type RelayFailureOptions } from './failures';
 import { InMemoryGroupAuthorizationServer } from './group-server';
 
 export interface InMemorySignalProtocolRelayServerOptions {
@@ -94,10 +92,7 @@ function cloneRelayValue<T>(value: T): T {
  * component: expiry is never stored, only computed. Sessions that lapse are
  * rejected here and reported as `expired` by `getProvisioningMessage`.
  */
-function requireLiveProvisioningSession(
-  session: { expiresAt: number },
-  sessionId: string
-): void {
+function requireLiveProvisioningSession(session: { expiresAt: number }, sessionId: string): void {
   if (session.expiresAt <= Date.now()) {
     throw new Error(`Provisioning session ${sessionId} expired`);
   }
@@ -210,6 +205,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
   private readonly groupAuthorizationServer = new InMemoryGroupAuthorizationServer(
     this.serverSecretParams
   );
+  private readonly unidentifiedAccessKeys = new Map<string, Uint8Array>();
   readonly groupServer: IRelayGroupServer;
 
   constructor(options: InMemorySignalProtocolRelayServerOptions = {}) {
@@ -220,10 +216,11 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     );
     this.groupServer = {
       server: this.groupAuthorizationServer,
-      issueAuthCredential: (userId) =>
-        this.issueAuthCredential(userId),
-      issueProfileKeyCredential: (userId, profileKey) =>
-        this.issueProfileKeyCredential(userId, profileKey),
+      issueAuthCredential: (userId) => this.issueAuthCredential(userId),
+      setUnidentifiedAccessKey: (userId, accessKey) =>
+        this.setUnidentifiedAccessKey(userId, accessKey),
+      issueProfileKeyCredential: (userId, request) =>
+        this.issueProfileKeyCredential(userId, request),
     };
   }
 
@@ -304,7 +301,10 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     }
 
     if (receiptKey) {
-      this.clientMessageReceipts.set(receiptKey, { messageId: id, serverTimestamp });
+      this.clientMessageReceipts.set(receiptKey, {
+        messageId: id,
+        serverTimestamp,
+      });
     }
 
     return cloneRelayValue({ messageId: id, serverTimestamp });
@@ -367,9 +367,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
   async registerDevice(userId: string, device: DeviceRegistration): Promise<number> {
     const existing = this.devices.get(userId) || [];
     const occupiedIds = new Set(
-      existing
-        .filter((candidate) => candidate.registered)
-        .map((candidate) => candidate.deviceId)
+      existing.filter((candidate) => candidate.registered).map((candidate) => candidate.deviceId)
     );
     const requestedDeviceId = device.deviceId;
     if (
@@ -649,11 +647,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     const ecOneTimePreKey =
       !exhaustOneTimePreKeys && ecPreKeys.length > 0 ? ecPreKeys.shift()! : null;
     if (ecOneTimePreKey) {
-      this.recordConsumedPreKeyIds(
-        this.consumedEcPreKeyIds,
-        deviceKey,
-        [ecOneTimePreKey]
-      );
+      this.recordConsumedPreKeyIds(this.consumedEcPreKeyIds, deviceKey, [ecOneTimePreKey]);
     }
     if (ecPreKeys.length === 0) {
       this.ecPreKeys.delete(deviceKey);
@@ -663,15 +657,9 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     // Per PQXDH spec Section 3.2: one-time KEM prekeys provide per-session PQ forward secrecy
     const kemOneTimePreKeys = this.kemOneTimePreKeys.get(deviceKey) || [];
     const kemOneTimePreKey =
-      !exhaustOneTimePreKeys && kemOneTimePreKeys.length > 0
-        ? kemOneTimePreKeys.shift()!
-        : null;
+      !exhaustOneTimePreKeys && kemOneTimePreKeys.length > 0 ? kemOneTimePreKeys.shift()! : null;
     if (kemOneTimePreKey) {
-      this.recordConsumedPreKeyIds(
-        this.consumedKemOneTimePreKeyIds,
-        deviceKey,
-        [kemOneTimePreKey]
-      );
+      this.recordConsumedPreKeyIds(this.consumedKemOneTimePreKeyIds, deviceKey, [kemOneTimePreKey]);
     }
     if (kemOneTimePreKeys.length === 0) {
       this.kemOneTimePreKeys.delete(deviceKey);
@@ -1030,7 +1018,12 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     userId: string,
     deviceId: number,
     identityType?: IdentityType
-  ): Promise<{ keyId: number; createdAt: number; expiresAt: number; publicKey: string } | null> {
+  ): Promise<{
+    keyId: number;
+    createdAt: number;
+    expiresAt: number;
+    publicKey: string;
+  } | null> {
     const key = this.storageKey(userId, deviceId, identityType);
     const metadata = this.ecSignedPreKeyMetadata.get(key);
     return metadata ? cloneRelayValue(metadata) : null;
@@ -1040,7 +1033,12 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     userId: string,
     deviceId: number,
     identityType?: IdentityType
-  ): Promise<{ keyId: number; createdAt: number; expiresAt: number; publicKey: string } | null> {
+  ): Promise<{
+    keyId: number;
+    createdAt: number;
+    expiresAt: number;
+    publicKey: string;
+  } | null> {
     const key = this.storageKey(userId, deviceId, identityType);
     const metadata = this.kemLastResortPreKeyMetadata.get(key);
     return metadata ? cloneRelayValue(metadata) : null;
@@ -1064,28 +1062,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
   }
 
   /**
-   * Send sealed sender message (anonymous delivery).
-   * Same as send() but without sender identification.
-   */
-  async sendUnidentified(
-    envelope: Envelope,
-    auth: SealedSenderAuth
-  ): Promise<{ messageId: string; serverTimestamp: number }> {
-    if (this.failures.shouldRejectAuthorization()) {
-      throw new SealedSenderAuthError();
-    }
-    // Pass through without validation. Callers can override if needed.
-    void auth; // Accept but do not validate in the in-memory relay
-    return this.send({
-      ...envelope,
-      senderUserId: '',
-      senderDeviceId: 0,
-      messageType: 'unidentified_sender',
-    });
-  }
-
-  /**
-   * Send V2 multi-recipient sealed sender message.
+   * Send a multi-recipient sealed sender message.
    * Parses the binary blob, constructs per-device ReceivedMessages,
    * and fans out via send().
    */
@@ -1095,13 +1072,20 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     timestamp: number,
     recipientUserIds?: string[],
     clientMessageId?: string
-  ): Promise<{ messageId: string; serverTimestamp: number; uuids404: string[] }> {
+  ): Promise<{
+    messageId: string;
+    serverTimestamp: number;
+    uuids404: string[];
+  }> {
+    if (this.failures.shouldRejectAuthorization()) {
+      throw new SealedSenderAuthError();
+    }
     void auth; // Accept but do not validate in the in-memory relay
 
     const { base64ToBytes, bytesToBase64 } = await import('../../../internal/crypto');
     const { asBase64 } = await import('../../../types/utils');
     const { deserializeSentMessage, serializeReceivedMessage } =
-      await import('../../../internal/protocol/sealed-sender/v2-binary');
+      await import('../../../internal/protocol/sealed-sender/multi-recipient-message');
 
     const parsed = deserializeSentMessage(base64ToBytes(asBase64(sentMessageBase64)));
 
@@ -1253,11 +1237,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     fromVersion: number,
     authorization: GroupAuthorization
   ): Promise<GroupChangePage> {
-    return this.groupAuthorizationServer.getGroupChanges(
-      groupId,
-      fromVersion,
-      authorization
-    );
+    return this.groupAuthorizationServer.getGroupChanges(groupId, fromVersion, authorization);
   }
 
   async submitGroupChange(
@@ -1282,7 +1262,10 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
 
   private userIdentities = new Map<string, { uuid: string; phoneNumberIdentifier?: string }>();
 
-  private getOrCreateIdentity(userId: string): { uuid: string; phoneNumberIdentifier?: string } {
+  private getOrCreateIdentity(userId: string): {
+    uuid: string;
+    phoneNumberIdentifier?: string;
+  } {
     let identity = this.userIdentities.get(userId);
     if (!identity) {
       // No phoneNumberIdentifier. Matches the username-based (non-phone) app pattern
@@ -1294,7 +1277,10 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
 
   async issueAuthCredential(userId: string): Promise<Uint8Array> {
     const identity = this.getOrCreateIdentity(userId);
-    const aci: ServiceId = { kind: SERVICE_ID_ACI, uuid: uuidToBytes(identity.uuid) };
+    const aci: ServiceId = {
+      kind: SERVICE_ID_ACI,
+      uuid: uuidToBytes(identity.uuid),
+    };
     const pni: ServiceId | undefined = identity.phoneNumberIdentifier
       ? {
           kind: SERVICE_ID_PNI,
@@ -1316,19 +1302,24 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     return serializeAuthCredentialResponse(response);
   }
 
-  async issueProfileKeyCredential(
-    userId: string,
-    profileKey: Uint8Array
-  ): Promise<Uint8Array> {
+  async setUnidentifiedAccessKey(userId: string, accessKey: Uint8Array): Promise<void> {
+    if (accessKey.length !== 16) {
+      throw new Error(`Unidentified access key must be 16 bytes, got ${accessKey.length}`);
+    }
+    this.getOrCreateIdentity(userId);
+    this.unidentifiedAccessKeys.set(userId, new Uint8Array(accessKey));
+  }
+
+  async issueProfileKeyCredential(userId: string, requestBytes: Uint8Array): Promise<Uint8Array> {
     const { aci } = this.getGroupServiceIds(userId);
+    const request = deserializeProfileKeyCredentialRequest(requestBytes);
     const now = Math.floor(Date.now() / 1000);
     const redemptionTime =
-      Math.floor(now / SECONDS_PER_DAY) * SECONDS_PER_DAY +
-      2 * SECONDS_PER_DAY;
+      Math.floor(now / SECONDS_PER_DAY) * SECONDS_PER_DAY + 2 * SECONDS_PER_DAY;
     const response = issueProfileKeyCredentialZk(
       this.serverSecretParams.profileKeyCredentialKeyPair,
       aci,
-      profileKey,
+      request,
       redemptionTime,
       crypto.getRandomValues(new Uint8Array(32))
     );
@@ -1489,7 +1480,12 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
   setEcSignedPreKeyMetadata(
     userId: string,
     deviceId: number,
-    metadata: { keyId: number; createdAt: number; expiresAt: number; publicKey: string },
+    metadata: {
+      keyId: number;
+      createdAt: number;
+      expiresAt: number;
+      publicKey: string;
+    },
     identityType: IdentityType = 'aci'
   ): void {
     const key = this.storageKey(userId, deviceId, identityType);
@@ -1502,7 +1498,12 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
   setKemLastResortPreKeyMetadata(
     userId: string,
     deviceId: number,
-    metadata: { keyId: number; createdAt: number; expiresAt: number; publicKey: string },
+    metadata: {
+      keyId: number;
+      createdAt: number;
+      expiresAt: number;
+      publicKey: string;
+    },
     identityType: IdentityType = 'aci'
   ): void {
     const key = this.storageKey(userId, deviceId, identityType);

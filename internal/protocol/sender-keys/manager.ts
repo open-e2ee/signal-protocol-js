@@ -89,6 +89,15 @@ export interface SenderKeyState {
    * decryption keys remain usable for delayed messages.
    */
   createdAt: number;
+
+  /**
+   * True while an automatic rotation still needs a durable distribution send.
+   *
+   * The exact-outbox path clears this only after every prepared distribution
+   * message reaches the Relay. If outbox persistence fails first, the next
+   * attempt can reconstruct a distribution from the current ratchet state.
+   */
+  distributionPending?: boolean;
 }
 
 export interface SenderKeyDistributionMessage {
@@ -139,13 +148,13 @@ const CHAIN_KEY_CONSTANT = new Uint8Array([0x02]);
  *
  * An age above {@link SENDER_KEY_AGE_CEILING}, or below
  * {@link SENDER_KEY_AGE_FLOOR}, is a coherent policy that reaches past what
- * the implementation can honour. It is either too long to bound a key's life,
+ * the implementation can honor. It is either too long to bound a key's life,
  * or too short for the rotate-and-redistribute path to beat. The bound it
  * passed is used, and the direction of its intent is kept.
  *
  * A value that is not a positive finite number is not a policy at all. Unlike
  * an out-of-range one, it does not say which way the host wanted to move. A
- * zero in particular is far more often an absent or uninitialised field than a
+ * zero in particular is far more often an absent or uninitialized field than a
  * request to rotate constantly. Reading it as the latter would impose the
  * tightest rotation the SDK allows on a host that asked for nothing. So it
  * falls back to the default. A host that genuinely wants maximal rotation can
@@ -154,10 +163,7 @@ const CHAIN_KEY_CONSTANT = new Uint8Array([0x02]);
  * All three are logged: a silent clamp would leave a host believing a rotation
  * interval it is not getting.
  */
-function resolveMaxSenderKeyAge(
-  configured: number | undefined,
-  logger: Required<ILogger>
-): number {
+function resolveMaxSenderKeyAge(configured: number | undefined, logger: Required<ILogger>): number {
   if (configured === undefined) return SENDER_KEYS_DEFAULTS.maxSenderKeyAge;
 
   if (!Number.isFinite(configured) || configured <= 0) {
@@ -544,7 +550,12 @@ export class SenderKeyManager {
         throw new EncryptionError(
           `Sender key expired after ${Math.floor(age / (24 * 60 * 60 * 1000))} days (max: ${Math.floor(this.maxSenderKeyAge / (24 * 60 * 60 * 1000))} days). Auto-rotation required.`,
           EncryptionErrorCode.SENDER_KEY_EXPIRED,
-          { senderKeyId: state.senderKeyId, groupId, ageMs: age, maxAgeMs: this.maxSenderKeyAge }
+          {
+            senderKeyId: state.senderKeyId,
+            groupId,
+            ageMs: age,
+            maxAgeMs: this.maxSenderKeyAge,
+          }
         );
       }
     }
@@ -1043,7 +1054,8 @@ export class SenderKeyManager {
   async rotateSenderKey(
     groupId: string,
     userId: string,
-    deviceId: number
+    deviceId: number,
+    options?: { distributionPending?: boolean }
   ): Promise<{
     senderKeyId: string;
     distributionMessage: SenderKeyDistributionMessage;
@@ -1069,6 +1081,7 @@ export class SenderKeyManager {
       publicSignatureKey: signatureKeyPair.publicKey, // Already Base64-encoded PublicKey
       chainIndex: 0,
       createdAt: Date.now(),
+      ...(options?.distributionPending && { distributionPending: true }),
     };
 
     // M11: Save old state to previousStates for in-flight message decryption
@@ -1105,6 +1118,44 @@ export class SenderKeyManager {
     });
 
     return { senderKeyId, distributionMessage };
+  }
+
+  /**
+   * Reconstruct the current distribution after an interrupted automatic
+   * rotation. The current chain index and key let a receiver begin at the
+   * first ciphertext that can still be sent.
+   */
+  async getPendingSenderKeyDistribution(
+    groupId: string,
+    userId: string,
+    deviceId: number
+  ): Promise<SenderKeyDistributionMessage | null> {
+    const state = await this.storage.getSenderKey(groupId, userId, deviceId);
+    if (!state?.distributionPending) return null;
+    return {
+      senderKeyId: state.senderKeyId,
+      chainId: state.chainId,
+      generation: state.generation,
+      chainIndex: state.chainIndex,
+      chainKey: state.chainKey,
+      publicSignatureKey: state.publicSignatureKey,
+    };
+  }
+
+  /**
+   * Clear a pending automatic distribution only for the generation whose
+   * prepared messages have reached the Relay. A later rotation wins.
+   */
+  async confirmSenderKeyDistributionSent(
+    groupId: string,
+    userId: string,
+    deviceId: number,
+    senderKeyId: string
+  ): Promise<void> {
+    const state = await this.storage.getSenderKey(groupId, userId, deviceId);
+    if (!state?.distributionPending || state.senderKeyId !== senderKeyId) return;
+    delete state.distributionPending;
+    await this.storage.storeSenderKey(groupId, userId, deviceId, state);
   }
 
   /**

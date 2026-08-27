@@ -18,24 +18,11 @@ export type {
   // Certificates
   ServerCertificate,
   SenderCertificate,
-
-  // Delivery Tokens
-  DeliveryToken,
-  DeliveryTokenRegistration,
-
-  // V1 Messages
-  UnidentifiedSenderMessage,
-  UnidentifiedSenderMessageContent,
-
-  // V1 Options
-  SealOptions,
-  UnsealOptions,
-
-  // V2 Multi-Recipient Types
-  SealedSenderV2Recipient,
-  SealedSenderV2Message,
+  SealedSenderMessageContent,
+  SealedSenderRecipient,
+  SealedSenderMessage,
   SealMultiRecipientOptions,
-  UnsealV2Options,
+  UnsealOptions,
 } from './types';
 
 // ContentHint is exported from the public package (canonical source)
@@ -46,8 +33,6 @@ export type {
 
 export {
   // Version constants
-  SEALED_SENDER_VERSION,
-  SEALED_SENDER_V1_VERSION,
   SEALED_SENDER_V2_UUID_VERSION,
   SEALED_SENDER_V2_SERVICE_ID_VERSION,
   SEALED_SENDER_SALT,
@@ -91,25 +76,13 @@ export {
 // Encryption (Seal)
 // ============================================================================
 
-export { seal } from './encryption';
-
-// ============================================================================
-// V2 Multi-Recipient Encryption
-// ============================================================================
-
-export { sealMultiRecipient } from './encryption-v2';
+export { sealMultiRecipient } from './encryption';
 
 // ============================================================================
 // Decryption (Unseal)
 // ============================================================================
 
 export { unseal } from './decryption';
-
-// ============================================================================
-// V2 Multi-Recipient Decryption
-// ============================================================================
-
-export { unsealV2 } from './decryption-v2';
 
 // ============================================================================
 // V2 Binary Serialization
@@ -120,7 +93,7 @@ export {
   deserializeSentMessage,
   serializeReceivedMessage,
   deserializeReceivedMessage,
-} from './v2-binary';
+} from './multi-recipient-message';
 
 // ============================================================================
 // Protocol Buffer serialization
@@ -132,8 +105,6 @@ export {
   type ServerCertificateProto,
   type SenderCertificateData,
   type SenderCertificateProto,
-  type UnidentifiedSenderMessageData,
-  type UnidentifiedSenderMessageProto,
   MessageType as SealedSenderMessageType,
   // Encoding/decoding functions
   encodeServerCertificateData,
@@ -144,10 +115,6 @@ export {
   decodeSenderCertificateData,
   encodeSenderCertificate,
   decodeSenderCertificate,
-  encodeUnidentifiedSenderMessageData,
-  decodeUnidentifiedSenderMessageData,
-  encodeUnidentifiedSenderMessage,
-  decodeUnidentifiedSenderMessage,
   // Utility functions
   protoToBase64,
   base64ToProto,

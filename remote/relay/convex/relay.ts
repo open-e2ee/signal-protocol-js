@@ -117,9 +117,7 @@ interface RetryRequestResult {
  */
 type ConvexClient = ConvexReactClient | ConvexHttpClient;
 
-type SignalProtocolBackend = ReturnType<
-  typeof defineConvexSignalProtocolBackend
->;
+type SignalProtocolBackend = ReturnType<typeof defineConvexSignalProtocolBackend>;
 
 /**
  * The `api.signal.*` shape Convex code-generates for an app whose
@@ -226,10 +224,11 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     if (api.groups && api.zkAuth) {
       this.groupServer = {
         server: new ConvexGroupServer(convex, api.groups),
-        issueAuthCredential: (userId) =>
-          this.issueAuthCredential(userId),
-        issueProfileKeyCredential: (_userId, profileKey) =>
-          this.issueProfileKeyCredential(profileKey),
+        issueAuthCredential: (userId) => this.issueAuthCredential(userId),
+        setUnidentifiedAccessKey: (_userId, accessKey) =>
+          this.setUnidentifiedAccessKey(accessKey),
+        issueProfileKeyCredential: (_userId, request) =>
+          this.issueProfileKeyCredential(request),
       };
     }
   }
@@ -845,60 +844,6 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     });
   }
 
-  async sendUnidentified(
-    envelope: Envelope,
-    auth: SealedSenderAuth
-  ): Promise<{ messageId: string; serverTimestamp: number }> {
-    const ciphertext =
-      typeof envelope.ciphertext === 'string'
-        ? envelope.ciphertext
-        : this.uint8ArrayToBase64(envelope.ciphertext);
-
-    try {
-      if (auth.type === 'groupSendToken') {
-        // The server verifies the ZK endorsement token against the claimed
-        // recipient ACI before it reads any account, so the claim rides
-        // along with the token.
-        const claimed = auth.recipientAciBytes.get(envelope.targetUserId);
-        if (!claimed) {
-          throw new SealedSenderAuthError();
-        }
-        return await this.convex.mutation(this.api.messages.sendUnidentified, {
-          targetUserId: envelope.targetUserId,
-          targetDeviceId: envelope.targetDeviceId,
-          targetAciBytes: claimed.buffer.slice(
-            claimed.byteOffset,
-            claimed.byteOffset + claimed.byteLength
-          ) as ArrayBuffer,
-          ciphertext,
-          timestamp: envelope.timestamp,
-          clientMessageId: envelope.clientMessageId,
-          groupSendToken: auth.groupSendToken.buffer.slice(
-            auth.groupSendToken.byteOffset,
-            auth.groupSendToken.byteOffset + auth.groupSendToken.byteLength
-          ) as ArrayBuffer,
-        });
-      }
-
-      // Access key path (profile-key-derived UAK)
-      return await this.convex.mutation(this.api.messages.sendUnidentified, {
-        targetUserId: envelope.targetUserId,
-        targetDeviceId: envelope.targetDeviceId,
-        ciphertext,
-        timestamp: envelope.timestamp,
-        clientMessageId: envelope.clientMessageId,
-        unidentifiedAccessKey: auth.unidentifiedAccessKey,
-      });
-    } catch (error) {
-      // Convert an authorization rejection into the typed error the cipher
-      // watches for when deciding to retry on the identified path.
-      if (isUnauthorizedRejection(error)) {
-        throw new SealedSenderAuthError(error instanceof Error ? error : undefined);
-      }
-      throw error;
-    }
-  }
-
   /**
    * Send a V2 multi-recipient sealed sender message.
    *
@@ -916,11 +861,15 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     timestamp: number,
     recipientUserIds?: string[],
     clientMessageId?: string
-  ): Promise<{ messageId: string; serverTimestamp: number; uuids404: string[] }> {
+  ): Promise<{
+    messageId: string;
+    serverTimestamp: number;
+    uuids404: string[];
+  }> {
     const { base64ToBytes, bytesToBase64 } = await import('../../../internal/crypto');
     const { asBase64 } = await import('../../../types/utils');
     const { deserializeSentMessage } =
-      await import('../../../internal/protocol/sealed-sender/v2-binary');
+      await import('../../../internal/protocol/sealed-sender/multi-recipient-message');
 
     const binaryBlob = base64ToBytes(asBase64(sentMessageBase64));
     const parsed = deserializeSentMessage(binaryBlob);
@@ -1103,7 +1052,10 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
               });
               this.logger.debug('Retry request handled successfully', {
                 category: 'E2EE',
-                data: { requestId: req.id, failedTimestamp: req.failedTimestamp },
+                data: {
+                  requestId: req.id,
+                  failedTimestamp: req.failedTimestamp,
+                },
               });
             } catch (markError) {
               // Mark failed but handler already ran. Keep in processedIds to prevent duplicate
@@ -1353,7 +1305,12 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     userId: string,
     deviceId: number,
     identityType?: IdentityType
-  ): Promise<{ keyId: number; createdAt: number; expiresAt: number; publicKey: string } | null> {
+  ): Promise<{
+    keyId: number;
+    createdAt: number;
+    expiresAt: number;
+    publicKey: string;
+  } | null> {
     const metadata = await this.convex.query(this.api.keys.getEcSignedPreKeyMetadata, {
       userId,
       deviceId,
@@ -1366,7 +1323,12 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     userId: string,
     deviceId: number,
     identityType?: IdentityType
-  ): Promise<{ keyId: number; createdAt: number; expiresAt: number; publicKey: string } | null> {
+  ): Promise<{
+    keyId: number;
+    createdAt: number;
+    expiresAt: number;
+    publicKey: string;
+  } | null> {
     const metadata = await this.convex.query(this.api.keys.getKemLastResortPreKeyMetadata, {
       userId,
       deviceId,
@@ -1479,9 +1441,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     // legacy caller-supplied epoch must be rejected, matching
     // ConvexGroupServer.submitGroupChange.
     if (arguments.length !== 5) {
-      throw new Error(
-        'INVALID_REQUEST: Group change submission must not carry an epoch'
-      );
+      throw new Error('INVALID_REQUEST: Group change submission must not carry an epoch');
     }
     const { groups } = this.requireGroupServerApi();
     const result = await this.convex.mutation(groups.submitGroupChange, {
@@ -1508,14 +1468,18 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     return new Uint8Array(result);
   }
 
-  async issueProfileKeyCredential(
-    profileKey: Uint8Array
-  ): Promise<Uint8Array> {
+  async setUnidentifiedAccessKey(accessKey: Uint8Array): Promise<void> {
     const api = this.requireGroupServerApi();
-    const result = await this.convex.mutation(
-      api.zkAuth.issueProfileKeyCredentialMutation,
-      { profileKey: this.toBytes(profileKey) }
-    );
+    await this.convex.mutation(api.zkAuth.setUnidentifiedAccessKeyMutation, {
+      accessKey: this.toBytes(accessKey),
+    });
+  }
+
+  async issueProfileKeyCredential(request: Uint8Array): Promise<Uint8Array> {
+    const api = this.requireGroupServerApi();
+    const result = await this.convex.mutation(api.zkAuth.issueProfileKeyCredentialMutation, {
+      request: this.toBytes(request),
+    });
     return new Uint8Array(result);
   }
 

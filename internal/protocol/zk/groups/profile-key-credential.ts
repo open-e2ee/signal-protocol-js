@@ -24,7 +24,10 @@
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
 import {
   IssuanceProofBuilder,
-  type IssuanceProof,
+  BlindingKeyPair,
+  type BlindedAttribute,
+  type BlindedIssuanceProof,
+  type BlindingPublicKey,
   VerificationFailure,
 } from '../credentials/issuance';
 import {
@@ -77,6 +80,72 @@ function redemptionTimePublicAttribute(time: number): PublicAttribute {
 }
 
 // ---------------------------------------------------------------------------
+// Blinded issuance request
+// ---------------------------------------------------------------------------
+
+/** Public request sent to the authenticated credential issuer. */
+export interface ProfileKeyCredentialRequest {
+  /** Ephemeral public key used only for this blind issuance. */
+  readonly blindingPublicKey: BlindingPublicKey;
+  /** Profile-key attribute encrypted under the ephemeral blinding key. */
+  readonly blindedProfileKey: BlindedAttribute;
+}
+
+/** Client-only state required to unblind and verify the issuer response. */
+export interface ProfileKeyCredentialRequestContext {
+  readonly request: ProfileKeyCredentialRequest;
+  readonly blindingKey: BlindingKeyPair;
+  readonly aci: UidStruct;
+  readonly profileKey: ProfileKeyStruct;
+}
+
+/**
+ * Blind a profile-key attribute before it crosses the Relay boundary.
+ *
+ * The profile-key structure is ACI-bound before blinding. The returned context
+ * stays on the client and must be used only with the matching response.
+ */
+export function createProfileKeyCredentialRequest(
+  aci: ServiceId,
+  profileKeyBytes: Uint8Array,
+  randomness: Uint8Array
+): ProfileKeyCredentialRequestContext {
+  if (randomness.length < 32) {
+    throw new Error('Profile-key credential request randomness must be at least 32 bytes');
+  }
+
+  const profileKey = profileKeyStructNew(profileKeyBytes, aci.uuid);
+  const sho = new ShoHmacSha256(
+    enc.encode('Signal_ZKGroup_20220508_ExpiringProfileKeyCredential_Blinding')
+  );
+  sho.absorbAndRatchet(randomness);
+  const blindingKey = BlindingKeyPair.generate(sho);
+  const encrypted = blindingKey.encrypt(profileKey, sho);
+  const request: ProfileKeyCredentialRequest = {
+    blindingPublicKey: blindingKey.publicKey,
+    blindedProfileKey: {
+      blindedPoints: [
+        {
+          D1: encrypted.blindedPoints[0].D1,
+          D2: encrypted.blindedPoints[0].D2,
+        },
+        {
+          D1: encrypted.blindedPoints[1].D1,
+          D2: encrypted.blindedPoints[1].D2,
+        },
+      ],
+    },
+  };
+
+  return {
+    request,
+    blindingKey,
+    aci: uidStructFromServiceId(aci),
+    profileKey,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // ExpiringProfileKeyCredentialResponse (server -> client)
 // ---------------------------------------------------------------------------
 
@@ -88,7 +157,7 @@ function redemptionTimePublicAttribute(time: number): PublicAttribute {
  */
 export interface ExpiringProfileKeyCredentialResponse {
   /** ZK issuance proof binding the credential to (ACI, ProfileKey, redemptionTime). */
-  readonly issuanceProof: IssuanceProof;
+  readonly issuanceProof: BlindedIssuanceProof;
   /** Day-aligned epoch timestamp (must be a multiple of SECONDS_PER_DAY). */
   readonly redemptionTime: number;
 }
@@ -144,21 +213,21 @@ export interface ProfileKeyCredentialPresentation {
 // ---------------------------------------------------------------------------
 
 /**
- * Issue an ExpiringProfileKeyCredential for the given ACI, ProfileKey, and
- * redemption time.
+ * Issue an ExpiringProfileKeyCredential for an authenticated ACI, blinded
+ * ProfileKey request, and redemption time.
  *
  * Called by the server. Produces an issuance proof that the client can verify
  * to extract the credential.
  *
- * The builder accumulates attributes in the same order used by the client
- * during verification: ACI (hidden), ProfileKey (hidden), redemptionTime (public).
+ * The issuer sees the authenticated ACI and redemption time. It never receives
+ * the raw profile key or the client's blinding secret.
  *
  * CRITICAL: Use different randomness for each issuance. Reusing randomness
  * effectively reveals the server's private key.
  *
  * @param credentialKeyPair - The server's profile key credential signing key pair
  * @param aci - The user's ACI ServiceId
- * @param profileKeyBytes - The user's 32-byte profile key
+ * @param request - Client-created blinded profile-key request
  * @param redemptionTime - Day-aligned epoch timestamp (seconds)
  * @param randomness - At least 32 bytes of cryptographically secure randomness
  * @returns The issuance response to send to the client
@@ -166,19 +235,18 @@ export interface ProfileKeyCredentialPresentation {
 export function issueProfileKeyCredential(
   credentialKeyPair: CredentialKeyPair,
   aci: ServiceId,
-  profileKeyBytes: Uint8Array,
+  request: ProfileKeyCredentialRequest,
   redemptionTime: number,
   randomness: Uint8Array
 ): ExpiringProfileKeyCredentialResponse {
   const aciUid = uidStructFromServiceId(aci);
-  const profileKey = profileKeyStructNew(profileKeyBytes, aci.uuid);
 
   const builder = new IssuanceProofBuilder(CREDENTIAL_LABEL);
   builder.addAttribute(aciUid);
-  builder.addAttribute(profileKey);
   builder.addPublicAttribute(redemptionTimePublicAttribute(redemptionTime));
-
-  const issuanceProof = builder.issue(credentialKeyPair, randomness);
+  const issuanceProof = builder
+    .addBlindedAttribute(request.blindedProfileKey)
+    .issue(credentialKeyPair, request.blindingPublicKey, randomness);
 
   return { issuanceProof, redemptionTime };
 }
@@ -202,8 +270,7 @@ export function issueProfileKeyCredential(
  *
  * @param publicKey - The server's profile key credential public key
  * @param response - The issuance response from the server
- * @param aci - The user's ACI ServiceId (must match what the server issued)
- * @param profileKeyBytes - The user's 32-byte profile key (must match)
+ * @param requestContext - Client-only ACI, profile key, request, and blinding state
  * @param redemptionTime - Day-aligned epoch timestamp (must match the response)
  * @param currentTime - Current time in epoch seconds, used for 1-7 day window validation
  * @returns The verified credential for storage and later presentation
@@ -214,8 +281,7 @@ export function issueProfileKeyCredential(
 export function receiveProfileKeyCredential(
   publicKey: CredentialPublicKey,
   response: ExpiringProfileKeyCredentialResponse,
-  aci: ServiceId,
-  profileKeyBytes: Uint8Array,
+  requestContext: ProfileKeyCredentialRequestContext,
   redemptionTime: number,
   currentTime: number
 ): ExpiringProfileKeyCredential {
@@ -230,20 +296,17 @@ export function receiveProfileKeyCredential(
     throw new VerificationFailure();
   }
 
-  const aciUid = uidStructFromServiceId(aci);
-  const profileKey = profileKeyStructNew(profileKeyBytes, aci.uuid);
-
   const builder = new IssuanceProofBuilder(CREDENTIAL_LABEL);
-  builder.addAttribute(aciUid);
-  builder.addAttribute(profileKey);
+  builder.addAttribute(requestContext.aci);
   builder.addPublicAttribute(redemptionTimePublicAttribute(redemptionTime));
-
-  const credential = builder.verify(publicKey, response.issuanceProof);
+  const credential = builder
+    .addBlindedAttribute(requestContext.request.blindedProfileKey)
+    .verify(publicKey, requestContext.blindingKey, response.issuanceProof);
 
   return {
     credential,
-    aci: aciUid,
-    profileKey,
+    aci: requestContext.aci,
+    profileKey: requestContext.profileKey,
     redemptionTime,
   };
 }
@@ -350,6 +413,45 @@ export function verifyProfileKeyCredentialPresentation(
 
 const Point = RistrettoPoint;
 
+const PROFILE_KEY_CREDENTIAL_REQUEST_LENGTH = 5 * 32;
+const BLINDED_PROFILE_KEY_CREDENTIAL_RESPONSE_LENGTH = 8 + 4 * 32 + 352;
+
+/** Serialize the fixed-width blinded request. */
+export function serializeProfileKeyCredentialRequest(
+  request: ProfileKeyCredentialRequest
+): Uint8Array {
+  const points = [
+    request.blindingPublicKey.Y,
+    request.blindedProfileKey.blindedPoints[0].D1,
+    request.blindedProfileKey.blindedPoints[0].D2,
+    request.blindedProfileKey.blindedPoints[1].D1,
+    request.blindedProfileKey.blindedPoints[1].D2,
+  ];
+  const bytes = new Uint8Array(PROFILE_KEY_CREDENTIAL_REQUEST_LENGTH);
+  points.forEach((point, index) => bytes.set(point.toBytes(), index * 32));
+  return bytes;
+}
+
+/** Deserialize and validate the fixed-width blinded request. */
+export function deserializeProfileKeyCredentialRequest(
+  bytes: Uint8Array
+): ProfileKeyCredentialRequest {
+  if (bytes.length !== PROFILE_KEY_CREDENTIAL_REQUEST_LENGTH) {
+    throw new Error('deserializeProfileKeyCredentialRequest: invalid length');
+  }
+  const point = (index: number): RistrettoPoint =>
+    Point.fromBytes(bytes.subarray(index * 32, (index + 1) * 32));
+  return {
+    blindingPublicKey: { Y: point(0) },
+    blindedProfileKey: {
+      blindedPoints: [
+        { D1: point(1), D2: point(2) },
+        { D1: point(3), D2: point(4) },
+      ],
+    },
+  };
+}
+
 /**
  * Serialize an ExpiringProfileKeyCredentialResponse to bytes.
  *
@@ -357,7 +459,8 @@ const Point = RistrettoPoint;
  *   [redemptionTime: 8 bytes BE u64]
  *   [credential.t: 32 bytes scalar LE]
  *   [credential.U: 32 bytes point]
- *   [credential.V: 32 bytes point]
+ *   [credential.S1: 32 bytes point]
+ *   [credential.S2: 32 bytes point]
  *   [pokshoProof: remaining bytes]
  */
 export function serializeProfileKeyCredentialResponse(
@@ -366,16 +469,21 @@ export function serializeProfileKeyCredentialResponse(
   const { issuanceProof, redemptionTime } = response;
   const tBytes = scalarToBytes(issuanceProof.credential.t);
   const uBytes = issuanceProof.credential.U.toBytes();
-  const vBytes = issuanceProof.credential.V.toBytes();
+  const s1Bytes = issuanceProof.credential.S1.toBytes();
+  const s2Bytes = issuanceProof.credential.S2.toBytes();
   const proofBytes = issuanceProof.pokshoProof;
+  if (proofBytes.length !== 352) {
+    throw new Error('serializeProfileKeyCredentialResponse: invalid proof length');
+  }
 
-  const buf = new Uint8Array(8 + 32 + 32 + 32 + proofBytes.length);
+  const buf = new Uint8Array(8 + 32 + 32 + 32 + 32 + proofBytes.length);
   const view = new DataView(buf.buffer);
   view.setBigUint64(0, BigInt(redemptionTime), false);
   buf.set(tBytes, 8);
   buf.set(uBytes, 40);
-  buf.set(vBytes, 72);
-  buf.set(proofBytes, 104);
+  buf.set(s1Bytes, 72);
+  buf.set(s2Bytes, 104);
+  buf.set(proofBytes, 136);
   return buf;
 }
 
@@ -385,8 +493,8 @@ export function serializeProfileKeyCredentialResponse(
 export function deserializeProfileKeyCredentialResponse(
   bytes: Uint8Array
 ): ExpiringProfileKeyCredentialResponse {
-  // 8 (time) + 32*3 (credential) + 320 (issuance proof: 1 challenge + 9 responses)
-  if (bytes.length !== 424) {
+  // 8 + 32*4 credential points + 352-byte blinded issuance proof.
+  if (bytes.length !== BLINDED_PROFILE_KEY_CREDENTIAL_RESPONSE_LENGTH) {
     throw new Error('deserializeProfileKeyCredentialResponse: invalid length');
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -395,12 +503,13 @@ export function deserializeProfileKeyCredentialResponse(
   const t = bytesToScalarCanonical(bytes.subarray(8, 40));
   if (t === null) throw new Error('deserializeProfileKeyCredentialResponse: invalid scalar t');
   const U = Point.fromBytes(bytes.subarray(40, 72));
-  const V = Point.fromBytes(bytes.subarray(72, 104));
-  const pokshoProof = bytes.slice(104);
+  const S1 = Point.fromBytes(bytes.subarray(72, 104));
+  const S2 = Point.fromBytes(bytes.subarray(104, 136));
+  const pokshoProof = bytes.slice(136);
 
   return {
     issuanceProof: {
-      credential: { t, U, V },
+      credential: { t, U, S1, S2 },
       pokshoProof,
     },
     redemptionTime,

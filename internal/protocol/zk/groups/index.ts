@@ -98,9 +98,14 @@ export {
 } from './auth-credential';
 
 export {
+  type ProfileKeyCredentialRequest,
+  type ProfileKeyCredentialRequestContext,
   type ExpiringProfileKeyCredentialResponse,
   type ExpiringProfileKeyCredential,
   type ProfileKeyCredentialPresentation,
+  createProfileKeyCredentialRequest,
+  serializeProfileKeyCredentialRequest,
+  deserializeProfileKeyCredentialRequest,
   issueProfileKeyCredential,
   receiveProfileKeyCredential,
   presentProfileKeyCredential,

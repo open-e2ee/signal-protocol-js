@@ -10,8 +10,8 @@ import {
   serializeAuthCredentialResponse,
 } from '../../../../internal/protocol/zk/groups/auth-credential';
 import { SECONDS_PER_DAY } from '../../../../internal/protocol/zk/groups/group-params';
-import { deriveAccessKey } from '../../../../internal/protocol/sealed-sender/delivery-token';
 import {
+  deserializeProfileKeyCredentialRequest,
   issueProfileKeyCredential,
   serializeProfileKeyCredentialResponse,
 } from '../../../../internal/protocol/zk/groups/profile-key-credential';
@@ -20,7 +20,7 @@ import {
   setUnidentifiedAccessKey,
 } from './accounts';
 
-const PROFILE_KEY_LENGTH = 32;
+const UNIDENTIFIED_ACCESS_KEY_LENGTH = 16;
 
 const identityArgs = {
   userId: v.optional(v.string()),
@@ -35,12 +35,12 @@ function toArrayBuffer(value: Uint8Array): ArrayBuffer {
   ) as ArrayBuffer;
 }
 
-function requireProfileKey(value: ArrayBuffer): Uint8Array {
-  const profileKey = new Uint8Array(value);
-  if (profileKey.length !== PROFILE_KEY_LENGTH) {
-    throw new Error(`profileKey must be ${PROFILE_KEY_LENGTH} bytes`);
+function requireAccessKey(value: ArrayBuffer): Uint8Array {
+  const accessKey = new Uint8Array(value);
+  if (accessKey.length !== UNIDENTIFIED_ACCESS_KEY_LENGTH) {
+    throw new Error(`accessKey must be ${UNIDENTIFIED_ACCESS_KEY_LENGTH} bytes`);
   }
-  return profileKey;
+  return accessKey;
 }
 
 export const issueAuthCredentialMutation = mutation({
@@ -73,7 +73,7 @@ export const issueAuthCredentialMutation = mutation({
 export const issueProfileKeyCredentialMutation = mutation({
   args: {
     ...identityArgs,
-    profileKey: v.bytes(),
+    request: v.bytes(),
   },
   returns: v.bytes(),
   handler: async (ctx, input) => {
@@ -85,7 +85,7 @@ export const issueProfileKeyCredentialMutation = mutation({
         callerPniBytes: input.pniBytes,
       });
     }
-    const profileKey = requireProfileKey(input.profileKey);
+    const request = deserializeProfileKeyCredentialRequest(new Uint8Array(input.request));
     const runtime = groupServerRuntime();
     const nowSeconds = Math.floor(runtime.now() / 1000);
     const redemptionTime =
@@ -94,19 +94,32 @@ export const issueProfileKeyCredentialMutation = mutation({
     const response = issueProfileKeyCredential(
       groupServerSecretParams().profileKeyCredentialKeyPair,
       aci,
-      profileKey,
+      request,
       redemptionTime,
       runtime.randomBytes(32)
     );
-    if (input.userId !== undefined) {
-      await setUnidentifiedAccessKey(
-        ctx,
-        input.userId,
-        await deriveAccessKey(profileKey)
-      );
-    }
     return toArrayBuffer(
       serializeProfileKeyCredentialResponse(response)
     );
+  },
+});
+
+export const setUnidentifiedAccessKeyMutation = mutation({
+  args: {
+    ...identityArgs,
+    accessKey: v.bytes(),
+  },
+  returns: v.null(),
+  handler: async (ctx, input) => {
+    if (input.userId === undefined) {
+      throw new Error('Authenticated userId is required');
+    }
+    await rememberAccount(ctx, {
+      callerUserId: input.userId,
+      callerAciBytes: input.aciBytes,
+      callerPniBytes: input.pniBytes,
+    });
+    await setUnidentifiedAccessKey(ctx, input.userId, requireAccessKey(input.accessKey));
+    return null;
   },
 });

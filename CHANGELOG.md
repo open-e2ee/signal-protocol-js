@@ -1,6 +1,64 @@
 # Changelog
 
+## 1.0.0
+
+- **Hosted Relay supports data-only push wake hints across Expo, APNs, FCM,
+  and Web Push.** The SDK registers one destination for the authenticated
+  device and derives no account, device, scope, or generation identifiers from
+  application input. A wake starts an authenticated durable-mailbox pull.
+  The SDK acknowledges only envelopes that it processes successfully, and the
+  same pull remains available when push delivery is unavailable.
+
+- **Hosted Relay now supports provider migration, recovery progress, and
+  managed device linking.** Migration assertions use the existing purpose-aware
+  identity callback with typed source and target roles. Recovery reports typed
+  phases while Relay remains the account authority. Managed linking requires a
+  provisioned account identity. It also requires distinct active and new
+  device-auth keys. It sends no ratchet, sender-key, skipped-key, or outbox
+  state.
+
+- **Breaking: sends use a durable exact-ciphertext outbox and always return a
+  logical-send identifier.** `SendResult.clientMessageId` is required. The SDK
+  generates it when `SendOptions.clientMessageId` is absent, exposes it on send
+  errors through `isOutgoingMessageError`, and replays the persisted encrypted
+  transmission after an unknown Relay result. Receivers retain processed Relay
+  envelope identifiers for 30 days and acknowledge duplicates without running
+  protocol decryption again. Automatic sender-key rotation also persists its
+  pairwise distribution messages before group transport. Custom
+  `ISignalProtocolLocalStore` implementations must now implement
+  `deleteMetadata` for bounded outbox and deduplication retention.
+
+- **Breaking: linked-device backup format 2 transfers account identity only.**
+  A linked device generates fresh prekeys and establishes independent sessions.
+  The SDK rejects old or extended backup shapes that carry prekeys, ratchet
+  sessions, sender-key state, message state, or outbox state.
+
+- **Profile-key credential issuance is blinded.** The authenticated issuer
+  receives an ACI-bound blinded request, not the raw profile key. The client
+  unblinds and verifies the response before it creates a group presentation.
+
+- **Breaking: sealed-sender delivery now uses one multi-recipient wire format
+  for direct and group sends.** The direct path supports one recipient through
+  the same format, and the SDK rejects the retired V1 wire format. Hosted Relay
+  adapters no longer implement the V1 send method. `preferred` delivery falls
+  back to identified delivery only after an anonymous authorization rejection;
+  other anonymous-delivery failures do not change the privacy route.
+
 ## 0.4.0
+
+- **Breaking: sender certificates now bind to Relay scope and issuer
+  validity.** The signed sender certificate requires an opaque 16-byte scope.
+  The signed server certificate requires its validity interval. Recipients
+  reject the old certificate shape. The new hosted bootstrap accepts a
+  publishable key and identity assertion callback. It then uses the account,
+  device, and scope bindings that Relay returns. Identified delivery does not
+  require a sender certificate.
+
+- **Hosted Relay bootstrap now registers a complete EC and ML-KEM prekey
+  inventory.** The SDK creates and stores signed, last-resort, and one-time
+  prekeys before bootstrap. It sends only public material. Exact retries reuse
+  the original operation and public registration snapshot, so a restarted
+  client cannot publish an old one-time prekey as a new registration.
 
 - **The README now provides a runnable encrypted round trip and a current demo.**
   The quickstart exercises two SDK clients through the in-memory relay. The new
@@ -142,7 +200,7 @@
   whether the operation produced the epoch secret. Braid mode spreads one
   ML-KEM key agreement across many messages, and until now the chunk counts
   lived entirely inside the state machine, so a host had no way to show or log
-  how far a ratchet had travelled. A direct-mode session never raises the
+  how far a ratchet had traveled. A direct-mode session never raises the
   callback. The hook is guarded exactly as `onProtocolSelected` is: a consumer
   that throws is logged and the protocol path continues.
 
@@ -209,7 +267,7 @@
   install one. An epoch advance for receiving alone installs a zeroed send
   chain key. Pruning writes one over each retired send chain. Deriving from
   either would key a message from a known constant. No production path reached
-  that state, so the check is defence in depth.
+  that state, so the check is defense in depth.
 
 - **The unused SPQR binary header codec is gone.** `serializeSPQRHeaderBinary`
   and `deserializeSPQRHeaderBinary` emitted an unversioned framing. No
@@ -980,7 +1038,7 @@
   matching the `Type` enum of the reference implementation's
   `UnidentifiedSenderMessage.Message` (`PREKEY_MESSAGE`, `MESSAGE`,
   `SENDERKEY_MESSAGE`, `PLAINTEXT_CONTENT`), and `SealOptions.groupId` —
-  encrypted, never populated by the send path — is removed in favour of
+  encrypted, never populated by the send path — is removed in favor of
   `contentType`. This is a wire-format change to sealed sender for both V1 and
   V2.
 
@@ -1061,7 +1119,7 @@
 
 - **Sealed sender envelope parsing is now canonical and validated.** Both the
   V1 and V2 inner-envelope parsers accepted a payload with trailing bytes, an
-  unrecognised content-type byte, a truncated varint, or a missing content
+  unrecognized content-type byte, a truncated varint, or a missing content
   hint. Parsing runs after authentication, so none of these was reachable by an
   attacker, but two distinct byte strings could parse to identical content and
   an unknown content type fell through to a routing default. The parsers now
@@ -1235,7 +1293,7 @@
 
 - **Sealed sender can now be enabled.** `oe-groups trust-root` exports the
   Ed25519 sender-certificate root alongside the group trust root, printing both
-  labelled (`group trust root:` / `sealed sender trust root:`). Previously only
+  labeled (`group trust root:` / `sealed sender trust root:`). Previously only
   the group root was printed, so there was no supported way to obtain the value
   clients pin in `sealedSender.trustRoots`; inbound sealed-sender validation
   stayed disabled and every send fell back to identified delivery, disclosing

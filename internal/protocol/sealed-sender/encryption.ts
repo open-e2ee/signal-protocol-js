@@ -1,63 +1,65 @@
 /**
- * Envelope Encryption (Seal) for Sealed Sender
+ * Sealed Sender V2 Multi-Recipient Encryption
  *
- * Implements two encryption stages:
- * - Stage 1 (Ephemeral): Encrypts sender's identity public key
- * - Stage 2 (Sender): Encrypts certificate + message
+ * Implements V2 multi-recipient sealed sender based on
+ * Barbosa & Farshim's randomness reuse technique (IMA 2007).
  *
- * This provides binding between the ephemeral key and sender identity,
- * so the sender cannot be impersonated even if the ephemeral key
- * is somehow compromised.
+ * Key efficiency gain: A single ephemeral key and message ciphertext
+ * is shared across all recipients, with per-recipient key encapsulation.
  *
- * @see https://signal.org/blog/sealed-sender/
+ * Algorithm:
+ * 1. Generate random M (32 bytes)
+ * 2. Derive ephemeral keypair E from M via HKDF(LABEL_R)
+ * 3. Derive symmetric key K from M via HKDF(LABEL_K)
+ * 4. Encrypt USMC with AES-GCM-SIV(K, nonce=zeros, plaintext=usmc)
+ * 5. For each recipient i:
+ *    a. ikm = X25519(E_private, recipient_pub[i]) || E_pub || recipient_pub[i]
+ *    b. xor_key = HKDF(ikm, info=LABEL_DH)
+ *    c. encrypted_key[i] = M XOR xor_key
+ *    d. auth_ikm = X25519(sender_identity, recipient_pub[i]) || E_pub || encrypted_key[i] || sender_id_pub || recipient_pub[i]
+ *    e. auth_tag[i] = HKDF(auth_ikm, info=LABEL_DH_S) (16 bytes)
+ * 6. Return { version, E_pub, recipients[], ciphertext }
+ *
  */
 
-import type { SealOptions, UnidentifiedSenderMessage } from './types';
-import type { ContentHint } from '../../../types/messages';
-import {
-  SEALED_SENDER_VERSION,
-  SEALED_SENDER_SALT,
-  MAC_BYTES,
-  SealedSenderContentType,
+import type {
+  SealMultiRecipientOptions,
+  SealedSenderMessage,
+  SealedSenderRecipient,
 } from './types';
+import { SEALED_SENDER_V2_UUID_VERSION, V2_RANDOM_M_BYTES, SealedSenderContentType } from './types';
 import type { Base64 } from '../../../types';
 import { serializeSenderCertificate } from './certificate';
 import {
-  generateECDHKeyPair,
-  computeSharedSecret,
-  hkdf,
-  aesCtrEncrypt,
-  hmac,
+  deriveEphemeralFromM,
+  deriveCipherKeyFromM,
+  applyAgreementXor,
+  computeAuthenticationTag,
+} from './multi-recipient-crypto';
+import {
+  generateRandomBytes,
   bytesToBase64,
-  base64ToBytes,
-  stringToBytes,
   concatBytes,
   secureZeroBytes,
+  aesGcmSivEncryptZeroNonce,
 } from '../../crypto';
 import { encodeVarint } from '../../encoding/proto/primitives';
 
-/**
- * Serialize the envelope plaintext (content type + certificate + message).
- *
- * Format: contentType(1) || varint(certLen) || certBytes || varint(msgLen) || msg || contentHint
- *
- * The content type leads because it is what the recipient needs before it can
- * do anything with the payload. No group identifier is serialized. A group
- * message says only that it is a framed SenderKeyMessage, and the recipient
- * resolves the group from the frame's opaque distribution identifier.
- *
- * @param certBytes Serialized sender certificate
- * @param message Signal Protocol message
- * @param contentType How the recipient should decrypt `message`
- * @param contentHint Optional content hint
- * @returns Serialized envelope
- */
+/** Generic error message for all seal failures */
 export {};
+const GENERIC_ERROR = 'Sealed sender encryption failed';
+
+/**
+ * Serialize envelope (content type + certificate + message) for encryption.
+ *
+ * Format matches V1 for consistency:
+ * contentType(1) || varint(certLen) || certBytes || varint(msgLen) || msgBytes || contentHint
+ */
 function serializeEnvelope(
   certBytes: Uint8Array,
   message: Uint8Array,
   contentType: SealedSenderContentType,
-  contentHint?: ContentHint
+  contentHint?: number
 ): Uint8Array {
   const parts: Uint8Array[] = [];
 
@@ -65,176 +67,158 @@ function serializeEnvelope(
   parts.push(new Uint8Array([contentType]));
 
   // Certificate length as varint
-  const certLenVarint = encodeVarint(certBytes.length);
-  parts.push(certLenVarint);
-
-  // Certificate bytes
+  parts.push(encodeVarint(certBytes.length));
   parts.push(certBytes);
 
   // Message length as varint
-  const msgLenVarint = encodeVarint(message.length);
-  parts.push(msgLenVarint);
-
-  // Message bytes
+  parts.push(encodeVarint(message.length));
   parts.push(message);
 
-  // Content hint (1 byte, optional - default 0)
-  if (contentHint !== undefined) {
-    parts.push(new Uint8Array([contentHint]));
-  } else {
-    parts.push(new Uint8Array([0])); // DEFAULT
-  }
+  // Content hint (1 byte)
+  parts.push(new Uint8Array([contentHint ?? 0]));
 
   return concatBytes(...parts);
 }
 
 /**
- * Seal a Signal Protocol message using two-stage encryption.
+ * Seal a Signal Protocol message for multiple recipients using V2 format.
  *
- * Hides the sender identity from the relay while allowing the recipient to
- * authenticate the sender.
+ * Uses randomness reuse (Barbosa & Farshim 2007) for efficiency:
+ * - Single ephemeral key shared across all recipients
+ * - Single message ciphertext shared across all recipients
+ * - Per-recipient key encapsulation via XOR with HKDF-derived key
+ * - Per-recipient auth tag using identity-to-identity ECDH
  *
- * Two-Stage Algorithm:
+ * @param options Multi-recipient sealing options
+ * @returns V2 sealed sender message
+ * @throws Error (generic) if any validation fails
  *
- * Stage 1 - Ephemeral Layer (binds ephemeral key to recipient):
- * 1. Generate ephemeral X25519 keypair (e_pub, e_priv)
- * 2. Compute shared secret: e_ss = X25519(e_priv, recipientIdentityPublic)
- * 3. Build salt: e_salt = "UnidentifiedDelivery" || recipientIdentityPublic || e_pub
- * 4. Derive keys: e_material = HKDF(salt=e_salt, ikm=e_ss, length=96)
- *    - e_cipherKey = e_material[0:32]
- *    - e_macKey = e_material[32:64]
- *    - e_chain = e_material[64:96] (for stage 2 salt)
- * 5. Encrypt: e_ciphertext = AES-CTR(e_cipherKey, iv=0, senderIdentityPublic)
- * 6. MAC: e_mac = HMAC(e_macKey, e_ciphertext)
- * 7. encryptedStatic = e_ciphertext || e_mac
- *
- * Stage 2 - Sender Layer (binds message to sender identity):
- * 1. Compute shared secret: s_ss = X25519(senderIdentityPrivate, recipientIdentityPublic)
- * 2. Build salt: s_salt = e_chain || e_ciphertext || e_mac
- * 3. Derive keys: s_material = HKDF(salt=s_salt, ikm=s_ss, length=64)
- *    - s_cipherKey = s_material[0:32]
- *    - s_macKey = s_material[32:64]
- * 4. Serialize envelope: type || cert || message || hint
- * 5. Encrypt: s_ciphertext = AES-CTR(s_cipherKey, iv=0, envelope)
- * 6. MAC: s_mac = HMAC(s_macKey, s_ciphertext)
- * 7. encryptedMessage = s_ciphertext || s_mac
- *
- * Security: All sensitive key material is zeroed after use.
- *
- * @param options Sealing options
- * @returns Sealed sender message with two-stage encryption
- *
- * @see https://signal.org/blog/sealed-sender/
+ * @example
+ * ```typescript
+ * const sealed = await sealMultiRecipient({
+ *   senderCertificate: cert,
+ *   senderIdentityPrivate: myPrivateKey,
+ *   senderIdentityPublic: myPublicKey,
+ *   recipients: [
+ *     { serviceId: 'user1', deviceId: 1, registrationId: 12345, identityPublic: user1Pub },
+ *     { serviceId: 'user2', deviceId: 1, registrationId: 23456, identityPublic: user2Pub },
+ *   ],
+ *   signalProtocolMessage: encryptedMessage,
+ * });
+ * ```
  */
-export async function seal(options: SealOptions): Promise<UnidentifiedSenderMessage> {
+export async function sealMultiRecipient(
+  options: SealMultiRecipientOptions
+): Promise<SealedSenderMessage> {
   const {
     senderCertificate,
     senderIdentityPrivate,
-    recipientIdentityPublic,
+    senderIdentityPublic,
+    recipients,
     signalProtocolMessage,
     contentHint,
     contentType = SealedSenderContentType.MESSAGE,
   } = options;
 
-  // Arrays to track for secure zeroing
+  // Validate recipients
+  if (!recipients || recipients.length === 0) {
+    throw new Error(GENERIC_ERROR);
+  }
+
+  // Track sensitive material for secure zeroing
   const toZero: Uint8Array[] = [];
 
   try {
     // ========================================================================
-    // Stage 1: Ephemeral Layer
-    // Encrypts sender's identity public key, bound to ephemeral key
+    // Step 1: Generate random M (32 bytes)
     // ========================================================================
-
-    // Step 1.1: Generate ephemeral X25519 keypair
-    const ephemeral = await generateECDHKeyPair();
-    const ephemeralPublicBytes = base64ToBytes(ephemeral.publicKey);
-    const ephemeralPrivateBytes = base64ToBytes(ephemeral.privateKey);
-    toZero.push(ephemeralPrivateBytes);
-
-    // Step 1.2: Compute shared secret: e_ss = ECDH(e_priv, recipientIdentityPublic)
-    const recipientPublicBase64 = bytesToBase64(recipientIdentityPublic) as Base64;
-    const e_sharedSecret = await computeSharedSecret(ephemeral.privateKey, recipientPublicBase64);
-    toZero.push(e_sharedSecret);
-
-    // Step 1.3: Build the stage-one HKDF salt.
-    // e_salt = "UnidentifiedDelivery" || recipientIdentityPublic || ephemeralPublic
-    const saltPrefix = stringToBytes(SEALED_SENDER_SALT);
-    const e_salt = concatBytes(saltPrefix, recipientIdentityPublic, ephemeralPublicBytes);
-
-    // Step 1.4: Derive ephemeral keys (96 bytes: cipher + mac + chain)
-    const e_material = await hkdf(e_sharedSecret, e_salt, new Uint8Array(0), 96);
-    toZero.push(e_material);
-    const e_cipherKey = e_material.slice(0, 32);
-    const e_macKey = e_material.slice(32, 64);
-    const e_chain = e_material.slice(64, 96);
-    toZero.push(e_cipherKey, e_macKey, e_chain);
-
-    // Step 1.5: Encrypt sender's identity public key
-    // Get sender identity public key from certificate
-    const senderIdentityPublic = base64ToBytes(senderCertificate.senderIdentityKey);
-    const e_iv = new Uint8Array(16); // All zeros
-    const e_ciphertext = aesCtrEncrypt(e_cipherKey, e_iv, senderIdentityPublic);
-
-    // Step 1.6: Compute MAC over Stage 1 ciphertext
-    const e_mac_full = await hmac(e_macKey, e_ciphertext);
-    const e_mac = e_mac_full.slice(0, MAC_BYTES);
-
-    // Step 1.7: Combine into encryptedStatic
-    const encryptedStatic = concatBytes(e_ciphertext, e_mac);
+    const M = await generateRandomBytes(V2_RANDOM_M_BYTES);
+    toZero.push(M);
 
     // ========================================================================
-    // Stage 2: Sender Layer
-    // Encrypts certificate + message, bound to sender identity
+    // Step 2: Derive ephemeral keypair from M (using LABEL_R)
     // ========================================================================
+    const ephemeral = await deriveEphemeralFromM(M);
+    toZero.push(ephemeral.privateKey);
 
-    // Step 2.1: Compute shared secret: s_ss = ECDH(senderIdentityPrivate, recipientIdentityPublic)
-    const senderPrivateBase64 = bytesToBase64(senderIdentityPrivate) as Base64;
-    const s_sharedSecret = await computeSharedSecret(senderPrivateBase64, recipientPublicBase64);
-    toZero.push(s_sharedSecret);
+    // ========================================================================
+    // Step 3: Derive symmetric cipher key K from M (using LABEL_K)
+    // ========================================================================
+    const cipherKey = await deriveCipherKeyFromM(M);
+    toZero.push(cipherKey);
 
-    // Step 2.2: Build salt for Stage 2 (chained from Stage 1)
-    // s_salt = e_chain || e_ciphertext || e_mac
-    const s_salt = concatBytes(e_chain, e_ciphertext, e_mac);
-
-    // Step 2.3: Derive sender keys (96 bytes: discard + cipher + mac)
-    // The first 32 bytes of the 96-byte derivation are domain-separated discard
-    // material. Cipher and MAC keys occupy the remaining bytes.
-    const s_material = await hkdf(s_sharedSecret, s_salt, new Uint8Array(0), 96);
-    toZero.push(s_material);
-    // s_material[0:32] discarded (mirrors EphemeralKeys structure)
-    const s_cipherKey = s_material.slice(32, 64);
-    const s_macKey = s_material.slice(64, 96);
-    toZero.push(s_cipherKey, s_macKey);
-
-    // Step 2.4: Serialize envelope (certificate + message)
+    // ========================================================================
+    // Step 4: Serialize and encrypt envelope with AES-GCM-SIV
+    // ========================================================================
     const certBytes = serializeSenderCertificate(senderCertificate);
-    const envelope = serializeEnvelope(
-      certBytes,
-      signalProtocolMessage,
-      contentType,
-      contentHint
-    );
+    const envelope = serializeEnvelope(certBytes, signalProtocolMessage, contentType, contentHint);
 
-    // Step 2.5: Encrypt envelope
-    const s_iv = new Uint8Array(16); // All zeros
-    const s_ciphertext = aesCtrEncrypt(s_cipherKey, s_iv, envelope);
-
-    // Step 2.6: Compute MAC over Stage 2 ciphertext
-    const s_mac_full = await hmac(s_macKey, s_ciphertext);
-    const s_mac = s_mac_full.slice(0, MAC_BYTES);
-
-    // Step 2.7: Combine into encryptedMessage
-    const encryptedMessage = concatBytes(s_ciphertext, s_mac);
+    // AES-GCM-SIV with zero nonce (safe because key is single-use)
+    const messageCiphertext = aesGcmSivEncryptZeroNonce(cipherKey, envelope);
 
     // ========================================================================
-    // Build final message
+    // Step 5: Per-recipient key encapsulation
+    // Group by serviceId and compute C_i/AT_i once per unique identity, not
+    // once per destination device.
     // ========================================================================
+    const recipientEntries: SealedSenderRecipient[] = [];
 
+    // Group recipients by serviceId. All devices of the same user share one identity key
+    const groupedByUser = new Map<string, typeof recipients>();
+    for (const recipient of recipients) {
+      const group = groupedByUser.get(recipient.serviceId);
+      if (group) {
+        group.push(recipient);
+      } else {
+        groupedByUser.set(recipient.serviceId, [recipient]);
+      }
+    }
+
+    for (const [, userDevices] of groupedByUser) {
+      const identityPublic = userDevices[0]!.identityPublic;
+
+      // 5a-5c. Compute encrypted message key ONCE per unique identity
+      const encryptedMessageKey = await applyAgreementXor(
+        ephemeral.privateKey,
+        ephemeral.publicKey,
+        identityPublic,
+        'sending',
+        M
+      );
+
+      // 5d-5e. Compute authentication tag ONCE per unique identity
+      const authenticationTag = await computeAuthenticationTag(
+        senderIdentityPrivate,
+        senderIdentityPublic,
+        identityPublic,
+        ephemeral.publicKey,
+        encryptedMessageKey,
+        'sending'
+      );
+
+      const encryptedMessageKeyBase64 = bytesToBase64(encryptedMessageKey) as Base64;
+      const authenticationTagBase64 = bytesToBase64(authenticationTag) as Base64;
+
+      // Emit one entry per device, sharing the same C_i/AT_i
+      for (const device of userDevices) {
+        recipientEntries.push({
+          serviceId: device.serviceId,
+          deviceId: device.deviceId,
+          registrationId: device.registrationId,
+          encryptedMessageKey: encryptedMessageKeyBase64,
+          authenticationTag: authenticationTagBase64,
+        });
+      }
+    }
+
+    // ========================================================================
+    // Step 6: Return V2 message
+    // ========================================================================
     return {
-      version: SEALED_SENDER_VERSION,
-      ephemeralPublic: ephemeral.publicKey as Base64,
-      encryptedStatic: bytesToBase64(encryptedStatic) as Base64,
-      encryptedMessage: bytesToBase64(encryptedMessage) as Base64,
+      version: SEALED_SENDER_V2_UUID_VERSION,
+      ephemeralPublic: bytesToBase64(ephemeral.publicKey) as Base64,
+      recipients: recipientEntries,
+      messageCiphertext: bytesToBase64(messageCiphertext) as Base64,
     };
   } finally {
     // Security: Zero all sensitive key material
@@ -243,3 +227,11 @@ export async function seal(options: SealOptions): Promise<UnidentifiedSenderMess
     }
   }
 }
+
+// Re-export deterministic helpers within the protocol module.
+export {
+  deriveEphemeralFromM,
+  deriveCipherKeyFromM,
+  applyAgreementXor,
+  computeAuthenticationTag,
+} from './multi-recipient-crypto';

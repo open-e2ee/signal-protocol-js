@@ -1,42 +1,51 @@
 /**
- * Envelope Decryption (Unseal) for Sealed Sender
+ * Sealed Sender V2 Multi-Recipient Decryption
  *
- * Implements two decryption stages:
- * - Stage 1 (Ephemeral): Decrypts sender's identity public key
- * - Stage 2 (Sender): Decrypts certificate + message
+ * Implements V2 multi-recipient sealed-sender decryption.
  *
- * Security:
- * - MAC is verified BEFORE decryption at each stage (critical for security)
- * - All errors use generic messages to prevent fingerprinting
- * - Constant-time MAC comparison prevents timing attacks
- * - Sender identity is verified against certificate
+ * Algorithm:
+ * 1. Parse version, find my recipient entry by serviceId
+ * 2. M = apply_agreement_xor(recipient_identity, ephemeral_pub, encrypted_key)
+ * 3. Verify E_pub matches X25519(derive_private_from_M(M)) - authenticates XOR decryption
+ * 4. K = HKDF(M, LABEL_K)
+ * 5. usmc = AES-GCM-SIV.Decrypt(K, nonce=zeros, ciphertext) - authenticated decryption
+ * 6. Parse certificate from usmc to get sender identity
+ * 7. Verify auth_tag using identity-to-identity ECDH (binds sender to message)
+ * 8. Validate sender certificate, return content
  *
- * @see https://signal.org/blog/sealed-sender/
+ * IMPORTANT: Auth tag is verified AFTER decryption because it requires sender identity
+ * from the certificate. This is safe because:
+ * - AES-GCM-SIV provides authenticated encryption
+ * - Ephemeral key consistency check authenticates the XOR decryption
+ * - Auth tag binds the sender's identity to the message
+ *
  */
 
-import type { UnsealOptions, UnidentifiedSenderMessageContent, SenderCertificate } from './types';
+import type { UnsealOptions, SealedSenderMessageContent, SenderCertificate } from './types';
 import type { ContentHint } from '../../../types/messages';
 import {
-  SEALED_SENDER_SALT,
-  MAC_BYTES,
+  SEALED_SENDER_V2_UUID_VERSION,
+  SEALED_SENDER_V2_SERVICE_ID_VERSION,
   SealedSenderContentType,
   isSealedSenderContentType,
 } from './types';
 import type { Base64 } from '../../../types';
 import { deserializeSenderCertificate, validateSenderCertificate } from './certificate';
 import {
-  computeSharedSecret,
-  hkdf,
-  aesCtrDecrypt,
-  hmac,
+  deriveEphemeralPrivateFromM,
+  deriveCipherKeyFromM,
+  applyAgreementXor,
+  computeAuthenticationTag,
+  verifyAuthenticationTag,
+} from './multi-recipient-crypto';
+import {
   bytesToBase64,
   base64ToBytes,
-  stringToBytes,
-  concatBytes,
   constantTimeEqual,
   secureZeroBytes,
+  aesGcmSivDecryptZeroNonce,
 } from '../../crypto';
-import { decodeVarint as decodeVarintObj } from '../../encoding/proto/primitives';
+import { decodeVarint } from '../../encoding/proto/primitives';
 import { x25519 } from '@noble/curves/ed25519.js';
 
 /** Generic error message for all unseal failures */
@@ -47,32 +56,7 @@ const GENERIC_ERROR = 'Sealed sender verification failed';
 const MIN_ENVELOPE_BYTES = 4;
 
 /**
- * Decode a varint from bytes, returning a tuple for sealed sender call sites.
- *
- * Wraps the shared decodeVarint primitive with:
- * - Tuple return format [value, bytesRead] (matching sealed sender convention)
- * - Generic error message (no information leakage)
- *
- * @param bytes Bytes to decode from
- * @param offset Starting offset
- * @returns [value, bytesRead]
- */
-function decodeVarint(bytes: Uint8Array, offset: number): [number, number] {
-  try {
-    const { value, bytesRead } = decodeVarintObj(bytes, offset);
-    return [value, bytesRead];
-  } catch {
-    throw new Error(GENERIC_ERROR);
-  }
-}
-
-/**
- * Parse the decrypted envelope to extract certificate and message.
- *
- * Format: contentType(1) || varint(certLen) || certBytes || varint(msgLen) || msgBytes || contentHint
- *
- * @param envelope Decrypted envelope bytes
- * @returns Parsed envelope components
+ * Parse decrypted envelope to extract certificate and message.
  */
 function parseEnvelope(envelope: Uint8Array): {
   certificate: SenderCertificate;
@@ -93,13 +77,12 @@ function parseEnvelope(envelope: Uint8Array): {
   let offset = 1;
 
   // Read certificate length
-  const [certLen, certLenBytes] = decodeVarint(envelope, offset);
+  const { value: certLen, bytesRead: certLenBytes } = decodeVarint(envelope, offset);
   if (certLenBytes === 0) {
     throw new Error(GENERIC_ERROR);
   }
   offset += certLenBytes;
 
-  // Validate we have enough bytes for certificate
   if (offset + certLen > envelope.length) {
     throw new Error(GENERIC_ERROR);
   }
@@ -109,13 +92,12 @@ function parseEnvelope(envelope: Uint8Array): {
   offset += certLen;
 
   // Read message length
-  const [msgLen, msgLenBytes] = decodeVarint(envelope, offset);
+  const { value: msgLen, bytesRead: msgLenBytes } = decodeVarint(envelope, offset);
   if (msgLenBytes === 0) {
     throw new Error(GENERIC_ERROR);
   }
   offset += msgLenBytes;
 
-  // Validate we have enough bytes for message
   if (offset + msgLen > envelope.length) {
     throw new Error(GENERIC_ERROR);
   }
@@ -145,204 +127,148 @@ function parseEnvelope(envelope: Uint8Array): {
 }
 
 /**
- * Unseal a Sealed Sender message using two-stage decryption.
+ * Unseal a V2 multi-recipient Sealed Sender message.
  *
- * Reveals the sender identity only after authenticating the encrypted
- * certificate.
- *
- * Two-Stage Algorithm:
- *
- * Stage 1 - Ephemeral Layer (verify and decrypt sender identity):
- * 1. Extract ephemeralPublic, encryptedStatic, encryptedMessage
- * 2. Parse encryptedStatic: e_ciphertext (32 bytes) || e_mac (10 bytes)
- * 3. Compute shared secret: e_ss = X25519(recipientIdentityPrivate, ephemeralPublic)
- * 4. Build salt: e_salt = "UnidentifiedDelivery" || recipientIdentityPublic || ephemeralPublic
- * 5. Derive keys: e_material = HKDF(salt=e_salt, ikm=e_ss, length=96)
- * 6. **VERIFY MAC FIRST**: Compare e_mac with HMAC(e_macKey, e_ciphertext)
- * 7. Decrypt: senderIdentityPublic = AES-CTR(e_cipherKey, iv=0, e_ciphertext)
- *
- * Stage 2 - Sender Layer (verify and decrypt message):
- * 1. Parse encryptedMessage: s_ciphertext || s_mac (10 bytes)
- * 2. Compute shared secret: s_ss = X25519(recipientIdentityPrivate, senderIdentityPublic)
- * 3. Build salt: s_salt = e_chain || e_ciphertext || e_mac
- * 4. Derive keys: s_material = HKDF(salt=s_salt, ikm=s_ss, length=96)
- * 5. **VERIFY MAC FIRST**: Compare s_mac with HMAC(s_macKey, s_ciphertext)
- * 6. Decrypt: envelope = AES-CTR(s_cipherKey, iv=0, s_ciphertext)
- * 7. Parse envelope to extract certificate and message
- * 8. Validate certificate matches decrypted sender identity
- * 9. Validate certificate (expiration, signature, revocation)
- * 10. Self-send detection
- *
- * Security:
- * - MAC is verified BEFORE decryption at each stage
- * - Sender identity from Stage 1 is verified against certificate
- *
- * @param options Unsealing options
+ * @param options V2 unsealing options
  * @returns Decrypted content with validated sender certificate
  * @throws Error (generic) if any validation fails
  *
- * @see https://signal.org/blog/sealed-sender/
+ * @example
+ * ```typescript
+ * const content = await unseal({
+ *   sealedMessage: receivedMessage,
+ *   recipientIdentityPrivate: myPrivateKey,
+ *   recipientIdentityPublic: myPublicKey,
+ *   recipientServiceId: 'my-user-id',
+ *   recipientDeviceId: 1,
+ *   trustRoots: [trustRootPublicKey],
+ * });
+ * ```
  */
-export async function unseal(options: UnsealOptions): Promise<UnidentifiedSenderMessageContent> {
-  const { sealedMessage, recipientIdentityPrivate, trustRoots, currentTime } = options;
+export async function unseal(options: UnsealOptions): Promise<SealedSenderMessageContent> {
+  const {
+    sealedMessage,
+    recipientIdentityPrivate,
+    recipientIdentityPublic,
+    recipientServiceId,
+    recipientDeviceId,
+    trustRoots,
+    currentTime,
+    certificatePolicy,
+  } = options;
 
-  // Arrays to track for secure zeroing
+  // Track sensitive material for secure zeroing
   const toZero: Uint8Array[] = [];
 
-  // Step 1: Verify version
-  // Signal Protocol version format: (requiredVersion << 4) | currentVersion
-  const requiredVersion = (sealedMessage.version >> 4) & 0x0f;
-  const currentVersion = sealedMessage.version & 0x0f;
-
-  // We support messages that require version 1 or lower
-  if (requiredVersion > 1) {
+  // ========================================================================
+  // Step 1: Validate version and find my recipient entry
+  // ========================================================================
+  const version = sealedMessage.version;
+  if (
+    version !== SEALED_SENDER_V2_UUID_VERSION &&
+    version !== SEALED_SENDER_V2_SERVICE_ID_VERSION
+  ) {
     throw new Error(GENERIC_ERROR);
   }
 
-  // Current version must also be valid (1 for now)
-  if (currentVersion < 1) {
+  // Find my recipient entry
+  const myRecipient = sealedMessage.recipients.find(
+    (r) => r.serviceId === recipientServiceId && r.deviceId === recipientDeviceId
+  );
+
+  if (!myRecipient) {
     throw new Error(GENERIC_ERROR);
   }
 
   try {
-    // ========================================================================
-    // Stage 1: Ephemeral Layer
-    // Decrypt sender's identity public key
-    // ========================================================================
+    const ephemeralPublic = base64ToBytes(sealedMessage.ephemeralPublic);
+    const encryptedMessageKey = base64ToBytes(myRecipient.encryptedMessageKey);
+    const receivedAuthTag = base64ToBytes(myRecipient.authenticationTag);
+    const messageCiphertext = base64ToBytes(sealedMessage.messageCiphertext);
 
-    // Step 1.1: Extract components
-    const ephemeralPublicBytes = base64ToBytes(sealedMessage.ephemeralPublic);
-    const encryptedStatic = base64ToBytes(sealedMessage.encryptedStatic);
-    const encryptedMessage = base64ToBytes(sealedMessage.encryptedMessage);
-
-    // Validate ephemeral key size
-    if (ephemeralPublicBytes.length !== 32) {
-      throw new Error(GENERIC_ERROR);
-    }
-
-    // Step 1.2: Parse encryptedStatic: e_ciphertext || e_mac
-    // e_ciphertext = 32 bytes (encrypted sender identity public key)
-    // e_mac = MAC_BYTES
-    const expectedStaticLen = 32 + MAC_BYTES;
-    if (encryptedStatic.length !== expectedStaticLen) {
-      throw new Error(GENERIC_ERROR);
-    }
-    const e_ciphertext = encryptedStatic.slice(0, 32);
-    const e_mac = encryptedStatic.slice(32, 32 + MAC_BYTES);
-
-    // Step 1.3: Compute shared secret: e_ss = ECDH(recipientIdentityPrivate, ephemeralPublic)
-    const recipientPrivateBase64 = bytesToBase64(recipientIdentityPrivate) as Base64;
-    const ephemeralPublicBase64 = bytesToBase64(ephemeralPublicBytes) as Base64;
-    const e_sharedSecret = await computeSharedSecret(recipientPrivateBase64, ephemeralPublicBase64);
-    toZero.push(e_sharedSecret);
-
-    // Step 1.4: build the Stage 1 salt.
-    // We need the recipient's public key, so derive it from the private key.
-    // Note: for X25519, we cannot easily derive public from private without the
-    // curve library.
-    // The recipient should provide their public key. For now, we will need to
-    // add it to options.
-    // WORKAROUND: use the certificate's expected sender identity to validate
-    // later.
-    const saltPrefix = stringToBytes(SEALED_SENDER_SALT);
-
-    // Derive recipient's public key from private key for salt computation.
-    // The reference implementation uses the recipient's stored public key. We derive it from the private key.
-    const recipientIdentityPublic = x25519.getPublicKey(recipientIdentityPrivate);
-
-    const e_salt = concatBytes(saltPrefix, recipientIdentityPublic, ephemeralPublicBytes);
-
-    // Step 1.5: Derive ephemeral keys (96 bytes: cipher + mac + chain)
-    const e_material = await hkdf(e_sharedSecret, e_salt, new Uint8Array(0), 96);
-    toZero.push(e_material);
-    const e_cipherKey = e_material.slice(0, 32);
-    const e_macKey = e_material.slice(32, 64);
-    const e_chain = e_material.slice(64, 96);
-    toZero.push(e_cipherKey, e_macKey, e_chain);
-
-    // Step 1.6: **VERIFY MAC FIRST** (critical for security)
-    const expectedE_mac_full = await hmac(e_macKey, e_ciphertext);
-    const expectedE_mac = expectedE_mac_full.slice(0, MAC_BYTES);
-    if (!constantTimeEqual(e_mac, expectedE_mac)) {
-      throw new Error(GENERIC_ERROR);
-    }
-
-    // Step 1.7: Decrypt sender's identity public key
-    const e_iv = new Uint8Array(16); // All zeros
-    const senderIdentityPublic = aesCtrDecrypt(e_cipherKey, e_iv, e_ciphertext);
-
-    // Validate sender identity key size
-    if (senderIdentityPublic.length !== 32) {
+    if (ephemeralPublic.length !== 32) {
       throw new Error(GENERIC_ERROR);
     }
 
     // ========================================================================
-    // Stage 2: Sender Layer
-    // Decrypt certificate + message
+    // Step 2: Decrypt M using XOR (ephemeral-to-identity ECDH)
     // ========================================================================
-
-    // Step 2.1: Parse encryptedMessage: s_ciphertext || s_mac
-    if (encryptedMessage.length < MAC_BYTES) {
-      throw new Error(GENERIC_ERROR);
-    }
-    const s_ciphertext = encryptedMessage.slice(0, -MAC_BYTES);
-    const s_mac = encryptedMessage.slice(-MAC_BYTES);
-
-    // Step 2.2: Compute shared secret: s_ss = ECDH(recipientIdentityPrivate, senderIdentityPublic)
-    const senderIdentityPublicBase64 = bytesToBase64(senderIdentityPublic) as Base64;
-    const s_sharedSecret = await computeSharedSecret(
-      recipientPrivateBase64,
-      senderIdentityPublicBase64
+    const M = await applyAgreementXor(
+      recipientIdentityPrivate,
+      ephemeralPublic,
+      ephemeralPublic, // For receiving: both ECDH target and IKM are the ephemeral key
+      'receiving',
+      encryptedMessageKey
     );
-    toZero.push(s_sharedSecret);
+    toZero.push(M);
 
-    // Step 2.3: Build salt for Stage 2 (chained from Stage 1)
-    // s_salt = e_chain || e_ciphertext || e_mac
-    const s_salt = concatBytes(e_chain, e_ciphertext, e_mac);
+    // ========================================================================
+    // Step 3: Verify ephemeral public key consistency
+    // This authenticates the XOR decryption - if M was wrong, derived key will not match
+    // ========================================================================
+    const derivedEphemeralPrivate = await deriveEphemeralPrivateFromM(M);
+    toZero.push(derivedEphemeralPrivate);
 
-    // Step 2.4: Derive sender keys (96 bytes: discard + cipher + mac)
-    // The first 32 bytes of the 96-byte derivation are domain-separated discard
-    // material. Cipher and MAC keys occupy the remaining bytes.
-    const s_material = await hkdf(s_sharedSecret, s_salt, new Uint8Array(0), 96);
-    toZero.push(s_material);
-    // s_material[0:32] discarded (mirrors EphemeralKeys structure)
-    const s_cipherKey = s_material.slice(32, 64);
-    const s_macKey = s_material.slice(64, 96);
-    toZero.push(s_cipherKey, s_macKey);
+    const derivedEphemeralPublic = x25519.getPublicKey(derivedEphemeralPrivate);
 
-    // Step 2.5: **VERIFY MAC FIRST** (critical for security)
-    const expectedS_mac_full = await hmac(s_macKey, s_ciphertext);
-    const expectedS_mac = expectedS_mac_full.slice(0, MAC_BYTES);
-    if (!constantTimeEqual(s_mac, expectedS_mac)) {
+    if (!constantTimeEqual(ephemeralPublic, derivedEphemeralPublic)) {
       throw new Error(GENERIC_ERROR);
     }
 
-    // Step 2.6: Decrypt envelope
-    const s_iv = new Uint8Array(16); // All zeros
-    const envelope = aesCtrDecrypt(s_cipherKey, s_iv, s_ciphertext);
+    // ========================================================================
+    // Step 4: Derive cipher key K from M
+    // ========================================================================
+    const cipherKey = await deriveCipherKeyFromM(M);
+    toZero.push(cipherKey);
 
-    // Step 2.7: Parse envelope
+    // ========================================================================
+    // Step 5: Decrypt message with AES-GCM-SIV (provides authenticated decryption)
+    // ========================================================================
+    let envelope: Uint8Array;
+    try {
+      envelope = aesGcmSivDecryptZeroNonce(cipherKey, messageCiphertext);
+    } catch {
+      throw new Error(GENERIC_ERROR);
+    }
+
+    // ========================================================================
+    // Step 6: Parse envelope to get sender certificate
+    // ========================================================================
     const { certificate, message, contentType, contentHint } = parseEnvelope(envelope);
 
-    // Step 2.8: Validate sender identity matches certificate
-    const certIdentityKey = base64ToBytes(certificate.senderIdentityKey);
-    if (!constantTimeEqual(senderIdentityPublic, certIdentityKey)) {
+    // ========================================================================
+    // Step 7: Verify authentication tag (identity-to-identity ECDH).
+    // Now that we have the sender's identity from the certificate, verify the
+    // auth tag. This binds the sender's identity to the message.
+    // ========================================================================
+    const senderIdentityPublic = base64ToBytes(certificate.senderIdentityKey);
+
+    const expectedAuthTag = await computeAuthenticationTag(
+      recipientIdentityPrivate,
+      recipientIdentityPublic,
+      senderIdentityPublic,
+      ephemeralPublic,
+      encryptedMessageKey,
+      'receiving'
+    );
+
+    if (!verifyAuthenticationTag(expectedAuthTag, receivedAuthTag)) {
       throw new Error(GENERIC_ERROR);
     }
 
-    // Step 2.9: Validate certificate
-    await validateSenderCertificate(certificate, trustRoots, currentTime);
+    // ========================================================================
+    // Step 8: Validate sender certificate
+    // ========================================================================
+    await validateSenderCertificate(certificate, trustRoots, currentTime, certificatePolicy);
 
-    // Step 2.10: Self-send detection (SPEC Section 6.6)
-    // Reject messages where sender === recipient (replay attack prevention)
+    // Self-send detection
     if (
-      certificate.senderUuid === options.recipientUuid &&
-      certificate.senderDeviceId === options.recipientDeviceId
+      certificate.senderUuid === recipientServiceId &&
+      certificate.senderDeviceId === recipientDeviceId
     ) {
       throw new Error(GENERIC_ERROR);
     }
 
-    // Step 2.11: Return validated content
     return {
       senderCertificate: certificate,
       signalProtocolMessage: bytesToBase64(message) as Base64,

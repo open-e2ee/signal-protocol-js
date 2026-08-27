@@ -1175,6 +1175,12 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     await this.db!.put('metadata', value, `meta:${key}`);
   }
 
+  async deleteMetadata(key: string): Promise<void> {
+    this.ensureInitialized();
+    this._metadata.delete(key);
+    await this.db!.delete('metadata', `meta:${key}`);
+  }
+
   // ============================================================================
   // Private Helper Methods
   // ============================================================================

@@ -42,6 +42,18 @@ decryption keys remain usable for delayed messages.
 
 ***
 
+### distributionPending?
+
+> `optional` **distributionPending?**: `boolean`
+
+True while an automatic rotation still needs a durable distribution send.
+
+The exact-outbox path clears this only after every prepared distribution
+message reaches the Relay. If outbox persistence fails first, the next
+attempt can reconstruct a distribution from the current ratchet state.
+
+***
+
 ### generation
 
 > **generation**: `number`

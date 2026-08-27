@@ -101,6 +101,13 @@ flowchart LR
   envelopes.
 - The remote object store carries encrypted attachment/media bytes only.
 
+You can operate these server-side interfaces through a shipped or custom
+adapter. You can instead use [OpenE2EE Relay](https://open-e2ee.dev/relay) for
+managed encrypted delivery, private encrypted attachment storage, push wakes,
+and lifecycle controls. The SDK does not require the managed service. The
+[Relay pricing page](https://open-e2ee.dev/relay/pricing) defines its exact
+meters and limits.
+
 ## Target Message-First API Preview
 
 This is the target DX the package moves toward. It appears here so app

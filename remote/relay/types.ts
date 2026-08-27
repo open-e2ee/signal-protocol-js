@@ -11,10 +11,7 @@
 import type { PreKeyBundle, IdentityType, CompositeIdentityV1 } from '../../keys/types';
 import type { RetryRequest } from '../../internal/sesame/types';
 import { ContentHint } from '../../types/messages';
-import type {
-  GroupAuthorization,
-  IGroupServer,
-} from '../../internal/groups/manager';
+import type { GroupAuthorization, IGroupServer } from '../../internal/groups/manager';
 
 // Re-export for consumers of this module
 export {};
@@ -45,11 +42,10 @@ export interface IRelayGroupServer {
   readonly server: IGroupServer;
   /** Issue an auth credential for the relay's authenticated account. */
   issueAuthCredential(userId: string): Promise<Uint8Array>;
-  /** Issue a profile-key credential for the relay's authenticated account. */
-  issueProfileKeyCredential(
-    userId: string,
-    profileKey: Uint8Array
-  ): Promise<Uint8Array>;
+  /** Store the client-derived sealed-sender access key for the authenticated account. */
+  setUnidentifiedAccessKey(userId: string, accessKey: Uint8Array): Promise<void>;
+  /** Issue a profile-key credential from a blinded request for the authenticated account. */
+  issueProfileKeyCredential(userId: string, request: Uint8Array): Promise<Uint8Array>;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -659,25 +655,9 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
   fetchSenderCertificate?(deviceId: number): Promise<string>;
 
   /**
-   * Send a sealed sender message (anonymous delivery).
+   * Send a multi-recipient sealed sender message.
    *
-   * The server does NOT know the sender. The ciphertext is an
-   * UnidentifiedSenderMessage that the recipient unseals to discover
-   * the sender's identity via the embedded certificate.
-   *
-   * @param envelope - Sealed sender envelope (senderUserId/senderDeviceId are empty strings/0)
-   * @param auth - Authentication for anonymous delivery (access key or group send token)
-   * @returns Message ID and server timestamp
-   */
-  sendUnidentified?(
-    envelope: Envelope,
-    auth: SealedSenderAuth
-  ): Promise<{ messageId: string; serverTimestamp: number }>;
-
-  /**
-   * Send a V2 multi-recipient sealed sender message.
-   *
-   * Client sends the full V2 binary blob (base64-encoded).
+   * Client sends the full binary blob (base64-encoded).
    * Relay parses client-side, sends structured JSON to mutation.
    * Server constructs per-device ReceivedMessage blobs and fans out.
    *

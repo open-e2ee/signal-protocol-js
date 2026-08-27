@@ -962,6 +962,11 @@ export class KeyStorage {
     ]);
   }
 
+  async deleteMetadata(key: string): Promise<void> {
+    const db = getRawDatabase();
+    await db.runAsync('DELETE FROM metadata WHERE key = ?', [key]);
+  }
+
   /**
    * Clear all encryption keys
    *

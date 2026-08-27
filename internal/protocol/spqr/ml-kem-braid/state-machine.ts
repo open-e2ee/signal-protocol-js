@@ -199,7 +199,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
         return this.aliceSendFromCt1Received(state);
 
       case 'EkSentCt1Received':
-        // Waiting for more CT2 chunks. Send bare CT1 acknowledgements.
+        // Waiting for more CT2 chunks. Send bare CT1 acknowledgments.
         return this.aliceSendFromEkSentCt1Received(state);
 
       default:
@@ -278,12 +278,12 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
   }
 
   private async aliceSendFromCt1Received(state: MLKEMBraidAgentState): Promise<SendResult> {
-    // Continue sending ek_vector chunks with CT1 acknowledgement until CT2 arrives.
+    // Continue sending ek_vector chunks with CT1 acknowledgment until CT2 arrives.
     return this.aliceSendEkChunk(state, MessageType.EkCt1Ack);
   }
 
   private async aliceSendFromEkSentCt1Received(state: MLKEMBraidAgentState): Promise<SendResult> {
-    // The SPQR v1 Ct1Ack is acknowledgement-only after CT2 reception.
+    // The SPQR v1 Ct1Ack is acknowledgment-only after CT2 reception.
     return {
       message: {
         epoch: state.epoch,
@@ -553,7 +553,7 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
   }
 
   private async bobSendFromEkReceivedCt1Sampled(state: MLKEMBraidAgentState): Promise<SendResult> {
-    // EK is complete, but the reference implementation waits for CT1 acknowledgement before CT2.
+    // EK is complete, but the reference implementation waits for CT1 acknowledgment before CT2.
     // Continue sending CT1 chunks, including parity, until the peer ACK arrives.
     return this.bobSendCt1Chunk(state);
   }

@@ -572,22 +572,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         null,
         Name
       >;
-      sendUnidentified: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          ciphertext: string;
-          clientMessageId?: string;
-          groupSendToken?: ArrayBuffer;
-          targetAciBytes?: ArrayBuffer;
-          targetDeviceId: number;
-          targetUserId: string;
-          timestamp: number;
-          unidentifiedAccessKey?: string;
-        },
-        { messageId: string; serverTimestamp: number },
-        Name
-      >;
     };
     provisioning: {
       acknowledgeProvisioning: FunctionReference<
@@ -725,10 +709,22 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         {
           aciBytes: ArrayBuffer;
           pniBytes?: ArrayBuffer;
-          profileKey: ArrayBuffer;
+          request: ArrayBuffer;
           userId?: string;
         },
         ArrayBuffer,
+        Name
+      >;
+      setUnidentifiedAccessKeyMutation: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          accessKey: ArrayBuffer;
+          aciBytes: ArrayBuffer;
+          pniBytes?: ArrayBuffer;
+          userId?: string;
+        },
+        null,
         Name
       >;
     };

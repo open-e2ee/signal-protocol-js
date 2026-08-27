@@ -44,7 +44,7 @@ export function scalarBytes(value: bigint): Uint8Array {
 }
 
 /**
- * Derive one labelled Ed25519 private key from the deployment's group signing
+ * Derive one labeled Ed25519 private key from the deployment's group signing
  * scalar: `SHA-256(label ‖ scalar)`.
  *
  * @param signingKey - `ServerSecretParams.signingKeyPair.signingKey`.
@@ -87,4 +87,19 @@ export async function deriveSealedSenderRootPublicKey(
   } finally {
     rootPrivateKey.fill(0);
   }
+}
+
+/**
+ * Derive the opaque 16-byte relay scope that sender certificates bind.
+ *
+ * The scope is operator-owned and deterministic for one pinned sealed-sender
+ * root. Deployments with different roots therefore have disjoint scopes.
+ *
+ * @param rootPublicKey - The raw Ed25519 root public key clients pin.
+ * @returns The first 16 bytes of SHA-256(rootPublicKey).
+ */
+export async function deriveSealedSenderScopeId(
+  rootPublicKey: Uint8Array
+): Promise<Uint8Array> {
+  return (await sha256(rootPublicKey)).slice(0, 16);
 }

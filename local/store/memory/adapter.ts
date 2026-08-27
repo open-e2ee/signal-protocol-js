@@ -1170,6 +1170,11 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
     this._metadata.set(key, value);
   }
 
+  async deleteMetadata(key: string): Promise<void> {
+    this.failures.beforeWrite('deleteMetadata');
+    this._metadata.delete(key);
+  }
+
   // ============================================================================
   // Key Recovery Methods (Bug #7 - Identifier Collision Recovery)
   // ============================================================================

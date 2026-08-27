@@ -29,18 +29,13 @@ export interface ConvexSignalProtocolBackendIdentity {
   pniBytes?: Uint8Array;
 }
 
-export interface DefineConvexSignalProtocolBackendConfig<
-  Context = DefaultBackendContext,
-> {
+export interface DefineConvexSignalProtocolBackendConfig<Context = DefaultBackendContext> {
   /** Resolve the authenticated app session to protocol identifiers. */
-  identify(
-    ctx: Context
-  ): Promise<ConvexSignalProtocolBackendIdentity>;
+  identify(ctx: Context): Promise<ConvexSignalProtocolBackendIdentity>;
 }
 
 type DefaultBackendContext =
-  | GenericQueryCtx<GenericDataModel>
-  | GenericMutationCtx<GenericDataModel>;
+  GenericQueryCtx<GenericDataModel> | GenericMutationCtx<GenericDataModel>;
 
 const changeResultValidator = v.object({
   version: v.number(),
@@ -57,15 +52,10 @@ const snapshotResultValidator = v.object({
 });
 
 function toArrayBuffer(value: Uint8Array): ArrayBuffer {
-  return value.buffer.slice(
-    value.byteOffset,
-    value.byteOffset + value.byteLength
-  ) as ArrayBuffer;
+  return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer;
 }
 
-function resolvedIdentityArgs(
-  identity: ConvexSignalProtocolBackendIdentity | null | undefined
-): {
+function resolvedIdentityArgs(identity: ConvexSignalProtocolBackendIdentity | null | undefined): {
   userId?: string;
   aciBytes: ArrayBuffer;
   pniBytes?: ArrayBuffer;
@@ -84,10 +74,7 @@ function resolvedIdentityArgs(
   return {
     userId: identity.userId,
     aciBytes: toArrayBuffer(identity.aciBytes),
-    pniBytes:
-      identity.pniBytes === undefined
-        ? undefined
-        : toArrayBuffer(identity.pniBytes),
+    pniBytes: identity.pniBytes === undefined ? undefined : toArrayBuffer(identity.pniBytes),
   };
 }
 
@@ -100,15 +87,11 @@ function resolvedAccountIdentityArgs(identity: {
   callerAciBytes: ArrayBuffer;
   callerPniBytes?: ArrayBuffer;
 } {
-  if (
-    typeof identity.userId !== 'string' ||
-    identity.userId.length === 0
-  ) {
+  if (typeof identity.userId !== 'string' || identity.userId.length === 0) {
     throw new ConvexError({
       code: 'UNAUTHORIZED',
       status: 401,
-      message:
-        'identify() must return userId for relay account operations',
+      message: 'identify() must return userId for relay account operations',
     });
   }
   return {
@@ -138,10 +121,7 @@ const deviceTypeValidator = v.union(
   v.literal('web')
 );
 
-const identityTypeValidator = v.union(
-  v.literal('aci'),
-  v.literal('pni')
-);
+const identityTypeValidator = v.union(v.literal('aci'), v.literal('pni'));
 
 const retryReasonValidator = v.union(
   v.literal('NO_SESSION'),
@@ -167,24 +147,15 @@ const provisioningStatusValidator = v.union(
  * The returned namespace bags are additive: later component phases can add
  * more protocol namespaces without changing this factory's arguments.
  */
-export function defineConvexSignalProtocolBackend<
-  Context = DefaultBackendContext,
->(
+export function defineConvexSignalProtocolBackend<Context = DefaultBackendContext>(
   component: ComponentApi,
   config: DefineConvexSignalProtocolBackendConfig<Context>
 ) {
   const identify = async (
-    ctx:
-      | GenericQueryCtx<GenericDataModel>
-      | GenericMutationCtx<GenericDataModel>
-  ) =>
-    resolvedIdentityArgs(
-      await config.identify(ctx as unknown as Context)
-    );
+    ctx: GenericQueryCtx<GenericDataModel> | GenericMutationCtx<GenericDataModel>
+  ) => resolvedIdentityArgs(await config.identify(ctx as unknown as Context));
   const identifyAccount = async (
-    ctx:
-      | GenericQueryCtx<GenericDataModel>
-      | GenericMutationCtx<GenericDataModel>
+    ctx: GenericQueryCtx<GenericDataModel> | GenericMutationCtx<GenericDataModel>
   ) => resolvedAccountIdentityArgs(await identify(ctx));
 
   return {
@@ -260,24 +231,6 @@ export function defineConvexSignalProtocolBackend<
       // Sealed-sender delivery is bearer-authorized. Resolving an app
       // identity here would both weaken anonymity and break callers that
       // intentionally have no authenticated app session.
-      sendUnidentified: mutationGeneric({
-        args: {
-          targetUserId: v.string(),
-          targetDeviceId: v.number(),
-          targetAciBytes: v.optional(v.bytes()),
-          ciphertext: v.string(),
-          timestamp: v.number(),
-          clientMessageId: v.optional(v.string()),
-          unidentifiedAccessKey: v.optional(v.string()),
-          groupSendToken: v.optional(v.bytes()),
-        },
-        returns: messageReceiptValidator,
-        handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.messages.sendUnidentified,
-            input
-          ),
-      }),
       sendMultiRecipientUnidentified: mutationGeneric({
         args: {
           recipients: v.array(
@@ -303,10 +256,7 @@ export function defineConvexSignalProtocolBackend<
           uuids404: v.array(v.string()),
         }),
         handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.messages.sendMultiRecipientUnidentified,
-            input
-          ),
+          await ctx.runMutation(component.messages.sendMultiRecipientUnidentified, input),
       }),
       sendRetryRequest: mutationGeneric({
         args: {
@@ -339,25 +289,19 @@ export function defineConvexSignalProtocolBackend<
           })
         ),
         handler: async (ctx, input) =>
-          await ctx.runQuery(
-            component.messages.getPendingRetryRequests,
-            {
-              ...(await identifyAccount(ctx)),
-              ...input,
-            }
-          ),
+          await ctx.runQuery(component.messages.getPendingRetryRequests, {
+            ...(await identifyAccount(ctx)),
+            ...input,
+          }),
       }),
       markRetryRequestHandled: mutationGeneric({
         args: { requestId: v.string() },
         returns: v.null(),
         handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.messages.markRetryRequestHandled,
-            {
-              ...(await identifyAccount(ctx)),
-              ...input,
-            }
-          ),
+          await ctx.runMutation(component.messages.markRetryRequestHandled, {
+            ...(await identifyAccount(ctx)),
+            ...input,
+          }),
       }),
     },
     devices: {
@@ -409,25 +353,19 @@ export function defineConvexSignalProtocolBackend<
         args: { deviceId: v.number() },
         returns: v.null(),
         handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.devices.markDeviceConnected,
-            {
-              ...(await identifyAccount(ctx)),
-              ...input,
-            }
-          ),
+          await ctx.runMutation(component.devices.markDeviceConnected, {
+            ...(await identifyAccount(ctx)),
+            ...input,
+          }),
       }),
       markDeviceDisconnected: mutationGeneric({
         args: { deviceId: v.number() },
         returns: v.null(),
         handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.devices.markDeviceDisconnected,
-            {
-              ...(await identifyAccount(ctx)),
-              ...input,
-            }
-          ),
+          await ctx.runMutation(component.devices.markDeviceDisconnected, {
+            ...(await identifyAccount(ctx)),
+            ...input,
+          }),
       }),
       presenceHeartbeat: mutationGeneric({
         args: { deviceId: v.number() },
@@ -453,13 +391,10 @@ export function defineConvexSignalProtocolBackend<
         returns: v.null(),
         handler: async (ctx, input) => {
           const { userId: _untrustedUserId, ...payload } = input;
-          return await ctx.runMutation(
-            component.keys.uploadIdentityKey,
-            {
-              ...(await identifyAccount(ctx)),
-              ...payload,
-            }
-          );
+          return await ctx.runMutation(component.keys.uploadIdentityKey, {
+            ...(await identifyAccount(ctx)),
+            ...payload,
+          });
         },
       }),
       getIdentityKey: queryGeneric({
@@ -575,13 +510,10 @@ export function defineConvexSignalProtocolBackend<
         returns: v.object({ cleared: v.number() }),
         handler: async (ctx, input) => {
           const { userId: _untrustedUserId, ...payload } = input;
-          return await ctx.runMutation(
-            component.keys.clearStaleKemPreKeys,
-            {
-              ...(await identifyAccount(ctx)),
-              ...payload,
-            }
-          );
+          return await ctx.runMutation(component.keys.clearStaleKemPreKeys, {
+            ...(await identifyAccount(ctx)),
+            ...payload,
+          });
         },
       }),
       uploadEcSignedPreKey: mutationGeneric({
@@ -599,13 +531,10 @@ export function defineConvexSignalProtocolBackend<
         returns: v.null(),
         handler: async (ctx, input) => {
           const { userId: _untrustedUserId, ...payload } = input;
-          return await ctx.runMutation(
-            component.keys.uploadEcSignedPreKey,
-            {
-              ...(await identifyAccount(ctx)),
-              ...payload,
-            }
-          );
+          return await ctx.runMutation(component.keys.uploadEcSignedPreKey, {
+            ...(await identifyAccount(ctx)),
+            ...payload,
+          });
         },
       }),
       uploadKemLastResortPreKey: mutationGeneric({
@@ -623,13 +552,10 @@ export function defineConvexSignalProtocolBackend<
         returns: v.null(),
         handler: async (ctx, input) => {
           const { userId: _untrustedUserId, ...payload } = input;
-          return await ctx.runMutation(
-            component.keys.uploadKemLastResortPreKey,
-            {
-              ...(await identifyAccount(ctx)),
-              ...payload,
-            }
-          );
+          return await ctx.runMutation(component.keys.uploadKemLastResortPreKey, {
+            ...(await identifyAccount(ctx)),
+            ...payload,
+          });
         },
       }),
       getEcSignedPreKeyMetadata: queryGeneric({
@@ -649,13 +575,10 @@ export function defineConvexSignalProtocolBackend<
         ),
         handler: async (ctx, input) => {
           const { userId: _untrustedUserId, ...payload } = input;
-          return await ctx.runQuery(
-            component.keys.getEcSignedPreKeyMetadata,
-            {
-              ...(await identifyAccount(ctx)),
-              ...payload,
-            }
-          );
+          return await ctx.runQuery(component.keys.getEcSignedPreKeyMetadata, {
+            ...(await identifyAccount(ctx)),
+            ...payload,
+          });
         },
       }),
       getKemLastResortPreKeyMetadata: queryGeneric({
@@ -675,13 +598,10 @@ export function defineConvexSignalProtocolBackend<
         ),
         handler: async (ctx, input) => {
           const { userId: _untrustedUserId, ...payload } = input;
-          return await ctx.runQuery(
-            component.keys.getKemLastResortPreKeyMetadata,
-            {
-              ...(await identifyAccount(ctx)),
-              ...payload,
-            }
-          );
+          return await ctx.runQuery(component.keys.getKemLastResortPreKeyMetadata, {
+            ...(await identifyAccount(ctx)),
+            ...payload,
+          });
         },
       }),
     },
@@ -690,13 +610,10 @@ export function defineConvexSignalProtocolBackend<
         args: { deviceId: v.number() },
         returns: v.string(),
         handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.certificates.issueSenderCertificate,
-            {
-              ...(await identifyAccount(ctx)),
-              ...input,
-            }
-          ),
+          await ctx.runMutation(component.certificates.issueSenderCertificate, {
+            ...(await identifyAccount(ctx)),
+            ...input,
+          }),
       }),
     },
     provisioning: {
@@ -708,13 +625,10 @@ export function defineConvexSignalProtocolBackend<
         returns: v.object({ sessionId: v.string() }),
         handler: async (ctx, input) => {
           const { userId: _untrustedUserId, ...payload } = input;
-          return await ctx.runMutation(
-            component.provisioning.createProvisioningSession,
-            {
-              ...(await identifyAccount(ctx)),
-              ...payload,
-            }
-          );
+          return await ctx.runMutation(component.provisioning.createProvisioningSession, {
+            ...(await identifyAccount(ctx)),
+            ...payload,
+          });
         },
       }),
       connectNewDevice: mutationGeneric({
@@ -729,13 +643,10 @@ export function defineConvexSignalProtocolBackend<
         },
         returns: v.null(),
         handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.provisioning.connectNewDevice,
-            {
-              ...(await identifyAccount(ctx)),
-              ...input,
-            }
-          ),
+          await ctx.runMutation(component.provisioning.connectNewDevice, {
+            ...(await identifyAccount(ctx)),
+            ...input,
+          }),
       }),
       sendProvisioningMessage: mutationGeneric({
         args: {
@@ -746,13 +657,10 @@ export function defineConvexSignalProtocolBackend<
         returns: v.null(),
         handler: async (ctx, input) => {
           const { userId: _untrustedUserId, ...payload } = input;
-          return await ctx.runMutation(
-            component.provisioning.sendProvisioningMessage,
-            {
-              ...(await identifyAccount(ctx)),
-              ...payload,
-            }
-          );
+          return await ctx.runMutation(component.provisioning.sendProvisioningMessage, {
+            ...(await identifyAccount(ctx)),
+            ...payload,
+          });
         },
       }),
       getProvisioningMessage: queryGeneric({
@@ -763,13 +671,10 @@ export function defineConvexSignalProtocolBackend<
           expiresAt: v.union(v.number(), v.null()),
         }),
         handler: async (ctx, input) =>
-          await ctx.runQuery(
-            component.provisioning.getProvisioningMessage,
-            {
-              ...(await identifyAccount(ctx)),
-              ...input,
-            }
-          ),
+          await ctx.runQuery(component.provisioning.getProvisioningMessage, {
+            ...(await identifyAccount(ctx)),
+            ...input,
+          }),
       }),
       completeProvisioning: mutationGeneric({
         args: {
@@ -783,37 +688,28 @@ export function defineConvexSignalProtocolBackend<
         },
         returns: v.object({ deviceId: v.number() }),
         handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.provisioning.completeProvisioning,
-            {
-              ...(await identifyAccount(ctx)),
-              ...input,
-            }
-          ),
+          await ctx.runMutation(component.provisioning.completeProvisioning, {
+            ...(await identifyAccount(ctx)),
+            ...input,
+          }),
       }),
       acknowledgeProvisioning: mutationGeneric({
         args: { sessionId: v.string() },
         returns: v.null(),
         handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.provisioning.acknowledgeProvisioning,
-            {
-              ...(await identifyAccount(ctx)),
-              ...input,
-            }
-          ),
+          await ctx.runMutation(component.provisioning.acknowledgeProvisioning, {
+            ...(await identifyAccount(ctx)),
+            ...input,
+          }),
       }),
       rollbackProvisioning: mutationGeneric({
         args: { sessionId: v.string() },
         returns: v.null(),
         handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.provisioning.rollbackProvisioning,
-            {
-              ...(await identifyAccount(ctx)),
-              ...input,
-            }
-          ),
+          await ctx.runMutation(component.provisioning.rollbackProvisioning, {
+            ...(await identifyAccount(ctx)),
+            ...input,
+          }),
       }),
       deleteProvisioningSession: mutationGeneric({
         args: {
@@ -823,13 +719,10 @@ export function defineConvexSignalProtocolBackend<
         returns: v.null(),
         handler: async (ctx, input) => {
           const { userId: _untrustedUserId, ...payload } = input;
-          return await ctx.runMutation(
-            component.provisioning.deleteProvisioningSession,
-            {
-              ...(await identifyAccount(ctx)),
-              ...payload,
-            }
-          );
+          return await ctx.runMutation(component.provisioning.deleteProvisioningSession, {
+            ...(await identifyAccount(ctx)),
+            ...payload,
+          });
         },
       }),
     },
@@ -846,8 +739,7 @@ export function defineConvexSignalProtocolBackend<
           groupPublicParams: v.bytes(),
         },
         returns: v.null(),
-        handler: async (ctx, input) =>
-          await ctx.runMutation(component.groups.createGroup, input),
+        handler: async (ctx, input) => await ctx.runMutation(component.groups.createGroup, input),
       }),
       getGroup: queryGeneric({
         args: {
@@ -857,8 +749,7 @@ export function defineConvexSignalProtocolBackend<
           version: v.optional(v.number()),
         },
         returns: v.union(snapshotResultValidator, v.null()),
-        handler: async (ctx, input) =>
-          await ctx.runQuery(component.groups.getGroup, input),
+        handler: async (ctx, input) => await ctx.runQuery(component.groups.getGroup, input),
       }),
       getGroupJoinInfo: queryGeneric({
         args: {
@@ -874,11 +765,7 @@ export function defineConvexSignalProtocolBackend<
           }),
           v.null()
         ),
-        handler: async (ctx, input) =>
-          await ctx.runQuery(
-            component.groups.getGroupJoinInfo,
-            input
-          ),
+        handler: async (ctx, input) => await ctx.runQuery(component.groups.getGroupJoinInfo, input),
       }),
       getGroupChanges: queryGeneric({
         args: {
@@ -891,8 +778,7 @@ export function defineConvexSignalProtocolBackend<
           entries: v.array(changeResultValidator),
           hasMore: v.boolean(),
         }),
-        handler: async (ctx, input) =>
-          await ctx.runQuery(component.groups.getGroupChanges, input),
+        handler: async (ctx, input) => await ctx.runQuery(component.groups.getGroupChanges, input),
       }),
       submitGroupChange: mutationGeneric({
         args: {
@@ -905,10 +791,7 @@ export function defineConvexSignalProtocolBackend<
         },
         returns: changeResultValidator,
         handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.groups.submitGroupChange,
-            input
-          ),
+          await ctx.runMutation(component.groups.submitGroupChange, input),
       }),
       refreshGroupSendEndorsements: mutationGeneric({
         args: {
@@ -921,10 +804,7 @@ export function defineConvexSignalProtocolBackend<
           expiration: v.number(),
         }),
         handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.groups.refreshGroupSendEndorsements,
-            input
-          ),
+          await ctx.runMutation(component.groups.refreshGroupSendEndorsements, input),
       }),
     },
     zkAuth: {
@@ -932,22 +812,25 @@ export function defineConvexSignalProtocolBackend<
         args: {},
         returns: v.bytes(),
         handler: async (ctx) =>
-          await ctx.runMutation(
-            component.zkAuth.issueAuthCredentialMutation,
-            await identify(ctx)
-          ),
+          await ctx.runMutation(component.zkAuth.issueAuthCredentialMutation, await identify(ctx)),
       }),
       issueProfileKeyCredentialMutation: mutationGeneric({
-        args: { profileKey: v.bytes() },
+        args: { request: v.bytes() },
         returns: v.bytes(),
         handler: async (ctx, input) =>
-          await ctx.runMutation(
-            component.zkAuth.issueProfileKeyCredentialMutation,
-            {
-              ...(await identify(ctx)),
-              ...input,
-            }
-          ),
+          await ctx.runMutation(component.zkAuth.issueProfileKeyCredentialMutation, {
+            ...(await identify(ctx)),
+            ...input,
+          }),
+      }),
+      setUnidentifiedAccessKeyMutation: mutationGeneric({
+        args: { accessKey: v.bytes() },
+        returns: v.null(),
+        handler: async (ctx, input) =>
+          await ctx.runMutation(component.zkAuth.setUnidentifiedAccessKeyMutation, {
+            ...(await identify(ctx)),
+            ...input,
+          }),
       }),
     },
   };

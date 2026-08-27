@@ -75,7 +75,7 @@ function usedBytes(entries: Map<string, string>): number {
 
 function quotaError(): Error {
   const error = new Error('Reference backend storage quota exhausted');
-  // Signalled by name, not by a shared class: the store's boundary matches
+  // Signaled by name, not by a shared class: the store's boundary matches
   // `error.name` so any backend can raise the same signal.
   error.name = 'QuotaExceededError';
   return error;

@@ -16,7 +16,6 @@
  * - Transports receive encrypted transfer packets
  */
 
-import type { DoubleRatchetState } from '../internal/protocol/double-ratchet';
 import type { ILogger } from '../logger';
 
 // ============================================================================
@@ -77,42 +76,12 @@ export interface BackupIdentityKeyPair {
 }
 
 /**
- * Signed prekey for backup/transfer (JSON-serializable).
+ * Linked-device provisioning bundle.
  *
- * Uses plain strings for JSON serialization. The canonical `EcSignedPreKey`
- * type is in `keys/types.ts`.
- */
-export interface BackupSignedPreKey {
-  /** Key ID */
-  id: number;
-  /** X25519 public key (Base64) */
-  publicKey: string;
-  /** X25519 private key (Base64) */
-  privateKey: string;
-  /** Ed25519 signature of public key (Base64) */
-  signature: string;
-  /** Timestamp when key was generated */
-  timestamp: number;
-}
-
-/**
- * One-time prekey for backup/transfer (JSON-serializable).
- *
- * Uses plain strings for JSON serialization. The canonical `EcOneTimePreKey`
- * type is in `keys/types.ts`.
- */
-export interface BackupOneTimePreKey {
-  /** Key ID */
-  id: number;
-  /** X25519 public key (Base64) */
-  publicKey: string;
-  /** X25519 private key (Base64) */
-  privateKey: string;
-}
-
-/**
- * Complete device backup structure
- * Contains all encryption keys needed to restore account
+ * It transfers only the account identity needed to bind a new device. The new
+ * device generates its own signed and one-time prekeys after import. Ratchet
+ * sessions, sender-key state, message state, and outbox state never cross the
+ * device boundary.
  */
 export interface DeviceBackup {
   /** Backup format version */
@@ -129,20 +98,6 @@ export interface DeviceBackup {
 
   /** Long-lived identity key */
   identityKey: BackupIdentityKeyPair;
-  /** Current signed prekey */
-  signedPreKey: BackupSignedPreKey;
-  /** Available one-time prekeys */
-  oneTimePreKeys: BackupOneTimePreKey[];
-
-  /** Session states (per encrypted session) */
-  sessions: Record<string, DoubleRatchetState>;
-
-  /** Session count */
-  sessionCount: number;
-  /** Total message count (optional) */
-  messageCount?: number;
-  /** Photo count (optional) */
-  photoCount?: number;
 }
 
 /**
@@ -335,4 +290,4 @@ export const TRANSFER_PROTOCOL_VERSION = 1;
 /**
  * Backup format version
  */
-export const BACKUP_FORMAT_VERSION = 1;
+export const BACKUP_FORMAT_VERSION = 2;

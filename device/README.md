@@ -14,8 +14,9 @@ The two onboarding operations are deliberately separate:
 
 - **Provisioning** adds a linked device. It transfers account identity material
   and optional account metadata, but not existing sessions or message history.
-- **Transfer** migrates local cryptographic state to replacement hardware. It
-  can include identity keys, prekeys, and sessions in an encrypted backup.
+- **Transfer** sends the same identity-only provisioning bundle over an
+  application-owned encrypted device-to-device channel. The receiving device
+  generates fresh prekeys and sessions after import.
 
 The primary device uses ID `1`. The backend allocates linked device IDs from
 `2` through `5`. A client must not choose its own linked-device ID.
@@ -147,7 +148,7 @@ const receiving = await prepareNewDeviceTransfer();
 await appQr.show(receiving.qrCode);
 
 const sending = await prepareOldDeviceTransferWithBackup(backupStorage);
-const backup = await sending.getBackup(sessionIds);
+const backup = await sending.getBackup();
 ```
 
 The application owns transport selection, peer confirmation, progress UI,
@@ -159,8 +160,9 @@ durably restores the backup.
 
 - Provisioning sessions expire after five minutes.
 - Ephemeral ECDH keys derive the provisioning/transfer encryption keys.
-- The SDK encrypts identity and backup material before it reaches a relay or
-  transport.
+- The SDK encrypts identity material before it reaches a relay or transport.
+- Linked-device bundles never contain signed prekeys, one-time prekeys,
+  ratchet sessions, sender-key state, message state, or retry outbox state.
 - The QR channel authenticates the session only to the extent that the
   application protects what the user scans or shares.
 - The SDK encrypts device names for backend storage.

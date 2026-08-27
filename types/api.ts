@@ -1509,6 +1509,9 @@ export interface ISignalProtocolLocalStore
    * Set a metadata value by key.
    */
   setMetadata(key: string, value: string): Promise<void>;
+
+  /** Delete one metadata value. */
+  deleteMetadata(key: string): Promise<void>;
 }
 
 /**

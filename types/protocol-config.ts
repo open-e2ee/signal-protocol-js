@@ -149,7 +149,7 @@ export interface ProtocolSelectionEvent {
  *
  * Braid mode spreads an ML-KEM key agreement across many messages. Each
  * message carries one erasure-coded chunk, and an epoch closes only once
- * enough chunks have travelled in both directions. Nothing outside the braid
+ * enough chunks have traveled in both directions. Nothing outside the braid
  * state machine can otherwise observe that. A host that wants to show or log
  * the ratchet's progress has no other source for it.
  */

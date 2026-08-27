@@ -17,6 +17,7 @@ import {
   SEALED_SENDER_ROOT_LABEL,
   SEALED_SENDER_SERVER_LABEL,
   deriveSealedSenderPrivateKey,
+  deriveSealedSenderScopeId,
 } from '../../../../internal/protocol/sealed-sender/trust-root';
 import { asBase64 } from '../../../../types/utils';
 import { mutation } from './_generated/server';
@@ -42,7 +43,7 @@ async function derivePrivateKey(label: string): Promise<PrivateKey> {
   ) as PrivateKey;
 }
 
-async function certificateAuthority() {
+async function certificateAuthority(now: number) {
   const rootPrivateKey = await derivePrivateKey(SEALED_SENDER_ROOT_LABEL);
   const serverPrivateKey = await derivePrivateKey(SEALED_SENDER_SERVER_LABEL);
   const rootPublicKey = bytesToBase64(
@@ -51,9 +52,13 @@ async function certificateAuthority() {
   const serverPublicKey = bytesToBase64(
     ed25519.getPublicKey(base64ToBytes(serverPrivateKey))
   ) as PublicKey;
+  const notBefore = now - 60 * 1000;
+  const notAfter = now + 365 * 24 * 60 * 60 * 1000;
   const serverCertificateBytes = encodeServerCertificateData({
     id: SERVER_CERTIFICATE_ID,
     key: base64ToBytes(serverPublicKey),
+    notBefore,
+    notAfter,
   });
   const serverSignature = ed25519.sign(
     serverCertificateBytes,
@@ -64,6 +69,8 @@ async function certificateAuthority() {
     signature: serverSignature,
   });
   return {
+    notAfter,
+    relayScopeId: await deriveSealedSenderScopeId(base64ToBytes(rootPublicKey)),
     rootPublicKey,
     serverPrivateKey,
     serializedServerCertificate,
@@ -72,7 +79,7 @@ async function certificateAuthority() {
 
 /** The deterministic trust root applications pin for sender certificates. */
 export async function senderCertificateTrustRoot(): Promise<PublicKey> {
-  return (await certificateAuthority()).rootPublicKey;
+  return (await certificateAuthority(Date.now())).rootPublicKey;
 }
 
 export const issueSenderCertificate = mutation({
@@ -126,19 +133,21 @@ export const issueSenderCertificate = mutation({
       .unique();
     if (
       existing &&
+      existing.certificateContract === 'scoped' &&
       existing.identityKey === composite.x25519PublicKey &&
       existing.expiresAt > now + REFRESH_MARGIN_MS
     ) {
       return existing.certificate;
     }
-    const authority = await certificateAuthority();
-    const expiresAt = now + CERTIFICATE_EXPIRATION_MS;
+    const authority = await certificateAuthority(now);
+    const expiresAt = Math.min(now + CERTIFICATE_EXPIRATION_MS, authority.notAfter);
     const certificateBytes = encodeSenderCertificateData({
       senderDevice: input.deviceId,
       expires: expiresAt,
       identityKey: base64ToBytes(composite.x25519PublicKey),
       signerCertificate: authority.serializedServerCertificate,
       senderUuid: input.callerUserId,
+      relayScopeId: authority.relayScopeId,
     });
     const signature = ed25519.sign(
       certificateBytes,
@@ -158,6 +167,7 @@ export const issueSenderCertificate = mutation({
       certificate: encoded,
       issuedAt: now,
       expiresAt,
+      certificateContract: 'scoped' as const,
     };
     if (existing) {
       await ctx.db.replace(existing._id, value);

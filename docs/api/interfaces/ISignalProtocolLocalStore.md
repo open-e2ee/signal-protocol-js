@@ -397,6 +397,24 @@ Delete all message records for a session
 
 ***
 
+### deleteMetadata()
+
+> **deleteMetadata**(`key`): `Promise`\<`void`\>
+
+Delete one metadata value.
+
+#### Parameters
+
+##### key
+
+`string`
+
+#### Returns
+
+`Promise`\<`void`\>
+
+***
+
 ### deleteOldestSkippedSenderKeys()
 
 > **deleteOldestSkippedSenderKeys**(`groupId`, `senderId`, `senderDeviceId`, `count`): `Promise`\<`number`\>

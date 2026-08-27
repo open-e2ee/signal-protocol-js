@@ -838,6 +838,12 @@ export class NodeEncryptedDatabase {
     });
   }
 
+  async deleteMetadataValue(key: string): Promise<void> {
+    await this.mutateSecurityState((state) => {
+      delete state.metadata[key];
+    });
+  }
+
   async getRegistrationId(identityType: string): Promise<number> {
     const state = await this.readSecurityState();
     return state.registrationIds[identityType] ?? 0;

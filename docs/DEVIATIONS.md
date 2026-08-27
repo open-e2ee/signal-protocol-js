@@ -83,11 +83,10 @@ model and what is out of scope.
 | **SPQR / ML-KEM Braid** | ML-KEM Braid rev. 1 | **Deviation.** Same protocol, same KDF labels, same Reed–Solomon parameters, byte-identical message framing — except `hek = SHA3-256(ek_seed ‖ ek_vector)`, the operand order the specification states, which is the reverse of `libsignal`'s implementation | The normative text was followed over the executable reference | Wire-visible. Headers, ciphertexts, and shared secrets diverge; a braid session cannot complete a single epoch against `libsignal`'s implementation. Also means the KEM is not FIPS 203 in braid mode |
 | **Triple Ratchet** | `libsignal` `triple_ratchet.rs` | **Faithful.** The PQ secret enters as the HKDF salt at message-key expansion, same label, same order | — | The braiding construction follows the ML-KEM Braid specification |
 | **Sesame** | Sesame rev. 2 | **Deviation** on session expiry (§4.2 applies only to unacknowledged sessions) and on deleted devices (hard-removed rather than marked stale). **Extensions:** QR provisioning, device transfer, encrypted device names, identity-change gating, a 5-device cap | Product requirements the specification does not address | Hard deletion **drops the MAXLATENCY window, so in-flight messages from a just-removed device become permanently undecryptable**. Device transfer clones ratchet state, which weakens the forward-secrecy bound |
-| **Sealed sender v1** | `libsignal` `sealed_sender.rs` | **Deviation.** Correct labels, cipher, and MAC length, but the 96-byte HKDF output is split `(cipher, mac, chain)` where `libsignal` splits `(chain, cipher, mac)`; keys in the salt omit the `0x05` type byte; the inner envelope is a hand-rolled varint format rather than the `UnidentifiedSenderMessage.Message` protobuf, though it now carries the same message-type values | The slice order and the missing prefix are unintentional; the framing is a deliberate simplification | Self-consistent and secure, but every v1 key sits in a different slot than `libsignal`'s |
-| **Sealed sender v2** | `libsignal` `sealed_sender.rs` | **Faithful** on all four labels, the KEM, AES-256-GCM-SIV, the multi-recipient binary format, and the `0x3FFF` registration-ID mask | — | The v2 construction follows `libsignal` |
+| **Sealed sender** | `libsignal` `sealed_sender.rs` | **Faithful** on the multi-recipient transport labels, KEM, AES-256-GCM-SIV, binary format, and `0x3FFF` registration-ID mask. **Extension:** sender and server certificates require signed Relay scope and issuer validity under operator-owned Ed25519 roots | Binds anonymous delivery to one Relay deployment and supports explicit issuer rotation and revocation | The transport follows `libsignal`; certificates are not interchangeable with Signal Messenger or another deployment |
 | **Delivery token** | `libsignal` `profile_key.rs` | **Faithful.** `deriveAccessKey` follows `libsignal`'s `ProfileKey::derive_access_key`, and reproduces `libsignal`'s published known-answer values | — | Not an SDK invention, despite what the module name suggests |
 | **Sender keys** | `libsignal` `sender_keys.rs` | **Deviation.** Protobuf field numbers and `0x33` framing match, and the `0x01`/`0x02` seeds match, but message-key derivation **omits HKDF-Extract**, signatures are Ed25519 not XEdDSA, and `distributionUuid` carries a UTF-8 string rather than 16 UUID bytes | The Ed25519 choice follows the identity profile; the missing Extract appears unintentional | Group message keys differ from `libsignal`'s for the same chain key. Confirmed numerically, not merely by inspection |
-| **Groups** | Signal Private Group System | **Independent design.** Real zkgroup primitives underneath; the server validates every change against zero-knowledge presentations and signs the accepted result, and clients verify those signatures. **Deviation:** profile-key credential issuance is not blinded — the issuing server sees the raw profile key at issuance time | Ships a validating group server with an enforcement contract (S1–S14) specified in-tree | Not wire-compatible with the Signal Private Group System; credentials are not interchangeable. The unblinded issuance path means a hostile issuance server learns profile keys, which the Signal Private Group System's blinded issuance prevents |
+| **Groups** | Signal Private Group System | **Independent design.** Real zkgroup primitives underneath; profile-key credential issuance blinds the ACI-bound profile-key attribute, the server validates every change against zero-knowledge presentations and signs the accepted result, and clients verify those signatures | Ships a validating group server with an enforcement contract (S1–S14) specified in-tree | Not wire-compatible with the Signal Private Group System; credentials are not interchangeable. The issuer sees the authenticated ACI and redemption window, but not the raw profile key |
 | **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation is structured as four labeled derivations rather than one seeded derivation | Server keys are the deploying operator's own trust root (each deployment generates its own seed), not Signal Messenger's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal Messenger's |
 | **Registration IDs** | `libsignal` `sealed_sender.rs` | **Faithful.** Generated in `[1, 16383]`, strictly inside the 14 bits the wire format reserves | — | — |
 
@@ -247,7 +246,7 @@ The SDK generates registration IDs in the closed range `[1, 16383]`
 The upper bound is load-bearing rather than cosmetic. The value `16384` is
 `0x4000` and does not fit in 14 bits. The SDK's multi-recipient sealed-sender
 encoder masks rather than rejects
-(`internal/protocol/sealed-sender/v2-binary.ts:170-171`), so an ID one above
+(`internal/protocol/sealed-sender/multi-recipient-message.ts`), so an ID one above
 the range would reach the wire as `0`. The generated range is therefore strictly
 narrower than `libsignal`'s accepted range, and a test asserts that every
 generated ID survives the mask unchanged.
@@ -758,7 +757,7 @@ possession must add it at the application layer.
 
 ## 6. Sealed sender
 
-### 6.1 Version 2 is faithful
+### 6.1 The multi-recipient transport is faithful
 
 These parts match `libsignal`:
 
@@ -771,39 +770,9 @@ These parts match `libsignal`:
   ServiceIds
 - the packed device ID with its 14-bit registration ID and `0x3FFF` mask
 
-Certificate validation order and semantics match as well. That includes the
-trust-root loop, which does not short-circuit and therefore does not reveal which
-root validated.
-
-### 6.2 Version 1 diverges in three places
-
-**The SDK splits the 96-byte HKDF output in a different order.** `libsignal`
-derives `(chain_key, cipher_key, mac_key)` ([`sealed_sender.rs:711-746`][ss]).
-The SDK derives `(cipher, mac, chain)`
-(`internal/protocol/sealed-sender/encryption.ts:164-166`). The construction is
-self-consistent and secure, because the keys are independent HKDF output either
-way. Every v1 key still sits in a different slot than `libsignal`'s. This is an
-implementation divergence rather than a design decision. The SDK's own pinned
-specification document records the same order, so the two agree with each other.
-
-**Public keys in the v1 salt and in certificates omit the `0x05` type byte.**
-`libsignal` uses the 33-byte serialized form. The SDK uses raw 32 bytes and
-enforces that length
-(`internal/protocol/sealed-sender/certificate.ts:306-309`). The SDK's own v2 path
-*does* apply the `0x05` prefix, so the two sealed-sender versions disagree with
-each other.
-
-**The inner envelope is a hand-rolled varint format**
-(`internal/protocol/sealed-sender/encryption.ts:46-86`) rather than the
-`UnidentifiedSenderMessage.Message` protobuf. It still carries the message-type
-field that `libsignal` dispatches on, which selects between prekey, regular,
-sender-key, and plaintext payloads ([`sealed_sender.rs:2055-2075`][ss]). The
-field is a leading byte holding `libsignal`'s enum values. The framing therefore
-differs while the dispatch does not.
-
-That field lets the unseal path restore the real message type. Without it the
-path would rebuild the envelope with a fixed type, and a sealed group message
-would not decrypt as a group message.
+The base trust-root loop also matches. It does not short-circuit and therefore
+does not reveal which root validated. Required signed scope and issuer-validity
+checks extend the upstream certificate semantics.
 
 **`PLAINTEXT_CONTENT` (8) is a known wire value that this SDK rejects.**
 `libsignal` uses it to carry a `DecryptionErrorMessage` when no session exists
@@ -829,7 +798,7 @@ one pattern: sealed messages from one peer stack fail with that error while
 messages from this SDK succeed. Check the leading content-type byte before you
 treat that as a cryptographic failure.
 
-### 6.3 The delivery token follows `libsignal`, not an SDK invention
+### 6.2 The delivery token follows `libsignal`, not an SDK invention
 
 Despite the module name, `deriveAccessKey`
 (`internal/protocol/sealed-sender/delivery-token.ts:52-91`) is `libsignal`'s
@@ -846,10 +815,11 @@ The SDK's own documentation once described a different, 12-byte HKDF
 construction that no code implements. That description is wrong, and the PR that
 accompanies this file corrects it.
 
-Certificate signatures use Ed25519 rather than XEdDSA, per §1.2, so SDK
-certificates cannot validate against a Signal Messenger trust root or vice versa. The
-revocation list is empty where `libsignal` revokes one key ID, which is
-appropriate for a different trust root but worth noting.
+Certificate signatures use Ed25519 rather than XEdDSA, per §1.2. The signed
+Relay scope and issuer-validity interval are deployment extensions. Hosted and
+self-hosted deployments use disjoint operator roots, issuers, scopes, and
+revocation policy. Their certificates cannot validate against each other or a
+Signal Messenger trust root.
 
 ---
 
@@ -940,17 +910,18 @@ implements that contract. On every applied change, clients verify the server's
 signature, the group binding, the strict version sequence, and the pre-state
 authorization.
 
-**Profile-key credential issuance is not blinded**. The issuance endpoint
-receives the raw 32-byte profile key, so the issuing server sees every user's
-profile key in plaintext at issuance time. The Signal Private Group System issues
-profile-key credentials over a *blinded* commitment, so its server never learns
-the key. The blinding primitives exist in this codebase
-(`internal/protocol/zk/credentials/issuance.ts`), but nothing wires them into
-this path. Section 12.1 of the in-tree group specification carries the same
-caveat.
+**Profile-key credential issuance uses a package-owned blinded wire format**.
+The client sends a fixed-width serialized request that contains an ephemeral
+blinding public key and an ACI-bound blinded profile-key attribute. The issuer
+sees the authenticated ACI and the public redemption time, but it does not
+receive the raw 32-byte profile key or the client's blinding secret. The client
+verifies and unblinds the signed response with the matching request context.
+Fresh request randomness makes two requests for the same ACI and profile key
+unlinkable from the blinded request bytes.
 
-Until blinded issuance ships, a deployer must assume that the issuance server
-learns profile keys, and therefore profile names and avatars.
+This preserves the Signal Private Group System's issuer-privacy property, but
+the request and response encodings remain this SDK's own and are not
+interchangeable with Signal Messenger or `libsignal` credentials.
 
 **Serialization is JSON**, not protobuf, both for group state
 (`internal/groups/manager.ts:1229-1236`) and for the blob payloads inside the
@@ -1004,7 +975,7 @@ confirm any of them in source.
 
 - **Does a sealed-sender-wrapped prekey message decrypt end to end?** The unseal
   path rebuilds the envelope with a fixed message type
-  (`client/sealed-sender-ops.ts:263-265`). An adjacent comment suggests that the
+  (`client/sealed-sender.ts`). An adjacent comment suggests that the
   Sesame layer re-derives the initiation state from the ciphertext. This review
   traced neither that path nor the integration tests. First-contact sealed
   messages break if Sesame does not detect the state itself.

@@ -12,7 +12,10 @@ import {
   concatBytes,
   urlSafeToBase64,
 } from '../internal/crypto/utils';
-import { bytesToServiceId, serviceIdToBytes } from '../internal/protocol/sealed-sender/v2-binary';
+import {
+  bytesToServiceId,
+  serviceIdToBytes,
+} from '../internal/protocol/sealed-sender/multi-recipient-message';
 import { asBase64 } from '../types/utils';
 
 export interface UsernameLink {

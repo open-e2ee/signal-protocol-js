@@ -34,22 +34,16 @@ import {
   secureZeroBytes,
 } from '../internal/crypto';
 import { asBase64 } from '../types/utils';
-import { ProtocolAddress } from '../types/address';
-import { CURRENT_SESSION_RECORD_VERSION } from '../types/session';
 import type {
   TransferKeyPair,
   TransferQRCode,
   DeviceBackup,
   EncryptedBackup,
   BackupIdentityKeyPair,
-  BackupSignedPreKey,
-  BackupOneTimePreKey,
 } from './types';
-import type { DoubleRatchetState } from '../internal/protocol/double-ratchet';
 import { QR_CODE_MAX_AGE, TRANSFER_PROTOCOL_VERSION, BACKUP_FORMAT_VERSION } from './types';
 
 const QR_CODE_MAX_FUTURE_SKEW = 30_000;
-const MAX_BACKUP_SESSIONS = 100_000;
 
 function decodeCanonicalBase64(value: unknown, label: string, expectedLength: number): Uint8Array {
   if (typeof value !== 'string') throw new Error(`${label} must be Base64`);
@@ -302,15 +296,7 @@ export async function deriveTransferKeys(
  * Checks that the backup has all required fields and is well-formed
  */
 export function validateBackup(backup: DeviceBackup): void {
-  const requiredFields = [
-    'version',
-    'timestamp',
-    'deviceInfo',
-    'identityKey',
-    'signedPreKey',
-    'oneTimePreKeys',
-    'sessions',
-  ];
+  const requiredFields = ['version', 'timestamp', 'deviceInfo', 'identityKey'];
 
   for (const field of requiredFields) {
     if (!(field in backup)) {
@@ -322,7 +308,11 @@ export function validateBackup(backup: DeviceBackup): void {
     throw new Error(`Unsupported backup version: ${backup.version}`);
   }
 
-  if (!Number.isFinite(backup.timestamp) || !Number.isInteger(backup.timestamp) || backup.timestamp < 0) {
+  if (
+    !Number.isFinite(backup.timestamp) ||
+    !Number.isInteger(backup.timestamp) ||
+    backup.timestamp < 0
+  ) {
     throw new Error('Invalid backup timestamp');
   }
   if (backup.timestamp > Date.now() + QR_CODE_MAX_FUTURE_SKEW) {
@@ -336,58 +326,29 @@ export function validateBackup(backup: DeviceBackup): void {
   decodeCanonicalBase64(backup.identityKey.dhKey.publicKey, 'Identity DH public key', 32);
   decodeCanonicalBase64(backup.identityKey.dhKey.privateKey, 'Identity DH private key', 32);
   decodeCanonicalBase64(backup.identityKey.signingKey.publicKey, 'Identity signing public key', 32);
-  decodeCanonicalBase64(backup.identityKey.signingKey.privateKey, 'Identity signing private key', 32);
+  decodeCanonicalBase64(
+    backup.identityKey.signingKey.privateKey,
+    'Identity signing private key',
+    32
+  );
 
-  // Validate signed prekey structure
-  if (!backup.signedPreKey.publicKey || !backup.signedPreKey.signature) {
-    throw new Error('Invalid signed prekey structure');
-  }
-  if (!Number.isInteger(backup.signedPreKey.id) || backup.signedPreKey.id < 0) {
-    throw new Error('Invalid signed prekey id');
-  }
-  if (
-    !Number.isFinite(backup.signedPreKey.timestamp) ||
-    !Number.isInteger(backup.signedPreKey.timestamp) ||
-    backup.signedPreKey.timestamp < 0 ||
-    backup.signedPreKey.timestamp > Date.now() + QR_CODE_MAX_FUTURE_SKEW
-  ) {
-    throw new Error('Invalid signed prekey timestamp');
-  }
-  decodeCanonicalBase64(backup.signedPreKey.publicKey, 'Signed prekey public key', 32);
-  decodeCanonicalBase64(backup.signedPreKey.privateKey, 'Signed prekey private key', 32);
-  decodeCanonicalBase64(backup.signedPreKey.signature, 'Signed prekey signature', 64);
-
-  if (!Array.isArray(backup.oneTimePreKeys)) throw new Error('Invalid one-time prekeys');
-  for (const key of backup.oneTimePreKeys) {
-    if (!Number.isInteger(key.id) || key.id < 0) throw new Error('Invalid one-time prekey id');
-    decodeCanonicalBase64(key.publicKey, 'One-time prekey public key', 32);
-    decodeCanonicalBase64(key.privateKey, 'One-time prekey private key', 32);
+  for (const forbiddenField of [
+    'signedPreKey',
+    'oneTimePreKeys',
+    'sessions',
+    'sessionCount',
+    'senderKeys',
+    'outbox',
+  ]) {
+    if (forbiddenField in backup) {
+      throw new Error(`Invalid linked-device bundle: forbidden field '${forbiddenField}'`);
+    }
   }
 
-  if (!backup.sessions || typeof backup.sessions !== 'object' || Array.isArray(backup.sessions)) {
-    throw new Error('Invalid sessions structure');
-  }
-  const sessionEntries = Object.entries(backup.sessions);
-  if (
-    !Number.isInteger(backup.sessionCount) ||
-    backup.sessionCount < 0 ||
-    backup.sessionCount !== sessionEntries.length ||
-    backup.sessionCount > MAX_BACKUP_SESSIONS
-  ) {
-    throw new Error('Invalid backup session count');
-  }
-  for (const [sessionId, session] of sessionEntries) {
-    ProtocolAddress.parse(sessionId);
-    if (
-      !session ||
-      typeof session !== 'object' ||
-      !session.DHs ||
-      !Number.isInteger(session.Ns) ||
-      session.Ns < 0 ||
-      !Number.isInteger(session.Nr) ||
-      session.Nr < 0
-    ) {
-      throw new Error(`Invalid session structure: ${sessionId}`);
+  const allowedFields = new Set(['version', 'timestamp', 'deviceInfo', 'identityKey']);
+  for (const field of Object.keys(backup)) {
+    if (!allowedFields.has(field)) {
+      throw new Error(`Invalid linked-device bundle: forbidden field '${field}'`);
     }
   }
 }
@@ -468,7 +429,7 @@ export async function decryptBackup(
     data: {
       operation: 'transfer-decrypt',
       sizeBytes: decryptedBytes.length,
-      sessionCount: backup.sessionCount,
+      identityOnly: true,
     },
   });
 
@@ -573,16 +534,6 @@ export function createEmptyBackup(): DeviceBackup {
       dhKey: { publicKey: '', privateKey: '' },
       signingKey: { publicKey: '', privateKey: '' },
     },
-    signedPreKey: {
-      id: 0,
-      publicKey: '',
-      privateKey: '',
-      signature: '',
-      timestamp: 0,
-    },
-    oneTimePreKeys: [],
-    sessions: {},
-    sessionCount: 0,
   };
 }
 
@@ -592,30 +543,11 @@ export function createEmptyBackup(): DeviceBackup {
 // These functions require a KeyStorage adapter to be provided
 
 /**
- * Minimal storage interface for backup operations.
- *
- * Uses Backup* types which are JSON-serializable versions of the canonical key types.
- * The Backup* types use plain strings (Base64) instead of branded types, and use
- * `id` instead of `keyId` for compatibility with the DeviceBackup format.
+ * Minimal storage interface for the identity-only linked-device bundle.
  */
 export interface BackupStorage {
   getIdentityKey(): Promise<BackupIdentityKeyPair | null>;
-  getEcSignedPreKey(): Promise<BackupSignedPreKey | null>;
-  getEcOneTimePreKeys(): Promise<BackupOneTimePreKey[]>;
-  getSessionRecord(
-    address: ProtocolAddress
-  ): Promise<{ currentSession: DoubleRatchetState | null } | null>;
-  storeSessionRecord(
-    address: ProtocolAddress,
-    record: {
-      currentSession: DoubleRatchetState | null;
-      archivedSessions: Record<string, DoubleRatchetState>;
-      version: number;
-    }
-  ): Promise<void>;
   storeIdentityKey(key: BackupIdentityKeyPair): Promise<void>;
-  storeEcSignedPreKey(key: BackupSignedPreKey): Promise<void>;
-  storeEcOneTimePreKeys(keys: BackupOneTimePreKey[]): Promise<void>;
   /**
    * Run all restore writes in an adapter-backed atomic transaction or isolated
    * namespace. Rejecting the callback must leave the previously active state intact.
@@ -625,19 +557,14 @@ export interface BackupStorage {
 
 export interface RestoreDeviceBackupResult {
   status: 'complete' | 'incomplete';
-  sessionsRestored: number;
-  totalSessions: number;
   error?: Error;
 }
 
 /**
  * Create device backup from storage
  *
- * Exports all encryption keys from storage:
- * - Identity key (long-lived, per-user)
- * - Signed prekey
- * - One-time prekeys
- * - All session states (per encrypted session)
+ * Exports the long-lived account identity only. The linked device generates
+ * fresh device prekeys after import and establishes fresh sessions normally.
  *
  * @param storage - Key storage adapter to read from
  */
@@ -657,17 +584,6 @@ export async function createDeviceBackup(
     throw new Error('No identity key found - cannot create backup');
   }
 
-  // Export prekeys
-  const signedPreKey = await storage.getEcSignedPreKey();
-  if (!signedPreKey) {
-    throw new Error('No EC signed prekey found - cannot create backup');
-  }
-
-  const oneTimePreKeys = await storage.getEcOneTimePreKeys();
-
-  // Sessions will be added via addSessionToBackup
-  const sessions: DeviceBackup['sessions'] = {};
-
   const backup: DeviceBackup = {
     version: BACKUP_FORMAT_VERSION,
     timestamp: Date.now(),
@@ -677,18 +593,13 @@ export async function createDeviceBackup(
       appVersion: Constants.expoConfig?.version || 'unknown',
     },
     identityKey,
-    signedPreKey,
-    oneTimePreKeys,
-    sessions,
-    sessionCount: 0,
   };
 
   logger.debug('Device Transfer: Backup created', {
     category: 'Device',
     data: {
       hasIdentityKey: true,
-      hasSignedPreKey: true,
-      oneTimePreKeysCount: oneTimePreKeys.length,
+      freshPrekeysRequired: true,
     },
   });
 
@@ -696,54 +607,10 @@ export async function createDeviceBackup(
 }
 
 /**
- * Add session to backup
- *
- * Helper function to add a session state to an existing backup
- *
- * @param backup - Backup to add session to
- * @param storage - Key storage adapter
- * @param sessionId - Session ID to add
- */
-export async function addSessionToBackup(
-  backup: DeviceBackup,
-  storage: BackupStorage,
-  sessionId: string,
-  providedLogger?: ILogger
-): Promise<void> {
-  const logger = resolveSignalProtocolLogger(providedLogger);
-  try {
-    // Backup keys use the serialized ProtocolAddress form.
-    const address = ProtocolAddress.parse(sessionId);
-    const record = await storage.getSessionRecord(address);
-    const session = record?.currentSession;
-
-    if (session) {
-      backup.sessions[sessionId] = session;
-      backup.sessionCount = Object.keys(backup.sessions).length;
-
-      logger.debug('Device Transfer: Added session to backup', {
-        category: 'Device',
-        data: { sessionId, sessionCount: backup.sessionCount },
-      });
-    }
-  } catch (error) {
-    logger.warn('Device Transfer: Failed to add session to backup', {
-      category: 'Device',
-      error: error as Error,
-      data: { sessionId },
-    });
-    // Do not throw - allow partial backup
-  }
-}
-
-/**
  * Restore device backup to storage
  *
- * Imports:
- * - Identity key
- * - Signed prekey
- * - One-time prekeys
- * - All session states
+ * Imports the account identity only. The linked device creates fresh device prekeys
+ * and sessions after this transaction succeeds.
  *
  * This completely replaces existing keys (use with caution!)
  *
@@ -758,41 +625,29 @@ export async function restoreDeviceBackup(
   const logger = resolveSignalProtocolLogger(providedLogger);
   logger.info('Device Transfer: Starting backup restoration', {
     category: 'Device',
-    data: { sessionCount: backup.sessionCount },
+    data: { identityOnly: true },
   });
 
-  let sessionsRestored = 0;
   try {
     validateBackup(backup);
     await storage.runRestoreTransaction(async (transaction) => {
       await transaction.storeIdentityKey(backup.identityKey);
-      await transaction.storeEcSignedPreKey(backup.signedPreKey);
-      await transaction.storeEcOneTimePreKeys(backup.oneTimePreKeys);
-      for (const [sessionId, session] of Object.entries(backup.sessions)) {
-        const address = ProtocolAddress.parse(sessionId);
-        await transaction.storeSessionRecord(address, {
-          currentSession: session,
-          archivedSessions: {},
-          version: CURRENT_SESSION_RECORD_VERSION,
-        });
-        sessionsRestored++;
-      }
     });
   } catch (cause) {
     const error = cause instanceof Error ? cause : new Error('Unknown backup restore failure');
     logger.error('Device Transfer: Backup restoration incomplete; old state retained', {
       category: 'Device',
       error,
-      data: { sessionsRestored, totalSessions: backup.sessionCount },
+      data: { identityOnly: true },
     });
-    return { status: 'incomplete', sessionsRestored: 0, totalSessions: backup.sessionCount, error };
+    return { status: 'incomplete', error };
   }
 
   logger.info('Device Transfer: Backup restoration complete', {
     category: 'Device',
-    data: { sessionsRestored, totalSessions: backup.sessionCount },
+    data: { freshPrekeysRequired: true },
   });
-  return { status: 'complete', sessionsRestored, totalSessions: backup.sessionCount };
+  return { status: 'complete' };
 }
 
 /**
@@ -807,21 +662,12 @@ export async function prepareOldDeviceTransferWithBackup(
   providedLogger?: ILogger
 ): Promise<{
   keyPair: TransferKeyPair;
-  getBackup: (sessionIds: string[]) => Promise<DeviceBackup>;
+  getBackup: () => Promise<DeviceBackup>;
 }> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   const keyPair = await generateTransferKeyPair(logger);
 
-  const getBackup = async (sessionIds: string[]): Promise<DeviceBackup> => {
-    const backup = await createDeviceBackup(storage, logger);
-
-    // Add all sessions
-    for (const sessionId of sessionIds) {
-      await addSessionToBackup(backup, storage, sessionId, logger);
-    }
-
-    return backup;
-  };
+  const getBackup = async (): Promise<DeviceBackup> => createDeviceBackup(storage, logger);
 
   logger.info('Device Transfer: Old device prepared for transfer with backup', {
     category: 'Device',

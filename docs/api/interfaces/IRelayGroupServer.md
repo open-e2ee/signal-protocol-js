@@ -41,9 +41,9 @@ Issue an auth credential for the relay's authenticated account.
 
 ### issueProfileKeyCredential()
 
-> **issueProfileKeyCredential**(`userId`, `profileKey`): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
+> **issueProfileKeyCredential**(`userId`, `request`): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
 
-Issue a profile-key credential for the relay's authenticated account.
+Issue a profile-key credential from a blinded request for the authenticated account.
 
 #### Parameters
 
@@ -51,10 +51,32 @@ Issue a profile-key credential for the relay's authenticated account.
 
 `string`
 
-##### profileKey
+##### request
 
 `Uint8Array`
 
 #### Returns
 
 `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
+
+***
+
+### setUnidentifiedAccessKey()
+
+> **setUnidentifiedAccessKey**(`userId`, `accessKey`): `Promise`\<`void`\>
+
+Store the client-derived sealed-sender access key for the authenticated account.
+
+#### Parameters
+
+##### userId
+
+`string`
+
+##### accessKey
+
+`Uint8Array`
+
+#### Returns
+
+`Promise`\<`void`\>

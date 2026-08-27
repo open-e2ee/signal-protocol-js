@@ -21,6 +21,14 @@ Base64-encoded AES-256 master key
 
 ***
 
+### clientMessageId
+
+> **clientMessageId**: `string`
+
+Stable logical-send identifier used by the exact-ciphertext outbox.
+
+***
+
 ### clientTimestamp?
 
 > `optional` **clientTimestamp?**: `number`

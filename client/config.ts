@@ -71,12 +71,21 @@ export {
  */
 export type SealedSenderAccessMode = 'unrestricted' | 'contacts-only' | 'disabled';
 
+/** Outbound sealed-sender policy for direct and group delivery. */
+export type SealedSenderDeliveryMode = 'preferred' | 'required' | 'disabled';
+
+/** A deliberate privacy-route change after anonymous authorization is rejected. */
+export interface SealedSenderIdentifiedFallbackEvent {
+  recipientUserId: string;
+  reason: 'authorization-rejected';
+}
+
 /**
  * Sealed Sender configuration.
  *
  * @see https://signal.org/blog/sealed-sender/
  */
-export interface SealedSenderConfig {
+interface SealedSenderConfigBase {
   /**
    * Ed25519 trust root public keys for certificate validation.
    *
@@ -86,6 +95,12 @@ export interface SealedSenderConfig {
    * Multiple roots work for key rotation scenarios.
    */
   trustRoots: Uint8Array[];
+
+  /** Opaque 16-byte Relay project-environment scope pinned by the application. */
+  relayScopeId: Uint8Array;
+
+  /** Issuer key IDs revoked by this deployment's operator. */
+  revokedIssuerKeyIds: readonly number[];
 
   /**
    * Provider function that returns a serialized SenderCertificate (base64).
@@ -106,6 +121,21 @@ export interface SealedSenderConfig {
   accessMode?: SealedSenderAccessMode;
 
   /**
+   * Outbound delivery policy.
+   *
+   * - `preferred`: use identified delivery only when anonymous capability is
+   *   absent before send or the relay rejects anonymous authorization.
+   * - `required`: fail closed when anonymous delivery is unavailable or rejected.
+   * - `disabled`: always use identified delivery and do not fetch a certificate.
+   *
+   * @default 'preferred'
+   */
+  deliveryMode?: SealedSenderDeliveryMode;
+
+  /** Reports the only post-send-attempt privacy downgrade allowed by `preferred`. */
+  onIdentifiedFallback?: (event: SealedSenderIdentifiedFallbackEvent) => void | Promise<void>;
+
+  /**
    * Optional host-provided contact profile state store.
    *
    * When present, the Signal Protocol client can use per-contact profile keys
@@ -115,8 +145,23 @@ export interface SealedSenderConfig {
   contactStateStore?: import('../profile/contact-state').ContactProfileStateStore;
 }
 
-/** Certificate expiration safety margin (5 minutes in milliseconds). */
-export const SEALED_SENDER_CERTIFICATE_MARGIN_MS = 5 * 60 * 1000;
+/** Self-hosted sealed-sender trust is pinned by the application deployment. */
+export interface SelfHostedSealedSenderConfig extends SealedSenderConfigBase {
+  /** Selects the application-owned self-hosted trust system. */
+  trustModel?: 'self-hosted';
+}
+
+/** Hosted Relay sealed-sender trust is bound to one project environment. */
+export interface HostedSealedSenderConfig extends SealedSenderConfigBase {
+  /** Selects the OpenE2EE hosted trust system. */
+  trustModel: 'hosted';
+}
+
+/** Sealed-sender trust configuration. Hosted and self-hosted roots cannot mix. */
+export type SealedSenderConfig = SelfHostedSealedSenderConfig | HostedSealedSenderConfig;
+
+/** Refresh sender certificates one hour before their signed expiration. */
+export const SEALED_SENDER_CERTIFICATE_MARGIN_MS = 60 * 60 * 1000;
 
 /**
  * Signal Protocol configuration options
@@ -736,9 +781,10 @@ export interface SignalProtocolClientConfig {
    *   variable.
    * - The deployment's Ed25519 sender-certificate root public key pinned in
    *   `trustRoots` at build time. Print it with `npx oe-groups trust-root`,
-   *   which reports it as `sealed sender trust root` alongside the group trust
-   *   root. Never fetch it from a relay at runtime. A relay that can choose
-   *   the root that validates it can mint certificates for any sender.
+   *   which reports it as `sealed sender trust root` alongside the matching
+   *   `sealed sender relay scope`. Pin both values. Never fetch either from a
+   *   relay at runtime. A relay that can choose its own validation policy can
+   *   mint certificates for any sender.
    *
    * With `trustRoots` empty, inbound sealed-sender validation stays disabled
    * and sends fall back to identified delivery, which deanonymizes the sender
@@ -752,6 +798,8 @@ export interface SignalProtocolClientConfig {
    *   storage: customStorage,
    *   sealedSender: {
    *     trustRoots: [trustRootPublicKeyBytes],
+   *     relayScopeId: relayScopeIdBytes,
+   *     revokedIssuerKeyIds: [],
    *     certificateProvider: async () => {
    *       return await convex.mutation(api.signal.certificates.issueSenderCertificate, { deviceId: 1 });
    *     },
@@ -795,8 +843,8 @@ export interface SignalProtocolClientConfig {
     server?: import('../internal/groups/manager').IGroupServer;
     /** Override the relay's auth-credential issuance transport. */
     issueCredential?: () => Promise<Uint8Array>;
-    /** Override the relay's profile-key credential issuance transport. */
-    issueProfileKeyCredential?: () => Promise<Uint8Array>;
+    /** Override the relay's blinded profile-key credential issuance transport. */
+    issueProfileKeyCredential?: (request: Uint8Array) => Promise<Uint8Array>;
     /**
      * Explicitly accept group history without server signatures.
      *

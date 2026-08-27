@@ -50,9 +50,11 @@ Optional CDN number when the remote object backend distinguishes CDN tiers
 
 Stable client-generated send identifier for retry idempotency.
 
-Retries of the same logical send should reuse this value with the same
-timestamp. Relay adapters that support it can return the original accept
-result instead of inserting a duplicate envelope after an unknown result.
+The SDK generates this value when it is omitted. An application that
+retries a failed send explicitly must reuse the identifier. If it also
+supplies a timestamp, that timestamp must match the original send. The SDK
+persists the exact encrypted transmission before it contacts the Relay, so
+an unknown result never advances the protocol ratchet twice.
 
 ***
 

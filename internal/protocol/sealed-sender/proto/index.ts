@@ -56,6 +56,8 @@ export {};
 export interface ServerCertificateData {
   id: number;
   key: Uint8Array;
+  notBefore: number;
+  notAfter: number;
 }
 
 /**
@@ -76,6 +78,7 @@ export interface SenderCertificateData {
   expires: number;
   identityKey: Uint8Array;
   signerCertificate: Uint8Array; // serialized ServerCertificate proto bytes
+  relayScopeId: Uint8Array;
 }
 
 /**
@@ -122,6 +125,8 @@ export interface UnidentifiedSenderMessageProto {
 const SERVER_CERTIFICATE_DATA = {
   id: 1,
   key: 2,
+  notBefore: 3,
+  notAfter: 4,
 } as const;
 
 /** `ServerCertificate`: the outer wrapper carrying the signature. */
@@ -138,6 +143,7 @@ const SENDER_CERTIFICATE_DATA = {
   identityKey: 4,
   signerCertificate: 5,
   senderUuid: 6,
+  relayScopeId: 7,
 } as const;
 
 /** `SenderCertificate`: the outer wrapper carrying the signature. */
@@ -177,10 +183,13 @@ function emptyBytes(): Uint8Array {
  * These are the bytes the trust root signs.
  */
 export function encodeServerCertificateData(data: ServerCertificateData): Uint8Array {
-  return concatFields(
+  const parts = [
     encodeUint32Field(SERVER_CERTIFICATE_DATA.id, data.id),
-    encodeBytesField(SERVER_CERTIFICATE_DATA.key, data.key)
-  );
+    encodeBytesField(SERVER_CERTIFICATE_DATA.key, data.key),
+  ];
+  parts.push(encodeFixed64Field(SERVER_CERTIFICATE_DATA.notBefore, BigInt(data.notBefore)));
+  parts.push(encodeFixed64Field(SERVER_CERTIFICATE_DATA.notAfter, BigInt(data.notAfter)));
+  return concatFields(...parts);
 }
 
 /**
@@ -190,6 +199,8 @@ export function decodeServerCertificateData(bytes: Uint8Array): ServerCertificat
   const reader = new ProtoReader(bytes);
   let id = 0;
   let key = emptyBytes();
+  let notBefore = 0;
+  let notAfter = 0;
 
   while (reader.hasMore()) {
     const { fieldNumber } = reader.readTag();
@@ -200,13 +211,19 @@ export function decodeServerCertificateData(bytes: Uint8Array): ServerCertificat
       case SERVER_CERTIFICATE_DATA.key:
         key = reader.readBytes();
         break;
+      case SERVER_CERTIFICATE_DATA.notBefore:
+        notBefore = Number(reader.readFixed64());
+        break;
+      case SERVER_CERTIFICATE_DATA.notAfter:
+        notAfter = Number(reader.readFixed64());
+        break;
       default:
         reader.skipField();
         break;
     }
   }
 
-  return { id, key };
+  return { id, key, notBefore, notAfter };
 }
 
 /**
@@ -272,6 +289,7 @@ export function encodeSenderCertificateData(data: SenderCertificateData): Uint8A
   parts.push(encodeBytesField(SENDER_CERTIFICATE_DATA.identityKey, data.identityKey));
   parts.push(encodeBytesField(SENDER_CERTIFICATE_DATA.signerCertificate, data.signerCertificate));
   parts.push(encodeStringField(SENDER_CERTIFICATE_DATA.senderUuid, data.senderUuid));
+  parts.push(encodeBytesField(SENDER_CERTIFICATE_DATA.relayScopeId, data.relayScopeId));
 
   return concatFields(...parts);
 }
@@ -291,6 +309,7 @@ export function decodeSenderCertificateData(bytes: Uint8Array): SenderCertificat
   let expires = 0;
   let identityKey = emptyBytes();
   let signerCertificate = emptyBytes();
+  let relayScopeId = emptyBytes();
 
   while (reader.hasMore()) {
     const { fieldNumber } = reader.readTag();
@@ -316,6 +335,9 @@ export function decodeSenderCertificateData(bytes: Uint8Array): SenderCertificat
       case SENDER_CERTIFICATE_DATA.senderUuid:
         senderUuid = reader.readString();
         break;
+      case SENDER_CERTIFICATE_DATA.relayScopeId:
+        relayScopeId = reader.readBytes();
+        break;
       default:
         reader.skipField();
         break;
@@ -329,6 +351,7 @@ export function decodeSenderCertificateData(bytes: Uint8Array): SenderCertificat
     expires,
     identityKey,
     signerCertificate,
+    relayScopeId,
   };
 }
 

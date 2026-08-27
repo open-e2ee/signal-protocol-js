@@ -152,7 +152,6 @@ export const {
   getPendingMessages,
   markDelivered,
   getActiveDevices,
-  sendUnidentified,
   sendMultiRecipientUnidentified,
   sendRetryRequest,
   getPendingRetryRequests,
@@ -232,8 +231,8 @@ issuance also resolves identity. Group wrappers pass client arguments through
 untouched because group reads and writes authenticate membership solely through
 the supplied zero-knowledge presentation.
 
-`sendUnidentified` and `sendMultiRecipientUnidentified` are the deliberate
-exception: those sealed-sender paths do **not** call `identify`. They authorize
+`sendMultiRecipientUnidentified` is the deliberate exception: this
+sealed-sender path does **not** call `identify`. It authorizes
 the bearer request with the target's unidentified-access key or verified group
 send material, which keeps delivery available without an authenticated
 application session. Rejections carry structured `ConvexError` data. The relay
@@ -330,8 +329,8 @@ Add `--prod` for the default production deployment or
 - generates a cryptographically random 32-byte seed only when the secret is
   absent
 - writes the seed to the selected Convex deployment through stdin
-- prints two labelled base64 roots: the serialized group trust root and the
-  Ed25519 sender-certificate root
+- prints the serialized group trust root, the Ed25519 sender-certificate root,
+  and the sender-certificate relay scope as labeled base64 values
 
 Pin both in the client build. See
 [Sender certificate trust root](#sender-certificate-trust-root) for where each
@@ -350,18 +349,21 @@ from the group signing key by distinct KDF labels
 (`open-e2ee:sealed-sender:root:v1` / `:server:v1`). Clients verify inbound
 sealed-sender certificates against the matching Ed25519 **root** public key.
 
-`oe-groups trust-root` prints both roots, labelled:
+`oe-groups trust-root` prints both roots, labeled:
 
 ```
 group trust root: <base64>
 sealed sender trust root: <base64>
+sealed sender relay scope: <base64>
 ```
 
 The two roots go in different places and are not interchangeable. The group
 trust root goes into the group configuration, and the sealed-sender root into
-`sealedSender.trustRoots` in the client build. Pin both at build time. Never
-fetch either from a relay at runtime, because a relay that chooses its own
-validation root can mint certificates for any sender.
+`sealedSender.trustRoots` in the client build. Put the matching relay scope into
+`sealedSender.relayScopeId`, and configure the operator-owned issuer revocation
+list in `sealedSender.revokedIssuerKeyIds`. Pin these values at build time.
+Never fetch them from a relay at runtime, because a relay that chooses its own
+validation policy can mint certificates for any sender.
 
 The component derives both from the same deployment secret, so rotating
 `OE_GROUPS_SERVER_SECRET` rotates both and strands clients pinned to either
@@ -451,8 +453,12 @@ The component cannot do it while its identity has no device field.
 
 ## Profile-key issuance threat model
 
-`issueProfileKeyCredentialMutation` receives the raw 32-byte profile key. The
-group server therefore sees the plaintext profile key at issuance time. The
-credential proof hides it in later group presentations, but issuance in this
-credential layer is not blinded. Blinded issuance is a future credential-layer
-candidate and is explicitly outside this component's scope.
+`issueProfileKeyCredentialMutation` receives a 160-byte blinded request bound
+to the authenticated ACI. The group server sees the ACI and redemption window,
+but it does not receive the raw 32-byte profile key or the client's ephemeral
+blinding secret. The client unblinds and verifies the response before it uses
+the credential in a group presentation.
+
+`setUnidentifiedAccessKeyMutation` is a separate delivery-authorization seam.
+It receives only the 16-byte access key that the client derives from its
+profile key. Credential issuance does not derive or register that access key.

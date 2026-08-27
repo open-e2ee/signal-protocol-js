@@ -213,7 +213,7 @@ export function decodeVarint64(
     // Nine bytes carry bits 0..62, so the tenth contributes bit 63 and no
     // more. A payload above 0x01 would carry the value past 2^64-1.
     //
-    // The continuation bit is not part of that judgement. A tenth byte that
+    // The continuation bit is not part of that judgment. A tenth byte that
     // asks for an eleventh is too long, which the check at the foot of the
     // loop reports instead.
     if (bytesRead === MAX_VARINT64_BYTES && (byte & 0x7f) > 0x01) {

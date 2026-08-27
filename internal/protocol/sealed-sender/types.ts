@@ -1,9 +1,7 @@
 /**
  * Sealed Sender Protocol Types
  *
- * TypeScript interfaces for the Sealed Sender protocol: server certificates,
- * sender certificates, unidentified sender messages (V1/V2), seal/unseal
- * options, and protocol constants.
+ * TypeScript interfaces for the Sealed Sender protocol.
  *
  * @see https://signal.org/blog/sealed-sender/
  */
@@ -38,6 +36,12 @@ export interface ServerCertificate {
    * Used to verify sender certificate signatures.
    */
   publicKey: Base64;
+
+  /** Issuer validity start (Unix timestamp in milliseconds). */
+  notBefore: number;
+
+  /** Issuer validity end (Unix timestamp in milliseconds). */
+  notAfter: number;
 
   /**
    * Protobuf-encoded inner Certificate {id, key}.
@@ -94,6 +98,9 @@ export interface SenderCertificate {
    */
   senderE164?: string;
 
+  /** Opaque 16-byte Relay project-environment scope. */
+  relayScopeId: Base64;
+
   /**
    * Embedded server certificate that signed this sender certificate.
    * Contains the full ServerCertificate (id, publicKey, certificateBytes, signature).
@@ -114,41 +121,7 @@ export interface SenderCertificate {
 }
 
 // ============================================================================
-// Delivery Token
-// ============================================================================
-
-/**
- * Delivery token for abuse prevention.
- *
- * Derived from recipient's profile key via HKDF.
- * Only contacts who know the profile key can derive the token.
- *
- */
-export interface DeliveryToken {
-  /**
-   * 96-bit token (12 bytes, base64).
-   */
-  token: Base64;
-}
-
-/**
- * Delivery token registration for server storage.
- */
-export interface DeliveryTokenRegistration {
-  /**
-   * User ID this token belongs to.
-   */
-  userId: string;
-
-  /**
-   * SHA-256 hash of the delivery token (base64).
-   * Server stores hash, not the token itself.
-   */
-  tokenHash: Base64;
-}
-
-// ============================================================================
-// Unidentified Sender Message
+// Sealed Sender Message
 // ============================================================================
 
 /**
@@ -162,36 +135,6 @@ export interface DeliveryTokenRegistration {
  *
  * @see https://signal.org/blog/sealed-sender/
  */
-export interface UnidentifiedSenderMessage {
-  /**
-   * Compound protocol version.
-   * Format: (requiredVersion << 4) | currentVersion
-   * V1 = 0x11 (requires v1, is v1)
-   */
-  version: number;
-
-  /**
-   * Ephemeral X25519 public key (32 bytes, base64).
-   * Used for ECDH key agreement in Stage 1.
-   */
-  ephemeralPublic: Base64;
-
-  /**
-   * Stage 1 encrypted content: sender's identity public key + MAC.
-   * Format: AES-CTR(e_cipherKey, senderIdentityPublic) || HMAC(e_macKey, ciphertext)
-   * Total: 32 bytes (encrypted key) + 10 bytes (MAC) = 42 bytes
-   */
-  encryptedStatic: Base64;
-
-  /**
-   * Stage 2 encrypted content: certificate + message + MAC.
-   * Format: AES-CTR(s_cipherKey, envelope) || HMAC(s_macKey, ciphertext)
-   * Where envelope = contentType(1) || varint(certLen) || cert ||
-   * varint(msgLen) || msg || hint
-   */
-  encryptedMessage: Base64;
-}
-
 /**
  * How the recipient should decrypt the payload inside a sealed envelope.
  *
@@ -229,9 +172,7 @@ export enum SealedSenderContentType {
  * would mean routing an unauthenticated payload through a path with no handler
  * for it. The whole point of the type is that it is not encrypted.
  */
-export function isSealedSenderContentType(
-  value: number
-): value is SealedSenderContentType {
+export function isSealedSenderContentType(value: number): value is SealedSenderContentType {
   return (
     value === SealedSenderContentType.PREKEY_MESSAGE ||
     value === SealedSenderContentType.MESSAGE ||
@@ -242,7 +183,7 @@ export function isSealedSenderContentType(
 /**
  * Decrypted content from sealed sender message.
  */
-export interface UnidentifiedSenderMessageContent {
+export interface SealedSenderMessageContent {
   /**
    * Validated sender certificate.
    */
@@ -276,90 +217,8 @@ export interface UnidentifiedSenderMessageContent {
 // Sealed Sender Options
 // ============================================================================
 
-/**
- * Options for sealing a message.
- */
-export interface SealOptions {
-  /**
-   * Sender's certificate (obtained from server).
-   */
-  senderCertificate: SenderCertificate;
-
-  /**
-   * Sender's X25519 identity private key.
-   */
-  senderIdentityPrivate: Uint8Array;
-
-  /**
-   * Recipient's X25519 identity public key.
-   */
-  recipientIdentityPublic: Uint8Array;
-
-  /**
-   * Signal Protocol message to seal (already encrypted).
-   */
-  signalProtocolMessage: Uint8Array;
-
-  /**
-   * Optional content hint.
-   */
-  contentHint?: ContentHint;
-
-  /**
-   * How the recipient should decrypt `signalProtocolMessage`.
-   *
-   * Defaults to `MESSAGE`. Group traffic must pass `SENDERKEY_MESSAGE`. The
-   * outer envelope is `unidentified_sender` for everything, so this is the
-   * only thing that tells the recipient the payload is a framed
-   * SenderKeyMessage.
-   */
-  contentType?: SealedSenderContentType;
-}
-
-/**
- * Options for unsealing a message.
- */
-export interface UnsealOptions {
-  /**
-   * Sealed message to decrypt.
-   */
-  sealedMessage: UnidentifiedSenderMessage;
-
-  /**
-   * Recipient's X25519 identity private key.
-   */
-  recipientIdentityPrivate: Uint8Array;
-
-  /**
-   * Ed25519 trust root public keys for validating server certificates.
-   * Server cert signature is verified against these roots.
-   *
-   */
-  trustRoots: Base64[];
-
-  /**
-   * Current timestamp for expiration checking.
-   * Defaults to Date.now() if not provided.
-   */
-  currentTime?: number;
-
-  /**
-   * Recipient's user identifier for self-send detection.
-   * Rejects messages where sender === recipient (replay attack prevention).
-   *
-   */
-  recipientUuid: string;
-
-  /**
-   * Recipient's device identifier for self-send detection.
-   * Used together with recipientUuid for self-send detection.
-   *
-   */
-  recipientDeviceId: number;
-}
-
 // ============================================================================
-// Sealed Sender V2 (Multi-Recipient)
+// Multi-recipient transport
 // ============================================================================
 
 /**
@@ -369,7 +228,7 @@ export interface UnsealOptions {
  * but shares the same message ciphertext.
  *
  */
-export interface SealedSenderV2Recipient {
+export interface SealedSenderRecipient {
   /**
    * Recipient's service identifier (Convex _id or UUID).
    */
@@ -408,7 +267,7 @@ export interface SealedSenderV2Recipient {
  *
  * @see https://signal.org/blog/sealed-sender/
  */
-export interface SealedSenderV2Message {
+export interface SealedSenderMessage {
   /**
    * Protocol version.
    * 0x22 = V2 with UUID identifiers
@@ -425,7 +284,7 @@ export interface SealedSenderV2Message {
   /**
    * Per-recipient encrypted key material and auth tags.
    */
-  recipients: SealedSenderV2Recipient[];
+  recipients: SealedSenderRecipient[];
 
   /**
    * AES-GCM-SIV encrypted message content.
@@ -487,11 +346,11 @@ export interface SealMultiRecipientOptions {
 /**
  * Options for V2 unsealing (extends V1 options).
  */
-export interface UnsealV2Options {
+export interface UnsealOptions {
   /**
    * V2 sealed message to decrypt.
    */
-  sealedMessage: SealedSenderV2Message;
+  sealedMessage: SealedSenderMessage;
 
   /**
    * Recipient's X25519 identity private key.
@@ -523,6 +382,15 @@ export interface UnsealV2Options {
    * Current timestamp for expiration checking.
    */
   currentTime?: number;
+
+  /** Deployment-owned scope and revocation checks for sender certificates. */
+  certificatePolicy: SenderCertificateValidationPolicy;
+}
+
+/** Context that binds a sender certificate to one Relay trust system. */
+export interface SenderCertificateValidationPolicy {
+  expectedRelayScopeId: Base64;
+  revokedIssuerKeyIds?: readonly number[];
 }
 
 // ============================================================================
@@ -581,12 +449,8 @@ export const V2_AUTH_TAG_LEN = 16;
  *
  * @see https://signal.org/blog/sealed-sender/
  */
-export const SEALED_SENDER_V1_VERSION = 0x11; // Requires v1, is v1 (single recipient)
 export const SEALED_SENDER_V2_UUID_VERSION = 0x22; // V2 with UUID identifiers
 export const SEALED_SENDER_V2_SERVICE_ID_VERSION = 0x23; // V2 with ServiceId
-
-/** Current version - use V1 for compatibility */
-export const SEALED_SENDER_VERSION = SEALED_SENDER_V1_VERSION;
 
 /**
  * Salt used for HKDF key derivation.

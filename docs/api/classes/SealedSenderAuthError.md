@@ -19,7 +19,7 @@ This error triggers automatic fallback to identified sender delivery.
 
 ```typescript
 try {
-  await relay.sendUnidentified(envelope, accessKey);
+  await relay.sendMultiRecipientUnidentified(message, accessKey, timestamp);
 } catch (error) {
   if (isSealedSenderAuthError(error)) {
     // Fall back to identified delivery

@@ -1103,7 +1103,8 @@ await signal.establishSession(remoteAddress, bundle);
 Fetch (or return cached) sender certificate for sealed sender.
 
 Uses the configured certificateProvider or relay.fetchSenderCertificate().
-Caches the result until expiry (24h certificate, 5min safety margin).
+Validates the fetched certificate and caches it until one hour before its
+signed expiration.
 
 #### Returns
 

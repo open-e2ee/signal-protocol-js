@@ -938,6 +938,10 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
     await this.db.setMetadataValue(key, value);
   }
 
+  async deleteMetadata(key: string): Promise<void> {
+    await this.db.deleteMetadataValue(key);
+  }
+
   // ============================================================================
   // Key Recovery (PQXDH §4.13 identifier-collision recovery)
   // ============================================================================

@@ -178,9 +178,15 @@ Override the relay's auth-credential issuance transport.
 
 #### issueProfileKeyCredential?
 
-> `optional` **issueProfileKeyCredential?**: () => `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
+> `optional` **issueProfileKeyCredential?**: (`request`) => `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
 
-Override the relay's profile-key credential issuance transport.
+Override the relay's blinded profile-key credential issuance transport.
+
+##### Parameters
+
+###### request
+
+`Uint8Array`
 
 ##### Returns
 
@@ -825,7 +831,7 @@ await signal.send('bob', fileBytes, { mimeType: 'image/jpeg' });
 
 ### sealedSender?
 
-> `optional` **sealedSender?**: [`SealedSenderConfig`](SealedSenderConfig.md)
+> `optional` **sealedSender?**: [`SealedSenderConfig`](../type-aliases/SealedSenderConfig.md)
 
 Sealed Sender configuration for anonymous message delivery.
 
@@ -839,9 +845,10 @@ Requires:
   variable.
 - The deployment's Ed25519 sender-certificate root public key pinned in
   `trustRoots` at build time. Print it with `npx oe-groups trust-root`,
-  which reports it as `sealed sender trust root` alongside the group trust
-  root. Never fetch it from a relay at runtime. A relay that can choose
-  the root that validates it can mint certificates for any sender.
+  which reports it as `sealed sender trust root` alongside the matching
+  `sealed sender relay scope`. Pin both values. Never fetch either from a
+  relay at runtime. A relay that can choose its own validation policy can
+  mint certificates for any sender.
 
 With `trustRoots` empty, inbound sealed-sender validation stays disabled
 and sends fall back to identified delivery, which deanonymizes the sender
@@ -858,6 +865,8 @@ const signal = await SignalProtocolClient.create(userId, {
   storage: customStorage,
   sealedSender: {
     trustRoots: [trustRootPublicKeyBytes],
+    relayScopeId: relayScopeIdBytes,
+    revokedIssuerKeyIds: [],
     certificateProvider: async () => {
       return await convex.mutation(api.signal.certificates.issueSenderCertificate, { deviceId: 1 });
     },

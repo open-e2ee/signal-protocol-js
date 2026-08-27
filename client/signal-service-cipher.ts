@@ -51,7 +51,24 @@ import {
   type ViewOnceOpenSyncInput,
 } from './content-adapter';
 import * as CryptoUtils from '../internal/crypto';
+import {
+  completeOutgoingMessageIntent,
+  getOutgoingMessageIntent,
+  replaceOutgoingDirectDeviceMessage,
+  storeOutgoingMessageIntent,
+  withOutgoingMessageIntentLock,
+  type StoredOutgoingDeviceMessage,
+  type StoredOutgoingMessageIntent,
+} from '../local/store/reliability';
 import { withRetry } from '../utils/retry';
+import { prepareGroupSharedMessage } from './group-sealed-sender';
+import { sendGroupWithExactOutbox } from './group-outbox';
+import {
+  resolveSealedSenderContext as resolveSealedSenderSendContext,
+  serializeDirectSealedSenderMessage as serializeDirectSealedSenderTransport,
+  type ResolvedSealedSenderContext,
+  type SealedSenderProvider as SealedSenderProviderContract,
+} from './sealed-sender';
 import { prepareMediaAttachmentUpload, serializeMediaAttachmentMessage } from '../media';
 import {
   UnidentifiedAccessMode,
@@ -113,6 +130,26 @@ function getEnvelopeMessageType(ciphertext: string | Uint8Array): 'prekey_bundle
   return 'ciphertext';
 }
 
+function attachClientMessageId(error: unknown, clientMessageId: string): Error {
+  const normalized = error instanceof Error ? error : new Error(String(error));
+  try {
+    Object.defineProperty(normalized, 'clientMessageId', {
+      configurable: true,
+      enumerable: true,
+      value: clientMessageId,
+    });
+    return normalized;
+  } catch {
+    const wrapped = new Error(normalized.message);
+    wrapped.name = normalized.name;
+    Object.defineProperty(wrapped, 'clientMessageId', {
+      enumerable: true,
+      value: clientMessageId,
+    });
+    return wrapped;
+  }
+}
+
 /**
  * Detect if an error is a stale session error from the server
  *
@@ -136,28 +173,15 @@ function isStaleSessionError(error: unknown): error is { data: StaleSessionError
   return false;
 }
 
-/**
- * Detect 409 mismatched devices error from V2 multi-recipient send.
- *
- * The Convex component does not throw this: it reports skipped recipients
- * via `uuids404` on a success response (handled in `tryMultiRecipientSend`).
- * The matcher remains for relay implementations that reject the whole send
- * with a mismatched-device error instead.
- */
-function isMismatchedDevicesError(message: string): boolean {
-  return message.includes('MISMATCHED_DEVICES');
+class SealedSenderRecipientRejectedError extends Error {
+  constructor() {
+    super('Sealed sender recipient was not accepted');
+    this.name = 'SealedSenderRecipientRejectedError';
+  }
 }
 
-/**
- * Detect 410 stale sessions error from V2 multi-recipient send.
- *
- * The Convex component throws STALE_DEVICE only on the single-recipient
- * `send` path (structured `data.code`, see `isStaleSessionError`). Its
- * multi-recipient path reports mismatches via `uuids404` instead. The
- * matcher remains for relay implementations that reject the whole send.
- */
-function isStaleSessionV2Error(message: string): boolean {
-  return message.includes('STALE_DEVICE');
+function isConclusiveDeviceRejection(error: unknown): boolean {
+  return isStaleSessionError(error) || error instanceof SealedSenderRecipientRejectedError;
 }
 
 /**
@@ -169,12 +193,7 @@ function isStaleSessionV2Error(message: string): boolean {
  *
  * @returns Sender certificate (base64), sender private key (bytes), and config
  */
-export type SealedSenderProvider = () => Promise<{
-  senderCertificateBase64: string;
-  senderIdentityPrivate: Uint8Array;
-  senderIdentityPublic: Uint8Array;
-  config: import('./config').SealedSenderConfig;
-}>;
+export type SealedSenderProvider = SealedSenderProviderContract;
 
 /**
  * Callback for establishing sessions when none exist
@@ -242,6 +261,8 @@ export class SignalProtocolServiceCipher {
   private sessionEstablisher?: SessionEstablisher;
   private staleSessionRefresher?: StaleSessionRefresher;
   private sealedSenderProvider?: SealedSenderProvider;
+  private sealedSenderDeliveryMode: import('./config').SealedSenderDeliveryMode = 'preferred';
+  private sealedSenderIdentifiedFallback?: import('./config').SealedSenderConfig['onIdentifiedFallback'];
   private contactProfileStateStore?: ContactProfileStateStore;
   private endorsementManager?: EndorsementManager;
   private endorsementRefresher?: EndorsementRefresher;
@@ -318,21 +339,6 @@ export class SignalProtocolServiceCipher {
         timestamp: syncMsg.timestamp,
       });
     }
-  }
-
-  private async sendSyncTranscriptToLocalOtherDevices(
-    conversationId: string,
-    plaintextBytes: Uint8Array,
-    timestamp: number,
-    recipientUserId?: string
-  ): Promise<void> {
-    const transcriptBytes = this.buildSentSyncTranscript(
-      conversationId,
-      plaintextBytes,
-      timestamp,
-      recipientUserId
-    );
-    await this.sendSyncPayloadToLocalOtherDevices(transcriptBytes, timestamp);
   }
 
   private async sendSyncPayloadToLocalOtherDevices(
@@ -447,6 +453,44 @@ export class SignalProtocolServiceCipher {
     this.sealedSenderProvider = provider;
   }
 
+  setSealedSenderDeliveryMode(mode: import('./config').SealedSenderDeliveryMode): void {
+    this.sealedSenderDeliveryMode = mode;
+  }
+
+  setSealedSenderIdentifiedFallback(
+    callback: NonNullable<import('./config').SealedSenderConfig['onIdentifiedFallback']>
+  ): void {
+    this.sealedSenderIdentifiedFallback = callback;
+  }
+
+  private async reportIdentifiedFallback(recipientUserId: string): Promise<void> {
+    try {
+      await this.sealedSenderIdentifiedFallback?.({
+        recipientUserId,
+        reason: 'authorization-rejected',
+      });
+    } catch (fallbackHookError) {
+      this.logger.warn('Sealed sender identified-fallback hook failed', {
+        category: 'E2EE',
+        data: {
+          recipientUserId,
+          error: (fallbackHookError as Error).message,
+        },
+      });
+    }
+  }
+
+  private useIdentifiedDeliveryOrThrow(recipientUserId: string, reason: string): null {
+    if (this.sealedSenderDeliveryMode === 'required') {
+      throw new EncryptionError(
+        `Sealed sender is required but unavailable: ${reason}`,
+        EncryptionErrorCode.SEALED_SENDER_REQUIRED,
+        { recipientUserId, operation: 'resolveSealedSenderContext', reason }
+      );
+    }
+    return null;
+  }
+
   setContactProfileStateStore(store: ContactProfileStateStore): void {
     this.contactProfileStateStore = store;
   }
@@ -527,7 +571,7 @@ export class SignalProtocolServiceCipher {
         );
       }
 
-      const { unsealMessage, reconstructEnvelope } = await import('./sealed-sender-ops');
+      const { unsealMessage, reconstructEnvelope } = await import('./sealed-sender');
 
       // Get recipient's X25519 identity private key for unsealing
       const identityKeyPair = await this.storage.getIdentityKey();
@@ -552,6 +596,7 @@ export class SignalProtocolServiceCipher {
         this.userId,
         this.deviceId,
         sealedSenderConfig,
+        envelope.serverTimestamp,
         this.logger
       );
 
@@ -688,22 +733,28 @@ export class SignalProtocolServiceCipher {
     content: Uint8Array,
     options?: SendOptions
   ): Promise<SendResult> {
+    const clientMessageId = options?.clientMessageId ?? (await CryptoUtils.generateUuidV4());
+    const durableOptions = { ...options, clientMessageId };
     const lockKey = `encrypt:${recipientId}`;
 
-    return this.lock.acquire(lockKey, async () => {
-      // 1. Route binary file data (Uint8Array with isBinary flag) to blob encryption
-      if (options?.isBinary) {
-        return this.encryptBinaryAttachment(recipientId, content, options);
-      }
+    try {
+      return await this.lock.acquire(lockKey, async () => {
+        // 1. Route binary file data (Uint8Array with isBinary flag) to blob encryption
+        if (durableOptions.isBinary) {
+          return this.encryptBinaryAttachment(recipientId, content, durableOptions);
+        }
 
-      // 2. Detect recipient type (group vs user)
-      if (isGroupId(recipientId)) {
-        return this.encryptToGroup(recipientId, content, options);
-      }
+        // 2. Detect recipient type (group vs user)
+        if (isGroupId(recipientId)) {
+          return this.encryptToGroup(recipientId, content, durableOptions);
+        }
 
-      // 3. Send to user (existing SESAME path)
-      return this.encryptToUser(recipientId, content, options);
-    });
+        // 3. Send to user (existing SESAME path)
+        return this.encryptToUser(recipientId, content, durableOptions);
+      });
+    } catch (error) {
+      throw attachClientMessageId(error, clientMessageId);
+    }
   }
 
   /**
@@ -923,10 +974,7 @@ export class SignalProtocolServiceCipher {
       result = await withRetry(
         async () => {
           const attempt = await this.sessionEstablisher!(recipientUserId);
-          if (
-            attempt.establishedDevices.length === 0 &&
-            attempt.failedDeviceErrors.length > 0
-          ) {
+          if (attempt.establishedDevices.length === 0 && attempt.failedDeviceErrors.length > 0) {
             throw attempt.failedDeviceErrors[0]!.error;
           }
           return attempt;
@@ -984,30 +1032,71 @@ export class SignalProtocolServiceCipher {
   private async encryptToUser(
     recipientUserId: string,
     plaintextBytes: Uint8Array,
-    options?: SendOptions
+    options: SendOptions & { clientMessageId: string }
   ): Promise<SendResult> {
-    // Auto-establish sessions if needed (lazy session creation)
-    await this.ensureSessionsForUser(recipientUserId);
+    return this.encryptToUserWithOutbox(recipientUserId, plaintextBytes, options);
+  }
+  private async encryptToUserWithOutbox(
+    recipientUserId: string,
+    plaintextBytes: Uint8Array,
+    options: SendOptions & { clientMessageId: string }
+  ): Promise<SendResult> {
+    return withOutgoingMessageIntentLock(this.storage, options.clientMessageId, () =>
+      this.encryptToUserWithOutboxLocked(recipientUserId, plaintextBytes, options)
+    );
+  }
 
-    // SESAME multi-device encryption: encrypt for all recipient devices
+  private async encryptToUserWithOutboxLocked(
+    recipientUserId: string,
+    plaintextBytes: Uint8Array,
+    options: SendOptions & { clientMessageId: string }
+  ): Promise<SendResult> {
+    const plaintextDigest = CryptoUtils.bytesToBase64(await CryptoUtils.sha256(plaintextBytes));
+    const existing = await getOutgoingMessageIntent(this.storage, options.clientMessageId);
+
+    if (existing) {
+      if (
+        existing.recipientId !== recipientUserId ||
+        existing.plaintextDigest !== plaintextDigest ||
+        (options.timestamp !== undefined && existing.clientTimestamp !== options.timestamp) ||
+        existing.contentHint !== options.contentHint
+      ) {
+        throw new Error('A clientMessageId cannot identify two different logical sends');
+      }
+      if (existing.result) return existing.result;
+      return this.sendStoredDirectIntent(existing, plaintextBytes);
+    }
+
+    await this.ensureSessionsForUser(recipientUserId);
+    const sealedSender = this.relay ? await this.resolveSealedSenderContext(recipientUserId) : null;
+    const directSealedSender =
+      sealedSender && this.relay?.sendMultiRecipientUnidentified ? sealedSender : null;
+    const transportMode = directSealedSender
+      ? directSealedSender.config.deliveryMode === 'required'
+        ? 'sealed_sender_required'
+        : 'sealed_sender_preferred'
+      : 'identified';
+    if (directSealedSender && directSealedSender.auth.type !== 'accessKey') {
+      throw new Error('Direct sealed-sender delivery requires access-key authorization');
+    }
+    const sealedSenderAuth =
+      directSealedSender?.auth.type === 'accessKey' ? { ...directSealedSender.auth } : undefined;
+
+    const clientTimestamp = options.timestamp ?? Date.now();
+    const syncPlaintext = this.buildSentSyncTranscript(
+      this.getDirectConversationId(recipientUserId),
+      plaintextBytes,
+      clientTimestamp,
+      recipientUserId
+    );
     let batch: OutgoingMessageBatch;
     try {
-      const clientTimestamp = options?.timestamp ?? Date.now();
-      const syncPlaintext = this.buildSentSyncTranscript(
-        this.getDirectConversationId(recipientUserId),
-        plaintextBytes,
-        clientTimestamp,
-        recipientUserId
-      );
       batch = await this.sesameManager.send(recipientUserId, plaintextBytes, {
         clientTimestamp,
         syncPlaintext,
       });
     } catch (error) {
-      // Preserve EncryptionError codes
-      if (error instanceof EncryptionError) {
-        throw error;
-      }
+      if (error instanceof EncryptionError) throw error;
       throw new EncryptionError(
         'Failed to encrypt message for user',
         EncryptionErrorCode.ENCRYPTION_FAILED,
@@ -1024,146 +1113,410 @@ export class SignalProtocolServiceCipher {
       },
     });
 
-    // Upload messages to relay server if configured
-    let messageId = `local-${Date.now()}`;
-    let timestamp = Date.now(); // Fallback if no relay
+    const deviceMessages = await Promise.all(
+      batch.deviceMessages.map((message) =>
+        this.prepareStoredDirectDeviceMessage(message, directSealedSender)
+      )
+    );
 
-    if (this.relay) {
-      // Resolve sealed sender context once per send (avoid re-fetching per device)
-      const sealedSender = await this.resolveSealedSenderContext(recipientUserId);
+    const syncMessages: StoredOutgoingDeviceMessage[] = batch.syncMessages.map((msg, index) => ({
+      recipientUserId: msg.recipientUserId,
+      recipientDeviceId: msg.recipientDeviceId,
+      timestamp: msg.timestamp,
+      clientMessageId: `${options.clientMessageId}:sync:${index}`,
+      ciphertext:
+        typeof msg.ciphertext === 'string'
+          ? msg.ciphertext
+          : CryptoUtils.bytesToBase64(msg.ciphertext),
+      messageType: getEnvelopeMessageType(msg.ciphertext),
+    }));
 
-      // Send to each recipient device with stale session handling
-      for (const msg of batch.deviceMessages) {
-        const messageType = getEnvelopeMessageType(msg.ciphertext);
-        const ciphertextBase64 =
-          typeof msg.ciphertext === 'string'
-            ? msg.ciphertext
-            : CryptoUtils.bytesToBase64(msg.ciphertext);
+    const intent: StoredOutgoingMessageIntent = {
+      kind: 'direct',
+      clientMessageId: options.clientMessageId,
+      recipientId: recipientUserId,
+      plaintextDigest,
+      clientTimestamp,
+      createdAt: Date.now(),
+      transportMode,
+      ...(sealedSenderAuth && { sealedSenderAuth }),
+      ...(options.contentHint !== undefined && {
+        contentHint: options.contentHint,
+      }),
+      deviceMessages,
+      syncMessages,
+    };
+    await storeOutgoingMessageIntent(this.storage, intent);
+    return this.sendStoredDirectIntent(intent, plaintextBytes);
+  }
 
-        // For PreKeyMessages, get session metadata for server-side validation.
-        // The reference implementation only validates registrationId
-        // server-side, for device reinstall detection.
-        // Stale prekey detection is handled client-side via MAC failure + retry.
-        let recipientRegistrationId: number | undefined;
+  private async prepareStoredDirectDeviceMessage(
+    message: import('../internal/sesame/types').SesameMessage,
+    sealedSender: Exclude<
+      Awaited<ReturnType<typeof SignalProtocolServiceCipher.prototype.resolveSealedSenderContext>>,
+      null
+    > | null
+  ): Promise<StoredOutgoingDeviceMessage> {
+    const messageType = getEnvelopeMessageType(message.ciphertext);
+    const session =
+      messageType === 'prekey_bundle'
+        ? await this.sesameManager.getSession(message.recipientUserId, message.recipientDeviceId)
+        : null;
+    const storedMessage: StoredOutgoingDeviceMessage = {
+      recipientUserId: message.recipientUserId,
+      recipientDeviceId: message.recipientDeviceId,
+      timestamp: message.timestamp,
+      ciphertext:
+        typeof message.ciphertext === 'string'
+          ? message.ciphertext
+          : CryptoUtils.bytesToBase64(message.ciphertext),
+      messageType,
+      ...(session?.currentSession?.remoteRegistrationId !== undefined && {
+        recipientRegistrationId: session.currentSession.remoteRegistrationId,
+      }),
+    };
+    if (sealedSender) {
+      storedMessage.sealedSenderMessage = await this.serializeDirectSealedSenderMessage(
+        storedMessage,
+        storedMessage.ciphertext,
+        storedMessage.messageType,
+        storedMessage.recipientRegistrationId,
+        sealedSender
+      );
+    }
+    return storedMessage;
+  }
 
-        if (messageType === 'prekey_bundle') {
-          const session = await this.sesameManager.getSession(
-            msg.recipientUserId,
-            msg.recipientDeviceId
-          );
-          if (session?.currentSession) {
-            recipientRegistrationId = session.currentSession.remoteRegistrationId;
-          }
-        }
-
-        try {
-          const result = await this.sendToDevice(
-            msg,
-            ciphertextBase64,
-            messageType,
-            recipientRegistrationId,
-            sealedSender,
-            options?.contentHint,
-            options?.clientMessageId
-          );
-          // Use first envelope ID and serverTimestamp as the canonical values
-          if (messageId.startsWith('local-')) {
-            messageId = result.messageId;
-            timestamp = result.serverTimestamp;
-          }
-        } catch (error) {
-          // Recover from a relay stale-device response.
-          if (isStaleSessionError(error) && this.staleSessionRefresher) {
-            const staleData = error.data;
-            this.logger.info('Server detected stale session, refreshing', {
-              category: 'E2EE',
-              data: {
-                code: staleData.code,
-                reason: staleData.reason,
-                recipientUserId: msg.recipientUserId,
-                recipientDeviceId: msg.recipientDeviceId,
-              },
-            });
-
-            // Refresh the stale session (archive + fetch fresh bundle + re-establish)
-            const refreshed = await this.staleSessionRefresher(
-              msg.recipientUserId,
-              msg.recipientDeviceId
-            );
-
-            if (refreshed) {
-              // Re-encrypt and retry with fresh session
-              const freshBatch = await this.sesameManager.send(recipientUserId, plaintextBytes, {
-                clientTimestamp: options?.timestamp,
-              });
-              const freshMsg = freshBatch.deviceMessages.find(
-                (m) =>
-                  m.recipientUserId === msg.recipientUserId &&
-                  m.recipientDeviceId === msg.recipientDeviceId
-              );
-
-              if (freshMsg) {
-                const freshCiphertext =
-                  typeof freshMsg.ciphertext === 'string'
-                    ? freshMsg.ciphertext
-                    : CryptoUtils.bytesToBase64(freshMsg.ciphertext);
-
-                // Get fresh session metadata
-                const freshSession = await this.sesameManager.getSession(
-                  msg.recipientUserId,
-                  msg.recipientDeviceId
-                );
-
-                const retryResult = await this.sendToDevice(
-                  freshMsg,
-                  freshCiphertext,
-                  getEnvelopeMessageType(freshMsg.ciphertext),
-                  freshSession?.currentSession?.remoteRegistrationId,
-                  sealedSender,
-                  options?.contentHint,
-                  options?.clientMessageId
-                );
-
-                if (messageId.startsWith('local-')) {
-                  messageId = retryResult.messageId;
-                  timestamp = retryResult.serverTimestamp;
-                }
-
-                this.logger.info('Successfully sent after stale session refresh', {
-                  category: 'E2EE',
-                  data: {
-                    recipientUserId: msg.recipientUserId,
-                    recipientDeviceId: msg.recipientDeviceId,
-                  },
-                });
-                continue; // Successfully sent after refresh
-              }
-            }
-
-            // If refresh failed or no message for device, throw original error
-            throw new EncryptionError(
-              `Failed to refresh stale session: ${staleData.reason}`,
-              EncryptionErrorCode.SESSION_ESTABLISHMENT_FAILED,
-              {
-                originalError: error as unknown as Error,
-                recipientUserId: msg.recipientUserId,
-              }
-            );
-          }
-
-          // Re-throw non-stale errors
-          throw error;
-        }
-      }
-
-      await this.uploadSyncMessages(batch.syncMessages);
+  private async repairRejectedDirectDeviceMessage(
+    intent: StoredOutgoingMessageIntent,
+    rejected: StoredOutgoingDeviceMessage,
+    plaintextBytes: Uint8Array
+  ): Promise<StoredOutgoingDeviceMessage> {
+    if (!this.staleSessionRefresher) throw new Error('Stale-session refresh is not configured');
+    const refreshed = await this.staleSessionRefresher(
+      rejected.recipientUserId,
+      rejected.recipientDeviceId
+    );
+    if (!refreshed) {
+      throw new EncryptionError(
+        'Failed to refresh a rejected recipient device',
+        EncryptionErrorCode.SESSION_ESTABLISHMENT_FAILED,
+        { recipientUserId: rejected.recipientUserId }
+      );
     }
 
-    return {
+    const freshMessage = await this.sesameManager.sendMessage(
+      rejected.recipientUserId,
+      rejected.recipientDeviceId,
+      plaintextBytes,
+      { clientTimestamp: intent.clientTimestamp, includeSyncMessages: false }
+    );
+    let sealedSender: Exclude<
+      Awaited<ReturnType<typeof SignalProtocolServiceCipher.prototype.resolveSealedSenderContext>>,
+      null
+    > | null = null;
+    if (intent.transportMode !== 'identified') {
+      sealedSender = await this.resolveSealedSenderContext(rejected.recipientUserId);
+      if (!sealedSender || sealedSender.auth.type !== 'accessKey') {
+        throw new Error('Cannot rebuild a sealed-sender transmission after session refresh');
+      }
+    }
+    const replacement = await this.prepareStoredDirectDeviceMessage(freshMessage, sealedSender);
+    await replaceOutgoingDirectDeviceMessage(
+      this.storage,
+      intent.clientMessageId,
+      rejected,
+      replacement
+    );
+    return replacement;
+  }
+
+  private async sendStoredDirectDeviceMessage(
+    intent: StoredOutgoingMessageIntent,
+    message: StoredOutgoingDeviceMessage
+  ): Promise<{ messageId: string; serverTimestamp: number }> {
+    if (
+      intent.transportMode !== 'identified' &&
+      (!message.sealedSenderMessage || !intent.sealedSenderAuth)
+    ) {
+      throw new Error('Corrupt sealed-sender outbox intent');
+    }
+    return intent.transportMode === 'identified'
+      ? this.sendToDevice(
+          message,
+          message.ciphertext,
+          message.messageType,
+          message.recipientRegistrationId,
+          null,
+          intent.contentHint,
+          intent.clientMessageId
+        )
+      : this.sendToDevice(
+          message,
+          message.ciphertext,
+          message.messageType,
+          message.recipientRegistrationId,
+          null,
+          intent.contentHint,
+          intent.clientMessageId,
+          {
+            sentMessageBase64: message.sealedSenderMessage!,
+            auth: intent.sealedSenderAuth!,
+            deliveryMode:
+              intent.transportMode === 'sealed_sender_required' ? 'required' : 'preferred',
+          }
+        );
+  }
+
+  private async sendStoredDirectIntent(
+    intent: StoredOutgoingMessageIntent,
+    plaintextBytes: Uint8Array
+  ): Promise<SendResult> {
+    if (intent.kind !== 'direct') throw new Error('Expected a direct outbox intent');
+    if (!this.relay) {
+      const result = {
+        clientMessageId: intent.clientMessageId,
+        messageId: `local-${intent.clientTimestamp}`,
+        timestamp: intent.clientTimestamp,
+        recipientDeviceCount: intent.deviceMessages.length,
+      };
+      await completeOutgoingMessageIntent(this.storage, intent.clientMessageId, result);
+      return result;
+    }
+
+    let messageId = `local-${intent.clientTimestamp}`;
+    let timestamp = intent.clientTimestamp;
+
+    for (const msg of intent.deviceMessages) {
+      let result: { messageId: string; serverTimestamp: number };
+      try {
+        result = await this.sendStoredDirectDeviceMessage(intent, msg);
+      } catch (error) {
+        if (!isConclusiveDeviceRejection(error)) throw error;
+        const replacement = await this.repairRejectedDirectDeviceMessage(
+          intent,
+          msg,
+          plaintextBytes
+        );
+        result = await this.sendStoredDirectDeviceMessage(intent, replacement);
+      }
+      if (messageId.startsWith('local-')) {
+        messageId = result.messageId;
+        timestamp = result.serverTimestamp;
+      }
+    }
+
+    for (const msg of intent.syncMessages) {
+      await this.relay.send({
+        targetUserId: msg.recipientUserId,
+        targetDeviceId: msg.recipientDeviceId,
+        senderUserId: this.userId,
+        senderDeviceId: this.deviceId,
+        ciphertext: msg.ciphertext,
+        messageType: msg.messageType,
+        timestamp: msg.timestamp,
+        clientMessageId: msg.clientMessageId,
+      });
+    }
+
+    const result = {
+      clientMessageId: intent.clientMessageId,
       messageId,
       timestamp,
-      recipientDeviceCount: batch.deviceMessages.length,
+      recipientDeviceCount: intent.deviceMessages.length,
     };
+    await completeOutgoingMessageIntent(this.storage, intent.clientMessageId, result);
+    return result;
+  }
+
+  private async encryptToGroupWithOutbox(
+    actualGroupId: string,
+    plaintextBytes: Uint8Array,
+    options: SendOptions & { clientMessageId: string }
+  ): Promise<SendResult> {
+    return sendGroupWithExactOutbox(
+      {
+        storage: this.storage,
+        ...(this.relay && { relay: this.relay }),
+        senderUserId: this.userId,
+        senderDeviceId: this.deviceId,
+        deliveryMode: this.sealedSenderDeliveryMode,
+        preparePayload: async (groupId, bytes, sendOptions) => {
+          const prepared = await this.prepareGroupSenderKeyPayload(groupId, bytes, sendOptions);
+          return {
+            ciphertext: CryptoUtils.bytesToBase64(prepared.ciphertext),
+            preMessages: prepared.preMessages,
+            ...(prepared.senderKeyDistributionId && {
+              senderKeyDistributionId: prepared.senderKeyDistributionId,
+            }),
+          };
+        },
+        confirmSenderKeyDistributionSent: (groupId, senderKeyId) =>
+          this.senderKeyManager.confirmSenderKeyDistributionSent(
+            groupId,
+            this.userId,
+            this.deviceId,
+            senderKeyId
+          ),
+        resolveMemberDevices: (groupId, sendOptions) =>
+          this.resolveGroupMemberDevices(groupId, sendOptions),
+        prepareSharedMessage: async (groupId, members, ciphertext) => {
+          if (
+            members.length === 0 ||
+            this.sealedSenderDeliveryMode === 'disabled' ||
+            !this.sealedSenderProvider ||
+            !this.endorsementManager ||
+            !this.relay?.sendMultiRecipientUnidentified
+          ) {
+            return undefined;
+          }
+          const prepared = await prepareGroupSharedMessage({
+            storage: this.storage,
+            senderKeys: await this.sealedSenderProvider(),
+            members,
+            encryptedMessageBase64: ciphertext,
+          });
+          return prepared
+            ? {
+                groupId,
+                sentMessageBase64: prepared.sentMessageBase64,
+                recipientUserIds: prepared.recipientUserIds,
+                deliveryMode:
+                  this.sealedSenderDeliveryMode === 'required' ? 'required' : 'preferred',
+              }
+            : undefined;
+        },
+        prepareDeviceMessage: (member, groupId, ciphertext, timestamp) =>
+          this.prepareStoredGroupDeviceMessage(member, groupId, ciphertext, timestamp),
+        prepareSyncMessages: async (groupId, bytes, timestamp, clientMessageId) => {
+          if (!this.relay) return [];
+          const syncPayload = this.buildSentSyncTranscript(groupId, bytes, timestamp);
+          const prepared = await this.sesameManager.sendToLocalOtherDevices(syncPayload, {
+            clientTimestamp: timestamp,
+            includeSyncMessages: false,
+          });
+          return prepared.map((message, index) => ({
+            recipientUserId: message.recipientUserId,
+            recipientDeviceId: message.recipientDeviceId,
+            timestamp: message.timestamp,
+            clientMessageId: `${clientMessageId}:sync:${index}`,
+            ciphertext:
+              typeof message.ciphertext === 'string'
+                ? message.ciphertext
+                : CryptoUtils.bytesToBase64(message.ciphertext),
+            messageType: getEnvelopeMessageType(message.ciphertext),
+          }));
+        },
+        resolveGroupAuthorization: (groupId, recipients) =>
+          this.resolveGroupSendAuthorization(groupId, recipients),
+        reportIdentifiedFallback: (recipientUserId) =>
+          this.reportIdentifiedFallback(recipientUserId),
+        sendPreparedSealedDevice: (intent, message, auth) =>
+          this.sendToDevice(
+            message,
+            message.ciphertext,
+            message.messageType,
+            undefined,
+            null,
+            undefined,
+            intent.clientMessageId,
+            {
+              sentMessageBase64: message.sealedSenderMessage!,
+              auth,
+              deliveryMode: message.sealedSenderDeliveryMode ?? 'preferred',
+            }
+          ),
+      },
+      actualGroupId,
+      plaintextBytes,
+      options
+    );
+  }
+
+  private async prepareStoredGroupDeviceMessage(
+    member: GroupMemberDevice,
+    groupId: string,
+    ciphertext: string,
+    timestamp: number
+  ): Promise<StoredOutgoingDeviceMessage> {
+    const stored: StoredOutgoingDeviceMessage = {
+      recipientUserId: member.userId,
+      recipientDeviceId: member.deviceId,
+      timestamp,
+      ciphertext,
+      messageType: 'sender_key',
+    };
+    const sealedSender = await this.resolveSealedSenderContext(member.userId, groupId);
+    if (!sealedSender || !this.relay?.sendMultiRecipientUnidentified) return stored;
+
+    stored.sealedSenderMessage = await this.serializeDirectSealedSenderMessage(
+      stored,
+      ciphertext,
+      'sender_key',
+      undefined,
+      sealedSender
+    );
+    stored.sealedSenderDeliveryMode =
+      sealedSender.config.deliveryMode === 'required' ? 'required' : 'preferred';
+    if (sealedSender.auth.type === 'accessKey') {
+      stored.sealedSenderAuthorization = 'access_key';
+      stored.sealedSenderAccessKey = sealedSender.auth.unidentifiedAccessKey;
+    } else {
+      stored.sealedSenderAuthorization = 'group_send_token';
+    }
+    return stored;
+  }
+
+  private async resolveGroupSendAuthorization(
+    groupId: string,
+    recipientUserIds: string[]
+  ): Promise<Extract<SealedSenderAuth, { type: 'groupSendToken' }> | null> {
+    if (!this.endorsementManager || recipientUserIds.length === 0) return null;
+    const { needsRefresh, reason } = await this.endorsementManager.shouldRefreshEndorsements(
+      groupId,
+      recipientUserIds
+    );
+    if (needsRefresh && this.endorsementRefresher) {
+      await this.endorsementRefresher(groupId, recipientUserIds);
+      this.logger.debug('Refreshed endorsements before durable group send', {
+        category: 'E2EE',
+        data: { groupId, reason },
+      });
+    }
+    const groupSecretParams = this.groupSecretParamsProvider
+      ? await this.groupSecretParamsProvider(groupId)
+      : null;
+    const combined = await this.endorsementManager.getCombinedToken(
+      groupId,
+      recipientUserIds,
+      groupSecretParams ?? undefined
+    );
+    return combined
+      ? {
+          type: 'groupSendToken',
+          groupSendToken: combined.token,
+          recipientAciBytes: combined.aciBytesByUserId,
+        }
+      : null;
+  }
+
+  private async serializeDirectSealedSenderMessage(
+    msg: {
+      recipientUserId: string;
+      recipientDeviceId: number;
+    },
+    ciphertextBase64: string,
+    messageType: 'prekey_bundle' | 'ciphertext' | 'sender_key',
+    recipientRegistrationId: number | undefined,
+    sealedSender: ResolvedSealedSenderContext
+  ): Promise<string> {
+    return serializeDirectSealedSenderTransport(
+      msg,
+      ciphertextBase64,
+      messageType,
+      recipientRegistrationId,
+      sealedSender
+    );
   }
 
   /**
@@ -1193,190 +1546,39 @@ export class SignalProtocolServiceCipher {
   private async resolveSealedSenderContext(
     recipientUserId: string,
     groupId?: string
-  ): Promise<{
-    senderCertificateBase64: string;
-    senderIdentityPrivate: Uint8Array;
-    recipientIdentityPublic: Uint8Array;
-    config: import('./config').SealedSenderConfig;
-    auth: SealedSenderAuth;
-  } | null> {
-    if (!this.sealedSenderProvider || !this.relay?.sendUnidentified) {
-      return null;
-    }
-
-    try {
-      // Priority 1: GroupSend endorsement (preferred for groups)
-      // No profile key needed. Endorsement tokens prove group membership via ZK credential
-      if (groupId && this.endorsementManager) {
-        try {
-          // Resolve group secret params for endorsement token generation
-          const groupSecretParams = this.groupSecretParamsProvider
-            ? await this.groupSecretParamsProvider(groupId)
-            : null;
-          const endorsementToken = await this.endorsementManager.getTokenForRecipient(
-            groupId,
-            recipientUserId,
-            groupSecretParams ?? undefined
-          );
-          if (endorsementToken) {
-            const { senderCertificateBase64, senderIdentityPrivate, config } =
-              await this.sealedSenderProvider();
-
-            const recipientAddress = ProtocolAddress.create(recipientUserId, 1);
-            const recipientIdentityRecord = await this.storage.getContactIdentity(recipientAddress);
-
-            if (recipientIdentityRecord) {
-              const recipientIdentityPublic = base64ToBytes(
-                recipientIdentityRecord.identity.x25519PublicKey
-              );
-              return {
-                senderCertificateBase64,
-                senderIdentityPrivate,
-                recipientIdentityPublic,
-                config,
-                auth: {
-                  type: 'groupSendToken',
-                  groupSendToken: endorsementToken.token,
-                  // The identity the token endorses. The relay verifies the
-                  // token against this claim before reading any account.
-                  recipientAciBytes: new Map([
-                    [recipientUserId, endorsementToken.aciBytes],
-                  ]),
-                },
-              };
-            }
-          }
-        } catch (endorsementError) {
-          // Endorsement lookup failed. Fall through to UAK path
-          this.logger.debug('Endorsement lookup failed, trying UAK', {
-            category: 'E2EE',
-            data: {
-              recipientUserId,
-              groupId,
-              error: (endorsementError as Error).message,
-            },
-          });
-        }
-      }
-
-      // Priority 2: Per-contact mode-based UAK (existing path)
-      // Check mode first. DISABLED skips sealed sender entirely
-      const contactStateStore = this.contactProfileStateStore;
-      if (!contactStateStore) {
-        this.logger.debug('No contact profile state store configured, using identified delivery', {
-          category: 'E2EE',
-          data: { recipientUserId, groupId },
-        });
-        return null;
-      }
-
-      const mode = await contactStateStore.getUnidentifiedAccessMode(recipientUserId);
-
-      if (mode === UnidentifiedAccessMode.DISABLED) {
-        this.logger.debug('Sealed sender disabled for recipient, using identified delivery', {
-          category: 'E2EE',
-          data: { recipientUserId, mode },
-        });
-        return null;
-      }
-
-      // Resolve access key based on mode
-      const { deriveAccessKey } = await import('../internal/protocol/sealed-sender/delivery-token');
-      const { bytesToBase64 } = await import('../internal/crypto');
-
-      let auth: SealedSenderAuth;
-
-      switch (mode) {
-        case UnidentifiedAccessMode.UNRESTRICTED: {
-          // Anyone can send sealed sender. Use zeroed 16-byte key
-          const zeroedKey = new Uint8Array(16);
-          auth = {
-            type: 'accessKey',
-            unidentifiedAccessKey: bytesToBase64(zeroedKey),
-          };
-          break;
-        }
-        case UnidentifiedAccessMode.ENABLED: {
-          // Must derive from profile key. Fail if unavailable
-          const recipientProfileKey = await contactStateStore.getContactProfileKey(recipientUserId);
-          if (!recipientProfileKey) {
-            this.logger.debug('No profile key for ENABLED recipient, using identified delivery', {
-              category: 'E2EE',
-              data: { recipientUserId },
-            });
-            return null;
-          }
-          const accessKey = await deriveAccessKey(recipientProfileKey);
-          auth = {
-            type: 'accessKey',
-            unidentifiedAccessKey: bytesToBase64(accessKey),
-          };
-          break;
-        }
-        case UnidentifiedAccessMode.UNKNOWN:
-        default: {
-          // Best effort: use derived key if available, else zeroed key
-          const recipientProfileKey = await contactStateStore.getContactProfileKey(recipientUserId);
-          if (recipientProfileKey) {
-            const accessKey = await deriveAccessKey(recipientProfileKey);
-            auth = {
-              type: 'accessKey',
-              unidentifiedAccessKey: bytesToBase64(accessKey),
-            };
-          } else {
-            const zeroedKey = new Uint8Array(16);
-            auth = {
-              type: 'accessKey',
-              unidentifiedAccessKey: bytesToBase64(zeroedKey),
-            };
-          }
-          break;
-        }
-      }
-
-      // Get sender certificate and identity keys
-      const { senderCertificateBase64, senderIdentityPrivate, config } =
-        await this.sealedSenderProvider();
-
-      // Get recipient's identity public key (needed for sealed sender DH)
-      const recipientAddress = ProtocolAddress.create(recipientUserId, 1);
-      const recipientIdentityRecord = await this.storage.getContactIdentity(recipientAddress);
-      if (!recipientIdentityRecord) {
-        // No identity key on file - fall back to identified delivery
-        this.logger.debug('No identity key for recipient, using identified delivery', {
-          category: 'E2EE',
-          data: { recipientUserId },
-        });
-        return null;
-      }
-
-      const recipientIdentityPublic = base64ToBytes(
-        recipientIdentityRecord.identity.x25519PublicKey
-      );
-
-      return {
-        senderCertificateBase64,
-        senderIdentityPrivate,
-        recipientIdentityPublic,
-        config,
-        auth,
-      };
-    } catch (error) {
-      // Sealed sender is best-effort. Fall back to identified delivery on failure
-      this.logger.warn('Failed to resolve sealed sender context, using identified delivery', {
-        category: 'E2EE',
-        data: { recipientUserId, error: (error as Error).message },
-      });
-      return null;
-    }
+  ): Promise<ResolvedSealedSenderContext | null> {
+    return resolveSealedSenderSendContext(
+      {
+        storage: this.storage,
+        deliveryMode: this.sealedSenderDeliveryMode,
+        relaySupportsUnidentified: Boolean(this.relay?.sendMultiRecipientUnidentified),
+        ...(this.sealedSenderProvider && {
+          provider: this.sealedSenderProvider,
+        }),
+        ...(this.contactProfileStateStore && {
+          contactProfileStateStore: this.contactProfileStateStore,
+        }),
+        ...(this.endorsementManager && {
+          endorsementManager: this.endorsementManager,
+        }),
+        ...(this.groupSecretParamsProvider && {
+          groupSecretParamsProvider: this.groupSecretParamsProvider,
+        }),
+        logger: this.logger,
+        useIdentifiedDeliveryOrThrow: (userId, reason) =>
+          this.useIdentifiedDeliveryOrThrow(userId, reason),
+      },
+      recipientUserId,
+      groupId
+    );
   }
 
   /**
    * Send a single ciphertext to a device, optionally wrapping with sealed sender.
    *
    * When sealed sender context is available:
-   * 1. Wraps the ciphertext with seal() to hide sender identity
-   * 2. Uses relay.sendUnidentified() for anonymous delivery
+   * 1. Wraps the ciphertext with the multi-recipient format for one recipient
+   * 2. Uses relay.sendMultiRecipientUnidentified() for anonymous delivery
    *
    * On sealed sender auth failure, transitions the recipient's
    * UnidentifiedAccessMode before falling back to identified delivery:
@@ -1402,51 +1604,66 @@ export class SignalProtocolServiceCipher {
       ReturnType<typeof SignalProtocolServiceCipher.prototype.resolveSealedSenderContext>
     >,
     contentHint?: ContentHint,
-    clientMessageId?: string
+    clientMessageId?: string,
+    preparedSealedSender?: {
+      sentMessageBase64: string;
+      auth: SealedSenderAuth;
+      deliveryMode: 'preferred' | 'required';
+    }
   ): Promise<{ messageId: string; serverTimestamp: number }> {
     const effectiveClientMessageId = msg.clientMessageId ?? clientMessageId;
 
-    // Sealed sender path: wrap with seal() and use anonymous delivery
-    if (sealedSender && this.relay!.sendUnidentified) {
-      const { sealMessage } = await import('./sealed-sender-ops');
+    if (preparedSealedSender && !this.relay!.sendMultiRecipientUnidentified) {
+      if (preparedSealedSender.deliveryMode === 'required') {
+        throw new EncryptionError(
+          'Required sealed-sender relay capability is unavailable',
+          EncryptionErrorCode.SEALED_SENDER_REQUIRED,
+          { recipientUserId: msg.recipientUserId }
+        );
+      }
+    }
 
-
-      const sealedCiphertext = await sealMessage(
-        ciphertextBase64,
-        sealedSender.senderCertificateBase64,
-        sealedSender.senderIdentityPrivate,
-        sealedSender.recipientIdentityPublic,
-        sealedSender.config,
-        this.logger,
-        // The outer envelope is `unidentified_sender` for every sealed
-        // message. The inner type has to travel inside the seal, or the
-        // recipient cannot tell a group message from a pairwise one.
-        messageType === 'sender_key'
-          ? SealedSenderContentType.SENDERKEY_MESSAGE
-          : messageType === 'prekey_bundle'
-            ? SealedSenderContentType.PREKEY_MESSAGE
-            : SealedSenderContentType.MESSAGE
-      );
+    // Sealed sender path: use the V2 upload format for one recipient. V2 has
+    // no two-recipient minimum; its recipient-count field permits this exact
+    // direct-delivery shape.
+    if ((sealedSender || preparedSealedSender) && this.relay!.sendMultiRecipientUnidentified) {
+      const prepared =
+        preparedSealedSender ??
+        (sealedSender
+          ? {
+              sentMessageBase64: await this.serializeDirectSealedSenderMessage(
+                msg,
+                ciphertextBase64,
+                messageType,
+                recipientRegistrationId,
+                sealedSender
+              ),
+              auth: sealedSender.auth,
+              deliveryMode:
+                sealedSender.config.deliveryMode === 'required' ? 'required' : 'preferred',
+            }
+          : undefined);
+      if (!prepared) throw new Error('Missing sealed-sender delivery state');
 
       try {
-        return await this.relay!.sendUnidentified!(
-          {
-            targetUserId: msg.recipientUserId,
-            targetDeviceId: msg.recipientDeviceId,
-            senderUserId: '', // Hidden from server
-            senderDeviceId: 0,
-            ciphertext: sealedCiphertext,
-            messageType: 'unidentified_sender',
-            timestamp: msg.timestamp,
-            clientMessageId: effectiveClientMessageId,
-            contentHint,
-          },
-          sealedSender.auth
+        const result = await this.relay!.sendMultiRecipientUnidentified!(
+          prepared.sentMessageBase64,
+          prepared.auth,
+          msg.timestamp,
+          [msg.recipientUserId],
+          effectiveClientMessageId
         );
+        if (result.uuids404.length > 0) {
+          throw new SealedSenderRecipientRejectedError();
+        }
+        return result;
       } catch (error) {
         // Fall back to identified delivery only for sealed-sender authorization
         // failures. Other failures retain their original error semantics.
         if (error instanceof SealedSenderAuthError) {
+          if (prepared.deliveryMode === 'required') {
+            throw error;
+          }
           // Restrict the cached mode after authorization fails.
           try {
             if (this.contactProfileStateStore) {
@@ -1499,6 +1716,7 @@ export class SignalProtocolServiceCipher {
               },
             });
           }
+          await this.reportIdentifiedFallback(msg.recipientUserId);
           // Fall through to identified path below
         } else {
           throw error;
@@ -1519,412 +1737,6 @@ export class SignalProtocolServiceCipher {
       recipientRegistrationId,
       contentHint,
     });
-  }
-
-  /**
-   * Attempt V2 multi-recipient sealed sender send.
-   * Returns null if unavailable. Caller falls back to V1.
-   *
-   * Recovery behavior:
-   * - 409 (mismatched devices): refresh device lists, rebuild recipient list, retry once
-   * - 410 (stale sessions): archive stale sessions, retry once
-   * - Other errors: return null for full V1 fallback
-   *
-   */
-  private async tryMultiRecipientSend(
-    groupId: string,
-    otherMembers: GroupMemberDevice[],
-    encryptedMessageJson: string,
-    sendTimestamp: number,
-    clientMessageId?: string
-  ): Promise<{ messageId: string; serverTimestamp: number } | null> {
-    // Guard checks. Return null to trigger V1 fallback
-    if (!this.sealedSenderProvider) return null;
-    if (!this.relay?.sendMultiRecipientUnidentified) return null;
-    if (otherMembers.length < 2) return null;
-
-    // outer recovery state flags. Prevent infinite retry loops
-    //
-    let hasRetriedDevices = false;
-    let hasRetriedSessions = false;
-    let currentMembers = otherMembers;
-
-    const attemptV2Send = async (): Promise<{
-      messageId: string;
-      serverTimestamp: number;
-    } | null> => {
-      // Get sender keys (certificate + identity)
-      const senderKeys = await this.sealedSenderProvider!();
-
-      const { base64ToBytes: b64ToBytes, bytesToBase64: bytesToB64 } =
-        await import('../internal/crypto');
-
-      // Gather recipient identity keys (per unique userId)
-      const identityByUser = new Map<string, Uint8Array>();
-      const uniqueUserIds = [...new Set(currentMembers.map((m) => m.userId))];
-
-      for (const userId of uniqueUserIds) {
-        const address = ProtocolAddress.create(userId, 1);
-        const identityRecord = await this.storage.getContactIdentity(address);
-        if (identityRecord) {
-          identityByUser.set(userId, b64ToBytes(identityRecord.identity.x25519PublicKey));
-        }
-      }
-
-      // Split V2-eligible vs V1-fallback
-      const v2Members: typeof currentMembers = [];
-      const v1FallbackMembers: typeof currentMembers = [];
-
-      for (const member of currentMembers) {
-        if (identityByUser.has(member.userId)) {
-          v2Members.push(member);
-        } else {
-          v1FallbackMembers.push(member);
-        }
-      }
-
-      // Need at least 2 V2-eligible unique users
-      const v2UniqueUsers = new Set(v2Members.map((m) => m.userId));
-      if (v2UniqueUsers.size < 2) return null;
-
-      // Build V2 recipients with registration IDs from session state
-      const v2Recipients: Array<{
-        serviceId: string;
-        deviceId: number;
-        registrationId: number;
-        identityPublic: Uint8Array;
-      }> = [];
-
-      for (const member of v2Members) {
-        const session = await this.storage.getSessionRecord(
-          ProtocolAddress.create(member.userId, member.deviceId)
-        );
-
-        let registrationId = 0;
-        if (session?.currentSession) {
-          registrationId = session.currentSession.remoteRegistrationId;
-        }
-
-        v2Recipients.push({
-          serviceId: member.userId,
-          deviceId: member.deviceId,
-          registrationId,
-          identityPublic: identityByUser.get(member.userId)!,
-        });
-      }
-
-      // Call sealMultiRecipient()
-      const { sealMultiRecipient } = await import('../internal/protocol/sealed-sender');
-      const { deserializeSenderCertificate } = await import('../internal/protocol/sealed-sender');
-
-      // Parse sender certificate
-      const certBytes = b64ToBytes(senderKeys.senderCertificateBase64 as Base64);
-      const senderCertificate = deserializeSenderCertificate(certBytes);
-
-      // Convert encryptedMessageJson to bytes for the seal
-      const signalProtocolMessage = new TextEncoder().encode(encryptedMessageJson);
-
-
-      const sealResult = await sealMultiRecipient({
-        senderCertificate,
-        senderIdentityPrivate: senderKeys.senderIdentityPrivate,
-        senderIdentityPublic: senderKeys.senderIdentityPublic,
-        recipients: v2Recipients,
-        signalProtocolMessage,
-        // The group this belongs to stays out of the sealed envelope. The
-        // content type says only "decrypt this as a framed SenderKeyMessage".
-        // The recipient resolves the group from the frame's distribution
-        // identifier against its own sender key store.
-        contentType: SealedSenderContentType.SENDERKEY_MESSAGE,
-      });
-
-      // Serialize to binary
-      const { serializeSentMessage } = await import('../internal/protocol/sealed-sender/v2-binary');
-
-      // Group recipients by serviceId for the binary format
-      const recipientsByUser = new Map<
-        string,
-        {
-          serviceId: string;
-          devices: Array<{ deviceId: number; registrationId: number }>;
-          encryptedMessageKey: Uint8Array;
-          authenticationTag: Uint8Array;
-        }
-      >();
-
-      for (const entry of sealResult.recipients) {
-        const existing = recipientsByUser.get(entry.serviceId);
-        if (existing) {
-          existing.devices.push({
-            deviceId: entry.deviceId,
-            registrationId: entry.registrationId,
-          });
-        } else {
-          recipientsByUser.set(entry.serviceId, {
-            serviceId: entry.serviceId,
-            devices: [
-              {
-                deviceId: entry.deviceId,
-                registrationId: entry.registrationId,
-              },
-            ],
-            encryptedMessageKey: b64ToBytes(entry.encryptedMessageKey as Base64),
-            authenticationTag: b64ToBytes(entry.authenticationTag as Base64),
-          });
-        }
-      }
-
-      const binaryBlob = serializeSentMessage(
-        Array.from(recipientsByUser.values()),
-        [], // No excluded recipients for now
-        b64ToBytes(sealResult.ephemeralPublic as Base64),
-        b64ToBytes(sealResult.messageCiphertext as Base64)
-      );
-
-      const sentMessageBase64 = bytesToB64(binaryBlob);
-
-      // Get combined auth token
-      if (!this.endorsementManager) return null;
-
-      const groupSecretParams = this.groupSecretParamsProvider
-        ? await this.groupSecretParamsProvider(groupId)
-        : null;
-
-      const v2UserIds = [...v2UniqueUsers];
-
-      // Pre-send endorsement refresh
-      const { needsRefresh, reason } = await this.endorsementManager.shouldRefreshEndorsements(
-        groupId,
-        v2UserIds
-      );
-
-      if (needsRefresh && this.endorsementRefresher) {
-        try {
-          await this.endorsementRefresher(groupId, v2UserIds);
-          this.logger.debug('Refreshed endorsements before V2 send', {
-            category: 'E2EE',
-            data: { groupId, reason },
-          });
-        } catch (refreshErr) {
-          this.logger.debug('Pre-send endorsement refresh failed, will attempt V1 fallback', {
-            category: 'E2EE',
-            data: { groupId, error: (refreshErr as Error).message },
-          });
-        }
-      }
-
-      const combinedToken = await this.endorsementManager.getCombinedToken(
-        groupId,
-        v2UserIds,
-        groupSecretParams ?? undefined
-      );
-
-      if (!combinedToken) return null;
-
-      const auth: SealedSenderAuth = {
-        type: 'groupSendToken',
-        groupSendToken: combinedToken.token,
-        // The identities the combined token endorses, straight from the
-        // endorsement cache. The relay verifies the token against these
-        // claims before reading any account.
-        recipientAciBytes: combinedToken.aciBytesByUserId,
-      };
-
-      // Send via relay
-      const recipientUserIds = Array.from(recipientsByUser.keys());
-      const result = await this.relay!.sendMultiRecipientUnidentified!(
-        sentMessageBase64,
-        auth,
-        sendTimestamp,
-        recipientUserIds,
-        clientMessageId
-      );
-
-      // The server reports recipients it skipped (unregistered device,
-      // registration-ID mismatch after a reinstall) in uuids404 while still
-      // returning success for the rest. Dropping that field silently loses
-      // messages for exactly the members that most need redelivery. So refresh
-      // their device lists, and fan out to them per-device alongside the V1
-      // fallback members below.
-      const v1FallbackTargets = [...v1FallbackMembers];
-      if (result.uuids404?.length) {
-        this.logger.info('V2 send skipped recipients; refreshing and redelivering per-device', {
-          category: 'E2EE',
-          data: { groupId, skipped: result.uuids404 },
-        });
-        const refreshed = await Promise.all(
-          result.uuids404.map((uid) =>
-            this.relay!.getActiveDevices(uid).catch(() => [] as GroupMemberDevice[])
-          )
-        );
-        v1FallbackTargets.push(
-          ...refreshed.flat().filter((m) => m.userId !== this.userId)
-        );
-      }
-
-      // Send to V1 fallback members via per-device fanout
-      if (v1FallbackTargets.length > 0) {
-        const sealedSenderByUser = new Map<
-          string,
-          Awaited<ReturnType<typeof this.resolveSealedSenderContext>>
-        >();
-        const fallbackUserIds = [...new Set(v1FallbackTargets.map((m) => m.userId))];
-        for (const userId of fallbackUserIds) {
-          sealedSenderByUser.set(userId, await this.resolveSealedSenderContext(userId, groupId));
-        }
-
-        for (const member of v1FallbackTargets) {
-          const sealedSender = sealedSenderByUser.get(member.userId) ?? null;
-          await this.sendToDevice(
-            {
-              recipientUserId: member.userId,
-              recipientDeviceId: member.deviceId,
-              timestamp: sendTimestamp,
-            },
-            encryptedMessageJson,
-            'sender_key',
-            undefined,
-            sealedSender,
-            undefined,
-            clientMessageId
-          );
-        }
-      }
-
-      return {
-        messageId: result.messageId,
-        serverTimestamp: result.serverTimestamp,
-      };
-    };
-
-    try {
-      return await attemptV2Send();
-    } catch (error) {
-      const errorMessage = (error as Error).message ?? '';
-
-      // 409: Mismatched devices. Refresh device lists and retry once
-      // the application send pipeline
-      if (!hasRetriedDevices && isMismatchedDevicesError(errorMessage)) {
-        hasRetriedDevices = true;
-        this.logger.info('V2 send got mismatched devices (409), refreshing and retrying', {
-          category: 'E2EE',
-          data: { groupId },
-        });
-
-        try {
-          // Refresh device lists for all affected users
-          const uniqueUserIds = [...new Set(currentMembers.map((m) => m.userId))];
-          const refreshedDevices = await Promise.all(
-            uniqueUserIds.map((uid) => this.relay!.getActiveDevices(uid))
-          );
-          currentMembers = refreshedDevices.flat().filter((m) => m.userId !== this.userId);
-
-          return await attemptV2Send();
-        } catch (retryError) {
-          this.logger.debug('V2 retry after device refresh failed, falling back to V1', {
-            category: 'E2EE',
-            data: { groupId, error: (retryError as Error).message },
-          });
-          return null;
-        }
-      }
-
-      // 410: Stale sessions. Archive and retry once
-      // the application send pipeline
-      if (!hasRetriedSessions && isStaleSessionV2Error(errorMessage)) {
-        hasRetriedSessions = true;
-        this.logger.info('V2 send got stale sessions (410), archiving and retrying', {
-          category: 'E2EE',
-          data: { groupId },
-        });
-
-        try {
-          // Archive stale sessions for all affected devices and re-establish
-          if (this.staleSessionRefresher) {
-            for (const member of currentMembers) {
-              await this.staleSessionRefresher(member.userId, member.deviceId).catch(() => {
-                // Non-fatal: some devices might not have stale sessions
-              });
-            }
-          }
-
-          return await attemptV2Send();
-        } catch (retryError) {
-          this.logger.debug('V2 retry after session refresh failed, falling back to V1', {
-            category: 'E2EE',
-            data: { groupId, error: (retryError as Error).message },
-          });
-          return null;
-        }
-      }
-
-      // All other errors: V1 fallback
-      this.logger.debug('V2 multi-recipient send failed, falling back to V1', {
-        category: 'E2EE',
-        data: { groupId, error: errorMessage },
-      });
-      return null;
-    }
-  }
-
-  /**
-   * V1 per-device sealed sender fanout (legacy path, used as fallback).
-   */
-  private async perDeviceFanoutSend(
-    groupId: string,
-    otherMembers: GroupMemberDevice[],
-    encryptedMessageJson: string,
-    sendTimestamp: number,
-    clientMessageId?: string
-  ): Promise<{ messageId: string; serverTimestamp: number } | undefined> {
-    // Pre-send endorsement freshness check (non-blocking, log only)
-    // Actual refresh is handled at orchestration layer (group-service.ts)
-    if (this.endorsementManager) {
-      const uniqueUserIds = [...new Set(otherMembers.map((m) => m.userId))];
-      const { needsRefresh, reason } = await this.endorsementManager.shouldRefreshEndorsements(
-        groupId,
-        uniqueUserIds
-      );
-      if (needsRefresh) {
-        this.logger.debug('Group endorsements need refresh before send', {
-          category: 'E2EE',
-          data: { groupId, reason },
-        });
-      }
-    }
-
-    // Resolve sealed sender context per unique recipient (not per device)
-    // Identity keys and endorsement tokens are per-user, shared across devices
-    const sealedSenderByUser = new Map<
-      string,
-      Awaited<ReturnType<typeof this.resolveSealedSenderContext>>
-    >();
-    const uniqueRecipientIds = [...new Set(otherMembers.map((m) => m.userId))];
-    for (const userId of uniqueRecipientIds) {
-      sealedSenderByUser.set(userId, await this.resolveSealedSenderContext(userId, groupId));
-    }
-
-    // Send to each member device (sendToDevice handles seal + fallback)
-    let firstResult: { messageId: string; serverTimestamp: number } | undefined;
-    for (const member of otherMembers) {
-      const sealedSender = sealedSenderByUser.get(member.userId) ?? null;
-      const result = await this.sendToDevice(
-        {
-          recipientUserId: member.userId,
-          recipientDeviceId: member.deviceId,
-          timestamp: sendTimestamp,
-        },
-        encryptedMessageJson,
-        'sender_key',
-        undefined,
-        sealedSender,
-        undefined,
-        clientMessageId
-      );
-      if (!firstResult) firstResult = result;
-    }
-
-    return firstResult;
   }
 
   /**
@@ -1955,23 +1767,15 @@ export class SignalProtocolServiceCipher {
     return deviceResults.flat();
   }
 
-  /**
-   * Encrypt to a group via Sender Keys (O(1) encryption)
-   *
-   * Prefers V2 multi-recipient sealed sender when available, falls back to
-   * V1 per-device fanout.
-   */
-  private async encryptToGroup(
-    groupId: string,
+  private async prepareGroupSenderKeyPayload(
+    actualGroupId: string,
     plaintextBytes: Uint8Array,
-    options?: SendOptions
-  ): Promise<SendResult> {
-    // Extract actual group ID from prefixed format
-    const actualGroupId = extractGroupId(groupId);
-    await this.groupSendBarrierChecker?.(actualGroupId);
-
-    // Require sender key to exist - caller (SignalProtocolClient.createGroupSenderKey) must create it first
-    // The sender key is then distributed to group members before sending
+    options: SendOptions & { clientMessageId: string; timestamp: number }
+  ): Promise<{
+    ciphertext: Uint8Array;
+    preMessages: StoredOutgoingDeviceMessage[];
+    senderKeyDistributionId?: string;
+  }> {
     const existingKey = await this.storage.getSenderKey(actualGroupId, this.userId, this.deviceId);
     if (!existingKey) {
       throw new EncryptionError(
@@ -1985,165 +1789,102 @@ export class SignalProtocolServiceCipher {
       );
     }
 
-    // Encrypt with sender key (O(1) - single encryption for all members)
-    // Auto-rotate on SENDER_KEY_EXPIRED
-    let encrypted: Uint8Array;
-    try {
-      encrypted = await this.senderKeyManager.encryptGroupMessage(
-        actualGroupId,
-        this.userId,
-        this.deviceId,
-        plaintextBytes
-      );
-    } catch (error) {
-      if (
-        error instanceof EncryptionError &&
-        error.code === EncryptionErrorCode.SENDER_KEY_EXPIRED
-      ) {
+    let distributionMessage = await this.senderKeyManager.getPendingSenderKeyDistribution(
+      actualGroupId,
+      this.userId,
+      this.deviceId
+    );
+    if (!distributionMessage) {
+      try {
+        return {
+          ciphertext: await this.senderKeyManager.encryptGroupMessage(
+            actualGroupId,
+            this.userId,
+            this.deviceId,
+            plaintextBytes
+          ),
+          preMessages: [],
+        };
+      } catch (error) {
+        if (
+          !(error instanceof EncryptionError) ||
+          error.code !== EncryptionErrorCode.SENDER_KEY_EXPIRED
+        ) {
+          throw error;
+        }
+
         this.logger.info('Sender key expired, auto-rotating', {
           category: 'E2EE',
           data: { groupId: actualGroupId },
         });
-
-        // Rotate sender key (generates new key material + increments generation)
-        const { distributionMessage } = await this.senderKeyManager.rotateSenderKey(
-          actualGroupId,
-          this.userId,
-          this.deviceId
-        );
-
-        // Redistribute new sender key to all group members via relay
-        if (this.relay) {
-          const members = await this.resolveGroupMemberDevices(actualGroupId, options);
-          const otherMembers = members.filter((m) => m.userId !== this.userId);
-
-          for (const member of otherMembers) {
-            // Send SKDM via pairwise session (same as initial distribution)
-            await this.ensureSessionsForUser(member.userId);
-            // Serialize SKDM as ProtoContentData with senderKeyDistributionMessage field
-            // The string field contains JSON-encoded {groupId, ...distributionMessage}
-            const skdmBytes = this.contentAdapter
-              ? this.contentAdapter.serializeSenderKeyDistributionBytes(
-                  actualGroupId,
-                  distributionMessage
-                )
-              : new TextEncoder().encode(
-                  JSON.stringify({
-                    senderKeyDistributionMessage: JSON.stringify({
-                      groupId: actualGroupId,
-                      ...distributionMessage,
-                    }),
-                  })
-                );
-            const batch = await this.sesameManager.send(member.userId, skdmBytes, {});
-            for (const msg of batch.deviceMessages) {
-              const ciphertextBase64 =
-                typeof msg.ciphertext === 'string'
-                  ? msg.ciphertext
-                  : CryptoUtils.bytesToBase64(msg.ciphertext);
-              await this.relay.send({
-                targetUserId: msg.recipientUserId,
-                targetDeviceId: msg.recipientDeviceId,
-                senderUserId: this.userId,
-                senderDeviceId: this.deviceId,
-                ciphertext: ciphertextBase64,
-                // A distribution message is ordinary pairwise traffic. The
-                // group it announces is inside the encrypted payload. Naming
-                // it on the envelope would hand the relay the same membership
-                // map the message exists to keep off the wire.
-                messageType: getEnvelopeMessageType(msg.ciphertext),
-                timestamp: msg.timestamp,
-              });
-            }
-          }
-        }
-
-        // Retry encryption with the new key (once, no infinite loop)
-        encrypted = await this.senderKeyManager.encryptGroupMessage(
+        ({ distributionMessage } = await this.senderKeyManager.rotateSenderKey(
           actualGroupId,
           this.userId,
           this.deviceId,
-          plaintextBytes
-        );
-      } else {
-        throw error;
+          { distributionPending: true }
+        ));
       }
     }
 
-    // Send encrypted message via relay
-    let messageId = `local-${Date.now()}`;
-    let timestamp = Date.now(); // Fallback if no relay
-    let recipientDeviceCount = 0;
-
+    const preMessages: StoredOutgoingDeviceMessage[] = [];
     if (this.relay) {
-      // Resolve group members → devices from the caller-provided roster.
-      // Membership is local-first (it lives in each client's decrypted group
-      // state). The relay deliberately keeps no membership map, so there is
-      // no server endpoint to fall back to.
       const members = await this.resolveGroupMemberDevices(actualGroupId, options);
-      // Framed SenderKeyMessage bytes → base64 for transport
-      const encryptedMessageJson = CryptoUtils.bytesToBase64(encrypted);
-      const sendTimestamp = options?.timestamp ?? Date.now();
-
-      // Filter to other members (skip self, the application send pipeline)
-      const otherMembers = members.filter((m) => m.userId !== this.userId);
-      recipientDeviceCount = otherMembers.length;
-
-      // Try V2 multi-recipient first
-      const v2Result = await this.tryMultiRecipientSend(
-        actualGroupId,
-        otherMembers,
-        encryptedMessageJson,
-        sendTimestamp,
-        options?.clientMessageId
-      );
-
-      if (v2Result) {
-        messageId = v2Result.messageId;
-        timestamp = v2Result.serverTimestamp;
-
-        this.logger.debug('Group message sent via V2 multi-recipient', {
-          category: 'E2EE',
-          data: { groupId: actualGroupId, recipientDeviceCount, messageId },
+      const otherMembers = members.filter((member) => member.userId !== this.userId);
+      const recipientUserIds = [...new Set(otherMembers.map((member) => member.userId))];
+      for (const recipientUserId of recipientUserIds) {
+        await this.ensureSessionsForUser(recipientUserId);
+        const skdmBytes = this.contentAdapter
+          ? this.contentAdapter.serializeSenderKeyDistributionBytes(
+              actualGroupId,
+              distributionMessage
+            )
+          : new TextEncoder().encode(
+              JSON.stringify({
+                senderKeyDistributionMessage: JSON.stringify({
+                  groupId: actualGroupId,
+                  ...distributionMessage,
+                }),
+              })
+            );
+        const batch = await this.sesameManager.send(recipientUserId, skdmBytes, {
+          clientTimestamp: options.timestamp,
+          includeSyncMessages: false,
         });
-      } else {
-        // V1 fallback
-        const v1Result = await this.perDeviceFanoutSend(
-          actualGroupId,
-          otherMembers,
-          encryptedMessageJson,
-          sendTimestamp,
-          options?.clientMessageId
-        );
-
-        if (v1Result) {
-          messageId = v1Result.messageId;
-          timestamp = v1Result.serverTimestamp;
-        } else {
-          messageId = `group-${actualGroupId}-${timestamp}`;
+        for (const message of batch.deviceMessages) {
+          const stored = await this.prepareStoredDirectDeviceMessage(message, null);
+          stored.clientMessageId = `${options.clientMessageId}:sender-key-distribution:${preMessages.length}`;
+          preMessages.push(stored);
         }
-
-        this.logger.debug('Group message sent via V1 per-device fanout', {
-          category: 'E2EE',
-          data: { groupId: actualGroupId, recipientDeviceCount, messageId },
-        });
       }
-
-      await this.sendSyncTranscriptToLocalOtherDevices(
-        actualGroupId,
-        plaintextBytes,
-        sendTimestamp
-      );
     }
 
     return {
-      messageId,
-      timestamp,
-      recipientDeviceCount,
-      groupId: actualGroupId,
+      ciphertext: await this.senderKeyManager.encryptGroupMessage(
+        actualGroupId,
+        this.userId,
+        this.deviceId,
+        plaintextBytes
+      ),
+      preMessages,
+      senderKeyDistributionId: distributionMessage.senderKeyId,
     };
   }
 
+  /**
+   * Encrypt to a group via Sender Keys (O(1) encryption)
+   *
+   * Uses the multi-recipient sealed-sender transport when anonymous delivery
+   * is available, with exact per-device identified delivery otherwise.
+   */
+  private async encryptToGroup(
+    groupId: string,
+    plaintextBytes: Uint8Array,
+    options: SendOptions & { clientMessageId: string }
+  ): Promise<SendResult> {
+    const actualGroupId = extractGroupId(groupId);
+    await this.groupSendBarrierChecker?.(actualGroupId);
+    return this.encryptToGroupWithOutbox(actualGroupId, plaintextBytes, options);
+  }
   /**
    * Encrypt binary attachment with two-layer encryption
    *
@@ -2164,7 +1905,7 @@ export class SignalProtocolServiceCipher {
   private async encryptBinaryAttachment(
     recipientId: string,
     data: Uint8Array,
-    options?: SendOptions
+    options: SendOptions & { clientMessageId: string }
   ): Promise<SendResult> {
     if (!this.relay) {
       throw new EncryptionError(
@@ -2177,7 +1918,7 @@ export class SignalProtocolServiceCipher {
 
     const attachmentPayload = serializeMediaAttachmentMessage({
       attachment: uploaded,
-      timestamp: options?.timestamp ?? Date.now(),
+      timestamp: options.timestamp ?? Date.now(),
     });
     const attachmentBytes = new TextEncoder().encode(attachmentPayload);
     let result: SendResult;

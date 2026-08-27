@@ -58,7 +58,7 @@ import type {
   Base64,
 } from '../types';
 import { EncryptionError, EncryptionErrorCode } from '../types';
-import { base64ToBytes } from '../internal/crypto';
+import { base64ToBytes, bytesToBase64, constantTimeEqual } from '../internal/crypto';
 import type { SignalProtocolClientHooks } from './event-hooks';
 import { ProtocolAddress } from '../types/address';
 import {
@@ -128,6 +128,7 @@ import type {
 } from '../internal/groups';
 import type { GroupId } from '../internal/groups/group-id';
 import { SignalProtocolGroupStateStore } from '../internal/groups/sdk-store';
+import { deriveAccessKey } from '../internal/protocol/sealed-sender/delivery-token';
 
 // Re-export for backwards compatibility (definition moved to constants.ts to avoid require cycles)
 export {};
@@ -230,7 +231,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
 
   /**
    * Cached sender certificate for sealed sender.
-   * Lazily fetched and refreshed when expired (24h validity, 5min margin).
+   * Lazily fetched and refreshed one hour before its signed expiration.
    */
   private cachedSenderCertificate: string | null = null;
   private cachedCertificateExpiry: number = 0;
@@ -323,45 +324,35 @@ export class SignalProtocolClient implements ISignalProtocolClient {
       const server = config.groups.server ?? capability?.server;
       const issueCredential =
         config.groups.issueCredential ??
-        (capability
-          ? () => capability.issueAuthCredential(this._userId)
-          : undefined);
+        (capability ? () => capability.issueAuthCredential(this._userId) : undefined);
       const issueProfileKeyCredential =
         config.groups.issueProfileKeyCredential ??
         (capability
-          ? () =>
-              capability.issueProfileKeyCredential(
-                this._userId,
-                config.groups!.profileKey
-              )
+          ? async (request: Uint8Array) => {
+              const accessKey = await deriveAccessKey(config.groups!.profileKey);
+              await capability.setUnidentifiedAccessKey(this._userId, accessKey);
+              return capability.issueProfileKeyCredential(this._userId, request);
+            }
           : undefined);
 
       if (!server || !issueCredential || !issueProfileKeyCredential) {
         const missing = [
           !server ? 'server' : undefined,
           !issueCredential ? 'issueCredential' : undefined,
-          !issueProfileKeyCredential
-            ? 'issueProfileKeyCredential'
-            : undefined,
+          !issueProfileKeyCredential ? 'issueProfileKeyCredential' : undefined,
         ].filter((value): value is string => value !== undefined);
         throw new Error(
           `Groups require the relay.groupServer capability or explicit overrides; missing: ${missing.join(', ')}`
         );
       }
       if (!config.aci) {
-        throw new Error(
-          'Groups require the client identity ACI; set identity.aci'
-        );
+        throw new Error('Groups require the client identity ACI; set identity.aci');
       }
 
       const trustRoot = decodeGroupTrustRoot(config.groups.trustRoot);
-      this.groupStore =
-        config.groups.store ??
-        new SignalProtocolGroupStateStore(this._storage);
+      this.groupStore = config.groups.store ?? new SignalProtocolGroupStateStore(this._storage);
       const endorsementManager = config.groups.endorsementManager;
-      endorsementManager?.assertEndorsementRootPublicKey(
-        trustRoot.endorsementRootPublicKey
-      );
+      endorsementManager?.assertEndorsementRootPublicKey(trustRoot.endorsementRootPublicKey);
 
       this.groupManager = new GroupManager({
         store: this.groupStore,
@@ -369,14 +360,12 @@ export class SignalProtocolClient implements ISignalProtocolClient {
         issueCredential,
         credentialPublicKey: trustRoot.credentialPublicKey,
         serverSigningPublicKey: trustRoot.serverSigningPublicKey,
-        allowUnauthenticatedGroupHistory:
-          config.groups.allowUnauthenticatedGroupHistory,
+        allowUnauthenticatedGroupHistory: config.groups.allowUnauthenticatedGroupHistory,
         onConfigurationWarning: config.groups.onConfigurationWarning,
         aci: config.aci,
         pni: config.pni,
         issueProfileKeyCredential,
-        profileKeyCredentialPublicKey:
-          trustRoot.profileKeyCredentialPublicKey,
+        profileKeyCredentialPublicKey: trustRoot.profileKeyCredentialPublicKey,
         profileKey: config.groups.profileKey,
         onSenderKeyRotation: async (groupId) => {
           // Forward to existing sender key rotation
@@ -473,6 +462,13 @@ export class SignalProtocolClient implements ISignalProtocolClient {
           }
         }
       );
+    }
+
+    if (config?.sealedSender) {
+      this.cipher.setSealedSenderDeliveryMode(config.sealedSender.deliveryMode ?? 'preferred');
+      if (config.sealedSender.onIdentifiedFallback) {
+        this.cipher.setSealedSenderIdentifiedFallback(config.sealedSender.onIdentifiedFallback);
+      }
     }
 
     // Set up sealed sender provider if configured
@@ -640,30 +636,39 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    */
   get isSealedSenderEnabled(): boolean {
     const ss = this.config.sealedSender;
-    return !!(ss && ss.accessMode !== 'disabled' && ss.trustRoots.length > 0);
+    return !!(ss && ss.deliveryMode !== 'disabled' && ss.trustRoots.length > 0);
   }
 
   /**
    * Fetch (or return cached) sender certificate for sealed sender.
    *
    * Uses the configured certificateProvider or relay.fetchSenderCertificate().
-   * Caches the result until expiry (24h certificate, 5min safety margin).
+   * Validates the fetched certificate and caches it until one hour before its
+   * signed expiration.
    *
    * @returns Base64-encoded serialized SenderCertificate
    * @throws if no certificate provider is available
    */
   async fetchSenderCertificate(): Promise<string> {
     const { SEALED_SENDER_CERTIFICATE_MARGIN_MS } = await import('./config');
+    const now = Date.now();
 
-    // Return cached if still valid (with 5min safety margin)
-    if (this.cachedSenderCertificate && Date.now() < this.cachedCertificateExpiry) {
+    if (this.cachedSenderCertificate && now < this.cachedCertificateExpiry) {
       return this.cachedSenderCertificate;
+    }
+
+    const sealedSender = this.config.sealedSender;
+    if (!sealedSender || sealedSender.trustRoots.length === 0) {
+      throw new EncryptionError(
+        'Sender certificate trust is not configured',
+        EncryptionErrorCode.INITIALIZATION_FAILED
+      );
     }
 
     // Fetch from configured provider or relay
     let certBase64: string;
-    if (this.config.sealedSender?.certificateProvider) {
-      certBase64 = await this.config.sealedSender.certificateProvider();
+    if (sealedSender.certificateProvider) {
+      certBase64 = await sealedSender.certificateProvider();
     } else if (this.relay?.fetchSenderCertificate) {
       certBase64 = await this.relay.fetchSenderCertificate(this.deviceId);
     } else {
@@ -673,11 +678,47 @@ export class SignalProtocolClient implements ISignalProtocolClient {
       );
     }
 
-    // Cache with margin
-    const CERTIFICATE_VALIDITY_MS = 24 * 60 * 60 * 1000;
-    this.cachedSenderCertificate = certBase64;
-    this.cachedCertificateExpiry =
-      Date.now() + CERTIFICATE_VALIDITY_MS - SEALED_SENDER_CERTIFICATE_MARGIN_MS;
+    const { deserializeSenderCertificate, validateSenderCertificate } =
+      await import('../internal/protocol/sealed-sender');
+    let certificate: ReturnType<typeof deserializeSenderCertificate>;
+    try {
+      certificate = deserializeSenderCertificate(base64ToBytes(certBase64 as Base64));
+      await validateSenderCertificate(
+        certificate,
+        sealedSender.trustRoots.map((root) => bytesToBase64(root) as Base64),
+        now,
+        {
+          expectedRelayScopeId: bytesToBase64(sealedSender.relayScopeId) as Base64,
+          revokedIssuerKeyIds: sealedSender.revokedIssuerKeyIds,
+        }
+      );
+      const identity = await this._storage.getIdentityKey();
+      if (
+        !identity ||
+        certificate.senderUuid !== this.userId ||
+        certificate.senderDeviceId !== this.deviceId ||
+        !constantTimeEqual(
+          base64ToBytes(certificate.senderIdentityKey),
+          base64ToBytes(identity.dhKey.publicKey)
+        )
+      ) {
+        throw new Error('certificate binding mismatch');
+      }
+    } catch {
+      throw new EncryptionError(
+        'Fetched sender certificate failed client binding validation',
+        EncryptionErrorCode.INVALID_CIPHERTEXT
+      );
+    }
+
+    const refreshAt = certificate.expires - SEALED_SENDER_CERTIFICATE_MARGIN_MS;
+    if (refreshAt > now) {
+      this.cachedSenderCertificate = certBase64;
+      this.cachedCertificateExpiry = refreshAt;
+    } else {
+      this.cachedSenderCertificate = null;
+      this.cachedCertificateExpiry = 0;
+    }
 
     return certBase64;
   }
@@ -1316,7 +1357,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   ): Promise<string> {
     // Handle sealed sender envelopes: unseal to reveal sender before decrypting
     if (envelope.messageType === 'unidentified_sender' && this.config.sealedSender) {
-      const { unsealMessage, envelopeTypeForContent } = await import('./sealed-sender-ops');
+      const { unsealMessage, envelopeTypeForContent } = await import('./sealed-sender');
       const identityKeyPair = await this._storage.getIdentityKey();
       if (!identityKeyPair) {
         throw new EncryptionError(
@@ -1332,6 +1373,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
         this.userId,
         this.deviceId,
         this.config.sealedSender,
+        envelope.serverTimestamp,
         this.logger
       );
 
@@ -2480,8 +2522,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
       groupId,
       plaintext,
       this.groupManager
-        ? (candidateGroupId) =>
-            this.groupManager!.assertGroupSendAllowed(candidateGroupId)
+        ? (candidateGroupId) => this.groupManager!.assertGroupSendAllowed(candidateGroupId)
         : undefined
     );
   }
@@ -2936,13 +2977,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     editorAci: Uint8Array,
     member: GroupMemberInput
   ): Promise<void> {
-    return GroupOps.addGroupMember(
-      this.ctx,
-      this.groups,
-      groupId,
-      editorAci,
-      member
-    );
+    return GroupOps.addGroupMember(this.ctx, this.groups, groupId, editorAci, member);
   }
 
   /** Accept this client's pending profile-key invitation. */
@@ -2957,12 +2992,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     groupId: GroupId,
     identity: 'aci' | 'pni' = 'aci'
   ): Promise<void> {
-    return GroupOps.declineGroupMemberInvitation(
-      this.ctx,
-      this.groups,
-      groupId,
-      identity
-    );
+    return GroupOps.declineGroupMemberInvitation(this.ctx, this.groups, groupId, identity);
   }
 
   /**
@@ -2998,13 +3028,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     editorAci: Uint8Array,
     description: string
   ): Promise<void> {
-    return GroupOps.updateGroupDescription(
-      this.ctx,
-      this.groups,
-      groupId,
-      editorAci,
-      description
-    );
+    return GroupOps.updateGroupDescription(this.ctx, this.groups, groupId, editorAci, description);
   }
 
   /**
@@ -3015,13 +3039,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     editorAci: Uint8Array,
     updates: Partial<AccessControl>
   ): Promise<void> {
-    return GroupOps.updateGroupAccessControl(
-      this.ctx,
-      this.groups,
-      groupId,
-      editorAci,
-      updates
-    );
+    return GroupOps.updateGroupAccessControl(this.ctx, this.groups, groupId, editorAci, updates);
   }
 
   /**

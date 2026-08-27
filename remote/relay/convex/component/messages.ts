@@ -1,15 +1,8 @@
-import {
-  MINUTE,
-  RateLimiter,
-  isRateLimitError,
-} from '@convex-dev/rate-limiter';
+import { MINUTE, RateLimiter, isRateLimitError } from '@convex-dev/rate-limiter';
 import { ConvexError, v } from 'convex/values';
-import {
-  base64ToBytes,
-  bytesToBase64,
-} from '../../../../internal/crypto/utils';
+import { base64ToBytes, bytesToBase64 } from '../../../../internal/crypto/utils';
 import { MAX_DEVICES } from '../../../../device/constants';
-import { serializeReceivedMessage } from '../../../../internal/protocol/sealed-sender/v2-binary';
+import { serializeReceivedMessage } from '../../../../internal/protocol/sealed-sender/multi-recipient-message';
 import { asBase64 } from '../../../../types/utils';
 import { components } from './_generated/api';
 import { mutation, query } from './_generated/server';
@@ -46,14 +39,11 @@ const MAX_MULTI_RECIPIENT_DEVICES = 1000;
  * Otherwise a payload whose size is not a multiple of 3 encodes 2 characters
  * past the advertised limit, and full-size messages are refused.
  */
-const base64LengthOf = (byteLength: number): number =>
-  4 * Math.ceil(byteLength / 3);
+const base64LengthOf = (byteLength: number): number => 4 * Math.ceil(byteLength / 3);
 const MAX_MESSAGE_BYTES = 96 * 1024;
 const MAX_MULTI_RECIPIENT_MESSAGE_BYTES = 96 * 1024;
 const MAX_CIPHERTEXT_LENGTH = base64LengthOf(MAX_MESSAGE_BYTES);
-const MAX_MULTI_RECIPIENT_CIPHERTEXT_LENGTH = base64LengthOf(
-  MAX_MULTI_RECIPIENT_MESSAGE_BYTES
-);
+const MAX_MULTI_RECIPIENT_CIPHERTEXT_LENGTH = base64LengthOf(MAX_MULTI_RECIPIENT_MESSAGE_BYTES);
 
 /**
  * Inbound budget per recipient, spent in ciphertext bytes.
@@ -130,16 +120,9 @@ function ciphertextBytes(encoded: string): number {
   return Math.floor((encoded.length * 3) / 4);
 }
 
-function requireCiphertextWithin(
-  encoded: string,
-  maxLength: number
-): void {
+function requireCiphertextWithin(encoded: string, maxLength: number): void {
   if (encoded.length > maxLength) {
-    throw relayError(
-      'INVALID_REQUEST',
-      413,
-      'Message content exceeds the maximum size'
-    );
+    throw relayError('INVALID_REQUEST', 413, 'Message content exceeds the maximum size');
   }
 }
 
@@ -160,8 +143,7 @@ function rethrowRateLimited(error: unknown, message: string): never {
     const data = error.data as { kind?: unknown; retryAfter?: unknown };
     if (data.kind === 'RateLimited') {
       throw relayError('RATE_LIMITED', 429, message, {
-        retryAfter:
-          typeof data.retryAfter === 'number' ? data.retryAfter : undefined,
+        retryAfter: typeof data.retryAfter === 'number' ? data.retryAfter : undefined,
       });
     }
   }
@@ -192,10 +174,7 @@ async function chargeInboundBudget(
       throws: true,
     });
   } catch (error) {
-    rethrowRateLimited(
-      error,
-      'Inbound message rate limit exceeded for this recipient'
-    );
+    rethrowRateLimited(error, 'Inbound message rate limit exceeded for this recipient');
   }
 }
 
@@ -208,10 +187,7 @@ async function chargeInboundBudget(
  * sender it never has to have talked to, so there is no relationship to
  * check either.
  */
-async function chargeRetryRequest(
-  ctx: MutationCtx,
-  requesterUserId: string
-): Promise<void> {
+async function chargeRetryRequest(ctx: MutationCtx, requesterUserId: string): Promise<void> {
   try {
     await rateLimiter.limit(ctx, 'retryRequests', {
       key: requesterUserId,
@@ -239,9 +215,7 @@ async function requireActiveDevice(
 ): Promise<void> {
   const device = await ctx.db
     .query('devices')
-    .withIndex('by_user_id_and_device_id', (q) =>
-      q.eq('userId', userId).eq('deviceId', deviceId)
-    )
+    .withIndex('by_user_id_and_device_id', (q) => q.eq('userId', userId).eq('deviceId', deviceId))
     .unique();
   if (!device?.registered || !device.enabled) {
     throw relayError('NOT_FOUND', 404, 'Unknown destination device');
@@ -358,33 +332,23 @@ export const send = mutation({
     if (input.recipientRegistrationId !== undefined) {
       const registration = await ctx.db
         .query('identityRegistrations')
-        .withIndex(
-          'by_user_id_and_device_id_and_identity_type',
-          (q) =>
-            q
-              .eq('userId', input.targetUserId)
-              .eq('deviceId', input.targetDeviceId)
-              .eq('identityType', 'aci')
+        .withIndex('by_user_id_and_device_id_and_identity_type', (q) =>
+          q
+            .eq('userId', input.targetUserId)
+            .eq('deviceId', input.targetDeviceId)
+            .eq('identityType', 'aci')
         )
         .unique();
-      if (
-        registration &&
-        registration.registrationId !== input.recipientRegistrationId
-      ) {
+      if (registration && registration.registrationId !== input.recipientRegistrationId) {
         // Names only the stale device, matching the reference's 410 body.
         // The current registration ID stays out. The sender re-fetches the
         // prekey bundle to recover, and that path is rate limited. This one
         // would otherwise hand any account-authenticated caller a free
         // oracle for registration-ID changes on arbitrary devices.
-        throw relayError(
-          'STALE_DEVICE',
-          410,
-          'Recipient device registration changed',
-          {
-            staleDevices: [input.targetDeviceId],
-            reason: 'device_reinstalled',
-          }
-        );
+        throw relayError('STALE_DEVICE', 410, 'Recipient device registration changed', {
+          staleDevices: [input.targetDeviceId],
+          reason: 'device_reinstalled',
+        });
       }
     }
     // Placed after the registration check for readability, not for safety. A
@@ -436,9 +400,7 @@ export const getPendingMessages = query({
       await ctx.db
         .query('messages')
         .withIndex('by_target_user_id_and_target_device_id', (q) =>
-          q
-            .eq('targetUserId', input.callerUserId)
-            .eq('targetDeviceId', input.deviceId)
+          q.eq('targetUserId', input.callerUserId).eq('targetDeviceId', input.deviceId)
         )
         .take(MAX_PENDING_MESSAGES)
     ).filter((row) => row.expiresAt > now);
@@ -468,8 +430,7 @@ export const getPendingMessages = query({
           throw new ConvexError({
             code: 'INTERNAL_ERROR',
             status: 500,
-            message:
-              'Shared multi-recipient payload is missing for a live message',
+            message: 'Shared multi-recipient payload is missing for a live message',
           });
         }
         shared = base64ToBytes(asBase64(payload.sharedBase64));
@@ -527,15 +488,11 @@ export const markDelivered = mutation({
     await rememberAccount(ctx, input);
     const message = await ctx.db
       .query('messages')
-      .withIndex('by_message_id', (q) =>
-        q.eq('messageId', input.messageId)
-      )
+      .withIndex('by_message_id', (q) => q.eq('messageId', input.messageId))
       .unique();
     if (!message) return null;
     if (message.targetUserId !== input.callerUserId) {
-      throw unauthorized(
-        'only the target account can mark a message delivered'
-      );
+      throw unauthorized('only the target account can mark a message delivered');
     }
     await ctx.db.delete(message._id);
     return null;
@@ -602,9 +559,7 @@ async function authorizeUnidentified(
   const hasAccessKey = auth.unidentifiedAccessKey !== undefined;
   const hasGroupToken = auth.groupSendToken !== undefined;
   if (hasAccessKey === hasGroupToken) {
-    throw unauthorized(
-      'exactly one sealed-sender authorization is required'
-    );
+    throw unauthorized('exactly one sealed-sender authorization is required');
   }
   if (auth.groupSendToken !== undefined) {
     // The caller names the ACI it claims for each recipient. The token
@@ -613,70 +568,18 @@ async function authorizeUnidentified(
     const named: Array<{ userId: string; aciBytes: ArrayBuffer }> = [];
     for (const recipient of recipients) {
       if (recipient.aciBytes === undefined) {
-        throw unauthorized(
-          'a group-send token requires an ACI for every recipient'
-        );
+        throw unauthorized('a group-send token requires an ACI for every recipient');
       }
       named.push({ userId: recipient.userId, aciBytes: recipient.aciBytes });
     }
     await authorizeGroupSendToken(ctx, named, auth.groupSendToken);
     return;
   }
-  const distinctRecipients = [
-    ...new Set(recipients.map((recipient) => recipient.userId)),
-  ];
+  const distinctRecipients = [...new Set(recipients.map((recipient) => recipient.userId))];
   for (const userId of distinctRecipients) {
-    await authorizeAccessKey(
-      ctx,
-      userId,
-      auth.unidentifiedAccessKey!
-    );
+    await authorizeAccessKey(ctx, userId, auth.unidentifiedAccessKey!);
   }
 }
-
-export const sendUnidentified = mutation({
-  args: {
-    targetUserId: v.string(),
-    targetDeviceId: v.number(),
-    /** The recipient ACI the caller claims. Required with a group-send
-     * token, which endorses ACIs rather than user IDs. */
-    targetAciBytes: v.optional(v.bytes()),
-    ciphertext: v.string(),
-    timestamp: v.number(),
-    clientMessageId: v.optional(v.string()),
-    unidentifiedAccessKey: v.optional(v.string()),
-    groupSendToken: v.optional(v.bytes()),
-  },
-  returns: receiptValidator,
-  handler: async (ctx, input) => {
-    requireCiphertextWithin(input.ciphertext, MAX_CIPHERTEXT_LENGTH);
-    await authorizeUnidentified(
-      ctx,
-      [{ userId: input.targetUserId, aciBytes: input.targetAciBytes }],
-      input
-    );
-    await requireActiveDevice(
-      ctx,
-      input.targetUserId,
-      input.targetDeviceId
-    );
-    await chargeInboundBudget(
-      ctx,
-      input.targetUserId,
-      ciphertextBytes(input.ciphertext)
-    );
-    return await insertMessage(ctx, {
-      targetUserId: input.targetUserId,
-      targetDeviceId: input.targetDeviceId,
-      senderUserId: '',
-      senderDeviceId: 0,
-      ciphertext: input.ciphertext,
-      messageType: 'unidentified_sender',
-      timestamp: input.timestamp,
-      clientMessageId: input.clientMessageId,
-    });
-  },
-});
 
 const multiRecipientValidator = v.object({
   userId: v.string(),
@@ -712,10 +615,7 @@ export const sendMultiRecipientUnidentified = mutation({
         `Multi-recipient delivery supports at most ${MAX_MULTI_RECIPIENT_DEVICES} devices`
       );
     }
-    requireCiphertextWithin(
-      input.messageCiphertextBase64,
-      MAX_MULTI_RECIPIENT_CIPHERTEXT_LENGTH
-    );
+    requireCiphertextWithin(input.messageCiphertextBase64, MAX_MULTI_RECIPIENT_CIPHERTEXT_LENGTH);
     // Per-recipient key material is a fixed-size key and tag. The reference
     // budgets ~100 bytes per recipient block. 512 base64 characters is far
     // above any real encoding and far below a useful flood.
@@ -749,12 +649,8 @@ export const sendMultiRecipientUnidentified = mutation({
       })),
       input
     );
-    const ephemeralPublic = base64ToBytes(
-      asBase64(input.ephemeralPublicBase64)
-    );
-    const messageCiphertext = base64ToBytes(
-      asBase64(input.messageCiphertextBase64)
-    );
+    const ephemeralPublic = base64ToBytes(asBase64(input.ephemeralPublicBase64));
+    const messageCiphertext = base64ToBytes(asBase64(input.messageCiphertextBase64));
     // The shared remainder is the ephemeral public key and the message
     // ciphertext. It is stored once and referenced from every accepted
     // recipient row. That matches the reference's message store, which
@@ -766,9 +662,7 @@ export const sendMultiRecipientUnidentified = mutation({
     // nothing new beyond, at worst, one TTL-reaped orphan payload.
     const sharedLength = ephemeralPublic.length + messageCiphertext.length;
     let sharedPayloadId: string | undefined;
-    const ensureSharedPayload = async (
-      shared: Uint8Array
-    ): Promise<string> => {
+    const ensureSharedPayload = async (shared: Uint8Array): Promise<string> => {
       if (sharedPayloadId === undefined) {
         sharedPayloadId = crypto.randomUUID();
         await ctx.db.insert('multiRecipientPayloads', {
@@ -779,16 +673,14 @@ export const sendMultiRecipientUnidentified = mutation({
       }
       return sharedPayloadId;
     };
-    let first:
-      { messageId: string; serverTimestamp: number } | undefined;
+    let first: { messageId: string; serverTimestamp: number } | undefined;
     const uuids404 = new Set<string>();
+    const chargedUsers = new Set<string>();
     for (const recipient of input.recipients) {
       const device = await ctx.db
         .query('devices')
         .withIndex('by_user_id_and_device_id', (q) =>
-          q
-            .eq('userId', recipient.userId)
-            .eq('deviceId', recipient.deviceId)
+          q.eq('userId', recipient.userId).eq('deviceId', recipient.deviceId)
         )
         .unique();
       if (!device?.registered || !device.enabled) {
@@ -797,21 +689,24 @@ export const sendMultiRecipientUnidentified = mutation({
       }
       const registration = await ctx.db
         .query('identityRegistrations')
-        .withIndex(
-          'by_user_id_and_device_id_and_identity_type',
-          (q) =>
-            q
-              .eq('userId', recipient.userId)
-              .eq('deviceId', recipient.deviceId)
-              .eq('identityType', 'aci')
+        .withIndex('by_user_id_and_device_id_and_identity_type', (q) =>
+          q
+            .eq('userId', recipient.userId)
+            .eq('deviceId', recipient.deviceId)
+            .eq('identityType', 'aci')
         )
         .unique();
-      if (
-        registration &&
-        registration.registrationId !== recipient.registrationId
-      ) {
+      if (registration && registration.registrationId !== recipient.registrationId) {
         uuids404.add(recipient.userId);
         continue;
+      }
+      if (!chargedUsers.has(recipient.userId)) {
+        await chargeInboundBudget(
+          ctx,
+          recipient.userId,
+          ciphertextBytes(input.messageCiphertextBase64)
+        );
+        chargedUsers.add(recipient.userId);
       }
       // The canonical serializer builds (and validates) the full wire
       // form. The row keeps only the per-recipient prefix (version byte
@@ -822,10 +717,7 @@ export const sendMultiRecipientUnidentified = mutation({
         ephemeralPublic,
         messageCiphertext
       );
-      const prefix = receivedMessage.subarray(
-        0,
-        receivedMessage.length - sharedLength
-      );
+      const prefix = receivedMessage.subarray(0, receivedMessage.length - sharedLength);
       const result = await insertMessage(ctx, {
         targetUserId: recipient.userId,
         targetDeviceId: recipient.deviceId,
@@ -905,12 +797,10 @@ export const getPendingRetryRequests = query({
     const rows = (
       await ctx.db
         .query('retryRequests')
-        .withIndex(
-          'by_original_sender_user_id_and_original_sender_device_id',
-          (q) =>
-            q
-              .eq('originalSenderUserId', input.callerUserId)
-              .eq('originalSenderDeviceId', input.deviceId)
+        .withIndex('by_original_sender_user_id_and_original_sender_device_id', (q) =>
+          q
+            .eq('originalSenderUserId', input.callerUserId)
+            .eq('originalSenderDeviceId', input.deviceId)
         )
         .take(MAX_PENDING_RETRY_REQUESTS)
     ).filter((row) => row.expiresAt > now);
@@ -937,15 +827,11 @@ export const markRetryRequestHandled = mutation({
     await rememberAccount(ctx, input);
     const request = await ctx.db
       .query('retryRequests')
-      .withIndex('by_request_id', (q) =>
-        q.eq('requestId', input.requestId)
-      )
+      .withIndex('by_request_id', (q) => q.eq('requestId', input.requestId))
       .unique();
     if (!request) return null;
     if (request.originalSenderUserId !== input.callerUserId) {
-      throw unauthorized(
-        'only the original sender can handle a retry request'
-      );
+      throw unauthorized('only the original sender can handle a retry request');
     }
     await ctx.db.delete(request._id);
     return null;

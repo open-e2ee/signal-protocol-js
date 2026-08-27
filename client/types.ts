@@ -160,9 +160,11 @@ export interface SendOptions {
   /**
    * Stable client-generated send identifier for retry idempotency.
    *
-   * Retries of the same logical send should reuse this value with the same
-   * timestamp. Relay adapters that support it can return the original accept
-   * result instead of inserting a duplicate envelope after an unknown result.
+   * The SDK generates this value when it is omitted. An application that
+   * retries a failed send explicitly must reuse the identifier. If it also
+   * supplies a timestamp, that timestamp must match the original send. The SDK
+   * persists the exact encrypted transmission before it contacts the Relay, so
+   * an unknown result never advances the protocol ratchet twice.
    */
   clientMessageId?: string;
 
@@ -211,6 +213,9 @@ export type DownloadedAttachment = ResolvedMediaAttachment;
  * recipient type (user/group).
  */
 export interface SendResult {
+  /** Stable logical-send identifier used by the exact-ciphertext outbox. */
+  clientMessageId: string;
+
   /** Server-assigned message ID for tracking and markAsRead() */
   messageId: string;
 
@@ -244,6 +249,25 @@ export interface SendResult {
 
   /** MIME content type for the encrypted media */
   contentType?: string;
+}
+
+/**
+ * A send failure whose exact encrypted transmission remains in the outbox.
+ *
+ * Reuse `clientMessageId` when the application calls `send()` again after an
+ * unknown Relay result. The durable outbox supplies the original timestamp.
+ */
+export interface OutgoingMessageError extends Error {
+  readonly clientMessageId: string;
+}
+
+/** Return true when a send error exposes its durable logical-send identifier. */
+export function isOutgoingMessageError(error: unknown): error is OutgoingMessageError {
+  return (
+    error instanceof Error &&
+    'clientMessageId' in error &&
+    typeof (error as { clientMessageId?: unknown }).clientMessageId === 'string'
+  );
 }
 
 /**

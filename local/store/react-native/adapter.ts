@@ -909,6 +909,11 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     await this.storageBackend.setItem(this.getMetadataStorageKey(key), value);
   }
 
+  async deleteMetadata(key: string): Promise<void> {
+    this._metadata.delete(key);
+    await this.storageBackend.removeItem(this.getMetadataStorageKey(key));
+  }
+
   // ============================================================================
   // Private Helper Methods
   // ============================================================================

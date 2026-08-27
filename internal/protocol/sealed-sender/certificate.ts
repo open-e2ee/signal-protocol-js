@@ -12,11 +12,15 @@
  *
  */
 
-import type { SenderCertificate, ServerCertificate } from './types';
+import type {
+  SenderCertificate,
+  SenderCertificateValidationPolicy,
+  ServerCertificate,
+} from './types';
 import { REVOKED_CERTIFICATE_IDS } from './types';
 import type { Base64 } from '../../../types';
 import type { PrivateKey, PublicKey, Signature } from '../../../keys';
-import { verify, sign, bytesToBase64, base64ToBytes } from '../../crypto';
+import { verify, sign, bytesToBase64, base64ToBytes, constantTimeEqual } from '../../crypto';
 import {
   encodeServerCertificateData,
   decodeServerCertificateData,
@@ -47,12 +51,24 @@ const GENERIC_ERROR = 'Sealed sender verification failed';
 export async function createServerCertificate(
   id: number,
   publicKey: Base64,
-  trustRootPrivateKey: PrivateKey
+  trustRootPrivateKey: PrivateKey,
+  validity: { notBefore: number; notAfter: number }
 ): Promise<ServerCertificate> {
+  if (
+    !Number.isSafeInteger(validity.notBefore) ||
+    !Number.isSafeInteger(validity.notAfter) ||
+    validity.notBefore <= 0 ||
+    validity.notAfter < validity.notBefore
+  ) {
+    throw new Error(GENERIC_ERROR);
+  }
+
   // Encode inner Certificate protobuf
   const certificateBytesRaw = encodeServerCertificateData({
     id,
     key: base64ToBytes(publicKey),
+    notBefore: validity.notBefore,
+    notAfter: validity.notAfter,
   });
 
   // Sign with trust root
@@ -61,6 +77,8 @@ export async function createServerCertificate(
   return {
     id,
     publicKey,
+    notBefore: validity.notBefore,
+    notAfter: validity.notAfter,
     certificateBytes: bytesToBase64(certificateBytesRaw),
     signature: signatureBase64,
   };
@@ -82,10 +100,20 @@ export async function createSenderCertificate(
     senderIdentityKey: Base64;
     expires: number;
     senderE164?: string;
+    relayScopeId: Base64;
   },
   signer: ServerCertificate,
   signerPrivateKey: PrivateKey
 ): Promise<SenderCertificate> {
+  if (
+    base64ToBytes(fields.relayScopeId).length !== 16 ||
+    !Number.isSafeInteger(fields.expires) ||
+    fields.expires <= 0 ||
+    fields.expires > signer.notAfter
+  ) {
+    throw new Error(GENERIC_ERROR);
+  }
+
   // Serialize the signer as outer ServerCertificate protobuf
   const signerBytes = encodeServerCertificate({
     certificate: base64ToBytes(signer.certificateBytes),
@@ -100,6 +128,7 @@ export async function createSenderCertificate(
     expires: fields.expires,
     identityKey: base64ToBytes(fields.senderIdentityKey),
     signerCertificate: signerBytes,
+    relayScopeId: base64ToBytes(fields.relayScopeId),
   });
 
   // Sign with signer's private key
@@ -111,6 +140,7 @@ export async function createSenderCertificate(
     senderIdentityKey: fields.senderIdentityKey,
     expires: fields.expires,
     senderE164: fields.senderE164,
+    relayScopeId: fields.relayScopeId,
     signer,
     certificateBytes: bytesToBase64(certificateBytesRaw),
     signature: signatureBase64,
@@ -164,7 +194,12 @@ export function deserializeSenderCertificate(bytes: Uint8Array): SenderCertifica
     const inner = decodeSenderCertificateData(outer.certificate);
 
     // Validate inner Certificate has required fields
-    if (!inner.senderUuid || !inner.identityKey.length || !inner.signerCertificate.length) {
+    if (
+      !inner.senderUuid ||
+      !inner.identityKey.length ||
+      !inner.signerCertificate.length ||
+      inner.relayScopeId.length !== 16
+    ) {
       throw new Error('missing required fields');
     }
 
@@ -180,7 +215,13 @@ export function deserializeSenderCertificate(bytes: Uint8Array): SenderCertifica
     const signerInner = decodeServerCertificateData(signerOuter.certificate);
 
     // Validate server cert inner data
-    if (!signerInner.key.length) {
+    if (
+      !signerInner.key.length ||
+      !Number.isSafeInteger(signerInner.notBefore) ||
+      !Number.isSafeInteger(signerInner.notAfter) ||
+      signerInner.notBefore <= 0 ||
+      signerInner.notAfter < signerInner.notBefore
+    ) {
       throw new Error('missing required fields');
     }
 
@@ -188,6 +229,8 @@ export function deserializeSenderCertificate(bytes: Uint8Array): SenderCertifica
     const signer: ServerCertificate = {
       id: signerInner.id,
       publicKey: bytesToBase64(signerInner.key),
+      notBefore: signerInner.notBefore,
+      notAfter: signerInner.notAfter,
       certificateBytes: bytesToBase64(signerOuter.certificate),
       signature: bytesToBase64(signerOuter.signature),
     };
@@ -198,6 +241,7 @@ export function deserializeSenderCertificate(bytes: Uint8Array): SenderCertifica
       senderIdentityKey: bytesToBase64(inner.identityKey),
       expires: inner.expires,
       senderE164: inner.senderE164,
+      relayScopeId: bytesToBase64(inner.relayScopeId),
       signer,
       certificateBytes: bytesToBase64(outer.certificate),
       signature: bytesToBase64(outer.signature),
@@ -223,12 +267,14 @@ export function deserializeSenderCertificate(bytes: Uint8Array): SenderCertifica
  * @param cert Certificate to validate
  * @param trustRoots Ed25519 trust root public keys
  * @param currentTime Optional timestamp for expiration check (defaults to Date.now())
+ * @param policy Required deployment scope and issuer revocation policy
  * @throws Error (generic) if validation fails
  */
 export async function validateSenderCertificate(
   cert: SenderCertificate,
   trustRoots: Base64[],
-  currentTime?: number
+  currentTime: number | undefined,
+  policy: SenderCertificateValidationPolicy
 ): Promise<void> {
   const now = currentTime ?? Date.now();
 
@@ -236,9 +282,39 @@ export async function validateSenderCertificate(
   if (trustRoots.length === 0) {
     throw new Error(GENERIC_ERROR);
   }
+  if (base64ToBytes(policy.expectedRelayScopeId).length !== 16) {
+    throw new Error(GENERIC_ERROR);
+  }
 
   // Step 1: Check revocation by server certificate ID (cheapest check)
-  if (REVOKED_CERTIFICATE_IDS.includes(cert.signer.id)) {
+  if (
+    REVOKED_CERTIFICATE_IDS.includes(cert.signer.id) ||
+    policy.revokedIssuerKeyIds?.includes(cert.signer.id)
+  ) {
+    throw new Error(GENERIC_ERROR);
+  }
+
+  if (
+    base64ToBytes(cert.relayScopeId).length !== 16 ||
+    !constantTimeEqual(
+      base64ToBytes(cert.relayScopeId),
+      base64ToBytes(policy.expectedRelayScopeId)
+    )
+  ) {
+    throw new Error(GENERIC_ERROR);
+  }
+
+  if (
+    !Number.isSafeInteger(cert.expires) ||
+    cert.expires <= 0 ||
+    cert.signer.notBefore > cert.signer.notAfter ||
+    !Number.isSafeInteger(cert.signer.notBefore) ||
+    !Number.isSafeInteger(cert.signer.notAfter) ||
+    cert.signer.notBefore <= 0 ||
+    now < cert.signer.notBefore ||
+    now > cert.signer.notAfter ||
+    cert.expires > cert.signer.notAfter
+  ) {
     throw new Error(GENERIC_ERROR);
   }
 
@@ -291,14 +367,27 @@ export async function validateSenderCertificate(
  *
  * @param cert Server certificate to validate
  * @param trustRoots Ed25519 trust root public keys
+ * @param currentTime Optional timestamp for issuer validity (defaults to Date.now())
  * @throws Error (generic) if validation fails
  */
 export async function validateServerCertificate(
   cert: ServerCertificate,
-  trustRoots: Base64[]
+  trustRoots: Base64[],
+  currentTime = Date.now()
 ): Promise<void> {
   // Check revocation
   if (REVOKED_CERTIFICATE_IDS.includes(cert.id)) {
+    throw new Error(GENERIC_ERROR);
+  }
+
+  if (
+    !Number.isSafeInteger(cert.notBefore) ||
+    !Number.isSafeInteger(cert.notAfter) ||
+    cert.notBefore <= 0 ||
+    cert.notAfter < cert.notBefore ||
+    currentTime < cert.notBefore ||
+    currentTime > cert.notAfter
+  ) {
     throw new Error(GENERIC_ERROR);
   }
 

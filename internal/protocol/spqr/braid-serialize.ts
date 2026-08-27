@@ -156,7 +156,7 @@ function validateEncoderStateJSON(value: unknown, label: string): void {
     throw new Error(`${label}.data must contain between 1 and 1152 bytes`);
   }
   // totalChunks is the initial delivery estimate. Streaming parity generation
-  // may advance currentChunk beyond it while waiting for peer acknowledgement.
+  // may advance currentChunk beyond it while waiting for peer acknowledgment.
   assertInteger(value.totalChunks, `${label}.totalChunks`, 1, BRAID_ENCODER_CURSOR_MAX);
   assertBraidEncoderCursor(value.currentChunk, `${label}.currentChunk`);
   if (typeof value.isComplete !== 'boolean') throw new Error(`${label}.isComplete must be boolean`);

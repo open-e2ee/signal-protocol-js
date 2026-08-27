@@ -964,9 +964,9 @@ Message ID and server timestamp (for delivery receipt matching)
 
 > `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `recipientUserIds?`, `clientMessageId?`): `Promise`\<\{ `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
 
-Send a V2 multi-recipient sealed sender message.
+Send a multi-recipient sealed sender message.
 
-Client sends the full V2 binary blob (base64-encoded).
+Client sends the full binary blob (base64-encoded).
 Relay parses client-side, sends structured JSON to mutation.
 Server constructs per-device ReceivedMessage blobs and fans out.
 
@@ -1063,38 +1063,6 @@ Retry request with sender/requester info and failed sequence number
 #### Returns
 
 `Promise`\<`void`\>
-
-***
-
-### sendUnidentified()?
-
-> `optional` **sendUnidentified**(`envelope`, `auth`): `Promise`\<\{ `messageId`: `string`; `serverTimestamp`: `number`; \}\>
-
-Send a sealed sender message (anonymous delivery).
-
-The server does NOT know the sender. The ciphertext is an
-UnidentifiedSenderMessage that the recipient unseals to discover
-the sender's identity via the embedded certificate.
-
-#### Parameters
-
-##### envelope
-
-[`Envelope`](Envelope.md)
-
-Sealed sender envelope (senderUserId/senderDeviceId are empty strings/0)
-
-##### auth
-
-[`SealedSenderAuth`](../type-aliases/SealedSenderAuth.md)
-
-Authentication for anonymous delivery (access key or group send token)
-
-#### Returns
-
-`Promise`\<\{ `messageId`: `string`; `serverTimestamp`: `number`; \}\>
-
-Message ID and server timestamp
 
 ***
 
