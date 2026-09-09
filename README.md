@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/open-e2ee/design/v0.9.1/brand/generated/open-e2ee-mark-adaptive.svg" alt="OpenE2EE" width="72" height="72">
+<img src="https://raw.githubusercontent.com/open-e2ee/design/v0.21.2/brand/generated/open-e2ee-mark-adaptive.svg" alt="OpenE2EE" width="72" height="72">
 
 # OpenE2EE Signal Protocol SDK
 
@@ -25,7 +25,7 @@
 
 The protocol code ships without a native crypto module or platform crypto binary. The Expo SQLCipher store requires a development build and native project configuration.
 
-Version `1.0.x`. Public APIs and persisted formats follow semantic versioning.
+Version `2.0.x`. Public APIs and persisted formats follow semantic versioning.
 
 OpenE2EE implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. Read the [full notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
