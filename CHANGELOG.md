@@ -2,8 +2,8 @@
 
 ## 2.0.0
 
-- **The public fuzz workflow uses code-change mode.**
-  The previous runner setting selected coverage reporting instead of fuzzing.
+- Six Jazzer.js targets run for 150 seconds each on Ubuntu 24.04.
+  The previous runner selected coverage reporting instead of fuzzing.
 
 - **Hosted control messages accept an omitted send identifier.**
   One generated UUID survives token retries.
