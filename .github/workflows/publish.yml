@@ -28,8 +28,8 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          # Must match the npm major used by the release-export pipeline (see ci.yml).
-          node-version: 26
+          # Package compression must match the example lockfile integrity.
+          node-version: 26.8.2
           cache: npm
           registry-url: https://registry.npmjs.org
 
@@ -39,12 +39,29 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Pack only
-        if: inputs.dry-run
-        run: npm pack --dry-run
+      - name: Pack and check example integrity
+        id: package
+        run: |
+          npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP" > "$RUNNER_TEMP/packed.json"
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const [packed] = JSON.parse(readFileSync(join(process.env.RUNNER_TEMP, 'packed.json'), 'utf8'));
+          for (const example of ['browser', 'expo']) {
+            const lock = JSON.parse(readFileSync(`examples/${example}/package-lock.json`, 'utf8'));
+            const dependency = lock.packages[`node_modules/${packed.name}`];
+            assert.equal(dependency?.version, packed.version, `${example}: SDK version mismatch`);
+            assert.equal(dependency?.integrity, packed.integrity, `${example}: SDK integrity mismatch`);
+          }
+          console.log(`Verified ${packed.name}@${packed.version}: ${packed.integrity}`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `path=${join(process.env.RUNNER_TEMP, packed.filename)}\n`);
+          JS
 
       - name: Publish
         if: ${{ !inputs.dry-run }}
+        env:
+          SDK_PACKAGE_PATH: ${{ steps.package.outputs.path }}
         # Dist-tag policy, applied at publish time because OIDC trusted-publishing
         # credentials cover the publish operation only (no post-hoc dist-tag moves):
         #   - stable versions publish to `latest`;
@@ -89,7 +106,7 @@ jobs:
               ;;
           esac
           echo "Publishing $VERSION with dist-tag $TAG (registry latest: ${CURRENT_LATEST:-n/a})"
-          npm publish --provenance --access public --tag "$TAG"
+          npm publish "$SDK_PACKAGE_PATH" --provenance --access public --tag "$TAG"
           # Best-effort: keep the prerelease channel tag current when a prerelease
           # ships to latest. May be refused under OIDC scoping; never fails the job.
           case "$VERSION" in
@@ -116,7 +133,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 26
+          node-version: 26.8.2
           cache: npm
 
       - name: Install from the committed lockfile
