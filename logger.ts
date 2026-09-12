@@ -1,3 +1,5 @@
+declare const __DEV__: boolean | undefined;
+
 /**
  * Signal Protocol package logging primitives.
  *
@@ -5,8 +7,6 @@
  * explicit dependencies. This keeps logging package-local without relying on
  * mutable module-global state.
  */
-
-declare const __DEV__: boolean | undefined;
 
 export interface ILogger {
   debug?(message: string, data?: unknown): void;
