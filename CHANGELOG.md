@@ -2,6 +2,9 @@
 
 ## 2.0.0
 
+- **The public fuzz workflow uses code-change mode.**
+  The previous runner setting selected coverage reporting instead of fuzzing.
+
 - **Hosted control messages accept an omitted send identifier.**
   One generated UUID survives token retries.
 
