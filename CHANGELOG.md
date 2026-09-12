@@ -4,6 +4,7 @@
 
 - Select secure randomness for browsers, Node, and Expo through package imports.
   ML-KEM receives explicit random input on Hermes.
+  React Native uses the application's Web Crypto provider before loading Expo crypto.
 - Use Noble AES when the runtime has no Web Crypto implementation.
 - Export the metadata table required by Expo storage. Read recipient identities
   with the column names returned by SQLite.
