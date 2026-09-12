@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.2
+
+- Correct the browser and Expo example package integrity for the release environment.
+- Check example pins before publication and publish the checked tarball.
+  This release changes package metadata and publication checks.
+
 ## 2.0.1
 
 - Select secure randomness for browsers, Node, and Expo through package imports.
