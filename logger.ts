@@ -1,3 +1,5 @@
+declare const __DEV__: boolean | undefined;
+
 /**
  * Signal Protocol package logging primitives.
  *

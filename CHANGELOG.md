@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.1
+
+- Select secure randomness for browsers, Node, and Expo through package imports.
+  ML-KEM receives explicit random input on Hermes.
+  React Native uses the application's Web Crypto provider before loading Expo crypto.
+- Use Noble AES when the runtime has no Web Crypto implementation.
+- Export the metadata table required by Expo storage. Read recipient identities
+  with the column names returned by SQLite.
+- Keep in-memory relay message identifiers unique across resets and restarts.
+  Persistent clients no longer discard new replies as duplicate deliveries.
+- Add runnable browser and Expo examples, including encrypted replies and
+  SQLCipher persistence. Explain private testing and public verification.
+
 ## 2.0.0
 
 - Six Jazzer.js targets run for 150 seconds each on Ubuntu 24.04.

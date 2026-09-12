@@ -1,0 +1,9 @@
+#sdk-example { max-width: 48rem; margin: 3rem auto; padding: 0 1.5rem; font-family: system-ui, sans-serif; line-height: 1.6; }
+#sdk-example h1 { font-size: clamp(2rem, 4vw, 3rem); font-weight: 650; line-height: 1.15; letter-spacing: -.035em; margin: 1rem 0; }
+#sdk-example p { margin: 1rem 0; }
+#sdk-example a { color: inherit; text-decoration: underline; text-underline-offset: .2em; }
+#sdk-example label { display: block; font-weight: 600; }
+#sdk-example textarea { box-sizing: border-box; width: 100%; font: inherit; padding: .7rem; margin: .5rem 0 1rem; border: 1px solid #82968a; border-radius: .25rem; background: transparent; }
+#sdk-example button { font: inherit; padding: .5rem 1rem; cursor: pointer; border: 1px solid #82968a; border-radius: .25rem; background: transparent; }
+#sdk-example button:disabled { cursor: wait; opacity: .65; }
+#sdk-example pre { min-height: 12rem; white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem; border: 1px solid #82968a; border-radius: .4rem; font-size: .85rem; }

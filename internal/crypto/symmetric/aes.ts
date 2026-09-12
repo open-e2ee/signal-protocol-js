@@ -15,47 +15,7 @@ import type { Base64 } from '../../../types';
 import { generateRandomBytes } from '../random';
 import { bytesToBase64, base64ToBytes, concatBytes, constantTimeEqual } from '../utils';
 import { hmac } from './hmac';
-
-// ============================================================================
-// Type Utilities
-// ============================================================================
-
-/**
- * Narrow Uint8Array<ArrayBufferLike> to Uint8Array<ArrayBuffer> for Web Crypto API.
- *
- * TypeScript 5.x widens Uint8Array to Uint8Array<ArrayBufferLike> which includes
- * SharedArrayBuffer. Web Crypto expects BufferSource backed by ArrayBuffer only.
- * At runtime, our code never creates SharedArrayBuffer, so this cast is safe.
- */
-export {};
-function buf(value: Uint8Array): Uint8Array<ArrayBuffer>;
-function buf(value: Uint8Array | undefined): Uint8Array<ArrayBuffer> | undefined;
-function buf(value: Uint8Array | undefined): Uint8Array<ArrayBuffer> | undefined {
-  return value as Uint8Array<ArrayBuffer> | undefined;
-}
-
-/**
- * AES-GCM parameters for Web Crypto, with the AAD left out when there is none.
- *
- * Omitting an optional dictionary member and setting it to `undefined` are not
- * the same thing here. Node's Web Crypto converts the parameters through WebIDL,
- * where an `undefined` member is absent, and accepts it. Chrome parses them by
- * hand: a present `additionalData` key must be a BufferSource whatever its
- * value, so the call fails with `AeadParams: additionalData: Not a BufferSource`.
- *
- * Every AES-GCM caller that passes no AAD therefore worked under Node and threw
- * in a browser. Device provisioning and device transfer are two such callers,
- * and neither passes AAD at all. Building the parameters in one place is what
- * keeps the next call site from reintroducing it.
- */
-function gcmParams(iv: Uint8Array, additionalData?: Uint8Array): AesGcmParams {
-  return {
-    name: 'AES-GCM',
-    iv: buf(iv),
-    tagLength: 128, // 128-bit auth tag
-    ...(additionalData ? { additionalData: buf(additionalData) } : {}),
-  };
-}
+import { encryptAes, decryptAes } from './aes-provider';
 
 // ============================================================================
 // Constants
@@ -105,17 +65,7 @@ export async function aesGcmEncrypt(
   // Generate random IV (12 bytes optimal for GCM)
   const iv = await generateRandomBytes(AES_GCM_IV_BYTES);
 
-  // Import key for Web Crypto API
-  const cryptoKey = await crypto.subtle.importKey('raw', buf(key), { name: 'AES-GCM' }, false, [
-    'encrypt',
-  ]);
-
-  // Encrypt
-  const encrypted = await crypto.subtle.encrypt(
-    gcmParams(iv, additionalData),
-    cryptoKey,
-    buf(plaintext)
-  );
+  const encrypted = await encryptAes('AES-GCM', key, iv, plaintext, additionalData);
 
   // Split ciphertext and auth tag
   const encryptedBytes = new Uint8Array(encrypted);
@@ -151,17 +101,7 @@ export async function aesGcmEncryptWithIV(
   iv: Base64;
   authTag: Base64;
 }> {
-  // Import key for Web Crypto API
-  const cryptoKey = await crypto.subtle.importKey('raw', buf(key), { name: 'AES-GCM' }, false, [
-    'encrypt',
-  ]);
-
-  // Encrypt
-  const encrypted = await crypto.subtle.encrypt(
-    gcmParams(iv, additionalData),
-    cryptoKey,
-    buf(plaintext)
-  );
+  const encrypted = await encryptAes('AES-GCM', key, iv, plaintext, additionalData);
 
   // Split ciphertext and auth tag
   const encryptedBytes = new Uint8Array(encrypted);
@@ -201,17 +141,7 @@ export async function aesGcmDecrypt(
   encrypted.set(ciphertextBytes, 0);
   encrypted.set(authTagBytes, ciphertextBytes.length);
 
-  // Import key
-  const cryptoKey = await crypto.subtle.importKey('raw', buf(key), { name: 'AES-GCM' }, false, [
-    'decrypt',
-  ]);
-
-  // Decrypt
-  const decrypted = await crypto.subtle.decrypt(
-    gcmParams(ivBytes, additionalData),
-    cryptoKey,
-    buf(encrypted)
-  );
+  const decrypted = await decryptAes('AES-GCM', key, ivBytes, encrypted, additionalData);
 
   return new Uint8Array(decrypted);
 }
@@ -251,22 +181,7 @@ export async function aesCbcHmacEncrypt(
   mac: Base64;
 }> {
   // Step 1: Encrypt with AES-256-CBC
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    buf(encryptionKey),
-    { name: 'AES-CBC' },
-    false,
-    ['encrypt']
-  );
-
-  const encrypted = await crypto.subtle.encrypt(
-    {
-      name: 'AES-CBC',
-      iv: buf(iv),
-    },
-    cryptoKey,
-    buf(plaintext)
-  );
+  const encrypted = await encryptAes('AES-CBC', encryptionKey, iv, plaintext);
 
   const ciphertextBytes = new Uint8Array(encrypted);
 
@@ -330,22 +245,7 @@ export async function aesCbcHmacDecrypt(
 
   // Step 2: Decrypt with AES-256-CBC
   try {
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw',
-      buf(encryptionKey),
-      { name: 'AES-CBC' },
-      false,
-      ['decrypt']
-    );
-
-    const decrypted = await crypto.subtle.decrypt(
-      {
-        name: 'AES-CBC',
-        iv: buf(iv),
-      },
-      cryptoKey,
-      buf(ciphertextBytes)
-    );
+    const decrypted = await decryptAes('AES-CBC', encryptionKey, iv, ciphertextBytes);
 
     return new Uint8Array(decrypted);
   } catch {
@@ -371,22 +271,7 @@ export async function aesCbcEncrypt(
   iv: Uint8Array,
   plaintext: Uint8Array
 ): Promise<Base64> {
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    buf(encryptionKey),
-    { name: 'AES-CBC' },
-    false,
-    ['encrypt']
-  );
-
-  const encrypted = await crypto.subtle.encrypt(
-    {
-      name: 'AES-CBC',
-      iv: buf(iv),
-    },
-    cryptoKey,
-    buf(plaintext)
-  );
+  const encrypted = await encryptAes('AES-CBC', encryptionKey, iv, plaintext);
 
   return bytesToBase64(new Uint8Array(encrypted));
 }
@@ -412,22 +297,7 @@ export async function aesCbcDecrypt(
     // "Decryption failed" error rather than leaking a distinguishable message.
     const ciphertextBytes = base64ToBytes(ciphertext);
 
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw',
-      buf(encryptionKey),
-      { name: 'AES-CBC' },
-      false,
-      ['decrypt']
-    );
-
-    const decrypted = await crypto.subtle.decrypt(
-      {
-        name: 'AES-CBC',
-        iv: buf(iv),
-      },
-      cryptoKey,
-      buf(ciphertextBytes)
-    );
+    const decrypted = await decryptAes('AES-CBC', encryptionKey, iv, ciphertextBytes);
 
     return new Uint8Array(decrypted);
   } catch {
@@ -458,22 +328,7 @@ export async function aesCbcEncryptBytes(
   iv: Uint8Array,
   plaintext: Uint8Array
 ): Promise<Uint8Array> {
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    buf(encryptionKey),
-    { name: 'AES-CBC' },
-    false,
-    ['encrypt']
-  );
-
-  const encrypted = await crypto.subtle.encrypt(
-    {
-      name: 'AES-CBC',
-      iv: buf(iv),
-    },
-    cryptoKey,
-    buf(plaintext)
-  );
+  const encrypted = await encryptAes('AES-CBC', encryptionKey, iv, plaintext);
 
   return new Uint8Array(encrypted);
 }
@@ -497,22 +352,7 @@ export async function aesCbcDecryptBytes(
   ciphertext: Uint8Array
 ): Promise<Uint8Array> {
   try {
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw',
-      buf(encryptionKey),
-      { name: 'AES-CBC' },
-      false,
-      ['decrypt']
-    );
-
-    const decrypted = await crypto.subtle.decrypt(
-      {
-        name: 'AES-CBC',
-        iv: buf(iv),
-      },
-      cryptoKey,
-      buf(ciphertext)
-    );
+    const decrypted = await decryptAes('AES-CBC', encryptionKey, iv, ciphertext);
 
     return new Uint8Array(decrypted);
   } catch {
@@ -544,15 +384,7 @@ export async function aesGcmEncryptWithIVBytes(
   iv: Uint8Array,
   additionalData?: Uint8Array
 ): Promise<Uint8Array> {
-  const cryptoKey = await crypto.subtle.importKey('raw', buf(key), { name: 'AES-GCM' }, false, [
-    'encrypt',
-  ]);
-
-  const encrypted = await crypto.subtle.encrypt(
-    gcmParams(iv, additionalData),
-    cryptoKey,
-    buf(plaintext)
-  );
+  const encrypted = await encryptAes('AES-GCM', key, iv, plaintext, additionalData);
 
   return new Uint8Array(encrypted); // ciphertext || authTag (16 bytes)
 }
@@ -576,15 +408,7 @@ export async function aesGcmDecryptWithIVBytes(
   iv: Uint8Array,
   additionalData?: Uint8Array
 ): Promise<Uint8Array> {
-  const cryptoKey = await crypto.subtle.importKey('raw', buf(key), { name: 'AES-GCM' }, false, [
-    'decrypt',
-  ]);
-
-  const decrypted = await crypto.subtle.decrypt(
-    gcmParams(iv, additionalData),
-    cryptoKey,
-    buf(ciphertext)
-  );
+  const decrypted = await decryptAes('AES-GCM', key, iv, ciphertext, additionalData);
 
   return new Uint8Array(decrypted);
 }

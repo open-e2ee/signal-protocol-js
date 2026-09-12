@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1789242069273,
+      "tag": "0000_signal_protocol",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789242286211,
+      "tag": "0001_example_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789242529311,
+      "tag": "0002_protocol_metadata",
+      "breakpoints": true
+    }
+  ]
+}

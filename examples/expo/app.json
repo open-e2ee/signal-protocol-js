@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "OpenE2EE Exchange",
+    "slug": "opene2ee-exchange",
+    "version": "1.0.0",
+    "jsEngine": "hermes",
+    "ios": { "bundleIdentifier": "dev.opene2ee.exchange" },
+    "android": { "package": "dev.opene2ee.exchange" },
+    "plugins": [["expo-sqlite", { "useSQLCipher": true }], "expo-secure-store"]
+  }
+}

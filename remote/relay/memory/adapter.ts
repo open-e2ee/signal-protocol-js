@@ -36,6 +36,7 @@ import {
   deriveIdentityCommitment,
   encodeCompositeIdentityV1,
 } from '../../../keys/identity';
+import { generateUuidV4 } from '../../../internal/crypto/random';
 import { constantTimeEqual } from '../../../internal/crypto/utils';
 import { PROVISIONING_SESSION_TTL_MS } from '../../../device/constants';
 import {
@@ -144,7 +145,6 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
   // Messages/envelopes
   private pendingMessages = new Map<string, Envelope[]>(); // key: `${userId}:${deviceId}`
   private clientMessageReceipts = new Map<string, { messageId: string; serverTimestamp: number }>(); // key: `${userId}:${deviceId}:${senderUserId}:${clientMessageId}`
-  private messageCounter = 0;
 
   // Subscriptions
   private subscriptions = new Map<string, ((envelope: Envelope) => void)[]>();
@@ -266,6 +266,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
 
   async send(envelope: Envelope): Promise<{ messageId: string; serverTimestamp: number }> {
     await this.failures.waitForLatency();
+    const id = await generateUuidV4();
     const targetKey = `${envelope.targetUserId}:${envelope.targetDeviceId}`;
     // Sender-scoped like the Convex backend's dedup index: a
     // clientMessageId collapses retries from the same sender only, never
@@ -280,7 +281,6 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
       }
     }
 
-    const id = `msg-${++this.messageCounter}`;
     const serverTimestamp = Date.now();
 
     const storedEnvelope: Envelope = {
@@ -1451,7 +1451,6 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     this.userIdentities.clear();
     this.senderCertificates.clear();
     this.failures.reset();
-    this.messageCounter = 0;
     this.provisioningCounter = 0;
   }
 

@@ -5,7 +5,7 @@ import { validateContactIdentityRecord } from '../../../../keys/identity';
 import { getDrizzle, getRawDatabase, recipientIdentities } from '../db';
 import { buildContactIdentityId } from './identity-key-id';
 
-type RecipientIdentityRow = typeof recipientIdentities.$inferSelect;
+type RecipientIdentityRow = Pick<typeof recipientIdentities.$inferSelect, 'recordJson'>;
 
 export {};
 
@@ -21,7 +21,7 @@ export async function getContactIdentity(
 ): Promise<ContactIdentityRecord | null> {
   await getDrizzle();
   const row = await getRawDatabase().getFirstAsync<RecipientIdentityRow>(
-    `SELECT recipient_id, identity_type, record_json, updated_at
+    `SELECT record_json AS recordJson
        FROM recipient_identities WHERE recipient_id = ?`,
     [buildContactIdentityId(userId, identityType)]
   );
@@ -31,7 +31,7 @@ export async function getContactIdentity(
 export async function getAllContactIdentities(): Promise<ContactIdentityRecord[]> {
   await getDrizzle();
   const rows = await getRawDatabase().getAllAsync<RecipientIdentityRow>(
-    `SELECT recipient_id, identity_type, record_json, updated_at FROM recipient_identities`
+    `SELECT record_json AS recordJson FROM recipient_identities`
   );
   return rows.map(decodeRow);
 }

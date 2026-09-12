@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signal Protocol SDK: encrypted message example</title>
+  </head>
+  <body>
+    <main id="sdk-example">
+      <a href="https://github.com/open-e2ee/signal-protocol-js">OpenE2EE / Signal Protocol SDK</a>
+      <h1>Send an encrypted message</h1>
+      <p>Alice encrypts your message. A relay holds the ciphertext. Bob decrypts the message and sends a reply.</p>
+      <p>This example runs in a browser worker. Both devices and the relay use memory in this tab. A reset discards their state.</p>
+      <form id="exchange">
+        <label for="message">Message from Alice</label>
+        <textarea id="message" required maxlength="2000" rows="3">hello from my browser</textarea>
+        <div><button id="run" type="submit">Run encrypted exchange</button> <button id="reset" type="button">Reset</button></div>
+      </form>
+      <p id="status" role="status">Ready</p>
+      <pre id="output" aria-label="Execution output" tabindex="0"></pre>
+      <p>The browser console shows the same results. Ciphertext changes on each run.</p>
+      <p><a href="https://github.com/open-e2ee/signal-protocol-js/tree/v2.0.1/examples/browser/src/exchange.ts">Read the exchange code</a> · <a href="https://stackblitz.com/fork/github/open-e2ee/signal-protocol-js/tree/v2.0.1/examples/browser">Edit on StackBlitz</a></p>
+      <p>Continue with <a href="https://docs.open-e2ee.dev/start/browser">browser storage</a>, <a href="https://docs.open-e2ee.dev/start/expo">Expo / Hermes setup</a>, or <a href="https://open-e2ee.dev/relay">OpenE2EE Relay for separate devices</a>.</p>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

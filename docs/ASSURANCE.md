@@ -1,155 +1,95 @@
 # Assurance
 
-> Navigation: [README](../README.md) | [Security Model](./SECURITY.md) |
-> [Protocol Policy](./PROTOCOL_POLICY.md) |
-> [Vulnerability Reporting](../SECURITY.md)
+The Signal Protocol SDK is open source under AGPL-3.0-or-later. Its engineering tests remain private. We do not publish those tests or their private fixtures and comparison material.
 
-This document exists because of an honest problem. If you browse this
-repository, you will not find automated checks. A cryptography package with no
-visible checks reasonably reads as an unchecked one. That inference is wrong
-here, and the correct answer is not a reassuring adjective. This document
-explains where the checks live, what they cover, what the export publishes, and
-what it keeps private.
+This document states our testing methods, reported results, public checks, and review limits.
 
-## Why this repository looks the way it does
+## What is public
 
-This repository is a mechanized export of a private engineering repository. An
-allowlist in the source repository decides, file by file, what becomes public.
-An export tool copies exactly that set, and refuses to write anything the
-allowlist does not name. The published result is the library, its
-documentation, and its generated API reference.
+The public repository contains the SDK source, documentation, examples, and build checks. An export tool copies approved files from the engineering repository. It excludes private engineering material and its development dependencies.
 
-The automated checks are deliberately outside that allowlist. They exercise
-internal module paths, private protocol scaffolding, and cross-implementation
-comparison material that the allowlist keeps unpublished. The export also
-strips the development dependencies they require. Publishing them as inert
-files that nobody could run would look like assurance without being any.
+You can inspect the implementation and run the examples. You cannot reproduce the private results from this repository alone.
 
-## What runs, and what it covers
+Private testing also exists in other open-source projects. [SQLite publishes some checks and keeps TH3 private](https://www.sqlite.org/testing.html). [Convex documents a private testing framework](https://github.com/get-convex/convex-backend#readme). Those projects do not review or endorse this SDK.
 
-Every change to the source repository runs the full set of automated checks,
-and an export is only cut from a revision where they pass.
+## Reported engineering results
+
+Engineering CI runs the default automated checks on pull requests and changes to the main branch. Release preparation requires a passing run.
 
 Most recent full run on 2026-09-12:
 
 | | |
 |---|---|
-| Modules executed | 395 |
-| Assertions | 7,019 |
-| Passed | 7,017 |
+| Test modules | 399 |
+| Test cases | 7,069 |
+| Passed | 7,067 |
 | Skipped | 2 |
 | Failed | 0 |
-| Wall time | 236 s |
+| Wall time | 197 s |
 
-That figure excludes longer-running performance and endurance checks, which run
-under separate commands.
+The total counts test cases. One test case can contain several assertions. Separate commands run the longer performance and endurance checks.
 
-Nobody hand-edits the table above. Release tooling regenerates it from a real
-run, and refuses to write figures from a failing run. The release gate refuses
-to cut an export when the figures are more than three days old.
+Release tooling generates this table from a completed run. It refuses results from a failing run. The release gate rejects figures older than three days.
 
-Coverage spans, in the terms this documentation uses elsewhere:
+## Testing methods
 
-- **Conformance scenarios**. Session, group, and sealed-sender invariants
-  checked against known-answer material and against behavior documented in the
-  published specifications.
-- **Cryptographic known-answer checks**. ML-KEM, hashing, AEAD, and signature
-  primitives checked against published vector data.
-- **Protocol behavior**. PQXDH establishment, the Double Ratchet, and SPQR and
-  ML-KEM Braid epochs. Skipped-key bounds, replay and reordering handling, and
-  fail-closed paths.
-- **Property-based checks**. Randomized inputs against protocol and encoding
-  invariants.
-- **Integration flows**. Multi-device fanout, group membership lifecycle,
-  device linking and provisioning, PNI-to-ACI upgrade, and relay delivery.
-- **Adapter behavior**. The Expo, browser, Node, React Native, and in-memory
-  storage adapters, plus the Convex relay and object-store adapters. The
-  browser adapter's contract suites also run inside real Chromium, Firefox,
-  and WebKit pages on every change. A soak run drives thousands of full
-  open/write/read/close cycles through the browser adapter in Chromium on
-  every change. It fails on upward memory or latency drift.
-- **React Native adapter behavior**. The exported backend-conformance kit runs
-  against its reference backend on the Hermes engine on every change.
-  Interruption and storage-pressure suites drive the adapter over that
-  backend.
-- **Public surface**. The exported API shape, and the quickstart printed in the
-  [README](../README.md). CI runs that quickstart as written on every change.
-- **Error surface**. Every class in the exported `EncryptionError` family has a
-  construction site. Every `EncryptionErrorCode` and
-  `MediaAttachmentErrorCode` value also has one. The check rejects unresolved
-  code forwarding instead of treating it as proof.
+- **Known answers:** compare cryptographic outputs with published reference data for ML-KEM, hashes, authenticated encryption, and signatures.
+- **Protocol behavior:** check PQXDH, Double Ratchet, SPQR, and ML-KEM Braid state changes. Cover replay rejection, reordered messages, skipped-key limits, and required post-quantum operations.
+- **Generated inputs:** check protocol and encoding properties across randomized inputs.
+- **Messaging flows:** exercise device fanout, groups, device linking, provisioning, PNI-to-ACI changes, and relay delivery.
+- **Storage contracts:** check persistence, concurrency, interruption, recovery, and storage pressure at adapter boundaries.
+- **Runtime behavior:** run the browser storage contracts in Chromium, Firefox, and WebKit. Run the React Native backend contract on Hermes.
+- **Public API:** check exported types, import paths, documented calls, and expected example output against the packed package.
+- **Errors:** check construction sites for exported error classes and codes. Reject unresolved code forwarding.
 
-In every adapter case the assertions target the adapter's contract. The engines
-are the environment the adapter must honor that contract in, not the subject of
-the tests.
+The browser storage job also runs 2,000 open, write, read, and close cycles. It checks for upward memory and latency drift.
 
-## What reviews each change
+A storage contract check does not prove a full encrypted exchange. The [browser example](../examples/browser/README.md) and [Expo example](../examples/expo/README.md) exercise message encryption, delivery, and decryption.
 
-Tooling automates the checks above, and automation only finds what someone
-thought to encode. Alongside them, every change to the source repository passes
-an adversarial AI review before it merges. Recurring whole-codebase AI audit
-passes run against the same repository, and their findings go through the same
-gated process as any other change. AI agents review each change, rather than
-reviewers at a firm, and this project does not publish the transcripts. The
-reviews therefore describe what the process requires, not a result you can
-inspect. This package has no independent firm audit, and an adversarial AI
-review is not a substitute for one.
+## Runtime checks for 2.0.1
 
-## What this repository verifies in public
+On 2026-09-12, the browser example completed encrypted exchanges in Chromium, Firefox, and WebKit. Nine checks covered fresh messages, replies, repeated runs, cancellation, reset, and worker-load errors under CSP.
 
-Continuous integration here runs on every push and pull request. Its result is
-a badge on the README that you can click through to the run logs:
+The Expo example completed encrypted exchanges in development and release builds on Hermes. The checked targets were the iOS 26.1 simulator and Android 15 emulator, using Expo 55 and React Native 0.83.10.
 
-- `npm ci` against the committed lockfile.
-- `npm run build`, a full TypeScript compile of the published sources.
-- `npm run typecheck`.
-- `npm audit --omit=dev` at moderate severity against the production
-  dependency tree.
-- the [README](../README.md) Quick Start, extracted from the file as printed
-  and run against the packed package. A second run adds
-  `--disallow-code-generation-from-strings`, which stands in for a strict
-  `script-src` policy and for a Chrome MV3 extension.
-- every TypeScript snippet in the shipped documentation, checked against the
-  packed package. The check runs each complete program and matches its output.
-  For a snippet that cannot run, it compiles every SDK name against the
-  package's types. A renamed or deleted export therefore fails the build in
-  every document that names it. A snippet that previews an unreleased API
-  declares which import paths do not exist yet. The build fails if one of them
-  resolves, and names each pseudocode block in its log.
-- every subpath in the package's export map. A consumer outside the repository
-  imports each one, with all of the optional peer dependencies removed from
-  its `node_modules`. The check itself names the platform-bound entry points,
-  and it verifies that list in both directions. An exemption that stops being
-  true therefore fails the check.
+Both platforms used SQLCipher 4.7.0. After a process restart, Alice retained her identity and completed another exchange. Release builds ran with Metro stopped. These results establish behavior on the listed targets, not device performance.
 
-That is a genuine, independently reproducible signal about the code you read
-here. It compiles. Its types are consistent. Its six production dependencies
-carry no known advisories at moderate or higher severity. The code printed in
-its documentation runs as printed on a machine that is not ours. That signal is
-not a substitute for the protocol checks, and this document does not offer it
-as one.
+These application checks are separate from the recurring browser-storage and Hermes backend-contract jobs.
 
-## What this is not
+## Review status
 
-- **Not an independent firm audit**. This package has no independent security
-  firm audit, and no audit engagement. The adversarial AI review described
-  above is continuous and real, but it is not a third-party assurance result.
-  Treat this package as unaudited by any independent firm.
-- **Not a compatibility guarantee**. Conformance work checks this profile
-  against the published specifications it cites. It does not establish general
-  wire compatibility with Signal Messenger, which this project does not claim.
-- **Not a timing proof**. See the JavaScript timing boundary in the
-  [security model](./SECURITY.md). Best-effort source-level patterns are not
-  constant-time guarantees.
+> Reviewed continuously by adversarial AI agents; not audited by any independent firm.
 
-## If you need more
+Our review policy requires adversarial AI review before substantive code changes merge. Recurring reviews inspect the engineering repository. We keep the review transcripts private.
 
-Reviewers who evaluate this SDK for production can request a deeper walkthrough
-of the assurance material, including the conformance scenarios and their
-results. This applies in particular under a commercial license or a
-security-review process.
-Write to security@open-e2ee.dev for security review, or
-licensing@open-e2ee.dev for commercial evaluation.
+This statement describes our process. It is not an independent security assessment. OpenE2EE has no audit engagement with an independent firm.
 
-If you find a vulnerability, follow the private reporting process in
-[SECURITY.md](../SECURITY.md) rather than opening a public issue.
+## Checks you can run
+
+[Public CI](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml) runs on pushes and pull requests. Its logs show these checks:
+
+- Install from the committed lockfile, compile the SDK, and check its types.
+- Check dependencies for known advisories at moderate severity or higher.
+- Extract the README example and run it against the packed package.
+- Run the example with string-based code generation disabled.
+- Run complete documentation programs and check their expected output.
+- Check SDK imports and types in snippets that require application context.
+- Check exported import paths in a separate consumer without optional peer dependencies. Verify the declared platform exceptions.
+
+The examples include installation commands and expected output. The browser example shows ciphertext and decrypted messages in the page and console.
+
+A passing build establishes that the checked code builds and the exercised behavior passes. It does not establish the absence of vulnerabilities.
+
+## Limits
+
+The SDK implements its documented Signal Protocol profile. It is not wire-compatible with Signal Messenger or libsignal. Read the [protocol policy](./PROTOCOL_POLICY.md) and [deviations](./DEVIATIONS.md).
+
+JavaScript engines do not guarantee machine-level constant-time execution or reliable memory zeroization. The [security model](./SECURITY.md) describes endpoint, timing, storage, and metadata risks.
+
+Applications must choose their authentication, device trust, backup, recovery, and retention policies. Automated checks do not make those decisions.
+
+## Security review and reporting
+
+Request a walkthrough of the methods and results at [security@open-e2ee.dev](mailto:security@open-e2ee.dev). Contact [licensing@open-e2ee.dev](mailto:licensing@open-e2ee.dev) for commercial evaluation.
+
+Report suspected vulnerabilities through [SECURITY.md](../SECURITY.md). Keep vulnerability details out of public issues.
