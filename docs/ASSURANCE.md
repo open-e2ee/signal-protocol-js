@@ -34,12 +34,12 @@ Most recent full run on 2026-09-12:
 
 | | |
 |---|---|
-| Modules executed | 394 |
-| Assertions | 7,011 |
-| Passed | 7,009 |
+| Modules executed | 395 |
+| Assertions | 7,019 |
+| Passed | 7,017 |
 | Skipped | 2 |
 | Failed | 0 |
-| Wall time | 368 s |
+| Wall time | 236 s |
 
 That figure excludes longer-running performance and endurance checks, which run
 under separate commands.

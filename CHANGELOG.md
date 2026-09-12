@@ -2,6 +2,12 @@
 
 ## 2.0.0
 
+- **Hosted control messages accept an omitted send identifier.**
+  One generated UUID survives token retries.
+
+- **Explicit account recovery bypasses stored sessions.**
+  The SDK requests a recovery assertion.
+
 - **Update the Noble dependencies.** Ciphers, curves, and hashes use 2.4.0.
   Post-quantum uses 0.7.1.
 

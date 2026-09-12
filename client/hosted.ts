@@ -1025,11 +1025,13 @@ export async function createHostedSignalProtocolClient(
     storage,
     publishableKey,
   );
-  const resumed = await resumeHostedRelayTransport({
-    connection,
-    deviceAuthentication,
-    storage,
-  });
+  const resumed = hosted.assertionPurpose === 'recover'
+    ? undefined
+    : await resumeHostedRelayTransport({
+        connection,
+        deviceAuthentication,
+        storage,
+      });
   if (resumed !== undefined) {
     const client = await createClientFromHostedResult(
       resumed,

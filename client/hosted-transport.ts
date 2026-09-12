@@ -31,6 +31,7 @@ import {
   bytesToBase64,
   bytesToUrlSafeBase64,
   concatBytes,
+  generateUuidV4,
   sha256,
   stringToBytes,
   urlSafeToBase64,
@@ -875,10 +876,11 @@ export class HostedRelayHttpTransport
     if (
       envelope.senderUserId !== this.session.canonicalAccountId ||
       envelope.senderDeviceId !== this.session.deviceId ||
-      !envelope.clientMessageId
+      envelope.clientMessageId === ''
     ) {
       throw new Error('Managed Relay send authority or operation ID is invalid');
     }
+    const messageId = envelope.clientMessageId ?? await generateUuidV4();
     const key = `${envelope.targetUserId}\0${String(envelope.targetDeviceId)}`;
     let generation = this.destinationGenerations.get(key);
     if (generation === undefined) {
@@ -896,7 +898,7 @@ export class HostedRelayHttpTransport
           generation,
         },
         envelope: bytesToBase64(encodeDeliveryWire(envelope)),
-        messageId: envelope.clientMessageId,
+        messageId,
         operationEpochMilliseconds: envelope.timestamp,
         publishableKey: this.connection.publishableKey,
         ...(envelope.recipientRegistrationId === undefined
@@ -914,11 +916,11 @@ export class HostedRelayHttpTransport
       }
       throw error;
     }
-    if (!record(value) || requiredString(value, 'messageId') !== envelope.clientMessageId) {
+    if (!record(value) || requiredString(value, 'messageId') !== messageId) {
       throw new Error('Managed Relay returned an invalid delivery receipt');
     }
     return {
-      messageId: envelope.clientMessageId,
+      messageId,
       serverTimestamp:
         typeof value.enqueuedAt === 'number' ? value.enqueuedAt : envelope.timestamp,
     };
