@@ -8,19 +8,15 @@
 
 > **registerHostedRelayPush**(`options`): `Promise`\<`void`\>
 
-Register a data-only wake destination for the adapter's authenticated device.
+Register a best-effort wake profile for this hosted client's device.
 
 ## Parameters
 
 ### options
 
-#### adapter
+#### client
 
-[`HostedRelayPushAdapter`](../interfaces/HostedRelayPushAdapter.md)
-
-#### publishableKey
-
-`string`
+[`HostedRelayWakeClient`](../interfaces/HostedRelayWakeClient.md)
 
 #### registration
 

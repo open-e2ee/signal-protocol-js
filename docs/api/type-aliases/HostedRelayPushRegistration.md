@@ -8,4 +8,4 @@
 
 > **HostedRelayPushRegistration** = [`HostedRelayTokenPushRegistration`](HostedRelayTokenPushRegistration.md) \| [`HostedRelayWebPushRegistration`](../interfaces/HostedRelayWebPushRegistration.md)
 
-Supported data-only wake registration shapes.
+Supported best-effort wake and generic-alert registration shapes.

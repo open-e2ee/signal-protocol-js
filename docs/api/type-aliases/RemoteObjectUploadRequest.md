@@ -32,6 +32,14 @@ MIME type of the encrypted bytes in the upload.
 
 ***
 
+### digest
+
+> **digest**: `Uint8Array`
+
+SHA-256 digest of the exact encrypted bytes.
+
+***
+
 ### requestId
 
 > **requestId**: `string`

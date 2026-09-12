@@ -22,3 +22,15 @@ account, registered device, scope, and authenticated transport used by the clien
 ## Returns
 
 `Promise`\<[`SignalProtocolClient`](../classes/SignalProtocolClient.md)\>
+
+## Example
+
+```ts
+const client = await createHostedSignalProtocolClient({
+  adapters,
+  hosted: {
+    getIdentityAssertion,
+    relayUrl: process.env.OPEN_E2EE_RELAY_URL!,
+  },
+});
+```

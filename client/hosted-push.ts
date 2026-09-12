@@ -4,11 +4,25 @@ import type { IncomingEnvelope, ProcessEnvelopeOptions } from './types';
 const PUSH_TOKEN_MAXIMUM_LENGTH = 4_096;
 const PUSH_ENDPOINT_MAXIMUM_LENGTH = 2_048;
 
+export type HostedRelayPushProfile =
+  'background-only' | 'visible-alert' | 'nse-visible' | 'nse-filtering';
+
+export type HostedRelayPushPlatform = 'android' | 'ios' | 'web';
+
 /** Native or Expo provider token registered for this authenticated device. */
-export type HostedRelayTokenPushRegistration = {
-  readonly provider: 'apns' | 'expo' | 'fcm';
-  readonly token: string;
-};
+export type HostedRelayTokenPushRegistration =
+  | {
+      readonly platform: 'ios';
+      readonly profile: HostedRelayPushProfile;
+      readonly provider: 'apns' | 'expo';
+      readonly token: string;
+    }
+  | {
+      readonly platform: 'android';
+      readonly profile: 'background-only' | 'visible-alert';
+      readonly provider: 'expo' | 'fcm';
+      readonly token: string;
+    };
 
 /** Browser Push API subscription registered for this authenticated device. */
 export interface HostedRelayWebPushRegistration {
@@ -17,61 +31,33 @@ export interface HostedRelayWebPushRegistration {
     readonly auth: string;
     readonly p256dh: string;
   };
+  readonly platform: 'web';
+  readonly profile: 'background-only' | 'visible-alert';
   readonly provider: 'web-push';
 }
 
-/** Supported data-only wake registration shapes. */
+/** Supported best-effort wake and generic-alert registration shapes. */
 export type HostedRelayPushRegistration =
   HostedRelayTokenPushRegistration | HostedRelayWebPushRegistration;
 
-export interface HostedRelayPushRegistrationRequest {
-  readonly publishableKey: string;
-  readonly registration: HostedRelayPushRegistration;
-}
-
-export interface HostedRelayPushRemovalRequest {
-  readonly publishableKey: string;
-}
-
-export interface HostedRelayMailboxPullRequest {
-  readonly publishableKey: string;
-}
-
-export interface HostedRelayMailboxAcknowledgmentRequest {
-  readonly messageIds: readonly string[];
-  readonly publishableKey: string;
-}
-
-/**
- * Authenticated hosted transport for wake registration and durable mailbox pull.
- *
- * The adapter owns the device credential. These request shapes do not accept an
- * account, device, scope, or generation because the Relay derives those fields
- * from that credential.
- */
-export interface HostedRelayPushAdapter {
-  acknowledgeMailbox(
-    request: HostedRelayMailboxAcknowledgmentRequest
-  ): Promise<void>;
-  pullMailbox(
-    request: HostedRelayMailboxPullRequest
-  ): Promise<readonly IncomingEnvelope[]>;
-  registerPush(request: HostedRelayPushRegistrationRequest): Promise<void>;
-  removePush(request: HostedRelayPushRemovalRequest): Promise<void>;
+/** @internal SDK-owned transport for one authenticated hosted client. */
+export interface HostedRelayPushRuntime {
+  acknowledgeMailbox(messageIds: readonly string[]): Promise<void>;
+  pullMailbox(): Promise<readonly IncomingEnvelope[]>;
+  registerPush(registration: HostedRelayPushRegistration): Promise<void>;
+  removePush(): Promise<void>;
 }
 
 export interface HostedRelayWakeClient {
   processIncomingEnvelopes(
     envelopes: IncomingEnvelope[],
-    options?: ProcessEnvelopeOptions
+    options?: ProcessEnvelopeOptions,
   ): ReturnType<SignalProtocolClient['processIncomingEnvelopes']>;
 }
 
 export interface HostedRelayWakeOptions {
-  readonly adapter: HostedRelayPushAdapter;
   readonly client: HostedRelayWakeClient;
   readonly processOptions?: ProcessEnvelopeOptions;
-  readonly publishableKey: string;
 }
 
 export interface HostedRelayWakeResult {
@@ -80,12 +66,22 @@ export interface HostedRelayWakeResult {
   readonly pulled: number;
 }
 
-function assertPublishableKey(value: string): string {
-  const publishableKey = value.trim();
-  if (!publishableKey || publishableKey.length > 512) {
-    throw new Error('Hosted Relay publishable key is invalid');
+const hostedRuntimes = new WeakMap<object, HostedRelayPushRuntime>();
+
+/** @internal Bind the SDK-owned transport to the client that uses it. */
+export function bindHostedRelayPushRuntime(
+  client: HostedRelayWakeClient,
+  runtime: HostedRelayPushRuntime,
+): void {
+  hostedRuntimes.set(client, runtime);
+}
+
+function hostedRuntime(client: HostedRelayWakeClient): HostedRelayPushRuntime {
+  const runtime = hostedRuntimes.get(client);
+  if (runtime === undefined) {
+    throw new Error('The client is not connected to OpenE2EE Relay');
   }
-  return publishableKey;
+  return runtime;
 }
 
 function assertToken(token: string): string {
@@ -96,13 +92,50 @@ function assertToken(token: string): string {
 }
 
 function validatedRegistration(
-  registration: HostedRelayPushRegistration
+  registration: HostedRelayPushRegistration,
 ): HostedRelayPushRegistration {
+  if (
+    registration.profile !== 'background-only' &&
+    registration.profile !== 'visible-alert' &&
+    registration.profile !== 'nse-visible' &&
+    registration.profile !== 'nse-filtering'
+  ) {
+    throw new Error('Hosted Relay push profile is invalid');
+  }
+  if (registration.profile === 'nse-filtering') {
+    throw new Error(
+      'Hosted Relay notification filtering is unavailable until signed physical-device verification passes',
+    );
+  }
   if (registration.provider !== 'web-push') {
+    if (
+      (registration.provider === 'apns' && registration.platform !== 'ios') ||
+      (registration.provider === 'fcm' &&
+        registration.platform !== 'android') ||
+      (registration.provider === 'expo' &&
+        registration.platform !== 'ios' &&
+        registration.platform !== 'android') ||
+      (registration.platform !== 'ios' &&
+        registration.profile !== 'background-only' &&
+        registration.profile !== 'visible-alert')
+    ) {
+      throw new Error(
+        'Hosted Relay push profile is not supported by this platform',
+      );
+    }
     return {
-      provider: registration.provider,
+      ...registration,
       token: assertToken(registration.token),
     };
+  }
+  if (
+    registration.platform !== 'web' ||
+    (registration.profile !== 'background-only' &&
+      registration.profile !== 'visible-alert')
+  ) {
+    throw new Error(
+      'Hosted Relay push profile is not supported by this platform',
+    );
   }
   let endpoint: URL;
   try {
@@ -122,30 +155,26 @@ function validatedRegistration(
       auth: assertToken(registration.keys.auth),
       p256dh: assertToken(registration.keys.p256dh),
     },
+    platform: registration.platform,
+    profile: registration.profile,
     provider: 'web-push',
   };
 }
 
-/** Register a data-only wake destination for the adapter's authenticated device. */
+/** Register a best-effort wake profile for this hosted client's device. */
 export async function registerHostedRelayPush(options: {
-  readonly adapter: HostedRelayPushAdapter;
-  readonly publishableKey: string;
+  readonly client: HostedRelayWakeClient;
   readonly registration: HostedRelayPushRegistration;
 }): Promise<void> {
-  await options.adapter.registerPush({
-    publishableKey: assertPublishableKey(options.publishableKey),
-    registration: validatedRegistration(options.registration),
-  });
+  const registration = validatedRegistration(options.registration);
+  await hostedRuntime(options.client).registerPush(registration);
 }
 
-/** Remove the data-only wake destination for the adapter's authenticated device. */
+/** Remove the wake destination for this hosted client's device. */
 export async function removeHostedRelayPush(options: {
-  readonly adapter: HostedRelayPushAdapter;
-  readonly publishableKey: string;
+  readonly client: HostedRelayWakeClient;
 }): Promise<void> {
-  await options.adapter.removePush({
-    publishableKey: assertPublishableKey(options.publishableKey),
-  });
+  await hostedRuntime(options.client).removePush();
 }
 
 /**
@@ -154,17 +183,17 @@ export async function removeHostedRelayPush(options: {
  * wake hints and can also be called when push is unavailable.
  */
 export async function pullHostedRelayAfterWake(
-  options: HostedRelayWakeOptions
+  options: HostedRelayWakeOptions,
 ): Promise<HostedRelayWakeResult> {
-  const publishableKey = assertPublishableKey(options.publishableKey);
-  const envelopes = await options.adapter.pullMailbox({ publishableKey });
+  const runtime = hostedRuntime(options.client);
+  const envelopes = await runtime.pullMailbox();
   const results = await options.client.processIncomingEnvelopes(
     [...envelopes],
-    options.processOptions
+    options.processOptions,
   );
   if (results.length !== envelopes.length) {
     throw new Error(
-      'Hosted Relay mailbox processing returned an invalid result'
+      'Hosted Relay mailbox processing returned an invalid result',
     );
   }
   const acknowledgedMessageIds: string[] = [];
@@ -177,10 +206,7 @@ export async function pullHostedRelayAfterWake(
     }
   }
   if (acknowledgedMessageIds.length > 0) {
-    await options.adapter.acknowledgeMailbox({
-      messageIds: acknowledgedMessageIds,
-      publishableKey,
-    });
+    await runtime.acknowledgeMailbox(acknowledgedMessageIds);
   }
   return {
     acknowledgedMessageIds,

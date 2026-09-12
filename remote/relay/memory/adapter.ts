@@ -289,6 +289,16 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
       serverTimestamp,
     };
 
+    // Ephemeral work is a live hint. It never enters the offline mailbox or
+    // the durable retry receipt map. Missing or disconnected recipients lose
+    // it by design.
+    if (envelope.deliveryClass === 'ephemeral') {
+      if ((this.subscriptions.get(targetKey)?.length ?? 0) > 0) {
+        this.failures.deliver(targetKey, storedEnvelope);
+      }
+      return cloneRelayValue({ messageId: id, serverTimestamp });
+    }
+
     // Store in pending messages
     const pending = this.pendingMessages.get(targetKey) || [];
     pending.push(storedEnvelope);
@@ -1070,6 +1080,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     sentMessageBase64: string,
     auth: SealedSenderAuth,
     timestamp: number,
+    deliveryClass: import('../types').DeliveryClass,
     recipientUserIds?: string[],
     clientMessageId?: string
   ): Promise<{
@@ -1112,6 +1123,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
           senderDeviceId: 0,
           ciphertext: bytesToBase64(receivedMsg),
           messageType: 'unidentified_sender',
+          deliveryClass,
           timestamp,
           clientMessageId,
         });

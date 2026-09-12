@@ -17,6 +17,8 @@ export type RemoteObjectUploadRequest = {
   contentType: string;
   /** Exact encrypted object length in bytes. */
   contentLength: number;
+  /** SHA-256 digest of the exact encrypted bytes. */
+  digest: Uint8Array;
 };
 
 /** Short-lived credentials for a direct object upload. */

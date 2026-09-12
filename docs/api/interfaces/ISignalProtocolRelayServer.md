@@ -962,7 +962,7 @@ Message ID and server timestamp (for delivery receipt matching)
 
 ### sendMultiRecipientUnidentified()?
 
-> `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `recipientUserIds?`, `clientMessageId?`): `Promise`\<\{ `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
+> `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `deliveryClass`, `recipientUserIds?`, `clientMessageId?`): `Promise`\<\{ `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
 
 Send a multi-recipient sealed sender message.
 
@@ -989,6 +989,12 @@ Sealed sender authentication (access key or group send token)
 `number`
 
 Client timestamp for message identification
+
+##### deliveryClass
+
+[`DeliveryClass`](../type-aliases/DeliveryClass.md)
+
+Exact persistence and wake behavior
 
 ##### recipientUserIds?
 

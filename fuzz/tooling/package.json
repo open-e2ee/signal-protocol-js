@@ -1,0 +1,10 @@
+{
+  "name": "signal-protocol-fuzz-tooling",
+  "version": "0.0.0",
+  "description": "Pinned Jazzer.js for parser fuzzing.",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "dependencies": {
+    "@jazzer.js/core": "4.0.0"
+  }
+}

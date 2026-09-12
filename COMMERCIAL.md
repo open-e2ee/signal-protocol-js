@@ -43,7 +43,7 @@ Growth and Enterprise start with an email.
 
 ## How buying works
 
-1. Read the terms at [open-e2ee.dev/licensing](https://open-e2ee.dev/licensing).
+1. Read the [Commercial Terms](https://open-e2ee.dev/legal/terms).
 2. Startup tier: purchase directly in the [console](https://console.open-e2ee.dev)
    and download your signed license record immediately.
 3. Growth, Enterprise, or anything unusual (OEM, source escrow, security

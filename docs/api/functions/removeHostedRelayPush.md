@@ -8,19 +8,15 @@
 
 > **removeHostedRelayPush**(`options`): `Promise`\<`void`\>
 
-Remove the data-only wake destination for the adapter's authenticated device.
+Remove the wake destination for this hosted client's device.
 
 ## Parameters
 
 ### options
 
-#### adapter
+#### client
 
-[`HostedRelayPushAdapter`](../interfaces/HostedRelayPushAdapter.md)
-
-#### publishableKey
-
-`string`
+[`HostedRelayWakeClient`](../interfaces/HostedRelayWakeClient.md)
 
 ## Returns
 

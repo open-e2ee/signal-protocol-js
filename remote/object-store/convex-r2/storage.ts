@@ -17,13 +17,18 @@ import {
   validateUploadRequest,
 } from '../validation';
 
+/** Convex wire form for an upload request. */
+export type ConvexR2UploadRequest = Omit<RemoteObjectUploadRequest, 'digest'> & {
+  digest: ArrayBuffer;
+};
+
 /** App-owned Convex functions that broker access to an `@convex-dev/r2` component. */
 export interface ConvexR2ObjectStoreApi {
   /** Public mutation returning an object ID, upload URL, and actual expiry. */
   createUpload: FunctionReference<
     'mutation',
     'public',
-    RemoteObjectUploadRequest,
+    ConvexR2UploadRequest,
     RemoteObjectUpload
   >;
   /** Public action returning fresh download credentials, or `null` when absent. */
@@ -89,6 +94,7 @@ export class ConvexR2ObjectStore implements SignalProtocolRemoteObjectStore {
       requestId: input.requestId,
       contentType: input.contentType,
       contentLength: input.contentLength,
+      digest: new Uint8Array(input.digest).buffer,
     });
     return normalizeUpload(result);
   }

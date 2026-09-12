@@ -1,0 +1,58 @@
+name: Parser fuzzing
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzzing:
+    name: Fuzz ${{ matrix.target }}
+    if: github.repository == 'open-e2ee/signal-protocol-js'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - base64
+          - sealed-sender
+          - sender-key-message
+          - session-record
+          - signal-message
+          - spqr-wire
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            fuzz/tooling/package-lock.json
+      - name: Install and build
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+          npm ci --prefix fuzz/tooling --ignore-scripts
+      - name: Fuzz for 150 seconds
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/fuzz-artifacts"
+          node fuzz/tooling/node_modules/@jazzer.js/core/dist/cli.js "fuzz/fuzz-$FUZZ_TARGET.js" --sync -- -max_total_time=150 -timeout=10 -artifact_prefix="$RUNNER_TEMP/fuzz-artifacts/"
+      - name: Save crash inputs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: ${{ runner.temp }}/fuzz-artifacts/
+          if-no-files-found: ignore

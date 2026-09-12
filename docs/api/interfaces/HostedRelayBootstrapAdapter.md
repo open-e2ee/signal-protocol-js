@@ -8,30 +8,17 @@
 
 SDK or integration-owned hosted Relay transport.
 
-Certificate roots are pinned in this adapter, outside the bootstrap response.
-A Relay response cannot select the root that validates its own certificates.
+Managed Relay certificate roots are compiled into the SDK and selected by the
+exact connection origin. The adapter cannot supply or replace hosted trust.
+
+OpenE2EE has no customers. This is a clean prelaunch contract replacement.
+Do not restore a certificateTrust compatibility property: accepting caller
+trust would weaken the managed trust boundary. Self-hosted trust stays in its
+separate explicit configuration.
 
 ## Extended by
 
 - [`HostedRelayManagedDeviceLinkAdapter`](HostedRelayManagedDeviceLinkAdapter.md)
-
-## Properties
-
-### certificateTrust
-
-> `readonly` **certificateTrust**: `object`
-
-#### environment
-
-> `readonly` **environment**: `"development"` \| `"production"`
-
-#### revokedIssuerKeyIds
-
-> `readonly` **revokedIssuerKeyIds**: readonly `number`[]
-
-#### trustRoots
-
-> `readonly` **trustRoots**: readonly `Uint8Array`\<`ArrayBufferLike`\>[]
 
 ## Methods
 

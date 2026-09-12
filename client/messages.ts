@@ -356,9 +356,8 @@ export async function sendTypingIndicator(
       timestamp: Date.now(),
       // Explicit ContentHint per Signal Protocol - silently discard on failure
       contentHint: ContentHint.Implicit,
-      // Typing indicators are ephemeral (skip persistence if offline) and non-urgent (silent push)
-      ephemeral: true,
-      urgent: false,
+      // Typing is online-only and never enters provider push.
+      deliveryClass: 'ephemeral',
     });
 
     ctx.logger.debug(`Typing indicator sent: ${actionName}`, {
@@ -581,8 +580,8 @@ async function sendReceiptToDeviceInner(
     timestamp: Date.now(),
     // Receipts are implicit content and may be silently discarded on failure.
     contentHint: ContentHint.Implicit,
-    // Receipts are non-urgent (silent push) but not ephemeral (should be delivered)
-    urgent: false,
+    // Receipts persist for convergence but never request a visible alert.
+    deliveryClass: 'background-sync',
   });
 
   ctx.logger.debug(

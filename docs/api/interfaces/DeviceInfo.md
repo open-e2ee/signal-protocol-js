@@ -10,17 +10,19 @@ Device info returned by getDevices()
 
 ## Properties
 
-### active
+### active?
 
-> **active**: `boolean`
+> `optional` **active?**: `boolean`
 
-Whether device is currently online (system-controlled)
+Whether device is currently online, when the relay exposes presence.
 
 ***
 
-### createdAt
+### createdAt?
 
-> **createdAt**: `number`
+> `optional` **createdAt?**: `number`
+
+Registration time, when the relay exposes device observations.
 
 ***
 
@@ -50,9 +52,11 @@ Whether device can receive messages (user-controlled)
 
 ***
 
-### lastSeen
+### lastSeen?
 
-> **lastSeen**: `number`
+> `optional` **lastSeen?**: `number`
+
+Last observed activity, when the relay exposes device observations.
 
 ***
 

@@ -6,18 +6,6 @@
 
 # Type Alias: HostedRelayTokenPushRegistration
 
-> **HostedRelayTokenPushRegistration** = `object`
+> **HostedRelayTokenPushRegistration** = \{ `platform`: `"ios"`; `profile`: `HostedRelayPushProfile`; `provider`: `"apns"` \| `"expo"`; `token`: `string`; \} \| \{ `platform`: `"android"`; `profile`: `"background-only"` \| `"visible-alert"`; `provider`: `"expo"` \| `"fcm"`; `token`: `string`; \}
 
 Native or Expo provider token registered for this authenticated device.
-
-## Properties
-
-### provider
-
-> `readonly` **provider**: `"apns"` \| `"expo"` \| `"fcm"`
-
-***
-
-### token
-
-> `readonly` **token**: `string`

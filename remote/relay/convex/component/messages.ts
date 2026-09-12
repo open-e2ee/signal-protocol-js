@@ -230,6 +230,12 @@ const messageTypeValidator = v.union(
   v.literal('unidentified_sender')
 );
 
+const deliveryClassValidator = v.union(
+  v.literal('user-visible'),
+  v.literal('background-sync'),
+  v.literal('ephemeral')
+);
+
 const receiptValidator = v.object({
   messageId: v.string(),
   serverTimestamp: v.number(),
@@ -243,8 +249,7 @@ const pendingMessageValidator = v.object({
   senderDeviceId: v.number(),
   ciphertext: v.string(),
   messageType: messageTypeValidator,
-  urgent: v.optional(v.boolean()),
-  ephemeral: v.optional(v.boolean()),
+  deliveryClass: deliveryClassValidator,
   timestamp: v.number(),
   serverTimestamp: v.number(),
   clientMessageId: v.optional(v.string()),
@@ -271,8 +276,7 @@ type StoredMessage = {
     | 'sender_key'
     | 'server_delivery_receipt'
     | 'unidentified_sender';
-  urgent?: boolean;
-  ephemeral?: boolean;
+  deliveryClass: 'user-visible' | 'background-sync' | 'ephemeral';
   timestamp: number;
   clientMessageId?: string;
   sharedPayloadId?: string;
@@ -319,8 +323,7 @@ export const send = mutation({
     senderDeviceId: v.number(),
     ciphertext: v.string(),
     messageType: messageTypeValidator,
-    urgent: v.optional(v.boolean()),
-    ephemeral: v.optional(v.boolean()),
+    deliveryClass: deliveryClassValidator,
     timestamp: v.number(),
     clientMessageId: v.optional(v.string()),
     recipientRegistrationId: v.optional(v.number()),
@@ -361,6 +364,17 @@ export const send = mutation({
       ciphertextBytes(input.ciphertext),
       input.callerUserId
     );
+    // Convex subscriptions are database-backed. This adapter cannot prove
+    // transient device acceptance without first retaining the frame, so it
+    // rejects ephemeral work instead of reporting false delivery or turning
+    // typing into offline mailbox state.
+    if (input.deliveryClass === 'ephemeral') {
+      throw relayError(
+        'NOT_IMPLEMENTED',
+        501,
+        'This Relay adapter has no live-only delivery transport'
+      );
+    }
     return await insertMessage(ctx, {
       targetUserId: input.targetUserId,
       targetDeviceId: input.targetDeviceId,
@@ -368,8 +382,7 @@ export const send = mutation({
       senderDeviceId: input.senderDeviceId,
       ciphertext: input.ciphertext,
       messageType: input.messageType,
-      urgent: input.urgent,
-      ephemeral: input.ephemeral,
+      deliveryClass: input.deliveryClass,
       timestamp: input.timestamp,
       clientMessageId: input.clientMessageId,
     });
@@ -451,8 +464,7 @@ export const getPendingMessages = query({
           senderUserId,
           senderDeviceId,
           messageType,
-          urgent,
-          ephemeral,
+          deliveryClass,
           timestamp,
           serverTimestamp,
           clientMessageId,
@@ -466,8 +478,7 @@ export const getPendingMessages = query({
           senderDeviceId,
           ciphertext: await wireCiphertext(row),
           messageType,
-          urgent,
-          ephemeral,
+          deliveryClass,
           timestamp,
           serverTimestamp,
           clientMessageId,
@@ -597,6 +608,7 @@ export const sendMultiRecipientUnidentified = mutation({
     recipients: v.array(multiRecipientValidator),
     ephemeralPublicBase64: v.string(),
     messageCiphertextBase64: v.string(),
+    deliveryClass: deliveryClassValidator,
     timestamp: v.number(),
     clientMessageId: v.optional(v.string()),
     unidentifiedAccessKey: v.optional(v.string()),
@@ -725,6 +737,7 @@ export const sendMultiRecipientUnidentified = mutation({
         senderDeviceId: 0,
         ciphertext: bytesToBase64(prefix),
         messageType: 'unidentified_sender',
+        deliveryClass: input.deliveryClass,
         timestamp: input.timestamp,
         clientMessageId: input.clientMessageId,
         sharedPayloadId: await ensureSharedPayload(

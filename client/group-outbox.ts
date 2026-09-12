@@ -93,6 +93,7 @@ async function sendStoredDeviceMessage(
       senderDeviceId: context.senderDeviceId,
       ciphertext: message.ciphertext,
       messageType: message.messageType,
+      deliveryClass: 'user-visible',
       timestamp: message.timestamp,
       clientMessageId: intent.clientMessageId,
     });
@@ -149,6 +150,7 @@ async function sendStoredGroupIntent(
       senderDeviceId: context.senderDeviceId,
       ciphertext: message.ciphertext,
       messageType: message.messageType,
+      deliveryClass: 'background-sync',
       timestamp: message.timestamp,
       clientMessageId: message.clientMessageId,
       recipientRegistrationId: message.recipientRegistrationId,
@@ -187,6 +189,7 @@ async function sendStoredGroupIntent(
           intent.groupSharedMessage.sentMessageBase64,
           auth,
           intent.clientTimestamp,
+          'user-visible',
           intent.groupSharedMessage.recipientUserIds,
           intent.clientMessageId
         );
@@ -262,6 +265,7 @@ async function sendStoredGroupIntent(
       senderDeviceId: context.senderDeviceId,
       ciphertext: message.ciphertext,
       messageType: message.messageType,
+      deliveryClass: 'background-sync',
       timestamp: message.timestamp,
       clientMessageId: message.clientMessageId,
     });

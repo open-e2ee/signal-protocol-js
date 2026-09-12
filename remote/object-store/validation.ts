@@ -72,6 +72,9 @@ export function validateUploadRequest(
       `Object length ${input.contentLength} exceeds configured limit ${maxSizeBytes}`
     );
   }
+  if (!(input.digest instanceof Uint8Array) || input.digest.length !== 32) {
+    throw new TypeError('digest must be a 32-byte SHA-256 digest');
+  }
 }
 
 export function validateObjectId(objectId: string): void {

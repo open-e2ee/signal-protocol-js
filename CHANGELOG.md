@@ -1,5 +1,68 @@
 # Changelog
 
+## 2.0.0
+
+- Six Jazzer.js targets run for 150 seconds each on Ubuntu 24.04.
+  The previous runner selected coverage reporting instead of fuzzing.
+
+- **Hosted control messages accept an omitted send identifier.**
+  One generated UUID survives token retries.
+
+- **Explicit account recovery bypasses stored sessions.**
+  The SDK requests a recovery assertion.
+
+- **Update the Noble dependencies.** Ciphers, curves, and hashes use 2.4.0.
+  Post-quantum uses 0.7.1.
+
+- **Breaking: Hosted Relay setup now uses one environment-scoped public
+  connection URL.** The SDK resolves the exact protocol endpoint and
+  publishable key from that URL, rejects project or environment mismatches
+  before it creates identity state, and supports the non-streaming Fetch
+  responses used by React Native and Expo. Applications no longer select a
+  Relay hostname or pair it with a second public value.
+
+- **Hosted encrypted attachment uploads preserve broker-signed headers.** The
+  default Fetch adapter no longer adds a second case-variant `Content-Type`
+  header that can invalidate a presigned upload request.
+
+- **Breaking: the hosted client now owns its authenticated Relay transport.**
+  Applications supply one environment-scoped Relay URL, local storage, and an
+  identity-assertion callback. The SDK registers or resumes the device, renews
+  short-lived tokens with device-key proof, maintains prekeys, and performs
+  direct delivery, mailbox, push, and encrypted-object operations without
+  application-supplied hosted adapters. Encrypted-object upload requests now
+  require the SHA-256 digest of the exact bytes.
+
+- **Breaking: Managed Relay adapters no longer accept certificate roots.** The
+  SDK compiles separate customer Development, customer Production, and internal
+  Staging fixture roots. It selects one profile from the exact
+  environment-scoped connection origin. Bootstrap data and application adapters
+  cannot replace hosted trust. Self-hosted Relay trust remains explicit and
+  separate.
+
+- **Hosted Relay push registration now declares the device platform and one
+  authorized notification profile.** Android and Web registrations accept
+  background wakes or generic visible alerts. iOS also accepts the
+  Notification Service Extension profile. The SDK rejects invalid
+  provider-platform pairs before transport. Apple notification filtering stays
+  unavailable until signed physical-device verification passes. Push remains a
+  best-effort wake; authenticated Relay mailbox pull remains delivery.
+
+- **Breaking: Relay envelopes use one required delivery class.**
+  `user-visible` persists and can request a generic alert, `background-sync`
+  persists without a visible alert, and `ephemeral` is online-only and never
+  enters an offline mailbox. The SDK infers the class for standard chat work.
+  The independent `urgent` and `ephemeral` booleans no longer exist. Relay
+  adapters that cannot prove live transient acceptance reject ephemeral work
+  instead of reporting false delivery or retaining typing state.
+
+  Convex validates stored component documents before it deploys the new
+  schema. Every 1.x `messages` row lacks the required class, so a 2.0 deploy
+  requires an empty component mailbox. Stop sends and let retention drain the
+  table, or clear it before deployment. This is a deliberate clean prelaunch
+  replacement; 2.0 does not parse or backfill the obsolete envelope shape.
+  See "Upgrading" in the Convex component README.
+
 ## 1.0.0
 
 - **Hosted Relay supports data-only push wake hints across Expo, APNs, FCM,
