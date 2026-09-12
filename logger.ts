@@ -6,6 +6,8 @@
  * mutable module-global state.
  */
 
+declare const __DEV__: boolean | undefined;
+
 export interface ILogger {
   debug?(message: string, data?: unknown): void;
   info?(message: string, data?: unknown): void;

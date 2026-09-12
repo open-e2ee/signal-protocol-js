@@ -1,49 +1,57 @@
-<img src="https://raw.githubusercontent.com/open-e2ee/design/v0.21.2/brand/generated/open-e2ee-mark-adaptive.svg" alt="OpenE2EE" width="72" height="72">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/open-e2ee/design/v0.21.2/brand/generated/hosted/open-e2ee-logo-dark.svg">
+  <img src="https://raw.githubusercontent.com/open-e2ee/design/v0.21.2/brand/generated/hosted/open-e2ee-logo-light.svg" alt="OpenE2EE" width="340">
+</picture>
 
 # OpenE2EE Signal Protocol SDK
 
-**End-to-end encrypted messaging for TypeScript apps. Signal Protocol, post-quantum by default, runs in Expo.**
+**Pure TypeScript for end-to-end encrypted chat.**
 
-[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-2f6f5e)](https://github.com/open-e2ee/signal-protocol-js/blob/main/LICENSE)
+Add encrypted messaging to Expo, React Native, browser, and Node applications. The SDK manages device identities, session establishment, and message encryption. Your application supplies storage, user authentication, and a relay for delivery.
+
+The default policy requires post-quantum session establishment and ratcheting. The protocol implementation is open source under AGPLv3, with a [commercial license](./COMMERCIAL.md) available.
+
+[**Run an encrypted exchange in your browser**](https://open-e2ee.dev/playground) · [Edit on StackBlitz](https://stackblitz.com/fork/github/open-e2ee/signal-protocol-js/tree/v2.0.1/examples/browser) · [Run on Expo / Hermes](./examples/expo/README.md)
+
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-2f6f5e)](./LICENSE)
 [![npm version](https://img.shields.io/npm/v/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
-[![native crypto: 0](https://img.shields.io/badge/native_crypto-0-2f6f5e)](./ARCHITECTURE.md)
 [![npm provenance](https://img.shields.io/badge/npm-provenance-2f6f5e)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk#provenance)
 [![Checks](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml/badge.svg)](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml)
 
-[Website](https://open-e2ee.dev) ·
-[Documentation](https://docs.open-e2ee.dev) ·
-[Live demo](https://open-e2ee.dev/#demo) ·
-[OpenE2EE Relay](https://open-e2ee.dev/relay) ·
-[API reference](https://docs.open-e2ee.dev/reference/api) ·
-[Security](./SECURITY.md)
-
-- **One TypeScript package.** Run the same protocol code in Expo, React Native, modern browsers, and Node.
-- **Post-quantum by default.** The default policy requires PQXDH session establishment and the ML-KEM Braid post-quantum ratchet. Required post-quantum operations fail closed.
-- **Messaging primitives included.** Build multi-device messaging, groups, sealed sender, encrypted attachments, and safety-number verification.
-- **Explicit infrastructure boundaries.** Your application owns device-local storage. Supply your own relay adapter or use [OpenE2EE Relay](https://open-e2ee.dev/relay) for managed encrypted delivery. The relay never needs message plaintext or device private keys.
-- **AGPLv3, or a commercial license.** Proprietary applications that cannot meet AGPLv3 obligations can use a [commercial license](./COMMERCIAL.md).
-
-The protocol code ships without a native crypto module or platform crypto binary. The Expo SQLCipher store requires a development build and native project configuration.
-
-Version `2.0.x`. Public APIs and persisted formats follow semantic versioning.
-
-OpenE2EE implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. Read the [full notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
+[Documentation](https://docs.open-e2ee.dev) · [API reference](https://docs.open-e2ee.dev/reference/api) · [OpenE2EE Relay](https://open-e2ee.dev/relay) · [Security](./SECURITY.md)
 
 ## See an encrypted round trip
 
-Press play for the complete four-message run: device setup, session establishment, encrypted relay delivery, and on-device decryption.
+Press play for device setup, session establishment, encrypted delivery, and decryption on each device.
 
 https://github.com/user-attachments/assets/d8002bc3-c037-41b6-8f48-4008f2d49e6c
 
-The [live demo](https://open-e2ee.dev/#demo) runs two SDK clients against an in-memory relay. On desktop, type a message and inspect the envelope, ratchets, relay mailbox, and decrypted result. On mobile, the same protocol run replays at reading pace. The protocol and cryptography are real. The example simulates infrastructure in memory. Displayed timings exclude network time.
+The [visual demo](https://open-e2ee.dev/#demo) shows the envelope, ratchets, relay mailbox, and decrypted result. On desktop, type a message and inspect each step. On mobile, a recorded protocol run replays at reading pace. Displayed timings exclude network time.
+
+The [console example](https://open-e2ee.dev/playground) executes in your browser on desktop or mobile. It creates Alice and Bob, sends your message, and decrypts a reply. The page and developer console show the actual output. [Read the complete source](./examples/browser/src/exchange.ts) or [run it locally](./examples/browser/README.md).
+
+Both examples use real protocol code and cryptography. An in-memory relay holds their envelopes. They need no account or backend project.
+
+## What the SDK handles
+
+- **Session establishment and ratcheting.** PQXDH establishes sessions. The ML-KEM Braid ratchet adds post-quantum key updates. Required post-quantum operations fail closed.
+- **Chat features.** Multi-device messaging, groups, sealed sender, encrypted attachments, and safety-number verification use the same package.
+- **Device-local state.** Storage adapters keep identities, sessions, and message state on the device.
+- **Delivery through an adapter.** Operate your own relay or use [OpenE2EE Relay](https://open-e2ee.dev/relay).
+
+The relay never needs message plaintext or device private keys.
+
+OpenE2EE implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
+
+Version `2.0.x`. Public APIs and persisted formats follow semantic versioning.
 
 ## Install
-
-Requires Node 18 or later for the local example.
 
 ```bash
 npm install @open-e2ee/signal-protocol-sdk
 ```
+
+Use a current Node LTS release for local development. Each runtime example lists its build requirements.
 
 ## Run a local encrypted round trip
 
@@ -92,14 +100,14 @@ The client factory creates or loads each device identity. When given a relay, it
 
 The in-memory store loses identities, sessions, and ratchet state on restart. The in-memory relay has no authentication, authorization, or durable storage. Do not ship either adapter. Continue with the [documentation quickstart](https://docs.open-e2ee.dev/start/quickstart), which explains key custody, relay metadata, prekey replenishment, additional devices, and recovery policy.
 
-## Move to production storage
+## Use your app’s storage and relay
 
 Choose the device-local store for your runtime. Then supply a relay that authenticates each device and implements your product's access policy, or use [OpenE2EE Relay](https://open-e2ee.dev/relay) as the managed delivery path. The SDK does not require the managed service. [Review Relay plans and exact meter definitions.](https://open-e2ee.dev/relay/pricing)
 
 | Runtime | Storage path | Deployment boundary |
 |---|---|---|
-| Expo | [`expoStore`](./local/store/expo/README.md) | Configure SQLCipher before schema access. Requires a development build; it does not run in Expo Go. |
-| Browser | [`indexedDbStore`](./local/store/web/README.md) | IndexedDB persists encrypted records, but same-origin JavaScript can access the records and their key. Review CSP, XSS, dependencies, and service workers. |
+| Expo | [`expoStore`](./local/store/expo/README.md) | Configure SQLCipher before schema access. Requires a native development or release build. [Run the Hermes example](./examples/expo/README.md); Expo Go does not include SQLCipher. |
+| Browser | [`indexedDbStore`](./local/store/web/README.md) | Use a secure context and a restrictive CSP. Same-origin JavaScript can access stored records and their key. [Browser setup](https://docs.open-e2ee.dev/start/browser). |
 | Bare React Native | [`reactNativeStore`](./local/store/react-native/README.md) | Provide an atomic, durable key-value backend and run the exported backend conformance kit. |
 | Node | [`nodeStore`](./local/store/node/README.md) | Set an explicit private data directory on a trusted local filesystem. |
 
@@ -107,17 +115,13 @@ The [adapter guide](./ADAPTERS.md) defines every storage, relay, vault, and obje
 
 ## Security and assurance
 
-The [assurance summary](./docs/ASSURANCE.md) states what the automated checks cover and what the public export does not contain. Public CI rebuilds, type-checks, audits, and runs this README example against the packed package.
+The SDK is open source. Our engineering tests remain private. We publish the [testing methodology and dated results](./docs/ASSURANCE.md), including what readers can and cannot verify from this repository. Public CI rebuilds the package, checks types and dependencies, and runs the documented examples.
+
+> Reviewed continuously by adversarial AI agents; not audited by any independent firm.
 
 JavaScript engines do not provide a machine-level constant-time contract or guaranteed zeroization. The [security model](./docs/SECURITY.md) defines the timing, same-process, storage, and metadata boundaries. The [protocol policy](./docs/PROTOCOL_POLICY.md) defines supported modes and fail-closed behavior.
 
 Report a suspected vulnerability privately through the process in [SECURITY](./SECURITY.md). Do not open a public issue for it.
-
-## Why developers choose this SDK
-
-The SDK gives TypeScript applications one maintained package for required post-quantum session establishment and ratcheting, multi-device messaging, groups, sealed sender, attachments, and safety numbers. It keeps protocol state on the device. Applications can operate a relay adapter or use OpenE2EE Relay for managed delivery.
-
-[Compare maintained alternatives and their limits.](https://open-e2ee.dev/product/#how-it-compares)
 
 ## Documentation
 

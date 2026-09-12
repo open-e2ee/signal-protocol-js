@@ -22,6 +22,7 @@
  */
 
 import { ml_kem768, ml_kem1024 } from '@noble/post-quantum/ml-kem.js';
+import { generateRandomBytes } from '../random';
 
 // ============================================================================
 // Kyber Shared Secret Branded Type
@@ -192,9 +193,7 @@ export async function generateMlKem1024KeyPair(): Promise<{
   publicKey: Uint8Array;
   privateKey: Uint8Array;
 }> {
-  // Generate ML-KEM-1024 keypair
-  // Note: ml_kem1024.keygen() accepts optional 64-byte seed for deterministic generation
-  const keyPair = ml_kem1024.keygen();
+  const keyPair = ml_kem1024.keygen(await generateRandomBytes(64));
 
   return {
     publicKey: serializeMlKem1024PublicKey(keyPair.publicKey),
@@ -226,7 +225,7 @@ export async function mlKem1024Encapsulate(serializedPublicKey: Uint8Array): Pro
   ciphertext: Uint8Array;
 }> {
   const rawPublicKey = parseMlKem1024PublicKey(serializedPublicKey);
-  const result = ml_kem1024.encapsulate(rawPublicKey);
+  const result = ml_kem1024.encapsulate(rawPublicKey, await generateRandomBytes(32));
 
   return {
     sharedSecret: asKyberSharedSecret(result.sharedSecret), // 32 bytes
@@ -290,8 +289,7 @@ export async function generateKyber768KeyPair(): Promise<{
   publicKey: Uint8Array;
   privateKey: Uint8Array;
 }> {
-  // Generate ML-KEM-768 keypair
-  const keyPair = ml_kem768.keygen();
+  const keyPair = ml_kem768.keygen(await generateRandomBytes(64));
 
   return {
     publicKey: keyPair.publicKey, // KYBER_768_PUBLIC_KEY_BYTES (1184)
@@ -331,7 +329,7 @@ export async function kyber768Encapsulate(kyberPublicKey: Uint8Array): Promise<{
   }
 
   // ML-KEM-768 encapsulation
-  const result = ml_kem768.encapsulate(kyberPublicKey);
+  const result = ml_kem768.encapsulate(kyberPublicKey, await generateRandomBytes(32));
 
   return {
     sharedSecret: asKyberSharedSecret(result.sharedSecret), // 32 bytes

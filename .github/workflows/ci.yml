@@ -73,7 +73,8 @@ jobs:
           npm init -y > /dev/null
           npm install --no-audit --no-fund "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz
           cp "$RUNNER_TEMP/quickstart.mjs" .
-          timeout 120 node quickstart.mjs | tee output.txt || true
+          set -o pipefail
+          timeout 120 node quickstart.mjs | tee output.txt
           grep -q "alice: hello" output.txt
 
   csp:

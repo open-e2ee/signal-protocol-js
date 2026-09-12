@@ -200,6 +200,10 @@ export const INFRASTRUCTURE_MODULES = {
  * These provide cross-cutting concerns or internal tooling.
  */
 export const META_DIRECTORIES = {
+  examples: {
+    directories: ['examples'],
+    description: 'Executable applications that consume the public package',
+  },
   types: {
     directories: ['types'],
     description: 'Shared type definitions used across all layers',
@@ -263,7 +267,7 @@ export const INFRASTRUCTURE_DIRECTORIES = ['local', 'remote', 'device'] as const
 /**
  * Meta directories (cross-cutting, not part of layer hierarchy).
  */
-export const META_DIRECTORY_NAMES = ['types', 'internal', 'utils'] as const;
+export const META_DIRECTORY_NAMES = ['examples', 'types', 'internal', 'utils'] as const;
 
 // =============================================================================
 // Validation Functions

@@ -7,6 +7,12 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 
+export const metadata = sqliteTable('metadata', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
 /**
  * SDK-managed SQLite schema fragment for Expo local storage.
  *
