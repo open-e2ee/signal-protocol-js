@@ -50,6 +50,8 @@
 
 ***
 
-### publishableKey
+### relayUrl
 
-> `readonly` **publishableKey**: `string`
+> `readonly` **relayUrl**: `string`
+
+Public environment-scoped Managed Relay connection URL.

@@ -1617,14 +1617,15 @@ async function defaultUpload(
   });
 
   const body = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+  const headers = { ...options.headers };
+  if (!Object.keys(headers).some((name) => name.toLowerCase() === 'content-type')) {
+    headers['Content-Type'] = 'application/octet-stream';
+  }
   const response = await globalThis.fetch(url, {
     method: 'PUT',
     body,
     signal: options.signal,
-    headers: {
-      'Content-Type': 'application/octet-stream',
-      ...options.headers,
-    },
+    headers,
   });
   assertNotAborted(options.signal);
 
@@ -2615,6 +2616,7 @@ async function uploadCiphertextWithRetry(input: {
   requestId: string;
 }): Promise<string> {
   const retry = resolveUploadRetryOptions(input.retry);
+  const digest = await sha256(input.ciphertext);
   let lastError: unknown;
   let resume = input.resume;
   let canonicalObjectId: string | undefined;
@@ -2651,6 +2653,7 @@ async function uploadCiphertextWithRetry(input: {
           requestId: input.requestId,
           contentType: 'application/octet-stream',
           contentLength: input.ciphertext.length,
+          digest,
         }
       );
       if (canonicalObjectId !== undefined && canonicalObjectId !== objectId) {

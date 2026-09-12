@@ -282,8 +282,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
       senderDeviceId: envelope.senderDeviceId,
       ciphertext,
       messageType: envelope.messageType,
-      urgent: envelope.urgent,
-      ephemeral: envelope.ephemeral,
+      deliveryClass: envelope.deliveryClass,
       timestamp: envelope.timestamp,
       clientMessageId: envelope.clientMessageId,
       // Relay-side stale-device detection validates the registration ID only.
@@ -438,6 +437,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
               senderDeviceId: msg.senderDeviceId,
               ciphertext: msg.ciphertext,
               messageType: msg.messageType,
+              deliveryClass: msg.deliveryClass,
               timestamp: msg.timestamp,
               serverTimestamp: msg.serverTimestamp,
             });
@@ -518,6 +518,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
               senderDeviceId: msg.senderDeviceId,
               ciphertext: msg.ciphertext,
               messageType: msg.messageType,
+              deliveryClass: msg.deliveryClass,
               timestamp: msg.timestamp,
               serverTimestamp: msg.serverTimestamp,
             });
@@ -859,6 +860,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
     sentMessageBase64: string,
     auth: SealedSenderAuth,
     timestamp: number,
+    deliveryClass: import('../types').DeliveryClass,
     recipientUserIds?: string[],
     clientMessageId?: string
   ): Promise<{
@@ -906,6 +908,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
           recipients: claimedRecipients,
           ephemeralPublicBase64: bytesToBase64(parsed.ephemeralPublic),
           messageCiphertextBase64: bytesToBase64(parsed.messageCiphertext),
+          deliveryClass,
           timestamp,
           clientMessageId,
           groupSendToken: auth.groupSendToken.buffer.slice(
@@ -919,6 +922,7 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
         recipients: flatRecipients,
         ephemeralPublicBase64: bytesToBase64(parsed.ephemeralPublic),
         messageCiphertextBase64: bytesToBase64(parsed.messageCiphertext),
+        deliveryClass,
         timestamp,
         clientMessageId,
         unidentifiedAccessKey: auth.unidentifiedAccessKey,

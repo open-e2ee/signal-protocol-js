@@ -448,7 +448,12 @@ export function isDuplicatedMessageError(error: unknown): error is DuplicatedMes
  * @example
  * ```typescript
  * try {
- *   await relay.sendMultiRecipientUnidentified(message, accessKey, timestamp);
+ *   await relay.sendMultiRecipientUnidentified(
+ *     message,
+ *     accessKey,
+ *     timestamp,
+ *     'user-visible'
+ *   );
  * } catch (error) {
  *   if (isSealedSenderAuthError(error)) {
  *     // Fall back to identified delivery

@@ -18,11 +18,22 @@ import {
   stringToBytes,
 } from '../internal/crypto';
 import type { ISignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import type { ISignalProtocolLocalStore, Base64 } from '../types';
 import { SignalProtocolClient } from './client';
 import type { SignalProtocolClientCompositionOptions } from './compose';
 import { createSignalProtocolClientConfig } from './compose';
 import type { SealedSenderAccessMode } from './config';
+import {
+  resolveHostedRelayConnection,
+  type HostedRelayCertificateTrust,
+} from './hosted-connection';
+import {
+  bootstrapHostedRelayTransport,
+  resumeHostedRelayTransport,
+  type HostedRelayTransportResult,
+} from './hosted-transport';
+import { bindHostedRelayPushRuntime } from './hosted-push';
 
 export {
   pullHostedRelayAfterWake,
@@ -30,12 +41,9 @@ export {
   removeHostedRelayPush,
 } from './hosted-push';
 export type {
-  HostedRelayMailboxAcknowledgmentRequest,
-  HostedRelayMailboxPullRequest,
-  HostedRelayPushAdapter,
+  HostedRelayPushPlatform,
+  HostedRelayPushProfile,
   HostedRelayPushRegistration,
-  HostedRelayPushRegistrationRequest,
-  HostedRelayPushRemovalRequest,
   HostedRelayTokenPushRegistration,
   HostedRelayWakeClient,
   HostedRelayWakeOptions,
@@ -49,7 +57,7 @@ const REGISTRATION_SNAPSHOT_METADATA_PREFIX =
   'hostedRelay.registrationSnapshot.v1:';
 const HOSTED_REGISTRATION_ONE_TIME_PREKEY_COUNT = 10;
 const DEVICE_AUTHENTICATION_SIGNATURE_LABEL = stringToBytes(
-  'OpenE2EE Relay device authentication v1\0'
+  'OpenE2EE Relay device authentication v1\0',
 );
 
 /** Why the hosted Relay needs a fresh identity assertion. */
@@ -73,7 +81,7 @@ export interface IdentityAssertionRequest {
 
 /** Stable application callback for a signed identity-provider assertion. */
 export type GetIdentityAssertion = (
-  request: IdentityAssertionRequest
+  request: IdentityAssertionRequest,
 ) => Promise<string>;
 
 /** Hosted identity operation progress suitable for application UI. */
@@ -101,7 +109,7 @@ export type HostedRelayIdentityProgress =
 
 /** Receives typed progress without receiving assertions or private key material. */
 export type HostedRelayIdentityProgressCallback = (
-  progress: HostedRelayIdentityProgress
+  progress: HostedRelayIdentityProgress,
 ) => void;
 
 /** A device proof signer whose private key never leaves the SDK-owned local store. */
@@ -130,6 +138,7 @@ export interface HostedRelayRegistrationPreKeys {
 
 /** Request passed to a hosted Relay bootstrap transport. */
 export interface HostedRelayBootstrapRequest {
+  readonly protocolEndpoint: string;
   readonly publishableKey: string;
   readonly assertion: string;
   readonly assertionPurpose: IdentityAssertionPurpose;
@@ -150,18 +159,10 @@ export interface HostedRelayBootstrapResult {
 }
 
 export type HostedRelayIdentityMigrationAction =
-  | 'prepare'
-  | 'inspect'
-  | 'cutover'
-  | 'rollback'
-  | 'finalize';
+  'prepare' | 'inspect' | 'cutover' | 'rollback' | 'finalize';
 
 export type HostedRelayIdentityMigrationState =
-  | 'abandoned'
-  | 'prepared'
-  | 'cutover'
-  | 'rolled-back'
-  | 'finalized';
+  'abandoned' | 'prepared' | 'cutover' | 'rolled-back' | 'finalized';
 
 export interface HostedRelayIdentityMigrationSnapshot {
   readonly accountPreserved: true;
@@ -177,6 +178,7 @@ export interface HostedRelayIdentityMigrationSnapshot {
 
 export interface HostedRelayIdentityMigrationRequest {
   readonly action: HostedRelayIdentityMigrationAction;
+  readonly protocolEndpoint: string;
   readonly publishableKey: string;
   readonly operationId: string;
   readonly manifestVersion?: number;
@@ -193,6 +195,7 @@ export interface HostedRelayIdentityMigrationRequest {
 }
 
 export interface HostedRelayManagedDeviceLinkRequest {
+  readonly protocolEndpoint: string;
   readonly publishableKey: string;
   readonly signalIdentity: CompositeIdentityV1;
   readonly registrationId: number;
@@ -202,8 +205,7 @@ export interface HostedRelayManagedDeviceLinkRequest {
   readonly newDeviceAuthentication: HostedRelayDeviceAuthentication;
 }
 
-export interface HostedRelayManagedDeviceLinkResult
-  extends HostedRelayBootstrapResult {
+export interface HostedRelayManagedDeviceLinkResult extends HostedRelayBootstrapResult {
   readonly accountPreserved: true;
   readonly protocolStateCopied: false;
 }
@@ -211,32 +213,31 @@ export interface HostedRelayManagedDeviceLinkResult
 /**
  * SDK or integration-owned hosted Relay transport.
  *
- * Certificate roots are pinned in this adapter, outside the bootstrap response.
- * A Relay response cannot select the root that validates its own certificates.
+ * Managed Relay certificate roots are compiled into the SDK and selected by the
+ * exact connection origin. The adapter cannot supply or replace hosted trust.
+ *
+ * OpenE2EE has no customers. This is a clean prelaunch contract replacement.
+ * Do not restore a certificateTrust compatibility property: accepting caller
+ * trust would weaken the managed trust boundary. Self-hosted trust stays in its
+ * separate explicit configuration.
  */
 export interface HostedRelayBootstrapAdapter {
-  readonly certificateTrust: {
-    readonly environment: 'development' | 'production';
-    readonly trustRoots: readonly Uint8Array[];
-    readonly revokedIssuerKeyIds: readonly number[];
-  };
   bootstrap(
-    request: HostedRelayBootstrapRequest
+    request: HostedRelayBootstrapRequest,
   ): Promise<HostedRelayBootstrapResult>;
 }
 
 /** Transport boundary for the hosted Relay identity-migration state machine. */
 export interface HostedRelayIdentityMigrationAdapter {
   migrate(
-    request: HostedRelayIdentityMigrationRequest
+    request: HostedRelayIdentityMigrationRequest,
   ): Promise<HostedRelayIdentityMigrationSnapshot>;
 }
 
 /** Transport boundary for canonical managed device linking. */
-export interface HostedRelayManagedDeviceLinkAdapter
-  extends HostedRelayBootstrapAdapter {
+export interface HostedRelayManagedDeviceLinkAdapter extends HostedRelayBootstrapAdapter {
   linkDevice(
-    request: HostedRelayManagedDeviceLinkRequest
+    request: HostedRelayManagedDeviceLinkRequest,
   ): Promise<HostedRelayManagedDeviceLinkResult>;
 }
 
@@ -247,13 +248,13 @@ export interface HostedSignalProtocolClientOptions extends Omit<
 > {
   readonly adapters: Omit<
     SignalProtocolClientCompositionOptions['adapters'],
-    'relay'
+    'relay' | 'remoteObjectStore'
   >;
   readonly hosted: {
-    readonly publishableKey: string;
-    readonly bootstrap: HostedRelayBootstrapAdapter;
+    /** Public environment-scoped Managed Relay connection URL. */
+    readonly relayUrl: string;
     readonly getIdentityAssertion: GetIdentityAssertion;
-    readonly assertionPurpose?: IdentityAssertionPurpose;
+    readonly assertionPurpose?: Exclude<IdentityAssertionPurpose, 'refresh'>;
     readonly assurance?: IdentityAssertionAssurance;
     readonly onProgress?: HostedRelayIdentityProgressCallback;
     readonly sealedSenderAccessMode?: SealedSenderAccessMode;
@@ -267,7 +268,8 @@ export interface HostedRelayIdentityMigrationOptions {
   readonly manifestVersion?: number;
   readonly operationId: string;
   readonly onProgress?: HostedRelayIdentityProgressCallback;
-  readonly publishableKey: string;
+  /** Public environment-scoped Managed Relay connection URL. */
+  readonly relayUrl: string;
   readonly authorization:
     | {
         readonly kind: 'active-device';
@@ -289,7 +291,8 @@ export interface HostedRelayManagedDeviceLinkOptions extends Omit<
   >;
   readonly activeDeviceStorage: ISignalProtocolLocalStore;
   readonly hosted: {
-    readonly publishableKey: string;
+    /** Public environment-scoped Managed Relay connection URL. */
+    readonly relayUrl: string;
     readonly adapter: HostedRelayManagedDeviceLinkAdapter;
     readonly onProgress?: HostedRelayIdentityProgressCallback;
     readonly sealedSenderAccessMode?: SealedSenderAccessMode;
@@ -319,7 +322,7 @@ interface StoredHostedRegistrationSnapshot {
 function uint32be(value: number): Uint8Array {
   if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
     throw new Error(
-      'Hosted Relay prekey ID must be an unsigned 32-bit integer'
+      'Hosted Relay prekey ID must be an unsigned 32-bit integer',
     );
   }
   return new Uint8Array([value >>> 24, value >>> 16, value >>> 8, value]);
@@ -332,7 +335,7 @@ function lengthPrefixed(value: Uint8Array): Uint8Array {
 async function deriveHostedRegistrationOperationId(
   identity: CompositeIdentityV1,
   registrationId: number,
-  prekeys: HostedRelayRegistrationPreKeys
+  prekeys: HostedRelayRegistrationPreKeys,
 ): Promise<string> {
   const entries = [
     ...prekeys.signedPreKeys.map((prekey) => ({ ...prekey, kind: 1 })),
@@ -356,7 +359,7 @@ async function deriveHostedRegistrationOperationId(
     new Uint8Array([1, 1]),
     base64ToBytes(identity.x25519PublicKey),
     new Uint8Array([2]),
-    base64ToBytes(identity.ed25519PublicKey)
+    base64ToBytes(identity.ed25519PublicKey),
   );
   return bytesToBase64(
     await sha256(
@@ -364,14 +367,14 @@ async function deriveHostedRegistrationOperationId(
         stringToBytes('OpenE2EE Relay hosted registration operation v1\0'),
         uint32be(registrationId),
         lengthPrefixed(encodedIdentity),
-        ...material
-      )
-    )
+        ...material,
+      ),
+    ),
   );
 }
 
 function encodeRegistrationPreKey(
-  prekey: HostedRelayRegistrationPreKey
+  prekey: HostedRelayRegistrationPreKey,
 ): StoredHostedRegistrationPreKey {
   return {
     algorithm: prekey.algorithm,
@@ -385,7 +388,7 @@ function encodeRegistrationPreKey(
 
 function decodeRegistrationPreKey(
   value: unknown,
-  kind: 'one-time' | 'signed'
+  kind: 'one-time' | 'signed',
 ): HostedRelayRegistrationPreKey {
   if (
     typeof value !== 'object' ||
@@ -432,7 +435,7 @@ function decodeRegistrationPreKey(
 async function decodeRegistrationSnapshot(
   value: string,
   identity: CompositeIdentityV1,
-  registrationId: number
+  registrationId: number,
 ): Promise<{
   operationId: string;
   registrationPreKeys: HostedRelayRegistrationPreKeys;
@@ -472,16 +475,16 @@ async function decodeRegistrationSnapshot(
   }
   const registrationPreKeys = {
     oneTimePreKeys: parsed.oneTimePreKeys.map((prekey) =>
-      decodeRegistrationPreKey(prekey, 'one-time')
+      decodeRegistrationPreKey(prekey, 'one-time'),
     ),
     signedPreKeys: parsed.signedPreKeys.map((prekey) =>
-      decodeRegistrationPreKey(prekey, 'signed')
+      decodeRegistrationPreKey(prekey, 'signed'),
     ),
   };
   const operationId = await deriveHostedRegistrationOperationId(
     identity,
     registrationId,
-    registrationPreKeys
+    registrationPreKeys,
   );
   if (operationId !== parsed.operationId) {
     throw new Error('Stored hosted Relay registration snapshot is invalid');
@@ -496,7 +499,7 @@ async function getOrCreateRegistrationSnapshot(
   registrationId: number,
   identityKeyPair: NonNullable<
     Awaited<ReturnType<ISignalProtocolLocalStore['getIdentityKey']>>
-  >
+  >,
 ): Promise<{
   operationId: string;
   registrationPreKeys: HostedRelayRegistrationPreKeys;
@@ -508,9 +511,9 @@ async function getOrCreateRegistrationSnapshot(
         new Uint8Array([0]),
         uint32be(registrationId),
         base64ToBytes(identity.x25519PublicKey),
-        base64ToBytes(identity.ed25519PublicKey)
-      )
-    )
+        base64ToBytes(identity.ed25519PublicKey),
+      ),
+    ),
   )}`;
   const stored = await storage.getMetadata(metadataKey);
   if (stored) {
@@ -518,22 +521,22 @@ async function getOrCreateRegistrationSnapshot(
   }
   const registrationPreKeys = await getOrCreateRegistrationPreKeys(
     storage,
-    identityKeyPair
+    identityKeyPair,
   );
   const operationId = await deriveHostedRegistrationOperationId(
     identity,
     registrationId,
-    registrationPreKeys
+    registrationPreKeys,
   );
   const snapshot: StoredHostedRegistrationSnapshot = {
     operationId: operationId as Base64,
     registrationId,
     signalIdentity: identity,
     oneTimePreKeys: registrationPreKeys.oneTimePreKeys.map(
-      encodeRegistrationPreKey
+      encodeRegistrationPreKey,
     ),
     signedPreKeys: registrationPreKeys.signedPreKeys.map(
-      encodeRegistrationPreKey
+      encodeRegistrationPreKey,
     ),
   };
   await storage.setMetadata(metadataKey, JSON.stringify(snapshot));
@@ -544,7 +547,7 @@ async function getOrCreateRegistrationPreKeys(
   storage: ISignalProtocolLocalStore,
   identity: NonNullable<
     Awaited<ReturnType<ISignalProtocolLocalStore['getIdentityKey']>>
-  >
+  >,
 ): Promise<HostedRelayRegistrationPreKeys> {
   let signedPreKey = await storage.getEcSignedPreKey(undefined, 'aci');
   if (!signedPreKey) {
@@ -560,7 +563,7 @@ async function getOrCreateRegistrationPreKeys(
   if (ecOneTimePreKeys.length === 0) {
     ecOneTimePreKeys = await generateEcOneTimePreKeys(
       HOSTED_REGISTRATION_ONE_TIME_PREKEY_COUNT,
-      0
+      0,
     );
     await storage.storeEcOneTimePreKeys(ecOneTimePreKeys, 'aci');
   }
@@ -569,7 +572,7 @@ async function getOrCreateRegistrationPreKeys(
     kemOneTimePreKeys = await generateKemOneTimePreKeys(
       identity,
       HOSTED_REGISTRATION_ONE_TIME_PREKEY_COUNT,
-      0
+      0,
     );
     await storage.storeKemOneTimePreKeys(kemOneTimePreKeys, 'aci');
   }
@@ -605,7 +608,7 @@ async function getOrCreateRegistrationPreKeys(
 }
 
 function decodeStoredDeviceAuthentication(
-  value: string
+  value: string,
 ): StoredDeviceAuthentication {
   let parsed: unknown;
   try {
@@ -630,7 +633,7 @@ function decodeStoredDeviceAuthentication(
 
 async function getOrCreateDeviceAuthentication(
   storage: ISignalProtocolLocalStore,
-  publishableKey: string
+  publishableKey: string,
 ): Promise<HostedRelayDeviceAuthentication> {
   const metadataKey = await deviceAuthenticationMetadataKey(publishableKey);
   const stored = await storage.getMetadata(metadataKey);
@@ -646,33 +649,33 @@ async function getOrCreateDeviceAuthentication(
 
 async function getExistingDeviceAuthentication(
   storage: ISignalProtocolLocalStore,
-  publishableKey: string
+  publishableKey: string,
 ): Promise<HostedRelayDeviceAuthentication> {
   const stored = await storage.getMetadata(
-    await deviceAuthenticationMetadataKey(publishableKey)
+    await deviceAuthenticationMetadataKey(publishableKey),
   );
   if (!stored) {
     throw new Error(
-      'Hosted Relay active device authentication key is not registered'
+      'Hosted Relay active device authentication key is not registered',
     );
   }
   return deviceAuthenticationSigner(
     decodeStoredDeviceAuthentication(stored),
-    publishableKey
+    publishableKey,
   );
 }
 
 async function deviceAuthenticationMetadataKey(
-  publishableKey: string
+  publishableKey: string,
 ): Promise<string> {
   return `${DEVICE_AUTHENTICATION_METADATA_PREFIX}${bytesToBase64(
-    await sha256(stringToBytes(publishableKey))
+    await sha256(stringToBytes(publishableKey)),
   )}`;
 }
 
 function deviceAuthenticationSigner(
   keyPair: StoredDeviceAuthentication,
-  publishableKey: string
+  publishableKey: string,
 ): HostedRelayDeviceAuthentication {
   return {
     publicKey: base64ToBytes(keyPair.publicKey),
@@ -684,7 +687,7 @@ function deviceAuthenticationSigner(
         DEVICE_AUTHENTICATION_SIGNATURE_LABEL,
         stringToBytes(publishableKey),
         new Uint8Array([0]),
-        challenge
+        challenge,
       );
       return base64ToBytes(await sign(keyPair.privateKey, payload));
     },
@@ -693,11 +696,11 @@ function deviceAuthenticationSigner(
 
 function assertHostedBootstrapResult(
   result: HostedRelayBootstrapResult,
-  bootstrap: HostedRelayBootstrapAdapter
+  certificateTrust: HostedRelayCertificateTrust,
 ): void {
   if (!result.canonicalAccountId || result.canonicalAccountId.length > 512) {
     throw new Error(
-      'Hosted Relay returned an invalid canonical account binding'
+      'Hosted Relay returned an invalid canonical account binding',
     );
   }
   if (!Number.isSafeInteger(result.deviceId) || result.deviceId < 1) {
@@ -708,39 +711,27 @@ function assertHostedBootstrapResult(
     result.relayScopeId.length !== 16
   ) {
     throw new Error(
-      'Hosted Relay returned an invalid project-environment scope'
+      'Hosted Relay returned an invalid project-environment scope',
     );
   }
   if (!result.relay) {
     throw new Error(
-      'Hosted Relay bootstrap did not return an authenticated Relay'
+      'Hosted Relay bootstrap did not return an authenticated Relay',
     );
   }
-  if (bootstrap.certificateTrust.trustRoots.length === 0) {
-    throw new Error('Hosted Relay adapter has no pinned certificate root');
+  if (certificateTrust.trustRoots.length === 0) {
+    throw new Error('Managed Relay has no compiled certificate root');
   }
-  for (const root of bootstrap.certificateTrust.trustRoots) {
+  for (const root of certificateTrust.trustRoots) {
     if (!(root instanceof Uint8Array) || root.length !== 32) {
-      throw new Error(
-        'Hosted Relay adapter has an invalid pinned certificate root'
-      );
+      throw new Error('Managed Relay has an invalid compiled certificate root');
     }
   }
-  for (const keyId of bootstrap.certificateTrust.revokedIssuerKeyIds) {
+  for (const keyId of certificateTrust.revokedIssuerKeyIds) {
     if (!Number.isSafeInteger(keyId) || keyId < 0 || keyId > 0xffff_ffff) {
-      throw new Error(
-        'Hosted Relay adapter has an invalid revoked issuer key ID'
-      );
+      throw new Error('Managed Relay has an invalid revoked issuer key ID');
     }
   }
-}
-
-function assertPublishableKey(value: string): string {
-  const publishableKey = value.trim();
-  if (!publishableKey || publishableKey.length > 512) {
-    throw new Error('Hosted Relay publishable key is invalid');
-  }
-  return publishableKey;
 }
 
 function assertOperationId(value: string): string {
@@ -766,22 +757,28 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   return difference === 0;
 }
 
-function createClientFromHostedResult(
+async function createClientFromHostedResult(
   result: HostedRelayBootstrapResult,
-  bootstrap: HostedRelayBootstrapAdapter,
-  adapters: Omit<SignalProtocolClientCompositionOptions['adapters'], 'relay'>,
+  certificateTrust: HostedRelayCertificateTrust,
+  adapters: Omit<
+    SignalProtocolClientCompositionOptions['adapters'],
+    'relay' | 'remoteObjectStore'
+  >,
   clientOptions: Omit<
     SignalProtocolClientCompositionOptions,
     'adapters' | 'identity' | 'sealedSender'
   >,
-  sealedSenderAccessMode?: SealedSenderAccessMode
+  sealedSenderAccessMode?: SealedSenderAccessMode,
+  remoteObjectStore?: SignalProtocolRemoteObjectStore,
+  hostedTransport?: HostedRelayTransportResult['transport'],
 ): Promise<SignalProtocolClient> {
-  assertHostedBootstrapResult(result, bootstrap);
+  assertHostedBootstrapResult(result, certificateTrust);
   const config = createSignalProtocolClientConfig({
     ...clientOptions,
     adapters: {
       ...adapters,
       relay: result.relay,
+      ...(remoteObjectStore === undefined ? {} : { remoteObjectStore }),
     },
     identity: {
       userId: result.canonicalAccountId,
@@ -790,14 +787,21 @@ function createClientFromHostedResult(
     sealedSender: {
       accessMode: sealedSenderAccessMode,
       relayScopeId: result.relayScopeId,
-      revokedIssuerKeyIds: bootstrap.certificateTrust.revokedIssuerKeyIds,
+      revokedIssuerKeyIds: certificateTrust.revokedIssuerKeyIds,
       trustModel: 'hosted',
-      trustRoots: bootstrap.certificateTrust.trustRoots.map(
-        (root) => new Uint8Array(root)
+      trustRoots: certificateTrust.trustRoots.map(
+        (root) => new Uint8Array(root),
       ),
     },
   });
-  return SignalProtocolClient.create(result.canonicalAccountId, config);
+  const client = await SignalProtocolClient.create(
+    result.canonicalAccountId,
+    config,
+  );
+  if (hostedTransport !== undefined) {
+    bindHostedRelayPushRuntime(client, hostedTransport);
+  }
+  return client;
 }
 
 /**
@@ -808,9 +812,10 @@ function createClientFromHostedResult(
  * and the HTTP representation.
  */
 export async function advanceHostedRelayIdentityMigration(
-  options: HostedRelayIdentityMigrationOptions
+  options: HostedRelayIdentityMigrationOptions,
 ): Promise<HostedRelayIdentityMigrationSnapshot> {
-  const publishableKey = assertPublishableKey(options.publishableKey);
+  const connection = await resolveHostedRelayConnection(options.relayUrl);
+  const { protocolEndpoint, publishableKey } = connection;
   const operationId = assertOperationId(options.operationId);
   if (
     options.action === 'prepare' &&
@@ -825,11 +830,11 @@ export async function advanceHostedRelayIdentityMigration(
     options.authorization.providerRole !== 'source'
   ) {
     throw new Error(
-      'Hosted Relay migration prepare requires source-provider authorization'
+      'Hosted Relay migration prepare requires source-provider authorization',
     );
   }
   const requestAssertion = async (
-    providerRole: IdentityAssertionProviderRole
+    providerRole: IdentityAssertionProviderRole,
   ): Promise<string> => {
     options.onProgress?.({
       operation: 'migration',
@@ -841,7 +846,7 @@ export async function advanceHostedRelayIdentityMigration(
       await options.getIdentityAssertion({
         purpose: 'refresh',
         migration: { action: options.action, providerRole },
-      })
+      }),
     );
   };
 
@@ -851,19 +856,15 @@ export async function advanceHostedRelayIdentityMigration(
           kind: 'active-device' as const,
           deviceAuthentication: await getExistingDeviceAuthentication(
             options.authorization.storage,
-            publishableKey
+            publishableKey,
           ),
         }
       : {
           kind: 'assertion' as const,
-          assertion: await requestAssertion(
-            options.authorization.providerRole
-          ),
+          assertion: await requestAssertion(options.authorization.providerRole),
         };
   const targetAssertion =
-    options.action === 'prepare'
-      ? await requestAssertion('target')
-      : undefined;
+    options.action === 'prepare' ? await requestAssertion('target') : undefined;
 
   options.onProgress?.({
     operation: 'migration',
@@ -872,6 +873,7 @@ export async function advanceHostedRelayIdentityMigration(
   });
   const snapshot = await options.adapter.migrate({
     action: options.action,
+    protocolEndpoint,
     publishableKey,
     operationId,
     ...(options.manifestVersion === undefined
@@ -904,10 +906,11 @@ export async function advanceHostedRelayIdentityMigration(
  * prekey material crosses this managed boundary.
  */
 export async function linkHostedRelayDevice(
-  options: HostedRelayManagedDeviceLinkOptions
+  options: HostedRelayManagedDeviceLinkOptions,
 ): Promise<SignalProtocolClient> {
   const { adapters, activeDeviceStorage, hosted, ...clientOptions } = options;
-  const publishableKey = assertPublishableKey(hosted.publishableKey);
+  const connection = await resolveHostedRelayConnection(hosted.relayUrl);
+  const { protocolEndpoint, publishableKey } = connection;
   hosted.onProgress?.({
     operation: 'device-link',
     phase: 'preparing-linked-device',
@@ -918,7 +921,7 @@ export async function linkHostedRelayDevice(
   ]);
   if (!identity) {
     throw new Error(
-      'Hosted Relay linked device requires a provisioned ACI identity'
+      'Hosted Relay linked device requires a provisioned ACI identity',
     );
   }
   if (
@@ -927,7 +930,7 @@ export async function linkHostedRelayDevice(
     activeIdentity.signingKey.publicKey !== identity.signingKey.publicKey
   ) {
     throw new Error(
-      'Hosted Relay linked device identity does not match the active account'
+      'Hosted Relay linked device identity does not match the active account',
     );
   }
   const signalIdentity = createCompositeIdentityV1(identity);
@@ -937,7 +940,7 @@ export async function linkHostedRelayDevice(
       publishableKey,
       signalIdentity,
       identity.registrationId,
-      identity
+      identity,
     );
   const [activeDeviceAuthentication, newDeviceAuthentication] =
     await Promise.all([
@@ -947,7 +950,7 @@ export async function linkHostedRelayDevice(
   if (
     equalBytes(
       activeDeviceAuthentication.publicKey,
-      newDeviceAuthentication.publicKey
+      newDeviceAuthentication.publicKey,
     )
   ) {
     throw new Error('Hosted Relay device link requires a new device key');
@@ -955,6 +958,7 @@ export async function linkHostedRelayDevice(
 
   hosted.onProgress?.({ operation: 'device-link', phase: 'submitting' });
   const result = await hosted.adapter.linkDevice({
+    protocolEndpoint,
     publishableKey,
     signalIdentity,
     registrationId: identity.registrationId,
@@ -971,10 +975,10 @@ export async function linkHostedRelayDevice(
   }
   const client = await createClientFromHostedResult(
     result,
-    hosted.adapter,
+    connection.certificateTrust,
     adapters,
     clientOptions,
-    hosted.sealedSenderAccessMode
+    hosted.sealedSenderAccessMode,
   );
   hosted.onProgress?.({
     operation: 'device-link',
@@ -989,12 +993,24 @@ export async function linkHostedRelayDevice(
  *
  * The Relay verifies the assertion and device proof, then returns the canonical
  * account, registered device, scope, and authenticated transport used by the client.
+ *
+ * @example
+ * ```ts
+ * const client = await createHostedSignalProtocolClient({
+ *   adapters,
+ *   hosted: {
+ *     getIdentityAssertion,
+ *     relayUrl: process.env.OPEN_E2EE_RELAY_URL!,
+ *   },
+ * });
+ * ```
  */
 export async function createHostedSignalProtocolClient(
-  options: HostedSignalProtocolClientOptions
+  options: HostedSignalProtocolClientOptions,
 ): Promise<SignalProtocolClient> {
   const { adapters, hosted, ...clientOptions } = options;
-  const publishableKey = assertPublishableKey(hosted.publishableKey);
+  const connection = await resolveHostedRelayConnection(hosted.relayUrl);
+  const { publishableKey } = connection;
   const operation =
     hosted.assertionPurpose === 'recover' ? 'recovery' : 'bootstrap';
   hosted.onProgress?.({ operation, phase: 'preparing-local-state' });
@@ -1007,8 +1023,30 @@ export async function createHostedSignalProtocolClient(
   }
   const deviceAuthentication = await getOrCreateDeviceAuthentication(
     storage,
-    publishableKey
+    publishableKey,
   );
+  const resumed = await resumeHostedRelayTransport({
+    connection,
+    deviceAuthentication,
+    storage,
+  });
+  if (resumed !== undefined) {
+    const client = await createClientFromHostedResult(
+      resumed,
+      connection.certificateTrust,
+      adapters,
+      clientOptions,
+      hosted.sealedSenderAccessMode,
+      resumed.remoteObjectStore,
+      resumed.transport,
+    );
+    if (client.syncStatus === 'failed') {
+      await client.stop();
+      throw new Error('OpenE2EE Relay initial synchronization failed');
+    }
+    hosted.onProgress?.({ operation, phase: 'complete' });
+    return client;
+  }
   const signalIdentity = createCompositeIdentityV1(identity);
   const { operationId, registrationPreKeys } =
     await getOrCreateRegistrationSnapshot(
@@ -1016,7 +1054,7 @@ export async function createHostedSignalProtocolClient(
       publishableKey,
       signalIdentity,
       identity.registrationId,
-      identity
+      identity,
     );
   const assertionPurpose = hosted.assertionPurpose ?? 'register';
   hosted.onProgress?.({ operation, phase: 'requesting-assertion' });
@@ -1027,8 +1065,9 @@ export async function createHostedSignalProtocolClient(
   assertIdentityAssertion(assertion);
 
   hosted.onProgress?.({ operation, phase: 'submitting' });
-  const result = await hosted.bootstrap.bootstrap({
-    publishableKey,
+  const result = await bootstrapHostedRelayTransport({
+    connection,
+    storage,
     assertion,
     assertionPurpose,
     signalIdentity,
@@ -1039,11 +1078,17 @@ export async function createHostedSignalProtocolClient(
   });
   const client = await createClientFromHostedResult(
     result,
-    hosted.bootstrap,
+    connection.certificateTrust,
     adapters,
     clientOptions,
-    hosted.sealedSenderAccessMode
+    hosted.sealedSenderAccessMode,
+    result.remoteObjectStore,
+    result.transport,
   );
+  if (client.syncStatus === 'failed') {
+    await client.stop();
+    throw new Error('OpenE2EE Relay initial synchronization failed');
+  }
   hosted.onProgress?.({ operation, phase: 'complete' });
   return client;
 }

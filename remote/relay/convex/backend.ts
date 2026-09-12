@@ -141,6 +141,12 @@ const provisioningStatusValidator = v.union(
   v.literal('expired')
 );
 
+const deliveryClassValidator = v.union(
+  v.literal('user-visible'),
+  v.literal('background-sync'),
+  v.literal('ephemeral')
+);
+
 /**
  * Build the public app functions that expose the installed component.
  *
@@ -167,8 +173,7 @@ export function defineConvexSignalProtocolBackend<Context = DefaultBackendContex
           senderDeviceId: v.number(),
           ciphertext: v.string(),
           messageType: messageTypeValidator,
-          urgent: v.optional(v.boolean()),
-          ephemeral: v.optional(v.boolean()),
+          deliveryClass: deliveryClassValidator,
           timestamp: v.number(),
           clientMessageId: v.optional(v.string()),
           recipientRegistrationId: v.optional(v.number()),
@@ -191,8 +196,7 @@ export function defineConvexSignalProtocolBackend<Context = DefaultBackendContex
             senderDeviceId: v.number(),
             ciphertext: v.string(),
             messageType: messageTypeValidator,
-            urgent: v.optional(v.boolean()),
-            ephemeral: v.optional(v.boolean()),
+            deliveryClass: deliveryClassValidator,
             timestamp: v.number(),
             serverTimestamp: v.number(),
             clientMessageId: v.optional(v.string()),
@@ -245,6 +249,7 @@ export function defineConvexSignalProtocolBackend<Context = DefaultBackendContex
           ),
           ephemeralPublicBase64: v.string(),
           messageCiphertextBase64: v.string(),
+          deliveryClass: deliveryClassValidator,
           timestamp: v.number(),
           clientMessageId: v.optional(v.string()),
           unidentifiedAccessKey: v.optional(v.string()),

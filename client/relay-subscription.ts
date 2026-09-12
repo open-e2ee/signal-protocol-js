@@ -332,6 +332,7 @@ async function handleDecryptionError(
         senderUserId: envelope.senderUserId,
         senderDeviceId: envelope.senderDeviceId,
         messageType: envelope.messageType,
+        deliveryClass: envelope.deliveryClass,
         timestamp: envelope.timestamp,
         reason: 'Protocol message - ephemeral, no retry',
         behavior: 'IMPLICIT_DISCARD',
@@ -353,6 +354,7 @@ async function handleDecryptionError(
         envelopeId: envelope.id,
         senderId: envelope.senderUserId,
         messageType: envelope.messageType,
+        deliveryClass: envelope.deliveryClass,
         reason: error.message,
       },
     });
@@ -364,6 +366,7 @@ async function handleDecryptionError(
         envelopeId: envelope.id,
         senderId: envelope.senderUserId,
         messageType: envelope.messageType,
+        deliveryClass: envelope.deliveryClass,
       },
     });
   }

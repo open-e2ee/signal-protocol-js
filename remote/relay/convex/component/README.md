@@ -276,16 +276,16 @@ component. Each authenticated fetcher/target-account pair receives ten fetches
 per fixed one-minute window. The eleventh request fails with structured
 `RATE_LIMITED` data and HTTP-equivalent status 429.
 
-## Upgrading: clear `messages` before deploying this version
+## Upgrading to 2.0: clear `messages` before deployment
 
-This version drops two shapes from the `messages` table: the optional
-`groupId` field, and `plaintext_content` from the `messageType` union.
+Version 2.0 replaces the optional `urgent` and `ephemeral` booleans with one
+required `deliveryClass`. Every 1.x `messages` row lacks that field.
 
 Convex validates every existing document against the new schema **during the
-push**, before any of your code runs. A stored row carrying a `groupId`, or one
-whose `messageType` is `plaintext_content`, therefore fails the deploy. No
-migration mutation can fix it, because the deploy that would ship the mutation
-is the deploy that fails. The order has to be: clear first, deploy second.
+push**, before any of your code runs. Any retained 1.x row therefore fails the
+deploy. No migration mutation can run first, because the deploy that would ship
+it is the deploy that fails. The order is: empty the table first, then deploy.
+Version 2.0 does not keep a compatibility field or parser for the old shape.
 
 Messages are transient by design. The table has a seven-day TTL and an hourly
 cleanup cron. Clients re-request undelivered messages through the retry path,
@@ -300,9 +300,7 @@ npx convex data messages --component signalProtocol
 ```
 
 Add `--prod` or `--deployment <name-or-reference>` to target a deployment other
-than your dev one. A deployment that never relayed a group message, and never
-had a caller pass `plaintext_content`, has no affected rows and needs no
-action. No send path in this SDK ever produced the latter.
+than your development deployment. An empty table needs no action.
 
 If there are rows, either wait or clear:
 

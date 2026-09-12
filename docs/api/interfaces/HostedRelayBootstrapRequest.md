@@ -36,6 +36,12 @@ Stable for exact retries and changes when the public registration material chang
 
 ***
 
+### protocolEndpoint
+
+> `readonly` **protocolEndpoint**: `string`
+
+***
+
 ### publishableKey
 
 > `readonly` **publishableKey**: `string`

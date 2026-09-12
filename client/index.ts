@@ -50,12 +50,9 @@ export {
   type HostedRelayManagedDeviceLinkOptions,
   type HostedRelayManagedDeviceLinkRequest,
   type HostedRelayManagedDeviceLinkResult,
-  type HostedRelayMailboxAcknowledgmentRequest,
-  type HostedRelayMailboxPullRequest,
-  type HostedRelayPushAdapter,
+  type HostedRelayPushPlatform,
+  type HostedRelayPushProfile,
   type HostedRelayPushRegistration,
-  type HostedRelayPushRegistrationRequest,
-  type HostedRelayPushRemovalRequest,
   type HostedRelayRegistrationPreKey,
   type HostedRelayRegistrationPreKeys,
   type HostedRelayTokenPushRegistration,
@@ -108,7 +105,10 @@ export type {
   SignalProtocolContentAdapter,
 } from './content-adapter';
 export { createDefaultSignalProtocolContentAdapter } from './content-adapter';
-export type { DecryptedEnvelope, SignalProtocolClientHooks } from './event-hooks';
+export type {
+  DecryptedEnvelope,
+  SignalProtocolClientHooks,
+} from './event-hooks';
 export type {
   SignalProtocolClientDeleteLocalAttachmentInput,
   SignalProtocolClientLoadedLocalAttachment,

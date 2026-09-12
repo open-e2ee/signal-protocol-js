@@ -17,7 +17,10 @@ import type {
   RemoteObjectUpload,
   RemoteObjectUploadRequest,
 } from '../types';
-import type { ConvexR2ObjectStoreApi } from './storage';
+import type {
+  ConvexR2ObjectStoreApi,
+  ConvexR2UploadRequest,
+} from './storage';
 
 const MAX_PRESIGNED_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
 const MAX_IDENTIFIER_LENGTH = 1_024;
@@ -73,7 +76,7 @@ export interface ConvexR2ObjectCallbacks {
   reserve: FunctionReference<
     'mutation',
     'internal',
-    RemoteObjectUploadRequest,
+    ConvexR2UploadRequest,
     ConvexR2ObjectReservation
   >;
   /** Authorize and resolve an object for the requested operation. */
@@ -165,6 +168,13 @@ function requireContentLength(value: number, maxContentLength: number): number {
   }
   if (value > maxContentLength) {
     throw new Error(`contentLength exceeds the configured limit of ${maxContentLength} bytes`);
+  }
+  return value;
+}
+
+function requireDigest(value: ArrayBuffer): ArrayBuffer {
+  if (value.byteLength !== 32) {
+    throw new Error('digest must be a 32-byte SHA-256 digest');
   }
   return value;
 }
@@ -328,12 +338,14 @@ export function defineConvexR2ObjectStore(config: DefineConvexR2ObjectStoreConfi
         requestId: v.string(),
         contentType: v.string(),
         contentLength: v.number(),
+        digest: v.bytes(),
       },
       returns: uploadResultValidator,
       handler: async (ctx, input): Promise<RemoteObjectUpload> => {
         requireIdentifier(input.requestId, 'requestId');
         requireAllowedContentType(input.contentType, limits.allowedContentTypes);
         requireContentLength(input.contentLength, limits.maxContentLength);
+        requireDigest(input.digest);
 
         const reservation = await ctx.runMutation(objects.reserve, input);
         requireIdentifier(reservation.objectId, 'objectId');

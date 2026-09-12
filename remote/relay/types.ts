@@ -664,6 +664,7 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
    * @param sentMessageBase64 - Base64-encoded V2 multi-recipient binary blob
    * @param auth - Sealed sender authentication (access key or group send token)
    * @param timestamp - Client timestamp for message identification
+   * @param deliveryClass - Exact persistence and wake behavior
    * @param recipientUserIds - Original user IDs in same order as binary recipients
    * @returns Message ID, server timestamp, and list of unknown recipient UUIDs
    *
@@ -672,6 +673,7 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
     sentMessageBase64: string,
     auth: SealedSenderAuth,
     timestamp: number,
+    deliveryClass: DeliveryClass,
     recipientUserIds?: string[],
     clientMessageId?: string
   ): Promise<{
@@ -751,8 +753,11 @@ export type SealedSenderAuth =
       recipientAciBytes: Map<string, Uint8Array>;
     };
 
+/** Provider-neutral delivery behavior inferred from encrypted-content semantics. */
+export type DeliveryClass = 'user-visible' | 'background-sync' | 'ephemeral';
+
 /**
- * Envelope for delivery (profile naming)
+ * Envelope for delivery.
  *
  * Server treats ciphertext as opaque bytes (zero-knowledge).
  */
@@ -796,11 +801,8 @@ export interface Envelope {
     | 'server_delivery_receipt'
     | 'unidentified_sender';
 
-  /** Push notification priority (default true). Non-urgent = silent push. */
-  urgent?: boolean;
-
-  /** Skip persistence if recipient offline (for typing indicators, receipts). */
-  ephemeral?: boolean;
+  /** Exact persistence and wake behavior for this encrypted envelope. */
+  deliveryClass: DeliveryClass;
 
   /** Server-assigned envelope ID (set by server) */
   id?: string;
@@ -893,10 +895,12 @@ export interface DeviceInfo {
   linked: boolean;
   /** Whether device can receive messages (user-controlled) */
   enabled: boolean;
-  /** Whether device is currently online (system-controlled) */
-  active: boolean;
-  lastSeen: number;
-  createdAt: number;
+  /** Whether device is currently online, when the relay exposes presence. */
+  active?: boolean;
+  /** Last observed activity, when the relay exposes device observations. */
+  lastSeen?: number;
+  /** Registration time, when the relay exposes device observations. */
+  createdAt?: number;
   /** When the user linked the device (for secondary devices) */
   linkedAt?: number;
 }

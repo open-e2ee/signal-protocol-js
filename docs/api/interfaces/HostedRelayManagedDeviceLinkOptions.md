@@ -252,9 +252,11 @@ const signal = await SignalProtocolClient.create(userId, {
 
 > `readonly` `optional` **onProgress?**: [`HostedRelayIdentityProgressCallback`](../type-aliases/HostedRelayIdentityProgressCallback.md)
 
-#### publishableKey
+#### relayUrl
 
-> `readonly` **publishableKey**: `string`
+> `readonly` **relayUrl**: `string`
+
+Public environment-scoped Managed Relay connection URL.
 
 #### sealedSenderAccessMode?
 

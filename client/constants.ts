@@ -37,8 +37,10 @@ export const IMPLICIT_ENVELOPE_TYPES = ['server_delivery_receipt'] as const;
 /**
  * Check if a message takes ContentHint.Implicit behavior.
  *
- * Implicit messages are ephemeral (typing indicators, receipts) and should be
- * silently discarded on decryption failure - no ERROR logs, no retry requests.
+ * Implicit messages have disposable content semantics (for example typing
+ * indicators and receipts) and should be silently discarded on decryption
+ * failure - no ERROR logs, no retry requests. Their Relay delivery class is a
+ * separate persistence and wake decision.
  *
  * The primary mechanism is ContentHint.Implicit (set by the sender on the envelope).
  * Server-generated delivery receipts are also implicit by envelope type.

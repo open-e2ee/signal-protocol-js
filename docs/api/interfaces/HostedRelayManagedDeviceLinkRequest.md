@@ -26,6 +26,12 @@
 
 ***
 
+### protocolEndpoint
+
+> `readonly` **protocolEndpoint**: `string`
+
+***
+
 ### publishableKey
 
 > `readonly` **publishableKey**: `string`

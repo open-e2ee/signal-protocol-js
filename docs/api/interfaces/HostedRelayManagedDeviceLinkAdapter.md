@@ -12,28 +12,6 @@ Transport boundary for canonical managed device linking.
 
 - [`HostedRelayBootstrapAdapter`](HostedRelayBootstrapAdapter.md)
 
-## Properties
-
-### certificateTrust
-
-> `readonly` **certificateTrust**: `object`
-
-#### environment
-
-> `readonly` **environment**: `"development"` \| `"production"`
-
-#### revokedIssuerKeyIds
-
-> `readonly` **revokedIssuerKeyIds**: readonly `number`[]
-
-#### trustRoots
-
-> `readonly` **trustRoots**: readonly `Uint8Array`\<`ArrayBufferLike`\>[]
-
-#### Inherited from
-
-[`HostedRelayBootstrapAdapter`](HostedRelayBootstrapAdapter.md).[`certificateTrust`](HostedRelayBootstrapAdapter.md#certificatetrust)
-
 ## Methods
 
 ### bootstrap()

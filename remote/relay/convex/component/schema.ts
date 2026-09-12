@@ -173,8 +173,11 @@ export default defineSchema({
       v.literal('server_delivery_receipt'),
       v.literal('unidentified_sender')
     ),
-    urgent: v.optional(v.boolean()),
-    ephemeral: v.optional(v.boolean()),
+    deliveryClass: v.union(
+      v.literal('user-visible'),
+      v.literal('background-sync'),
+      v.literal('ephemeral')
+    ),
     timestamp: v.number(),
     serverTimestamp: v.number(),
     clientMessageId: v.optional(v.string()),

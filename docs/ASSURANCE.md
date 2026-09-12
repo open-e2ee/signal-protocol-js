@@ -30,16 +30,16 @@ files that nobody could run would look like assurance without being any.
 Every change to the source repository runs the full set of automated checks,
 and an export is only cut from a revision where they pass.
 
-Most recent full run on 2026-08-27:
+Most recent full run on 2026-09-12:
 
 | | |
 |---|---|
-| Modules executed | 393 |
-| Assertions | 6,986 |
-| Passed | 6,984 |
+| Modules executed | 394 |
+| Assertions | 7,011 |
+| Passed | 7,009 |
 | Skipped | 2 |
 | Failed | 0 |
-| Wall time | 212 s |
+| Wall time | 368 s |
 
 That figure excludes longer-running performance and endurance checks, which run
 under separate commands.

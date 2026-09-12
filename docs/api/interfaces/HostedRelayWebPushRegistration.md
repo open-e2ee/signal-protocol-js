@@ -30,6 +30,18 @@ Browser Push API subscription registered for this authenticated device.
 
 ***
 
+### platform
+
+> `readonly` **platform**: `"web"`
+
+***
+
+### profile
+
+> `readonly` **profile**: `"background-only"` \| `"visible-alert"`
+
+***
+
 ### provider
 
 > `readonly` **provider**: `"web-push"`

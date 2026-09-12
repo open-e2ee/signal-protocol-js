@@ -336,6 +336,7 @@ export class SignalProtocolServiceCipher {
             ? syncMsg.ciphertext
             : CryptoUtils.bytesToBase64(syncMsg.ciphertext),
         messageType: getEnvelopeMessageType(syncMsg.ciphertext),
+        deliveryClass: 'background-sync',
         timestamp: syncMsg.timestamp,
       });
     }
@@ -1314,6 +1315,7 @@ export class SignalProtocolServiceCipher {
         senderDeviceId: this.deviceId,
         ciphertext: msg.ciphertext,
         messageType: msg.messageType,
+        deliveryClass: 'background-sync',
         timestamp: msg.timestamp,
         clientMessageId: msg.clientMessageId,
       });
@@ -1650,6 +1652,7 @@ export class SignalProtocolServiceCipher {
           prepared.sentMessageBase64,
           prepared.auth,
           msg.timestamp,
+          'user-visible',
           [msg.recipientUserId],
           effectiveClientMessageId
         );
@@ -1732,6 +1735,7 @@ export class SignalProtocolServiceCipher {
       senderDeviceId: this.deviceId,
       ciphertext: ciphertextBase64,
       messageType,
+      deliveryClass: 'user-visible',
       timestamp: msg.timestamp,
       clientMessageId: effectiveClientMessageId,
       recipientRegistrationId,

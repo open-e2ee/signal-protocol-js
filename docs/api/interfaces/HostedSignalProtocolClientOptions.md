@@ -16,7 +16,7 @@ Compact, runtime-neutral hosted Relay client configuration.
 
 ### adapters
 
-> `readonly` **adapters**: `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md)\[`"adapters"`\], `"relay"`\>
+> `readonly` **adapters**: `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md)\[`"adapters"`\], `"relay"` \| `"remoteObjectStore"`\>
 
 ***
 
@@ -242,15 +242,11 @@ const signal = await SignalProtocolClient.create(userId, {
 
 #### assertionPurpose?
 
-> `readonly` `optional` **assertionPurpose?**: [`IdentityAssertionPurpose`](../type-aliases/IdentityAssertionPurpose.md)
+> `readonly` `optional` **assertionPurpose?**: `"register"` \| `"recover"`
 
 #### assurance?
 
 > `readonly` `optional` **assurance?**: [`IdentityAssertionAssurance`](../type-aliases/IdentityAssertionAssurance.md)
-
-#### bootstrap
-
-> `readonly` **bootstrap**: [`HostedRelayBootstrapAdapter`](HostedRelayBootstrapAdapter.md)
 
 #### getIdentityAssertion
 
@@ -260,9 +256,11 @@ const signal = await SignalProtocolClient.create(userId, {
 
 > `readonly` `optional` **onProgress?**: [`HostedRelayIdentityProgressCallback`](../type-aliases/HostedRelayIdentityProgressCallback.md)
 
-#### publishableKey
+#### relayUrl
 
-> `readonly` **publishableKey**: `string`
+> `readonly` **relayUrl**: `string`
+
+Public environment-scoped Managed Relay connection URL.
 
 #### sealedSenderAccessMode?
 

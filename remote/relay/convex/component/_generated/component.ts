@@ -433,7 +433,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         Array<{
           ciphertext: string;
           clientMessageId?: string;
-          ephemeral?: boolean;
+          deliveryClass: "user-visible" | "background-sync" | "ephemeral";
           expiresAt: number;
           id: string;
           messageType:
@@ -448,7 +448,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           targetDeviceId: number;
           targetUserId: string;
           timestamp: number;
-          urgent?: boolean;
         }>,
         Name
       >;
@@ -511,7 +510,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           callerUserId: string;
           ciphertext: string;
           clientMessageId?: string;
-          ephemeral?: boolean;
+          deliveryClass: "user-visible" | "background-sync" | "ephemeral";
           messageType:
             | "ciphertext"
             | "prekey_bundle"
@@ -523,7 +522,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           targetDeviceId: number;
           targetUserId: string;
           timestamp: number;
-          urgent?: boolean;
         },
         { messageId: string; serverTimestamp: number },
         Name
@@ -533,6 +531,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         {
           clientMessageId?: string;
+          deliveryClass: "user-visible" | "background-sync" | "ephemeral";
           ephemeralPublicBase64: string;
           groupSendToken?: ArrayBuffer;
           messageCiphertextBase64: string;

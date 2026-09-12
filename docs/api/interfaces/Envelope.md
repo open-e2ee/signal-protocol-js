@@ -6,7 +6,7 @@
 
 # Interface: Envelope
 
-Envelope for delivery (profile naming)
+Envelope for delivery.
 
 Server treats ciphertext as opaque bytes (zero-knowledge).
 
@@ -53,11 +53,11 @@ Set by sender, used by recipient to decide retry behavior on decryption failure.
 
 ***
 
-### ephemeral?
+### deliveryClass
 
-> `optional` **ephemeral?**: `boolean`
+> **deliveryClass**: [`DeliveryClass`](../type-aliases/DeliveryClass.md)
 
-Skip persistence if recipient offline (for typing indicators, receipts).
+Exact persistence and wake behavior for this encrypted envelope.
 
 ***
 
@@ -150,11 +150,3 @@ Target user ID
 Client timestamp for message identification.
 Set by sender BEFORE encryption. Same value embedded in dataMessage.timestamp.
 Used for: retry request matching, delivery receipt correlation, replay prevention.
-
-***
-
-### urgent?
-
-> `optional` **urgent?**: `boolean`
-
-Push notification priority (default true). Non-urgent = silent push.
