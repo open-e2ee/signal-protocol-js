@@ -905,7 +905,7 @@ control before it signs and persists the accepted result.
 
 The enforcement rules are the SDK's own S1–S14 contract rather than Signal
 Messenger's server implementation. The shipped enforcing server
-(`internal/groups/server-engine.ts`, with an installable Convex component)
+(`internal/groups/server-engine.ts`, which the OpenE2EE Signal Protocol Relay runs)
 implements that contract. On every applied change, clients verify the server's
 signature, the group binding, the strict version sequence, and the pre-state
 authorization.

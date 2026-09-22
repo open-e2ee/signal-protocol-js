@@ -9,18 +9,11 @@
  *
  * ```typescript
  * import type { ISignalProtocolRelayServer } from '@open-e2ee/signal-protocol-sdk/remote/relay';
- * import {
- *   convexRelay,
- *   type ConvexSignalProtocolRelayApi,
- * } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
- * import { api } from '../convex/_generated/api';
+ * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
  *
- * const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
- * const relay: ISignalProtocolRelayServer = convexRelay({
- *   convex,
- *   api: signalApi,
- *   currentUserId: userId,
- * });
+ * // Development relay. Production connects to the OpenE2EE Signal Protocol Relay
+ * // through `createHostedSignalProtocolClient()` from the package root.
+ * const relay: ISignalProtocolRelayServer = inMemoryRelay();
  * ```
  */
 

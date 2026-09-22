@@ -13,7 +13,7 @@ npm install @open-e2ee/signal-protocol-sdk
 
 In this monorepo, consumers use the package as a workspace package. App consumers
 should also install any runtime dependencies their chosen adapters need, such as
-Expo or Convex client packages.
+Expo packages.
 
 ## What You Need
 
@@ -102,7 +102,7 @@ flowchart LR
 - The remote object store carries encrypted attachment/media bytes only.
 
 You can operate these server-side interfaces through a shipped or custom
-adapter. You can instead use [OpenE2EE Relay](https://open-e2ee.dev/relay) for
+adapter. You can instead use [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay) for
 managed encrypted delivery, private encrypted attachment storage, push wakes,
 and lifecycle controls. The SDK does not require the managed service. The
 [Relay pricing page](https://open-e2ee.dev/relay/pricing) defines its exact
@@ -170,21 +170,16 @@ The production shape uses the same message API with platform adapters:
 
 <!-- doc-snippet:planned target-message-api-platform-adapters unshipped="@open-e2ee/signal-protocol-sdk/device/storage/expo" -->
 ```ts
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
+import { createHostedSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { createExpoDeviceStorage } from "@open-e2ee/signal-protocol-sdk/device/storage/expo";
-import { convexR2ObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2";
-import { convexRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
-import { api } from "../convex/_generated/api";
 
-const signal = await createSignalProtocolClient({
-  identity: { userId, deviceId },
+const signal = await createHostedSignalProtocolClient({
   adapters: {
     deviceStorage: createExpoDeviceStorage({ database, files }),
-    relay: convexRelay({ convex, api, currentUserId: userId }),
-    remoteObjectStore: convexR2ObjectStore({
-      convex,
-      api: api.signalObjectStore,
-    }),
+  },
+  hosted: {
+    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    getIdentityAssertion,
   },
 });
 ```
@@ -320,40 +315,28 @@ session, and later messages use `ciphertext`.
 
 ## Production Client
 
-Use the protocol storage adapter for your runtime and the relay adapter for your
-backend. For the Signal Protocol stack, that is Expo local storage and a Convex
-relay:
+Use the protocol storage adapter for your runtime and connect to the OpenE2EE
+Signal Protocol Relay. For an Expo app, that is Expo local storage and the
+hosted client:
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
+import { createHostedSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
-import {
-  convexRelay,
-  type ConvexSignalProtocolRelayApi,
-} from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
-import { api } from "../convex/_generated/api";
 
-const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
-
-// The relay handles server-side public keys, devices, and encrypted envelopes.
-const relay = convexRelay({
-  convex,
-  api: signalApi,
-  currentUserId: userId,
-});
-
-const signal = await createSignalProtocolClient({
-  identity: { userId },
+// Initialize the application-owned Expo/SQLCipher database bindings first.
+const signal = await createHostedSignalProtocolClient({
   adapters: {
-    // Storage owns this device's private keys and session state.
+    // Expo storage owns this device's private keys and session state.
     storage: expoStore(),
-    relay,
+  },
+  hosted: {
+    // The environment-scoped connection URL from the OpenE2EE console.
+    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    // Returns a short-lived signed assertion for the signed-in user.
+    getIdentityAssertion,
   },
 });
-
-// Publish this device's public prekeys so other devices can start sessions.
-await signal.syncToServer();
 ```
 
 Production bootstrapping must register or provision the current device with the

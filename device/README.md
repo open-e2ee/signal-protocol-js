@@ -101,7 +101,7 @@ import {
 } from "@open-e2ee/signal-protocol-sdk/device/provisioning";
 // Reads `react-native` and `expo-constants`, so it is imported separately from
 // the protocol itself. Off Expo, build the same four fields by hand.
-import { getDeviceMetadata } from "@open-e2ee/signal-protocol-sdk/device/expo-metadata";
+import { getDeviceMetadata } from "@open-e2ee/signal-protocol-sdk/device/expo";
 
 const {
   sessionId,

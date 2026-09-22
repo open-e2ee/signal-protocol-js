@@ -67,7 +67,7 @@ const DEVICE_AUTHENTICATION_SIGNATURE_LABEL = stringToBytes(
   'OpenE2EE Relay device authentication v1\0',
 );
 
-/** Why the hosted Relay needs a fresh identity assertion. */
+/** Why the Signal Protocol Relay needs a fresh identity assertion. */
 export type IdentityAssertionPurpose = 'register' | 'refresh' | 'recover';
 
 /** Assurance requested from the application's identity provider. */
@@ -131,7 +131,7 @@ export interface HostedRelayDeviceAuthentication {
   signCertificateRequest(tokenId: string, nonce: string): Promise<Uint8Array>;
 }
 
-/** Public prekey material sent during one atomic hosted Relay registration. */
+/** Public prekey material sent during one atomic Signal Protocol Relay registration. */
 export interface HostedRelayRegistrationPreKey {
   readonly algorithm: 'ec-x25519' | 'kem-ml-kem-1024';
   readonly keyId: number;
@@ -145,7 +145,7 @@ export interface HostedRelayRegistrationPreKeys {
   readonly signedPreKeys: readonly HostedRelayRegistrationPreKey[];
 }
 
-/** Request passed to a hosted Relay bootstrap transport. */
+/** Request passed to a Signal Protocol Relay bootstrap transport. */
 export interface HostedRelayBootstrapRequest {
   readonly protocolEndpoint: string;
   readonly publishableKey: string;
@@ -220,9 +220,9 @@ export interface HostedRelayManagedDeviceLinkResult extends HostedRelayBootstrap
 }
 
 /**
- * SDK or integration-owned hosted Relay transport.
+ * SDK or integration-owned Signal Protocol Relay transport.
  *
- * Managed Relay certificate roots are compiled into the SDK and selected by the
+ * Signal Protocol Relay certificate roots are compiled into the SDK and selected by the
  * exact connection origin. The adapter cannot supply or replace hosted trust.
  *
  * OpenE2EE has no customers. This is a clean prelaunch contract replacement.
@@ -236,7 +236,7 @@ export interface HostedRelayBootstrapAdapter {
   ): Promise<HostedRelayBootstrapResult>;
 }
 
-/** Transport boundary for the hosted Relay identity-migration state machine. */
+/** Transport boundary for the Signal Protocol Relay identity-migration state machine. */
 export interface HostedRelayIdentityMigrationAdapter {
   migrate(
     request: HostedRelayIdentityMigrationRequest,
@@ -250,7 +250,7 @@ export interface HostedRelayManagedDeviceLinkAdapter extends HostedRelayBootstra
   ): Promise<HostedRelayManagedDeviceLinkResult>;
 }
 
-/** Compact, runtime-neutral hosted Relay client configuration. */
+/** Compact, runtime-neutral Signal Protocol Relay client configuration. */
 export interface HostedSignalProtocolClientOptions extends Omit<
   SignalProtocolClientCompositionOptions,
   'adapters' | 'identity' | 'sealedSender' | 'groups'
@@ -261,7 +261,7 @@ export interface HostedSignalProtocolClientOptions extends Omit<
     'relay' | 'remoteObjectStore'
   >;
   readonly hosted: {
-    /** Public environment-scoped Managed Relay connection URL. */
+    /** Public environment-scoped Signal Protocol Relay connection URL. */
     readonly relayUrl: string;
     readonly getIdentityAssertion: GetIdentityAssertion;
     readonly assertionPurpose?: Exclude<IdentityAssertionPurpose, 'refresh'>;
@@ -278,7 +278,7 @@ export interface HostedRelayIdentityMigrationOptions {
   readonly manifestVersion?: number;
   readonly operationId: string;
   readonly onProgress?: HostedRelayIdentityProgressCallback;
-  /** Public environment-scoped Managed Relay connection URL. */
+  /** Public environment-scoped Signal Protocol Relay connection URL. */
   readonly relayUrl: string;
   readonly authorization:
     | {
@@ -302,7 +302,7 @@ export interface HostedRelayManagedDeviceLinkOptions extends Omit<
   >;
   readonly activeDeviceStorage: ISignalProtocolLocalStore;
   readonly hosted: {
-    /** Public environment-scoped Managed Relay connection URL. */
+    /** Public environment-scoped Signal Protocol Relay connection URL. */
     readonly relayUrl: string;
     readonly adapter: HostedRelayManagedDeviceLinkAdapter;
     readonly onProgress?: HostedRelayIdentityProgressCallback;
@@ -333,7 +333,7 @@ interface StoredHostedRegistrationSnapshot {
 function uint32be(value: number): Uint8Array {
   if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
     throw new Error(
-      'Hosted Relay prekey ID must be an unsigned 32-bit integer',
+      'Signal Protocol Relay prekey ID must be an unsigned 32-bit integer',
     );
   }
   return new Uint8Array([value >>> 24, value >>> 16, value >>> 8, value]);
@@ -416,7 +416,7 @@ function decodeRegistrationPreKey(
     !('signature' in value || kind === 'one-time') ||
     ('signature' in value && typeof value.signature !== 'string')
   ) {
-    throw new Error('Stored hosted Relay registration snapshot is invalid');
+    throw new Error('Stored Signal Protocol Relay registration snapshot is invalid');
   }
   const publicKey = base64ToBytes(value.publicKey as Base64);
   const signature =
@@ -433,7 +433,7 @@ function decodeRegistrationPreKey(
       value.algorithm === 'ec-x25519' &&
       signature !== undefined)
   ) {
-    throw new Error('Stored hosted Relay registration snapshot is invalid');
+    throw new Error('Stored Signal Protocol Relay registration snapshot is invalid');
   }
   return {
     algorithm: value.algorithm,
@@ -455,7 +455,7 @@ async function decodeRegistrationSnapshot(
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new Error('Stored hosted Relay registration snapshot is invalid');
+    throw new Error('Stored Signal Protocol Relay registration snapshot is invalid');
   }
   if (
     typeof parsed !== 'object' ||
@@ -482,7 +482,7 @@ async function decodeRegistrationSnapshot(
     parsed.signedPreKeys.length !== 2 ||
     base64ToBytes(parsed.operationId as Base64).length !== 32
   ) {
-    throw new Error('Stored hosted Relay registration snapshot is invalid');
+    throw new Error('Stored Signal Protocol Relay registration snapshot is invalid');
   }
   const registrationPreKeys = {
     oneTimePreKeys: parsed.oneTimePreKeys.map((prekey) =>
@@ -498,7 +498,7 @@ async function decodeRegistrationSnapshot(
     registrationPreKeys,
   );
   if (operationId !== parsed.operationId) {
-    throw new Error('Stored hosted Relay registration snapshot is invalid');
+    throw new Error('Stored Signal Protocol Relay registration snapshot is invalid');
   }
   return { operationId, registrationPreKeys };
 }
@@ -625,7 +625,7 @@ function decodeStoredDeviceAuthentication(
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new Error('Stored hosted Relay device authentication key is invalid');
+    throw new Error('Stored Signal Protocol Relay device authentication key is invalid');
   }
   if (
     typeof parsed !== 'object' ||
@@ -637,7 +637,7 @@ function decodeStoredDeviceAuthentication(
     base64ToBytes(parsed.publicKey as Base64).length !== 32 ||
     base64ToBytes(parsed.privateKey as Base64).length !== 32
   ) {
-    throw new Error('Stored hosted Relay device authentication key is invalid');
+    throw new Error('Stored Signal Protocol Relay device authentication key is invalid');
   }
   return parsed as StoredDeviceAuthentication;
 }
@@ -667,7 +667,7 @@ async function getExistingDeviceAuthentication(
   );
   if (!stored) {
     throw new Error(
-      'Hosted Relay active device authentication key is not registered',
+      'Signal Protocol Relay active device authentication key is not registered',
     );
   }
   return deviceAuthenticationSigner(
@@ -692,7 +692,7 @@ function deviceAuthenticationSigner(
     publicKey: base64ToBytes(keyPair.publicKey),
     signCertificateRequest: async (tokenId, nonce) => {
       if (!tokenId || tokenId.includes('\0') || !nonce || nonce.length > 256)
-        throw new Error('Hosted Relay certificate request is invalid');
+        throw new Error('Signal Protocol Relay certificate request is invalid');
       return base64ToBytes(
         await sign(
           keyPair.privateKey,
@@ -707,7 +707,7 @@ function deviceAuthenticationSigner(
     },
     signChallenge: async (challenge) => {
       if (!(challenge instanceof Uint8Array) || challenge.length === 0) {
-        throw new Error('Hosted Relay device challenge must not be empty');
+        throw new Error('Signal Protocol Relay device challenge must not be empty');
       }
       const payload = concatBytes(
         DEVICE_AUTHENTICATION_SIGNATURE_LABEL,
@@ -726,43 +726,43 @@ function assertHostedBootstrapResult(
 ): void {
   if (!result.canonicalAccountId || result.canonicalAccountId.length > 512) {
     throw new Error(
-      'Hosted Relay returned an invalid canonical account binding',
+      'Signal Protocol Relay returned an invalid canonical account binding',
     );
   }
   if (!Number.isSafeInteger(result.deviceId) || result.deviceId < 1) {
-    throw new Error('Hosted Relay returned an invalid device binding');
+    throw new Error('Signal Protocol Relay returned an invalid device binding');
   }
   if (
     !(result.relayScopeId instanceof Uint8Array) ||
     result.relayScopeId.length !== 16
   ) {
     throw new Error(
-      'Hosted Relay returned an invalid project-environment scope',
+      'Signal Protocol Relay returned an invalid project-environment scope',
     );
   }
   if (!result.relay) {
     throw new Error(
-      'Hosted Relay bootstrap did not return an authenticated Relay',
+      'Signal Protocol Relay bootstrap did not return an authenticated Relay',
     );
   }
   if (certificateTrust.trustRoots.length === 0) {
-    throw new Error('Managed Relay has no compiled certificate root');
+    throw new Error('Signal Protocol Relay has no compiled certificate root');
   }
   for (const root of certificateTrust.trustRoots) {
     if (!(root instanceof Uint8Array) || root.length !== 32) {
-      throw new Error('Managed Relay has an invalid compiled certificate root');
+      throw new Error('Signal Protocol Relay has an invalid compiled certificate root');
     }
   }
   for (const keyId of certificateTrust.revokedIssuerKeyIds) {
     if (!Number.isSafeInteger(keyId) || keyId < 0 || keyId > 0xffff_ffff) {
-      throw new Error('Managed Relay has an invalid revoked issuer key ID');
+      throw new Error('Signal Protocol Relay has an invalid revoked issuer key ID');
     }
   }
 }
 
 function assertOperationId(value: string): string {
   if (!value || value.length > 128) {
-    throw new Error('Hosted Relay operation ID is invalid');
+    throw new Error('Signal Protocol Relay operation ID is invalid');
   }
   return value;
 }
@@ -785,20 +785,20 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
 
 function hostedAccountAci(accountId: string) {
   if (!/^[A-Za-z0-9_-]{22}$/u.test(accountId)) {
-    throw new Error('Hosted Relay returned an invalid account ACI');
+    throw new Error('Signal Protocol Relay returned an invalid account ACI');
   }
   let uuid: Uint8Array;
   try {
     uuid = base64ToBytes(urlSafeToBase64(accountId) as Base64);
   } catch {
-    throw new Error('Hosted Relay returned an invalid account ACI');
+    throw new Error('Signal Protocol Relay returned an invalid account ACI');
   }
   if (
     uuid.length !== 16 ||
     uuid.every((byte) => byte === 0) ||
     bytesToUrlSafeBase64(uuid) !== accountId
   ) {
-    throw new Error('Hosted Relay returned an invalid account ACI');
+    throw new Error('Signal Protocol Relay returned an invalid account ACI');
   }
   return { kind: 0 as const, uuid };
 }
@@ -893,7 +893,7 @@ export async function advanceHostedRelayIdentityMigration(
     (!Number.isSafeInteger(options.manifestVersion) ||
       options.manifestVersion! < 1)
   ) {
-    throw new Error('Hosted Relay migration manifest version is invalid');
+    throw new Error('Signal Protocol Relay migration manifest version is invalid');
   }
   if (
     options.action === 'prepare' &&
@@ -901,7 +901,7 @@ export async function advanceHostedRelayIdentityMigration(
     options.authorization.providerRole !== 'source'
   ) {
     throw new Error(
-      'Hosted Relay migration prepare requires source-provider authorization',
+      'Signal Protocol Relay migration prepare requires source-provider authorization',
     );
   }
   const requestAssertion = async (
@@ -958,7 +958,7 @@ export async function advanceHostedRelayIdentityMigration(
     snapshot.collision !== false ||
     snapshot.operationId !== operationId
   ) {
-    throw new Error('Hosted Relay returned an invalid migration snapshot');
+    throw new Error('Signal Protocol Relay returned an invalid migration snapshot');
   }
   options.onProgress?.({
     operation: 'migration',
@@ -992,7 +992,7 @@ export async function linkHostedRelayDevice(
   ]);
   if (!identity) {
     throw new Error(
-      'Hosted Relay linked device requires a provisioned ACI identity',
+      'Signal Protocol Relay linked device requires a provisioned ACI identity',
     );
   }
   if (
@@ -1001,7 +1001,7 @@ export async function linkHostedRelayDevice(
     activeIdentity.signingKey.publicKey !== identity.signingKey.publicKey
   ) {
     throw new Error(
-      'Hosted Relay linked device identity does not match the active account',
+      'Signal Protocol Relay linked device identity does not match the active account',
     );
   }
   const signalIdentity = createCompositeIdentityV1(identity);
@@ -1024,7 +1024,7 @@ export async function linkHostedRelayDevice(
       newDeviceAuthentication.publicKey,
     )
   ) {
-    throw new Error('Hosted Relay device link requires a new device key');
+    throw new Error('Signal Protocol Relay device link requires a new device key');
   }
 
   hosted.onProgress?.({ operation: 'device-link', phase: 'submitting' });
@@ -1042,7 +1042,7 @@ export async function linkHostedRelayDevice(
     result.accountPreserved !== true ||
     result.protocolStateCopied !== false
   ) {
-    throw new Error('Hosted Relay returned an invalid managed device link');
+    throw new Error('Signal Protocol Relay returned an invalid managed device link');
   }
   const client = await createClientFromHostedResult(
     result,
@@ -1060,7 +1060,7 @@ export async function linkHostedRelayDevice(
 }
 
 /**
- * Create a hosted Relay client without accepting a caller-supplied account or device ID.
+ * Create a Signal Protocol Relay client without accepting a caller-supplied account or device ID.
  *
  * The Relay verifies the assertion and device proof, then returns the canonical
  * account, registered device, scope, and authenticated transport used by the client.
@@ -1115,7 +1115,7 @@ export async function createHostedSignalProtocolClient(
     );
     if (client.syncStatus === 'failed') {
       await client.stop();
-      throw new Error('OpenE2EE Relay initial synchronization failed');
+      throw new Error('OpenE2EE Signal Protocol Relay initial synchronization failed');
     }
     hosted.onProgress?.({ operation, phase: 'complete' });
     return client;
@@ -1160,7 +1160,7 @@ export async function createHostedSignalProtocolClient(
   );
   if (client.syncStatus === 'failed') {
     await client.stop();
-    throw new Error('OpenE2EE Relay initial synchronization failed');
+    throw new Error('OpenE2EE Signal Protocol Relay initial synchronization failed');
   }
   hosted.onProgress?.({ operation, phase: 'complete' });
   return client;

@@ -6,6 +6,6 @@ contact_links:
   - name: Documentation and guides
     url: https://docs.open-e2ee.dev
     about: Quickstarts, concepts, and integration guides.
-  - name: Commercial licensing
-    url: https://open-e2ee.dev/pricing
-    about: Tiers, terms, and the console for self-serve purchase.
+  - name: OpenE2EE Signal Protocol Relay
+    url: https://open-e2ee.dev/relay
+    about: The hosted relay built for this SDK.

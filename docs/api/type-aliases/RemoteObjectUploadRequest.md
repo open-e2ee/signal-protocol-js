@@ -52,7 +52,7 @@ Immutable preparation time in Unix milliseconds. Never refresh it for a retry.
 
 > `optional` **readCapabilityDigest?**: `Uint8Array`
 
-Optional broker read-capability commitment. Required by hosted Relay.
+Optional broker read-capability commitment. Required by the Signal Protocol Relay.
 
 ***
 

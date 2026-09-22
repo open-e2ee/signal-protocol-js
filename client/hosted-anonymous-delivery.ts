@@ -136,7 +136,7 @@ export class HostedAnonymousDelivery {
         },
       );
     } catch (cause) {
-      throw new Error("Managed Relay request could not be completed", {
+      throw new Error("Signal Protocol Relay request could not be completed", {
         cause,
       });
     }

@@ -59,14 +59,11 @@ import {
 ```
 
 The root package intentionally does not re-export platform-bound adapters like
-Expo storage or Convex helpers.
+Expo storage or the Convex R2 object store.
 
 ## Integration subpaths
 
 - `@open-e2ee/signal-protocol-sdk/remote/relay`
-- `@open-e2ee/signal-protocol-sdk/remote/relay/convex`
-- `@open-e2ee/signal-protocol-sdk/remote/relay/convex/relay`
-- `@open-e2ee/signal-protocol-sdk/convex.config`
 - `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
 - `@open-e2ee/signal-protocol-sdk/remote/relay/types`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store`
@@ -83,7 +80,7 @@ Expo storage or Convex helpers.
 - `@open-e2ee/signal-protocol-sdk/device`
 - `@open-e2ee/signal-protocol-sdk/device/constants`
 - `@open-e2ee/signal-protocol-sdk/device/device-id`
-- `@open-e2ee/signal-protocol-sdk/device/expo-metadata`
+- `@open-e2ee/signal-protocol-sdk/device/expo`
 - `@open-e2ee/signal-protocol-sdk/device/lifecycle`
 - `@open-e2ee/signal-protocol-sdk/device/provisioning`
 - `@open-e2ee/signal-protocol-sdk/encoding`
@@ -147,13 +144,8 @@ Expo storage or Convex helpers.
 
 ### Relay implementations
 
-- `ConvexSignalProtocolRelayServer` for Convex-backed apps
-- `convexRelay()` for Convex-backed composition
-- the installable component from
-  `@open-e2ee/signal-protocol-sdk/convex.config`, with public handlers from
-  `defineConvexSignalProtocolBackend()` and the `oe-groups` CLI
-  (`npx oe-groups trust-root`) for secret initialization and trust-root
-  export
+- `createHostedSignalProtocolClient()` from the package root for the OpenE2EE
+  Signal Protocol Relay
 - `InMemorySignalProtocolRelayServer` / `inMemoryRelay()` for local development
 - custom implementations via `ISignalProtocolRelayServer`
 

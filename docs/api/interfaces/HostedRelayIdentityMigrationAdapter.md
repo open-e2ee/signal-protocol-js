@@ -6,7 +6,7 @@
 
 # Interface: HostedRelayIdentityMigrationAdapter
 
-Transport boundary for the hosted Relay identity-migration state machine.
+Transport boundary for the Signal Protocol Relay identity-migration state machine.
 
 ## Methods
 

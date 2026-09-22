@@ -179,7 +179,7 @@ function record(value: unknown): value is JsonRecord {
 
 function uint32be(value: number): Uint8Array {
   if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
-    throw new Error("Hosted Relay unsigned integer is invalid");
+    throw new Error("Signal Protocol Relay unsigned integer is invalid");
   }
   return new Uint8Array([value >>> 24, value >>> 16, value >>> 8, value]);
 }
@@ -233,11 +233,11 @@ function identifiedEndpoint(connection: HostedRelayConnection): string {
 async function parseResponse(response: Response): Promise<unknown> {
   const body = await response.text();
   if (body.length > MAXIMUM_RESPONSE_BYTES) {
-    throw new Error("Managed Relay response is too large");
+    throw new Error("Signal Protocol Relay response is too large");
   }
   if (response.ok && response.status === 204) {
     if (body.length !== 0) {
-      throw new Error("Managed Relay returned an invalid response");
+      throw new Error("Signal Protocol Relay returned an invalid response");
     }
     return undefined;
   }
@@ -245,7 +245,7 @@ async function parseResponse(response: Response): Promise<unknown> {
   try {
     parsed = JSON.parse(body);
   } catch {
-    throw new Error("Managed Relay returned invalid JSON");
+    throw new Error("Signal Protocol Relay returned invalid JSON");
   }
   if (!response.ok) {
     const error = record(parsed) && record(parsed.error) ? parsed.error : {};
@@ -253,7 +253,7 @@ async function parseResponse(response: Response): Promise<unknown> {
     const message =
       typeof error.message === "string"
         ? error.message
-        : "Managed Relay request failed";
+        : "Signal Protocol Relay request failed";
     throw new HostedRelayHttpError(response.status, code, message);
   }
   return parsed;
@@ -280,7 +280,7 @@ async function postJson(
       redirect: "error",
     });
   } catch (cause) {
-    throw new Error("Managed Relay request could not be completed", { cause });
+    throw new Error("Signal Protocol Relay request could not be completed", { cause });
   }
   return parseResponse(response);
 }
@@ -411,7 +411,7 @@ function parseSession(
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new Error("Stored hosted Relay session is invalid");
+    throw new Error("Stored Signal Protocol Relay session is invalid");
   }
   if (
     !record(parsed) ||
@@ -429,7 +429,7 @@ function parseSession(
     (parsed.mailboxGeneration as number) < 0 ||
     parsed.relayScopeId !== relayScopeId(connection)
   ) {
-    throw new Error("Stored hosted Relay session is invalid");
+    throw new Error("Stored Signal Protocol Relay session is invalid");
   }
   return {
     canonicalAccountId: parsed.canonicalAccountId,
@@ -475,20 +475,20 @@ function tokenExpiration(
 function requiredNumber(object: JsonRecord, key: string): number {
   const value = object[key];
   if (!Number.isSafeInteger(value))
-    throw new Error("Managed Relay returned invalid data");
+    throw new Error("Signal Protocol Relay returned invalid data");
   return value as number;
 }
 
 function requiredString(object: JsonRecord, key: string): string {
   const value = object[key];
   if (typeof value !== "string" || !value)
-    throw new Error("Managed Relay returned invalid data");
+    throw new Error("Signal Protocol Relay returned invalid data");
   return value;
 }
 
 function unsupported(operation: string): never {
   throw new Error(
-    `Managed Relay does not support ${operation} through this contract`,
+    `Signal Protocol Relay does not support ${operation} through this contract`,
   );
 }
 
@@ -498,7 +498,7 @@ function encodeDeliveryWire(envelope: Envelope): Uint8Array {
       ? bytesToBase64(envelope.ciphertext)
       : envelope.ciphertext;
   if (bytesToBase64(base64ToBytes(ciphertext as Base64)) !== ciphertext) {
-    throw new Error("Managed Relay envelope ciphertext is invalid");
+    throw new Error("Signal Protocol Relay envelope ciphertext is invalid");
   }
   const wire: HostedDeliveryWireEnvelope = {
     ciphertext,
@@ -517,7 +517,7 @@ function decodeDeliveryWire(value: Uint8Array): HostedDeliveryWireEnvelope {
   try {
     wire = JSON.parse(new TextDecoder().decode(value));
   } catch {
-    throw new Error("Managed Relay mailbox envelope is invalid");
+    throw new Error("Signal Protocol Relay mailbox envelope is invalid");
   }
   if (
     !record(wire) ||
@@ -530,7 +530,7 @@ function decodeDeliveryWire(value: Uint8Array): HostedDeliveryWireEnvelope {
     !Number.isSafeInteger(wire.timestamp) ||
     wire.version !== DELIVERY_WIRE_VERSION
   ) {
-    throw new Error("Managed Relay mailbox envelope is invalid");
+    throw new Error("Signal Protocol Relay mailbox envelope is invalid");
   }
   return wire as unknown as HostedDeliveryWireEnvelope;
 }
@@ -567,7 +567,7 @@ export class HostedRelayHttpTransport
           await this.directory(accountAddress);
         const generation = this.destinationGenerations.get(key);
         if (generation === undefined)
-          throw new Error("Managed Relay destination device does not exist");
+          throw new Error("Signal Protocol Relay destination device does not exist");
         return { accountAddress, deviceId, generation };
       },
     );
@@ -677,7 +677,7 @@ export class HostedRelayHttpTransport
       value.available !== true ||
       value.objectId !== objectId
     ) {
-      throw new Error("Managed Relay returned an invalid upload receipt");
+      throw new Error("Signal Protocol Relay returned an invalid upload receipt");
     }
     const contentLength = requiredNumber(value, "contentLength");
     const digest = decodeBase64Url(
@@ -689,7 +689,7 @@ export class HostedRelayHttpTransport
       contentLength < 0 ||
       digest.length !== 32
     ) {
-      throw new Error("Managed Relay returned an invalid upload receipt");
+      throw new Error("Signal Protocol Relay returned an invalid upload receipt");
     }
     return { objectId, contentLength, digest };
   }
@@ -719,14 +719,14 @@ export class HostedRelayHttpTransport
       requestedAtSeconds,
     });
     if (!record(value) || typeof value.deviceToken !== "string") {
-      throw new Error("Managed Relay returned an invalid device token");
+      throw new Error("Signal Protocol Relay returned an invalid device token");
     }
     this.session = { ...this.session, deviceToken: value.deviceToken };
     if (
       tokenExpiration(this.session.deviceToken, this.session) <=
       requestedAtSeconds
     ) {
-      throw new Error("Managed Relay returned an invalid device token");
+      throw new Error("Signal Protocol Relay returned an invalid device token");
     }
     await this.persistSession();
   }
@@ -782,7 +782,7 @@ export class HostedRelayHttpTransport
       identityType !== "aci"
     ) {
       throw new Error(
-        "Managed Relay operation crossed the current device authority",
+        "Signal Protocol Relay operation crossed the current device authority",
       );
     }
   }
@@ -799,11 +799,11 @@ export class HostedRelayHttpTransport
       value.accountAddress !== userId ||
       !Array.isArray(value.devices)
     ) {
-      throw new Error("Managed Relay returned an invalid device directory");
+      throw new Error("Signal Protocol Relay returned an invalid device directory");
     }
     return value.devices.map((candidate) => {
       if (!record(candidate))
-        throw new Error("Managed Relay returned an invalid device directory");
+        throw new Error("Signal Protocol Relay returned an invalid device directory");
       const device = {
         deviceId: requiredNumber(candidate, "deviceId"),
         generation: requiredNumber(candidate, "generation"),
@@ -814,7 +814,7 @@ export class HostedRelayHttpTransport
         device.generation < 0 ||
         device.mailboxGeneration < 0
       ) {
-        throw new Error("Managed Relay returned an invalid device directory");
+        throw new Error("Signal Protocol Relay returned an invalid device directory");
       }
       this.destinationGenerations.set(
         `${userId}\0${String(device.deviceId)}`,
@@ -845,7 +845,7 @@ export class HostedRelayHttpTransport
   }> {
     const identity = await this.storage.getIdentityKey("aci");
     if (!identity)
-      throw new Error("Hosted Relay local Signal identity is unavailable");
+      throw new Error("Signal Protocol Relay local Signal identity is unavailable");
     return {
       identity: createCompositeIdentityV1(identity),
       registrationId: identity.registrationId,
@@ -886,7 +886,7 @@ export class HostedRelayHttpTransport
           )
         ) {
           throw new Error(
-            "Managed Relay prekey publication authority does not match local state",
+            "Signal Protocol Relay prekey publication authority does not match local state",
           );
         }
         const pending = this.session.pendingPreKeyPublication;
@@ -903,14 +903,14 @@ export class HostedRelayHttpTransport
             status.publicationRevision !== pending.predecessorRevision
           ) {
             throw new Error(
-              "Managed Relay prekey publication state is newer than local state",
+              "Signal Protocol Relay prekey publication state is newer than local state",
             );
           } else retryPending = pending;
         } else if (
           !publicationMatchesStatus(this.session.preKeyPublication, status)
         ) {
           throw new Error(
-            "Managed Relay prekey publication state is newer than local state",
+            "Signal Protocol Relay prekey publication state is newer than local state",
           );
         }
 
@@ -936,7 +936,7 @@ export class HostedRelayHttpTransport
           );
           if (repeatedFingerprint !== retryPending.materialFingerprint) {
             throw new Error(
-              "A different hosted Relay prekey publication is already pending",
+              "A different Signal Protocol Relay prekey publication is already pending",
             );
           }
         }
@@ -948,7 +948,7 @@ export class HostedRelayHttpTransport
           retryPending !== undefined &&
           fingerprint !== retryPending.materialFingerprint
         ) {
-          throw new Error("Stored hosted Relay prekey publication is invalid");
+          throw new Error("Stored Signal Protocol Relay prekey publication is invalid");
         }
         const operationId = retryPending?.operationId ?? fingerprint;
         const predecessorRevision =
@@ -978,7 +978,7 @@ export class HostedRelayHttpTransport
             predecessorRevision + 1
         ) {
           throw new Error(
-            "Managed Relay returned an invalid prekey publication",
+            "Signal Protocol Relay returned an invalid prekey publication",
           );
         }
         status = await this.prekeyStatus(
@@ -992,7 +992,7 @@ export class HostedRelayHttpTransport
           status.authorityGeneration !== this.session.generation
         ) {
           throw new Error(
-            "Managed Relay returned an invalid prekey publication",
+            "Signal Protocol Relay returned an invalid prekey publication",
           );
         }
         await this.acceptPublicationStatus(status);
@@ -1005,7 +1005,7 @@ export class HostedRelayHttpTransport
       publishableKey: this.connection.publishableKey,
     });
     if (!record(value) || !Array.isArray(value.messages)) {
-      throw new Error("Managed Relay returned an invalid mailbox page");
+      throw new Error("Signal Protocol Relay returned an invalid mailbox page");
     }
     return value.messages.map((candidate) => this.incomingEnvelope(candidate));
   }
@@ -1013,7 +1013,7 @@ export class HostedRelayHttpTransport
   /** One retained mailbox message, from a pull page or a `durable-message` frame. */
   private incomingEnvelope(candidate: unknown): IncomingEnvelope {
     if (!record(candidate) || !record(candidate.sender)) {
-      throw new Error("Managed Relay returned an invalid mailbox message");
+      throw new Error("Signal Protocol Relay returned an invalid mailbox message");
     }
     const decoded = this.decodeMailboxEnvelope(candidate);
     return {
@@ -1025,7 +1025,7 @@ export class HostedRelayHttpTransport
 
   private decodeMailboxEnvelope(candidate: JsonRecord) {
     if (!record(candidate.sender))
-      throw new Error("Managed Relay mailbox sender is invalid");
+      throw new Error("Signal Protocol Relay mailbox sender is invalid");
     const encoded = decodeCanonicalBase64(
       candidate.envelope,
       "Mailbox envelope",
@@ -1040,7 +1040,7 @@ export class HostedRelayHttpTransport
       };
     const senderDeviceId = requiredNumber(candidate.sender, "deviceId");
     if (senderDeviceId < 1)
-      throw new Error("Managed Relay mailbox sender is invalid");
+      throw new Error("Signal Protocol Relay mailbox sender is invalid");
     return {
       ...decodeDeliveryWire(encoded),
       senderUserId: requiredString(candidate.sender, "accountId"),
@@ -1063,7 +1063,7 @@ export class HostedRelayHttpTransport
         !claims.jti ||
         claims.jti.includes("\0")
       )
-        throw new Error("Managed Relay certificate token is invalid");
+        throw new Error("Signal Protocol Relay certificate token is invalid");
       const nonce = bytesToUrlSafeBase64(
         crypto.getRandomValues(new Uint8Array(32)),
       );
@@ -1072,7 +1072,7 @@ export class HostedRelayHttpTransport
         nonce,
       );
       if (proof.byteLength !== 64)
-        throw new Error("Managed Relay certificate proof is invalid");
+        throw new Error("Signal Protocol Relay certificate proof is invalid");
       try {
         const result = await postJson(
           this.connection,
@@ -1090,7 +1090,7 @@ export class HostedRelayHttpTransport
           decodeCanonicalBase64(result.senderCertificate, "Sender certificate")
             .length === 0
         )
-          throw new Error("Managed Relay certificate response is invalid");
+          throw new Error("Signal Protocol Relay certificate response is invalid");
         return result.senderCertificate;
       } catch (error) {
         if (
@@ -1101,7 +1101,7 @@ export class HostedRelayHttpTransport
           throw error;
       }
     }
-    throw new Error("Managed Relay certificate request failed");
+    throw new Error("Signal Protocol Relay certificate request failed");
   }
 
   public async setUnidentifiedAccessKey(
@@ -1110,13 +1110,13 @@ export class HostedRelayHttpTransport
   ): Promise<void> {
     this.assertCurrentIdentity(userId, this.session.deviceId);
     if (accessKey.byteLength !== 16)
-      throw new Error("Managed Relay access key is invalid");
+      throw new Error("Signal Protocol Relay access key is invalid");
     const value = await this.authenticatedPost("/anonymous/access-key", {
       publishableKey: this.connection.publishableKey,
       unidentifiedAccessKey: bytesToBase64(accessKey),
     });
     if (value !== undefined)
-      throw new Error("Managed Relay access-key receipt is invalid");
+      throw new Error("Signal Protocol Relay access-key receipt is invalid");
   }
 
   public async sendMultiRecipientUnidentified(
@@ -1143,7 +1143,7 @@ export class HostedRelayHttpTransport
       publishableKey: this.connection.publishableKey,
     });
     if (!record(value) || requiredNumber(value, "acknowledged") < 0) {
-      throw new Error("Managed Relay returned an invalid acknowledgment");
+      throw new Error("Signal Protocol Relay returned an invalid acknowledgment");
     }
   }
 
@@ -1155,7 +1155,7 @@ export class HostedRelayHttpTransport
       publishableKey: this.connection.publishableKey,
     });
     if (value !== undefined) {
-      throw new Error("Managed Relay returned an invalid push result");
+      throw new Error("Signal Protocol Relay returned an invalid push result");
     }
   }
 
@@ -1164,7 +1164,7 @@ export class HostedRelayHttpTransport
       publishableKey: this.connection.publishableKey,
     });
     if (value !== undefined) {
-      throw new Error("Managed Relay returned an invalid push result");
+      throw new Error("Signal Protocol Relay returned an invalid push result");
     }
   }
 
@@ -1197,14 +1197,14 @@ export class HostedRelayHttpTransport
       preparedAt: input.preparedAt,
     });
     if (!record(value) || !record(value.headers)) {
-      throw new Error("Managed Relay returned an invalid upload grant");
+      throw new Error("Signal Protocol Relay returned an invalid upload grant");
     }
     return {
       expiresAt: requiredNumber(value, "expiresAt"),
       headers: Object.fromEntries(
         Object.entries(value.headers).map(([name, header]) => {
           if (typeof header !== "string")
-            throw new Error("Managed Relay returned an invalid upload grant");
+            throw new Error("Signal Protocol Relay returned an invalid upload grant");
           return [name, header];
         }),
       ),
@@ -1244,7 +1244,7 @@ export class HostedRelayHttpTransport
       envelope.clientMessageId === ''
     ) {
       throw new Error(
-        "Managed Relay send authority or operation ID is invalid",
+        "Signal Protocol Relay send authority or operation ID is invalid",
       );
     }
     const messageId = envelope.clientMessageId ?? await generateUuidV4();
@@ -1255,7 +1255,7 @@ export class HostedRelayHttpTransport
       generation = this.destinationGenerations.get(key);
     }
     if (generation === undefined)
-      throw new Error("Managed Relay destination device does not exist");
+      throw new Error("Signal Protocol Relay destination device does not exist");
     let value: unknown;
     try {
       value = await this.authenticatedPost("/delivery/send", {
@@ -1293,7 +1293,7 @@ export class HostedRelayHttpTransport
       throw error;
     }
     if (!record(value) || requiredString(value, "messageId") !== messageId) {
-      throw new Error("Managed Relay returned an invalid delivery receipt");
+      throw new Error("Signal Protocol Relay returned an invalid delivery receipt");
     }
     return {
       messageId,
@@ -1409,7 +1409,7 @@ export class HostedRelayHttpTransport
       )
     ) {
       throw new Error(
-        "Managed Relay canonical Signal identity does not match local state",
+        "Signal Protocol Relay canonical Signal identity does not match local state",
       );
     }
   }
@@ -1465,11 +1465,11 @@ export class HostedRelayHttpTransport
       !Array.isArray(value.signedPreKeys) ||
       !Array.isArray(value.oneTimePreKeys)
     ) {
-      throw new Error("Managed Relay returned an invalid prekey bundle");
+      throw new Error("Signal Protocol Relay returned an invalid prekey bundle");
     }
     const signed = value.signedPreKeys.map((candidate) => {
       if (!record(candidate))
-        throw new Error("Managed Relay returned an invalid prekey bundle");
+        throw new Error("Signal Protocol Relay returned an invalid prekey bundle");
       return {
         algorithm: requiredString(candidate, "algorithm"),
         keyId: requiredNumber(candidate, "keyId"),
@@ -1479,7 +1479,7 @@ export class HostedRelayHttpTransport
     });
     const oneTime = value.oneTimePreKeys.map((candidate) => {
       if (!record(candidate))
-        throw new Error("Managed Relay returned an invalid prekey bundle");
+        throw new Error("Signal Protocol Relay returned an invalid prekey bundle");
       return {
         algorithm: requiredString(candidate, "algorithm"),
         keyId: requiredNumber(candidate, "keyId"),
@@ -1492,7 +1492,7 @@ export class HostedRelayHttpTransport
     const ecSigned = signed.find((key) => key.algorithm === "ec-x25519");
     const kemSigned = signed.find((key) => key.algorithm === "kem-ml-kem-1024");
     if (!ecSigned || !kemSigned)
-      throw new Error("Managed Relay returned an invalid prekey bundle");
+      throw new Error("Signal Protocol Relay returned an invalid prekey bundle");
     const ecOneTime = oneTime.find((key) => key.algorithm === "ec-x25519");
     const kemOneTime = oneTime.find(
       (key) => key.algorithm === "kem-ml-kem-1024",
@@ -1598,7 +1598,7 @@ export class HostedRelayHttpTransport
       publishableKey: this.connection.publishableKey,
     });
     if (!record(value))
-      throw new Error("Managed Relay returned an invalid prekey result");
+      throw new Error("Signal Protocol Relay returned an invalid prekey result");
     return { cleared: requiredNumber(value, "cleared") };
   }
 
@@ -1825,7 +1825,7 @@ export async function bootstrapHostedRelayTransport(
     },
   );
   if (!record(value))
-    throw new Error("Managed Relay returned an invalid registration");
+    throw new Error("Signal Protocol Relay returned an invalid registration");
   const materialFingerprint = await registrationMaterialFingerprint(
     request.signalIdentity,
     request.registrationId,
@@ -1861,7 +1861,7 @@ export async function bootstrapHostedRelayTransport(
     tokenExpiration(session.deviceToken, session) <=
       Math.floor(Date.now() / 1_000)
   ) {
-    throw new Error("Managed Relay returned an invalid registration");
+    throw new Error("Signal Protocol Relay returned an invalid registration");
   }
   await request.storage.setMetadata(
     await sessionMetadataKey(request.connection),

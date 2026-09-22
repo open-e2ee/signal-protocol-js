@@ -53,7 +53,7 @@ function parseRelayUrl(value: string): {
   try {
     url = new URL(value);
   } catch {
-    throw new Error('Managed Relay connection URL is invalid');
+    throw new Error('Signal Protocol Relay connection URL is invalid');
   }
   const profile = Object.entries(MANAGED_RELAY_PROFILES).find(
     ([, candidate]) => url.origin === candidate.origin,
@@ -68,7 +68,7 @@ function parseRelayUrl(value: string): {
     url.hash !== '' ||
     url.href !== value
   ) {
-    throw new Error('Managed Relay connection URL is invalid');
+    throw new Error('Signal Protocol Relay connection URL is invalid');
   }
   return {
     environment: MANAGED_RELAY_PROFILES[profile].environment,
@@ -134,21 +134,21 @@ async function connectionError(response: Response): Promise<Error> {
     code = undefined;
   }
   if (code === 'DEPLOYMENT_SUSPENDED') {
-    return new Error('Managed Relay deployment is suspended');
+    return new Error('Signal Protocol Relay deployment is suspended');
   }
   if (code === 'PRODUCTION_INACTIVE') {
-    return new Error('Managed Relay production deployment is not active');
+    return new Error('Signal Protocol Relay production deployment is not active');
   }
   if (response.status === 404) {
-    return new Error('Managed Relay connection does not exist or is stale');
+    return new Error('Signal Protocol Relay connection does not exist or is stale');
   }
   if (response.status === 403) {
-    return new Error('Managed Relay connection belongs to another environment');
+    return new Error('Signal Protocol Relay connection belongs to another environment');
   }
   if (response.status === 410) {
-    return new Error('Managed Relay connection is no longer active');
+    return new Error('Signal Protocol Relay connection is no longer active');
   }
-  return new Error('Managed Relay connection could not be resolved');
+  return new Error('Signal Protocol Relay connection could not be resolved');
 }
 
 async function boundedJson(response: Response): Promise<unknown> {
@@ -158,7 +158,7 @@ async function boundedJson(response: Response): Promise<unknown> {
     (!/^\d+$/.test(declaredLength) ||
       Number(declaredLength) > CONNECTION_DOCUMENT_MAXIMUM_BYTES)
   ) {
-    throw new Error('Managed Relay returned an invalid connection');
+    throw new Error('Signal Protocol Relay returned an invalid connection');
   }
   try {
     const body = response.body as ReadableStream<Uint8Array> | null | undefined;
@@ -173,7 +173,7 @@ async function boundedJson(response: Response): Promise<unknown> {
         size += result.value.byteLength;
         if (size > CONNECTION_DOCUMENT_MAXIMUM_BYTES) {
           await reader.cancel();
-          throw new Error('Managed Relay returned an invalid connection');
+          throw new Error('Signal Protocol Relay returned an invalid connection');
         }
         text += decoder.decode(result.value, { stream: true });
       }
@@ -189,21 +189,21 @@ async function boundedJson(response: Response): Promise<unknown> {
       new TextEncoder().encode(text).byteLength >
       CONNECTION_DOCUMENT_MAXIMUM_BYTES
     ) {
-      throw new Error('Managed Relay returned an invalid connection');
+      throw new Error('Signal Protocol Relay returned an invalid connection');
     }
     return JSON.parse(text) as unknown;
   } catch (error) {
     if (
       error instanceof Error &&
-      error.message === 'Managed Relay returned an invalid connection'
+      error.message === 'Signal Protocol Relay returned an invalid connection'
     ) {
       throw error;
     }
-    throw new Error('Managed Relay returned an invalid connection');
+    throw new Error('Signal Protocol Relay returned an invalid connection');
   }
 }
 
-/** Resolve one public environment-scoped Managed Relay connection. */
+/** Resolve one public environment-scoped Signal Protocol Relay connection. */
 export async function resolveHostedRelayConnection(
   value: string,
 ): Promise<HostedRelayConnection> {
@@ -229,14 +229,14 @@ export async function resolveHostedRelayConnection(
     ) {
       return cloneConnection(cached.connection);
     }
-    throw new Error('Managed Relay connection could not be resolved');
+    throw new Error('Signal Protocol Relay connection could not be resolved');
   }
   if (!response.ok) throw await connectionError(response);
   let valueFromRelay: unknown;
   try {
     valueFromRelay = await boundedJson(response);
   } catch {
-    throw new Error('Managed Relay returned an invalid connection');
+    throw new Error('Signal Protocol Relay returned an invalid connection');
   }
   const expectedOrigin = MANAGED_RELAY_PROFILES[input.profile].origin;
   const relayScopeId = record(valueFromRelay)
@@ -254,7 +254,7 @@ export async function resolveHostedRelayConnection(
     valueFromRelay.publishableKey !== input.locator ||
     relayScopeId === undefined
   ) {
-    throw new Error('Managed Relay returned an invalid connection');
+    throw new Error('Signal Protocol Relay returned an invalid connection');
   }
   const connection: HostedRelayConnection = {
     certificateTrust: compiledCertificateTrust(input.profile),

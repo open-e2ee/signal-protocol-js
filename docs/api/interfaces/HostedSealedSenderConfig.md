@@ -6,7 +6,7 @@
 
 # Interface: HostedSealedSenderConfig
 
-Hosted Relay sealed-sender trust is bound to one project environment.
+Signal Protocol Relay sealed-sender trust is bound to one project environment.
 
 ## Extends
 

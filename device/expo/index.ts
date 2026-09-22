@@ -1,7 +1,7 @@
 /**
  * Local device metadata, read from Expo and React Native.
  *
- * Split out of `./provisioning` because it was the only thing there that needed
+ * Split out of `../provisioning` because it was the only thing there that needed
  * a platform. Provisioning is a protocol: ephemeral ECDH, an encrypted
  * payload, and a server-side link. It takes the device's description as a
  * parameter. A static `import` of `react-native` in that module made the whole
@@ -14,7 +14,7 @@
 
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import type { LocalDeviceMetadata } from './provisioning';
+import type { LocalDeviceMetadata } from '../provisioning';
 
 export {};
 

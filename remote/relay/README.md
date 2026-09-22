@@ -30,8 +30,9 @@ const client = await createSignalProtocolClient({
 await client.syncToServer();
 ```
 
-For production, implement `ISignalProtocolRelayServer` or use the
-[Convex adapter](./convex/README.md). The application backend must authenticate
+For production, connect to the OpenE2EE Signal Protocol Relay through
+`createHostedSignalProtocolClient()` from the package root, or implement
+`ISignalProtocolRelayServer` against your own backend. That backend must authenticate
 mutations, allocate linked-device IDs, consume one-time prekeys atomically,
 enforce access policy, and store only encrypted envelopes plus required routing
 metadata.

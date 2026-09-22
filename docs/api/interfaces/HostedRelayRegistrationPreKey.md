@@ -6,7 +6,7 @@
 
 # Interface: HostedRelayRegistrationPreKey
 
-Public prekey material sent during one atomic hosted Relay registration.
+Public prekey material sent during one atomic Signal Protocol Relay registration.
 
 ## Properties
 

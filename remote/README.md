@@ -17,7 +17,7 @@ replaceable and prevent them from owning private keys or plaintext.
 
 ### Relay
 
-- `ConvexSignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/convex`
+- the OpenE2EE Signal Protocol Relay through `createHostedSignalProtocolClient()` from the package root
 - `InMemorySignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
 - custom implementations via `ISignalProtocolRelayServer`
 
@@ -31,21 +31,21 @@ replaceable and prevent them from owning private keys or plaintext.
 
 <!-- doc-snippet:skip requires-production-adapters -->
 ```ts
-import { SignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import {
-  ConvexSignalProtocolRelayServer,
-  type ConvexSignalProtocolRelayApi,
-} from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
-import { ExpoSignalProtocolStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
-import { api } from "../convex/_generated/api";
+import { createHostedSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
+import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
 
-const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
-
-const signal = await SignalProtocolClient.create(userId, {
-  storage: new ExpoSignalProtocolStore(),
-  relay: new ConvexSignalProtocolRelayServer(convex, signalApi, {
-    currentUserId: userId,
-  }),
+// Initialize the application-owned Expo/SQLCipher database bindings first.
+const signal = await createHostedSignalProtocolClient({
+  adapters: {
+    // Expo storage owns this device's private keys and session state.
+    storage: expoStore(),
+  },
+  hosted: {
+    // The environment-scoped connection URL from the OpenE2EE console.
+    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    // Returns a short-lived signed assertion for the signed-in user.
+    getIdentityAssertion,
+  },
 });
 ```
 

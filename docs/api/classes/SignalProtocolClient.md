@@ -2670,7 +2670,7 @@ Fully initialized SignalProtocolClient instance
 
 ```typescript
 import { SignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
-import { convexRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
+import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
 
 // Local-only primary device.
 const signal = await SignalProtocolClient.create('user-123', {
@@ -2684,7 +2684,7 @@ const signal = await SignalProtocolClient.create('user-123', {
 });
 
 // With relay sync.
-const relay = convexRelay({ convex, api: signalApi, currentUserId: userId });
+const relay = inMemoryRelay();
 const signal = await SignalProtocolClient.create('user-123', {
   storage,
   relay,

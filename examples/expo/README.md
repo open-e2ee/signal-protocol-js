@@ -62,4 +62,4 @@ npm run db:generate
 
 Read [exchange.ts](./exchange.ts) for the public SDK calls. Use the [Expo integration guide](https://docs.open-e2ee.dev/start/expo) to add the SDK to your app.
 
-For separate devices, supply an authenticated relay adapter or use [OpenE2EE Relay](https://open-e2ee.dev/relay). The relay never needs message plaintext or device private keys.
+For separate devices, supply an authenticated relay adapter or use [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay). The relay never needs message plaintext or device private keys.

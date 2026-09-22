@@ -20,14 +20,10 @@ import {
   createSignalProtocolClient,
   SignalProtocolClient,
 } from '@open-e2ee/signal-protocol-sdk';
-import {
-  convexRelay,
-  type ConvexSignalProtocolRelayApi,
-} from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
-import { api } from '../convex/_generated/api';
+import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
 
-const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
-const relay = convexRelay({ convex, api: signalApi, currentUserId: userId });
+// Development relay. Production uses `createHostedSignalProtocolClient()`.
+const relay = inMemoryRelay();
 
 // Preferred app-facing composition.
 const signal = await createSignalProtocolClient({
@@ -790,14 +786,10 @@ If omitted, client operates in local-only mode.
 
 ```typescript
 import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
-import {
-  convexRelay,
-  type ConvexSignalProtocolRelayApi,
-} from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
-import { api } from '../convex/_generated/api';
+import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
 
-const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
-const relay = convexRelay({ convex, api: signalApi, currentUserId: userId });
+// Development relay. Production uses `createHostedSignalProtocolClient()`.
+const relay = inMemoryRelay();
 
 const signal = await createSignalProtocolClient({
   identity: { userId },

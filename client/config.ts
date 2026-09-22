@@ -151,7 +151,7 @@ export interface SelfHostedSealedSenderConfig extends SealedSenderConfigBase {
   trustModel?: 'self-hosted';
 }
 
-/** Hosted Relay sealed-sender trust is bound to one project environment. */
+/** Signal Protocol Relay sealed-sender trust is bound to one project environment. */
 export interface HostedSealedSenderConfig extends SealedSenderConfigBase {
   /** Selects the OpenE2EE hosted trust system. */
   trustModel: 'hosted';
@@ -200,14 +200,10 @@ export interface DoubleRatchetConfig {
  *   createSignalProtocolClient,
  *   SignalProtocolClient,
  * } from '@open-e2ee/signal-protocol-sdk';
- * import {
- *   convexRelay,
- *   type ConvexSignalProtocolRelayApi,
- * } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
- * import { api } from '../convex/_generated/api';
+ * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
  *
- * const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
- * const relay = convexRelay({ convex, api: signalApi, currentUserId: userId });
+ * // Development relay. Production uses `createHostedSignalProtocolClient()`.
+ * const relay = inMemoryRelay();
  *
  * // Preferred app-facing composition.
  * const signal = await createSignalProtocolClient({
@@ -300,14 +296,10 @@ export interface SignalProtocolClientConfig {
    * @example
    * ```typescript
    * import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
-   * import {
-   *   convexRelay,
-   *   type ConvexSignalProtocolRelayApi,
-   * } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
-   * import { api } from '../convex/_generated/api';
+   * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
    *
-   * const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
-   * const relay = convexRelay({ convex, api: signalApi, currentUserId: userId });
+   * // Development relay. Production uses `createHostedSignalProtocolClient()`.
+   * const relay = inMemoryRelay();
    *
    * const signal = await createSignalProtocolClient({
    *   identity: { userId },

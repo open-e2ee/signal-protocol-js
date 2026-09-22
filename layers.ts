@@ -186,7 +186,7 @@ export const INFRASTRUCTURE_MODULES = {
   remote: {
     directories: ['remote'],
     implementsPorts: ['ISignalProtocolRelayServer', 'SignalProtocolRemoteObjectStore'],
-    description: 'Remote relay and object-store adapters: Convex, Memory, R2, S3',
+    description: 'Remote relay and object-store adapters: Memory, Convex R2, S3',
   },
   device: {
     directories: ['device'],

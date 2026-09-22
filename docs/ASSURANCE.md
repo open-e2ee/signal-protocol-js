@@ -1,6 +1,6 @@
 # Assurance
 
-The Signal Protocol SDK is open source under AGPL-3.0-or-later. Its engineering tests remain private. We do not publish those tests or their private fixtures and comparison material.
+The Signal Protocol SDK is open source under the MIT License or the Apache License 2.0, at your option. Its engineering tests remain private. We do not publish those tests or their private fixtures and comparison material.
 
 This document states our testing methods, reported results, public checks, and review limits.
 
@@ -90,6 +90,6 @@ Applications must choose their authentication, device trust, backup, recovery, a
 
 ## Security review and reporting
 
-Request a walkthrough of the methods and results at [security@open-e2ee.dev](mailto:security@open-e2ee.dev). Contact [licensing@open-e2ee.dev](mailto:licensing@open-e2ee.dev) for commercial evaluation.
+Request a walkthrough of the methods and results at [security@open-e2ee.dev](mailto:security@open-e2ee.dev).
 
 Report suspected vulnerabilities through [SECURITY.md](../SECURITY.md). Keep vulnerability details out of public issues.

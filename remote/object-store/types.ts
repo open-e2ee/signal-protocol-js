@@ -21,7 +21,7 @@ export type RemoteObjectUploadRequest = {
   contentLength: number;
   /** SHA-256 digest of the exact encrypted bytes. */
   digest: Uint8Array;
-  /** Optional broker read-capability commitment. Required by hosted Relay. */
+  /** Optional broker read-capability commitment. Required by the Signal Protocol Relay. */
   readCapabilityDigest?: Uint8Array;
 };
 

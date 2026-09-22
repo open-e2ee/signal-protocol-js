@@ -88,19 +88,12 @@ delivery, provisioning, key rotation, and encrypted group coordination.
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
 import type { ISignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
-import {
-  convexRelay,
-  type ConvexSignalProtocolRelayApi,
-} from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
-import { api } from "../convex/_generated/api";
+import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
 
-const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
-
-const relay: ISignalProtocolRelayServer = convexRelay({
-  convex,
-  api: signalApi,
-  currentUserId: userId,
-});
+// Development uses the in-memory relay. Production connects to the OpenE2EE
+// Signal Protocol Relay through `createHostedSignalProtocolClient()`, or to an
+// application backend that implements this interface.
+const relay: ISignalProtocolRelayServer = inMemoryRelay();
 ```
 
 The application backend must:
@@ -118,13 +111,13 @@ Each adapter implements `getPreKeyInventory` for prekey synchronization.
 It returns both reusable-key metadata records and both one-time-key counts.
 These observations do not consume keys, reserve a version, or authorize an upload.
 Callers request new observations after intervening work.
-Hosted Relay persists a separate public-eligibility snapshot for its published
+The Signal Protocol Relay persists a separate public-eligibility snapshot for its published
 prekeys. A publication reads the current public inventory, names its exact
 predecessor revision, persists one pending receipt before the request, and reads
 the accepted inventory before it commits the new receipt. An exact retry can
 recover a lost response. A stale or reordered writer cannot restore material
 that the Relay already issued. Retained private prekeys are not a publication
-inventory. Convex retains its bounded independent queries.
+inventory.
 
 The server remains responsible for atomic one-time-key consumption.
 

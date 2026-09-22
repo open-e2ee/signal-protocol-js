@@ -6,9 +6,9 @@
 
 # Interface: HostedRelayBootstrapAdapter
 
-SDK or integration-owned hosted Relay transport.
+SDK or integration-owned Signal Protocol Relay transport.
 
-Managed Relay certificate roots are compiled into the SDK and selected by the
+Signal Protocol Relay certificate roots are compiled into the SDK and selected by the
 exact connection origin. The adapter cannot supply or replace hosted trust.
 
 OpenE2EE has no customers. This is a clean prelaunch contract replacement.

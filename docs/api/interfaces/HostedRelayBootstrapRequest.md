@@ -6,7 +6,7 @@
 
 # Interface: HostedRelayBootstrapRequest
 
-Request passed to a hosted Relay bootstrap transport.
+Request passed to a Signal Protocol Relay bootstrap transport.
 
 ## Properties
 

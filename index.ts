@@ -437,9 +437,9 @@ export type { GroupId, GroupTrustRoot } from "./internal/groups";
  * @example
  * ```typescript
  * import type { ISignalProtocolRelayServer, SignalProtocolRemoteObjectStore } from '@open-e2ee/signal-protocol-sdk';
- * import { convexRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
+ * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
  *
- * const relay: ISignalProtocolRelayServer = convexRelay({ convex, api: signalApi, currentUserId: userId });
+ * const relay: ISignalProtocolRelayServer = inMemoryRelay();
  * ```
  */
 export type {

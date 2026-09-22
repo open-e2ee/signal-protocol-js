@@ -68,12 +68,8 @@ Make sure the prekey bundle is fresh and valid:
 
 <!-- doc-snippet:skip requires-external-context -->
 ```typescript
-// Fetch the latest prekey bundle from server
-const bundle = await convex.mutation(api.signal.keys.fetchPreKeyBundle, {
-  userId: bobId,
-  deviceId: 1,
-  identityType: 'aci',
-});
+// Fetch the latest prekey bundle through the relay adapter
+const bundle = await relay.fetchPreKeyBundle(bobId, 1, undefined, 'aci');
 
 // Verify bundle has required fields
 if (!bundle.identityKey || !bundle.signedPreKey) {

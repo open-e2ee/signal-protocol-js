@@ -252,7 +252,7 @@ export interface RetryConfig {
 }
 
 /**
- * Relay configuration with Convex operations
+ * Relay channel configuration
  */
 export interface RelayConfig extends ConnectionConfig {
   createChannel: (channelId: string) => Promise<void>;

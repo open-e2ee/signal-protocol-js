@@ -35,27 +35,20 @@ await signal.encryptMessage(bob, 'hello');
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
-import { convexRelay, type ConvexSignalProtocolRelayApi } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
+import { createHostedSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 import { expoStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
-import { api } from '../convex/_generated/api';
-
-const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
-
-// The relay handles server-side device lists, public prekeys, and envelopes.
-const relay = convexRelay({
-  convex,
-  api: signalApi,
-  currentUserId: userId,
-});
 
 // Initialize the application-owned Expo/SQLCipher database bindings first.
-const signal = await createSignalProtocolClient({
-  identity: { userId },
+const signal = await createHostedSignalProtocolClient({
   adapters: {
     // Expo storage owns this device's private keys and session state.
     storage: expoStore(),
-    relay,
+  },
+  hosted: {
+    // The environment-scoped connection URL from the OpenE2EE console.
+    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    // Returns a short-lived signed assertion for the signed-in user.
+    getIdentityAssertion,
   },
 });
 ```

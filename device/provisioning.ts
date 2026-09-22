@@ -23,7 +23,7 @@
  *
  * This module is platform-free on purpose. The device's own description arrives
  * as a `LocalDeviceMetadata` parameter, so nothing here needs to ask a platform
- * what it is running on. The `./expo-metadata` module supplies that for Expo
+ * what it is running on. The `./expo` module supplies that for Expo
  * hosts.
  */
 

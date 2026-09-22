@@ -65,14 +65,14 @@ function decodeCanonicalBase64(value: unknown, label: string): Uint8Array {
 function requiredNumber(object: JsonRecord, key: string): number {
   const value = object[key];
   if (!Number.isSafeInteger(value))
-    throw new Error('Managed Relay returned invalid data');
+    throw new Error('Signal Protocol Relay returned invalid data');
   return value as number;
 }
 
 function requiredString(object: JsonRecord, key: string): string {
   const value = object[key];
   if (typeof value !== 'string' || !value)
-    throw new Error('Managed Relay returned invalid data');
+    throw new Error('Signal Protocol Relay returned invalid data');
   return value;
 }
 
@@ -99,7 +99,7 @@ function parseStoredPreKey(value: unknown): StoredHostedPreKey {
     typeof value.publicKey !== 'string' ||
     (value.signature !== undefined && typeof value.signature !== 'string')
   ) {
-    throw new Error('Stored hosted Relay session is invalid');
+    throw new Error('Stored Signal Protocol Relay session is invalid');
   }
   decodeCanonicalBase64(value.publicKey, 'Stored prekey public key');
   if (value.signature !== undefined)
@@ -109,7 +109,7 @@ function parseStoredPreKey(value: unknown): StoredHostedPreKey {
 
 function parseStoredPreKeys(value: unknown): readonly StoredHostedPreKey[] {
   if (!Array.isArray(value))
-    throw new Error('Stored hosted Relay session is invalid');
+    throw new Error('Stored Signal Protocol Relay session is invalid');
   return value.map(parseStoredPreKey);
 }
 
@@ -167,7 +167,7 @@ export function parseStoredPublication(
     !Number.isSafeInteger(value.revision) ||
     (value.revision as number) < 0
   ) {
-    throw new Error('Stored hosted Relay session is invalid');
+    throw new Error('Stored Signal Protocol Relay session is invalid');
   }
   return {
     authorityGeneration: value.authorityGeneration as number,
@@ -194,7 +194,7 @@ export function parseStoredPendingPublication(
     !Number.isSafeInteger(value.predecessorRevision) ||
     (value.predecessorRevision as number) < 0
   ) {
-    throw new Error('Stored hosted Relay session is invalid');
+    throw new Error('Stored Signal Protocol Relay session is invalid');
   }
   return {
     materialFingerprint: value.materialFingerprint,
@@ -214,17 +214,17 @@ export function parseHostedPreKeyStatus(value: unknown): HostedPreKeyStatus {
     typeof value.profile !== 'string' ||
     !Array.isArray(value.signedPreKeys)
   ) {
-    throw new Error('Managed Relay returned invalid prekey status');
+    throw new Error('Signal Protocol Relay returned invalid prekey status');
   }
   const parsePreKey = (
     candidate: unknown,
     kind: 'one-time' | 'signed',
   ): HostedRelayRegistrationPreKey => {
     if (!record(candidate))
-      throw new Error('Managed Relay returned invalid prekey status');
+      throw new Error('Signal Protocol Relay returned invalid prekey status');
     const algorithm = requiredString(candidate, 'algorithm');
     if (algorithm !== 'ec-x25519' && algorithm !== 'kem-ml-kem-1024')
-      throw new Error('Managed Relay returned invalid prekey status');
+      throw new Error('Signal Protocol Relay returned invalid prekey status');
     const signature =
       candidate.signature === undefined
         ? undefined
@@ -232,7 +232,7 @@ export function parseHostedPreKeyStatus(value: unknown): HostedPreKeyStatus {
     const signatureRequired =
       kind === 'signed' || algorithm === 'kem-ml-kem-1024';
     if (signatureRequired !== (signature !== undefined))
-      throw new Error('Managed Relay returned invalid prekey status');
+      throw new Error('Signal Protocol Relay returned invalid prekey status');
     return {
       algorithm,
       keyId: requiredNumber(candidate, 'keyId'),
@@ -246,7 +246,7 @@ export function parseHostedPreKeyStatus(value: unknown): HostedPreKeyStatus {
   const counts: Record<string, number> = {};
   for (const [algorithm, count] of Object.entries(value.oneTimePreKeyCounts)) {
     if (!Number.isSafeInteger(count) || (count as number) < 0)
-      throw new Error('Managed Relay returned invalid prekey status');
+      throw new Error('Signal Protocol Relay returned invalid prekey status');
     counts[algorithm] = count as number;
   }
   return {
@@ -308,7 +308,7 @@ function registrationPreKeyUpload(
   upload: PreKeyUpload,
 ): HostedRelayRegistrationPreKey {
   if (!Number.isSafeInteger(upload.keyId) || upload.keyId < 0)
-    throw new Error('Hosted Relay prekey upload is invalid');
+    throw new Error('Signal Protocol Relay prekey upload is invalid');
   const signature =
     upload.signature === undefined
       ? undefined
@@ -317,7 +317,7 @@ function registrationPreKeyUpload(
     (upload.type === 'ecPreKey' && signature !== undefined) ||
     (upload.type !== 'ecPreKey' && signature === undefined)
   ) {
-    throw new Error('Hosted Relay prekey upload is invalid');
+    throw new Error('Signal Protocol Relay prekey upload is invalid');
   }
   return {
     algorithm:
@@ -368,7 +368,7 @@ export function applyPreKeyUploads(
       const identifier = `${prekey.algorithm}:${String(prekey.keyId)}`;
       if (identifiers.has(identifier))
         throw new Error(
-          `Hosted Relay ${kind} prekey upload repeats an identifier`,
+          `Signal Protocol Relay ${kind} prekey upload repeats an identifier`,
         );
       identifiers.add(identifier);
     }

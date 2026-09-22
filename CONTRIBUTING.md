@@ -46,14 +46,12 @@ reporting, or security@open-e2ee.dev.
 
 ## Licensing of contributions
 
-The SDK is dual-licensed. The license is AGPL-3.0-or-later, and OpenE2EE LLC
-also sells commercial licenses for proprietary use (see
-[COMMERCIAL.md](./COMMERCIAL.md)). When you submit a contribution, you agree
-that it falls under the repository's AGPL-3.0-or-later license. You also agree
-that OpenE2EE LLC may distribute it under its commercial licenses. If you are
-not comfortable with that dual grant, please say so in the PR instead of
-submitting it. An issue that describes the fix is still valuable, and it
-carries no licensing implications.
+The SDK is dual-licensed under the [MIT License](./LICENSE-MIT) or the
+[Apache License 2.0](./LICENSE-APACHE), at the user's option. When you submit
+a contribution, you agree that it is licensed under both, without any
+additional terms or conditions. If you are not comfortable with that dual
+grant, please say so in the PR instead of submitting it. An issue that
+describes the fix is still valuable, and it carries no licensing implications.
 
 ## How we work together
 

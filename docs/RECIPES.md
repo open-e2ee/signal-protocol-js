@@ -93,39 +93,26 @@ the session. Later messages on the same session use `ciphertext`. In both cases
 the relay sees encrypted envelope bytes. Bob receives decrypted content only
 through the `onMessageDecrypted` hook.
 
-## Production composition with Convex + Expo
+## Production composition with Expo on the Signal Protocol Relay
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import {
-  convexRelay,
-  type ConvexSignalProtocolRelayApi,
-} from "@open-e2ee/signal-protocol-sdk/remote/relay/convex";
+import { createHostedSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
-import { api } from "../convex/_generated/api";
-
-const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
-
-// The relay handles server-side public keys, devices, and encrypted envelopes.
-const relay = convexRelay({
-  convex,
-  api: signalApi,
-  currentUserId: userId,
-});
 
 // Initialize the application-owned Expo/SQLCipher database bindings first.
-const signal = await createSignalProtocolClient({
-  identity: { userId },
+const signal = await createHostedSignalProtocolClient({
   adapters: {
-    // Storage owns this device's private keys and session state.
+    // Expo storage owns this device's private keys and session state.
     storage: expoStore(),
-    relay,
+  },
+  hosted: {
+    // The environment-scoped connection URL from the OpenE2EE console.
+    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    // Returns a short-lived signed assertion for the signed-in user.
+    getIdentityAssertion,
   },
 });
-
-// Publish this device's public prekeys so other devices can start sessions.
-await signal.syncToServer();
 ```
 
 Production bootstrapping must register or provision the current device with the

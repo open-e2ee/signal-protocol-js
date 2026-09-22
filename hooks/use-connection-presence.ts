@@ -27,10 +27,8 @@
  *
  * @example
  * ```typescript
- * const relay = new ConvexSignalProtocolRelayServer(convex, signalApi, {
- *   currentUserId: userId,
- *   getAuthToken,
- * });
+ * // Any ISignalProtocolRelayServer that reports presence.
+ * const relay = createAuthenticatedRelay({ userId, getAuthToken });
  * useConnectionPresence({
  *   relay,
  *   deviceId,

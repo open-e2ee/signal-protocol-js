@@ -8,4 +8,4 @@
 
 > **IdentityAssertionPurpose** = `"register"` \| `"refresh"` \| `"recover"`
 
-Why the hosted Relay needs a fresh identity assertion.
+Why the Signal Protocol Relay needs a fresh identity assertion.

@@ -2,6 +2,31 @@
 
 ## 3.0.0
 
+- **Breaking: the SDK is dual-licensed under MIT or Apache-2.0.** The package
+  `license` is `(MIT OR Apache-2.0)`. `LICENSE` states the grant, and
+  `LICENSE-MIT` and `LICENSE-APACHE` carry the full texts. The
+  AGPL-3.0-or-later terms and the commercial license (`COMMERCIAL.md`) are
+  withdrawn.
+- **Breaking: the Convex relay server is no longer published.** The
+  `./remote/relay/convex` and `./convex.config` entry points, the
+  `remote/relay/convex/**` sources, and the `@convex-dev/rate-limiter` peer
+  dependency leave the public package. Production clients connect to the
+  OpenE2EE Signal Protocol Relay through `createHostedSignalProtocolClient()`,
+  development uses `inMemoryRelay()`, and any backend can implement
+  `ISignalProtocolRelayServer`. The Convex R2 object store
+  (`./remote/object-store/convex-r2`) stays.
+- **Breaking: `./device/expo-metadata` is now `./device/expo`.** The Expo
+  device metadata module moved to `device/expo/index.ts`. The duplicate
+  `./remote/relay/convex/relay` entry point is removed with the Convex relay.
+- **The hosted relay is the OpenE2EE Signal Protocol Relay.** Documentation,
+  doc comments, and user-visible error messages say `OpenE2EE Signal Protocol
+  Relay`, or `Signal Protocol Relay` as the short form, instead of
+  `OpenE2EE Relay`, `Managed Relay`, or `hosted Relay`. Code that matched
+  the old error message text must match the new text. Domain-separation labels
+  are unchanged.
+- Correct the browser and Expo example package integrity. Both lockfiles pin
+  the public tarball, and release verification packs the public candidate
+  under the publication runtime and checks both pins before an export.
 - **Breaking: the Kyber last-resort prekey takes the next key id on every
   rotation.** Rotation, prekey regeneration, and the local-only rotation path
   previously regenerated the key under id 1, which the local store now refuses
@@ -45,9 +70,8 @@
 
 - **Breaking: Relay adapters implement `getPreKeyInventory`.** Prekey
   synchronization reads both signed-key records and both one-time-key counts
-  through one operation. Hosted Relay uses one status request per decision.
-  Convex runs its existing bounded queries concurrently. Inventory is not a
-  reservation or cache. Canonical identity checks and fresh replenishment
+  through one operation. The Signal Protocol Relay uses one status request per
+  decision. Inventory is not a reservation or cache. Canonical identity checks and fresh replenishment
   checks remain separate.
 
 ## 2.0.2

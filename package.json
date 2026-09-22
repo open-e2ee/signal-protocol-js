@@ -26,7 +26,7 @@
     "sdk",
     "forward-secrecy"
   ],
-  "license": "AGPL-3.0-or-later",
+  "license": "(MIT OR Apache-2.0)",
   "author": {
     "name": "OpenE2EE",
     "url": "https://github.com/open-e2ee"
@@ -62,18 +62,6 @@
     "./remote/relay": {
       "types": "./dist/remote/relay/index.d.ts",
       "default": "./dist/remote/relay/index.js"
-    },
-    "./remote/relay/convex": {
-      "types": "./dist/remote/relay/convex/index.d.ts",
-      "default": "./dist/remote/relay/convex/index.js"
-    },
-    "./remote/relay/convex/relay": {
-      "types": "./dist/remote/relay/convex/relay.d.ts",
-      "default": "./dist/remote/relay/convex/relay.js"
-    },
-    "./convex.config": {
-      "types": "./dist/remote/relay/convex/component/convex.config.d.ts",
-      "default": "./dist/remote/relay/convex/component/convex.config.js"
     },
     "./remote/relay/memory": {
       "types": "./dist/remote/relay/memory/index.d.ts",
@@ -123,9 +111,9 @@
       "types": "./dist/device/device-id.d.ts",
       "default": "./dist/device/device-id.js"
     },
-    "./device/expo-metadata": {
-      "types": "./dist/device/expo-metadata.d.ts",
-      "default": "./dist/device/expo-metadata.js"
+    "./device/expo": {
+      "types": "./dist/device/expo/index.d.ts",
+      "default": "./dist/device/expo/index.js"
     },
     "./device/lifecycle": {
       "types": "./dist/device/lifecycle/index.d.ts",
@@ -301,8 +289,9 @@
     "ADAPTERS.md",
     "ARCHITECTURE.md",
     "CHANGELOG.md",
-    "COMMERCIAL.md",
     "LICENSE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
     "NOTICE",
     "README.md",
     "SECURITY.md",
@@ -350,8 +339,6 @@
     "remote/object-store/convex-r2/README.md",
     "remote/object-store/s3/README.md",
     "remote/relay/README.md",
-    "remote/relay/convex/README.md",
-    "remote/relay/convex/component/README.md",
     "remote/relay/memory/README.md",
     "safety/README.md",
     "scripts/oe-groups.mjs",
@@ -379,7 +366,6 @@
   },
   "peerDependencies": {
     "@convex-dev/r2": "^0.10.2",
-    "@convex-dev/rate-limiter": "^0.3.2",
     "convex": "^1.42.1",
     "drizzle-orm": "^0.45.1",
     "expo": "~55.0.27",
@@ -396,9 +382,6 @@
   },
   "peerDependenciesMeta": {
     "@convex-dev/r2": {
-      "optional": true
-    },
-    "@convex-dev/rate-limiter": {
       "optional": true
     },
     "convex": {
@@ -457,15 +440,12 @@
     "image-size": "file:./vendor/image-size-disabled"
   },
   "devDependencies": {
-    "fs-native-extensions": "1.2.7",
     "@convex-dev/r2": "^0.10.2",
-    "@convex-dev/rate-limiter": "^0.3.2",
     "@swc/core": "^1.15.43",
     "@types/async-lock": "^1.4.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "convex": "^1.42.3",
-    "convex-test": "^0.0.54",
     "drizzle-orm": "^0.45.1",
     "esbuild": "^0.27.0",
     "expo": "~55.0.27",
@@ -474,6 +454,7 @@
     "expo-device": "~55.0.19",
     "expo-secure-store": "~55.0.16",
     "expo-sqlite": "~55.0.18",
+    "fs-native-extensions": "1.2.7",
     "idb": "^8.0.3",
     "react": "19.2.0",
     "react-native": "0.83.10",

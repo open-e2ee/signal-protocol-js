@@ -6,7 +6,7 @@
 
 # Interface: HostedSignalProtocolClientOptions
 
-Compact, runtime-neutral hosted Relay client configuration.
+Compact, runtime-neutral Signal Protocol Relay client configuration.
 
 ## Extends
 
@@ -139,7 +139,7 @@ const signal = await SignalProtocolClient.create(userId, {
 
 > `readonly` **relayUrl**: `string`
 
-Public environment-scoped Managed Relay connection URL.
+Public environment-scoped Signal Protocol Relay connection URL.
 
 #### sealedSenderAccessMode?
 

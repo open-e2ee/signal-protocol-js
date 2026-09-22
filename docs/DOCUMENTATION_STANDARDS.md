@@ -77,6 +77,10 @@ substitute for documenting the local behavior.
 - **Application** or **host application** names the consuming product.
 - **Relay** names the application backend interface for device state, public
   prekeys, and encrypted envelopes.
+- **OpenE2EE Signal Protocol Relay** names the hosted relay that OpenE2EE
+  operates for this SDK. **Signal Protocol Relay** is the permitted short form
+  in error messages and repeated references. Do not write OpenE2EE Relay,
+  Managed Relay, or hosted Relay.
 - **Remote object store** names the brokered ciphertext-storage interface.
 
 Do not imply affiliation with Signal Messenger or general compatibility with

@@ -63,7 +63,6 @@ const packageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf
 const PLATFORM_BOUND = new Map([
   ['./convex.config', 'convex — Convex component definition, loaded by the Convex CLI'],
   ['./remote/relay/convex', 'convex — Convex-backed relay adapter'],
-  ['./remote/relay/convex/relay', 'convex — Convex-backed relay adapter'],
   ['./remote/object-store/convex-r2/server', '@convex-dev/r2 — Convex R2 server half'],
   ['./hooks', 'react — React hooks, unusable without a renderer'],
   ['./hooks/use-connection-presence', 'react — React hook, unusable without a renderer'],
@@ -73,7 +72,7 @@ const PLATFORM_BOUND = new Map([
   ['./local/store/react-native', 'react-native — React Native store adapter'],
   ['./local/store/web', 'idb — IndexedDB-backed store'],
   ['./local/vault/expo-secure-store', 'expo-secure-store — Expo SecureStore vault'],
-  ['./device/expo-metadata', 'react-native, expo-constants — reads the local platform'],
+  ['./device/expo', 'react-native, expo-constants — reads the local platform'],
 ]);
 
 /**

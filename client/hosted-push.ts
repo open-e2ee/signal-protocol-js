@@ -77,14 +77,14 @@ export function bindHostedRelayPushRuntime(
 function hostedRuntime(client: HostedRelayWakeClient): HostedRelayPushRuntime {
   const runtime = hostedRuntimes.get(client);
   if (runtime === undefined) {
-    throw new Error('The client is not connected to OpenE2EE Relay');
+    throw new Error('The client is not connected to the OpenE2EE Signal Protocol Relay');
   }
   return runtime;
 }
 
 function assertToken(token: string): string {
   if (!token || token.length > PUSH_TOKEN_MAXIMUM_LENGTH) {
-    throw new Error('Hosted Relay push token is invalid');
+    throw new Error('Signal Protocol Relay push token is invalid');
   }
   return token;
 }
@@ -98,11 +98,11 @@ function validatedRegistration(
     registration.profile !== 'nse-visible' &&
     registration.profile !== 'nse-filtering'
   ) {
-    throw new Error('Hosted Relay push profile is invalid');
+    throw new Error('Signal Protocol Relay push profile is invalid');
   }
   if (registration.profile === 'nse-filtering') {
     throw new Error(
-      'Hosted Relay notification filtering is unavailable until signed physical-device verification passes',
+      'Signal Protocol Relay notification filtering is unavailable until signed physical-device verification passes',
     );
   }
   if (registration.provider !== 'web-push') {
@@ -118,7 +118,7 @@ function validatedRegistration(
         registration.profile !== 'visible-alert')
     ) {
       throw new Error(
-        'Hosted Relay push profile is not supported by this platform',
+        'Signal Protocol Relay push profile is not supported by this platform',
       );
     }
     return {
@@ -132,20 +132,20 @@ function validatedRegistration(
       registration.profile !== 'visible-alert')
   ) {
     throw new Error(
-      'Hosted Relay push profile is not supported by this platform',
+      'Signal Protocol Relay push profile is not supported by this platform',
     );
   }
   let endpoint: URL;
   try {
     endpoint = new URL(registration.endpoint);
   } catch {
-    throw new Error('Hosted Relay Web Push endpoint is invalid');
+    throw new Error('Signal Protocol Relay Web Push endpoint is invalid');
   }
   if (
     endpoint.protocol !== 'https:' ||
     registration.endpoint.length > PUSH_ENDPOINT_MAXIMUM_LENGTH
   ) {
-    throw new Error('Hosted Relay Web Push endpoint is invalid');
+    throw new Error('Signal Protocol Relay Web Push endpoint is invalid');
   }
   return {
     endpoint: registration.endpoint,
@@ -191,7 +191,7 @@ export async function pullHostedRelayAfterWake(
     envelopes.some((envelope) => !envelope.id)
   ) {
     throw new Error(
-      'Hosted Relay mailbox returned invalid envelope identities',
+      'Signal Protocol Relay mailbox returned invalid envelope identities',
     );
   }
   const results = await options.client.receiveIncomingEnvelopes([...envelopes]);
@@ -204,7 +204,7 @@ export async function pullHostedRelayAfterWake(
     resultIds.some((id) => !inputIds.has(id))
   ) {
     throw new Error(
-      'Hosted Relay mailbox processing returned an invalid result',
+      'Signal Protocol Relay mailbox processing returned an invalid result',
     );
   }
   if (acknowledgedMessageIds.length > 0) {

@@ -244,14 +244,11 @@ export interface IKeyRotationService {
  * - Device registry (multi-device support, max 5 devices per user)
  * - Prekey management (X3DH/PQXDH key exchange)
  *
- * Backed by the 16 tables the Convex component owns. `docs/SCHEMA.md` covers
- * what each stores and for how long.
+ * The OpenE2EE Signal Protocol Relay and the in-memory relay implement it.
  *
  * @example
  * ```typescript
- * const relay: ISignalProtocolRelayServer = new ConvexSignalProtocolRelayServer(convex, signalApi, {
- *   currentUserId: userId,
- * });
+ * const relay: ISignalProtocolRelayServer = inMemoryRelay();
  *
  * // Subscribe to incoming envelopes
  * const unsubscribe = relay.subscribe(userId, deviceId, (envelope) => {
@@ -289,7 +286,7 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
 
   /**
    * Subscribe to incoming envelopes for this device.
-   * Real-time push via Convex subscription / WebSocket.
+   * Real-time push over the relay's subscription channel.
    *
    * @param userId - Current user ID
    * @param deviceId - This device's ID (1-5)
@@ -352,9 +349,7 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
    */
   removeDevice(userId: string, deviceId: number): Promise<void>;
 
-  // Note: Push token management is handled by convex/signal/push.ts
-  // using @convex-dev/expo-push-notifications with device-aware composite keys.
-  // See api.signal.push.recordToken/removeToken for token management.
+  // Push token management belongs to the relay implementation, keyed by device.
 
   /**
    * Mark device as connected (online).
@@ -934,11 +929,9 @@ export interface DeviceRegistration {
   deviceId?: number; // 1 = primary, undefined = auto-assign linked
   encryptedDeviceName?: ArrayBuffer;
   deviceType?: DeviceType;
-  // Note: Push tokens are managed separately via convex/signal/push.ts
 }
 
-// Note: PushToken interface was removed - push tokens are now managed by
-// @convex-dev/expo-push-notifications component via convex/signal/push.ts
+// Push tokens are managed by the relay implementation, not by this interface.
 
 /**
  * Prekey upload (batch).

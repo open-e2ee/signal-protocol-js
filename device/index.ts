@@ -81,7 +81,7 @@ export {
 // Provisioning functions (device linking via QR code)
 //
 // `getDeviceMetadata` is deliberately absent: it reads the platform, and lives
-// on `./device/expo-metadata` so that the provisioning protocol stays importable
+// on `./device/expo` so that the provisioning protocol stays importable
 // off Expo. Callers elsewhere build `LocalDeviceMetadata` themselves.
 export {
   generateProvisioningQR,

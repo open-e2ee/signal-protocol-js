@@ -9,16 +9,16 @@
 
 Add encrypted messaging to Expo, React Native, browser, and Node applications. The SDK manages device identities, session establishment, and message encryption. Your application supplies storage, user authentication, and a relay for delivery.
 
-The default policy requires post-quantum session establishment and ratcheting. The protocol implementation is open source under AGPLv3, with a [commercial license](./COMMERCIAL.md) available.
+The default policy requires post-quantum session establishment and ratcheting. The protocol implementation is open source under the MIT License or the Apache License 2.0, at your option.
 
 [**Run an encrypted exchange in your browser**](https://open-e2ee.dev/playground) · [Edit on StackBlitz](https://stackblitz.com/fork/github/open-e2ee/signal-protocol-js/tree/v3.0.0/examples/browser) · [Run on Expo / Hermes](./examples/expo/README.md)
 
-[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-2f6f5e)](./LICENSE)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-2f6f5e)](./LICENSE)
 [![npm version](https://img.shields.io/npm/v/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
 [![npm provenance](https://img.shields.io/badge/npm-provenance-2f6f5e)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk#provenance)
 [![Checks](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml/badge.svg)](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml)
 
-[Documentation](https://docs.open-e2ee.dev) · [API reference](https://docs.open-e2ee.dev/reference/api) · [OpenE2EE Relay](https://open-e2ee.dev/relay) · [Security](./SECURITY.md)
+[Documentation](https://docs.open-e2ee.dev) · [API reference](https://docs.open-e2ee.dev/reference/api) · [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay) · [Security](./SECURITY.md)
 
 ## See an encrypted round trip
 
@@ -37,7 +37,7 @@ Both examples use real protocol code and cryptography. An in-memory relay holds 
 - **Session establishment and ratcheting.** PQXDH establishes sessions. The ML-KEM Braid ratchet adds post-quantum key updates. Required post-quantum operations fail closed.
 - **Chat features.** Multi-device messaging, groups, sealed sender, encrypted attachments, and safety-number verification use the same package.
 - **Device-local state.** Storage adapters keep identities, sessions, and message state on the device.
-- **Delivery through an adapter.** Operate your own relay or use [OpenE2EE Relay](https://open-e2ee.dev/relay).
+- **Delivery through an adapter.** Operate your own relay or use [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay).
 
 The relay never needs message plaintext or device private keys.
 
@@ -102,7 +102,7 @@ The in-memory store loses identities, sessions, and ratchet state on restart. Th
 
 ## Use your app’s storage and relay
 
-Choose the device-local store for your runtime. Then supply a relay that authenticates each device and implements your product's access policy, or use [OpenE2EE Relay](https://open-e2ee.dev/relay) as the managed delivery path. The SDK does not require the managed service. [Review Relay plans and exact meter definitions.](https://open-e2ee.dev/relay/pricing)
+Choose the device-local store for your runtime. Then supply a relay that authenticates each device and implements your product's access policy, or use [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay) as the managed delivery path. The SDK does not require the managed service. [Review Relay plans and exact meter definitions.](https://open-e2ee.dev/relay/pricing)
 
 | Runtime | Storage path | Deployment boundary |
 |---|---|---|
@@ -111,7 +111,7 @@ Choose the device-local store for your runtime. Then supply a relay that authent
 | Bare React Native | [`reactNativeStore`](./local/store/react-native/README.md) | Provide an atomic, durable key-value backend and run the exported backend conformance kit. |
 | Node | [`nodeStore`](./local/store/node/README.md) | Install `fs-native-extensions@1.2.7` and set an explicit private directory on a trusted local filesystem. |
 
-The [adapter guide](./ADAPTERS.md) defines every storage, relay, vault, and object-store boundary. The [client composition guide](./docs/CLIENT_COMPOSITION.md) shows an Expo and Convex integration.
+The [adapter guide](./ADAPTERS.md) defines every storage, relay, vault, and object-store boundary. The [client composition guide](./docs/CLIENT_COMPOSITION.md) shows an Expo client on the OpenE2EE Signal Protocol Relay.
 
 ## Security and assurance
 
@@ -140,6 +140,6 @@ Open a [bug report](https://github.com/open-e2ee/signal-protocol-js/issues/new?t
 
 ## License and warranty
 
-Licensed under AGPLv3 (`AGPL-3.0-or-later`). See [LICENSE](./LICENSE). A [commercial license](./COMMERCIAL.md) covers proprietary products that cannot meet AGPLv3 obligations.
+Dual-licensed under the [MIT License](./LICENSE-MIT) or the [Apache License 2.0](./LICENSE-APACHE), at your option (`MIT OR Apache-2.0`). See [LICENSE](./LICENSE).
 
-The license provides the software **as is**, without warranties or conditions of any kind. To the extent that applicable law permits, copyright holders and contributors are not liable for damages that arise from its use. Your application must evaluate the SDK against its requirements and secure its deployment, storage, authentication, authorization, and operations. This summary does not modify the license.
+Both licenses provide the software **as is**, without warranties or conditions of any kind. To the extent that applicable law permits, copyright holders and contributors are not liable for damages that arise from its use. Your application must evaluate the SDK against its requirements and secure its deployment, storage, authentication, authorization, and operations. This summary does not modify either license.

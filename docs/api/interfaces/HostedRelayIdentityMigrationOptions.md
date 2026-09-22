@@ -54,4 +54,4 @@
 
 > `readonly` **relayUrl**: `string`
 
-Public environment-scoped Managed Relay connection URL.
+Public environment-scoped Signal Protocol Relay connection URL.

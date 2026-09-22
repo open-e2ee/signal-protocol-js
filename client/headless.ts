@@ -7,16 +7,11 @@
  * @example
  * ```typescript
  * // In background task (no React)
- * import { ConvexHttpClient } from 'convex/browser';
  * import { rotateKeysHeadless } from '@open-e2ee/signal-protocol-sdk/client/headless';
  * import { expoStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
- * import { convexRelay, type ConvexSignalProtocolRelayApi } from '@open-e2ee/signal-protocol-sdk/remote/relay/convex';
- * import { api } from '../convex/_generated/api';
  *
- * const convex = new ConvexHttpClient(CONVEX_URL);
- * convex.setAuth(authToken);
- * const signalApi = api.signal satisfies ConvexSignalProtocolRelayApi;
- * const relay = convexRelay({ convex, api: signalApi, currentUserId: userId });
+ * // Any ISignalProtocolRelayServer the app composes, authenticated for this user.
+ * const relay = createAuthenticatedRelay({ authToken, userId });
  * const storage = expoStore();
  *
  * const result = await rotateKeysHeadless(relay, userId, deviceId, { storage });
@@ -77,7 +72,7 @@ export interface HeadlessRotationOptions {
  * as SignalProtocolClient but works with any ISignalProtocolRelayServer implementation.
  *
  * Features:
- * - Works with ConvexSignalProtocolRelayServer or any ISignalProtocolRelayServer implementation
+ * - Works with any ISignalProtocolRelayServer implementation
  * - Checks whether the keys need rotation before it rotates them
  * - Handles errors gracefully (returns partial success)
  * - Logs all operations for debugging

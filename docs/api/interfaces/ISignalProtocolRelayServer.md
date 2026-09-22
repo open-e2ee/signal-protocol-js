@@ -13,15 +13,12 @@ Responsibilities:
 - Device registry (multi-device support, max 5 devices per user)
 - Prekey management (X3DH/PQXDH key exchange)
 
-Backed by the 16 tables the Convex component owns. `docs/SCHEMA.md` covers
-what each stores and for how long.
+The OpenE2EE Signal Protocol Relay and the in-memory relay implement it.
 
 ## Example
 
 ```typescript
-const relay: ISignalProtocolRelayServer = new ConvexSignalProtocolRelayServer(convex, signalApi, {
-  currentUserId: userId,
-});
+const relay: ISignalProtocolRelayServer = inMemoryRelay();
 
 // Subscribe to incoming envelopes
 const unsubscribe = relay.subscribe(userId, deviceId, (envelope) => {
@@ -1157,7 +1154,7 @@ ConflictError if expectedVersion !== currentVersion
 > **subscribe**(`userId`, `deviceId`, `onEnvelope`, `options?`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
 
 Subscribe to incoming envelopes for this device.
-Real-time push via Convex subscription / WebSocket.
+Real-time push over the relay's subscription channel.
 
 #### Parameters
 
