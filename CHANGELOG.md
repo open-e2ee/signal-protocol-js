@@ -1,5 +1,55 @@
 # Changelog
 
+## 3.0.0
+
+- **Breaking: the Kyber last-resort prekey takes the next key id on every
+  rotation.** Rotation, prekey regeneration, and the local-only rotation path
+  previously regenerated the key under id 1, which the local store now refuses
+  because it retains replaced keys under their ids for in-flight PQXDH
+  messages. Only a complete key reset starts at id 1 again. The
+  `KemLastResortPreKeyUpload` key id is no longer fixed at 1.
+- **Breaking: Node.js 22.12 is the minimum supported runtime.** Node.js 18 and
+  20 have reached end of life, the S3 object store dependencies require Node.js
+  20 or later, and the committed lockfile installs with npm 11. The Node store
+  authority checks run on Node.js 22 and 26.
+
+- **Breaking: hosted mailbox subscriptions deliver from the socket.** A
+  `durable-message` frame carries the envelope, and the subscription hands it
+  to the receive handler without a pull. Acknowledgments travel over the same
+  socket as one `acknowledge` frame per delivered batch, bounded at one hundred
+  message ids. The HTTP pull remains for recovery: once per reconnect attempt,
+  after a handler failure, and after a full recovery page. The HTTP
+  acknowledgment remains for the push-wake path and for a batch whose socket
+  closed before its acknowledgment left. Relay must reply `acknowledged`
+  without re-sending pending messages.
+
+- **Hosted group transport and issuer authority.**
+  Clients create encrypted groups, invite members, synchronize revisions, and
+  distribute sender keys through Relay. Long-lived clients refresh signed
+  authority. Cached endorsements bind to their issuer, and issuance cannot
+  exceed the issuer's expiry. Self-hosted trust remains explicit.
+
+- **Interrupted receives preserve an encrypted device-local receipt.** Receipt
+  persistence shares the transaction that advances cryptographic state.
+  Retries recover application handling after a restart without decrypting the
+  same envelope twice. Acknowledgment follows successful application handling.
+
+- **Breaking: endorsement cache entries include their public issuer key.**
+  Custom stores must preserve that key with each entry. The `groups/server`
+  entry point exposes the existing group authorization engine for Relay hosts.
+
+- **Hosted mailbox subscriptions stop dispatch after unsubscribe.** Polling
+  waits for each asynchronous message handler before the next envelope, batch
+  completion, and next poll. A handler failure closes the batch and leaves
+  unacknowledged envelopes available for retry.
+
+- **Breaking: Relay adapters implement `getPreKeyInventory`.** Prekey
+  synchronization reads both signed-key records and both one-time-key counts
+  through one operation. Hosted Relay uses one status request per decision.
+  Convex runs its existing bounded queries concurrently. Inventory is not a
+  reservation or cache. Canonical identity checks and fresh replenishment
+  checks remain separate.
+
 ## 2.0.2
 
 - Correct the browser and Expo example package integrity for the release environment.

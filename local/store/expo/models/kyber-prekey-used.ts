@@ -6,7 +6,8 @@
  *
  */
 
-import { getDrizzle, kyberPreKeyUsed } from '../db';
+import { and, eq, getDrizzle, kyberPreKeys, kyberPreKeyUsed } from '../db';
+import { ReusedBaseKeyError } from '../../kyber-prekey-lifecycle';
 
 // ============================================================================
 // Error
@@ -18,15 +19,7 @@ import { getDrizzle, kyberPreKeyUsed } from '../db';
  * This indicates a replay attack. The table already holds the same
  * `(kyberPreKeyId, signedPreKeyIdentity, signedPreKeyId, baseKey)` tuple.
  */
-export {};
-export class ReusedBaseKeyError extends Error {
-  constructor(kyberPreKeyId: number, signedPreKeyId: number) {
-    super(
-      `Reused base key detected for Kyber prekey ${kyberPreKeyId} with signed prekey ${signedPreKeyId}`
-    );
-    this.name = 'ReusedBaseKeyError';
-  }
-}
+export { ReusedBaseKeyError } from '../../kyber-prekey-lifecycle';
 
 // ============================================================================
 // Functions
@@ -54,12 +47,22 @@ export async function markKyberPreKeyUsed(
 
   try {
     const db = await getDrizzle();
-    await db.insert(kyberPreKeyUsed).values({
-      kyberPreKeyId,
-      signedPreKeyIdentity: identityType,
-      signedPreKeyId,
-      baseKey,
-    });
+    const parent = await db
+      .select({ id: kyberPreKeys.id })
+      .from(kyberPreKeys)
+      .where(
+        and(eq(kyberPreKeys.identityType, identityType), eq(kyberPreKeys.prekeyId, kyberPreKeyId))
+      )
+      .limit(1);
+    if (!parent[0]) throw new Error(`Kyber prekey ${kyberPreKeyId} is not retained`);
+    await db
+      .insert(kyberPreKeyUsed)
+      .values({
+        kyberPreKeyRowId: parent[0].id,
+        signedPreKeyIdentity: identityType,
+        signedPreKeyId,
+        baseKey,
+      });
   } catch (error: unknown) {
     // Duplicate tuple = PQXDH replay attack
     const errorMessage = error instanceof Error ? error.message : '';

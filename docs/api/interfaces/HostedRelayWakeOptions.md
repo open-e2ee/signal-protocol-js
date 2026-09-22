@@ -11,9 +11,3 @@
 ### client
 
 > `readonly` **client**: [`HostedRelayWakeClient`](HostedRelayWakeClient.md)
-
-***
-
-### processOptions?
-
-> `readonly` `optional` **processOptions?**: [`ProcessEnvelopeOptions`](ProcessEnvelopeOptions.md)

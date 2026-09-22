@@ -23,13 +23,17 @@ Encrypted group-state transport.
 
 ### issueAuthCredential()
 
-> **issueAuthCredential**(`userId`): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
+> **issueAuthCredential**(`userId`, `authorityKeyId?`): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
 
 Issue an auth credential for the relay's authenticated account.
 
 #### Parameters
 
 ##### userId
+
+`string`
+
+##### authorityKeyId?
 
 `string`
 
@@ -41,7 +45,7 @@ Issue an auth credential for the relay's authenticated account.
 
 ### issueProfileKeyCredential()
 
-> **issueProfileKeyCredential**(`userId`, `request`): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
+> **issueProfileKeyCredential**(`userId`, `request`, `authorityKeyId?`): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
 
 Issue a profile-key credential from a blinded request for the authenticated account.
 
@@ -54,6 +58,10 @@ Issue a profile-key credential from a blinded request for the authenticated acco
 ##### request
 
 `Uint8Array`
+
+##### authorityKeyId?
+
+`string`
 
 #### Returns
 

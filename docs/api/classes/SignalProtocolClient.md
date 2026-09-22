@@ -1674,6 +1674,26 @@ Decrypted plaintext
 
 ***
 
+### receiveIncomingEnvelopes()
+
+> **receiveIncomingEnvelopes**(`envelopes`): `Promise`\<\{ `failedMessageIds`: `string`[]; `processedMessageIds`: `string`[]; \}\>
+
+Receive a pulled batch through the subscription content handler.
+The application must register onMessageDecrypted before calling this method.
+Successful IDs are ready for transport acknowledgment.
+
+#### Parameters
+
+##### envelopes
+
+[`IncomingEnvelope`](../interfaces/IncomingEnvelope.md)[]
+
+#### Returns
+
+`Promise`\<\{ `failedMessageIds`: `string`[]; `processedMessageIds`: `string`[]; \}\>
+
+***
+
 ### registerHook()
 
 > **registerHook**\<`K`\>(`name`, `callback`): `void`

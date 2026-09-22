@@ -27,6 +27,7 @@ import {
   SERVICE_ID_PNI,
 } from '../protocol/zk/groups/uid-struct';
 import { RistrettoPoint } from '../protocol/zk/proofs/sho';
+import { GroupWireValidationError } from './error-details';
 
 const ENCRYPTED_CHANGE_ARRAY_ACTION_KEYS = [
   'newMembers',
@@ -152,12 +153,12 @@ export function toEncryptedGroupCreationSubmission(
   group: EncryptedGroup
 ): EncryptedGroupCreationSubmission {
   if (group.membersPendingAdminApproval.length !== 0) {
-    throw new Error(
-      'Group creation submission must not contain requesting members'
+    throw new GroupWireValidationError(
+      'Group creation submission must not contain requesting members', 'creation_requesting_members'
     );
   }
   if (group.membersBanned.length !== 0) {
-    throw new Error('Group creation submission must not contain banned members');
+    throw new GroupWireValidationError('Group creation submission must not contain banned members', 'creation_banned_members');
   }
   return {
     ...group,
@@ -309,8 +310,9 @@ function assertExactActionFields(
     actual.length !== expected.length ||
     actual.some((field, index) => field !== expected[index])
   ) {
-    throw new Error(
-      `${label} has non-canonical fields: expected ${expected.join(', ')}, got ${actual.join(', ')}`
+    throw new GroupWireValidationError(
+      `${label} has non-canonical fields: expected ${expected.join(', ')}, got ${actual.join(', ')}`,
+      'non_canonical_fields'
     );
   }
 }
@@ -428,7 +430,7 @@ function assertCiphertextEncoding(
 ): asserts value is Uint8Array {
   assertByteArray(value, label, 65);
   if (kind === 'aci' && value[0] !== SERVICE_ID_ACI) {
-    throw new Error(`${label} must carry an ACI ciphertext`);
+    throw new GroupWireValidationError(`${label} must carry an ACI ciphertext`, 'invalid_ciphertext_kind');
   }
   if (kind === 'pni' && value[0] !== SERVICE_ID_PNI) {
     throw new Error(`${label} must carry a PNI ciphertext`);
@@ -447,7 +449,7 @@ function assertCiphertextEncoding(
     RistrettoPoint.fromBytes(value.slice(1, 33));
     RistrettoPoint.fromBytes(value.slice(33, 65));
   } catch {
-    throw new Error(`${label} contains an invalid Ristretto ciphertext point`);
+    throw new GroupWireValidationError(`${label} contains an invalid Ristretto ciphertext point`, 'invalid_ciphertext_point');
   }
 }
 
@@ -463,7 +465,7 @@ function assertBlobEncoding(
     (value.length - 65) % 32 !== 0 ||
     value[value.length - 1] !== 0
   ) {
-    throw new Error(`${label} has an invalid encrypted-blob envelope`);
+    throw new GroupWireValidationError(`${label} has an invalid encrypted-blob envelope`, 'invalid_encrypted_blob');
   }
 }
 
@@ -918,8 +920,8 @@ function assertValidEncryptedGroupWireForm(
     form === 'creation-submission' &&
     group.membersPendingAdminApproval.length !== 0
   ) {
-    throw new Error(
-      'Group creation submission must not contain requesting members'
+    throw new GroupWireValidationError(
+      'Group creation submission must not contain requesting members', 'creation_requesting_members'
     );
   }
   for (const [index, requesting] of group.membersPendingAdminApproval.entries()) {
@@ -941,7 +943,7 @@ function assertValidEncryptedGroupWireForm(
     occupy(requesting.userId, label);
   }
   if (form === 'creation-submission' && group.membersBanned.length !== 0) {
-    throw new Error('Group creation submission must not contain banned members');
+    throw new GroupWireValidationError('Group creation submission must not contain banned members', 'creation_banned_members');
   }
   for (const [index, banned] of group.membersBanned.entries()) {
     const label = `Group.membersBanned[${index}]`;
@@ -951,8 +953,8 @@ function assertValidEncryptedGroupWireForm(
     occupy(banned.userId, label);
   }
   if (!satisfiesLiveGroupAdministratorInvariant(group)) {
-    throw new Error(
-      'Every non-terminated group must have at least one administrator'
+    throw new GroupWireValidationError(
+      'Every non-terminated group must have at least one administrator', 'no_administrator'
     );
   }
 }

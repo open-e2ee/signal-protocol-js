@@ -31,8 +31,12 @@ import {
 export {};
 type KyberPreKeyRow = typeof kyberPreKeys.$inferSelect;
 import { secureZero } from '../../../../internal/crypto';
-import type { IdentityType } from '../../../../keys/types';
-import { markPreKeysReplaced, cullReplacedPreKeys } from './replaced-prekey-utils';
+import type { IdentityType, KyberPreKey as KyberPreKeyType } from '../../../../keys/types';
+import {
+  assertUnambiguousKyberPreKeyStore,
+  createKyberPreKeyInstanceId,
+} from '../../kyber-prekey-lifecycle';
+import { markPreKeysReplaced } from './replaced-prekey-utils';
 
 // ============================================================================
 // Query Functions
@@ -52,13 +56,7 @@ export async function getKyberPreKeyByKeyId(
   const results = await db
     .select()
     .from(kyberPreKeys)
-    .where(
-      and(
-        eq(kyberPreKeys.identityType, identityType),
-        eq(kyberPreKeys.prekeyId, keyId),
-        isNull(kyberPreKeys.replacedAt)
-      )
-    )
+    .where(and(eq(kyberPreKeys.identityType, identityType), eq(kyberPreKeys.prekeyId, keyId)))
     .limit(1);
 
   return results.length > 0 ? new KyberPreKey(results[0]) : null;
@@ -67,9 +65,8 @@ export async function getKyberPreKeyByKeyId(
 /**
  * Get the current (latest) Kyber prekey.
  *
- * Returns the prekey with the highest keyId, which is always the most
- * recently rotated key. Per PQXDH Section 3.2, only one Kyber prekey
- * is active at a time (rotation replaces the previous value).
+ * Returns the one unreplaced prekey for the identity. Key IDs are identifiers,
+ * not an ordering signal.
  *
  * @returns Current KyberPreKey or null if none exists
  */
@@ -81,7 +78,7 @@ export async function getCurrentKyberPreKey(
     .select()
     .from(kyberPreKeys)
     .where(and(eq(kyberPreKeys.identityType, identityType), isNull(kyberPreKeys.replacedAt)))
-    .orderBy(desc(kyberPreKeys.prekeyId))
+    .orderBy(desc(kyberPreKeys.createdAt), desc(kyberPreKeys.id))
     .limit(1);
 
   return results.length > 0 ? new KyberPreKey(results[0]) : null;
@@ -178,12 +175,41 @@ export async function getMaxKyberPreKeyId(identityType: IdentityType = 'aci'): P
  * Also deletes keys with replacedAt far in the future (clock-skew protection).
  *
  * Best-effort overwrites decoded private-key bytes before deletion.
- * Delegates to shared cullReplacedPreKeys utility.
  * @param maxReplacedAgeMs - Maximum time a replaced prekey is retained before culling
  * @returns Number of culled prekeys
  */
 export async function cullReplacedKyberPreKeys(maxReplacedAgeMs: number): Promise<number> {
-  return cullReplacedPreKeys('kyber_prekeys', maxReplacedAgeMs);
+  const rawDb = getRawDatabase();
+  const now = Date.now();
+  const pastCutoff = now - maxReplacedAgeMs;
+  const futureCutoff = now + maxReplacedAgeMs;
+  let culledCount = 0;
+
+  await rawDb.withTransactionAsync(async () => {
+    const rows = await rawDb.getAllAsync<{ id: number; private_key: string }>(
+      `SELECT id, private_key FROM kyber_prekeys
+       WHERE replaced_at IS NOT NULL AND (replaced_at < ? OR replaced_at > ?)`,
+      [pastCutoff, futureCutoff]
+    );
+    if (rows.length === 0) return;
+    for (const row of rows) secureZero(row.private_key);
+
+    const placeholders = rows.map(() => '?').join(', ');
+    const rowIds = rows.map((row) => row.id);
+    // Delete by the immutable parent row ID. The schema FK also cascades this
+    // deletion when foreign-key enforcement is enabled by the host database.
+    await rawDb.runAsync(
+      `DELETE FROM kyber_prekey_used WHERE kyber_prekey_row_id IN (${placeholders})`,
+      rowIds
+    );
+    const result = await rawDb.runAsync(
+      `DELETE FROM kyber_prekeys
+       WHERE replaced_at IS NOT NULL AND (replaced_at < ? OR replaced_at > ?)`,
+      [pastCutoff, futureCutoff]
+    );
+    culledCount = result.changes ?? 0;
+  });
+  return culledCount;
 }
 
 // ============================================================================
@@ -228,6 +254,7 @@ export function createKyberPreKey(params: {
 
   return new KyberPreKey({
     id: 0, // Auto-increment
+    instanceId: '',
     identityType: params.identityType ?? 'aci',
     prekeyId: params.keyId,
     publicKey,
@@ -282,6 +309,11 @@ export class KyberPreKey {
   /** Key ID */
   get keyId(): number {
     return this.data.prekeyId;
+  }
+
+  /** Store-generated identity for this immutable retained instance. */
+  get instanceId(): string {
+    return this.data.instanceId;
   }
 
   /** Public key (base64 encoded) */
@@ -354,7 +386,9 @@ export class KyberPreKey {
    * Save Kyber prekey to database.
    */
   async save(): Promise<void> {
+    const instanceId = this.data.instanceId || (await createKyberPreKeyInstanceId());
     const insertData: NewKyberPreKey = {
+      instanceId,
       identityType: this.data.identityType,
       prekeyId: this.data.prekeyId,
       publicKey: this.data.publicKey,
@@ -365,28 +399,58 @@ export class KyberPreKey {
       replacedAt: this.data.replacedAt ?? null,
     };
 
-    // Use raw SQL for upsert on the composite unique index (identity_type, prekey_id)
     const rawDb = getRawDatabase();
-    await rawDb.runAsync(
-      `INSERT INTO kyber_prekeys (identity_type, prekey_id, public_key, private_key, signature, timestamp, created_at, replaced_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (identity_type, prekey_id) DO UPDATE SET
-         public_key = excluded.public_key,
-         private_key = excluded.private_key,
-         signature = excluded.signature,
-         timestamp = excluded.timestamp,
-         created_at = excluded.created_at`,
-      [
-        insertData.identityType ?? 'aci',
-        insertData.prekeyId,
-        insertData.publicKey,
-        insertData.privateKey,
-        insertData.signature ?? null,
-        insertData.timestamp,
-        insertData.createdAt,
-        insertData.replacedAt ?? null,
-      ]
-    );
+    const identityType = (insertData.identityType ?? 'aci') as IdentityType;
+    await rawDb.withTransactionAsync(async () => {
+      const existing = await rawDb.getFirstAsync<{
+        instanceId: string;
+        publicKey: string;
+        privateKey: string;
+        signature: string | null;
+        timestamp: number;
+      }>(
+        `SELECT instance_id AS instanceId, public_key AS publicKey,
+                private_key AS privateKey, signature, timestamp
+         FROM kyber_prekeys WHERE identity_type = ? AND prekey_id = ?`,
+        [identityType, insertData.prekeyId]
+      );
+      if (existing) {
+        assertUnambiguousKyberPreKeyStore(
+          {
+            keyId: insertData.prekeyId,
+            publicKey: existing.publicKey,
+            privateKey: existing.privateKey,
+            signature: existing.signature ?? '',
+            timestamp: existing.timestamp,
+          } as KyberPreKeyType,
+          this.toKyberPreKey() as KyberPreKeyType,
+          identityType
+        );
+        this.data.instanceId = existing.instanceId;
+        return;
+      }
+      await rawDb.runAsync(
+        `UPDATE kyber_prekeys SET replaced_at = ?
+         WHERE identity_type = ? AND replaced_at IS NULL`,
+        [Date.now(), identityType]
+      );
+      await rawDb.runAsync(
+        `INSERT INTO kyber_prekeys (instance_id, identity_type, prekey_id, public_key, private_key, signature, timestamp, created_at, replaced_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          insertData.instanceId,
+          identityType,
+          insertData.prekeyId,
+          insertData.publicKey,
+          insertData.privateKey,
+          insertData.signature ?? null,
+          insertData.timestamp,
+          insertData.createdAt,
+          insertData.replacedAt ?? null,
+        ]
+      );
+      this.data.instanceId = instanceId;
+    });
   }
 
   /**

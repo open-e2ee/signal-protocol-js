@@ -23,7 +23,7 @@ Device ID (1=primary, 2-5=linked)
 
 > **keyId**: `number`
 
-Key ID (always 1 per PQXDH spec Section 3.2)
+Key ID. Each rotation takes the next id.
 
 ***
 

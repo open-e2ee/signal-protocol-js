@@ -11,11 +11,13 @@ import { createCompositeIdentityV1 } from '../keys/identity';
 import {
   base64ToBytes,
   bytesToBase64,
+  bytesToUrlSafeBase64,
   concatBytes,
   generateSigningKeyPair,
   sha256,
   sign,
   stringToBytes,
+  urlSafeToBase64,
 } from '../internal/crypto';
 import type { ISignalProtocolRelayServer } from '../remote/relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
@@ -27,6 +29,7 @@ import type { SealedSenderAccessMode } from './config';
 import {
   resolveHostedRelayConnection,
   type HostedRelayCertificateTrust,
+  type HostedRelayConnection,
 } from './hosted-connection';
 import {
   bootstrapHostedRelayTransport,
@@ -34,6 +37,10 @@ import {
   type HostedRelayTransportResult,
 } from './hosted-transport';
 import { bindHostedRelayPushRuntime } from './hosted-push';
+import {
+  resolveHostedGroupOptions,
+  type HostedGroupOptions,
+} from './hosted-group-authority';
 
 export {
   pullHostedRelayAfterWake,
@@ -120,6 +127,8 @@ export interface HostedRelayDeviceAuthentication {
    * The adapter verifies `label || publishableKey || 0x00 || challenge`.
    */
   signChallenge(challenge: Uint8Array): Promise<Uint8Array>;
+  /** Sign the canonical certificate request with the SDK-owned device key. */
+  signCertificateRequest(tokenId: string, nonce: string): Promise<Uint8Array>;
 }
 
 /** Public prekey material sent during one atomic hosted Relay registration. */
@@ -244,8 +253,9 @@ export interface HostedRelayManagedDeviceLinkAdapter extends HostedRelayBootstra
 /** Compact, runtime-neutral hosted Relay client configuration. */
 export interface HostedSignalProtocolClientOptions extends Omit<
   SignalProtocolClientCompositionOptions,
-  'adapters' | 'identity' | 'sealedSender'
+  'adapters' | 'identity' | 'sealedSender' | 'groups'
 > {
+  readonly groups?: HostedGroupOptions;
   readonly adapters: Omit<
     SignalProtocolClientCompositionOptions['adapters'],
     'relay' | 'remoteObjectStore'
@@ -283,8 +293,9 @@ export interface HostedRelayIdentityMigrationOptions {
 
 export interface HostedRelayManagedDeviceLinkOptions extends Omit<
   SignalProtocolClientCompositionOptions,
-  'adapters' | 'identity' | 'sealedSender'
+  'adapters' | 'identity' | 'sealedSender' | 'groups'
 > {
+  readonly groups?: HostedGroupOptions;
   readonly adapters: Omit<
     SignalProtocolClientCompositionOptions['adapters'],
     'relay'
@@ -679,6 +690,21 @@ function deviceAuthenticationSigner(
 ): HostedRelayDeviceAuthentication {
   return {
     publicKey: base64ToBytes(keyPair.publicKey),
+    signCertificateRequest: async (tokenId, nonce) => {
+      if (!tokenId || tokenId.includes('\0') || !nonce || nonce.length > 256)
+        throw new Error('Hosted Relay certificate request is invalid');
+      return base64ToBytes(
+        await sign(
+          keyPair.privateKey,
+          concatBytes(
+            stringToBytes('OpenE2EE Relay sender certificate request v1\0'),
+            stringToBytes(tokenId),
+            new Uint8Array([0]),
+            stringToBytes(nonce),
+          ),
+        ),
+      );
+    },
     signChallenge: async (challenge) => {
       if (!(challenge instanceof Uint8Array) || challenge.length === 0) {
         throw new Error('Hosted Relay device challenge must not be empty');
@@ -757,24 +783,68 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   return difference === 0;
 }
 
+function hostedAccountAci(accountId: string) {
+  if (!/^[A-Za-z0-9_-]{22}$/u.test(accountId)) {
+    throw new Error('Hosted Relay returned an invalid account ACI');
+  }
+  let uuid: Uint8Array;
+  try {
+    uuid = base64ToBytes(urlSafeToBase64(accountId) as Base64);
+  } catch {
+    throw new Error('Hosted Relay returned an invalid account ACI');
+  }
+  if (
+    uuid.length !== 16 ||
+    uuid.every((byte) => byte === 0) ||
+    bytesToUrlSafeBase64(uuid) !== accountId
+  ) {
+    throw new Error('Hosted Relay returned an invalid account ACI');
+  }
+  return { kind: 0 as const, uuid };
+}
+
 async function createClientFromHostedResult(
   result: HostedRelayBootstrapResult,
-  certificateTrust: HostedRelayCertificateTrust,
+  connection: HostedRelayConnection,
   adapters: Omit<
     SignalProtocolClientCompositionOptions['adapters'],
     'relay' | 'remoteObjectStore'
   >,
   clientOptions: Omit<
-    SignalProtocolClientCompositionOptions,
-    'adapters' | 'identity' | 'sealedSender'
+    HostedSignalProtocolClientOptions,
+    'adapters' | 'hosted'
   >,
   sealedSenderAccessMode?: SealedSenderAccessMode,
   remoteObjectStore?: SignalProtocolRemoteObjectStore,
   hostedTransport?: HostedRelayTransportResult['transport'],
 ): Promise<SignalProtocolClient> {
+  const { certificateTrust } = connection;
   assertHostedBootstrapResult(result, certificateTrust);
+  const { groups, ...rest } = clientOptions;
+  const aci =
+    groups === undefined
+      ? undefined
+      : hostedAccountAci(result.canonicalAccountId);
+  const resolvedGroups =
+    groups === undefined
+      ? undefined
+      : await resolveHostedGroupOptions(connection, groups);
   const config = createSignalProtocolClientConfig({
-    ...clientOptions,
+    ...rest,
+    ...(resolvedGroups
+      ? {
+          groups: {
+            ...resolvedGroups,
+            resolveAciBytesByUserIds: async (userIds: string[]) =>
+              new Map(
+                userIds.map((userId) => [
+                  userId,
+                  hostedAccountAci(userId).uuid,
+                ]),
+              ),
+          },
+        }
+      : {}),
     adapters: {
       ...adapters,
       relay: result.relay,
@@ -783,6 +853,7 @@ async function createClientFromHostedResult(
     identity: {
       userId: result.canonicalAccountId,
       deviceId: result.deviceId,
+      ...(aci === undefined ? {} : { aci }),
     },
     sealedSender: {
       accessMode: sealedSenderAccessMode,
@@ -975,7 +1046,7 @@ export async function linkHostedRelayDevice(
   }
   const client = await createClientFromHostedResult(
     result,
-    connection.certificateTrust,
+    connection,
     adapters,
     clientOptions,
     hosted.sealedSenderAccessMode,
@@ -1035,7 +1106,7 @@ export async function createHostedSignalProtocolClient(
   if (resumed !== undefined) {
     const client = await createClientFromHostedResult(
       resumed,
-      connection.certificateTrust,
+      connection,
       adapters,
       clientOptions,
       hosted.sealedSenderAccessMode,
@@ -1080,7 +1151,7 @@ export async function createHostedSignalProtocolClient(
   });
   const client = await createClientFromHostedResult(
     result,
-    connection.certificateTrust,
+    connection,
     adapters,
     clientOptions,
     hosted.sealedSenderAccessMode,

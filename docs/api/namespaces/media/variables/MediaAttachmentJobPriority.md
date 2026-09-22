@@ -12,12 +12,12 @@
 
 ### High
 
-> `readonly` **High**: `"high"` = `'high'`
+> `readonly` **High**: `"high"` = `"high"`
 
 ### Low
 
-> `readonly` **Low**: `"low"` = `'low'`
+> `readonly` **Low**: `"low"` = `"low"`
 
 ### Normal
 
-> `readonly` **Normal**: `"normal"` = `'normal'`
+> `readonly` **Normal**: `"normal"` = `"normal"`

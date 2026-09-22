@@ -8,6 +8,14 @@
 
 ## Properties
 
+### authorityKeyId?
+
+> `optional` **authorityKeyId?**: `string`
+
+Public issuer selection, not account or group authority.
+
+***
+
 ### groupPublicParams
 
 > **groupPublicParams**: `Uint8Array`

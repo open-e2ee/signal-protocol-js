@@ -375,7 +375,7 @@ Store sender key state for a group member device.
 
 ### storeSenderKeyRecord()
 
-> **storeSenderKeyRecord**(`groupId`, `userId`, `deviceId`, `states`): `Promise`\<`void`\>
+> **storeSenderKeyRecord**(`groupId`, `userId`, `deviceId`, `states`, `receive?`): `Promise`\<`void`\>
 
 Store all sender key states (current + previous) for a group member device.
 
@@ -410,6 +410,10 @@ Device identifier
 [`SenderKeyState`](SenderKeyState.md)[]
 
 Array of states (current first, then previous, capped at MAX_SENDER_KEY_STATES)
+
+##### receive?
+
+`SenderKeyReceiveCommit`
 
 #### Returns
 

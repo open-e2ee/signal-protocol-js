@@ -8,6 +8,12 @@
 
 ## Properties
 
+### abandoned
+
+> **abandoned**: `number`
+
+***
+
 ### attempted
 
 > **attempted**: `number`
@@ -41,3 +47,19 @@
 ### skipped
 
 > **skipped**: `number`
+
+***
+
+### uploadFailures
+
+> **uploadFailures**: `object`[]
+
+Broker refusals that require explicit recovery with the original preparation.
+
+#### failure
+
+> **failure**: [`RemoteObjectUploadFailure`](RemoteObjectUploadFailure.md)
+
+#### jobId
+
+> **jobId**: `string`

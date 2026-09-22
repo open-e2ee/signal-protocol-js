@@ -18,14 +18,14 @@
  * ```
  */
 export {};
-export { SignalProtocolClient } from './client';
+export { SignalProtocolClient } from "./client";
 export {
   createSignalProtocolClient,
   createSignalProtocolClientConfig,
   type SignalProtocolClientAdapterConfig,
   type SignalProtocolClientCompositionOptions,
   type SignalProtocolClientIdentityConfig,
-} from './compose';
+} from "./compose";
 export {
   advanceHostedRelayIdentityMigration,
   createHostedSignalProtocolClient,
@@ -65,15 +65,15 @@ export {
   type IdentityAssertionProviderRole,
   type IdentityAssertionPurpose,
   type IdentityAssertionRequest,
-} from './hosted';
-export { BraidPolicy, PostQuantumPolicy } from './config';
+} from "./hosted";
+export { BraidPolicy, PostQuantumPolicy } from "./config";
 export type {
   HostedSealedSenderConfig,
   SealedSenderConfig,
   SelfHostedSealedSenderConfig,
   SignalProtocolConfig,
   SignalProtocolClientConfig,
-} from './config';
+} from "./config";
 export type {
   AttachmentTransferOptions,
   SignalProtocolClientContext,
@@ -85,8 +85,8 @@ export type {
   SendResult,
   SafetyNumber,
   SafetyNumberConfirmation,
-} from './types';
-export { isOutgoingMessageError } from './types';
+} from "./types";
+export { isOutgoingMessageError } from "./types";
 export type {
   BlockedRecipientsSyncInput,
   InspectedSignalProtocolContent,
@@ -103,17 +103,18 @@ export type {
   VerificationStateSyncInput,
   ViewOnceOpenSyncInput,
   SignalProtocolContentAdapter,
-} from './content-adapter';
-export { createDefaultSignalProtocolContentAdapter } from './content-adapter';
+} from "./content-adapter";
+export { createDefaultSignalProtocolContentAdapter } from "./content-adapter";
 export type {
   DecryptedEnvelope,
   SignalProtocolClientHooks,
-} from './event-hooks';
+} from "./event-hooks";
 export type {
   SignalProtocolClientDeleteLocalAttachmentInput,
   SignalProtocolClientLoadedLocalAttachment,
   SignalProtocolClientLoadLocalAttachmentInput,
   SignalProtocolClientMedia,
+  SignalProtocolClientMediaAbandonmentResult,
   SignalProtocolClientMediaCompletedResult,
   SignalProtocolClientMediaCleanupInput,
   SignalProtocolClientMediaCleanupResult,
@@ -135,11 +136,11 @@ export type {
   SignalProtocolClientSaveDownloadedAttachmentInput,
   SignalProtocolClientSaveUploadedAttachmentInput,
   SignalProtocolClientSyncDeleteInput,
-} from './media';
+} from "./media";
 
 // Re-export ProtocolAddress for type-safe API usage
-export { ProtocolAddress } from '../types/address';
-export type { ProtocolAddress as ProtocolAddressType } from '../types/address';
+export { ProtocolAddress } from "../types/address";
+export type { ProtocolAddress as ProtocolAddressType } from "../types/address";
 
 // Group messaging types (Sender Keys)
-export type { SenderKeyDistributionMessage } from '../internal/protocol/sender-keys';
+export type { SenderKeyDistributionMessage } from "../internal/protocol/sender-keys";

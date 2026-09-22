@@ -14,6 +14,26 @@ storage clients must never reach an app runtime.
 
 ## Methods
 
+### abandonUpload()?
+
+> `optional` **abandonUpload**(`input`): `Promise`\<`void`\>
+
+Refuse the original upload identity and delete its accepted object, if present.
+Never create an upload to find it. Preserve accepted accounting. Resolve only
+after durable refusal owns cleanup. A repeated request must be safe.
+
+#### Parameters
+
+##### input
+
+`Pick`\<[`RemoteObjectUploadRequest`](../type-aliases/RemoteObjectUploadRequest.md), `"requestId"` \| `"preparedAt"`\>
+
+#### Returns
+
+`Promise`\<`void`\>
+
+***
+
 ### completeUpload()?
 
 > `optional` **completeUpload**(`input`): `Promise`\<`void`\>
@@ -86,3 +106,27 @@ Delete an encrypted object, when supported by the backend.
 #### Returns
 
 `Promise`\<`void`\>
+
+***
+
+### reconcileUpload()?
+
+> `optional` **reconcileUpload**(`input`): `Promise`\<[`RemoteObjectUploadReceipt`](RemoteObjectUploadReceipt.md) \| `null`\>
+
+Recover an uncertain transfer using the original authorized object.
+
+Return a receipt only after verifying stored bytes and completing the
+backend's acceptance transition. Return null only when bytes are absent
+and the original authorization remains valid. Throw on unknown outcomes,
+mismatch, deletion, or expiry. Never reserve another object here.
+Omit this capability when the backend cannot provide that proof.
+
+#### Parameters
+
+##### input
+
+[`RemoteObjectCompleteUploadRequest`](../type-aliases/RemoteObjectCompleteUploadRequest.md)
+
+#### Returns
+
+`Promise`\<[`RemoteObjectUploadReceipt`](RemoteObjectUploadReceipt.md) \| `null`\>

@@ -1,4 +1,5 @@
 import { ConvexError } from 'convex/values';
+import { isGroupErrorDetail } from '../../../../internal/groups/error-details';
 import { base64ToBytes, bytesToBase64 } from '../../../../internal/crypto/utils';
 import type { GroupServerEngineRuntime } from '../../../../internal/groups/server-engine';
 import {
@@ -177,7 +178,7 @@ export async function translateEngineErrors<T>(
     if (!(error instanceof ConvexError) && error instanceof Error) {
       const data = (
         error as {
-          data?: { code?: unknown; status?: unknown; reason?: unknown };
+          data?: { code?: unknown; status?: unknown; reason?: unknown; detail?: unknown };
         }
       ).data;
       if (
@@ -193,6 +194,7 @@ export async function translateEngineErrors<T>(
           ...(typeof data.reason === 'string'
             ? { reason: data.reason }
             : {}),
+          ...(isGroupErrorDetail(data.detail) ? { detail: data.detail } : {}),
         });
       }
     }

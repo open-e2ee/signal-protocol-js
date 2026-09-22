@@ -23,6 +23,7 @@
  * ```
  */
 
+import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
 import * as Crypto from 'expo-crypto';
 import * as SignalProtocolCrypto from '../../../internal/crypto';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
@@ -34,10 +35,7 @@ import type {
   SkippedSenderMessageKey,
   SessionTrustCommit,
 } from '../../../types';
-import {
-  assertCurrentSessionRecord,
-  type SessionRecord,
-} from '../../../types/session';
+import { assertCurrentSessionRecord, type SessionRecord } from '../../../types/session';
 import type {
   IdentityKeyPair,
   EcSignedPreKey,
@@ -59,6 +57,18 @@ import type { Base64 } from '../../../types/utils';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import type { ReactNativeKeyValueStorage } from './storage';
 import { deserializeSessionRecord, serializeSessionRecord } from '../session-codec';
+import { parseReceivedContent } from '../received-content';
+import {
+  createKyberPreKeyState,
+  createKyberPreKeyInstanceId,
+  getCurrentKyberPreKey,
+  getRetainedKyberPreKey,
+  recordKyberPreKeyUse,
+  recordKyberPreKeyUseById,
+  type RetainedKyberPreKey,
+  retainKyberPreKey,
+  type StoredKyberPreKeyState,
+} from '../kyber-prekey-lifecycle';
 
 /**
  * Storage keys for the injected key-value backend
@@ -244,7 +254,6 @@ interface SecurityEvent {
 export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore {
   private databaseKey: Uint8Array | null = null;
   private initialized = false;
-  private readonly _metadata = new Map<string, string>();
   private readonly storageBackend: ReactNativeKeyValueStorage;
 
   private constructor(options: { storage: ReactNativeKeyValueStorage }) {
@@ -415,11 +424,7 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     validateContactIdentityRecord(replacement);
     await this.storageBackend.atomicWrite([
       { type: 'check', key: contactKey, expectedValue: existingValue },
-      {
-        type: 'set',
-        key: contactKey,
-        value: await this.encrypt(JSON.stringify(replacement)),
-      },
+      { type: 'set', key: contactKey, value: await this.encrypt(JSON.stringify(replacement)) },
       {
         type: 'removeSessionsForUser',
         keyPrefix: STORAGE_KEYS.SESSION_PREFIX,
@@ -443,7 +448,12 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
       : null;
     if (!existing) throw new Error('Cannot verify an unseen identity');
     validateContactIdentityRecord(existing);
-    const verified = verifyContactIdentityRecord(existing, identity, Date.now(), suppliedCommitment);
+    const verified = verifyContactIdentityRecord(
+      existing,
+      identity,
+      Date.now(),
+      suppliedCommitment
+    );
     await this.storageBackend.atomicWrite([
       { type: 'check', key: contactKey, expectedValue: existingValue },
       { type: 'set', key: contactKey, value: await this.encrypt(JSON.stringify(verified)) },
@@ -568,8 +578,18 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
 
   async storeKyberPreKey(kyberPreKey: KyberPreKey, identityType?: IdentityType): Promise<void> {
     this.ensureInitialized();
-    const encrypted = await this.encrypt(JSON.stringify(kyberPreKey));
-    await this.storageBackend.setItem(this.getKyberPreKeyStorageKey(identityType), encrypted);
+    const it = identityType ?? 'aci';
+    const storageKey = this.getKyberPreKeyStorageKey(it);
+    const stored = await this.storageBackend.getItem(storageKey);
+    const state = stored
+      ? (JSON.parse(await this.decrypt(stored)) as StoredKyberPreKeyState)
+      : createKyberPreKeyState();
+    const instanceId = await createKyberPreKeyInstanceId();
+    if (!retainKyberPreKey(state, kyberPreKey, it, Date.now(), instanceId)) return;
+    await this.storageBackend.atomicWrite([
+      { type: 'check', key: storageKey, expectedValue: stored },
+      { type: 'set', key: storageKey, value: await this.encrypt(JSON.stringify(state)) },
+    ]);
   }
 
   async getKyberPreKey(identityType?: IdentityType): Promise<KyberPreKey | null> {
@@ -580,7 +600,22 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     if (!encrypted) return null;
 
     const decrypted = await this.decrypt(encrypted);
-    return JSON.parse(decrypted);
+    return getCurrentKyberPreKey(JSON.parse(decrypted) as StoredKyberPreKeyState);
+  }
+
+  async getKyberPreKeyById(
+    keyId: number,
+    identityType?: IdentityType
+  ): Promise<RetainedKyberPreKey | null> {
+    this.ensureInitialized();
+    const encrypted = await this.storageBackend.getItem(
+      this.getKyberPreKeyStorageKey(identityType)
+    );
+    if (!encrypted) return null;
+    return getRetainedKyberPreKey(
+      JSON.parse(await this.decrypt(encrypted)) as StoredKyberPreKeyState,
+      keyId
+    );
   }
 
   async markKyberPreKeyUsed(
@@ -590,15 +625,17 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     identityType?: IdentityType
   ): Promise<void> {
     this.ensureInitialized();
-    // For simplicity, we will store the usage record as metadata
-    const usageKey = `${STORAGE_KEYS.PREKEY_PREFIX}kyber-usage:${identityType ?? 'aci'}:${kyberPreKeyId}`;
-    const usage = {
-      kyberPreKeyId,
-      signedPreKeyId,
-      baseKeyBytes: this.uint8ArrayToBase64(baseKeyBytes),
-      usedAt: Date.now(),
-    };
-    await this.storageBackend.setItem(usageKey, JSON.stringify(usage));
+    const it = identityType ?? 'aci';
+    const storageKey = this.getKyberPreKeyStorageKey(it);
+    const stored = await this.storageBackend.getItem(storageKey);
+    const state = stored
+      ? (JSON.parse(await this.decrypt(stored)) as StoredKyberPreKeyState)
+      : null;
+    recordKyberPreKeyUseById(state, it, { kyberPreKeyId, signedPreKeyId, baseKeyBytes });
+    await this.storageBackend.atomicWrite([
+      { type: 'check', key: storageKey, expectedValue: stored },
+      { type: 'set', key: storageKey, value: await this.encrypt(JSON.stringify(state)) },
+    ]);
   }
 
   // ============================================================================
@@ -695,21 +732,17 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     this.ensureInitialized();
     assertCurrentSessionRecord(commit.record);
     const addressKey = this.serializeAddress(commit.address);
-    const contactStorageKey = this.getContactStorageKey(
-      commit.address,
-      commit.contactIdentityType
-    );
+    const contactStorageKey = this.getContactStorageKey(commit.address, commit.contactIdentityType);
     const existingContactValue = await this.storageBackend.getItem(contactStorageKey);
     const existingContact = existingContactValue
       ? (JSON.parse(await this.decrypt(existingContactValue)) as ContactIdentityRecord)
       : null;
     if (existingContact) validateContactIdentityRecord(existingContact);
-    const contactStatus = evaluateContactIdentityCandidate(
-      existingContact,
-      commit.contactIdentity
-    );
+    const contactStatus = evaluateContactIdentityCandidate(existingContact, commit.contactIdentity);
     if (contactStatus !== 'NEW' && contactStatus !== 'MATCH') {
-      throw new Error(`Atomic session/trust commit rejected contact identity status ${contactStatus}`);
+      throw new Error(
+        `Atomic session/trust commit rejected contact identity status ${contactStatus}`
+      );
     }
     const sessionStorageKey = `${STORAGE_KEYS.SESSION_PREFIX}${addressKey}`;
     const sessionValue = JSON.stringify({
@@ -722,13 +755,15 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     const ecStorageKey = this.getEcOneTimePreKeyStorageKey(commit.localIdentityType);
     const kemStorageKey = this.getKemOneTimePreKeyStorageKey(commit.localIdentityType);
     const ecPrekeyValue =
-      commit.oneTimePreKeyId === undefined
-        ? null
-        : await this.storageBackend.getItem(ecStorageKey);
+      commit.oneTimePreKeyId === undefined ? null : await this.storageBackend.getItem(ecStorageKey);
     const kemPrekeyValue =
       commit.kemOneTimePreKeyId === undefined
         ? null
         : await this.storageBackend.getItem(kemStorageKey);
+    const kyberStorageKey = this.getKyberPreKeyStorageKey(commit.localIdentityType);
+    const kyberStateValue = commit.kyberPreKeyUse
+      ? await this.storageBackend.getItem(kyberStorageKey)
+      : null;
     const ecPrekeys = ecPrekeyValue
       ? (JSON.parse(await this.decrypt(ecPrekeyValue)) as EcOneTimePreKey[])
       : [];
@@ -747,19 +782,20 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     ) {
       throw new Error('Atomic session/trust commit cannot consume a missing KEM one-time prekey');
     }
+    let updatedKyberStateValue: string | null = null;
+    if (commit.kyberPreKeyUse) {
+      const state = kyberStateValue
+        ? (JSON.parse(await this.decrypt(kyberStateValue)) as StoredKyberPreKeyState)
+        : null;
+      recordKyberPreKeyUse(state, commit.localIdentityType, commit.kyberPreKeyUse);
+      updatedKyberStateValue = await this.encrypt(JSON.stringify(state));
+    }
     const operations = [
-      {
-        type: 'check' as const,
-        key: contactStorageKey,
-        expectedValue: existingContactValue,
-      },
+      { type: 'check' as const, key: contactStorageKey, expectedValue: existingContactValue },
       { type: 'set' as const, key: sessionStorageKey, value: sessionValue },
     ];
     if (contactStatus === 'NEW') {
-      const newContact = createUnverifiedContactIdentityRecord(
-        commit.contactIdentity,
-        Date.now()
-      );
+      const newContact = createUnverifiedContactIdentityRecord(commit.contactIdentity, Date.now());
       operations.push({
         type: 'set',
         key: contactStorageKey,
@@ -786,7 +822,42 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
         ),
       });
     }
+    if (commit.kyberPreKeyUse && updatedKyberStateValue) {
+      operations.push({ type: 'check', key: kyberStorageKey, expectedValue: kyberStateValue });
+      operations.push({ type: 'set', key: kyberStorageKey, value: updatedKyberStateValue });
+    }
+    if (commit.receivedContent)
+      operations.push({
+        type: 'set',
+        key: `@signal:received-content:${commit.receivedContent.id}`,
+        value: await this.encrypt(JSON.stringify(commit.receivedContent)),
+      });
     await this.storageBackend.atomicWrite(operations);
+  }
+
+  async getReceivedContent(id: string): Promise<ReceivedContent | null> {
+    this.ensureInitialized();
+    const value = await this.storageBackend.getItem(`@signal:received-content:${id}`);
+    return value ? parseReceivedContent(await this.decrypt(value), id) : null;
+  }
+
+  async deleteReceivedContent(id: string): Promise<void> {
+    this.ensureInitialized();
+    await this.storageBackend.removeItem(`@signal:received-content:${id}`);
+  }
+
+  async deleteExpiredReceivedContent(before: number): Promise<number> {
+    this.ensureInitialized();
+    const prefix = '@signal:received-content:';
+    const keys = (await this.storageBackend.getAllKeys()).filter((key) => key.startsWith(prefix));
+    const expired: string[] = [];
+    for (const key of keys) {
+      const value = await this.getReceivedContent(key.slice(prefix.length));
+      if (value && value.receivedAt < before) expired.push(key);
+    }
+    if (expired.length)
+      await this.storageBackend.atomicWrite(expired.map((key) => ({ type: 'remove', key })));
+    return expired.length;
   }
 
   async deleteSessionRecord(address: ProtocolAddress): Promise<void> {
@@ -876,7 +947,6 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
 
     // Remove all signal keys
     await this.storageBackend.removeMany(signalKeys);
-    this._metadata.clear();
 
     // Regenerate database key
     this.databaseKey = Crypto.getRandomBytes(32);
@@ -891,27 +961,43 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
   // ============================================================================
 
   async getMetadata(key: string): Promise<string | null> {
-    if (this._metadata.has(key)) {
-      return this._metadata.get(key) ?? null;
-    }
-
-    const stored = await this.storageBackend.getItem(this.getMetadataStorageKey(key));
-    if (stored === null) {
-      return null;
-    }
-
-    this._metadata.set(key, stored);
-    return stored;
+    return this.storageBackend.getItem(this.getMetadataStorageKey(key));
   }
 
   async setMetadata(key: string, value: string): Promise<void> {
-    this._metadata.set(key, value);
     await this.storageBackend.setItem(this.getMetadataStorageKey(key), value);
   }
 
   async deleteMetadata(key: string): Promise<void> {
-    this._metadata.delete(key);
     await this.storageBackend.removeItem(this.getMetadataStorageKey(key));
+  }
+
+  async compareAndSetMetadata(
+    key: string,
+    expected: string | null,
+    value: string | null
+  ): Promise<boolean> {
+    const storageKey = this.getMetadataStorageKey(key);
+    try {
+      await this.storageBackend.atomicWrite([
+        { type: 'check', key: storageKey, expectedValue: expected },
+        value === null
+          ? { type: 'remove', key: storageKey }
+          : { type: 'set', key: storageKey, value },
+      ]);
+      return true;
+    } catch (error) {
+      // A failed batch commits nothing. Do not report capacity failure as contention.
+      if (
+        error &&
+        typeof error === 'object' &&
+        'name' in error &&
+        error.name === 'QuotaExceededError'
+      )
+        throw error;
+      if ((await this.storageBackend.getItem(storageKey)) !== expected) return false;
+      throw error;
+    }
   }
 
   // ============================================================================
@@ -1125,17 +1211,11 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
   }
 
   private serializeUserRecord(record: UserRecord): SerializedUserRecord {
-    return {
-      ...record,
-      devices: Array.from(record.devices.entries()),
-    };
+    return { ...record, devices: Array.from(record.devices.entries()) };
   }
 
   private deserializeUserRecord(data: SerializedUserRecord): UserRecord {
-    return {
-      ...data,
-      devices: new Map(data.devices),
-    };
+    return { ...data, devices: new Map(data.devices) };
   }
 
   private getIdentityKeyStorageKey(identityType?: IdentityType): string {
@@ -1240,12 +1320,7 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
   async setDeviceRecord(userId: string, deviceId: number, record: DeviceRecord): Promise<void> {
     let userRecord = await this.getUserRecord(userId);
     if (!userRecord) {
-      userRecord = {
-        userId,
-        devices: new Map(),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
+      userRecord = { userId, devices: new Map(), createdAt: Date.now(), updatedAt: Date.now() };
     }
 
     userRecord.devices.set(deviceId, record);
@@ -1414,11 +1489,7 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
    * component escaped, no choice of id can synthesize another sender's
    * `:<deviceId>:<userId>` tail.
    */
-  private getSenderKeyIdPointerKey(
-    senderKeyId: string,
-    userId: string,
-    deviceId: number
-  ): string {
+  private getSenderKeyIdPointerKey(senderKeyId: string, userId: string, deviceId: number): string {
     return `${STORAGE_KEYS.SENDER_KEY_ID_INDEX_PREFIX}${escapeKeyComponent(senderKeyId)}:${deviceId}:${escapeKeyComponent(userId)}`;
   }
 
@@ -1552,7 +1623,8 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     groupId: string,
     userId: string,
     deviceId: number,
-    states: SenderKeyState[]
+    states: SenderKeyState[],
+    receive?: SenderKeyReceiveCommit
   ): Promise<void> {
     this.ensureInitialized();
     if (states.length === 0) {
@@ -1566,24 +1638,51 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     // resolves to a group, and fails one layer deeper than it should.
     const superseded = await this.getSenderKeyRecord(groupId, userId, deviceId);
     const retained = new Set(states.map((state) => state.senderKeyId));
+    const operations: Array<Parameters<typeof this.storageBackend.atomicWrite>[0][number]> = [];
     if (superseded) {
-      await this.storageBackend.removeMany(
-        superseded
+      operations.push(
+        ...superseded
           .map((state) => state.senderKeyId)
           .filter((senderKeyId) => senderKeyId && !retained.has(senderKeyId))
-          .map((senderKeyId) => this.getSenderKeyIdPointerKey(senderKeyId, userId, deviceId))
+          .map((senderKeyId) => ({
+            type: 'remove' as const,
+            key: this.getSenderKeyIdPointerKey(senderKeyId, userId, deviceId),
+          }))
       );
     }
 
-    await this.storageBackend.setItem(recordKey, await this.encrypt(JSON.stringify(states)));
+    operations.push({
+      type: 'set',
+      key: recordKey,
+      value: await this.encrypt(JSON.stringify(states)),
+    });
 
     for (const senderKeyId of retained) {
       if (!senderKeyId) continue;
-      await this.storageBackend.setItem(
-        this.getSenderKeyIdPointerKey(senderKeyId, userId, deviceId),
-        recordKey
-      );
+      operations.push({
+        type: 'set',
+        key: this.getSenderKeyIdPointerKey(senderKeyId, userId, deviceId),
+        value: recordKey,
+      });
     }
+    if (receive) {
+      operations.push({
+        type: 'set',
+        key: `@signal:received-content:${receive.content.id}`,
+        value: await this.encrypt(JSON.stringify(receive.content)),
+      });
+      if (receive.consumedChainIndex !== undefined)
+        operations.push({
+          type: 'remove',
+          key: this.getSkippedSenderKeyStorageKey(
+            groupId,
+            userId,
+            deviceId,
+            receive.consumedChainIndex
+          ),
+        });
+    }
+    await this.storageBackend.atomicWrite(operations);
   }
 
   async getSenderKeyRecord(
@@ -1674,10 +1773,7 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     const prefix = this.getSkippedSenderKeyPrefix(groupId, senderId, senderDeviceId);
     const matches = allKeys
       .filter((key) => key.startsWith(prefix))
-      .map((key) => ({
-        key,
-        chainIndex: parseInt(key.split(':').pop() ?? '0', 10),
-      }))
+      .map((key) => ({ key, chainIndex: parseInt(key.split(':').pop() ?? '0', 10) }))
       .sort((a, b) => a.chainIndex - b.chainIndex)
       .slice(0, count);
 
@@ -1771,11 +1867,15 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
   }
 
   async getKyberPreKeyMaxId(identityType?: IdentityType): Promise<number> {
-    const prekey = await this.getKyberPreKey(identityType);
-    return prekey?.keyId ?? 0;
+    const stored = await this.storageBackend.getItem(this.getKyberPreKeyStorageKey(identityType));
+    if (!stored) return 0;
+    const state = JSON.parse(await this.decrypt(stored)) as StoredKyberPreKeyState;
+    return Object.keys(state.instances).reduce((max, id) => Math.max(max, Number(id)), 0);
   }
 
-  async deleteAllPreKeys(identityType?: IdentityType): Promise<{
+  async deleteAllPreKeys(
+    identityType?: IdentityType
+  ): Promise<{
     ecSignedPreKeys: number;
     ecOneTimePreKeys: number;
     kyberPreKeys: number;
@@ -1784,7 +1884,14 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     this.ensureInitialized();
     const signedPreKeys = await this.getAllEcSignedPreKeys(identityType);
     const ecOneTimePreKeys = await this.getEcOneTimePreKeys(identityType);
-    const kyberPreKey = await this.getKyberPreKey(identityType);
+    const kyberStateValue = await this.storageBackend.getItem(
+      this.getKyberPreKeyStorageKey(identityType)
+    );
+    const kyberPreKeyCount = kyberStateValue
+      ? Object.keys(
+          (JSON.parse(await this.decrypt(kyberStateValue)) as StoredKyberPreKeyState).instances
+        ).length
+      : 0;
     const kemOneTimePreKeys = await this.getKemOneTimePreKeys(identityType);
     const it = identityType ?? 'aci';
 
@@ -1806,7 +1913,7 @@ export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore
     return {
       ecSignedPreKeys: signedPreKeys.length,
       ecOneTimePreKeys: ecOneTimePreKeys.length,
-      kyberPreKeys: kyberPreKey ? 1 : 0,
+      kyberPreKeys: kyberPreKeyCount,
       kemOneTimePreKeys: kemOneTimePreKeys.length,
     };
   }

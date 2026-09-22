@@ -68,8 +68,11 @@ import {
   deserializeProfileKeyCredentialPresentation,
   verifyProfileKeyCredentialPresentation,
 } from '../protocol/zk/groups/profile-key-credential';
-import type { UidEncCiphertext } from '../protocol/zk/groups/uid-encryption';
+import { UidEncryptionDomain, type UidEncCiphertext } from '../protocol/zk/groups/uid-encryption';
+import { Ciphertext } from '../protocol/zk/credentials/attributes';
+import { defaultExpiration, deriveForExpiration, issueEndorsements, serializeEndorsementsResponse } from '../protocol/zk/groups/group-send-endorsement';
 import { RistrettoPoint } from '../protocol/zk/proofs/sho';
+import { GroupWireValidationError, type GroupErrorDetail } from './error-details';
 
 const MAX_GROUP_SIZE = 1000;
 const INVITE_LINK_PASSWORD_LENGTH = 16;
@@ -155,22 +158,24 @@ export type GroupForbiddenReason =
   | 'not_a_member';
 
 class GroupServerError extends Error {
-  readonly data: { code: string; status: number; reason?: string };
+  readonly data: { code: string; status: number; reason?: string; detail?: GroupErrorDetail };
 
   constructor(
     code: string,
     status: number,
     message: string,
-    reason?: string
+    reason?: string,
+    detail?: GroupErrorDetail
   ) {
     super(`${code}: ${message}`);
     this.name = 'GroupServerError';
     this.data = reason === undefined ? { code, status } : { code, status, reason };
+    if (detail !== undefined) this.data.detail = detail;
   }
 }
 
-function rejectBadRequest(message: string): never {
-  throw new GroupServerError('INVALID_REQUEST', 400, message);
+function rejectBadRequest(message: string, detail?: GroupErrorDetail): never {
+  throw new GroupServerError('INVALID_REQUEST', 400, message, undefined, detail);
 }
 
 function rejectUnauthorized(message: string): never {
@@ -179,9 +184,10 @@ function rejectUnauthorized(message: string): never {
 
 function rejectForbidden(
   message: string,
-  reason?: GroupForbiddenReason
+  reason?: GroupForbiddenReason,
+  detail?: GroupErrorDetail
 ): never {
-  throw new GroupServerError('FORBIDDEN', 403, message, reason);
+  throw new GroupServerError('FORBIDDEN', 403, message, reason, detail);
 }
 
 function rejectConflict(message: string): never {
@@ -201,7 +207,7 @@ function requireCiphertextEncoding(
     rejectBadRequest(`${label} must be a 65-byte ciphertext`);
   }
   if (kind === 'aci' && value[0] !== SERVICE_ID_ACI) {
-    rejectBadRequest(`${label} must carry an ACI ciphertext`);
+    rejectBadRequest(`${label} must carry an ACI ciphertext`, 'invalid_ciphertext_kind');
   }
   if (
     kind === 'service-id' &&
@@ -217,7 +223,7 @@ function requireCiphertextEncoding(
     RistrettoPoint.fromBytes(value.slice(1, 33));
     RistrettoPoint.fromBytes(value.slice(33, 65));
   } catch {
-    rejectBadRequest(`${label} contains an invalid Ristretto ciphertext point`);
+    rejectBadRequest(`${label} contains an invalid Ristretto ciphertext point`, 'invalid_ciphertext_point');
   }
 }
 
@@ -235,7 +241,7 @@ function requireBlobEncoding(
     (value.length - 65) % 32 !== 0 ||
     value[value.length - 1] !== 0
   ) {
-    rejectBadRequest(`${label} has an invalid encrypted-blob envelope`);
+    rejectBadRequest(`${label} has an invalid encrypted-blob envelope`, 'invalid_encrypted_blob');
   }
 }
 
@@ -271,7 +277,7 @@ function verifyProfileKeyPresentation(
   nowSeconds: number
 ): void {
   if (presentationBytes.length === 0) {
-    rejectForbidden('Profile-key credential presentation is required');
+    rejectForbidden('Profile-key credential presentation is required', undefined, 'profile_presentation_required');
   }
   try {
     const presentation =
@@ -297,7 +303,7 @@ function verifyProfileKeyPresentation(
         )
       )
     ) {
-      rejectForbidden('Profile-key presentation does not bind the submitted member');
+      rejectForbidden('Profile-key presentation does not bind the submitted member', undefined, 'profile_presentation_binding');
     }
   } catch (error) {
     if (error instanceof GroupServerError) throw error;
@@ -428,7 +434,8 @@ function assertRecognizedActionShape(
     assertRecognizedEncryptedGroupChange(change);
     assertEncryptedGroupChangeForm(change, form);
   } catch (error) {
-    rejectBadRequest(error instanceof Error ? error.message : 'Actions are malformed');
+    rejectBadRequest(error instanceof Error ? error.message : 'Actions are malformed',
+      error instanceof GroupWireValidationError ? error.detail : undefined);
   }
   if (!Number.isSafeInteger(change.revision) || change.revision < 1) {
     rejectBadRequest('Actions revision must be a positive safe integer');
@@ -670,7 +677,8 @@ function assertEncryptedStateStructure(state: EncryptedGroup): void {
     assertValidEncryptedGroupWire(state);
   } catch (error) {
     rejectBadRequest(
-      error instanceof Error ? error.message : 'Encrypted group state is malformed'
+      error instanceof Error ? error.message : 'Encrypted group state is malformed',
+      error instanceof GroupWireValidationError ? error.detail : undefined
     );
   }
   if (!Number.isSafeInteger(state.version) || state.version < 0) {
@@ -818,7 +826,8 @@ function assertEncryptedCreationStateStructure(
     rejectBadRequest(
       error instanceof Error
         ? error.message
-        : 'Encrypted group creation submission is malformed'
+        : 'Encrypted group creation submission is malformed',
+      error instanceof GroupWireValidationError ? error.detail : undefined
     );
   }
 }
@@ -894,7 +903,8 @@ function sourceUserIdForChange(
   );
   if (actionNamedRequesterIds.length > 1) {
     rejectForbidden(
-      'A change cannot exercise self-rights under multiple requester aliases'
+      'A change cannot exercise self-rights under multiple requester aliases',
+      undefined, 'multiple_requester_aliases'
     );
   }
   if (actionNamedRequesterIds.length === 1) {
@@ -1018,7 +1028,7 @@ function authorizeEncryptedChange(
         assignedRole,
       })
     ) {
-      rejectForbidden(`Requester cannot perform ${action}`);
+      rejectForbidden(`Requester cannot perform ${action}`, undefined, 'action_not_allowed');
     }
   };
 
@@ -1058,7 +1068,8 @@ function authorizeEncryptedChange(
       pniPending.member.role !== aciPending.member.role
     ) {
       rejectForbidden(
-        'PNI-to-ACI promotion cannot consume pending aliases with different roles'
+        'PNI-to-ACI promotion cannot consume pending aliases with different roles',
+        undefined, 'invitation_role_conflict'
       );
     }
     check(
@@ -1116,7 +1127,7 @@ function requirePniAciBinding(
       promotion.pniCiphertext.length === 0 ||
       !equal(promotion.pniCiphertext, requester.pniCiphertext)
     ) {
-      rejectForbidden('PNI-to-ACI promotion is not bound to the requester presentation');
+      rejectForbidden('PNI-to-ACI promotion is not bound to the requester presentation', undefined, 'pni_aci_binding');
     }
   }
 }
@@ -1235,7 +1246,8 @@ function applyEncryptedChange(
       );
       if (aciPending!.member.role !== pending!.member.role) {
         rejectForbidden(
-          'PNI-to-ACI promotion cannot consume pending aliases with different roles'
+          'PNI-to-ACI promotion cannot consume pending aliases with different roles',
+          undefined, 'invitation_role_conflict'
         );
       }
     }
@@ -1385,6 +1397,11 @@ export class GroupAuthorizationServerEngine implements IGroupServer {
     this.groups.clear();
   }
 
+  /** Verify a retry's identity. The persistence adapter must also match its accepted request digest. */
+  verifyRetryAuthorization(groupId: Uint8Array, authorization: GroupAuthorization): void {
+    this.authenticate(groupId, authorization, this.groups.get(this.key(groupId))?.state);
+  }
+
   inspectEncryptedState(groupId: Uint8Array): Uint8Array | null {
     const stored = this.groups.get(this.key(groupId));
     return stored ? serializeEncryptedGroup(stored.state) : null;
@@ -1528,6 +1545,32 @@ export class GroupAuthorizationServerEngine implements IGroupServer {
     );
   }
 
+  /** Issue send authorization only for a current, non-banned group member. */
+  refreshGroupSendEndorsements(groupId: Uint8Array, authorization: GroupAuthorization, maximumExpiration?: number): { endorsements: Uint8Array; expiration: number } {
+    const stored = this.groups.get(this.key(groupId));
+    const requester = this.authenticate(groupId, authorization, stored?.state);
+    if (!stored || !this.isMemberOf(stored.state, requester) || requesterIsBanned(stored.state, requester))
+      rejectForbidden('Group send endorsements require current membership', 'not_a_member');
+    if (stored.state.terminated) rejectForbidden('Terminated group cannot issue send endorsements');
+    const members = stored.state.members.map((member): UidEncCiphertext => new Ciphertext(
+      RistrettoPoint.fromBytes(member.userId.subarray(1, 33)),
+      RistrettoPoint.fromBytes(member.userId.subarray(33, 65)),
+      UidEncryptionDomain,
+    ));
+    const nowSeconds = Math.floor(this.runtime.now() / 1000);
+    let expiration = defaultExpiration(nowSeconds);
+    if (maximumExpiration !== undefined) {
+      if (!Number.isSafeInteger(maximumExpiration) || maximumExpiration <= 0)
+        rejectBadRequest('The endorsement issuer expiry is invalid');
+      // Client verification requires a UTC-day boundary and at least two hours of remaining lifetime.
+      expiration = Math.min(expiration, Math.floor(maximumExpiration / 86400) * 86400);
+      if (expiration - nowSeconds < 2 * 3600)
+        rejectForbidden('The endorsement issuer expires too soon');
+    }
+    const result = issueEndorsements(members, deriveForExpiration(this.serverSecretParams.endorsementKeyPair, expiration), this.runtime.randomBytes(32));
+    return { expiration, endorsements: serializeEndorsementsResponse(result) };
+  }
+
   private requireReadable(state: EncryptedGroup, requester: VerifiedRequester): void {
     if (!this.isReadable(state, requester)) {
       rejectForbidden('Requester may not read full group state', 'not_readable');
@@ -1610,7 +1653,7 @@ export class GroupAuthorizationServerEngine implements IGroupServer {
       rejectForbidden('Creator presentation is not an initial member');
     }
     if (creator.role !== MemberRole.ADMINISTRATOR) {
-      rejectForbidden('Creator must be an initial administrator');
+      rejectForbidden('Creator must be an initial administrator', undefined, 'creator_not_administrator');
     }
     const storedState = stripStateProfileKeyPresentations(state);
     const initialSnapshot = this.createStoredSnapshot(groupId, storedState);

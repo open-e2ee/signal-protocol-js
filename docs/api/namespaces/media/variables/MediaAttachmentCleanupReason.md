@@ -12,16 +12,16 @@
 
 ### MessageDeleted
 
-> `readonly` **MessageDeleted**: `"message-deleted"` = `'message-deleted'`
+> `readonly` **MessageDeleted**: `"message-deleted"` = `"message-deleted"`
 
 ### MessageExpired
 
-> `readonly` **MessageExpired**: `"message-expired"` = `'message-expired'`
+> `readonly` **MessageExpired**: `"message-expired"` = `"message-expired"`
 
 ### OrphanedUpload
 
-> `readonly` **OrphanedUpload**: `"orphaned-upload"` = `'orphaned-upload'`
+> `readonly` **OrphanedUpload**: `"orphaned-upload"` = `"orphaned-upload"`
 
 ### ViewOnceOpened
 
-> `readonly` **ViewOnceOpened**: `"view-once-opened"` = `'view-once-opened'`
+> `readonly` **ViewOnceOpened**: `"view-once-opened"` = `"view-once-opened"`

@@ -66,7 +66,7 @@ this callback instead of hidden package storage.
 
 > `optional` **maxAttempts?**: `number`
 
-Maximum attempts before the queue removes a failing job.
+Maximum automatic attempts. Uploads retain their identity after this limit.
 
 #### Default
 
@@ -90,6 +90,19 @@ Bound the queue kept in the Signal Protocol local store metadata.
 
 ***
 
+### maxPreparedUploadBytes?
+
+> `optional` **maxPreparedUploadBytes?**: `number`
+
+Required to queue uploads. Bound total ciphertext bytes for queued uploads.
+Reserve each upload at enqueue, before loading its draft. Keep the reservation
+through uncertain outcomes until the queue removes that upload after cleanup.
+
+Select this device-local budget in the application. No default applies.
+Allow separate physical space for metadata, file commits, and encryption memory.
+
+***
+
 ### maxRetryDelayMs?
 
 > `optional` **maxRetryDelayMs?**: `number`
@@ -101,6 +114,14 @@ Maximum retry delay for transient job failures.
 ```ts
 3600000
 ```
+
+***
+
+### preparedUploads?
+
+> `optional` **preparedUploads?**: [`MediaAttachmentPreparedUploadStore`](MediaAttachmentPreparedUploadStore.md)
+
+Required for upload execution. Persist exact ciphertext and private pointer material atomically.
 
 ***
 

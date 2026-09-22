@@ -9,7 +9,7 @@ import type { Envelope } from '../remote/relay/types';
 import { EncryptionError, EncryptionErrorCode, type Base64 } from '../types';
 import { determineRetryReason, isRetryableDecryptionError } from './retry-utils';
 import { checkRetryRateLimit, RETRY_REQUEST_WINDOW_MS } from './retry';
-import { callHook, type DecryptedEnvelope } from './event-hooks';
+import type { DecryptedEnvelope } from './event-hooks';
 import type { ParsedReceiptContent, ParsedTypingContent } from './content-adapter';
 import type { SignalProtocolClientContext } from './types';
 import type { SesameMessage } from '../internal/sesame/types';
@@ -19,6 +19,7 @@ import {
   storeProcessedEnvelope,
   withProcessedEnvelopeLock,
 } from '../local/store/reliability';
+import { receivedContentId, pruneReceivedContent } from '../local/store/received-content';
 import { isImplicitContentType } from './constants';
 import type { SignalProtocolServiceCipher } from './signal-service-cipher';
 
@@ -78,6 +79,8 @@ export interface RelaySubscriptionCallbacks {
 export interface RelaySubscriptionConfig {
   /** Debounce interval for forced prekey rotations in ms */
   keyRotationDebounceMs: number;
+  /** Background pulls retain failed envelopes instead of acknowledging retry requests. */
+  acknowledgeFailures?: boolean;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -141,6 +144,19 @@ export async function handleRelayMessage(
   callbacks: RelaySubscriptionCallbacks,
   config: RelaySubscriptionConfig
 ): Promise<void> {
+  if (await processRelayMessage(ctx, envelope, state, callbacks, config)) {
+    await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+  }
+}
+
+/** Process content before either foreground or background transport acknowledges it. */
+export async function processRelayMessage(
+  ctx: RelaySubscriptionContext,
+  envelope: Envelope,
+  state: RelaySubscriptionState,
+  callbacks: RelaySubscriptionCallbacks,
+  config: RelaySubscriptionConfig
+): Promise<boolean> {
   if (!envelope.id) {
     return handleRelayMessageLocked(ctx, envelope, state, callbacks, config);
   }
@@ -155,8 +171,16 @@ async function handleRelayMessageLocked(
   state: RelaySubscriptionState,
   callbacks: RelaySubscriptionCallbacks,
   config: RelaySubscriptionConfig
-): Promise<void> {
-  if (envelope.id && (await hasProcessedEnvelope(ctx.storage, envelope.id))) {
+): Promise<boolean> {
+  const receiveId = envelope.id
+    ? await receivedContentId(ctx.userId, ctx.deviceId, envelope)
+    : undefined;
+  await pruneReceivedContent(ctx.storage);
+  if (
+    envelope.id &&
+    (await hasProcessedEnvelope(ctx.storage, envelope.id, Date.now(), receiveId))
+  ) {
+    if (receiveId) await ctx.storage.deleteReceivedContent(receiveId);
     ctx.logger.debug('Acknowledging previously processed relay envelope', {
       category: 'E2EE',
       data: {
@@ -164,25 +188,27 @@ async function handleRelayMessageLocked(
         behavior: 'PERSISTENT_DUPLICATE_DISCARD',
       },
     });
-    await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
-    return;
+    return true;
   }
 
+  if (!ctx.hooks?.onMessageDecrypted) {
+    throw new Error('Register onMessageDecrypted before receiving Relay messages');
+  }
+  let decryptedEnvelope: DecryptedEnvelope;
   try {
     // Delegate decryption to SignalProtocolServiceCipher
     // Pass sealed sender config for unidentified_sender envelope handling
-    const decryptedEnvelope = await ctx.cipher.decrypt(envelope, ctx.config.sealedSender);
-
-    // SUCCESS: Handle successful decryption
-    await handleDecryptionSuccess(ctx, envelope, decryptedEnvelope, state, callbacks);
+    decryptedEnvelope = await ctx.cipher.decrypt(envelope, ctx.config.sealedSender, receiveId);
   } catch (error) {
     // ERROR: Handle decryption failure
     await handleDecryptionError(ctx, envelope, error as Error, state, callbacks, config);
-    return;
+    return false;
   }
 
-  if (envelope.id) await storeProcessedEnvelope(ctx.storage, envelope.id);
-  await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+  await handleDecryptionSuccess(ctx, envelope, decryptedEnvelope, state, callbacks);
+  if (envelope.id) await storeProcessedEnvelope(ctx.storage, envelope.id, Date.now(), receiveId);
+  if (receiveId) await ctx.storage.deleteReceivedContent(receiveId);
+  return true;
 }
 
 /**
@@ -199,15 +225,25 @@ async function handleDecryptionSuccess(
   // Parse content to determine if it is a receipt, typing indicator, or data message.
   const inspectedContent = ctx.contentAdapter.inspectContent(decryptedEnvelope.content);
   const { receipt, typing } = inspectedContent;
+  const authenticatedEnvelope = {
+    ...envelope,
+    senderUserId: decryptedEnvelope.senderId,
+    senderDeviceId: decryptedEnvelope.senderDeviceId,
+  };
 
-  if (receipt) {
-    await callbacks.handleDeliveryReceipt(envelope, receipt);
+  if (inspectedContent.senderKeyDistribution) {
+    // The cipher installed this authenticated distribution before returning.
+    return;
+  } else if (receipt) {
+    await callbacks.handleDeliveryReceipt(authenticatedEnvelope, receipt);
   } else if (typing) {
     // Typing indicators are transient - no storage, no delivery receipt
-    await callbacks.handleTypingIndicator(envelope, typing);
+    await callbacks.handleTypingIndicator(authenticatedEnvelope, typing);
   } else {
     // Call hook: message decrypted (ContentManager stores in encrypted DB)
-    await callHook(ctx.hooks, 'onMessageDecrypted', decryptedEnvelope);
+    const receive = ctx.hooks?.onMessageDecrypted;
+    if (!receive) throw new Error('Register onMessageDecrypted before receiving Relay messages');
+    await receive(decryptedEnvelope);
 
     // Batch delivery receipts before sending
     // Multi-device: sendDeliveryReceipt fans out to all sender's devices
@@ -215,7 +251,7 @@ async function handleDecryptionSuccess(
       if (inspectedContent.shouldSendDeliveryReceipt) {
         accumulateDeliveryReceipt(
           state.receiptAccumulator,
-          envelope.senderUserId,
+          decryptedEnvelope.senderId,
           decryptedEnvelope.timestamp,
           callbacks.sendDeliveryReceipt,
           ctx.logger
@@ -305,20 +341,18 @@ async function handleDecryptionError(
   callbacks: RelaySubscriptionCallbacks,
   config: RelaySubscriptionConfig
 ): Promise<void> {
-  // An at-least-once relay may redeliver the same envelope. The session layer
-  // has already rejected the replay, so acknowledge it without asking the
-  // sender to create a fresh ciphertext for plaintext already delivered.
+  // A consumed ratchet key proves decryption, not application persistence.
+  // Only the processed-envelope receipt above can authorize duplicate ACKs.
   if (error instanceof EncryptionError && error.code === EncryptionErrorCode.MESSAGE_DUPLICATE) {
-    ctx.logger.debug('Discarding duplicate relay envelope without retry', {
+    ctx.logger.debug('Retaining unhandled duplicate relay envelope without retry', {
       category: 'E2EE',
       data: {
         envelopeId: envelope.id,
         senderUserId: envelope.senderUserId,
         senderDeviceId: envelope.senderDeviceId,
-        behavior: 'DUPLICATE_DISCARD',
+        behavior: 'UNHANDLED_DUPLICATE',
       },
     });
-    await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
     return;
   }
 
@@ -340,7 +374,9 @@ async function handleDecryptionError(
       },
     });
 
-    await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+    if (config.acknowledgeFailures !== false) {
+      await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+    }
     return;
   }
 
@@ -388,7 +424,9 @@ async function handleDecryptionError(
       },
     });
 
-    await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+    if (config.acknowledgeFailures !== false) {
+      await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+    }
     return;
   }
 
@@ -435,7 +473,9 @@ async function sendRetryRequest(
           windowMs: RETRY_REQUEST_WINDOW_MS,
         },
       });
-      await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+      if (config.acknowledgeFailures !== false) {
+        await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+      }
       return;
     }
 
@@ -469,7 +509,7 @@ async function sendRetryRequest(
       });
 
       // Mark failed message as delivered so it does not reappear
-      if (envelope.id) {
+      if (envelope.id && config.acknowledgeFailures !== false) {
         try {
           await ctx.relay.markDelivered(envelope.id);
           ctx.logger.debug('Marked failed message as delivered after retry request', {

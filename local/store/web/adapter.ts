@@ -19,6 +19,7 @@
  * ```
  */
 
+import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
 import { openDB, IDBPDatabase, DBSchema } from 'idb';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 import type {
@@ -44,19 +45,30 @@ import {
   verifyContactIdentityRecord,
 } from '../../../keys/identity';
 import type { SessionState, ProtocolAddress } from '../../../types';
-import {
-  IdentityKeyChange,
-  StorageQuotaExceededError,
-  TrustDirection,
-} from '../../../types';
-import {
-  assertCurrentSessionRecord,
-  type SessionRecord,
-} from '../../../types/session';
+import { IdentityKeyChange, StorageQuotaExceededError, TrustDirection } from '../../../types';
+import { assertCurrentSessionRecord, type SessionRecord } from '../../../types/session';
 import type { UserRecord, DeviceRecord, DeviceID } from '../../../types';
 import type { Base64 } from '../../../types/utils';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { deserializeSessionRecord, serializeSessionRecord } from '../session-codec';
+import { receivedContentKey, parseReceivedContent } from '../received-content';
+import {
+  createKyberPreKeyState,
+  createKyberPreKeyInstanceId,
+  getCurrentKyberPreKey,
+  getRetainedKyberPreKey,
+  recordKyberPreKeyUse,
+  recordKyberPreKeyUseById,
+  type RetainedKyberPreKey,
+  retainKyberPreKey,
+  type StoredKyberPreKeyState,
+} from '../kyber-prekey-lifecycle';
+
+function equalBytes(left: Uint8Array | undefined, right: Uint8Array | undefined): boolean {
+  if (!left || !right) return left === right;
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
 
 /**
  * IndexedDB schema for Signal Protocol storage
@@ -64,16 +76,10 @@ import { deserializeSessionRecord, serializeSessionRecord } from '../session-cod
 export {};
 interface SignalProtocolDBSchema extends DBSchema {
   // Metadata store - contains database key and registration ID
-  metadata: {
-    key: string;
-    value: Uint8Array | number | string;
-  };
+  metadata: { key: string; value: Uint8Array | number | string };
 
   // Identity keys store - our own identity
-  identity: {
-    key: string;
-    value: Uint8Array;
-  };
+  identity: { key: string; value: Uint8Array };
 
   // Contact identities store - TOFU tracking
   contacts: {
@@ -160,10 +166,7 @@ interface SignalProtocolDBSchema extends DBSchema {
       data: Uint8Array;
       updatedAt: number;
     };
-    indexes: {
-      'by-group': string;
-      'by-sender-key-id': string;
-    };
+    indexes: { 'by-group': string; 'by-sender-key-id': string };
   };
 
   // Skipped sender keys for out-of-order sender-key messages
@@ -176,10 +179,7 @@ interface SignalProtocolDBSchema extends DBSchema {
       data: Uint8Array;
       createdAt: number;
     };
-    indexes: {
-      'by-sender': string;
-      'by-created': number;
-    };
+    indexes: { 'by-sender': string; 'by-created': number };
   };
 
   // Message records for SESAME retry support
@@ -192,16 +192,11 @@ interface SignalProtocolDBSchema extends DBSchema {
       createdAt: number;
       data: Uint8Array;
     };
-    indexes: {
-      'by-session': string;
-      'by-created': number;
-    };
+    indexes: { 'by-session': string; 'by-created': number };
   };
 }
 
-type SerializedDeviceRecord = Omit<DeviceRecord, 'identityKey'> & {
-  identityKey: number[];
-};
+type SerializedDeviceRecord = Omit<DeviceRecord, 'identityKey'> & { identityKey: number[] };
 
 type SerializedUserRecord = Omit<UserRecord, 'devices'> & {
   devices: Array<[DeviceID, SerializedDeviceRecord]>;
@@ -326,7 +321,6 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
   private databaseKey: Uint8Array | null = null;
   private readonly dbName = 'signal-protocol-storage';
   private readonly dbVersion = 6; // v6 indexes sender key records by senderKeyId
-  private readonly _metadata = new Map<string, string>();
 
   constructor() {
     mapQuotaFailuresAtBoundary(this);
@@ -439,10 +433,7 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
         this.databaseKey = candidate;
       } catch (error) {
         if (!isConstraintError(error)) throw error;
-        this.databaseKey = (await this.db.get(
-          'metadata',
-          'databaseKey'
-        )) as Uint8Array;
+        this.databaseKey = (await this.db.get('metadata', 'databaseKey')) as Uint8Array;
       }
 
       // ⚠️ WARNING: Browser storage is vulnerable to XSS attacks
@@ -651,7 +642,12 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     const existingRow = await this.db!.get('contacts', key);
     const existing = existingRow ? await this.decodeContactRecord(existingRow.data) : null;
     if (!existing) throw new Error('Cannot verify an unseen identity');
-    const verified = verifyContactIdentityRecord(existing, identity, Date.now(), suppliedCommitment);
+    const verified = verifyContactIdentityRecord(
+      existing,
+      identity,
+      Date.now(),
+      suppliedCommitment
+    );
     const encrypted = await this.encrypt(JSON.stringify(verified));
     const tx = this.db!.transaction('contacts', 'readwrite');
     const contacts = tx.objectStore('contacts');
@@ -816,8 +812,22 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
   async storeKyberPreKey(kyberPreKey: KyberPreKey, identityType?: IdentityType): Promise<void> {
     this.ensureInitialized();
     const it = identityType ?? 'aci';
-    const encrypted = await this.encrypt(JSON.stringify(kyberPreKey));
-    await this.db!.put('prekeys', encrypted, `kyber:${it}`);
+    const storageKey = `kyber:${it}`;
+    const stored = await this.db!.get('prekeys', storageKey);
+    const state = stored
+      ? (JSON.parse(await this.decrypt(stored)) as StoredKyberPreKeyState)
+      : createKyberPreKeyState();
+    const instanceId = await createKyberPreKeyInstanceId();
+    if (!retainKyberPreKey(state, kyberPreKey, it, Date.now(), instanceId)) return;
+    const encrypted = await this.encrypt(JSON.stringify(state));
+    const tx = this.db!.transaction('prekeys', 'readwrite');
+    const prekeys = tx.objectStore('prekeys');
+    if (!equalBytes(await prekeys.get(storageKey), stored)) {
+      tx.abort();
+      await tx.done.catch(() => undefined);
+      throw new Error('Kyber prekey state changed during immutable store');
+    }
+    await Promise.all([prekeys.put(encrypted, storageKey), tx.done]);
   }
 
   async getKyberPreKey(identityType?: IdentityType): Promise<KyberPreKey | null> {
@@ -827,7 +837,21 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     if (!encrypted) return null;
 
     const decrypted = await this.decrypt(encrypted);
-    return JSON.parse(decrypted);
+    return getCurrentKyberPreKey(JSON.parse(decrypted) as StoredKyberPreKeyState);
+  }
+
+  async getKyberPreKeyById(
+    keyId: number,
+    identityType?: IdentityType
+  ): Promise<RetainedKyberPreKey | null> {
+    this.ensureInitialized();
+    const it = identityType ?? 'aci';
+    const encrypted = await this.db!.get('prekeys', `kyber:${it}`);
+    if (!encrypted) return null;
+    return getRetainedKyberPreKey(
+      JSON.parse(await this.decrypt(encrypted)) as StoredKyberPreKeyState,
+      keyId
+    );
   }
 
   async markKyberPreKeyUsed(
@@ -839,16 +863,21 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     this.ensureInitialized();
     const it = identityType ?? 'aci';
 
-    // Store usage metadata
-    const metadata = {
-      kyberPreKeyId,
-      signedPreKeyId,
-      baseKeyBytes: Array.from(baseKeyBytes),
-      usedAt: Date.now(),
-    };
-
-    const encrypted = await this.encrypt(JSON.stringify(metadata));
-    await this.db!.put('metadata', encrypted, `kyber-used:${it}:${kyberPreKeyId}`);
+    const storageKey = `kyber:${it}`;
+    const stored = await this.db!.get('prekeys', storageKey);
+    const state = stored
+      ? (JSON.parse(await this.decrypt(stored)) as StoredKyberPreKeyState)
+      : null;
+    recordKyberPreKeyUseById(state, it, { kyberPreKeyId, signedPreKeyId, baseKeyBytes });
+    const updated = await this.encrypt(JSON.stringify(state));
+    const tx = this.db!.transaction('prekeys', 'readwrite');
+    const prekeys = tx.objectStore('prekeys');
+    if (!equalBytes(await prekeys.get(storageKey), stored)) {
+      tx.abort();
+      await tx.done.catch(() => undefined);
+      throw new Error('Kyber prekey state changed during replay insertion');
+    }
+    await Promise.all([prekeys.put(updated, storageKey), tx.done]);
   }
 
   // ============================================================================
@@ -952,10 +981,7 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     this.ensureInitialized();
     assertCurrentSessionRecord(commit.record);
     const addressKey = this.serializeAddress(commit.address);
-    const contactKey = this.serializeContactIdentityKey(
-      commit.address,
-      commit.contactIdentityType
-    );
+    const contactKey = this.serializeContactIdentityKey(commit.address, commit.contactIdentityType);
     const existingContactRow = await this.db!.get('contacts', contactKey);
     const existingContact = existingContactRow
       ? await this.decodeContactRecord(existingContactRow.data)
@@ -967,12 +993,11 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     ) {
       throw new Error('Contact identity revision metadata does not match encrypted record');
     }
-    const contactStatus = evaluateContactIdentityCandidate(
-      existingContact,
-      commit.contactIdentity
-    );
+    const contactStatus = evaluateContactIdentityCandidate(existingContact, commit.contactIdentity);
     if (contactStatus !== 'NEW' && contactStatus !== 'MATCH') {
-      throw new Error(`Atomic session/trust commit rejected contact identity status ${contactStatus}`);
+      throw new Error(
+        `Atomic session/trust commit rejected contact identity status ${contactStatus}`
+      );
     }
     const newContact =
       contactStatus === 'NEW'
@@ -982,7 +1007,22 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
       ? await this.encrypt(JSON.stringify(newContact))
       : undefined;
     const encrypted = await this.encrypt(serializeSessionRecord(commit.record));
-    const tx = this.db!.transaction(['contacts', 'prekeys', 'sessions'], 'readwrite');
+    const content = commit.receivedContent
+      ? await this.encrypt(JSON.stringify(commit.receivedContent))
+      : undefined;
+    const kyberStorageKey = `kyber:${commit.localIdentityType}`;
+    const storedKyberState = commit.kyberPreKeyUse
+      ? await this.db!.get('prekeys', kyberStorageKey)
+      : undefined;
+    let updatedKyberState: Uint8Array | undefined;
+    if (commit.kyberPreKeyUse) {
+      const state = storedKyberState
+        ? (JSON.parse(await this.decrypt(storedKyberState)) as StoredKyberPreKeyState)
+        : null;
+      recordKyberPreKeyUse(state, commit.localIdentityType, commit.kyberPreKeyUse);
+      updatedKyberState = await this.encrypt(JSON.stringify(state));
+    }
+    const tx = this.db!.transaction(['contacts', 'prekeys', 'sessions', 'metadata'], 'readwrite');
     const contacts = tx.objectStore('contacts');
     const prekeys = tx.objectStore('prekeys');
     const currentContactRow = await contacts.get(contactKey);
@@ -1010,33 +1050,57 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
       await tx.done;
       throw new Error('Atomic session/trust commit cannot consume a missing KEM one-time prekey');
     }
+    if (
+      commit.kyberPreKeyUse &&
+      !equalBytes(await prekeys.get(kyberStorageKey), storedKyberState)
+    ) {
+      await tx.done;
+      throw new Error('Kyber prekey state changed during atomic session/trust commit');
+    }
     // Every mutation must enter the transaction in one synchronous batch.
     // A dying page closes its connection gracefully, and a transaction that
     // is idle at an await boundary then commits the writes it already holds.
     // An await between mutations is a window for a partial commit.
     const writes: Promise<unknown>[] = [];
-    if (newContact && encryptedContact) {
+    try {
+      if (content && commit.receivedContent)
+        writes.push(
+          tx.objectStore('metadata').put(content, receivedContentKey(commit.receivedContent.id))
+        );
+      if (newContact && encryptedContact) {
+        writes.push(
+          contacts.put({
+            key: contactKey,
+            userId: commit.address.userId,
+            data: encryptedContact,
+            revision: newContact.revision,
+          })
+        );
+      }
       writes.push(
-        contacts.put({
-          key: contactKey,
-          userId: commit.address.userId,
-          data: encryptedContact,
-          revision: newContact.revision,
-        })
+        tx
+          .objectStore('sessions')
+          .put({
+            key: addressKey,
+            userId: commit.address.userId,
+            deviceId: commit.address.deviceId,
+            data: encrypted,
+            updatedAt: Date.now(),
+          })
       );
+      if (ecPreKeyStorageKey) writes.push(prekeys.delete(ecPreKeyStorageKey));
+      if (kemPreKeyStorageKey) writes.push(prekeys.delete(kemPreKeyStorageKey));
+      if (updatedKyberState) writes.push(prekeys.put(updatedKyberState, kyberStorageKey));
+      await Promise.all([...writes, tx.done]);
+    } catch (error) {
+      try {
+        tx.abort();
+      } catch {
+        /* The failed transaction can already be inactive. */
+      }
+      await Promise.allSettled([...writes, tx.done]);
+      throw error;
     }
-    writes.push(
-      tx.objectStore('sessions').put({
-        key: addressKey,
-        userId: commit.address.userId,
-        deviceId: commit.address.deviceId,
-        data: encrypted,
-        updatedAt: Date.now(),
-      })
-    );
-    if (ecPreKeyStorageKey) writes.push(prekeys.delete(ecPreKeyStorageKey));
-    if (kemPreKeyStorageKey) writes.push(prekeys.delete(kemPreKeyStorageKey));
-    await Promise.all([...writes, tx.done]);
   }
 
   async deleteSessionRecord(address: ProtocolAddress): Promise<void> {
@@ -1143,7 +1207,6 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     await this.db!.clear('senderKeyRecords');
     await this.db!.clear('skippedSenderKeys');
     await this.db!.clear('messageRecords');
-    this._metadata.clear();
 
     // Generate new database encryption key after clearing
     this.databaseKey = crypto.getRandomValues(new Uint8Array(32));
@@ -1155,30 +1218,42 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
   // ============================================================================
 
   async getMetadata(key: string): Promise<string | null> {
-    if (this._metadata.has(key)) {
-      return this._metadata.get(key) ?? null;
-    }
-
     this.ensureInitialized();
     const stored = await this.db!.get('metadata', `meta:${key}`);
-    if (typeof stored !== 'string') {
-      return null;
-    }
-
-    this._metadata.set(key, stored);
-    return stored;
+    return typeof stored === 'string' ? stored : null;
   }
 
   async setMetadata(key: string, value: string): Promise<void> {
     this.ensureInitialized();
-    this._metadata.set(key, value);
     await this.db!.put('metadata', value, `meta:${key}`);
   }
 
   async deleteMetadata(key: string): Promise<void> {
     this.ensureInitialized();
-    this._metadata.delete(key);
     await this.db!.delete('metadata', `meta:${key}`);
+  }
+
+  async compareAndSetMetadata(
+    key: string,
+    expected: string | null,
+    value: string | null
+  ): Promise<boolean> {
+    this.ensureInitialized();
+    const tx = this.db!.transaction('metadata', 'readwrite');
+    try {
+      const stored = await tx.store.get(`meta:${key}`);
+      if ((typeof stored === 'string' ? stored : null) !== expected) {
+        await tx.done;
+        return false;
+      }
+      if (value === null) await tx.store.delete(`meta:${key}`);
+      else await tx.store.put(value, `meta:${key}`);
+      await tx.done;
+      return true;
+    } catch (error) {
+      await tx.done.catch(() => undefined);
+      throw error;
+    }
   }
 
   // ============================================================================
@@ -1202,7 +1277,10 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     return `${address.userId}.${address.deviceId}`;
   }
 
-  private serializeContactIdentityKey(address: ProtocolAddress, identityType?: IdentityType): string {
+  private serializeContactIdentityKey(
+    address: ProtocolAddress,
+    identityType?: IdentityType
+  ): string {
     return `${address.userId}:${identityType ?? 'aci'}`;
   }
 
@@ -1299,10 +1377,7 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
       ...record,
       devices: Array.from(record.devices.entries(), ([deviceId, device]) => [
         deviceId,
-        {
-          ...device,
-          identityKey: Array.from(device.identityKey),
-        },
+        { ...device, identityKey: Array.from(device.identityKey) },
       ]),
     };
   }
@@ -1317,10 +1392,7 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
       devices: new Map(
         data.devices.map(([deviceId, device]) => [
           deviceId,
-          {
-            ...device,
-            identityKey: new Uint8Array(device.identityKey),
-          },
+          { ...device, identityKey: new Uint8Array(device.identityKey) },
         ])
       ),
     };
@@ -1348,11 +1420,7 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     const serialized = this.serializeUserRecord(record);
     const encrypted = await this.encrypt(JSON.stringify(serialized));
 
-    await this.db!.put('sesameUsers', {
-      key: userId,
-      data: encrypted,
-      updatedAt: Date.now(),
-    });
+    await this.db!.put('sesameUsers', { key: userId, data: encrypted, updatedAt: Date.now() });
   }
 
   async getDeviceRecord(userId: string, deviceId: number): Promise<DeviceRecord | null> {
@@ -1635,7 +1703,8 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     groupId: string,
     userId: string,
     deviceId: number,
-    states: SenderKeyState[]
+    states: SenderKeyState[],
+    receive?: SenderKeyReceiveCommit
   ): Promise<void> {
     this.ensureInitialized();
     if (states.length === 0) {
@@ -1643,19 +1712,85 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
     }
 
     const encrypted = await this.encrypt(JSON.stringify(states));
-    await this.db!.put('senderKeyRecords', {
-      key: this.getSenderKeyRecordStorageKey(groupId, userId, deviceId),
-      groupId,
-      userId,
-      deviceId,
-      // Indexed so `resolveGroupForSenderKeyId` is a lookup rather than a
-      // decrypt-everything scan. Previous states are included: a message
-      // encrypted just before a rotation is still in flight when the rotation
-      // lands and names the superseded key.
-      senderKeyIds: states.map((state) => state.senderKeyId).filter(Boolean),
-      data: encrypted,
-      updatedAt: Date.now(),
-    });
+    const content = receive ? await this.encrypt(JSON.stringify(receive.content)) : undefined;
+    const tx = this.db!.transaction(
+      ['senderKeyRecords', 'skippedSenderKeys', 'metadata'],
+      'readwrite'
+    );
+    const writes: Promise<unknown>[] = [];
+    try {
+      writes.push(
+        tx.objectStore('senderKeyRecords').put({
+          key: this.getSenderKeyRecordStorageKey(groupId, userId, deviceId),
+          groupId,
+          userId,
+          deviceId,
+          // Indexed so `resolveGroupForSenderKeyId` is a lookup rather than a
+          // decrypt-everything scan. Previous states are included: a message
+          // encrypted just before a rotation is still in flight when the rotation
+          // lands and names the superseded key.
+          senderKeyIds: states.map((state) => state.senderKeyId).filter(Boolean),
+          data: encrypted,
+          updatedAt: Date.now(),
+        })
+      );
+      if (receive && content) {
+        writes.push(
+          tx.objectStore('metadata').put(content, receivedContentKey(receive.content.id))
+        );
+        if (receive.consumedChainIndex !== undefined)
+          writes.push(
+            tx
+              .objectStore('skippedSenderKeys')
+              .delete(
+                this.getSkippedSenderKeyStorageKey(
+                  groupId,
+                  userId,
+                  deviceId,
+                  receive.consumedChainIndex
+                )
+              )
+          );
+      }
+      await Promise.all([...writes, tx.done]);
+    } catch (error) {
+      try {
+        tx.abort();
+      } catch {
+        /* The failed transaction can already be inactive. */
+      }
+      await Promise.allSettled([...writes, tx.done]);
+      throw error;
+    }
+  }
+
+  async getReceivedContent(id: string): Promise<ReceivedContent | null> {
+    this.ensureInitialized();
+    const value = await this.db!.get('metadata', receivedContentKey(id));
+    if (value === undefined) return null;
+    if (!(value instanceof Uint8Array)) throw new Error('Invalid encrypted received content');
+    return parseReceivedContent(await this.decrypt(value), id);
+  }
+
+  async deleteReceivedContent(id: string): Promise<void> {
+    this.ensureInitialized();
+    await this.db!.delete('metadata', receivedContentKey(id));
+  }
+
+  async deleteExpiredReceivedContent(before: number): Promise<number> {
+    this.ensureInitialized();
+    const prefix = receivedContentKey('');
+    const keys = (await this.db!.getAllKeys('metadata')).filter((key) => key.startsWith(prefix));
+    const expired: string[] = [];
+    for (const key of keys) {
+      const value = await this.getReceivedContent(key.slice(prefix.length));
+      if (value && value.receivedAt < before) expired.push(key);
+    }
+    if (expired.length) {
+      const tx = this.db!.transaction('metadata', 'readwrite');
+      await Promise.all([...expired.map((key) => tx.store.delete(key)), tx.done]);
+    }
+    return expired.length;
   }
 
   async getSenderKeyRecord(
@@ -1857,11 +1992,17 @@ export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
   }
 
   async getKyberPreKeyMaxId(identityType?: IdentityType): Promise<number> {
-    const prekey = await this.getKyberPreKey(identityType);
-    return prekey?.keyId ?? 0;
+    this.ensureInitialized();
+    const it = identityType ?? 'aci';
+    const encrypted = await this.db!.get('prekeys', `kyber:${it}`);
+    if (!encrypted) return 0;
+    const state = JSON.parse(await this.decrypt(encrypted)) as StoredKyberPreKeyState;
+    return Object.keys(state.instances).reduce((max, id) => Math.max(max, Number(id)), 0);
   }
 
-  async deleteAllPreKeys(identityType?: IdentityType): Promise<{
+  async deleteAllPreKeys(
+    identityType?: IdentityType
+  ): Promise<{
     ecSignedPreKeys: number;
     ecOneTimePreKeys: number;
     kyberPreKeys: number;

@@ -17,14 +17,23 @@ import {
   sha256,
   streamingDecrypt,
   streamingEncrypt,
-} from '../internal/crypto';
-import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
-import { toBase64 } from '../types/utils';
+  urlSafeToBase64,
+} from "../internal/crypto";
+import type { SignalProtocolRemoteObjectStore } from "../remote/object-store";
+import { RemoteObjectUploadError } from "../remote/object-store";
+import { matchesUploadReceipt } from "../remote/object-store/validation";
+import { toBase64 } from "../types/utils";
+import type { PreparedMediaAttachmentUpload } from "./prepared-upload";
+
+export type {
+  PreparedMediaAttachmentUpload,
+  MediaAttachmentPreparedUploadStore,
+} from "./prepared-upload";
 
 export {};
 
 export const MediaAttachmentMessageType = {
-  Attachment: 'attachment',
+  Attachment: "attachment",
 } as const;
 
 export type MediaAttachmentMessageType =
@@ -36,7 +45,8 @@ export const MediaAttachmentFlag = {
   Gif: 8,
 } as const;
 
-export type MediaAttachmentFlag = (typeof MediaAttachmentFlag)[keyof typeof MediaAttachmentFlag];
+export type MediaAttachmentFlag =
+  (typeof MediaAttachmentFlag)[keyof typeof MediaAttachmentFlag];
 
 const MEDIA_ATTACHMENT_KEY_BYTES = 32;
 const MEDIA_ATTACHMENT_DIGEST_BYTES = 32;
@@ -48,21 +58,23 @@ const KNOWN_MEDIA_ATTACHMENT_FLAG_VALUES = new Set<number>([
   MediaAttachmentFlag.VoiceMessage + MediaAttachmentFlag.Borderless,
   MediaAttachmentFlag.VoiceMessage + MediaAttachmentFlag.Gif,
   MediaAttachmentFlag.Borderless + MediaAttachmentFlag.Gif,
-  MediaAttachmentFlag.VoiceMessage + MediaAttachmentFlag.Borderless + MediaAttachmentFlag.Gif,
+  MediaAttachmentFlag.VoiceMessage +
+    MediaAttachmentFlag.Borderless +
+    MediaAttachmentFlag.Gif,
 ]);
 const UUID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 export function isMediaAttachmentFlagSet(value: unknown): value is number {
   return (
-    typeof value === 'number' &&
+    typeof value === "number" &&
     Number.isSafeInteger(value) &&
     KNOWN_MEDIA_ATTACHMENT_FLAG_VALUES.has(value)
   );
 }
 
 function hexByte(value: number): string {
-  return value.toString(16).padStart(2, '0');
+  return value.toString(16).padStart(2, "0");
 }
 
 async function generateMediaAttachmentClientUuid(): Promise<string> {
@@ -70,10 +82,10 @@ async function generateMediaAttachmentClientUuid(): Promise<string> {
   bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
   bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
 
-  const hex = Array.from(bytes, hexByte).join('');
+  const hex = Array.from(bytes, hexByte).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(
     16,
-    20
+    20,
   )}-${hex.slice(20)}`;
 }
 
@@ -86,6 +98,8 @@ export async function generateMediaAttachmentUploadRequestId(): Promise<string> 
 export interface MediaAttachmentPointer {
   version: 1;
   storageId: string;
+  /** Independent broker read authority. Never use the attachment encryption key. */
+  readCapability?: string;
   key: string;
   digest: string;
   segmentSize: number;
@@ -114,26 +128,29 @@ export interface MediaAttachmentMessage {
   attachment: MediaAttachmentPointer;
 }
 
-export type CreateMediaAttachmentPointerInput = Omit<MediaAttachmentPointer, 'version'> & {
+export type CreateMediaAttachmentPointerInput = Omit<
+  MediaAttachmentPointer,
+  "version"
+> & {
   version?: 1;
 };
 
 export const MediaAttachmentErrorCode = {
-  UploadFailed: 'upload-failed',
-  UploadIdentityChanged: 'upload-identity-changed',
-  DownloadFailed: 'download-failed',
-  Cancelled: 'cancelled',
-  DeleteUnavailable: 'delete-unavailable',
-  DeleteFailed: 'delete-failed',
-  BlobNotFound: 'blob-not-found',
-  ResumeStateInvalid: 'resume-state-invalid',
-  JobHandlerMissing: 'job-handler-missing',
-  PolicyViolation: 'policy-violation',
-  InvalidPointer: 'invalid-pointer',
-  CiphertextSizeMismatch: 'ciphertext-size-mismatch',
-  DigestMismatch: 'digest-mismatch',
-  DecryptionFailed: 'decryption-failed',
-  PlaintextSizeMismatch: 'plaintext-size-mismatch',
+  UploadFailed: "upload-failed",
+  UploadIdentityChanged: "upload-identity-changed",
+  DownloadFailed: "download-failed",
+  Cancelled: "cancelled",
+  DeleteUnavailable: "delete-unavailable",
+  DeleteFailed: "delete-failed",
+  BlobNotFound: "blob-not-found",
+  ResumeStateInvalid: "resume-state-invalid",
+  JobHandlerMissing: "job-handler-missing",
+  PolicyViolation: "policy-violation",
+  InvalidPointer: "invalid-pointer",
+  CiphertextSizeMismatch: "ciphertext-size-mismatch",
+  DigestMismatch: "digest-mismatch",
+  DecryptionFailed: "decryption-failed",
+  PlaintextSizeMismatch: "plaintext-size-mismatch",
 } as const;
 
 export type MediaAttachmentErrorCode =
@@ -146,13 +163,13 @@ export class MediaAttachmentError extends Error {
   constructor(
     message: string,
     code: MediaAttachmentErrorCode,
-    options?: { cause?: unknown; status?: number }
+    options?: { cause?: unknown; status?: number },
   ) {
     super(message);
-    this.name = 'MediaAttachmentError';
+    this.name = "MediaAttachmentError";
     this.code = code;
     this.status = options?.status;
-    if (options && 'cause' in options) {
+    if (options && "cause" in options) {
       this.cause = options.cause;
     }
   }
@@ -165,9 +182,16 @@ export interface MediaAttachmentUploadResponse {
 }
 
 export interface MediaAttachmentProgress {
-  operation: 'upload' | 'download' | 'delete';
+  operation: "upload" | "download" | "delete";
   phase:
-    'encrypt' | 'request-url' | 'transfer' | 'retry' | 'verify' | 'decrypt' | 'complete' | 'delete';
+    | "encrypt"
+    | "request-url"
+    | "transfer"
+    | "retry"
+    | "verify"
+    | "decrypt"
+    | "complete"
+    | "delete";
   attempt?: number;
   /** Stable idempotency key for one logical upload. */
   requestId?: string;
@@ -176,13 +200,16 @@ export interface MediaAttachmentProgress {
   totalBytes?: number;
   status?: number;
   retryInMs?: number;
-  reason?: 'expired-url' | 'invalid-resume' | 'retryable-status' | 'transient-failure';
+  reason?:
+    "expired-url" | "invalid-resume" | "retryable-status" | "transient-failure";
 }
 
-export type MediaAttachmentProgressCallback = (progress: MediaAttachmentProgress) => void;
+export type MediaAttachmentProgressCallback = (
+  progress: MediaAttachmentProgress,
+) => void;
 
 export interface MediaAttachmentResumeState {
-  operation: 'upload' | 'download';
+  operation: "upload" | "download";
   offsetBytes?: number;
   resumeToken?: string;
   updatedAt: number;
@@ -190,8 +217,8 @@ export interface MediaAttachmentResumeState {
 }
 
 export interface MediaAttachmentTransferCheckpoint {
-  operation: 'upload' | 'download';
-  phase: 'request-url' | 'transfer' | 'retry' | 'complete';
+  operation: "upload" | "download";
+  phase: "request-url" | "transfer" | "retry" | "complete";
   attempt?: number;
   /** Stable idempotency key for one logical upload. */
   requestId?: string;
@@ -204,7 +231,7 @@ export interface MediaAttachmentTransferCheckpoint {
 }
 
 export type MediaAttachmentCheckpointCallback = (
-  checkpoint: MediaAttachmentTransferCheckpoint
+  checkpoint: MediaAttachmentTransferCheckpoint,
 ) => void;
 
 export interface MediaAttachmentTransferOptions {
@@ -224,9 +251,12 @@ export interface MediaAttachmentTransfer {
   upload?(
     url: string,
     data: Uint8Array,
-    options?: MediaAttachmentTransferOptions
+    options?: MediaAttachmentTransferOptions,
   ): Promise<MediaAttachmentUploadResponse>;
-  download?(url: string, options?: MediaAttachmentTransferOptions): Promise<Uint8Array>;
+  download?(
+    url: string,
+    options?: MediaAttachmentTransferOptions,
+  ): Promise<Uint8Array>;
 }
 
 export interface TusMediaAttachmentTransferOptions {
@@ -257,7 +287,8 @@ export interface ByteRangeMediaAttachmentTransferOptions {
   fetch?: typeof fetch;
   chunkSizeBytes?: number;
   partialStore?: ByteRangeMediaAttachmentPartialStore;
-  resumeToken?: string | ((url: string, options: MediaAttachmentTransferOptions) => string);
+  resumeToken?:
+    string | ((url: string, options: MediaAttachmentTransferOptions) => string);
 }
 
 export interface MediaAttachmentRetryOptions {
@@ -290,31 +321,33 @@ export const MEDIA_ATTACHMENT_POLICY_DEFAULTS = {
   maxDurationMs: 24 * 60 * 60 * 1_000,
   maxThumbnailBytes: 256 * 1024,
   maxWaveformSamples: 4_096,
-} as const satisfies Required<Omit<MediaAttachmentPolicy, 'allowedContentTypes'>>;
+} as const satisfies Required<
+  Omit<MediaAttachmentPolicy, "allowedContentTypes">
+>;
 
 export const MEDIA_ATTACHMENT_POLICY_PRESETS = {
   Image: {
-    allowedContentTypes: ['image/*'],
+    allowedContentTypes: ["image/*"],
     maxPlaintextSizeBytes: 25 * 1024 * 1024,
     maxCiphertextSizeBytes: 32 * 1024 * 1024,
     maxThumbnailBytes: 256 * 1024,
   },
   Video: {
-    allowedContentTypes: ['video/*'],
+    allowedContentTypes: ["video/*"],
     maxPlaintextSizeBytes: 100 * 1024 * 1024,
     maxCiphertextSizeBytes: 128 * 1024 * 1024,
     maxDurationMs: 4 * 60 * 60 * 1_000,
     maxThumbnailBytes: 512 * 1024,
   },
   Audio: {
-    allowedContentTypes: ['audio/*'],
+    allowedContentTypes: ["audio/*"],
     maxPlaintextSizeBytes: 100 * 1024 * 1024,
     maxCiphertextSizeBytes: 128 * 1024 * 1024,
     maxDurationMs: 4 * 60 * 60 * 1_000,
     maxWaveformSamples: 4_096,
   },
   Document: {
-    allowedContentTypes: ['application/pdf', 'text/*'],
+    allowedContentTypes: ["application/pdf", "text/*"],
     maxPlaintextSizeBytes: 50 * 1024 * 1024,
     maxCiphertextSizeBytes: 64 * 1024 * 1024,
   },
@@ -325,8 +358,8 @@ export interface PrepareMediaAttachmentUploadOptions {
   /**
    * Stable idempotency key for this logical upload.
    *
-   * Supply the same value when restarting an interrupted upload. The client
-   * generates a random value when you omit it.
+   * Restarted uploads must reuse both this ID and their prepared encrypted bytes.
+   * The client generates a random value when you omit it.
    */
   requestId?: string;
   transfer?: MediaAttachmentTransfer;
@@ -383,10 +416,10 @@ export interface ResolvedMediaAttachment {
 }
 
 export const MediaAttachmentCleanupReason = {
-  ViewOnceOpened: 'view-once-opened',
-  MessageDeleted: 'message-deleted',
-  MessageExpired: 'message-expired',
-  OrphanedUpload: 'orphaned-upload',
+  ViewOnceOpened: "view-once-opened",
+  MessageDeleted: "message-deleted",
+  MessageExpired: "message-expired",
+  OrphanedUpload: "orphaned-upload",
 } as const;
 
 export type MediaAttachmentCleanupReason =
@@ -439,7 +472,7 @@ export interface MediaAttachmentProcessingPlan {
   isViewOnceOpened: boolean;
   shouldPersistMessage: boolean;
   shouldDownload: boolean;
-  downloadReason: 'new-delivery' | 'duplicate-missing-local-copy' | null;
+  downloadReason: "new-delivery" | "duplicate-missing-local-copy" | null;
   downloadJob: MediaAttachmentBackgroundJob | null;
   cleanup: MediaAttachmentCleanupPlan | null;
 }
@@ -458,36 +491,36 @@ export interface PlanMediaAttachmentDeleteSyncInput {
 }
 
 export const MediaAttachmentJobOperation = {
-  Upload: 'upload',
-  Download: 'download',
-  DeleteLocal: 'delete-local',
-  DeleteRemote: 'delete-remote',
-  SyncDelete: 'sync-delete',
+  Upload: "upload",
+  Download: "download",
+  DeleteLocal: "delete-local",
+  DeleteRemote: "delete-remote",
+  SyncDelete: "sync-delete",
 } as const;
 
 export type MediaAttachmentJobOperation =
   (typeof MediaAttachmentJobOperation)[keyof typeof MediaAttachmentJobOperation];
 
 export const MediaAttachmentJobSource = {
-  ComposePreUpload: 'compose-pre-upload',
-  IncomingMessage: 'incoming-message',
-  SentSync: 'sent-sync',
-  UserAction: 'user-action',
-  Retry: 'retry',
-  BackgroundRecovery: 'background-recovery',
-  MessageDeleted: 'message-deleted',
-  MessageExpired: 'message-expired',
-  OrphanCleanup: 'orphan-cleanup',
-  LinkedDeviceSync: 'linked-device-sync',
+  ComposePreUpload: "compose-pre-upload",
+  IncomingMessage: "incoming-message",
+  SentSync: "sent-sync",
+  UserAction: "user-action",
+  Retry: "retry",
+  BackgroundRecovery: "background-recovery",
+  MessageDeleted: "message-deleted",
+  MessageExpired: "message-expired",
+  OrphanCleanup: "orphan-cleanup",
+  LinkedDeviceSync: "linked-device-sync",
 } as const;
 
 export type MediaAttachmentJobSource =
   (typeof MediaAttachmentJobSource)[keyof typeof MediaAttachmentJobSource];
 
 export const MediaAttachmentJobPriority = {
-  High: 'high',
-  Normal: 'normal',
-  Low: 'low',
+  High: "high",
+  Normal: "normal",
+  Low: "low",
 } as const;
 
 export type MediaAttachmentJobPriority =
@@ -558,20 +591,24 @@ export interface PlanMediaAttachmentCleanupJobsInput {
 }
 
 export const MediaAttachmentJobExecutionStatus = {
-  Completed: 'completed',
-  Skipped: 'skipped',
+  Completed: "completed",
+  Skipped: "skipped",
 } as const;
 
 export type MediaAttachmentJobExecutionStatus =
   (typeof MediaAttachmentJobExecutionStatus)[keyof typeof MediaAttachmentJobExecutionStatus];
 
 export type MediaAttachmentJobSkipReason =
-  'missing-upload-data' | 'missing-attachment-pointer' | 'sync-delete-not-configured';
+  | "missing-upload-data"
+  | "missing-attachment-pointer"
+  | "sync-delete-not-configured";
 
-export interface MediaAttachmentUploadJobData {
-  data: Uint8Array;
-  options?: Omit<PrepareMediaAttachmentUploadOptions, 'remoteObjectStore'>;
-}
+export type MediaAttachmentUploadJobData = (
+  | { data: Uint8Array; prepared?: never }
+  | { prepared: PreparedMediaAttachmentUpload; data?: never }
+) & {
+  options?: Omit<PrepareMediaAttachmentUploadOptions, "remoteObjectStore">;
+};
 
 export interface ExecuteMediaAttachmentJobOptions {
   remoteObjectStore: SignalProtocolRemoteObjectStore;
@@ -582,23 +619,26 @@ export interface ExecuteMediaAttachmentJobOptions {
   onProgress?: MediaAttachmentProgressCallback;
   onCheckpoint?: MediaAttachmentCheckpointCallback;
   loadUploadData?: (
-    job: MediaAttachmentBackgroundJob
+    job: MediaAttachmentBackgroundJob,
   ) => Promise<MediaAttachmentUploadJobData | null>;
+  loadUploadedAttachment?: (
+    job: MediaAttachmentBackgroundJob,
+  ) => Promise<MediaAttachmentPointer | null>;
   loadAttachmentPointer?: (
-    job: MediaAttachmentBackgroundJob
+    job: MediaAttachmentBackgroundJob,
   ) => Promise<CreateMediaAttachmentPointerInput | null>;
   saveUploadedAttachment?: (
     job: MediaAttachmentBackgroundJob,
-    attachment: MediaAttachmentPointer
+    attachment: MediaAttachmentPointer,
   ) => Promise<void>;
   saveDownloadedAttachment?: (
     job: MediaAttachmentBackgroundJob,
-    attachment: ResolvedMediaAttachment
+    attachment: ResolvedMediaAttachment,
   ) => Promise<void>;
   deleteLocalAttachment?: (job: MediaAttachmentBackgroundJob) => Promise<void>;
   syncDelete?: (
     job: MediaAttachmentBackgroundJob,
-    deleteSync: MediaAttachmentDeleteSyncInput
+    deleteSync: MediaAttachmentDeleteSyncInput,
   ) => Promise<void>;
 }
 
@@ -625,21 +665,29 @@ export interface DeleteMediaAttachmentResult {
 }
 
 function assertString(value: unknown, field: string): asserts value is string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new TypeError(`Invalid media attachment pointer: ${field} must be a non-empty string`);
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(
+      `Invalid media attachment pointer: ${field} must be a non-empty string`,
+    );
   }
 }
 
-function assertBase64ByteLength(value: string, field: string, expectedBytes: number): void {
+function assertBase64ByteLength(
+  value: string,
+  field: string,
+  expectedBytes: number,
+): void {
   try {
     const bytes = base64ToBytes(toBase64(value));
     if (bytes.length !== expectedBytes) {
-      throw new Error(`expected ${expectedBytes} bytes, received ${bytes.length}`);
+      throw new Error(
+        `expected ${expectedBytes} bytes, received ${bytes.length}`,
+      );
     }
   } catch (cause) {
     throw new TypeError(
       `Invalid media attachment pointer: ${field} must be a base64-encoded ${expectedBytes}-byte value`,
-      { cause }
+      { cause },
     );
   }
 }
@@ -650,19 +698,31 @@ function assertBase64String(value: string, field: string): void {
   } catch (cause) {
     throw new TypeError(
       `Invalid media attachment pointer: ${field} must be a base64-encoded value`,
-      { cause }
+      { cause },
     );
   }
 }
 
-function assertInteger(value: unknown, field: string, options?: { allowZero?: boolean }): void {
+function assertInteger(
+  value: unknown,
+  field: string,
+  options?: { allowZero?: boolean },
+): void {
   const min = options?.allowZero ? 0 : 1;
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min) {
-    throw new TypeError(`Invalid media attachment pointer: ${field} must be an integer >= ${min}`);
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < min
+  ) {
+    throw new TypeError(
+      `Invalid media attachment pointer: ${field} must be an integer >= ${min}`,
+    );
   }
 }
 
-function resolvePolicy(policy: MediaAttachmentPolicy | undefined): Required<MediaAttachmentPolicy> {
+function resolvePolicy(
+  policy: MediaAttachmentPolicy | undefined,
+): Required<MediaAttachmentPolicy> {
   return {
     ...MEDIA_ATTACHMENT_POLICY_DEFAULTS,
     allowedContentTypes: policy?.allowedContentTypes ?? [],
@@ -672,14 +732,20 @@ function resolvePolicy(policy: MediaAttachmentPolicy | undefined): Required<Medi
 
 function assertPolicy(condition: boolean, message: string): void {
   if (!condition) {
-    throw new MediaAttachmentError(message, MediaAttachmentErrorCode.PolicyViolation);
+    throw new MediaAttachmentError(
+      message,
+      MediaAttachmentErrorCode.PolicyViolation,
+    );
   }
 }
 
-function assertMetadataString(value: unknown, field: string): asserts value is string {
+function assertMetadataString(
+  value: unknown,
+  field: string,
+): asserts value is string {
   assertPolicy(
-    typeof value === 'string' && value.length > 0,
-    `Media attachment ${field} must be a non-empty string`
+    typeof value === "string" && value.length > 0,
+    `Media attachment ${field} must be a non-empty string`,
   );
 }
 
@@ -691,40 +757,48 @@ function assertOptionalMetadataString(value: unknown, field: string): void {
 function assertOptionalMetadataInteger(
   value: unknown,
   field: string,
-  options?: { allowZero?: boolean }
+  options?: { allowZero?: boolean },
 ): void {
   if (value === undefined) return;
   const min = options?.allowZero ? 0 : 1;
   assertPolicy(
-    typeof value === 'number' && Number.isSafeInteger(value) && value >= min,
-    `Media attachment ${field} must be an integer >= ${min}`
+    typeof value === "number" && Number.isSafeInteger(value) && value >= min,
+    `Media attachment ${field} must be an integer >= ${min}`,
   );
 }
 
 function assertOptionalMetadataBoolean(value: unknown, field: string): void {
   if (value === undefined) return;
-  assertPolicy(typeof value === 'boolean', `Media attachment ${field} must be a boolean`);
+  assertPolicy(
+    typeof value === "boolean",
+    `Media attachment ${field} must be a boolean`,
+  );
 }
 
-function assertOptionalMetadataWaveform(value: unknown): asserts value is number[] | undefined {
+function assertOptionalMetadataWaveform(
+  value: unknown,
+): asserts value is number[] | undefined {
   if (value === undefined) return;
   assertPolicy(
     Array.isArray(value) &&
       value.every(
         (sample) =>
-          typeof sample === 'number' && Number.isSafeInteger(sample) && sample >= 0 && sample <= 255
+          typeof sample === "number" &&
+          Number.isSafeInteger(sample) &&
+          sample >= 0 &&
+          sample <= 255,
       ),
-    'Media attachment waveform must contain integer samples from 0 to 255'
+    "Media attachment waveform must contain integer samples from 0 to 255",
   );
 }
 
 function isContentTypeAllowed(
   contentType: string,
-  allowedContentTypes: readonly string[]
+  allowedContentTypes: readonly string[],
 ): boolean {
   if (allowedContentTypes.length === 0) return true;
   return allowedContentTypes.some((allowed) => {
-    if (allowed.endsWith('/*')) {
+    if (allowed.endsWith("/*")) {
       return contentType.startsWith(`${allowed.slice(0, -2)}/`);
     }
     return contentType === allowed;
@@ -749,83 +823,89 @@ function validateMediaAttachmentMetadata(
     clientUuid?: string;
     cdnNumber?: number;
   },
-  policy: MediaAttachmentPolicy | undefined
+  policy: MediaAttachmentPolicy | undefined,
 ): void {
   const resolvedPolicy = resolvePolicy(policy);
 
-  assertMetadataString(input.contentType, 'contentType');
-  assertOptionalMetadataString(input.fileName, 'fileName');
-  assertOptionalMetadataString(input.caption, 'caption');
-  assertOptionalMetadataString(input.blurHash, 'blurHash');
-  assertOptionalMetadataString(input.thumbnail, 'thumbnail');
-  assertOptionalMetadataString(input.clientUuid, 'clientUuid');
-  assertOptionalMetadataInteger(input.size, 'size', { allowZero: true });
-  assertOptionalMetadataInteger(input.ciphertextSize, 'ciphertextSize');
-  assertOptionalMetadataInteger(input.width, 'width');
-  assertOptionalMetadataInteger(input.height, 'height');
-  assertOptionalMetadataInteger(input.durationMs, 'durationMs', {
+  assertMetadataString(input.contentType, "contentType");
+  assertOptionalMetadataString(input.fileName, "fileName");
+  assertOptionalMetadataString(input.caption, "caption");
+  assertOptionalMetadataString(input.blurHash, "blurHash");
+  assertOptionalMetadataString(input.thumbnail, "thumbnail");
+  assertOptionalMetadataString(input.clientUuid, "clientUuid");
+  assertOptionalMetadataInteger(input.size, "size", { allowZero: true });
+  assertOptionalMetadataInteger(input.ciphertextSize, "ciphertextSize");
+  assertOptionalMetadataInteger(input.width, "width");
+  assertOptionalMetadataInteger(input.height, "height");
+  assertOptionalMetadataInteger(input.durationMs, "durationMs", {
     allowZero: true,
   });
-  assertOptionalMetadataInteger(input.flags, 'flags', { allowZero: true });
-  assertOptionalMetadataInteger(input.cdnNumber, 'cdnNumber');
-  assertOptionalMetadataBoolean(input.isViewOnce, 'isViewOnce');
+  assertOptionalMetadataInteger(input.flags, "flags", { allowZero: true });
+  assertOptionalMetadataInteger(input.cdnNumber, "cdnNumber");
+  assertOptionalMetadataBoolean(input.isViewOnce, "isViewOnce");
   assertOptionalMetadataWaveform(input.waveform);
   assertPolicy(
     input.clientUuid === undefined || UUID_PATTERN.test(input.clientUuid),
-    'Media attachment clientUuid must be a UUID string'
+    "Media attachment clientUuid must be a UUID string",
   );
   assertPolicy(
     input.flags === undefined || isMediaAttachmentFlagSet(input.flags),
-    'Media attachment flags contains unknown media flag bits'
+    "Media attachment flags contains unknown media flag bits",
   );
 
   assertPolicy(
-    input.size === undefined || input.size <= resolvedPolicy.maxPlaintextSizeBytes,
-    `Media attachment plaintext size ${input.size} exceeds limit ${resolvedPolicy.maxPlaintextSizeBytes}`
+    input.size === undefined ||
+      input.size <= resolvedPolicy.maxPlaintextSizeBytes,
+    `Media attachment plaintext size ${input.size} exceeds limit ${resolvedPolicy.maxPlaintextSizeBytes}`,
   );
   assertPolicy(
     input.ciphertextSize === undefined ||
       input.ciphertextSize <= resolvedPolicy.maxCiphertextSizeBytes,
-    `Media attachment ciphertext size ${input.ciphertextSize} exceeds limit ${resolvedPolicy.maxCiphertextSizeBytes}`
+    `Media attachment ciphertext size ${input.ciphertextSize} exceeds limit ${resolvedPolicy.maxCiphertextSizeBytes}`,
   );
   assertPolicy(
     isContentTypeAllowed(input.contentType, resolvedPolicy.allowedContentTypes),
-    `Media attachment content type ${input.contentType} is not allowed`
+    `Media attachment content type ${input.contentType} is not allowed`,
   );
   assertPolicy(
-    input.fileName === undefined || input.fileName.length <= resolvedPolicy.maxFileNameLength,
-    `Media attachment file name exceeds limit ${resolvedPolicy.maxFileNameLength}`
+    input.fileName === undefined ||
+      input.fileName.length <= resolvedPolicy.maxFileNameLength,
+    `Media attachment file name exceeds limit ${resolvedPolicy.maxFileNameLength}`,
   );
   assertPolicy(
-    input.caption === undefined || input.caption.length <= resolvedPolicy.maxCaptionLength,
-    `Media attachment caption exceeds limit ${resolvedPolicy.maxCaptionLength}`
+    input.caption === undefined ||
+      input.caption.length <= resolvedPolicy.maxCaptionLength,
+    `Media attachment caption exceeds limit ${resolvedPolicy.maxCaptionLength}`,
   );
   assertPolicy(
     input.width === undefined || input.width <= resolvedPolicy.maxWidth,
-    `Media attachment width ${input.width} exceeds limit ${resolvedPolicy.maxWidth}`
+    `Media attachment width ${input.width} exceeds limit ${resolvedPolicy.maxWidth}`,
   );
   assertPolicy(
     input.height === undefined || input.height <= resolvedPolicy.maxHeight,
-    `Media attachment height ${input.height} exceeds limit ${resolvedPolicy.maxHeight}`
+    `Media attachment height ${input.height} exceeds limit ${resolvedPolicy.maxHeight}`,
   );
   assertPolicy(
-    input.durationMs === undefined || input.durationMs <= resolvedPolicy.maxDurationMs,
-    `Media attachment duration ${input.durationMs} exceeds limit ${resolvedPolicy.maxDurationMs}`
+    input.durationMs === undefined ||
+      input.durationMs <= resolvedPolicy.maxDurationMs,
+    `Media attachment duration ${input.durationMs} exceeds limit ${resolvedPolicy.maxDurationMs}`,
   );
   assertPolicy(
     input.thumbnail === undefined ||
-      getBase64ByteLength(input.thumbnail, 'thumbnail') <= resolvedPolicy.maxThumbnailBytes,
-    `Media attachment thumbnail exceeds limit ${resolvedPolicy.maxThumbnailBytes}`
+      getBase64ByteLength(input.thumbnail, "thumbnail") <=
+        resolvedPolicy.maxThumbnailBytes,
+    `Media attachment thumbnail exceeds limit ${resolvedPolicy.maxThumbnailBytes}`,
   );
   assertPolicy(
-    input.waveform === undefined || input.waveform.length <= resolvedPolicy.maxWaveformSamples,
-    `Media attachment waveform exceeds limit ${resolvedPolicy.maxWaveformSamples}`
+    input.waveform === undefined ||
+      input.waveform.length <= resolvedPolicy.maxWaveformSamples,
+    `Media attachment waveform exceeds limit ${resolvedPolicy.maxWaveformSamples}`,
   );
 }
 
 export function validateMediaAttachmentPolicy(
   attachment: CreateMediaAttachmentPointerInput,
-  policy?: MediaAttachmentPolicy
+  policy?: MediaAttachmentPolicy,
 ): MediaAttachmentPointer {
   const pointer = createMediaAttachmentPointer(attachment);
   validateMediaAttachmentMetadata(pointer, policy);
@@ -835,7 +915,7 @@ export function validateMediaAttachmentPolicy(
 function copyOptionalString(
   target: Partial<MediaAttachmentPointer>,
   source: CreateMediaAttachmentPointerInput,
-  field: 'clientUuid' | 'blurHash' | 'thumbnail' | 'fileName' | 'caption'
+  field: "clientUuid" | "blurHash" | "thumbnail" | "fileName" | "caption",
 ): void {
   const value = source[field];
   if (value === undefined) return;
@@ -845,25 +925,27 @@ function copyOptionalString(
 
 function copyOptionalClientUuid(
   target: Partial<MediaAttachmentPointer>,
-  source: CreateMediaAttachmentPointerInput
+  source: CreateMediaAttachmentPointerInput,
 ): void {
   const value = source.clientUuid;
   if (value === undefined) return;
-  assertString(value, 'clientUuid');
+  assertString(value, "clientUuid");
   if (!UUID_PATTERN.test(value)) {
-    throw new TypeError('Invalid media attachment pointer: clientUuid must be a UUID string');
+    throw new TypeError(
+      "Invalid media attachment pointer: clientUuid must be a UUID string",
+    );
   }
   target.clientUuid = value;
 }
 
 function copyOptionalThumbnail(
   target: Partial<MediaAttachmentPointer>,
-  source: CreateMediaAttachmentPointerInput
+  source: CreateMediaAttachmentPointerInput,
 ): void {
   const value = source.thumbnail;
   if (value === undefined) return;
-  assertString(value, 'thumbnail');
-  assertBase64String(value, 'thumbnail');
+  assertString(value, "thumbnail");
+  assertBase64String(value, "thumbnail");
   target.thumbnail = value;
 }
 
@@ -874,7 +956,7 @@ function getBase64ByteLength(value: string, field: string): number {
     throw new MediaAttachmentError(
       `Media attachment ${field} must be base64 encoded`,
       MediaAttachmentErrorCode.PolicyViolation,
-      { cause }
+      { cause },
     );
   }
 }
@@ -882,59 +964,64 @@ function getBase64ByteLength(value: string, field: string): number {
 function copyOptionalInteger(
   target: Partial<MediaAttachmentPointer>,
   source: CreateMediaAttachmentPointerInput,
-  field: 'cdnNumber' | 'width' | 'height' | 'durationMs' | 'flags'
+  field: "cdnNumber" | "width" | "height" | "durationMs" | "flags",
 ): void {
   const value = source[field];
   if (value === undefined) return;
-  assertInteger(value, field, { allowZero: field === 'durationMs' });
+  assertInteger(value, field, { allowZero: field === "durationMs" });
   target[field] = value;
 }
 
 function copyOptionalFlags(
   target: Partial<MediaAttachmentPointer>,
-  source: CreateMediaAttachmentPointerInput
+  source: CreateMediaAttachmentPointerInput,
 ): void {
   const value = source.flags;
   if (value === undefined) return;
-  assertInteger(value, 'flags', { allowZero: true });
+  assertInteger(value, "flags", { allowZero: true });
   if (!isMediaAttachmentFlagSet(value)) {
-    throw new TypeError('Invalid media attachment pointer: flags contains unknown media flag bits');
+    throw new TypeError(
+      "Invalid media attachment pointer: flags contains unknown media flag bits",
+    );
   }
   target.flags = value;
 }
 
 function copyOptionalWaveform(
   target: Partial<MediaAttachmentPointer>,
-  source: CreateMediaAttachmentPointerInput
+  source: CreateMediaAttachmentPointerInput,
 ): void {
   if (source.waveform === undefined) return;
   if (
     !Array.isArray(source.waveform) ||
     !source.waveform.every(
       (sample) =>
-        typeof sample === 'number' && Number.isInteger(sample) && sample >= 0 && sample <= 255
+        typeof sample === "number" &&
+        Number.isInteger(sample) &&
+        sample >= 0 &&
+        sample <= 255,
     )
   ) {
     throw new TypeError(
-      'Invalid media attachment pointer: waveform must contain integer samples from 0 to 255'
+      "Invalid media attachment pointer: waveform must contain integer samples from 0 to 255",
     );
   }
   target.waveform = [...source.waveform];
 }
 
 export function createMediaAttachmentPointer(
-  input: CreateMediaAttachmentPointerInput
+  input: CreateMediaAttachmentPointerInput,
 ): MediaAttachmentPointer {
-  assertString(input.storageId, 'storageId');
-  assertString(input.key, 'key');
-  assertString(input.digest, 'digest');
-  assertBase64ByteLength(input.key, 'key', MEDIA_ATTACHMENT_KEY_BYTES);
-  assertBase64ByteLength(input.digest, 'digest', MEDIA_ATTACHMENT_DIGEST_BYTES);
-  assertString(input.contentType, 'contentType');
-  assertInteger(input.segmentSize, 'segmentSize');
-  assertInteger(input.ciphertextSize, 'ciphertextSize');
-  assertInteger(input.size, 'size', { allowZero: true });
-  assertInteger(input.uploadTimestamp, 'uploadTimestamp');
+  assertString(input.storageId, "storageId");
+  assertString(input.key, "key");
+  assertString(input.digest, "digest");
+  assertBase64ByteLength(input.key, "key", MEDIA_ATTACHMENT_KEY_BYTES);
+  assertBase64ByteLength(input.digest, "digest", MEDIA_ATTACHMENT_DIGEST_BYTES);
+  assertString(input.contentType, "contentType");
+  assertInteger(input.segmentSize, "segmentSize");
+  assertInteger(input.ciphertextSize, "ciphertextSize");
+  assertInteger(input.size, "size", { allowZero: true });
+  assertInteger(input.uploadTimestamp, "uploadTimestamp");
 
   const pointer: Partial<MediaAttachmentPointer> = {
     version: 1,
@@ -948,21 +1035,37 @@ export function createMediaAttachmentPointer(
     uploadTimestamp: input.uploadTimestamp,
   };
 
+  if (input.readCapability !== undefined) {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(input.readCapability))
+      throw new TypeError("The attachment read capability is invalid.");
+    const capability = base64ToBytes(
+      toBase64(urlSafeToBase64(input.readCapability)),
+    );
+    if (
+      capability.length !== 32 ||
+      bytesToUrlSafeBase64(capability) !== input.readCapability
+    )
+      throw new TypeError("The attachment read capability is invalid.");
+    pointer.readCapability = input.readCapability;
+  }
+
   copyOptionalClientUuid(pointer, input);
-  copyOptionalString(pointer, input, 'blurHash');
+  copyOptionalString(pointer, input, "blurHash");
   copyOptionalThumbnail(pointer, input);
-  copyOptionalString(pointer, input, 'fileName');
-  copyOptionalString(pointer, input, 'caption');
-  copyOptionalInteger(pointer, input, 'cdnNumber');
-  copyOptionalInteger(pointer, input, 'width');
-  copyOptionalInteger(pointer, input, 'height');
-  copyOptionalInteger(pointer, input, 'durationMs');
+  copyOptionalString(pointer, input, "fileName");
+  copyOptionalString(pointer, input, "caption");
+  copyOptionalInteger(pointer, input, "cdnNumber");
+  copyOptionalInteger(pointer, input, "width");
+  copyOptionalInteger(pointer, input, "height");
+  copyOptionalInteger(pointer, input, "durationMs");
   copyOptionalFlags(pointer, input);
   copyOptionalWaveform(pointer, input);
 
   if (input.isViewOnce !== undefined) {
-    if (typeof input.isViewOnce !== 'boolean') {
-      throw new TypeError('Invalid media attachment pointer: isViewOnce must be a boolean');
+    if (typeof input.isViewOnce !== "boolean") {
+      throw new TypeError(
+        "Invalid media attachment pointer: isViewOnce must be a boolean",
+      );
     }
     pointer.isViewOnce = input.isViewOnce;
   }
@@ -974,14 +1077,16 @@ function encodeAttachmentIdentityPart(value: string): string {
   return bytesToUrlSafeBase64(new TextEncoder().encode(value));
 }
 
-export function createMediaAttachmentId(attachment: CreateMediaAttachmentPointerInput): string {
+export function createMediaAttachmentId(
+  attachment: CreateMediaAttachmentPointerInput,
+): string {
   const pointer = createMediaAttachmentPointer(attachment);
   return [
-    'media-v1',
+    "media-v1",
     encodeAttachmentIdentityPart(pointer.storageId),
     pointer.ciphertextSize,
     encodeAttachmentIdentityPart(pointer.digest),
-  ].join('.');
+  ].join(".");
 }
 
 export function createMediaAttachmentDeliveryId(input: {
@@ -989,34 +1094,39 @@ export function createMediaAttachmentDeliveryId(input: {
   senderUserId: string;
   timestamp: number;
 }): string {
-  assertString(input.senderUserId, 'senderUserId');
-  assertInteger(input.timestamp, 'timestamp');
+  assertString(input.senderUserId, "senderUserId");
+  assertInteger(input.timestamp, "timestamp");
   return [
-    'media-delivery-v1',
+    "media-delivery-v1",
     encodeAttachmentIdentityPart(input.senderUserId),
     input.timestamp,
     createMediaAttachmentId(input.attachment),
-  ].join('.');
+  ].join(".");
 }
 
-function knownIdsIncludes(ids: MediaAttachmentKnownIds | undefined, id: string): boolean {
+function knownIdsIncludes(
+  ids: MediaAttachmentKnownIds | undefined,
+  id: string,
+): boolean {
   if (!ids) return false;
   const candidate = ids as { has?: unknown };
-  if (typeof candidate.has === 'function') {
+  if (typeof candidate.has === "function") {
     return (candidate.has as (value: string) => boolean)(id);
   }
   return (ids as readonly string[]).includes(id);
 }
 
 function assertMediaAttachmentCleanupReason(
-  reason: MediaAttachmentCleanupReason
+  reason: MediaAttachmentCleanupReason,
 ): asserts reason is MediaAttachmentCleanupReason {
   if (!isMediaAttachmentCleanupReason(reason)) {
-    throw new TypeError('Invalid media attachment cleanup reason');
+    throw new TypeError("Invalid media attachment cleanup reason");
   }
 }
 
-function isMediaAttachmentCleanupReason(value: unknown): value is MediaAttachmentCleanupReason {
+function isMediaAttachmentCleanupReason(
+  value: unknown,
+): value is MediaAttachmentCleanupReason {
   return (
     value === MediaAttachmentCleanupReason.ViewOnceOpened ||
     value === MediaAttachmentCleanupReason.MessageDeleted ||
@@ -1025,15 +1135,19 @@ function isMediaAttachmentCleanupReason(value: unknown): value is MediaAttachmen
   );
 }
 
-function assertMediaAttachmentJobSource(source: MediaAttachmentJobSource): void {
+function assertMediaAttachmentJobSource(
+  source: MediaAttachmentJobSource,
+): void {
   if (!Object.values(MediaAttachmentJobSource).includes(source)) {
-    throw new TypeError('Invalid media attachment job source');
+    throw new TypeError("Invalid media attachment job source");
   }
 }
 
-function assertMediaAttachmentJobPriority(priority: MediaAttachmentJobPriority): void {
+function assertMediaAttachmentJobPriority(
+  priority: MediaAttachmentJobPriority,
+): void {
   if (!Object.values(MediaAttachmentJobPriority).includes(priority)) {
-    throw new TypeError('Invalid media attachment job priority');
+    throw new TypeError("Invalid media attachment job priority");
   }
 }
 
@@ -1051,24 +1165,24 @@ function createMediaAttachmentBackgroundJob(input: {
   notBefore?: number;
   resume?: MediaAttachmentResumeState;
 }): MediaAttachmentBackgroundJob {
-  assertString(input.attachmentId, 'attachmentId');
+  assertString(input.attachmentId, "attachmentId");
   assertMediaAttachmentJobSource(input.source);
   const priority = input.priority ?? MediaAttachmentJobPriority.Normal;
   assertMediaAttachmentJobPriority(priority);
   const attempt = input.attempt ?? 0;
   const createdAt = input.createdAt ?? Date.now();
   const notBefore = input.notBefore ?? createdAt;
-  assertInteger(attempt, 'attempt', { allowZero: true });
-  assertInteger(createdAt, 'createdAt', { allowZero: true });
-  assertInteger(notBefore, 'notBefore', { allowZero: true });
+  assertInteger(attempt, "attempt", { allowZero: true });
+  assertInteger(createdAt, "createdAt", { allowZero: true });
+  assertInteger(notBefore, "notBefore", { allowZero: true });
 
   const jobId = [
-    'media-job-v1',
+    "media-job-v1",
     input.operation,
     encodeAttachmentIdentityPart(input.attachmentId),
-    input.deliveryId ? encodeAttachmentIdentityPart(input.deliveryId) : 'none',
-    input.reason ? encodeAttachmentIdentityPart(input.reason) : 'none',
-  ].join('.');
+    input.deliveryId ? encodeAttachmentIdentityPart(input.deliveryId) : "none",
+    input.reason ? encodeAttachmentIdentityPart(input.reason) : "none",
+  ].join(".");
 
   return {
     jobId,
@@ -1088,11 +1202,11 @@ function createMediaAttachmentBackgroundJob(input: {
 }
 
 export function planMediaAttachmentUploadJob(
-  input: PlanMediaAttachmentUploadJobInput
+  input: PlanMediaAttachmentUploadJobInput,
 ): MediaAttachmentBackgroundJob {
-  assertString(input.localMediaId, 'localMediaId');
-  assertString(input.contentType, 'contentType');
-  assertInteger(input.size, 'size', { allowZero: true });
+  assertString(input.localMediaId, "localMediaId");
+  assertString(input.contentType, "contentType");
+  assertInteger(input.size, "size", { allowZero: true });
   validateMediaAttachmentMetadata(
     {
       contentType: input.contentType,
@@ -1110,7 +1224,7 @@ export function planMediaAttachmentUploadJob(
       clientUuid: input.clientUuid,
       cdnNumber: input.cdnNumber,
     },
-    input.policy
+    input.policy,
   );
 
   return createMediaAttachmentBackgroundJob({
@@ -1129,7 +1243,7 @@ export function planMediaAttachmentUploadJob(
 
 export function planMediaAttachmentCleanup(
   attachment: CreateMediaAttachmentPointerInput,
-  reason: MediaAttachmentCleanupReason
+  reason: MediaAttachmentCleanupReason,
 ): MediaAttachmentCleanupPlan {
   assertMediaAttachmentCleanupReason(reason);
   const pointer = createMediaAttachmentPointer(attachment);
@@ -1146,7 +1260,7 @@ export function planMediaAttachmentCleanup(
 }
 
 export function planMediaAttachmentCleanupJobs(
-  input: PlanMediaAttachmentCleanupJobsInput
+  input: PlanMediaAttachmentCleanupJobsInput,
 ): MediaAttachmentBackgroundJob[] {
   const source = input.source ?? MediaAttachmentJobSource.BackgroundRecovery;
   const includeLocal = input.includeLocal ?? input.cleanup.deleteLocalCache;
@@ -1167,7 +1281,7 @@ export function planMediaAttachmentCleanupJobs(
         attempt: input.attempt,
         createdAt: input.createdAt,
         notBefore: input.notBefore,
-      })
+      }),
     );
   }
 
@@ -1184,7 +1298,7 @@ export function planMediaAttachmentCleanupJobs(
         attempt: input.attempt,
         createdAt: input.createdAt,
         notBefore: input.notBefore,
-      })
+      }),
     );
   }
 
@@ -1201,7 +1315,7 @@ export function planMediaAttachmentCleanupJobs(
         attempt: input.attempt,
         createdAt: input.createdAt,
         notBefore: input.notBefore,
-      })
+      }),
     );
   }
 
@@ -1209,11 +1323,11 @@ export function planMediaAttachmentCleanupJobs(
 }
 
 export function planMediaAttachmentOpen(
-  input: PlanMediaAttachmentOpenInput
+  input: PlanMediaAttachmentOpenInput,
 ): MediaAttachmentOpenDecision {
   const attachment = createMediaAttachmentPointer(input.attachment);
-  assertString(input.senderUserId, 'senderUserId');
-  assertInteger(input.timestamp, 'timestamp');
+  assertString(input.senderUserId, "senderUserId");
+  assertInteger(input.timestamp, "timestamp");
 
   if (!attachment.isViewOnce) {
     return {
@@ -1227,7 +1341,10 @@ export function planMediaAttachmentOpen(
   return {
     attachment,
     isViewOnce: true,
-    cleanup: planMediaAttachmentCleanup(attachment, MediaAttachmentCleanupReason.ViewOnceOpened),
+    cleanup: planMediaAttachmentCleanup(
+      attachment,
+      MediaAttachmentCleanupReason.ViewOnceOpened,
+    ),
     viewOnceOpenSync: {
       senderUserId: input.senderUserId,
       timestamp: input.timestamp,
@@ -1236,11 +1353,11 @@ export function planMediaAttachmentOpen(
 }
 
 export function planMediaAttachmentProcessing(
-  input: PlanMediaAttachmentProcessingInput
+  input: PlanMediaAttachmentProcessingInput,
 ): MediaAttachmentProcessingPlan {
   const attachment = createMediaAttachmentPointer(input.attachment);
-  assertString(input.senderUserId, 'senderUserId');
-  assertInteger(input.timestamp, 'timestamp');
+  assertString(input.senderUserId, "senderUserId");
+  assertInteger(input.timestamp, "timestamp");
 
   const attachmentId = createMediaAttachmentId(attachment);
   const deliveryId = createMediaAttachmentDeliveryId({
@@ -1248,15 +1365,22 @@ export function planMediaAttachmentProcessing(
     senderUserId: input.senderUserId,
     timestamp: input.timestamp,
   });
-  const isDuplicateDelivery = knownIdsIncludes(input.processedDeliveryIds, deliveryId);
-  const hasLocalCopy = knownIdsIncludes(input.cachedAttachmentIds, attachmentId);
+  const isDuplicateDelivery = knownIdsIncludes(
+    input.processedDeliveryIds,
+    deliveryId,
+  );
+  const hasLocalCopy = knownIdsIncludes(
+    input.cachedAttachmentIds,
+    attachmentId,
+  );
   const isViewOnceOpened =
-    attachment.isViewOnce === true && knownIdsIncludes(input.openedViewOnceDeliveryIds, deliveryId);
+    attachment.isViewOnce === true &&
+    knownIdsIncludes(input.openedViewOnceDeliveryIds, deliveryId);
   const shouldDownload = !hasLocalCopy && !isViewOnceOpened;
   const downloadReason = shouldDownload
     ? isDuplicateDelivery
-      ? 'duplicate-missing-local-copy'
-      : 'new-delivery'
+      ? "duplicate-missing-local-copy"
+      : "new-delivery"
     : null;
 
   return {
@@ -1282,18 +1406,22 @@ export function planMediaAttachmentProcessing(
             reason: downloadReason,
             attempt: input.jobAttempt,
             createdAt: input.jobCreatedAt ?? input.timestamp,
-            notBefore: input.jobNotBefore ?? input.jobCreatedAt ?? input.timestamp,
+            notBefore:
+              input.jobNotBefore ?? input.jobCreatedAt ?? input.timestamp,
             resume: input.resume,
           })
         : null,
     cleanup: isViewOnceOpened
-      ? planMediaAttachmentCleanup(attachment, MediaAttachmentCleanupReason.ViewOnceOpened)
+      ? planMediaAttachmentCleanup(
+          attachment,
+          MediaAttachmentCleanupReason.ViewOnceOpened,
+        )
       : null,
   };
 }
 
 export function planMediaAttachmentDownloadJob(
-  input: PlanMediaAttachmentDownloadJobInput
+  input: PlanMediaAttachmentDownloadJobInput,
 ): MediaAttachmentBackgroundJob | null {
   return planMediaAttachmentProcessing({
     ...input,
@@ -1307,9 +1435,9 @@ export function planMediaAttachmentDownloadJob(
 }
 
 export function planMediaAttachmentDeleteSync(
-  input: PlanMediaAttachmentDeleteSyncInput
+  input: PlanMediaAttachmentDeleteSyncInput,
 ): MediaAttachmentDeleteSyncInput {
-  assertInteger(input.deletedAt, 'deletedAt');
+  assertInteger(input.deletedAt, "deletedAt");
   assertMediaAttachmentCleanupReason(input.reason);
   const attachment = createMediaAttachmentPointer(input.attachment);
   return {
@@ -1323,18 +1451,18 @@ export function planMediaAttachmentDeleteSync(
 function requireMediaAttachmentJobHandler<T>(
   handler: T | undefined,
   name: string,
-  operation: MediaAttachmentJobOperation
+  operation: MediaAttachmentJobOperation,
 ): T {
   if (handler !== undefined) return handler;
   throw new MediaAttachmentError(
     `Cannot execute media attachment ${operation} job: ${name} handler is required`,
-    MediaAttachmentErrorCode.JobHandlerMissing
+    MediaAttachmentErrorCode.JobHandlerMissing,
   );
 }
 
 function completedMediaAttachmentJob(
   job: MediaAttachmentBackgroundJob,
-  result: Omit<MediaAttachmentJobExecutionResult, 'job' | 'status'> = {}
+  result: Omit<MediaAttachmentJobExecutionResult, "job" | "status"> = {},
 ): MediaAttachmentJobExecutionResult {
   return {
     job,
@@ -1345,7 +1473,7 @@ function completedMediaAttachmentJob(
 
 function skippedMediaAttachmentJob(
   job: MediaAttachmentBackgroundJob,
-  skipReason: MediaAttachmentJobSkipReason
+  skipReason: MediaAttachmentJobSkipReason,
 ): MediaAttachmentJobExecutionResult {
   return {
     job,
@@ -1356,12 +1484,12 @@ function skippedMediaAttachmentJob(
 
 async function loadRequiredAttachmentPointer(
   job: MediaAttachmentBackgroundJob,
-  options: ExecuteMediaAttachmentJobOptions
+  options: ExecuteMediaAttachmentJobOptions,
 ): Promise<MediaAttachmentPointer | null> {
   const loadAttachmentPointer = requireMediaAttachmentJobHandler(
     options.loadAttachmentPointer,
-    'loadAttachmentPointer',
-    job.operation
+    "loadAttachmentPointer",
+    job.operation,
   );
   const attachment = await loadAttachmentPointer(job);
   return attachment ? createMediaAttachmentPointer(attachment) : null;
@@ -1369,20 +1497,28 @@ async function loadRequiredAttachmentPointer(
 
 export async function executeMediaAttachmentJob(
   job: MediaAttachmentBackgroundJob,
-  options: ExecuteMediaAttachmentJobOptions
+  options: ExecuteMediaAttachmentJobOptions,
 ): Promise<MediaAttachmentJobExecutionResult> {
   switch (job.operation) {
     case MediaAttachmentJobOperation.Upload: {
+      const completed = await options.loadUploadedAttachment?.(job);
+      if (completed) {
+        const attachment = createMediaAttachmentPointer(completed);
+        await options.saveUploadedAttachment?.(job, attachment);
+        return completedMediaAttachmentJob(job, {
+          uploadedAttachment: attachment,
+        });
+      }
       const loadUploadData = requireMediaAttachmentJobHandler(
         options.loadUploadData,
-        'loadUploadData',
-        job.operation
+        "loadUploadData",
+        job.operation,
       );
       const uploadData = await loadUploadData(job);
       if (!uploadData) {
-        return skippedMediaAttachmentJob(job, 'missing-upload-data');
+        return skippedMediaAttachmentJob(job, "missing-upload-data");
       }
-      const attachment = await prepareMediaAttachmentUpload(uploadData.data, {
+      const uploadOptions = {
         ...uploadData.options,
         remoteObjectStore: options.remoteObjectStore,
         transfer: uploadData.options?.transfer ?? options.transfer,
@@ -1392,7 +1528,13 @@ export async function executeMediaAttachmentJob(
         onProgress: uploadData.options?.onProgress ?? options.onProgress,
         onCheckpoint: uploadData.options?.onCheckpoint ?? options.onCheckpoint,
         resume: uploadData.options?.resume ?? job.resume,
-      });
+      };
+      const attachment = uploadData.prepared
+        ? await uploadPreparedMediaAttachment(
+            uploadData.prepared,
+            uploadOptions,
+          )
+        : await prepareMediaAttachmentUpload(uploadData.data, uploadOptions);
       await options.saveUploadedAttachment?.(job, attachment);
       return completedMediaAttachmentJob(job, {
         uploadedAttachment: attachment,
@@ -1402,7 +1544,7 @@ export async function executeMediaAttachmentJob(
     case MediaAttachmentJobOperation.Download: {
       const attachment = await loadRequiredAttachmentPointer(job, options);
       if (!attachment) {
-        return skippedMediaAttachmentJob(job, 'missing-attachment-pointer');
+        return skippedMediaAttachmentJob(job, "missing-attachment-pointer");
       }
       const downloadedAttachment = await resolveMediaAttachment(attachment, {
         remoteObjectStore: options.remoteObjectStore,
@@ -1421,8 +1563,8 @@ export async function executeMediaAttachmentJob(
     case MediaAttachmentJobOperation.DeleteLocal: {
       const deleteLocalAttachment = requireMediaAttachmentJobHandler(
         options.deleteLocalAttachment,
-        'deleteLocalAttachment',
-        job.operation
+        "deleteLocalAttachment",
+        job.operation,
       );
       await deleteLocalAttachment(job);
       return completedMediaAttachmentJob(job, { deletedLocalCache: true });
@@ -1431,7 +1573,7 @@ export async function executeMediaAttachmentJob(
     case MediaAttachmentJobOperation.DeleteRemote: {
       const attachment = await loadRequiredAttachmentPointer(job, options);
       if (!attachment) {
-        return skippedMediaAttachmentJob(job, 'missing-attachment-pointer');
+        return skippedMediaAttachmentJob(job, "missing-attachment-pointer");
       }
       const result = await deleteMediaAttachment(attachment, {
         remoteObjectStore: options.remoteObjectStore,
@@ -1445,11 +1587,11 @@ export async function executeMediaAttachmentJob(
 
     case MediaAttachmentJobOperation.SyncDelete: {
       if (!options.syncDelete) {
-        return skippedMediaAttachmentJob(job, 'sync-delete-not-configured');
+        return skippedMediaAttachmentJob(job, "sync-delete-not-configured");
       }
       const attachment = await loadRequiredAttachmentPointer(job, options);
       if (!attachment) {
-        return skippedMediaAttachmentJob(job, 'missing-attachment-pointer');
+        return skippedMediaAttachmentJob(job, "missing-attachment-pointer");
       }
       const deleteSync = planMediaAttachmentDeleteSync({
         attachment,
@@ -1468,7 +1610,7 @@ export function createMediaAttachmentMessage(input: {
   attachment: CreateMediaAttachmentPointerInput;
   timestamp: number;
 }): MediaAttachmentMessage {
-  assertInteger(input.timestamp, 'timestamp');
+  assertInteger(input.timestamp, "timestamp");
   return {
     type: MediaAttachmentMessageType.Attachment,
     version: 1,
@@ -1485,28 +1627,28 @@ export function serializeMediaAttachmentMessage(input: {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function assertNotAborted(signal: AbortSignal | undefined): void {
   if (!signal?.aborted) return;
   throw new MediaAttachmentError(
-    'Media attachment operation cancelled',
+    "Media attachment operation cancelled",
     MediaAttachmentErrorCode.Cancelled,
-    { cause: signal.reason }
+    { cause: signal.reason },
   );
 }
 
 function emitProgress(
   onProgress: MediaAttachmentProgressCallback | undefined,
-  progress: MediaAttachmentProgress
+  progress: MediaAttachmentProgress,
 ): void {
   onProgress?.(progress);
 }
 
 function emitCheckpoint(
   onCheckpoint: MediaAttachmentCheckpointCallback | undefined,
-  checkpoint: Omit<MediaAttachmentTransferCheckpoint, 'updatedAt'>
+  checkpoint: Omit<MediaAttachmentTransferCheckpoint, "updatedAt">,
 ): void {
   onCheckpoint?.({
     ...checkpoint,
@@ -1516,9 +1658,9 @@ function emitCheckpoint(
 
 function createResumeStateFromCheckpoint(
   checkpoint: MediaAttachmentTransferCheckpoint,
-  previous: MediaAttachmentResumeState | undefined
+  previous: MediaAttachmentResumeState | undefined,
 ): MediaAttachmentResumeState | undefined {
-  if (checkpoint.phase !== 'transfer') {
+  if (checkpoint.phase !== "transfer") {
     return previous;
   }
 
@@ -1536,19 +1678,24 @@ function createResumeStateFromCheckpoint(
     ...(offsetBytes !== undefined ? { offsetBytes } : {}),
     ...(resumeToken !== undefined ? { resumeToken } : {}),
     updatedAt: checkpoint.updatedAt,
-    ...(previous?.expiresAt !== undefined ? { expiresAt: previous.expiresAt } : {}),
+    ...(previous?.expiresAt !== undefined
+      ? { expiresAt: previous.expiresAt }
+      : {}),
   };
 }
 
 function trackResumeCheckpoints(
-  operation: MediaAttachmentResumeState['operation'],
+  operation: MediaAttachmentResumeState["operation"],
   onCheckpoint: MediaAttachmentCheckpointCallback | undefined,
   setResume: (resume: MediaAttachmentResumeState | undefined) => void,
-  getResume: () => MediaAttachmentResumeState | undefined
+  getResume: () => MediaAttachmentResumeState | undefined,
 ): MediaAttachmentCheckpointCallback {
   return (checkpoint) => {
     if (checkpoint.operation === operation) {
-      const nextResume = createResumeStateFromCheckpoint(checkpoint, getResume());
+      const nextResume = createResumeStateFromCheckpoint(
+        checkpoint,
+        getResume(),
+      );
       if (nextResume !== getResume()) {
         setResume(nextResume);
       }
@@ -1558,7 +1705,9 @@ function trackResumeCheckpoints(
   };
 }
 
-export function parseMediaAttachmentMessage(plaintext: string): MediaAttachmentMessage | null {
+export function parseMediaAttachmentMessage(
+  plaintext: string,
+): MediaAttachmentMessage | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(plaintext);
@@ -1569,13 +1718,14 @@ export function parseMediaAttachmentMessage(plaintext: string): MediaAttachmentM
   if (!isRecord(parsed)) return null;
   if (parsed.type !== MediaAttachmentMessageType.Attachment) return null;
   if (parsed.version !== 1) return null;
-  if (typeof parsed.timestamp !== 'number') return null;
+  if (typeof parsed.timestamp !== "number") return null;
   if (!isRecord(parsed.attachment)) return null;
 
   try {
     return createMediaAttachmentMessage({
       timestamp: parsed.timestamp,
-      attachment: parsed.attachment as unknown as CreateMediaAttachmentPointerInput,
+      attachment:
+        parsed.attachment as unknown as CreateMediaAttachmentPointerInput,
     });
   } catch {
     return null;
@@ -1585,19 +1735,19 @@ export function parseMediaAttachmentMessage(plaintext: string): MediaAttachmentM
 async function defaultUpload(
   url: string,
   data: Uint8Array,
-  options: MediaAttachmentTransferOptions = {}
+  options: MediaAttachmentTransferOptions = {},
 ): Promise<MediaAttachmentUploadResponse> {
   assertNotAborted(options.signal);
-  if (typeof globalThis.fetch !== 'function') {
+  if (typeof globalThis.fetch !== "function") {
     throw new MediaAttachmentError(
-      'Cannot upload media attachment: fetch is not available',
-      MediaAttachmentErrorCode.UploadFailed
+      "Cannot upload media attachment: fetch is not available",
+      MediaAttachmentErrorCode.UploadFailed,
     );
   }
 
   emitProgress(options.onProgress, {
-    operation: 'upload',
-    phase: 'transfer',
+    operation: "upload",
+    phase: "transfer",
     attempt: options.attempt,
     requestId: options.requestId,
     storageId: options.storageId,
@@ -1605,8 +1755,8 @@ async function defaultUpload(
     totalBytes: options.totalBytes ?? data.length,
   });
   emitCheckpoint(options.onCheckpoint, {
-    operation: 'upload',
-    phase: 'transfer',
+    operation: "upload",
+    phase: "transfer",
     attempt: options.attempt,
     requestId: options.requestId,
     storageId: options.storageId,
@@ -1616,13 +1766,18 @@ async function defaultUpload(
     resumeToken: options.resume?.resumeToken,
   });
 
-  const body = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+  const body = data.buffer.slice(
+    data.byteOffset,
+    data.byteOffset + data.byteLength,
+  ) as ArrayBuffer;
   const headers = { ...options.headers };
-  if (!Object.keys(headers).some((name) => name.toLowerCase() === 'content-type')) {
-    headers['Content-Type'] = 'application/octet-stream';
+  if (
+    !Object.keys(headers).some((name) => name.toLowerCase() === "content-type")
+  ) {
+    headers["Content-Type"] = "application/octet-stream";
   }
   const response = await globalThis.fetch(url, {
-    method: 'PUT',
+    method: "PUT",
     body,
     signal: options.signal,
     headers,
@@ -1638,8 +1793,8 @@ async function defaultUpload(
   }
 
   emitProgress(options.onProgress, {
-    operation: 'upload',
-    phase: 'transfer',
+    operation: "upload",
+    phase: "transfer",
     attempt: options.attempt,
     requestId: options.requestId,
     storageId: options.storageId,
@@ -1647,8 +1802,8 @@ async function defaultUpload(
     totalBytes: options.totalBytes ?? data.length,
   });
   emitCheckpoint(options.onCheckpoint, {
-    operation: 'upload',
-    phase: 'complete',
+    operation: "upload",
+    phase: "complete",
     attempt: options.attempt,
     requestId: options.requestId,
     storageId: options.storageId,
@@ -1667,97 +1822,126 @@ async function defaultUpload(
 
 function getFetchImplementation(
   fetchOverride: typeof fetch | undefined,
-  operation: 'upload' | 'download' = 'upload'
+  operation: "upload" | "download" = "upload",
 ): typeof fetch {
   const fetchImpl = fetchOverride ?? globalThis.fetch;
-  if (typeof fetchImpl !== 'function') {
+  if (typeof fetchImpl !== "function") {
     throw new MediaAttachmentError(
       `Cannot ${operation} media attachment: fetch is not available`,
-      operation === 'upload'
+      operation === "upload"
         ? MediaAttachmentErrorCode.UploadFailed
-        : MediaAttachmentErrorCode.DownloadFailed
+        : MediaAttachmentErrorCode.DownloadFailed,
     );
   }
   return fetchImpl;
 }
 
 function getHeader(response: Response, header: string): string | null {
-  return response.headers?.get?.(header) ?? response.headers?.get?.(header.toLowerCase()) ?? null;
+  return (
+    response.headers?.get?.(header) ??
+    response.headers?.get?.(header.toLowerCase()) ??
+    null
+  );
 }
 
 function parseTusOffset(value: string | null, context: string): number {
   if (value === null) {
-    throwInvalidResumeState(`TUS media upload ${context} did not return Upload-Offset`);
+    throwInvalidResumeState(
+      `TUS media upload ${context} did not return Upload-Offset`,
+    );
   }
 
   const normalized = value.trim();
   if (!/^\d+$/.test(normalized)) {
-    throwInvalidResumeState(`TUS media upload ${context} returned malformed Upload-Offset`);
+    throwInvalidResumeState(
+      `TUS media upload ${context} returned malformed Upload-Offset`,
+    );
   }
 
   const offset = Number(normalized);
   if (!Number.isSafeInteger(offset)) {
-    throwInvalidResumeState(`TUS media upload ${context} returned unsafe Upload-Offset`);
+    throwInvalidResumeState(
+      `TUS media upload ${context} returned unsafe Upload-Offset`,
+    );
   }
 
   return offset;
 }
 
-function parseTusCreationOffset(value: string | null, totalBytes: number): number {
+function parseTusCreationOffset(
+  value: string | null,
+  totalBytes: number,
+): number {
   if (value === null) return 0;
-  return assertTusOffsetWithinUpload(parseTusOffset(value, 'creation response'), totalBytes);
+  return assertTusOffsetWithinUpload(
+    parseTusOffset(value, "creation response"),
+    totalBytes,
+  );
 }
 
-function assertTusOffsetWithinUpload(offset: number, totalBytes: number): number {
+function assertTusOffsetWithinUpload(
+  offset: number,
+  totalBytes: number,
+): number {
   if (offset > totalBytes) {
     throwInvalidResumeState(
-      `TUS media upload returned Upload-Offset ${offset} beyond ${totalBytes} byte upload`
+      `TUS media upload returned Upload-Offset ${offset} beyond ${totalBytes} byte upload`,
     );
   }
   return offset;
 }
 
-function assertTusPatchAdvancedToExpectedOffset(offset: number, expectedOffset: number): number {
+function assertTusPatchAdvancedToExpectedOffset(
+  offset: number,
+  expectedOffset: number,
+): number {
   if (offset !== expectedOffset) {
     throwInvalidResumeState(
-      `TUS media upload resume offset is invalid: expected ${expectedOffset}, received ${offset}`
+      `TUS media upload resume offset is invalid: expected ${expectedOffset}, received ${offset}`,
     );
   }
   return offset;
 }
 
-function assertTusUploadResumeState(resume: MediaAttachmentResumeState | undefined): void {
+function assertTusUploadResumeState(
+  resume: MediaAttachmentResumeState | undefined,
+): void {
   if (!resume) return;
-  if (resume.operation !== 'upload') {
-    throwInvalidResumeState('TUS media upload received non-upload resume state');
+  if (resume.operation !== "upload") {
+    throwInvalidResumeState(
+      "TUS media upload received non-upload resume state",
+    );
   }
   if (
     resume.offsetBytes !== undefined &&
     (!Number.isSafeInteger(resume.offsetBytes) || resume.offsetBytes < 0)
   ) {
-    throwInvalidResumeState('TUS media upload resume offset is invalid');
+    throwInvalidResumeState("TUS media upload resume offset is invalid");
   }
 }
 
 function resolveTusChunkSizeBytes(
   chunkSizeBytes: number | undefined,
-  payloadBytes: number
+  payloadBytes: number,
 ): number {
   const resolved = chunkSizeBytes ?? payloadBytes;
   if (!Number.isSafeInteger(resolved) || resolved <= 0) {
     throw new MediaAttachmentError(
-      'TUS media upload chunk size must be a positive safe integer',
-      MediaAttachmentErrorCode.UploadFailed
+      "TUS media upload chunk size must be a positive safe integer",
+      MediaAttachmentErrorCode.UploadFailed,
     );
   }
   return resolved;
 }
 
-function resolveTusLocation(location: string | null, creationUrl: string): string {
+function resolveTusLocation(
+  location: string | null,
+  creationUrl: string,
+): string {
   if (!location) {
     throw new MediaAttachmentError(
-      'TUS media upload did not return a resume location',
-      MediaAttachmentErrorCode.UploadFailed
+      "TUS media upload did not return a resume location",
+      MediaAttachmentErrorCode.UploadFailed,
     );
   }
   return new URL(location, creationUrl).toString();
@@ -1773,23 +1957,34 @@ function isInvalidTusResumeResponse(response: Response): boolean {
 }
 
 function throwInvalidResumeState(message: string, status?: number): never {
-  throw new MediaAttachmentError(message, MediaAttachmentErrorCode.ResumeStateInvalid, { status });
+  throw new MediaAttachmentError(
+    message,
+    MediaAttachmentErrorCode.ResumeStateInvalid,
+    { status },
+  );
 }
 
-function sliceBytes(data: Uint8Array, start: number, end?: number): ArrayBuffer {
+function sliceBytes(
+  data: Uint8Array,
+  start: number,
+  end?: number,
+): ArrayBuffer {
   const view = data.subarray(start, end);
-  return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength) as ArrayBuffer;
+  return view.buffer.slice(
+    view.byteOffset,
+    view.byteOffset + view.byteLength,
+  ) as ArrayBuffer;
 }
 
 function emitUploadTransferProgress(
   options: MediaAttachmentTransferOptions,
   bytesTransferred: number,
   totalBytes: number,
-  resumeToken?: string
+  resumeToken?: string,
 ): void {
   emitProgress(options.onProgress, {
-    operation: 'upload',
-    phase: 'transfer',
+    operation: "upload",
+    phase: "transfer",
     attempt: options.attempt,
     requestId: options.requestId,
     storageId: options.storageId,
@@ -1797,8 +1992,8 @@ function emitUploadTransferProgress(
     totalBytes,
   });
   emitCheckpoint(options.onCheckpoint, {
-    operation: 'upload',
-    phase: bytesTransferred >= totalBytes ? 'complete' : 'transfer',
+    operation: "upload",
+    phase: bytesTransferred >= totalBytes ? "complete" : "transfer",
     attempt: options.attempt,
     requestId: options.requestId,
     storageId: options.storageId,
@@ -1810,42 +2005,48 @@ function emitUploadTransferProgress(
 }
 
 export function createTusMediaAttachmentTransfer(
-  tusOptions: TusMediaAttachmentTransferOptions = {}
+  tusOptions: TusMediaAttachmentTransferOptions = {},
 ): MediaAttachmentTransfer {
   return {
     async upload(
       creationUrl: string,
       data: Uint8Array,
-      options: MediaAttachmentTransferOptions = {}
+      options: MediaAttachmentTransferOptions = {},
     ): Promise<MediaAttachmentUploadResponse> {
       assertNotAborted(options.signal);
       const fetchImpl = getFetchImplementation(tusOptions.fetch);
-      const tusVersion = tusOptions.tusVersion ?? '1.0.0';
+      const tusVersion = tusOptions.tusVersion ?? "1.0.0";
       const totalBytes = options.totalBytes ?? data.length;
       if (totalBytes !== data.length) {
         throw new MediaAttachmentError(
           `TUS media upload length mismatch: totalBytes ${totalBytes} does not match payload length ${data.length}`,
-          MediaAttachmentErrorCode.UploadFailed
+          MediaAttachmentErrorCode.UploadFailed,
         );
       }
       assertTusUploadResumeState(options.resume);
-      const chunkSizeBytes = resolveTusChunkSizeBytes(tusOptions.chunkSizeBytes, data.length);
+      const chunkSizeBytes = resolveTusChunkSizeBytes(
+        tusOptions.chunkSizeBytes,
+        data.length,
+      );
       let resumeUrl = options.resume?.resumeToken;
       let offset = options.resume?.offsetBytes ?? 0;
 
       if (resumeUrl) {
         const head = await fetchImpl(resumeUrl, {
-          method: 'HEAD',
+          method: "HEAD",
           signal: options.signal,
           headers: {
             ...options.headers,
-            'Tus-Resumable': tusVersion,
+            "Tus-Resumable": tusVersion,
           },
         });
         assertNotAborted(options.signal);
         if (!head.ok) {
           if (isInvalidTusResumeResponse(head)) {
-            throwInvalidResumeState('TUS media upload resume location is invalid', head.status);
+            throwInvalidResumeState(
+              "TUS media upload resume location is invalid",
+              head.status,
+            );
           }
           return {
             ok: false,
@@ -1854,17 +2055,17 @@ export function createTusMediaAttachmentTransfer(
           };
         }
         offset = assertTusOffsetWithinUpload(
-          parseTusOffset(getHeader(head, 'Upload-Offset'), 'resume response'),
-          totalBytes
+          parseTusOffset(getHeader(head, "Upload-Offset"), "resume response"),
+          totalBytes,
         );
       } else {
         const create = await fetchImpl(creationUrl, {
-          method: 'POST',
+          method: "POST",
           signal: options.signal,
           headers: {
             ...options.headers,
-            'Tus-Resumable': tusVersion,
-            'Upload-Length': String(totalBytes),
+            "Tus-Resumable": tusVersion,
+            "Upload-Length": String(totalBytes),
           },
         });
         assertNotAborted(options.signal);
@@ -1875,8 +2076,14 @@ export function createTusMediaAttachmentTransfer(
             statusText: create.statusText,
           };
         }
-        resumeUrl = resolveTusLocation(getHeader(create, 'Location'), creationUrl);
-        offset = parseTusCreationOffset(getHeader(create, 'Upload-Offset'), totalBytes);
+        resumeUrl = resolveTusLocation(
+          getHeader(create, "Location"),
+          creationUrl,
+        );
+        offset = parseTusCreationOffset(
+          getHeader(create, "Upload-Offset"),
+          totalBytes,
+        );
       }
 
       emitUploadTransferProgress(options, offset, totalBytes, resumeUrl);
@@ -1885,20 +2092,23 @@ export function createTusMediaAttachmentTransfer(
         assertNotAborted(options.signal);
         const nextOffset = Math.min(offset + chunkSizeBytes, data.length);
         const patch = await fetchImpl(resumeUrl, {
-          method: 'PATCH',
+          method: "PATCH",
           body: sliceBytes(data, offset, nextOffset),
           signal: options.signal,
           headers: {
             ...options.headers,
-            'Tus-Resumable': tusVersion,
-            'Upload-Offset': String(offset),
-            'Content-Type': 'application/offset+octet-stream',
+            "Tus-Resumable": tusVersion,
+            "Upload-Offset": String(offset),
+            "Content-Type": "application/offset+octet-stream",
           },
         });
         assertNotAborted(options.signal);
         if (!patch.ok) {
           if (isInvalidTusResumeResponse(patch)) {
-            throwInvalidResumeState('TUS media upload resume offset is invalid', patch.status);
+            throwInvalidResumeState(
+              "TUS media upload resume offset is invalid",
+              patch.status,
+            );
           }
           return {
             ok: false,
@@ -1908,15 +2118,15 @@ export function createTusMediaAttachmentTransfer(
         }
         offset = assertTusPatchAdvancedToExpectedOffset(
           assertTusOffsetWithinUpload(
-            parseTusOffset(getHeader(patch, 'Upload-Offset'), 'PATCH response'),
-            totalBytes
+            parseTusOffset(getHeader(patch, "Upload-Offset"), "PATCH response"),
+            totalBytes,
           ),
-          nextOffset
+          nextOffset,
         );
         emitUploadTransferProgress(options, offset, totalBytes, resumeUrl);
       }
 
-      return { ok: true, status: 204, statusText: 'No Content' };
+      return { ok: true, status: 204, statusText: "No Content" };
     },
   };
 }
@@ -1928,14 +2138,14 @@ interface ParsedContentRange {
 }
 
 function parseContentLength(response: Response): number | undefined {
-  const contentLength = getHeader(response, 'content-length');
+  const contentLength = getHeader(response, "content-length");
   if (!contentLength || !/^\d+$/.test(contentLength)) return undefined;
   return Number(contentLength);
 }
 
 function assertCiphertextSizeWithinExpected(
   expectedBytes: number | undefined,
-  receivedBytes: number
+  receivedBytes: number,
 ): void {
   if (expectedBytes === undefined || receivedBytes <= expectedBytes) {
     return;
@@ -1943,13 +2153,13 @@ function assertCiphertextSizeWithinExpected(
 
   throw new MediaAttachmentError(
     `Media attachment ciphertext size mismatch: expected ${expectedBytes} bytes, received ${receivedBytes}`,
-    MediaAttachmentErrorCode.CiphertextSizeMismatch
+    MediaAttachmentErrorCode.CiphertextSizeMismatch,
   );
 }
 
 function assertCiphertextSizeEqualsExpected(
   expectedBytes: number | undefined,
-  receivedBytes: number | undefined
+  receivedBytes: number | undefined,
 ): void {
   if (
     expectedBytes === undefined ||
@@ -1961,7 +2171,7 @@ function assertCiphertextSizeEqualsExpected(
 
   throw new MediaAttachmentError(
     `Media attachment ciphertext size mismatch: expected ${expectedBytes} bytes, received ${receivedBytes}`,
-    MediaAttachmentErrorCode.CiphertextSizeMismatch
+    MediaAttachmentErrorCode.CiphertextSizeMismatch,
   );
 }
 
@@ -1972,11 +2182,19 @@ function parseContentRange(value: string | null): ParsedContentRange | null {
 
   const start = Number(match[1]);
   const end = Number(match[2]);
-  const totalBytes = match[3] === '*' ? undefined : Number(match[3]);
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) {
+  const totalBytes = match[3] === "*" ? undefined : Number(match[3]);
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    start < 0 ||
+    end < start
+  ) {
     return null;
   }
-  if (totalBytes !== undefined && (!Number.isSafeInteger(totalBytes) || totalBytes <= end)) {
+  if (
+    totalBytes !== undefined &&
+    (!Number.isSafeInteger(totalBytes) || totalBytes <= end)
+  ) {
     return null;
   }
   return { start, end, totalBytes };
@@ -1988,12 +2206,15 @@ function contentRangeLength(range: ParsedContentRange): number {
 
 function assertContentRangeTotalMatchesExpected(
   range: ParsedContentRange,
-  expectedBytes: number | undefined
+  expectedBytes: number | undefined,
 ): void {
   assertCiphertextSizeEqualsExpected(expectedBytes, range.totalBytes);
 }
 
-function assertContentRangeBodyLength(range: ParsedContentRange, bytes: Uint8Array): void {
+function assertContentRangeBodyLength(
+  range: ParsedContentRange,
+  bytes: Uint8Array,
+): void {
   const expectedLength = contentRangeLength(range);
   if (bytes.length === expectedLength) {
     return;
@@ -2002,11 +2223,14 @@ function assertContentRangeBodyLength(range: ParsedContentRange, bytes: Uint8Arr
   throw new MediaAttachmentError(
     `Media attachment range body length mismatch: expected ${expectedLength} bytes, received ${bytes.length}`,
     MediaAttachmentErrorCode.DownloadFailed,
-    { status: 206 }
+    { status: 206 },
   );
 }
 
-async function readResponseBodyBytes(response: Response, signal: AbortSignal | undefined) {
+async function readResponseBodyBytes(
+  response: Response,
+  signal: AbortSignal | undefined,
+) {
   if (response.body?.getReader) {
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
@@ -2027,23 +2251,24 @@ async function readResponseBodyBytes(response: Response, signal: AbortSignal | u
 function resolveByteRangeResumeToken(
   url: string,
   options: MediaAttachmentTransferOptions,
-  rangeOptions: ByteRangeMediaAttachmentTransferOptions
+  rangeOptions: ByteRangeMediaAttachmentTransferOptions,
 ): string {
   if (options.resume?.resumeToken) return options.resume.resumeToken;
-  if (typeof rangeOptions.resumeToken === 'function') {
+  if (typeof rangeOptions.resumeToken === "function") {
     return rangeOptions.resumeToken(url, options);
   }
-  if (typeof rangeOptions.resumeToken === 'string') return rangeOptions.resumeToken;
+  if (typeof rangeOptions.resumeToken === "string")
+    return rangeOptions.resumeToken;
   return options.attachmentId ?? options.storageId ?? url;
 }
 
 function createDownloadResumeState(
   options: MediaAttachmentTransferOptions,
   offsetBytes: number,
-  resumeToken: string
+  resumeToken: string,
 ): MediaAttachmentResumeState {
   return {
-    operation: 'download',
+    operation: "download",
     offsetBytes,
     resumeToken,
     updatedAt: Date.now(),
@@ -2056,19 +2281,19 @@ function emitDownloadTransferProgress(
   bytesTransferred: number,
   totalBytes: number | undefined,
   resumeToken: string | undefined,
-  complete = false
+  complete = false,
 ): void {
   emitProgress(options.onProgress, {
-    operation: 'download',
-    phase: 'transfer',
+    operation: "download",
+    phase: "transfer",
     attempt: options.attempt,
     storageId: options.storageId,
     bytesTransferred,
     totalBytes,
   });
   emitCheckpoint(options.onCheckpoint, {
-    operation: 'download',
-    phase: complete ? 'complete' : 'transfer',
+    operation: "download",
+    phase: complete ? "complete" : "transfer",
     attempt: options.attempt,
     storageId: options.storageId,
     attachmentId: options.attachmentId,
@@ -2081,39 +2306,48 @@ function emitDownloadTransferProgress(
 function handleDownloadHttpFailure(response: Response): never {
   if (response.status === 404) {
     throw new MediaAttachmentError(
-      'Media attachment blob not found',
+      "Media attachment blob not found",
       MediaAttachmentErrorCode.BlobNotFound,
-      { status: response.status }
+      { status: response.status },
     );
   }
   if (response.status === 416) {
-    throwInvalidResumeState('Byte-range media download resume offset is invalid', response.status);
+    throwInvalidResumeState(
+      "Byte-range media download resume offset is invalid",
+      response.status,
+    );
   }
   throw new MediaAttachmentError(
     `Media attachment download failed: ${response.status} ${response.statusText}`,
     MediaAttachmentErrorCode.DownloadFailed,
-    { status: response.status }
+    { status: response.status },
   );
 }
 
 async function loadByteRangePrefix(
   resume: MediaAttachmentResumeState | undefined,
-  partialStore: ByteRangeMediaAttachmentPartialStore | undefined
+  partialStore: ByteRangeMediaAttachmentPartialStore | undefined,
 ): Promise<Uint8Array> {
   if (!resume || (resume.offsetBytes ?? 0) === 0) {
     return new Uint8Array();
   }
-  if (resume.operation !== 'download') {
-    throwInvalidResumeState('Byte-range media download received non-download resume state');
+  if (resume.operation !== "download") {
+    throwInvalidResumeState(
+      "Byte-range media download received non-download resume state",
+    );
   }
   if (!partialStore) {
-    throwInvalidResumeState('Byte-range media download resume requires a partial-byte store');
+    throwInvalidResumeState(
+      "Byte-range media download resume requires a partial-byte store",
+    );
   }
 
   const prefix = await partialStore.load(resume);
   if (!prefix || prefix.length !== resume.offsetBytes) {
     await clearByteRangePrefixes(partialStore, [resume]);
-    throwInvalidResumeState('Byte-range media download partial state is missing or truncated');
+    throwInvalidResumeState(
+      "Byte-range media download partial state is missing or truncated",
+    );
   }
   return prefix;
 }
@@ -2122,7 +2356,7 @@ async function persistByteRangePrefix(
   partialStore: ByteRangeMediaAttachmentPartialStore | undefined,
   options: MediaAttachmentTransferOptions,
   bytes: Uint8Array,
-  resumeToken: string
+  resumeToken: string,
 ): Promise<MediaAttachmentResumeState | undefined> {
   if (!partialStore) return undefined;
   const resume = createDownloadResumeState(options, bytes.length, resumeToken);
@@ -2131,14 +2365,14 @@ async function persistByteRangePrefix(
 }
 
 function dedupeByteRangeResumeStates(
-  resumes: ReadonlyArray<MediaAttachmentResumeState | undefined>
+  resumes: ReadonlyArray<MediaAttachmentResumeState | undefined>,
 ): MediaAttachmentResumeState[] {
   const seen = new Set<string>();
   const deduped: MediaAttachmentResumeState[] = [];
 
   for (const resume of resumes) {
     if (!resume) continue;
-    const key = `${resume.operation}:${resume.resumeToken ?? ''}:${resume.offsetBytes ?? ''}`;
+    const key = `${resume.operation}:${resume.resumeToken ?? ""}:${resume.offsetBytes ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
     deduped.push(resume);
@@ -2149,7 +2383,7 @@ function dedupeByteRangeResumeStates(
 
 async function clearByteRangePrefixes(
   partialStore: ByteRangeMediaAttachmentPartialStore | undefined,
-  resumes: ReadonlyArray<MediaAttachmentResumeState | undefined>
+  resumes: ReadonlyArray<MediaAttachmentResumeState | undefined>,
 ): Promise<void> {
   if (!partialStore?.clear) return;
 
@@ -2167,7 +2401,7 @@ async function clearCurrentByteRangePrefix(
   partialStore: ByteRangeMediaAttachmentPartialStore | undefined,
   options: MediaAttachmentTransferOptions,
   offsetBytes: number,
-  resumeToken: string
+  resumeToken: string,
 ): Promise<void> {
   if (offsetBytes === 0 && !options.resume?.resumeToken) {
     return;
@@ -2179,14 +2413,24 @@ async function clearCurrentByteRangePrefix(
 }
 
 export function createByteRangeMediaAttachmentTransfer(
-  rangeOptions: ByteRangeMediaAttachmentTransferOptions = {}
+  rangeOptions: ByteRangeMediaAttachmentTransferOptions = {},
 ): MediaAttachmentTransfer {
   return {
-    async download(url: string, options: MediaAttachmentTransferOptions = {}): Promise<Uint8Array> {
+    async download(
+      url: string,
+      options: MediaAttachmentTransferOptions = {},
+    ): Promise<Uint8Array> {
       assertNotAborted(options.signal);
-      const fetchImpl = getFetchImplementation(rangeOptions.fetch, 'download');
-      const resumeToken = resolveByteRangeResumeToken(url, options, rangeOptions);
-      let bytes = await loadByteRangePrefix(options.resume, rangeOptions.partialStore);
+      const fetchImpl = getFetchImplementation(rangeOptions.fetch, "download");
+      const resumeToken = resolveByteRangeResumeToken(
+        url,
+        options,
+        rangeOptions,
+      );
+      let bytes = await loadByteRangePrefix(
+        options.resume,
+        rangeOptions.partialStore,
+      );
       let offset = bytes.length;
       let totalBytes = options.totalBytes;
       const persistedPrefixes: MediaAttachmentResumeState[] = [];
@@ -2194,8 +2438,16 @@ export function createByteRangeMediaAttachmentTransfer(
       emitDownloadTransferProgress(options, offset, totalBytes, resumeToken);
 
       if (totalBytes !== undefined && offset >= totalBytes) {
-        emitDownloadTransferProgress(options, offset, totalBytes, resumeToken, true);
-        await clearByteRangePrefixes(rangeOptions.partialStore, [options.resume]);
+        emitDownloadTransferProgress(
+          options,
+          offset,
+          totalBytes,
+          resumeToken,
+          true,
+        );
+        await clearByteRangePrefixes(rangeOptions.partialStore, [
+          options.resume,
+        ]);
         return bytes;
       }
 
@@ -2209,15 +2461,18 @@ export function createByteRangeMediaAttachmentTransfer(
           totalBytes !== undefined
             ? Math.min(requestedRangeEnd ?? totalBytes - 1, totalBytes - 1)
             : requestedRangeEnd;
-        const shouldRequestRange = offset > 0 || rangeOptions.chunkSizeBytes !== undefined;
+        const shouldRequestRange =
+          offset > 0 || rangeOptions.chunkSizeBytes !== undefined;
         const response = await fetchImpl(url, {
-          method: 'GET',
+          method: "GET",
           signal: options.signal,
+          redirect: "manual",
+          credentials: "omit",
           headers: {
             ...options.headers,
             ...(shouldRequestRange
               ? {
-                  Range: `bytes=${offset}-${rangeEnd !== undefined ? rangeEnd : ''}`,
+                  Range: `bytes=${offset}-${rangeEnd !== undefined ? rangeEnd : ""}`,
                 }
               : {}),
           },
@@ -2230,7 +2485,7 @@ export function createByteRangeMediaAttachmentTransfer(
               rangeOptions.partialStore,
               options,
               offset,
-              resumeToken
+              resumeToken,
             );
           }
           handleDownloadHttpFailure(response);
@@ -2241,7 +2496,9 @@ export function createByteRangeMediaAttachmentTransfer(
         if (shouldRequestRange) {
           if (response.status === 206) {
             rangedResponse = true;
-            responseContentRange = parseContentRange(getHeader(response, 'content-range'));
+            responseContentRange = parseContentRange(
+              getHeader(response, "content-range"),
+            );
             if (
               !responseContentRange ||
               responseContentRange.start !== offset ||
@@ -2251,18 +2508,23 @@ export function createByteRangeMediaAttachmentTransfer(
                 rangeOptions.partialStore,
                 options,
                 offset,
-                resumeToken
+                resumeToken,
               );
-              throwInvalidResumeState('Byte-range media download returned an unexpected range');
+              throwInvalidResumeState(
+                "Byte-range media download returned an unexpected range",
+              );
             }
             try {
-              assertContentRangeTotalMatchesExpected(responseContentRange, totalBytes);
+              assertContentRangeTotalMatchesExpected(
+                responseContentRange,
+                totalBytes,
+              );
             } catch (error) {
               await clearCurrentByteRangePrefix(
                 rangeOptions.partialStore,
                 options,
                 offset,
-                resumeToken
+                resumeToken,
               );
               throw error;
             }
@@ -2272,9 +2534,11 @@ export function createByteRangeMediaAttachmentTransfer(
               rangeOptions.partialStore,
               options,
               offset,
-              resumeToken
+              resumeToken,
             );
-            throwInvalidResumeState('Byte-range media download server ignored resume offset');
+            throwInvalidResumeState(
+              "Byte-range media download server ignored resume offset",
+            );
           } else if (response.status !== 200) {
             handleDownloadHttpFailure(response);
           }
@@ -2290,27 +2554,31 @@ export function createByteRangeMediaAttachmentTransfer(
               rangeOptions.partialStore,
               options,
               offset,
-              resumeToken
+              resumeToken,
             );
             throw error;
           }
         }
         assertCiphertextSizeWithinExpected(totalBytes, offset + chunk.length);
-        if (chunk.length === 0 && (totalBytes === undefined || offset < totalBytes)) {
+        if (
+          chunk.length === 0 &&
+          (totalBytes === undefined || offset < totalBytes)
+        ) {
           throw new MediaAttachmentError(
-            'Media attachment download returned an empty partial response',
+            "Media attachment download returned an empty partial response",
             MediaAttachmentErrorCode.DownloadFailed,
-            { status: response.status }
+            { status: response.status },
           );
         }
 
-        bytes = offset === 0 && !rangedResponse ? chunk : concatBytes(bytes, chunk);
+        bytes =
+          offset === 0 && !rangedResponse ? chunk : concatBytes(bytes, chunk);
         offset = bytes.length;
         const persistedPrefix = await persistByteRangePrefix(
           rangeOptions.partialStore,
           options,
           bytes,
-          resumeToken
+          resumeToken,
         );
         if (persistedPrefix) {
           persistedPrefixes.push(persistedPrefix);
@@ -2320,7 +2588,7 @@ export function createByteRangeMediaAttachmentTransfer(
           offset,
           totalBytes,
           resumeToken,
-          totalBytes !== undefined && offset >= totalBytes
+          totalBytes !== undefined && offset >= totalBytes,
         );
 
         if (!rangedResponse || rangeOptions.chunkSizeBytes === undefined) {
@@ -2335,7 +2603,7 @@ export function createByteRangeMediaAttachmentTransfer(
         ]);
         throw new MediaAttachmentError(
           `Media attachment download size mismatch: expected ${totalBytes} bytes, received ${bytes.length}`,
-          MediaAttachmentErrorCode.DownloadFailed
+          MediaAttachmentErrorCode.DownloadFailed,
         );
       }
 
@@ -2350,26 +2618,29 @@ export function createByteRangeMediaAttachmentTransfer(
 
 async function readResponseBytes(
   response: Response,
-  options: MediaAttachmentTransferOptions
+  options: MediaAttachmentTransferOptions,
 ): Promise<Uint8Array> {
-  const totalBytesHeader = getHeader(response, 'content-length');
+  const totalBytesHeader = getHeader(response, "content-length");
   const headerBytes =
-    totalBytesHeader && /^\d+$/.test(totalBytesHeader) ? Number(totalBytesHeader) : undefined;
+    totalBytesHeader && /^\d+$/.test(totalBytesHeader)
+      ? Number(totalBytesHeader)
+      : undefined;
   assertCiphertextSizeEqualsExpected(options.totalBytes, headerBytes);
   const totalBytes =
-    options.totalBytes ?? (headerBytes !== undefined ? Number(headerBytes) : undefined);
+    options.totalBytes ??
+    (headerBytes !== undefined ? Number(headerBytes) : undefined);
 
   emitProgress(options.onProgress, {
-    operation: 'download',
-    phase: 'transfer',
+    operation: "download",
+    phase: "transfer",
     attempt: options.attempt,
     storageId: options.storageId,
     bytesTransferred: 0,
     totalBytes,
   });
   emitCheckpoint(options.onCheckpoint, {
-    operation: 'download',
-    phase: 'transfer',
+    operation: "download",
+    phase: "transfer",
     attempt: options.attempt,
     storageId: options.storageId,
     attachmentId: options.attachmentId,
@@ -2388,20 +2659,23 @@ async function readResponseBytes(
       const { done, value } = await reader.read();
       if (done) break;
       const nextBytesTransferred = bytesTransferred + value.length;
-      assertCiphertextSizeWithinExpected(options.totalBytes, nextBytesTransferred);
+      assertCiphertextSizeWithinExpected(
+        options.totalBytes,
+        nextBytesTransferred,
+      );
       chunks.push(value);
       bytesTransferred = nextBytesTransferred;
       emitProgress(options.onProgress, {
-        operation: 'download',
-        phase: 'transfer',
+        operation: "download",
+        phase: "transfer",
         attempt: options.attempt,
         storageId: options.storageId,
         bytesTransferred,
         totalBytes,
       });
       emitCheckpoint(options.onCheckpoint, {
-        operation: 'download',
-        phase: 'transfer',
+        operation: "download",
+        phase: "transfer",
         attempt: options.attempt,
         storageId: options.storageId,
         attachmentId: options.attachmentId,
@@ -2413,8 +2687,8 @@ async function readResponseBytes(
 
     const data = concatBytes(...chunks);
     emitCheckpoint(options.onCheckpoint, {
-      operation: 'download',
-      phase: 'complete',
+      operation: "download",
+      phase: "complete",
       attempt: options.attempt,
       storageId: options.storageId,
       attachmentId: options.attachmentId,
@@ -2429,16 +2703,16 @@ async function readResponseBytes(
   assertNotAborted(options.signal);
   assertCiphertextSizeEqualsExpected(options.totalBytes, data.length);
   emitProgress(options.onProgress, {
-    operation: 'download',
-    phase: 'transfer',
+    operation: "download",
+    phase: "transfer",
     attempt: options.attempt,
     storageId: options.storageId,
     bytesTransferred: data.length,
     totalBytes: totalBytes ?? data.length,
   });
   emitCheckpoint(options.onCheckpoint, {
-    operation: 'download',
-    phase: 'complete',
+    operation: "download",
+    phase: "complete",
     attempt: options.attempt,
     storageId: options.storageId,
     attachmentId: options.attachmentId,
@@ -2451,33 +2725,35 @@ async function readResponseBytes(
 
 async function defaultDownload(
   url: string,
-  options: MediaAttachmentTransferOptions = {}
+  options: MediaAttachmentTransferOptions = {},
 ): Promise<Uint8Array> {
   assertNotAborted(options.signal);
-  if (typeof globalThis.fetch !== 'function') {
+  if (typeof globalThis.fetch !== "function") {
     throw new MediaAttachmentError(
-      'Cannot download media attachment: fetch is not available',
-      MediaAttachmentErrorCode.DownloadFailed
+      "Cannot download media attachment: fetch is not available",
+      MediaAttachmentErrorCode.DownloadFailed,
     );
   }
 
   const response = await globalThis.fetch(url, {
     signal: options.signal,
     headers: options.headers,
+    redirect: "manual",
+    credentials: "omit",
   });
   assertNotAborted(options.signal);
   if (!response.ok) {
     if (response.status === 404) {
       throw new MediaAttachmentError(
-        'Media attachment blob not found',
+        "Media attachment blob not found",
         MediaAttachmentErrorCode.BlobNotFound,
-        { status: response.status }
+        { status: response.status },
       );
     }
     throw new MediaAttachmentError(
       `Media attachment download failed: ${response.status} ${response.statusText}`,
       MediaAttachmentErrorCode.DownloadFailed,
-      { status: response.status }
+      { status: response.status },
     );
   }
 
@@ -2496,7 +2772,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function resolveUploadRetryOptions(
-  input: MediaAttachmentRetryOptions | undefined
+  input: MediaAttachmentRetryOptions | undefined,
 ): Required<MediaAttachmentRetryOptions> {
   return {
     ...DEFAULT_MEDIA_RETRY_OPTIONS,
@@ -2506,9 +2782,12 @@ function resolveUploadRetryOptions(
 
 function calculateUploadRetryDelay(
   attempt: number,
-  options: Required<MediaAttachmentRetryOptions>
+  options: Required<MediaAttachmentRetryOptions>,
 ): number {
-  let delay = Math.min(options.baseDelayMs * Math.pow(2, attempt), options.maxDelayMs);
+  let delay = Math.min(
+    options.baseDelayMs * Math.pow(2, attempt),
+    options.maxDelayMs,
+  );
   if (options.enableJitter && delay > 0) {
     delay -= Math.random() * delay * 0.25;
   }
@@ -2518,17 +2797,20 @@ function calculateUploadRetryDelay(
 function isRetryableUploadStatus(status: number | undefined): boolean {
   if (status === undefined) return true;
   if (status === 403) return true;
-  if (status === 408 || status === 409 || status === 425 || status === 429) return true;
+  if (status === 408 || status === 409 || status === 425 || status === 429)
+    return true;
   return status >= 500;
 }
 
 function isRetryableUploadError(error: unknown): boolean {
+  if (error instanceof RemoteObjectUploadError) return false;
   if (error instanceof MediaAttachmentError) {
     if (error.code === MediaAttachmentErrorCode.ResumeStateInvalid) {
       return true;
     }
     return (
-      error.code === MediaAttachmentErrorCode.UploadFailed && isRetryableUploadStatus(error.status)
+      error.code === MediaAttachmentErrorCode.UploadFailed &&
+      isRetryableUploadStatus(error.status)
     );
   }
   return true;
@@ -2537,7 +2819,8 @@ function isRetryableUploadError(error: unknown): boolean {
 function isRetryableDownloadStatus(status: number | undefined): boolean {
   if (status === undefined) return true;
   if (status === 403) return true;
-  if (status === 408 || status === 409 || status === 425 || status === 429) return true;
+  if (status === 408 || status === 409 || status === 425 || status === 429)
+    return true;
   return status >= 500;
 }
 
@@ -2559,26 +2842,29 @@ function isRetryableDownloadError(error: unknown): boolean {
 
 function normalizeDownloadError(error: unknown): unknown {
   if (error instanceof MediaAttachmentError) {
-    if (error.status === 404 && error.code === MediaAttachmentErrorCode.DownloadFailed) {
+    if (
+      error.status === 404 &&
+      error.code === MediaAttachmentErrorCode.DownloadFailed
+    ) {
       return new MediaAttachmentError(
-        'Media attachment blob not found',
+        "Media attachment blob not found",
         MediaAttachmentErrorCode.BlobNotFound,
-        { cause: error, status: 404 }
+        { cause: error, status: 404 },
       );
     }
     return error;
   }
 
-  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (
-    message.includes('blob not found') ||
-    message.includes('attachment blob not found') ||
-    message.includes('media attachment not found')
+    message.includes("blob not found") ||
+    message.includes("attachment blob not found") ||
+    message.includes("media attachment not found")
   ) {
     return new MediaAttachmentError(
-      'Media attachment blob not found',
+      "Media attachment blob not found",
       MediaAttachmentErrorCode.BlobNotFound,
-      { cause: error }
+      { cause: error },
     );
   }
 
@@ -2590,18 +2876,18 @@ function getRetryStatus(error: unknown): number | undefined {
 }
 
 function getRetryReason(
-  error: unknown
-): 'expired-url' | 'invalid-resume' | 'retryable-status' | 'transient-failure' {
+  error: unknown,
+): "expired-url" | "invalid-resume" | "retryable-status" | "transient-failure" {
   if (
     error instanceof MediaAttachmentError &&
     error.code === MediaAttachmentErrorCode.ResumeStateInvalid
   ) {
-    return 'invalid-resume';
+    return "invalid-resume";
   }
   const status = getRetryStatus(error);
-  if (status === 403) return 'expired-url';
-  if (status !== undefined) return 'retryable-status';
-  return 'transient-failure';
+  if (status === 403) return "expired-url";
+  if (status !== undefined) return "retryable-status";
+  return "transient-failure";
 }
 
 async function uploadCiphertextWithRetry(input: {
@@ -2614,102 +2900,166 @@ async function uploadCiphertextWithRetry(input: {
   resume?: MediaAttachmentResumeState;
   ciphertext: Uint8Array;
   requestId: string;
+  preparedAt: number;
+  readCapability?: string;
 }): Promise<string> {
   const retry = resolveUploadRetryOptions(input.retry);
   const digest = await sha256(input.ciphertext);
+  const readCapabilityDigest =
+    input.readCapability === undefined
+      ? undefined
+      : await sha256(
+          base64ToBytes(toBase64(urlSafeToBase64(input.readCapability))),
+        );
   let lastError: unknown;
   let resume = input.resume;
   let canonicalObjectId: string | undefined;
+  let transferredObjectId: string | undefined;
+  let reconciliationPending = false;
+  const reconcileTransfer = async (): Promise<boolean> => {
+    const objectId = canonicalObjectId!;
+    const receipt = await input.remoteObjectStore.reconcileUpload!({
+      objectId,
+    });
+    assertNotAborted(input.signal);
+    if (receipt === null) {
+      reconciliationPending = false;
+      return false;
+    }
+    if (
+      !matchesUploadReceipt(receipt, {
+        objectId,
+        contentLength: input.ciphertext.length,
+        digest,
+      })
+    ) {
+      throw new MediaAttachmentError(
+        "The stored upload differs from its immutable preparation.",
+        MediaAttachmentErrorCode.UploadIdentityChanged,
+      );
+    }
+    transferredObjectId = objectId;
+    reconciliationPending = false;
+    return true;
+  };
   const onCheckpoint = trackResumeCheckpoints(
-    'upload',
+    "upload",
     input.onCheckpoint,
     (nextResume) => {
       resume = nextResume;
     },
-    () => resume
+    () => resume,
   );
 
   for (let attempt = 0; attempt <= retry.maxRetries; attempt++) {
     try {
       assertNotAborted(input.signal);
-      emitProgress(input.onProgress, {
-        operation: 'upload',
-        phase: 'request-url',
-        attempt,
-        requestId: input.requestId,
-      });
-      emitCheckpoint(onCheckpoint, {
-        operation: 'upload',
-        phase: 'request-url',
-        attempt,
-        requestId: input.requestId,
-        storageId: canonicalObjectId,
-        bytesTransferred: resume?.offsetBytes ?? 0,
-        totalBytes: input.ciphertext.length,
-        resumeToken: resume?.resumeToken,
-      });
-      const { uploadUrl, objectId, headers, protocol } = await input.remoteObjectStore.createUpload(
-        {
+      if (reconciliationPending) await reconcileTransfer();
+      if (transferredObjectId === undefined) {
+        emitProgress(input.onProgress, {
+          operation: "upload",
+          phase: "request-url",
+          attempt,
           requestId: input.requestId,
-          contentType: 'application/octet-stream',
-          contentLength: input.ciphertext.length,
-          digest,
-        }
-      );
-      if (canonicalObjectId !== undefined && canonicalObjectId !== objectId) {
-        throw new MediaAttachmentError(
-          'Remote object storage returned a different object ID for an upload retry',
-          MediaAttachmentErrorCode.UploadIdentityChanged
-        );
-      }
-      canonicalObjectId = objectId;
-      assertNotAborted(input.signal);
-      const transfer =
-        input.transfer ?? (protocol === 'tus' ? createTusMediaAttachmentTransfer() : undefined);
-      const uploadHeaders = { ...headers };
-      if (!Object.keys(uploadHeaders).some((name) => name.toLowerCase() === 'content-type')) {
-        uploadHeaders['Content-Type'] = 'application/octet-stream';
-      }
-      const response = transfer?.upload
-        ? await transfer.upload(uploadUrl, input.ciphertext, {
-            headers: uploadHeaders,
-            signal: input.signal,
-            onProgress: input.onProgress,
-            onCheckpoint,
-            resume,
-            attempt,
-            totalBytes: input.ciphertext.length,
+        });
+        emitCheckpoint(onCheckpoint, {
+          operation: "upload",
+          phase: "request-url",
+          attempt,
+          requestId: input.requestId,
+          storageId: canonicalObjectId,
+          bytesTransferred: resume?.offsetBytes ?? 0,
+          totalBytes: input.ciphertext.length,
+          resumeToken: resume?.resumeToken,
+        });
+        const { uploadUrl, objectId, headers, protocol } =
+          await input.remoteObjectStore.createUpload({
             requestId: input.requestId,
-            storageId: objectId,
-          })
-        : await defaultUpload(uploadUrl, input.ciphertext, {
-            headers: uploadHeaders,
-            signal: input.signal,
-            onProgress: input.onProgress,
-            onCheckpoint,
-            resume,
-            attempt,
-            totalBytes: input.ciphertext.length,
-            requestId: input.requestId,
-            storageId: objectId,
+            preparedAt: input.preparedAt,
+            contentType: "application/octet-stream",
+            contentLength: input.ciphertext.length,
+            digest,
+            ...(readCapabilityDigest === undefined
+              ? {}
+              : { readCapabilityDigest }),
           });
+        if (canonicalObjectId !== undefined && canonicalObjectId !== objectId) {
+          throw new MediaAttachmentError(
+            "Remote object storage returned a different object ID for an upload retry",
+            MediaAttachmentErrorCode.UploadIdentityChanged,
+          );
+        }
+        canonicalObjectId = objectId;
+        assertNotAborted(input.signal);
+        const transfer =
+          input.transfer ??
+          (protocol === "tus" ? createTusMediaAttachmentTransfer() : undefined);
+        const uploadHeaders = { ...headers };
+        if (
+          !Object.keys(uploadHeaders).some(
+            (name) => name.toLowerCase() === "content-type",
+          )
+        ) {
+          uploadHeaders["Content-Type"] = "application/octet-stream";
+        }
+        try {
+          const response = transfer?.upload
+            ? await transfer.upload(uploadUrl, input.ciphertext, {
+                headers: uploadHeaders,
+                signal: input.signal,
+                onProgress: input.onProgress,
+                onCheckpoint,
+                resume,
+                attempt,
+                totalBytes: input.ciphertext.length,
+                requestId: input.requestId,
+                storageId: objectId,
+              })
+            : await defaultUpload(uploadUrl, input.ciphertext, {
+                headers: uploadHeaders,
+                signal: input.signal,
+                onProgress: input.onProgress,
+                onCheckpoint,
+                resume,
+                attempt,
+                totalBytes: input.ciphertext.length,
+                requestId: input.requestId,
+                storageId: objectId,
+              });
 
-      if (!response.ok) {
-        throw new MediaAttachmentError(
-          `Media attachment upload failed: ${response.status} ${response.statusText}`,
-          MediaAttachmentErrorCode.UploadFailed,
-          { status: response.status }
-        );
+          if (!response.ok) {
+            throw new MediaAttachmentError(
+              `Media attachment upload failed: ${response.status} ${response.statusText}`,
+              MediaAttachmentErrorCode.UploadFailed,
+              { status: response.status },
+            );
+          }
+
+          transferredObjectId = objectId;
+        } catch (error) {
+          if (input.signal?.aborted || !input.remoteObjectStore.reconcileUpload)
+            throw error;
+          reconciliationPending = true;
+          if (!(await reconcileTransfer())) throw error;
+        }
       }
 
-      await input.remoteObjectStore.completeUpload?.({ objectId });
-      return objectId;
+      if (transferredObjectId === undefined) {
+        throw new MediaAttachmentError(
+          "The upload has no verified transfer result.",
+          MediaAttachmentErrorCode.UploadFailed,
+        );
+      }
+      await input.remoteObjectStore.completeUpload?.({
+        objectId: transferredObjectId,
+      });
+      return transferredObjectId;
     } catch (error) {
       if (input.signal?.aborted) {
         throw new MediaAttachmentError(
-          'Media attachment operation cancelled',
+          "Media attachment operation cancelled",
           MediaAttachmentErrorCode.Cancelled,
-          { cause: input.signal.reason }
+          { cause: input.signal.reason },
         );
       }
       lastError = error;
@@ -2725,8 +3075,8 @@ async function uploadCiphertextWithRetry(input: {
 
       const delay = calculateUploadRetryDelay(attempt, retry);
       emitProgress(input.onProgress, {
-        operation: 'upload',
-        phase: 'retry',
+        operation: "upload",
+        phase: "retry",
         attempt,
         requestId: input.requestId,
         storageId: canonicalObjectId,
@@ -2735,8 +3085,8 @@ async function uploadCiphertextWithRetry(input: {
         reason: getRetryReason(error),
       });
       emitCheckpoint(onCheckpoint, {
-        operation: 'upload',
-        phase: 'retry',
+        operation: "upload",
+        phase: "retry",
         attempt,
         requestId: input.requestId,
         storageId: canonicalObjectId,
@@ -2750,13 +3100,16 @@ async function uploadCiphertextWithRetry(input: {
     }
   }
 
-  if (lastError instanceof MediaAttachmentError) {
+  if (
+    lastError instanceof MediaAttachmentError ||
+    lastError instanceof RemoteObjectUploadError
+  ) {
     throw lastError;
   }
   throw new MediaAttachmentError(
-    'Media attachment upload failed',
+    "Media attachment upload failed",
     MediaAttachmentErrorCode.UploadFailed,
-    { cause: lastError }
+    { cause: lastError },
   );
 }
 
@@ -2771,31 +3124,32 @@ async function downloadCiphertextWithRetry(input: {
   storageId: string;
   attachmentId: string;
   expectedCiphertextSize: number;
+  readCapability?: string;
 }): Promise<Uint8Array> {
   const retry = resolveUploadRetryOptions(input.retry);
   let lastError: unknown;
   let resume = input.resume;
   const onCheckpoint = trackResumeCheckpoints(
-    'download',
+    "download",
     input.onCheckpoint,
     (nextResume) => {
       resume = nextResume;
     },
-    () => resume
+    () => resume,
   );
 
   for (let attempt = 0; attempt <= retry.maxRetries; attempt++) {
     try {
       assertNotAborted(input.signal);
       emitProgress(input.onProgress, {
-        operation: 'download',
-        phase: 'request-url',
+        operation: "download",
+        phase: "request-url",
         attempt,
         storageId: input.storageId,
       });
       emitCheckpoint(onCheckpoint, {
-        operation: 'download',
-        phase: 'request-url',
+        operation: "download",
+        phase: "request-url",
         attempt,
         storageId: input.storageId,
         attachmentId: input.attachmentId,
@@ -2803,9 +3157,13 @@ async function downloadCiphertextWithRetry(input: {
         totalBytes: input.expectedCiphertextSize,
         resumeToken: resume?.resumeToken,
       });
-      const { downloadUrl, headers } = await input.remoteObjectStore.createDownload({
-        objectId: input.storageId,
-      });
+      const { downloadUrl, headers } =
+        await input.remoteObjectStore.createDownload({
+          objectId: input.storageId,
+          ...(input.readCapability === undefined
+            ? {}
+            : { readCapability: input.readCapability }),
+        });
       assertNotAborted(input.signal);
       return input.transfer?.download
         ? await input.transfer.download(downloadUrl, {
@@ -2833,9 +3191,9 @@ async function downloadCiphertextWithRetry(input: {
     } catch (error) {
       if (input.signal?.aborted) {
         throw new MediaAttachmentError(
-          'Media attachment operation cancelled',
+          "Media attachment operation cancelled",
           MediaAttachmentErrorCode.Cancelled,
-          { cause: input.signal.reason }
+          { cause: input.signal.reason },
         );
       }
       const normalizedError = normalizeDownloadError(error);
@@ -2846,14 +3204,17 @@ async function downloadCiphertextWithRetry(input: {
       if (shouldClearResume) {
         resume = undefined;
       }
-      if (attempt >= retry.maxRetries || !isRetryableDownloadError(normalizedError)) {
+      if (
+        attempt >= retry.maxRetries ||
+        !isRetryableDownloadError(normalizedError)
+      ) {
         break;
       }
 
       const delay = calculateUploadRetryDelay(attempt, retry);
       emitProgress(input.onProgress, {
-        operation: 'download',
-        phase: 'retry',
+        operation: "download",
+        phase: "retry",
         attempt,
         storageId: input.storageId,
         status: getRetryStatus(normalizedError),
@@ -2861,8 +3222,8 @@ async function downloadCiphertextWithRetry(input: {
         reason: getRetryReason(normalizedError),
       });
       emitCheckpoint(onCheckpoint, {
-        operation: 'download',
-        phase: 'retry',
+        operation: "download",
+        phase: "retry",
         attempt,
         storageId: input.storageId,
         attachmentId: input.attachmentId,
@@ -2880,9 +3241,9 @@ async function downloadCiphertextWithRetry(input: {
     throw lastError;
   }
   throw new MediaAttachmentError(
-    'Media attachment download failed',
+    "Media attachment download failed",
     MediaAttachmentErrorCode.DownloadFailed,
-    { cause: lastError }
+    { cause: lastError },
   );
 }
 
@@ -2895,22 +3256,25 @@ function decodeAttachmentKey(key: string): Uint8Array {
     return keyBytes;
   } catch (cause) {
     throw new MediaAttachmentError(
-      'Invalid media attachment pointer: key must be a base64-encoded 32-byte key',
+      "Invalid media attachment pointer: key must be a base64-encoded 32-byte key",
       MediaAttachmentErrorCode.InvalidPointer,
-      { cause }
+      { cause },
     );
   }
 }
 
-async function assertDigestMatches(ciphertext: Uint8Array, expectedDigest: string): Promise<void> {
+async function assertDigestMatches(
+  ciphertext: Uint8Array,
+  expectedDigest: string,
+): Promise<void> {
   let expectedDigestBytes: Uint8Array;
   try {
     expectedDigestBytes = base64ToBytes(toBase64(expectedDigest));
   } catch (cause) {
     throw new MediaAttachmentError(
-      'Invalid media attachment pointer: digest must be base64-encoded SHA-256',
+      "Invalid media attachment pointer: digest must be base64-encoded SHA-256",
       MediaAttachmentErrorCode.InvalidPointer,
-      { cause }
+      { cause },
     );
   }
 
@@ -2920,29 +3284,41 @@ async function assertDigestMatches(ciphertext: Uint8Array, expectedDigest: strin
     !constantTimeEqual(expectedDigestBytes, actualDigestBytes)
   ) {
     throw new MediaAttachmentError(
-      'Media attachment digest mismatch',
-      MediaAttachmentErrorCode.DigestMismatch
+      "Media attachment digest mismatch",
+      MediaAttachmentErrorCode.DigestMismatch,
     );
   }
 }
 
 /**
- * Encrypt and upload media bytes, returning a SDK attachment pointer.
- *
- * The client computes the encrypted object digest and object ID once. Upload
- * retries request fresh presigned URLs for that same key. This handles expired
- * upload URLs without changing the pointer metadata that the client later
- * encrypts into the Signal Protocol message.
+ * Encrypt and upload media bytes within one invocation.
+ * For restart recovery, persist prepareMediaAttachmentUploadData before calling uploadPreparedMediaAttachment.
  */
 export async function prepareMediaAttachmentUpload(
   data: Uint8Array,
-  options: PrepareMediaAttachmentUploadOptions
+  options: PrepareMediaAttachmentUploadOptions,
 ): Promise<MediaAttachmentPointer> {
+  return uploadPreparedMediaAttachment(
+    await prepareMediaAttachmentUploadData(data, options),
+    options,
+  );
+}
+
+/** Prepare exact encrypted bytes without contacting the remote object store. */
+export async function prepareMediaAttachmentUploadData(
+  data: Uint8Array,
+  options: Omit<PrepareMediaAttachmentUploadOptions, "remoteObjectStore"> = {},
+): Promise<PreparedMediaAttachmentUpload> {
   assertNotAborted(options.signal);
-  const contentType = options.contentType ?? 'application/octet-stream';
-  const clientUuid = options.clientUuid ?? (await generateMediaAttachmentClientUuid());
-  const requestId = options.requestId ?? (await generateMediaAttachmentUploadRequestId());
-  assertString(requestId, 'requestId');
+  const preparedAt = Date.now();
+  data = data.slice();
+  options = { ...options, waveform: options.waveform?.slice() };
+  const contentType = options.contentType ?? "application/octet-stream";
+  const clientUuid =
+    options.clientUuid ?? (await generateMediaAttachmentClientUuid());
+  const requestId =
+    options.requestId ?? (await generateMediaAttachmentUploadRequestId());
+  assertString(requestId, "requestId");
   assertNotAborted(options.signal);
   validateMediaAttachmentMetadata(
     {
@@ -2961,11 +3337,11 @@ export async function prepareMediaAttachmentUpload(
       clientUuid,
       cdnNumber: options.cdnNumber,
     },
-    options.policy
+    options.policy,
   );
   emitProgress(options.onProgress, {
-    operation: 'upload',
-    phase: 'encrypt',
+    operation: "upload",
+    phase: "encrypt",
     bytesTransferred: 0,
     totalBytes: data.length,
   });
@@ -2977,58 +3353,115 @@ export async function prepareMediaAttachmentUpload(
     const { ciphertext, segmentSize } = await streamingEncrypt(masterKey, data);
     assertNotAborted(options.signal);
     emitProgress(options.onProgress, {
-      operation: 'upload',
-      phase: 'encrypt',
+      operation: "upload",
+      phase: "encrypt",
       bytesTransferred: data.length,
       totalBytes: data.length,
     });
     const digest = bytesToBase64(await sha256(ciphertext));
-    const storageId = await uploadCiphertextWithRetry({
-      remoteObjectStore: options.remoteObjectStore,
-      transfer: options.transfer,
-      retry: options.retry,
-      signal: options.signal,
-      onProgress: options.onProgress,
-      onCheckpoint: options.onCheckpoint,
-      resume: options.resume,
-      ciphertext,
-      requestId,
-    });
-
-    const pointer = createMediaAttachmentPointer({
-      storageId,
+    const pointer: PreparedMediaAttachmentUpload["pointer"] = {
+      version: 1,
+      readCapability: bytesToUrlSafeBase64(await generateRandomBytes(32)),
       key: masterKeyBase64,
       digest,
       segmentSize,
       ciphertextSize: ciphertext.length,
       contentType,
       size: data.length,
-      uploadTimestamp: Date.now(),
       blurHash: options.blurHash,
       thumbnail: options.thumbnail,
       width: options.width,
       height: options.height,
       durationMs: options.durationMs,
-      waveform: options.waveform,
+      waveform: options.waveform?.slice(),
       fileName: options.fileName,
       caption: options.caption,
       isViewOnce: options.isViewOnce,
       flags: options.flags,
       clientUuid,
       cdnNumber: options.cdnNumber,
-    });
+    };
     validateMediaAttachmentMetadata(pointer, options.policy);
-    emitProgress(options.onProgress, {
-      operation: 'upload',
-      phase: 'complete',
-      storageId: pointer.storageId,
-      bytesTransferred: ciphertext.length,
-      totalBytes: ciphertext.length,
-    });
-    return pointer;
+    return {
+      requestId,
+      preparedAt,
+      ciphertext,
+      pointer,
+      plaintextDigest: bytesToBase64(await sha256(data)),
+    };
   } finally {
     secureZeroBytes(masterKey);
   }
+}
+
+/** Upload a saved preparation without generating new encryption material. */
+export async function uploadPreparedMediaAttachment(
+  prepared: PreparedMediaAttachmentUpload,
+  options: PrepareMediaAttachmentUploadOptions,
+): Promise<MediaAttachmentPointer> {
+  assertNotAborted(options.signal);
+  assertString(prepared.requestId, "requestId");
+  const preparedAt = prepared.preparedAt;
+  if (!Number.isSafeInteger(preparedAt) || preparedAt < 1) {
+    throw new MediaAttachmentError(
+      "The prepared upload time is invalid. Recover the original preparation.",
+      MediaAttachmentErrorCode.UploadIdentityChanged,
+    );
+  }
+  if (
+    options.requestId !== undefined &&
+    options.requestId !== prepared.requestId
+  ) {
+    throw new MediaAttachmentError(
+      "The prepared upload request ID changed.",
+      MediaAttachmentErrorCode.UploadIdentityChanged,
+    );
+  }
+  // Copy before asynchronous work so the caller cannot change the accepted bytes.
+  const ciphertext = prepared.ciphertext.slice();
+  const metadata = {
+    ...prepared.pointer,
+    waveform: prepared.pointer.waveform?.slice(),
+  };
+  const pointer = createMediaAttachmentPointer({
+    ...metadata,
+    storageId: "prepared-upload",
+    uploadTimestamp: Date.now(),
+  });
+  validateMediaAttachmentMetadata(pointer, options.policy);
+  if (ciphertext.length !== pointer.ciphertextSize) {
+    throw new MediaAttachmentError(
+      "The prepared ciphertext length changed.",
+      MediaAttachmentErrorCode.CiphertextSizeMismatch,
+    );
+  }
+  await assertDigestMatches(ciphertext, pointer.digest);
+  const storageId = await uploadCiphertextWithRetry({
+    remoteObjectStore: options.remoteObjectStore,
+    transfer: options.transfer,
+    retry: options.retry,
+    signal: options.signal,
+    onProgress: options.onProgress,
+    onCheckpoint: options.onCheckpoint,
+    resume: options.resume,
+    ciphertext,
+    requestId: prepared.requestId,
+    preparedAt,
+    readCapability: pointer.readCapability,
+  });
+  const attachment = createMediaAttachmentPointer({
+    ...metadata,
+    storageId,
+    uploadTimestamp: Date.now(),
+  });
+  emitProgress(options.onProgress, {
+    operation: "upload",
+    phase: "complete",
+    storageId,
+    bytesTransferred: ciphertext.length,
+    totalBytes: ciphertext.length,
+  });
+  return attachment;
 }
 
 /**
@@ -3041,7 +3474,7 @@ export async function prepareMediaAttachmentUpload(
  */
 export async function resolveMediaAttachment(
   attachment: CreateMediaAttachmentPointerInput,
-  options: ResolveMediaAttachmentOptions
+  options: ResolveMediaAttachmentOptions,
 ): Promise<ResolvedMediaAttachment> {
   const pointer = validateMediaAttachmentPolicy(attachment, options.policy);
   const ciphertext = await downloadCiphertextWithRetry({
@@ -3055,19 +3488,20 @@ export async function resolveMediaAttachment(
     storageId: pointer.storageId,
     attachmentId: createMediaAttachmentId(pointer),
     expectedCiphertextSize: pointer.ciphertextSize,
+    readCapability: pointer.readCapability,
   });
   assertNotAborted(options.signal);
 
   if (ciphertext.length !== pointer.ciphertextSize) {
     throw new MediaAttachmentError(
       `Media attachment ciphertext size mismatch: expected ${pointer.ciphertextSize}, received ${ciphertext.length}`,
-      MediaAttachmentErrorCode.CiphertextSizeMismatch
+      MediaAttachmentErrorCode.CiphertextSizeMismatch,
     );
   }
 
   emitProgress(options.onProgress, {
-    operation: 'download',
-    phase: 'verify',
+    operation: "download",
+    phase: "verify",
     storageId: pointer.storageId,
     bytesTransferred: ciphertext.length,
     totalBytes: pointer.ciphertextSize,
@@ -3078,34 +3512,39 @@ export async function resolveMediaAttachment(
   const keyBytes = decodeAttachmentKey(pointer.key);
   try {
     emitProgress(options.onProgress, {
-      operation: 'download',
-      phase: 'decrypt',
+      operation: "download",
+      phase: "decrypt",
       storageId: pointer.storageId,
       bytesTransferred: 0,
       totalBytes: pointer.size,
     });
-    const data = await streamingDecrypt(keyBytes, ciphertext, new Uint8Array(0), {
-      segmentSize: pointer.segmentSize,
-    });
+    const data = await streamingDecrypt(
+      keyBytes,
+      ciphertext,
+      new Uint8Array(0),
+      {
+        segmentSize: pointer.segmentSize,
+      },
+    );
     assertNotAborted(options.signal);
 
     if (data.length !== pointer.size) {
       throw new MediaAttachmentError(
         `Media attachment plaintext size mismatch: expected ${pointer.size}, received ${data.length}`,
-        MediaAttachmentErrorCode.PlaintextSizeMismatch
+        MediaAttachmentErrorCode.PlaintextSizeMismatch,
       );
     }
 
     emitProgress(options.onProgress, {
-      operation: 'download',
-      phase: 'decrypt',
+      operation: "download",
+      phase: "decrypt",
       storageId: pointer.storageId,
       bytesTransferred: data.length,
       totalBytes: pointer.size,
     });
     emitProgress(options.onProgress, {
-      operation: 'download',
-      phase: 'complete',
+      operation: "download",
+      phase: "complete",
       storageId: pointer.storageId,
       bytesTransferred: data.length,
       totalBytes: pointer.size,
@@ -3135,9 +3574,9 @@ export async function resolveMediaAttachment(
       throw error;
     }
     throw new MediaAttachmentError(
-      'Media attachment decryption failed',
+      "Media attachment decryption failed",
       MediaAttachmentErrorCode.DecryptionFailed,
-      { cause: error }
+      { cause: error },
     );
   } finally {
     secureZeroBytes(keyBytes);
@@ -3146,21 +3585,21 @@ export async function resolveMediaAttachment(
 
 export async function deleteMediaAttachment(
   attachment: CreateMediaAttachmentPointerInput,
-  options: DeleteMediaAttachmentOptions
+  options: DeleteMediaAttachmentOptions,
 ): Promise<DeleteMediaAttachmentResult> {
   const pointer = createMediaAttachmentPointer(attachment);
   assertNotAborted(options.signal);
   if (!options.remoteObjectStore.deleteObject) {
     throw new MediaAttachmentError(
-      'Media attachment remote delete is unavailable for the configured object store',
-      MediaAttachmentErrorCode.DeleteUnavailable
+      "Media attachment remote delete is unavailable for the configured object store",
+      MediaAttachmentErrorCode.DeleteUnavailable,
     );
   }
 
   try {
     emitProgress(options.onProgress, {
-      operation: 'delete',
-      phase: 'delete',
+      operation: "delete",
+      phase: "delete",
       storageId: pointer.storageId,
     });
     await options.remoteObjectStore.deleteObject({
@@ -3168,8 +3607,8 @@ export async function deleteMediaAttachment(
     });
     assertNotAborted(options.signal);
     emitProgress(options.onProgress, {
-      operation: 'delete',
-      phase: 'complete',
+      operation: "delete",
+      phase: "complete",
       storageId: pointer.storageId,
     });
     return {
@@ -3179,15 +3618,15 @@ export async function deleteMediaAttachment(
   } catch (cause) {
     if (options.signal?.aborted) {
       throw new MediaAttachmentError(
-        'Media attachment operation cancelled',
+        "Media attachment operation cancelled",
         MediaAttachmentErrorCode.Cancelled,
-        { cause: options.signal.reason }
+        { cause: options.signal.reason },
       );
     }
     throw new MediaAttachmentError(
-      'Media attachment remote delete failed',
+      "Media attachment remote delete failed",
       MediaAttachmentErrorCode.DeleteFailed,
-      { cause }
+      { cause },
     );
   }
 }

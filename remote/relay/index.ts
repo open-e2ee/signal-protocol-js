@@ -39,6 +39,8 @@ export type {
   DeviceRegistration,
   PreKeyUpload,
   PreKeyBundle,
+  PreKeyInventory,
+  PreKeyMetadata,
   Unsubscribe,
   AccountIdentityProvisioning,
   AccountIdentityRotation,

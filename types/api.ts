@@ -46,6 +46,33 @@ export interface SessionTrustCommit {
   localIdentityType: IdentityType;
   oneTimePreKeyId?: number;
   kemOneTimePreKeyId?: number;
+  /** Reusable Kyber-prekey replay evidence committed with the accepted session. */
+  kyberPreKeyUse?: {
+    kyberPreKeyId: number;
+    kyberPreKeyInstanceId: string;
+    signedPreKeyId: number;
+    baseKeyBytes: Uint8Array;
+  };
+  receivedContent?: ReceivedContent;
+}
+
+export interface RetainedKyberPreKey {
+  preKey: KyberPreKey;
+  instanceId: string;
+}
+
+/** Recoverable plaintext, encrypted at rest with the device-local store. */
+export interface ReceivedContent {
+  id: string;
+  plaintext: string;
+  receivedAt: number;
+  groupId?: string;
+}
+
+/** Commit received content with sender-key advancement or skipped-key consumption. */
+export interface SenderKeyReceiveCommit {
+  content: ReceivedContent;
+  consumedChainIndex?: number;
 }
 
 /**
@@ -314,11 +341,7 @@ export interface ISignalProtocolClient {
     remoteAddress: ProtocolAddress,
     fileBlob: Blob,
     mimeType?: string
-  ): Promise<{
-    encryptedBlob: Blob;
-    keyId: string;
-    encryptedKey: Ciphertext;
-  }>;
+  ): Promise<{ encryptedBlob: Blob; keyId: string; encryptedKey: Ciphertext }>;
 
   /**
    * Decrypt file blob
@@ -376,7 +399,9 @@ export interface ISignalProtocolClient {
    * @param groupId - Group identifier
    * @returns Sender key ID and distribution message to share with group members
    */
-  createGroupSenderKey(groupId: string): Promise<{
+  createGroupSenderKey(
+    groupId: string
+  ): Promise<{
     senderKeyId: string;
     distributionMessage: import('../internal/protocol/sender-keys').SenderKeyDistributionMessage;
   }>;
@@ -427,7 +452,9 @@ export interface ISignalProtocolClient {
    * @param groupId - Group identifier
    * @returns New sender key ID and distribution message
    */
-  rotateGroupSenderKey(groupId: string): Promise<{
+  rotateGroupSenderKey(
+    groupId: string
+  ): Promise<{
     senderKeyId: string;
     distributionMessage: import('../internal/protocol/sender-keys').SenderKeyDistributionMessage;
   }>;
@@ -972,6 +999,12 @@ export interface IKyberLastResortPreKeyStore {
    */
   getKyberPreKey(identityType?: IdentityType): Promise<KyberPreKey | null>;
 
+  /** Retrieve the exact retained Kyber prekey instance named by a message. */
+  getKyberPreKeyById(
+    keyId: number,
+    identityType?: IdentityType
+  ): Promise<RetainedKyberPreKey | null>;
+
   /**
    * Mark a Kyber prekey as used.
    *
@@ -1270,7 +1303,8 @@ export interface ISenderKeyStore {
     groupId: string,
     userId: string,
     deviceId: number,
-    states: SenderKeyState[]
+    states: SenderKeyState[],
+    receive?: SenderKeyReceiveCommit
   ): Promise<void>;
 
   /**
@@ -1430,6 +1464,9 @@ export interface IProtocolStore
  */
 export interface ISignalProtocolLocalStore
   extends IProtocolStore, ISesameStore, ISenderKeyStore, IMessageRecordStore {
+  getReceivedContent(id: string): Promise<ReceivedContent | null>;
+  deleteReceivedContent(id: string): Promise<void>;
+  deleteExpiredReceivedContent(before: number): Promise<number>;
   /**
    * Clear all encryption keys (use with caution!).
    *
@@ -1470,7 +1507,9 @@ export interface ISignalProtocolLocalStore
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
    * @returns Counts of deleted prekeys by type
    */
-  deleteAllPreKeys(identityType?: IdentityType): Promise<{
+  deleteAllPreKeys(
+    identityType?: IdentityType
+  ): Promise<{
     ecSignedPreKeys: number;
     ecOneTimePreKeys: number;
     kyberPreKeys: number;
@@ -1509,6 +1548,17 @@ export interface ISignalProtocolLocalStore
    * Set a metadata value by key.
    */
   setMetadata(key: string, value: string): Promise<void>;
+
+  /**
+   * Compare and replace one metadata value in the backing store's atomic write.
+   * Null means absent or deletion. Return false without writing on a mismatch.
+   * Reads and comparisons must use current backing state, not an adapter cache.
+   */
+  compareAndSetMetadata(
+    key: string,
+    expected: string | null,
+    value: string | null
+  ): Promise<boolean>;
 
   /** Delete one metadata value. */
   deleteMetadata(key: string): Promise<void>;

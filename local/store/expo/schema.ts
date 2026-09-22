@@ -6,6 +6,7 @@ import {
   text,
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
 
 export const metadata = sqliteTable('metadata', {
   key: text('key').primaryKey(),
@@ -94,6 +95,7 @@ export const kyberPreKeys = sqliteTable(
   'kyber_prekeys',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
+    instanceId: text('instance_id').notNull(),
     identityType: text('identity_type').notNull().default('aci'),
     prekeyId: integer('prekey_id').notNull(),
     publicKey: text('public_key').notNull(),
@@ -104,7 +106,11 @@ export const kyberPreKeys = sqliteTable(
     replacedAt: integer('replaced_at'),
   },
   (table) => [
+    uniqueIndex('kyber_prekey_instance').on(table.instanceId),
     uniqueIndex('kyber_prekey_identity').on(table.identityType, table.prekeyId),
+    uniqueIndex('kyber_prekey_current_identity')
+      .on(table.identityType)
+      .where(sql`${table.replacedAt} IS NULL`),
     index('idx_kyber_prekeys_timestamp').on(table.timestamp),
   ]
 );
@@ -112,7 +118,9 @@ export const kyberPreKeys = sqliteTable(
 export const kyberPreKeyUsed = sqliteTable(
   'kyber_prekey_used',
   {
-    kyberPreKeyId: integer('kyber_prekey_id').notNull(),
+    kyberPreKeyRowId: integer('kyber_prekey_row_id')
+      .notNull()
+      .references(() => kyberPreKeys.id, { onDelete: 'cascade', onUpdate: 'cascade' }),
     signedPreKeyIdentity: text('signed_prekey_identity').notNull(),
     signedPreKeyId: integer('signed_prekey_id').notNull(),
     baseKey: text('base_key').notNull(),
@@ -120,7 +128,7 @@ export const kyberPreKeyUsed = sqliteTable(
   (table) => [
     primaryKey({
       columns: [
-        table.kyberPreKeyId,
+        table.kyberPreKeyRowId,
         table.signedPreKeyIdentity,
         table.signedPreKeyId,
         table.baseKey,

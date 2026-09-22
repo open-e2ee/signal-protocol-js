@@ -289,10 +289,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
       this.initialized = true;
       this.logger.breadcrumb(
         `Signal Protocol initialized successfully (${identityTypes.join(' + ').toUpperCase()})`,
-        {
-          category: 'E2EE',
-          level: 'info',
-        }
+        { category: 'E2EE', level: 'info' }
       );
     } catch (error) {
       throw new EncryptionError(
@@ -386,10 +383,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
       // available unless the caller explicitly removes it.
       const existingKyberPreKey = await this.keyStorage.getKyberPreKey(identityType);
       if (!existingKyberPreKey) {
-        const kyberPreKey = await generateKyberLastResortPreKey(
-          identityKey,
-          1
-        );
+        const kyberPreKey = await generateKyberLastResortPreKey(identityKey, 1);
         await this.keyStorage.storeKyberPreKey(kyberPreKey, identityType);
       }
 
@@ -457,9 +451,8 @@ export class SignalProtocolManager implements ISignalProtocolManager {
         }
 
         // Step 1: Verify signed prekey signature using identity signing key
-        const { PREKEY_ALGORITHM_X25519, verifyPreKeySignature } = await import(
-          '../../keys/prekey-signature'
-        );
+        const { PREKEY_ALGORITHM_X25519, verifyPreKeySignature } =
+          await import('../../keys/prekey-signature');
         const isValid = await verifyPreKeySignature(
           prekeyBundle.identity,
           PREKEY_ALGORITHM_X25519,
@@ -743,11 +736,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
       // @see X3DH Spec Section 4.4 - signed prekey grace period handling
       this.logger.warn('Signed prekey not found in selected identity store', {
         category: 'E2EE',
-        data: {
-          requestedKeyId: usedSignedPreKeyId,
-          identityType,
-          operation: 'x3dh-responder',
-        },
+        data: { requestedKeyId: usedSignedPreKeyId, identityType, operation: 'x3dh-responder' },
       });
 
       throw new EncryptionError(
@@ -811,15 +800,20 @@ export class SignalProtocolManager implements ISignalProtocolManager {
 
     // Step 5: Get Bob's Kyber prekey if Alice used one (for PQXDH)
     let myKyberPreKey: KyberPreKey | null = null;
+    let myKyberPreKeyInstanceId: string | null = null;
     if (prekeyMessage.usedKyberPreKeyId !== undefined && prekeyMessage.kyberCiphertext) {
-      const retrievedKyberPreKey = await this.keyStorage.getKyberPreKey(identityType);
+      const retainedKyberPreKey = await this.keyStorage.getKyberPreKeyById(
+        prekeyMessage.usedKyberPreKeyId,
+        identityType
+      );
 
-      if (!retrievedKyberPreKey) {
+      if (!retainedKyberPreKey) {
         this.logger.warn('Kyber prekey not found for PQXDH message; aborting session', {
           category: 'E2EE',
           data: { kyberPreKeyId: prekeyMessage.usedKyberPreKeyId },
         });
       } else {
+        const retrievedKyberPreKey = retainedKyberPreKey.preKey;
         // BUG #7 FIX: Validate that the Kyber prekey ID matches what Alice used.
         // If IDs do not match, Alice encapsulated to a DIFFERENT key than we
         // have locally. Decapsulation would then produce a wrong shared secret
@@ -865,6 +859,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
         }
 
         myKyberPreKey = retrievedKyberPreKey;
+        myKyberPreKeyInstanceId = retainedKyberPreKey.instanceId;
       }
     }
 
@@ -954,12 +949,23 @@ export class SignalProtocolManager implements ISignalProtocolManager {
       },
     });
 
-    // Defer one-time prekey deletion until the first successful decryption so a
-    // corrupted inner message does not make recovery impossible.
-    if (myOneTimePreKey || myKemOneTimePreKey) {
+    // Defer one-time prekey deletion and reusable-key replay insertion until
+    // the first successful decryption so a corrupted message leaves no residue.
+    if (myOneTimePreKey || myKemOneTimePreKey || myKyberPreKey) {
       sessionState.pendingPreKeyDeletion = {
         oneTimePreKeyId: myOneTimePreKey?.keyId,
         kemOneTimePreKeyId: myKemOneTimePreKey?.keyId,
+        kyberPreKeyUse:
+          myKyberPreKey && myKyberPreKeyInstanceId
+            ? {
+                kyberPreKeyId: myKyberPreKey.keyId,
+                kyberPreKeyInstanceId: myKyberPreKeyInstanceId,
+                signedPreKeyId: mySignedPreKey.keyId,
+                baseKeyBytes: Array.from(
+                  CryptoUtils.base64ToBytes(prekeyMessage.senderEphemeralKey)
+                ),
+              }
+            : undefined,
         identityType,
       };
       this.logger.debug('Deferred prekey deletion until first successful decryption', {
@@ -1048,11 +1054,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
 
         // Add Triple Ratchet to session BEFORE zeroing the key
         // We zero only after the initialization succeeds
-        sessionState.tripleRatchet = {
-          spqrState: spqrState,
-          enabled: true,
-          enabledAt: Date.now(),
-        };
+        sessionState.tripleRatchet = { spqrState: spqrState, enabled: true, enabledAt: Date.now() };
 
         this.logger.breadcrumb('Triple Ratchet initialized (responder)', {
           category: 'E2EE',
@@ -1171,8 +1173,12 @@ export class SignalProtocolManager implements ISignalProtocolManager {
    * @param ciphertext - Message to decrypt
    * @see Signal Protocol Specification Section 3.5 - The Double Ratchet - RatchetDecrypt
    */
-  async decrypt(remoteAddress: ProtocolAddress, ciphertext: Ciphertext): Promise<string> {
-    return this.getSessionCipher().decrypt(remoteAddress, ciphertext);
+  async decrypt(
+    remoteAddress: ProtocolAddress,
+    ciphertext: Ciphertext,
+    receiveId?: string
+  ): Promise<string> {
+    return this.getSessionCipher().decrypt(remoteAddress, ciphertext, receiveId);
   }
 
   /**
@@ -1287,10 +1293,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
       const currentKyber = await this.keyStorage.getKyberPreKey(identityType);
       const nextKeyId = (currentKyber?.keyId ?? 0) + 1;
 
-      const newKyberPreKey = await generateKyberLastResortPreKey(
-        identityKey,
-        nextKeyId
-      );
+      const newKyberPreKey = await generateKyberLastResortPreKey(identityKey, nextKeyId);
 
       // Store new Kyber prekey locally (server upload handled by SignalProtocolClient)
       await this.keyStorage.storeKyberPreKey(newKyberPreKey, identityType);
@@ -1347,10 +1350,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
 
       this.logger.breadcrumb('Expired message keys cleaned up', {
         category: 'E2EE',
-        data: {
-          sessionId,
-          operation: 'cleanup_expired_keys',
-        },
+        data: { sessionId, operation: 'cleanup_expired_keys' },
       });
     } catch (error) {
       throw new EncryptionError(

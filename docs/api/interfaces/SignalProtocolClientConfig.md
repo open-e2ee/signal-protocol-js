@@ -160,6 +160,12 @@ Explicitly accept group history without server signatures.
 This selects the documented non-conforming deployment mode and emits a
 visible configuration warning.
 
+#### authorityKeyId?
+
+> `optional` **authorityKeyId?**: `string`
+
+Exact issuer selection for transports with a verified rotation registry.
+
 #### endorsementManager?
 
 > `optional` **endorsementManager?**: [`EndorsementManager`](../classes/EndorsementManager.md)
@@ -230,6 +236,16 @@ Resolve member ACIs without importing app content models into the client.
 
 `Promise`\<`Map`\<`string`, `Uint8Array`\<`ArrayBufferLike`\>\>\>
 
+#### resolveAuthority?
+
+> `optional` **resolveAuthority?**: () => `Promise`\<`GroupAuthority`\>
+
+Resolve a verified immutable authority before each group operation.
+
+##### Returns
+
+`Promise`\<`GroupAuthority`\>
+
 #### server?
 
 > `optional` **server?**: [`IGroupServer`](IGroupServer.md)
@@ -246,9 +262,8 @@ Override the SDK local storage adapter for group state.
 
 > **trustRoot**: `Uint8Array`
 
-Versioned serialized trust root pinned by the application at build time.
-
-This value is never fetched from the relay and trusted at runtime.
+Versioned group keys pinned by the application or authenticated under its pinned environment root.
+Unsigned runtime discovery cannot establish trust.
 
 #### Example
 
@@ -473,6 +488,7 @@ const signal = await createSignalProtocolClient({
   identity: { userId },
   adapters: { storage, relay, remoteObjectStore },
   media: {
+    preparedUploads: appPreparedUploads,
     loadLocalAttachment: async ({ localMediaId }) => appDrafts.readBytes(localMediaId),
     saveUploadedAttachment: async ({ localMediaId, attachment }) =>
       appPointers.save(localMediaId, attachment),

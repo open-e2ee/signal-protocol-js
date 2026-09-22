@@ -12,4 +12,4 @@
 
 ### Attachment
 
-> `readonly` **Attachment**: `"attachment"` = `'attachment'`
+> `readonly` **Attachment**: `"attachment"` = `"attachment"`

@@ -90,6 +90,7 @@ Expo storage or Convex helpers.
 - `@open-e2ee/signal-protocol-sdk/encoding/hex`
 - `@open-e2ee/signal-protocol-sdk/files`
 - `@open-e2ee/signal-protocol-sdk/groups`
+- `@open-e2ee/signal-protocol-sdk/groups/server`
 - `@open-e2ee/signal-protocol-sdk/hooks`
 - `@open-e2ee/signal-protocol-sdk/hooks/use-connection-presence`
 - `@open-e2ee/signal-protocol-sdk/keys`

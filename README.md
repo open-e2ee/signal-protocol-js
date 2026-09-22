@@ -11,7 +11,7 @@ Add encrypted messaging to Expo, React Native, browser, and Node applications. T
 
 The default policy requires post-quantum session establishment and ratcheting. The protocol implementation is open source under AGPLv3, with a [commercial license](./COMMERCIAL.md) available.
 
-[**Run an encrypted exchange in your browser**](https://open-e2ee.dev/playground) · [Edit on StackBlitz](https://stackblitz.com/fork/github/open-e2ee/signal-protocol-js/tree/v2.0.2/examples/browser) · [Run on Expo / Hermes](./examples/expo/README.md)
+[**Run an encrypted exchange in your browser**](https://open-e2ee.dev/playground) · [Edit on StackBlitz](https://stackblitz.com/fork/github/open-e2ee/signal-protocol-js/tree/v3.0.0/examples/browser) · [Run on Expo / Hermes](./examples/expo/README.md)
 
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-2f6f5e)](./LICENSE)
 [![npm version](https://img.shields.io/npm/v/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
@@ -43,7 +43,7 @@ The relay never needs message plaintext or device private keys.
 
 OpenE2EE implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
-Version `2.0.x`. Public APIs and persisted formats follow semantic versioning.
+Version `3.0.x`. Public APIs and persisted formats follow semantic versioning.
 
 ## Install
 
@@ -109,7 +109,7 @@ Choose the device-local store for your runtime. Then supply a relay that authent
 | Expo | [`expoStore`](./local/store/expo/README.md) | Configure SQLCipher before schema access. Requires a native development or release build. [Run the Hermes example](./examples/expo/README.md); Expo Go does not include SQLCipher. |
 | Browser | [`indexedDbStore`](./local/store/web/README.md) | Use a secure context and a restrictive CSP. Same-origin JavaScript can access stored records and their key. [Browser setup](https://docs.open-e2ee.dev/start/browser). |
 | Bare React Native | [`reactNativeStore`](./local/store/react-native/README.md) | Provide an atomic, durable key-value backend and run the exported backend conformance kit. |
-| Node | [`nodeStore`](./local/store/node/README.md) | Set an explicit private data directory on a trusted local filesystem. |
+| Node | [`nodeStore`](./local/store/node/README.md) | Install `fs-native-extensions@1.2.7` and set an explicit private directory on a trusted local filesystem. |
 
 The [adapter guide](./ADAPTERS.md) defines every storage, relay, vault, and object-store boundary. The [client composition guide](./docs/CLIENT_COMPOSITION.md) shows an Expo and Convex integration.
 

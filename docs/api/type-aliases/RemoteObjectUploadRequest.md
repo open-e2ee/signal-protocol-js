@@ -10,7 +10,7 @@
 
 Request for a short-lived, direct object upload operation.
 
-`requestId` is an idempotency key for one logical upload. It is not an
+`requestId` and `preparedAt` identify one immutable preparation. Neither is an
 object identifier or a provider key. An authenticated backend maps it to a
 stable canonical object identifier and a private provider key.
 
@@ -40,11 +40,27 @@ SHA-256 digest of the exact encrypted bytes.
 
 ***
 
+### preparedAt
+
+> **preparedAt**: `number`
+
+Immutable preparation time in Unix milliseconds. Never refresh it for a retry.
+
+***
+
+### readCapabilityDigest?
+
+> `optional` **readCapabilityDigest?**: `Uint8Array`
+
+Optional broker read-capability commitment. Required by hosted Relay.
+
+***
+
 ### requestId
 
 > **requestId**: `string`
 
-Stable idempotency key for retries of one logical upload.
+Stable nonce for retries of one logical upload.
 
 The backend must scope this untrusted value to the authenticated principal
-and return the same object reservation when the caller retries the request.
+and preparation time. Exact retries return the same object reservation.

@@ -12,20 +12,20 @@
 
 ### DeleteLocal
 
-> `readonly` **DeleteLocal**: `"delete-local"` = `'delete-local'`
+> `readonly` **DeleteLocal**: `"delete-local"` = `"delete-local"`
 
 ### DeleteRemote
 
-> `readonly` **DeleteRemote**: `"delete-remote"` = `'delete-remote'`
+> `readonly` **DeleteRemote**: `"delete-remote"` = `"delete-remote"`
 
 ### Download
 
-> `readonly` **Download**: `"download"` = `'download'`
+> `readonly` **Download**: `"download"` = `"download"`
 
 ### SyncDelete
 
-> `readonly` **SyncDelete**: `"sync-delete"` = `'sync-delete'`
+> `readonly` **SyncDelete**: `"sync-delete"` = `"sync-delete"`
 
 ### Upload
 
-> `readonly` **Upload**: `"upload"` = `'upload'`
+> `readonly` **Upload**: `"upload"` = `"upload"`

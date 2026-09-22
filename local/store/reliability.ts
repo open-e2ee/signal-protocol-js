@@ -357,23 +357,31 @@ export async function completeOutgoingMessageIntent(
 export async function hasProcessedEnvelope(
   store: ReliabilityMetadataStore,
   envelopeId: string,
-  now = Date.now()
+  now = Date.now(),
+  fingerprint?: string
 ): Promise<boolean> {
   const value = await store.getMetadata(recordKey('incoming', envelopeId));
   if (value === null) return false;
-  const processedAt = Number(value);
+  const { processedAt, fingerprint: storedFingerprint } = JSON.parse(value);
   if (!Number.isFinite(processedAt)) throw new Error('Corrupt processed-envelope record');
+  if (fingerprint !== undefined && fingerprint !== storedFingerprint) {
+    throw new Error('Relay envelope identity changed after processing');
+  }
   return processedAt >= now - RELIABILITY_RECORD_TTL_MS;
 }
 
 export async function storeProcessedEnvelope(
   store: ReliabilityMetadataStore,
   envelopeId: string,
-  processedAt = Date.now()
+  processedAt = Date.now(),
+  fingerprint?: string
 ): Promise<void> {
   await serializeMutation(store, async () => {
     const retainedDays = await pruneExpiredBuckets(store, 'incoming', processedAt);
-    await store.setMetadata(recordKey('incoming', envelopeId), String(processedAt));
+    await store.setMetadata(
+      recordKey('incoming', envelopeId),
+      JSON.stringify({ processedAt, fingerprint })
+    );
     await indexRecord(store, 'incoming', envelopeId, processedAt, retainedDays);
   });
 }

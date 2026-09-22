@@ -320,7 +320,7 @@ Re-exports [MediaAttachmentTransferOptions](namespaces/media/interfaces/MediaAtt
 
 ### MediaAttachmentUploadJobData
 
-Re-exports [MediaAttachmentUploadJobData](namespaces/media/interfaces/MediaAttachmentUploadJobData.md)
+Re-exports [MediaAttachmentUploadJobData](namespaces/media/type-aliases/MediaAttachmentUploadJobData.md)
 
 ***
 
@@ -426,6 +426,12 @@ Re-exports [prepareMediaAttachmentUpload](namespaces/media/functions/prepareMedi
 
 ***
 
+### prepareMediaAttachmentUploadData
+
+Re-exports [prepareMediaAttachmentUploadData](namespaces/media/functions/prepareMediaAttachmentUploadData.md)
+
+***
+
 ### PrepareMediaAttachmentUploadOptions
 
 Re-exports [PrepareMediaAttachmentUploadOptions](namespaces/media/interfaces/PrepareMediaAttachmentUploadOptions.md)
@@ -459,6 +465,12 @@ Re-exports [serializeMediaAttachmentMessage](namespaces/media/functions/serializ
 ### TusMediaAttachmentTransferOptions
 
 Re-exports [TusMediaAttachmentTransferOptions](namespaces/media/interfaces/TusMediaAttachmentTransferOptions.md)
+
+***
+
+### uploadPreparedMediaAttachment
+
+Re-exports [uploadPreparedMediaAttachment](namespaces/media/functions/uploadPreparedMediaAttachment.md)
 
 ***
 

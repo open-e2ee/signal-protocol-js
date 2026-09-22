@@ -42,7 +42,7 @@
 
 ### loadUploadData?
 
-> `optional` **loadUploadData?**: (`job`) => `Promise`\<[`MediaAttachmentUploadJobData`](MediaAttachmentUploadJobData.md) \| `null`\>
+> `optional` **loadUploadData?**: (`job`) => `Promise`\<[`MediaAttachmentUploadJobData`](../type-aliases/MediaAttachmentUploadJobData.md) \| `null`\>
 
 #### Parameters
 
@@ -52,7 +52,23 @@
 
 #### Returns
 
-`Promise`\<[`MediaAttachmentUploadJobData`](MediaAttachmentUploadJobData.md) \| `null`\>
+`Promise`\<[`MediaAttachmentUploadJobData`](../type-aliases/MediaAttachmentUploadJobData.md) \| `null`\>
+
+***
+
+### loadUploadedAttachment?
+
+> `optional` **loadUploadedAttachment?**: (`job`) => `Promise`\<[`MediaAttachmentPointer`](MediaAttachmentPointer.md) \| `null`\>
+
+#### Parameters
+
+##### job
+
+[`MediaAttachmentBackgroundJob`](MediaAttachmentBackgroundJob.md)
+
+#### Returns
+
+`Promise`\<[`MediaAttachmentPointer`](MediaAttachmentPointer.md) \| `null`\>
 
 ***
 

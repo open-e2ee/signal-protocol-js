@@ -8,12 +8,8 @@
 
 > **prepareMediaAttachmentUpload**(`data`, `options`): `Promise`\<[`MediaAttachmentPointer`](../interfaces/MediaAttachmentPointer.md)\>
 
-Encrypt and upload media bytes, returning a SDK attachment pointer.
-
-The client computes the encrypted object digest and object ID once. Upload
-retries request fresh presigned URLs for that same key. This handles expired
-upload URLs without changing the pointer metadata that the client later
-encrypts into the Signal Protocol message.
+Encrypt and upload media bytes within one invocation.
+For restart recovery, persist prepareMediaAttachmentUploadData before calling uploadPreparedMediaAttachment.
 
 ## Parameters
 

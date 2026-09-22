@@ -65,7 +65,7 @@ database-binding and SQLCipher bootstrap.
 
 ### Protocol policy
 
-Use product/security terms at the client seam:
+Use product/security terms at the client boundary:
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
@@ -151,6 +151,31 @@ await signal.syncToServer();
 await signal.rotateEcSignedPreKey();
 await signal.rotateKyberPreKey();
 ```
+
+### Hosted mailbox receive
+
+Register `onMessageDecrypted` before calling `pullHostedRelayAfterWake()`.
+The handler must persist application content before it resolves. Use the message
+ID for idempotent application writes. A rejected handler leaves the envelope
+unacknowledged.
+
+The hosted pull uses the same content handler as the foreground subscription.
+It installs pairwise sender-key distributions only for members of the verified
+local group. It handles receipts and typing separately from application messages.
+Successful content receipts permit acknowledgment retries without decryption.
+
+The device-local store commits recoverable content with the ratchet update or
+skipped-key consumption. A restart can resume the application write from that
+encrypted record without sender retransmission. The SDK deletes the content
+after a successful processing receipt. Retry cleanup removes abandoned records
+after the existing thirty-day retry horizon.
+
+The application handler can run again if its write succeeds but the processing
+receipt fails. Use the message ID to prevent duplicate application records.
+Recovery rejects changes to the envelope identity or ciphertext.
+
+`processIncomingEnvelopes()` remains a lower-level decryption API. It returns
+plaintext to its caller. It does not run the application handler.
 
 ### Background key maintenance
 

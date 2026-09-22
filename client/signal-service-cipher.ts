@@ -22,7 +22,7 @@ import type {
   GroupMemberDevice,
 } from '../remote/relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
-import type { ISignalProtocolLocalStore, Base64 } from '../types';
+import type { ISignalProtocolLocalStore, Base64, ReceivedContent } from '../types';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { SealedSenderAuthError } from '../types/errors';
 import { base64ToBytes } from '../internal/crypto';
@@ -265,8 +265,10 @@ export class SignalProtocolServiceCipher {
   private sealedSenderIdentifiedFallback?: import('./config').SealedSenderConfig['onIdentifiedFallback'];
   private contactProfileStateStore?: ContactProfileStateStore;
   private endorsementManager?: EndorsementManager;
+  private endorsementManagerResolver?: () => Promise<EndorsementManager | undefined>;
   private endorsementRefresher?: EndorsementRefresher;
   private groupSendBarrierChecker?: GroupSendBarrierChecker;
+  private groupReceiveAuthorizer?: (groupId: string, senderId: string) => Promise<void>;
   private groupSecretParamsProvider?: (
     groupId: string
   ) => Promise<import('../internal/protocol/zk/groups/group-params').GroupSecretParams | null>;
@@ -504,8 +506,9 @@ export class SignalProtocolServiceCipher {
    * group messages and provides stronger group membership verification.
    *
    */
-  setEndorsementManager(manager: EndorsementManager): void {
+  setEndorsementManager(manager: EndorsementManager, resolve?: () => Promise<EndorsementManager | undefined>): void {
     this.endorsementManager = manager;
+    this.endorsementManagerResolver = resolve;
   }
 
   /**
@@ -545,6 +548,11 @@ export class SignalProtocolServiceCipher {
   // Public API
   // ============================================================================
 
+  /** Bind received group content to verified local membership. */
+  setGroupReceiveAuthorizer(authorize: (groupId: string, senderId: string) => Promise<void>): void {
+    this.groupReceiveAuthorizer = authorize;
+  }
+
   /**
    * Decrypt incoming envelope - routes to appropriate cipher
    *
@@ -560,7 +568,8 @@ export class SignalProtocolServiceCipher {
    */
   async decrypt(
     envelope: Envelope,
-    sealedSenderConfig?: import('./config').SealedSenderConfig
+    sealedSenderConfig?: import('./config').SealedSenderConfig,
+    receiveId?: string
   ): Promise<DecryptedEnvelope> {
     // Handle sealed sender (unidentified_sender) envelopes by unsealing first
     if (envelope.messageType === 'unidentified_sender') {
@@ -605,7 +614,7 @@ export class SignalProtocolServiceCipher {
       const innerEnvelope = reconstructEnvelope(envelope, unsealed);
 
       // Recursively decrypt the inner message (now a standard ciphertext)
-      return this.decrypt(innerEnvelope);
+      return this.decrypt(innerEnvelope, undefined, receiveId);
     }
 
     // Validate message type before processing
@@ -644,24 +653,44 @@ export class SignalProtocolServiceCipher {
       // been resolved against the local sender key store. The envelope carries
       // no group, so this is the only place a group becomes known on receive.
       let resolvedGroupId: string | null = null;
+      const received = receiveId ? await this.storage.getReceivedContent(receiveId) : null;
 
       // Route on the envelope type. `sender_key` says "decrypt this as a
       // framed SenderKeyMessage". It does not say which group, and cannot.
       // That is the point of not putting a group on the envelope.
       if (envelope.messageType === 'sender_key') {
-        const group = await this.decryptGroup(envelope);
+        const group = await this.decryptGroup(envelope, receiveId, received ?? undefined);
         plaintext = group.plaintext;
         resolvedGroupId = group.groupId;
       } else {
         // Pairwise message - use SESAME for session convergence
         const sesameMessage = this.toSesameMessage(envelope);
-        plaintext = await this.decryptPairwise(sesameMessage);
+        plaintext = received?.plaintext ?? (await this.decryptPairwise(sesameMessage, receiveId));
       }
 
       // Create decrypted envelope for hook
-      const receivedAt = Date.now();
+      const receivedAt = received?.receivedAt ?? Date.now();
 
       const inspectedContent = this.getResolvedContentAdapter().inspectContent(plaintext);
+      const distribution = inspectedContent.senderKeyDistribution;
+      if (distribution) {
+        if (resolvedGroupId !== null) {
+          throw new EncryptionError(
+            'Sender-key distributions require pairwise encryption',
+            EncryptionErrorCode.INVALID_CIPHERTEXT
+          );
+        }
+        if (!this.groupReceiveAuthorizer) {
+          throw new Error('Configure verified group membership before receiving sender keys');
+        }
+        await this.groupReceiveAuthorizer(distribution.groupId, envelope.senderUserId);
+        await this.senderKeyManager.processSenderKeyDistribution(
+          distribution.groupId,
+          envelope.senderUserId,
+          envelope.senderDeviceId,
+          distribution.distribution
+        );
+      }
 
       // For DMs, compute canonical conversation ID: dm:${sorted(user1, user2)}
       // Groups use their group ID directly. Sent sync transcripts override this
@@ -805,9 +834,9 @@ export class SignalProtocolServiceCipher {
    *
    * @throws {EncryptionError} DECRYPTION_FAILED if decryption fails
    */
-  async decryptPairwise(sesameMessage: SesameMessage): Promise<string> {
+  async decryptPairwise(sesameMessage: SesameMessage, receiveId?: string): Promise<string> {
     try {
-      const plaintextBytes = await this.sesameManager.receive(sesameMessage);
+      const plaintextBytes = await this.sesameManager.receive(sesameMessage, receiveId);
       const plaintext = this.encodeLosslessPlaintext(plaintextBytes);
 
       this.logger.debug('Message received and decrypted', {
@@ -845,7 +874,11 @@ export class SignalProtocolServiceCipher {
    *
    * @throws {EncryptionError} DECRYPTION_FAILED if decryption fails
    */
-  private async decryptGroup(envelope: Envelope): Promise<{
+  private async decryptGroup(
+    envelope: Envelope,
+    receiveId?: string,
+    received?: ReceivedContent
+  ): Promise<{
     plaintext: string;
     groupId: string;
   }> {
@@ -858,11 +891,13 @@ export class SignalProtocolServiceCipher {
       framedBytes = envelope.ciphertext;
     }
 
-    const groupId = await this.senderKeyManager.resolveGroupForFramedMessage(
-      framedBytes,
-      envelope.senderUserId,
-      envelope.senderDeviceId
-    );
+    const groupId =
+      received?.groupId ??
+      (await this.senderKeyManager.resolveGroupForFramedMessage(
+        framedBytes,
+        envelope.senderUserId,
+        envelope.senderDeviceId
+      ));
 
     if (groupId === null) {
       // No stored sender key claims this distribution identifier, so there is
@@ -874,12 +909,15 @@ export class SignalProtocolServiceCipher {
       );
     }
 
+    await this.groupReceiveAuthorizer?.(groupId, envelope.senderUserId);
+    if (received) return { plaintext: received.plaintext, groupId };
     try {
       const plaintext = await this.senderKeyManager.decryptGroupMessage(
         groupId,
         envelope.senderUserId,
         envelope.senderDeviceId,
-        framedBytes
+        framedBytes,
+        receiveId
       );
 
       this.logger.debug('Decrypted group message', {
@@ -1473,8 +1511,9 @@ export class SignalProtocolServiceCipher {
     groupId: string,
     recipientUserIds: string[]
   ): Promise<Extract<SealedSenderAuth, { type: 'groupSendToken' }> | null> {
-    if (!this.endorsementManager || recipientUserIds.length === 0) return null;
-    const { needsRefresh, reason } = await this.endorsementManager.shouldRefreshEndorsements(
+    const manager = this.endorsementManagerResolver ? await this.endorsementManagerResolver() : this.endorsementManager;
+    if (!manager || recipientUserIds.length === 0) return null;
+    const { needsRefresh, reason } = await manager.shouldRefreshEndorsements(
       groupId,
       recipientUserIds
     );
@@ -1488,7 +1527,7 @@ export class SignalProtocolServiceCipher {
     const groupSecretParams = this.groupSecretParamsProvider
       ? await this.groupSecretParamsProvider(groupId)
       : null;
-    const combined = await this.endorsementManager.getCombinedToken(
+    const combined = await manager.getCombinedToken(
       groupId,
       recipientUserIds,
       groupSecretParams ?? undefined
@@ -1549,6 +1588,7 @@ export class SignalProtocolServiceCipher {
     recipientUserId: string,
     groupId?: string
   ): Promise<ResolvedSealedSenderContext | null> {
+    const manager = groupId && this.endorsementManagerResolver ? await this.endorsementManagerResolver() : this.endorsementManager;
     return resolveSealedSenderSendContext(
       {
         storage: this.storage,
@@ -1560,8 +1600,8 @@ export class SignalProtocolServiceCipher {
         ...(this.contactProfileStateStore && {
           contactProfileStateStore: this.contactProfileStateStore,
         }),
-        ...(this.endorsementManager && {
-          endorsementManager: this.endorsementManager,
+        ...(manager && {
+          endorsementManager: manager,
         }),
         ...(this.groupSecretParamsProvider && {
           groupSecretParamsProvider: this.groupSecretParamsProvider,

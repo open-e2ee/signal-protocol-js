@@ -352,6 +352,7 @@ export async function sendTypingIndicator(
       senderDeviceId: ctx.deviceId,
       ciphertext: ciphertextBase64,
       messageType: 'ciphertext',
+      clientMessageId: await CryptoUtils.generateUuidV4(),
       // Protocol messages use timestamp for identification
       timestamp: Date.now(),
       // Explicit ContentHint per Signal Protocol - silently discard on failure
@@ -525,8 +526,13 @@ async function sendReceiptToDevice(
   const hasSession = await SessionOps.hasSession(ctx, address);
   if (!hasSession) return;
 
+  let prepared: Envelope | undefined;
+  const sendPrepared = async () => {
+    prepared ??= await prepareReceiptToDevice(ctx, address, type, timestamps, recipientUserId, deviceId);
+    await ctx.relay!.send(prepared);
+  };
   try {
-    await sendReceiptToDeviceInner(ctx, address, type, timestamps, recipientUserId, deviceId);
+    await sendPrepared();
   } catch {
     ctx.logger.warn(`Receipt send failed, scheduling retry`, {
       category: 'E2EE',
@@ -535,7 +541,7 @@ async function sendReceiptToDevice(
     // Make one in-process retry after five seconds.
     setTimeout(async () => {
       try {
-        await sendReceiptToDeviceInner(ctx, address, type, timestamps, recipientUserId, deviceId);
+        await sendPrepared();
       } catch {
         // Give up after one retry
       }
@@ -544,19 +550,16 @@ async function sendReceiptToDevice(
 }
 
 /**
- * Inner send logic for receipt-to-device (encrypt + relay.send)
+ * Prepare one encrypted receipt for exact transport retries.
  */
-async function sendReceiptToDeviceInner(
+async function prepareReceiptToDevice(
   ctx: SignalProtocolClientContext,
   address: ProtocolAddress,
   type: ReceiptType,
   timestamps: number[],
   recipientUserId: string,
   deviceId: number
-): Promise<void> {
-  const receiptTypeName =
-    type === ReceiptType.READ ? 'read' : type === ReceiptType.VIEWED ? 'viewed' : 'delivery';
-
+): Promise<Envelope> {
   // Wrap the receipt in the Content protobuf.
   const encrypted = await encryptMessage(
     ctx,
@@ -569,31 +572,21 @@ async function sendReceiptToDeviceInner(
 
   // Send as ciphertext. Receipts are encrypted Content inside a ciphertext
   // envelope. The relay contract carries only the outer type.
-  await ctx.relay!.send({
+  return {
     targetUserId: recipientUserId,
     targetDeviceId: deviceId,
     senderUserId: ctx.userId,
     senderDeviceId: ctx.deviceId,
     ciphertext: ciphertextBase64,
     messageType: 'ciphertext',
+    clientMessageId: await CryptoUtils.generateUuidV4(),
     // Protocol messages use a timestamp for identification.
     timestamp: Date.now(),
     // Receipts are implicit content and may be silently discarded on failure.
     contentHint: ContentHint.Implicit,
     // Receipts persist for convergence but never request a visible alert.
     deliveryClass: 'background-sync',
-  });
-
-  ctx.logger.debug(
-    `${receiptTypeName.charAt(0).toUpperCase() + receiptTypeName.slice(1)} receipt sent`,
-    {
-      category: 'E2EE',
-      data: {
-        to: `${recipientUserId}:${deviceId}`,
-        timestampCount: timestamps.length,
-      },
-    }
-  );
+  };
 }
 
 /**

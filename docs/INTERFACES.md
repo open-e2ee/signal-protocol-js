@@ -114,6 +114,20 @@ The application backend must:
 
 A client-supplied user identifier is a routing input, not proof of identity.
 
+Each adapter implements `getPreKeyInventory` for prekey synchronization.
+It returns both reusable-key metadata records and both one-time-key counts.
+These observations do not consume keys, reserve a version, or authorize an upload.
+Callers request new observations after intervening work.
+Hosted Relay persists a separate public-eligibility snapshot for its published
+prekeys. A publication reads the current public inventory, names its exact
+predecessor revision, persists one pending receipt before the request, and reads
+the accepted inventory before it commits the new receipt. An exact retry can
+recover a lost response. A stale or reordered writer cannot restore material
+that the Relay already issued. Retained private prekeys are not a publication
+inventory. Convex retains its bounded independent queries.
+
+The server remains responsible for atomic one-time-key consumption.
+
 The relay stores public protocol material, ciphertext, and required routing
 metadata. It must not require device private keys or decrypted message content.
 See the [relay guide](../remote/relay/README.md).
@@ -165,6 +179,8 @@ const client = await createSignalProtocolClient({
   identity: { userId },
   adapters: { storage, relay, remoteObjectStore },
   media: {
+    preparedUploads: appPreparedUploads,
+    maxPreparedUploadBytes: appUploadBudgetBytes,
     loadLocalAttachment: ({ localMediaId }) =>
       appDrafts.readBytes(localMediaId),
     saveUploadedAttachment: ({ localMediaId, attachment }) =>

@@ -215,6 +215,26 @@ Identity type the prekeys belong to (for correct scoped deletion)
 
 > `optional` **kemOneTimePreKeyId?**: `number`
 
+#### kyberPreKeyUse?
+
+> `optional` **kyberPreKeyUse?**: `object`
+
+##### kyberPreKeyUse.baseKeyBytes
+
+> **baseKeyBytes**: `number`[]
+
+##### kyberPreKeyUse.kyberPreKeyId
+
+> **kyberPreKeyId**: `number`
+
+##### kyberPreKeyUse.kyberPreKeyInstanceId
+
+> **kyberPreKeyInstanceId**: `string`
+
+##### kyberPreKeyUse.signedPreKeyId
+
+> **signedPreKeyId**: `number`
+
 #### oneTimePreKeyId?
 
 > `optional` **oneTimePreKeyId?**: `number`

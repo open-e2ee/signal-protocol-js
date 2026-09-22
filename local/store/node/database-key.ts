@@ -17,10 +17,16 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, writeFile, unlink, chmod } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { access, readFile, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { EncryptionError, EncryptionErrorCode } from '../../../types';
+import { withNodeDatabaseLock } from './database-lock';
+import {
+  clearPendingNodeDatabaseFiles,
+  commitNodeDatabaseFile,
+  syncNodeDatabaseDirectory,
+} from './database-file-commit';
 
 /**
  * Database encryption key size (AES-256)
@@ -38,10 +44,8 @@ const DEFAULT_DATA_DIR = join(homedir(), '.config', 'open-e2ee', 'signal-protoco
  */
 const DB_KEY_FILENAME = 'db.key';
 
-/**
- * File permissions for the database key (0600 = owner read/write only)
- */
-const SECURE_FILE_MODE = 0o600;
+/** A durable marker prevents access during an incomplete explicit reset. */
+export const NODE_DATABASE_RESET_FILE = '.database.reset';
 
 /**
  * Node.js Database Key Manager
@@ -53,7 +57,7 @@ export class NodeDatabaseKeyManager {
   private cachedKey: Uint8Array | null = null;
   private readonly keyFilePath: string;
 
-  constructor(dataDir: string = DEFAULT_DATA_DIR) {
+  constructor(private readonly dataDir: string = DEFAULT_DATA_DIR) {
     this.keyFilePath = join(dataDir, DB_KEY_FILENAME);
   }
 
@@ -66,24 +70,32 @@ export class NodeDatabaseKeyManager {
    * @returns true if the method generated a key, false if one already exists
    */
   async initialize(): Promise<boolean> {
+    return withNodeDatabaseLock(this.dataDir, () => this.initializeLocked());
+  }
+
+  private async initializeLocked(): Promise<boolean> {
     try {
+      await clearPendingNodeDatabaseFiles(this.dataDir);
       // Check if key already exists
-      const existingKey = await this.getKey();
+      const existingKey = await this.readKeyLocked();
       if (existingKey) {
         return false;
       }
 
-      // Create the directory if it is missing
-      await mkdir(dirname(this.keyFilePath), { recursive: true, mode: 0o700 });
+      try {
+        await access(join(this.dataDir, 'protocol_security_state_v1.json'));
+        throw new Error(
+          'Node database key is missing. Restore the key or explicitly reset the store.'
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
 
       // Generate cryptographically secure random 32-byte key
       const keyBytes = randomBytes(DB_KEY_SIZE);
 
       // Store in filesystem with secure permissions
-      await writeFile(this.keyFilePath, keyBytes, { mode: SECURE_FILE_MODE });
-
-      // Verify permissions were set correctly (some filesystems ignore mode)
-      await chmod(this.keyFilePath, SECURE_FILE_MODE);
+      await commitNodeDatabaseFile(this.keyFilePath, keyBytes);
 
       // Cache the key
       this.cachedKey = new Uint8Array(keyBytes);
@@ -101,18 +113,38 @@ export class NodeDatabaseKeyManager {
   /**
    * Get the database encryption key
    *
-   * Retrieves the key from filesystem (or cache if available).
+   * Rechecks the filesystem and reuses the cached key only when its bytes match.
    * Returns null if key does not exist (needs initialization).
    *
    * @returns Database encryption key or null
    */
   async getKey(): Promise<Uint8Array | null> {
-    try {
-      // Return cached key if available
-      if (this.cachedKey) {
-        return this.cachedKey;
-      }
+    return withNodeDatabaseLock(this.dataDir, () => this.readKeyLocked());
+  }
 
+  /** @internal Holds authority through the caller's complete state transaction. */
+  async withKey<T>(operation: (key: Uint8Array) => Promise<T>, initialize = false): Promise<T> {
+    return withNodeDatabaseLock(this.dataDir, async () => {
+      if (initialize) await this.initializeLocked();
+      const key = await this.readKeyLocked();
+      if (!key)
+        throw new Error(
+          'Node database key is missing. Restore the key or explicitly reset the store.'
+        );
+      return operation(key);
+    });
+  }
+
+  private async readKeyLocked(): Promise<Uint8Array | null> {
+    try {
+      await access(join(this.dataDir, NODE_DATABASE_RESET_FILE));
+      throw new Error(
+        'Node database reset is incomplete. Repeat the explicit reset before opening the store.'
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    try {
       // Read key from file. A missing file surfaces as ENOENT below. A
       // separate access() pre-check would race against concurrent
       // creation or deletion of the key file.
@@ -126,12 +158,14 @@ export class NodeDatabaseKeyManager {
         );
       }
 
-      // Cache for future use
+      // Recheck disk on each transaction so reset cannot leave a stale writer.
+      if (this.cachedKey && Buffer.from(this.cachedKey).equals(keyBuffer)) return this.cachedKey;
       this.cachedKey = keyBytes;
 
       return keyBytes;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.cachedKey = null;
         return null;
       }
       throw new EncryptionError(
@@ -188,25 +222,28 @@ export class NodeDatabaseKeyManager {
    * @returns true if the method deleted a key, false if none existed
    */
   async deleteKey(): Promise<boolean> {
-    try {
-      const exists = await this.hasKey();
-      if (!exists) {
-        return false;
+    return withNodeDatabaseLock(this.dataDir, async () => {
+      try {
+        const exists = await this.readKeyLocked();
+        if (!exists) {
+          return false;
+        }
+
+        await unlink(this.keyFilePath);
+        await syncNodeDatabaseDirectory(this.dataDir);
+
+        // Clear cache
+        this.cachedKey = null;
+
+        return true;
+      } catch (error) {
+        throw new EncryptionError(
+          'Failed to delete database encryption key',
+          EncryptionErrorCode.KEY_STORAGE_ERROR,
+          { originalError: error as Error }
+        );
       }
-
-      await unlink(this.keyFilePath);
-
-      // Clear cache
-      this.cachedKey = null;
-
-      return true;
-    } catch (error) {
-      throw new EncryptionError(
-        'Failed to delete database encryption key',
-        EncryptionErrorCode.KEY_STORAGE_ERROR,
-        { originalError: error as Error }
-      );
-    }
+    });
   }
 
   /**
@@ -247,27 +284,27 @@ export class NodeDatabaseKeyManager {
    * @param newKey The new database encryption key
    */
   async completeKeyRotation(newKey: Uint8Array): Promise<void> {
-    try {
-      // Validate key size
-      if (newKey.length !== DB_KEY_SIZE) {
-        throw new Error(`Invalid key size: expected ${DB_KEY_SIZE} bytes`);
+    return withNodeDatabaseLock(this.dataDir, async () => {
+      try {
+        // Validate key size
+        if (newKey.length !== DB_KEY_SIZE) {
+          throw new Error(`Invalid key size: expected ${DB_KEY_SIZE} bytes`);
+        }
+
+        // Store new key
+        await this.readKeyLocked();
+        await commitNodeDatabaseFile(this.keyFilePath, newKey);
+
+        // Update cache
+        this.cachedKey = newKey;
+      } catch (error) {
+        throw new EncryptionError(
+          'Failed to complete database key rotation',
+          EncryptionErrorCode.KEY_STORAGE_ERROR,
+          { originalError: error as Error }
+        );
       }
-
-      // Store new key
-      await writeFile(this.keyFilePath, newKey, { mode: SECURE_FILE_MODE });
-
-      // Verify permissions
-      await chmod(this.keyFilePath, SECURE_FILE_MODE);
-
-      // Update cache
-      this.cachedKey = newKey;
-    } catch (error) {
-      throw new EncryptionError(
-        'Failed to complete database key rotation',
-        EncryptionErrorCode.KEY_STORAGE_ERROR,
-        { originalError: error as Error }
-      );
-    }
+    });
   }
 
   /**

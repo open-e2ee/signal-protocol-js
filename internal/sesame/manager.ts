@@ -140,7 +140,7 @@ interface PreKeyMessageResult {
  */
 export interface IProtocolManager {
   encrypt(remoteAddress: ProtocolAddress, plaintext: string): Promise<Ciphertext>;
-  decrypt(remoteAddress: ProtocolAddress, ciphertext: Ciphertext): Promise<string>;
+  decrypt(remoteAddress: ProtocolAddress, ciphertext: Ciphertext, receiveId?: string): Promise<string>;
   /**
    * Get the session record for a remote address.
    * Used by SESAME to sync sessions after PreKeyMessage decryption.
@@ -1041,7 +1041,7 @@ export class SesameManager implements ISesameManager {
    *
    * @see https://signal.org/docs/specifications/sesame/
    */
-  async receive(message: SesameMessage): Promise<Uint8Array> {
+  async receive(message: SesameMessage, receiveId?: string): Promise<Uint8Array> {
     if (!this.localUserId || !this.localDeviceId) {
       throw new SesameError('SesameManager not initialized', 'NOT_INITIALIZED');
     }
@@ -1090,7 +1090,7 @@ export class SesameManager implements ISesameManager {
     // session establishment for first messages from new senders
     if (candidates.length === 0) {
       try {
-        const result = await this.handlePreKeyMessage(message, senderAddress, ciphertext);
+        const result = await this.handlePreKeyMessage(message, senderAddress, ciphertext, receiveId);
 
         // TRANSACTIONAL: Only persist after successful decrypt
         // This prevents session state corruption if decryption fails
@@ -1145,7 +1145,7 @@ export class SesameManager implements ISesameManager {
 
     for (const candidate of candidates) {
       try {
-        const plaintextString = await this.protocol.decrypt(senderAddress, ciphertext);
+        const plaintextString = await this.protocol.decrypt(senderAddress, ciphertext, receiveId);
         decryptedPlaintext = new TextEncoder().encode(plaintextString);
         successfulCandidate = candidate;
         break;
@@ -1219,7 +1219,7 @@ export class SesameManager implements ISesameManager {
     });
 
     try {
-      const result = await this.handlePreKeyMessage(message, senderAddress, ciphertext);
+      const result = await this.handlePreKeyMessage(message, senderAddress, ciphertext, receiveId);
 
       // TRANSACTIONAL: Only persist after successful decrypt
       // This prevents session state corruption if decryption fails
@@ -1578,7 +1578,8 @@ export class SesameManager implements ISesameManager {
   private async handlePreKeyMessage(
     message: SesameMessage,
     senderAddress: ProtocolAddress,
-    ciphertext: Ciphertext
+    ciphertext: Ciphertext,
+    receiveId?: string
   ): Promise<PreKeyMessageResult> {
     this.logger.debug('SESAME: No existing sessions, trying PreKeyMessage handling', {
       category: 'E2EE',
@@ -1599,7 +1600,7 @@ export class SesameManager implements ISesameManager {
     );
 
     // Note: this.protocol is guaranteed non-null because receive() checks it before calling this method
-    const plaintextString = await this.protocol!.decrypt(senderAddress, ciphertext);
+    const plaintextString = await this.protocol!.decrypt(senderAddress, ciphertext, receiveId);
     const decryptedPlaintext = new TextEncoder().encode(plaintextString);
 
     // CRITICAL: Sync session from KeyStorage to SESAME layer

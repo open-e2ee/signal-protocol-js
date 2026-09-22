@@ -98,8 +98,8 @@
 
 Stable idempotency key for this logical upload.
 
-Supply the same value when restarting an interrupted upload. The client
-generates a random value when you omit it.
+Restarted uploads must reuse both this ID and their prepared encrypted bytes.
+The client generates a random value when you omit it.
 
 ***
 

@@ -40,6 +40,30 @@ Sender tuple to pin or match in the same durable commit.
 
 ***
 
+### kyberPreKeyUse?
+
+> `optional` **kyberPreKeyUse?**: `object`
+
+Reusable Kyber-prekey replay evidence committed with the accepted session.
+
+#### baseKeyBytes
+
+> **baseKeyBytes**: `Uint8Array`
+
+#### kyberPreKeyId
+
+> **kyberPreKeyId**: `number`
+
+#### kyberPreKeyInstanceId
+
+> **kyberPreKeyInstanceId**: `string`
+
+#### signedPreKeyId
+
+> **signedPreKeyId**: `number`
+
+***
+
 ### localIdentityType
 
 > **localIdentityType**: [`IdentityType`](../namespaces/keys/type-aliases/IdentityType.md)
@@ -51,6 +75,12 @@ Local identity namespace. It also scopes any consumed recipient prekeys.
 ### oneTimePreKeyId?
 
 > `optional` **oneTimePreKeyId?**: `number`
+
+***
+
+### receivedContent?
+
+> `optional` **receivedContent?**: `ReceivedContent`
 
 ***
 

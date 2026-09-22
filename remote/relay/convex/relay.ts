@@ -30,6 +30,7 @@ import type {
   DeviceRegistration,
   PreKeyUpload,
   PreKeyBundle,
+  PreKeyInventory,
   EcSignedPreKeyUpload,
   KemLastResortPreKeyUpload,
   Unsubscribe,
@@ -755,6 +756,23 @@ export class ConvexSignalProtocolRelayServer implements ISignalProtocolRelayServ
           }
         : null,
     };
+  }
+
+  async getPreKeyInventory(
+    userId: string,
+    deviceId: number,
+    identityType: IdentityType = 'aci'
+  ): Promise<PreKeyInventory> {
+    // Keep the existing bounded query transactions. Counts guide replenishment,
+    // not consumption authority, and can change before the next upload.
+    const [ecSignedPreKey, kemLastResortPreKey, ecOneTimePreKeyCount, kemOneTimePreKeyCount] =
+      await Promise.all([
+        this.getEcSignedPreKeyMetadata(userId, deviceId, identityType),
+        this.getKemLastResortPreKeyMetadata(userId, deviceId, identityType),
+        this.getPreKeyCount(userId, deviceId, 'ec', identityType),
+        this.getPreKeyCount(userId, deviceId, 'kem', identityType),
+      ]);
+    return { ecSignedPreKey, kemLastResortPreKey, ecOneTimePreKeyCount, kemOneTimePreKeyCount };
   }
 
   async getPreKeyCount(

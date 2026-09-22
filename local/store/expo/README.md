@@ -14,29 +14,31 @@ schema and transaction lifecycle.
 
 ## Database setup
 
-Compose the exported table definitions into the application schema, configure
+The package ships the authoritative Drizzle table definitions at
+`@open-e2ee/signal-protocol-sdk/local/store/expo/schema`. The host application
+owns migration generation and execution. Generate migrations from the package
+version that the application uses. Apply those migrations before the store
+makes its first query.
+
+Compose the exported table definitions into the application schema. Configure
 the database bindings once during bootstrap, and apply the database key before
 the first query:
 
 <!-- doc-snippet:skip requires-external-context -->
+
 ```ts
-import {
-  configureSignalProtocolExpoDbBindings,
-} from "@open-e2ee/signal-protocol-sdk/local/store/expo/db";
-import {
-  getDatabaseKeyManager,
-} from "@open-e2ee/signal-protocol-sdk/local/store/expo";
-import * as signalSchema from "@open-e2ee/signal-protocol-sdk/local/store/expo/schema";
+import { configureSignalProtocolExpoDbBindings } from '@open-e2ee/signal-protocol-sdk/local/store/expo/db';
+import { getDatabaseKeyManager } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
+import * as signalSchema from '@open-e2ee/signal-protocol-sdk/local/store/expo/schema';
 
 const keyManager = getDatabaseKeyManager();
 await keyManager.initialize();
 const sqlCipherPassword = await keyManager.getPassword();
 
-const { rawDatabase, drizzleDatabase } =
-  await appDatabase.openEncryptedSignalProtocolDatabase({
-    password: sqlCipherPassword,
-    schema: signalSchema,
-  });
+const { rawDatabase, drizzleDatabase } = await appDatabase.openEncryptedSignalProtocolDatabase({
+  password: sqlCipherPassword,
+  schema: signalSchema,
+});
 
 configureSignalProtocolExpoDbBindings({
   getDrizzle: async () => drizzleDatabase,
@@ -51,6 +53,10 @@ bootstrap. It must:
 - apply the supplied key before schema access
 - create or migrate the exported tables
 - return the matching raw and Drizzle handles
+
+Do not copy the exported table definitions into an application-owned schema.
+Copied definitions can omit key ownership constraints when the package schema
+changes.
 
 SQLCipher requires a development build and is not available in Expo Go.
 
@@ -67,16 +73,14 @@ Do not back these tables up to a server or sync them between devices.
 ## Client usage
 
 <!-- doc-snippet:skip requires-external-context -->
+
 ```ts
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
+import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
+import { expoStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
 
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: {
-    storage: expoStore(),
-    relay,
-  },
+  adapters: { storage: expoStore(), relay },
 });
 ```
 

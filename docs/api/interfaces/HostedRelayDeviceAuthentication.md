@@ -16,6 +16,28 @@ A device proof signer whose private key never leaves the SDK-owned local store.
 
 ## Methods
 
+### signCertificateRequest()
+
+> **signCertificateRequest**(`tokenId`, `nonce`): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
+
+Sign the canonical certificate request with the SDK-owned device key.
+
+#### Parameters
+
+##### tokenId
+
+`string`
+
+##### nonce
+
+`string`
+
+#### Returns
+
+`Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
+
+***
+
 ### signChallenge()
 
 > **signChallenge**(`challenge`): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>

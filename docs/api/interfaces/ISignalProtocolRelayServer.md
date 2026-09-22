@@ -654,6 +654,35 @@ Device ID
 
 ***
 
+### getPreKeyInventory()
+
+> **getPreKeyInventory**(`userId`, `deviceId`, `identityType?`): `Promise`\<[`PreKeyInventory`](PreKeyInventory.md)\>
+
+Read both signed-key records and one-time-key counts for one sync decision.
+This does not consume keys or reserve an inventory version.
+Adapters can use separate read transactions. Counts can change before upload.
+Request new observations after intervening work.
+
+#### Parameters
+
+##### userId
+
+`string`
+
+##### deviceId
+
+`number`
+
+##### identityType?
+
+[`IdentityType`](../namespaces/keys/type-aliases/IdentityType.md)
+
+#### Returns
+
+`Promise`\<[`PreKeyInventory`](PreKeyInventory.md)\>
+
+***
+
 ### getProvisioningMessage()
 
 > **getProvisioningMessage**(`sessionId`): `Promise`\<\{ `expiresAt`: `number` \| `null`; `message`: `string` \| `null`; `status`: `"completed"` \| `"waiting"` \| `"connected"` \| `"ready"` \| `"linked_pending_ack"` \| `"rolled_back"` \| `"expired"`; \}\>

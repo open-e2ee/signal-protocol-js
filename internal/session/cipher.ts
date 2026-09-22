@@ -496,11 +496,7 @@ export class SessionCipher {
           // Double Ratchet only: EC key derivation
           this.logger.debug('Double Ratchet: Deriving EC message key', {
             category: 'E2EE',
-            data: {
-              operation: 'encrypt',
-              counter: session.Ns,
-              hasChainKey: !!session.CKs,
-            },
+            data: { operation: 'encrypt', counter: session.Ns, hasChainKey: !!session.CKs },
           });
 
           // Pass session directly - mutations happen in place
@@ -530,11 +526,7 @@ export class SessionCipher {
 
           this.logger.debug('Preparing plaintext message header', {
             category: 'E2EE',
-            data: {
-              operation: 'encrypt',
-              counter,
-              previousCounter,
-            },
+            data: { operation: 'encrypt', counter, previousCounter },
           });
 
           // Step 4: Pad and encrypt plaintext with AES-256-CBC (encrypt-only, MAC computed separately)
@@ -579,7 +571,10 @@ export class SessionCipher {
               previousCounter,
               ciphertext: ciphertextBytes,
               pqRatchet: pqRatchetBytes,
-              addresses: serializeSignalProtocolMessageAddresses(session.localAddress, remoteAddress),
+              addresses: serializeSignalProtocolMessageAddresses(
+                session.localAddress,
+                remoteAddress
+              ),
               recipientIdentityType: authenticatedRecipientIdentityType,
             });
 
@@ -687,7 +682,9 @@ export class SessionCipher {
             framePreKeySignalProtocolMessage(preKeyProtobuf)
           ) as Ciphertext;
         } else {
-          encodedCiphertext = CryptoUtils.bytesToBase64(protobufFramedSignalProtocolMsg!) as Ciphertext;
+          encodedCiphertext = CryptoUtils.bytesToBase64(
+            protobufFramedSignalProtocolMsg!
+          ) as Ciphertext;
         }
 
         // Preserve archivedSessions from existing record (same pattern as decrypt)
@@ -771,7 +768,11 @@ export class SessionCipher {
    *
    * @see https://signal.org/docs/specifications/doubleratchet/#decrypting-messages
    */
-  async decrypt(remoteAddress: ProtocolAddress, ciphertext: Ciphertext): Promise<string> {
+  async decrypt(
+    remoteAddress: ProtocolAddress,
+    ciphertext: Ciphertext,
+    receiveId?: string
+  ): Promise<string> {
     return await this.lock.acquire(this.getLockKey(remoteAddress), async () => {
       try {
         // Parse message FIRST (before loading session)
@@ -792,7 +793,8 @@ export class SessionCipher {
 
           if (isBinaryPreKey) {
             // PreKeySignalProtocolMessage: [version_byte][protobuf] (no MAC)
-            const { protobufBytes: outerProtobuf } = parsePreKeySignalProtocolMessageEnvelope(framedBytes);
+            const { protobufBytes: outerProtobuf } =
+              parsePreKeySignalProtocolMessageEnvelope(framedBytes);
             const preKeyFields = decodePreKeySignalProtocolMessage(outerProtobuf);
 
             // Inner framed SignalProtocolMessage from field 4
@@ -810,9 +812,7 @@ export class SessionCipher {
                 EncryptionErrorCode.INVALID_CIPHERTEXT
               );
             }
-            const recipientIdentityType = identityTypeFromWire(
-              preKeyFields.recipientIdentityType
-            );
+            const recipientIdentityType = identityTypeFromWire(preKeyFields.recipientIdentityType);
 
             protobufMacContext = createProtobufMacContext(
               innerFramed,
@@ -866,7 +866,8 @@ export class SessionCipher {
             receivedPqRatchetBytes = pqRatchetRaw;
           } else {
             // SignalProtocolMessage: [version_byte][protobuf][MAC(8)]
-            const { protobufBytes, mac: envelopeMac } = parseSignalProtocolMessageEnvelope(framedBytes);
+            const { protobufBytes, mac: envelopeMac } =
+              parseSignalProtocolMessageEnvelope(framedBytes);
             const signalFields = decodeSignalProtocolMessage(protobufBytes);
 
             protobufMacContext = createProtobufMacContext(
@@ -1082,10 +1083,13 @@ export class SessionCipher {
               }
               session = null;
               retriedAfterArchive = false; // Reset flag after archiving
-              this.logger.info('Staged corrupted-session archive; retrying PreKeyMessage establishment', {
-                category: 'E2EE',
-                data: { remoteAddress: ProtocolAddress.toString(remoteAddress), attempt },
-              });
+              this.logger.info(
+                'Staged corrupted-session archive; retrying PreKeyMessage establishment',
+                {
+                  category: 'E2EE',
+                  data: { remoteAddress: ProtocolAddress.toString(remoteAddress), attempt },
+                }
+              );
             }
 
             // If no session exists AND this is a PreKeyMessage, establish session as responder
@@ -1214,16 +1218,28 @@ export class SessionCipher {
                 await this.keyStorage.commitSessionTrust({
                   address: remoteAddress,
                   record: recordToStore,
+                  receivedContent: receiveId
+                    ? { id: receiveId, plaintext: skippedPlaintext, receivedAt: Date.now() }
+                    : undefined,
                   contactIdentity: session.remoteIdentity,
                   contactIdentityType: session.remoteIdentityType,
                   localIdentityType: pendingDeletion?.identityType ?? session.localIdentityType,
                   oneTimePreKeyId: pendingDeletion?.oneTimePreKeyId,
                   kemOneTimePreKeyId: pendingDeletion?.kemOneTimePreKeyId,
+                  kyberPreKeyUse: pendingDeletion?.kyberPreKeyUse
+                    ? {
+                        ...pendingDeletion.kyberPreKeyUse,
+                        baseKeyBytes: Uint8Array.from(pendingDeletion.kyberPreKeyUse.baseKeyBytes),
+                      }
+                    : undefined,
                 });
               } else {
                 await this.keyStorage.commitSessionTrust({
                   address: remoteAddress,
                   record: recordToStore,
+                  receivedContent: receiveId
+                    ? { id: receiveId, plaintext: skippedPlaintext, receivedAt: Date.now() }
+                    : undefined,
                   contactIdentity: session.remoteIdentity,
                   contactIdentityType: session.remoteIdentityType,
                   localIdentityType: session.localIdentityType,
@@ -1313,11 +1329,7 @@ export class SessionCipher {
 
                 this.logger.debug('Skipping keys from old receiving chain before DH ratchet', {
                   category: 'E2EE',
-                  data: {
-                    operation: 'decrypt',
-                    previousCounter: counters.previousCounter,
-                    oldNr,
-                  },
+                  data: { operation: 'decrypt', previousCounter: counters.previousCounter, oldNr },
                 });
 
                 // Initialize receiverChains if not present
@@ -1380,10 +1392,7 @@ export class SessionCipher {
             await storeSkippedMessageKeys(
               session,
               counters.counter,
-              {
-                ...DEFAULT_RATCHET_CONFIG,
-                maxSkippedMessages,
-              },
+              { ...DEFAULT_RATCHET_CONFIG, maxSkippedMessages },
               this.logger
             );
 
@@ -1408,10 +1417,7 @@ export class SessionCipher {
               // Triple Ratchet: profile message key derivation (Section 6)
               this.logger.debug('Triple Ratchet: Deriving combined EC + PQ message key', {
                 category: 'E2EE',
-                data: {
-                  operation: 'triple-ratchet-decrypt',
-                  counter: counters.counter,
-                },
+                data: { operation: 'triple-ratchet-decrypt', counter: counters.counter },
               });
 
               // Step A: EC message key from Double Ratchet
@@ -1424,10 +1430,7 @@ export class SessionCipher {
               this.logger.breadcrumb('Triple Ratchet: Combined EC + PQ message keys', {
                 category: 'E2EE',
                 level: 'debug',
-                data: {
-                  operation: 'triple-ratchet-decrypt',
-                  ecMessageNumber: session.Nr - 1,
-                },
+                data: { operation: 'triple-ratchet-decrypt', ecMessageNumber: session.Nr - 1 },
               });
             } else {
               this.logger.debug('Double Ratchet: Deriving EC message key', {
@@ -1527,16 +1530,28 @@ export class SessionCipher {
               await this.keyStorage.commitSessionTrust({
                 address: remoteAddress,
                 record: recordToStore,
+                receivedContent: receiveId
+                  ? { id: receiveId, plaintext, receivedAt: Date.now() }
+                  : undefined,
                 contactIdentity: session.remoteIdentity,
                 contactIdentityType: session.remoteIdentityType,
                 localIdentityType: pendingDeletion?.identityType ?? session.localIdentityType,
                 oneTimePreKeyId: pendingDeletion?.oneTimePreKeyId,
                 kemOneTimePreKeyId: pendingDeletion?.kemOneTimePreKeyId,
+                kyberPreKeyUse: pendingDeletion?.kyberPreKeyUse
+                  ? {
+                      ...pendingDeletion.kyberPreKeyUse,
+                      baseKeyBytes: Uint8Array.from(pendingDeletion.kyberPreKeyUse.baseKeyBytes),
+                    }
+                  : undefined,
               });
             } else {
               await this.keyStorage.commitSessionTrust({
                 address: remoteAddress,
                 record: recordToStore,
+                receivedContent: receiveId
+                  ? { id: receiveId, plaintext, receivedAt: Date.now() }
+                  : undefined,
                 contactIdentity: session.remoteIdentity,
                 contactIdentityType: session.remoteIdentityType,
                 localIdentityType: session.localIdentityType,

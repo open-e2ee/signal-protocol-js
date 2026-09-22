@@ -683,7 +683,8 @@ export class SenderKeyManager {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
-    framedMessage: Uint8Array
+    framedMessage: Uint8Array,
+    receiveId?: string
   ): Promise<string> {
     // Parse framed SenderKeyMessage: [version_byte(1)] [protobuf(N)] [signature(64)]
     const { protobufBytes, signature } = parseSenderKeyMessage(framedMessage);
@@ -714,7 +715,8 @@ export class SenderKeyManager {
         groupId,
         senderId,
         senderDeviceId,
-        message
+        message,
+        receiveId
       );
 
       if (prevResult !== null) {
@@ -776,7 +778,13 @@ export class SenderKeyManager {
       }
     } else if (message.chainIndex < state.chainIndex) {
       // Old message - try skipped keys (Spec Section 4.1)
-      return await this.decryptWithSkippedKey(groupId, senderId, senderDeviceId, message);
+      return await this.decryptWithSkippedKey(
+        groupId,
+        senderId,
+        senderDeviceId,
+        message,
+        receiveId
+      );
     }
 
     // Derive message key from chain key (Signal Protocol KDF_CK pattern)
@@ -801,7 +809,16 @@ export class SenderKeyManager {
     state.chainIndex++;
 
     // Store updated state
-    await this.storage.storeSenderKey(groupId, senderId, senderDeviceId, state);
+    const previous = await this.loadPreviousStates(groupId, senderId, senderDeviceId);
+    await this.storage.storeSenderKeyRecord(
+      groupId,
+      senderId,
+      senderDeviceId,
+      [state, ...previous],
+      receiveId
+        ? { content: { id: receiveId, plaintext, receivedAt: Date.now(), groupId } }
+        : undefined
+    );
 
     this.logger.debug('Decrypted message with sender key', {
       category: 'E2EE',
@@ -825,7 +842,8 @@ export class SenderKeyManager {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
-    message: EncryptedGroupMessage
+    message: EncryptedGroupMessage,
+    receiveId?: string
   ): Promise<string> {
     const skippedKey = await this.storage.getSkippedSenderKey(
       groupId,
@@ -862,12 +880,21 @@ export class SenderKeyManager {
     const plaintext = this.encodeLosslessPlaintext(plaintextBytes);
 
     // Delete used skipped key (one-time use)
-    await this.storage.deleteSkippedSenderKey(
-      groupId,
-      senderId,
-      senderDeviceId,
-      message.chainIndex
-    );
+    if (receiveId) {
+      const states = await this.storage.getSenderKeyRecord(groupId, senderId, senderDeviceId);
+      if (!states?.length) throw new Error('Missing sender-key record during receive');
+      await this.storage.storeSenderKeyRecord(groupId, senderId, senderDeviceId, states, {
+        content: { id: receiveId, plaintext, receivedAt: Date.now(), groupId },
+        consumedChainIndex: message.chainIndex,
+      });
+    } else {
+      await this.storage.deleteSkippedSenderKey(
+        groupId,
+        senderId,
+        senderDeviceId,
+        message.chainIndex
+      );
+    }
 
     this.logger.debug('Decrypted out-of-order message with skipped key', {
       category: 'E2EE',
@@ -899,10 +926,13 @@ export class SenderKeyManager {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
-    message: EncryptedGroupMessage
+    message: EncryptedGroupMessage,
+    receiveId?: string
   ): Promise<string | null> {
     // Load previous states from storage (populates cache on miss)
-    const prevStates = await this.loadPreviousStates(groupId, senderId, senderDeviceId);
+    const prevStates = (await this.loadPreviousStates(groupId, senderId, senderDeviceId)).map(
+      (state) => ({ ...state })
+    );
 
     if (prevStates.length === 0) {
       return null;
@@ -963,7 +993,13 @@ export class SenderKeyManager {
       }
     } else if (message.chainIndex < prevState.chainIndex) {
       // Old message in previous state - try skipped keys
-      return await this.decryptWithSkippedKey(groupId, senderId, senderDeviceId, message);
+      return await this.decryptWithSkippedKey(
+        groupId,
+        senderId,
+        senderDeviceId,
+        message,
+        receiveId
+      );
     }
 
     // Derive message key and decrypt (AES-256-CBC, authenticity from Ed25519 signature)
@@ -986,11 +1022,16 @@ export class SenderKeyManager {
     const currentState = await this.storage.getSenderKey(groupId, senderId, senderDeviceId);
     if (currentState) {
       const key = this.stateKey(groupId, senderId, senderDeviceId);
-      const updatedPrev = this.previousStates.get(key) ?? prevStates;
-      await this.storage.storeSenderKeyRecord(groupId, senderId, senderDeviceId, [
-        currentState,
-        ...updatedPrev,
-      ]);
+      await this.storage.storeSenderKeyRecord(
+        groupId,
+        senderId,
+        senderDeviceId,
+        [currentState, ...prevStates],
+        receiveId
+          ? { content: { id: receiveId, plaintext, receivedAt: Date.now(), groupId } }
+          : undefined
+      );
+      this.previousStates.set(key, prevStates);
     }
 
     this.logger.debug('Decrypted message with previous sender key state', {

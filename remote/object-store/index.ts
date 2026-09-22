@@ -10,6 +10,12 @@ export type {
   RemoteObjectDownload,
   RemoteObjectDownloadRequest,
   RemoteObjectUpload,
+  RemoteObjectUploadReceipt,
   RemoteObjectUploadRequest,
   SignalProtocolRemoteObjectStore,
-} from './types';
+} from "./types";
+export {
+  RemoteObjectUploadError,
+  RemoteObjectUploadFailureCode,
+} from "./upload-error";
+export type { RemoteObjectUploadFailure } from "./upload-error";

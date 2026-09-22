@@ -70,7 +70,7 @@ export interface ConvexR2ObjectCallbacks {
   /**
    * Authorize and reserve one upload.
    *
-   * The application must scope `requestId` to the authenticated principal and
+   * The application must bind `requestId` and `preparedAt` to the authenticated principal and
    * return the same `objectId` and `providerKey` for every valid retry.
    */
   reserve: FunctionReference<
@@ -336,6 +336,7 @@ export function defineConvexR2ObjectStore(config: DefineConvexR2ObjectStoreConfi
     createUpload: mutationGeneric({
       args: {
         requestId: v.string(),
+        preparedAt: v.number(),
         contentType: v.string(),
         contentLength: v.number(),
         digest: v.bytes(),
@@ -343,6 +344,9 @@ export function defineConvexR2ObjectStore(config: DefineConvexR2ObjectStoreConfi
       returns: uploadResultValidator,
       handler: async (ctx, input): Promise<RemoteObjectUpload> => {
         requireIdentifier(input.requestId, 'requestId');
+        if (!Number.isSafeInteger(input.preparedAt) || input.preparedAt < 1) {
+          throw new TypeError('preparedAt must be a positive Unix timestamp in milliseconds');
+        }
         requireAllowedContentType(input.contentType, limits.allowedContentTypes);
         requireContentLength(input.contentLength, limits.maxContentLength);
         requireDigest(input.digest);

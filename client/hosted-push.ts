@@ -1,5 +1,5 @@
 import type { SignalProtocolClient } from './client';
-import type { IncomingEnvelope, ProcessEnvelopeOptions } from './types';
+import type { IncomingEnvelope } from './types';
 
 const PUSH_TOKEN_MAXIMUM_LENGTH = 4_096;
 const PUSH_ENDPOINT_MAXIMUM_LENGTH = 2_048;
@@ -49,15 +49,13 @@ export interface HostedRelayPushRuntime {
 }
 
 export interface HostedRelayWakeClient {
-  processIncomingEnvelopes(
+  receiveIncomingEnvelopes(
     envelopes: IncomingEnvelope[],
-    options?: ProcessEnvelopeOptions,
-  ): ReturnType<SignalProtocolClient['processIncomingEnvelopes']>;
+  ): ReturnType<SignalProtocolClient['receiveIncomingEnvelopes']>;
 }
 
 export interface HostedRelayWakeOptions {
   readonly client: HostedRelayWakeClient;
-  readonly processOptions?: ProcessEnvelopeOptions;
 }
 
 export interface HostedRelayWakeResult {
@@ -179,31 +177,35 @@ export async function removeHostedRelayPush(options: {
 
 /**
  * Authenticate, pull the durable mailbox, process each envelope, and acknowledge
- * only successful decryptions. This operation is safe to call after repeated
- * wake hints and can also be called when push is unavailable.
+ * only handled content. Register onMessageDecrypted to persist application
+ * content before calling this function. Push is not required.
  */
 export async function pullHostedRelayAfterWake(
   options: HostedRelayWakeOptions,
 ): Promise<HostedRelayWakeResult> {
   const runtime = hostedRuntime(options.client);
   const envelopes = await runtime.pullMailbox();
-  const results = await options.client.processIncomingEnvelopes(
-    [...envelopes],
-    options.processOptions,
-  );
-  if (results.length !== envelopes.length) {
+  const inputIds = new Set(envelopes.map((envelope) => envelope.id));
+  if (
+    inputIds.size !== envelopes.length ||
+    envelopes.some((envelope) => !envelope.id)
+  ) {
+    throw new Error(
+      'Hosted Relay mailbox returned invalid envelope identities',
+    );
+  }
+  const results = await options.client.receiveIncomingEnvelopes([...envelopes]);
+  const acknowledgedMessageIds = [...results.processedMessageIds];
+  const failedMessageIds = [...results.failedMessageIds];
+  const resultIds = [...acknowledgedMessageIds, ...failedMessageIds];
+  if (
+    resultIds.length !== inputIds.size ||
+    new Set(resultIds).size !== resultIds.length ||
+    resultIds.some((id) => !inputIds.has(id))
+  ) {
     throw new Error(
       'Hosted Relay mailbox processing returned an invalid result',
     );
-  }
-  const acknowledgedMessageIds: string[] = [];
-  const failedMessageIds: string[] = [];
-  for (const result of results) {
-    if ('plaintext' in result) {
-      acknowledgedMessageIds.push(result.envelope.id);
-    } else {
-      failedMessageIds.push(result.envelope.id);
-    }
   }
   if (acknowledgedMessageIds.length > 0) {
     await runtime.acknowledgeMailbox(acknowledgedMessageIds);

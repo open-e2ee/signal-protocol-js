@@ -187,7 +187,7 @@ every live session.
 
 ## Atomic Security Commits
 
-Contact trust and session creation/advancement share one atomic commit seam.
+Contact trust and session creation/advancement share one atomic commit boundary.
 Responder one-time-prekey consumption joins that same transaction. Separately,
 one logical transaction accepts an identity rotation and deletes every bound
 device session. An adapter must never publish only a subset of either
@@ -204,6 +204,21 @@ transaction can leave a concurrently-created session trusted under a rotated
 identity.
 
 ## Design Notes
+
+Received content uses the same encryption and transaction boundary as protocol state.
+
+The `commitSessionTrust` method commits received content, ratchet state, contact trust, and consumed prekeys together.
+The `storeSenderKeyRecord` method commits received content and skipped-key consumption together.
+
+An adapter must reject the complete transaction if any write fails.
+`getReceivedContent`, `deleteReceivedContent`, and `deleteExpiredReceivedContent`
+own recovery and cleanup. Generic unencrypted metadata cannot hold this content.
+The Node adapter uses its encrypted security document. Expo uses SQLCipher.
+Web and React Native encrypt each content record with their existing store key.
+
+The SDK removes content after durable handling and retains separate bounded
+duplicate evidence. Cleanup uses the existing thirty-day retry horizon.
+The host application must use idempotent writes keyed by message ID.
 
 - The Expo adapter is the primary supported mobile implementation. Deployment
   still requires review of key custody, backups, and host security.

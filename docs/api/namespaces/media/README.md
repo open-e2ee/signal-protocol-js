@@ -31,7 +31,6 @@
 - [MediaAttachmentTransfer](interfaces/MediaAttachmentTransfer.md)
 - [MediaAttachmentTransferCheckpoint](interfaces/MediaAttachmentTransferCheckpoint.md)
 - [MediaAttachmentTransferOptions](interfaces/MediaAttachmentTransferOptions.md)
-- [MediaAttachmentUploadJobData](interfaces/MediaAttachmentUploadJobData.md)
 - [MediaAttachmentUploadResponse](interfaces/MediaAttachmentUploadResponse.md)
 - [PlanMediaAttachmentCleanupJobsInput](interfaces/PlanMediaAttachmentCleanupJobsInput.md)
 - [PlanMediaAttachmentDeleteSyncInput](interfaces/PlanMediaAttachmentDeleteSyncInput.md)
@@ -59,6 +58,7 @@
 - [MediaAttachmentKnownIds](type-aliases/MediaAttachmentKnownIds.md)
 - [MediaAttachmentMessageType](type-aliases/MediaAttachmentMessageType.md)
 - [MediaAttachmentProgressCallback](type-aliases/MediaAttachmentProgressCallback.md)
+- [MediaAttachmentUploadJobData](type-aliases/MediaAttachmentUploadJobData.md)
 
 ## Variables
 
@@ -94,8 +94,10 @@
 - [planMediaAttachmentProcessing](functions/planMediaAttachmentProcessing.md)
 - [planMediaAttachmentUploadJob](functions/planMediaAttachmentUploadJob.md)
 - [prepareMediaAttachmentUpload](functions/prepareMediaAttachmentUpload.md)
+- [prepareMediaAttachmentUploadData](functions/prepareMediaAttachmentUploadData.md)
 - [resolveMediaAttachment](functions/resolveMediaAttachment.md)
 - [serializeMediaAttachmentMessage](functions/serializeMediaAttachmentMessage.md)
+- [uploadPreparedMediaAttachment](functions/uploadPreparedMediaAttachment.md)
 - [validateMediaAttachmentPolicy](functions/validateMediaAttachmentPolicy.md)
 
 ## References
@@ -103,3 +105,15 @@
 ### MediaAttachmentDeleteSyncInput
 
 Re-exports [MediaAttachmentDeleteSyncInput](../../interfaces/MediaAttachmentDeleteSyncInput.md)
+
+***
+
+### MediaAttachmentPreparedUploadStore
+
+Re-exports [MediaAttachmentPreparedUploadStore](../../interfaces/MediaAttachmentPreparedUploadStore.md)
+
+***
+
+### PreparedMediaAttachmentUpload
+
+Re-exports [PreparedMediaAttachmentUpload](../../interfaces/PreparedMediaAttachmentUpload.md)

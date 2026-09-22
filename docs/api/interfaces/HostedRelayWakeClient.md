@@ -8,9 +8,9 @@
 
 ## Methods
 
-### processIncomingEnvelopes()
+### receiveIncomingEnvelopes()
 
-> **processIncomingEnvelopes**(`envelopes`, `options?`): `Promise`\<(\{ `envelope`: [`IncomingEnvelope`](IncomingEnvelope.md); `plaintext`: `string`; \} \| \{ `envelope`: [`IncomingEnvelope`](IncomingEnvelope.md); `error`: `Error`; \})[]\>
+> **receiveIncomingEnvelopes**(`envelopes`): `Promise`\<\{ `failedMessageIds`: `string`[]; `processedMessageIds`: `string`[]; \}\>
 
 #### Parameters
 
@@ -18,10 +18,6 @@
 
 [`IncomingEnvelope`](IncomingEnvelope.md)[]
 
-##### options?
-
-[`ProcessEnvelopeOptions`](ProcessEnvelopeOptions.md)
-
 #### Returns
 
-`Promise`\<(\{ `envelope`: [`IncomingEnvelope`](IncomingEnvelope.md); `plaintext`: `string`; \} \| \{ `envelope`: [`IncomingEnvelope`](IncomingEnvelope.md); `error`: `Error`; \})[]\>
+`Promise`\<\{ `failedMessageIds`: `string`[]; `processedMessageIds`: `string`[]; \}\>

@@ -71,11 +71,14 @@ export interface EndorsementCacheStore {
   ): Promise<{
     endorsements: Map<string, CachedMemberEndorsement>;
     expiration: number;
+    /** Public endorsement issuer key. A different issuer invalidates this cache entry. */
+    issuerKey: Uint8Array;
   } | null>;
   cacheEndorsements(
     groupId: string,
     endorsements: Map<string, CachedMemberEndorsement>,
-    expiration: number
+    expiration: number,
+    issuerKey: Uint8Array
   ): Promise<void>;
   clearEndorsements(groupId: string): Promise<void>;
 }
@@ -86,6 +89,15 @@ export class EndorsementManager {
     private readonly endorsementRootPublicKey: ServerRootPublicKey,
     private readonly logger: Required<ILogger> = defaultSignalProtocolLogger
   ) {}
+
+  private async cached(groupId: string) {
+    const entry = await this.cache.getCachedEndorsements(groupId);
+    if (entry && (!(entry.issuerKey instanceof Uint8Array) || !constantTimeEqual(entry.issuerKey, this.endorsementRootPublicKey.PK.toBytes()))) {
+      await this.cache.clearEndorsements(groupId);
+      return null;
+    }
+    return entry;
+  }
 
   /**
    * Require this verifier to use the endorsement root pinned by group config.
@@ -186,7 +198,7 @@ export class EndorsementManager {
     }
 
     // 4. Cache via the app-owned endorsement adapter
-    await this.cache.cacheEndorsements(groupId, endorsementMap, endorsementsResponse.expiration);
+    await this.cache.cacheEndorsements(groupId, endorsementMap, endorsementsResponse.expiration, this.endorsementRootPublicKey.PK.toBytes());
 
     this.logger.debug('Cached group send endorsements', {
       category: 'E2EE',
@@ -219,7 +231,7 @@ export class EndorsementManager {
     expiration: number;
     aciBytes: Uint8Array;
   } | null> {
-    const cached = await this.cache.getCachedEndorsements(groupId);
+    const cached = await this.cached(groupId);
     if (!cached) return null;
 
     // Reject expired endorsements (clear stale cache)
@@ -277,7 +289,7 @@ export class EndorsementManager {
   } | null> {
     if (recipientUserIds.length === 0) return null;
 
-    const cached = await this.cache.getCachedEndorsements(groupId);
+    const cached = await this.cached(groupId);
     if (!cached) return null;
 
     if (this.isExpired(cached.expiration)) {
@@ -337,7 +349,7 @@ export class EndorsementManager {
   async isMissingAnyEndorsements(groupId: string, memberUserIds: string[]): Promise<boolean> {
     if (memberUserIds.length === 0) return false;
 
-    const cached = await this.cache.getCachedEndorsements(groupId);
+    const cached = await this.cached(groupId);
     if (!cached) return true; // No cache at all. Nothing is present
 
     for (const userId of memberUserIds) {
@@ -368,7 +380,7 @@ export class EndorsementManager {
     needsRefresh: boolean;
     reason?: 'missing_cache' | 'expiring_soon' | 'missing_members';
   }> {
-    const cached = await this.cache.getCachedEndorsements(groupId);
+    const cached = await this.cached(groupId);
 
     // No endorsement cache exists.
     if (!cached) {
@@ -407,7 +419,7 @@ export class EndorsementManager {
    * @returns Expiration in epoch seconds, or null if no cache exists
    */
   async getCachedExpiration(groupId: string): Promise<number | null> {
-    const cached = await this.cache.getCachedEndorsements(groupId);
+    const cached = await this.cached(groupId);
     return cached?.expiration ?? null;
   }
 }

@@ -78,6 +78,8 @@ const signal = await createSignalProtocolClient({
     }),
   },
   media: {
+    preparedUploads: appPreparedUploads,
+    maxPreparedUploadBytes: appUploadBudgetBytes,
     // The existing Signal Protocol storage adapter persists queue metadata.
     // These callbacks keep app-owned files, plaintext cache, and UI state
     // outside the protocol package.

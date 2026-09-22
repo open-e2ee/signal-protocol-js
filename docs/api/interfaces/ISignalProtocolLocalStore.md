@@ -216,6 +216,34 @@ Atomically pin/match trust, store the session, and consume referenced one-time p
 
 ***
 
+### compareAndSetMetadata()
+
+> **compareAndSetMetadata**(`key`, `expected`, `value`): `Promise`\<`boolean`\>
+
+Compare and replace one metadata value in the backing store's atomic write.
+Null means absent or deletion. Return false without writing on a mismatch.
+Reads and comparisons must use current backing state, not an adapter cache.
+
+#### Parameters
+
+##### key
+
+`string`
+
+##### expected
+
+`string` \| `null`
+
+##### value
+
+`string` \| `null`
+
+#### Returns
+
+`Promise`\<`boolean`\>
+
+***
+
 ### countSkippedSenderKeys()
 
 > **countSkippedSenderKeys**(`groupId`, `senderId`, `senderDeviceId`): `Promise`\<`number`\>
@@ -347,6 +375,22 @@ Delete all expired message records older than maxAgeMs
 
 ***
 
+### deleteExpiredReceivedContent()
+
+> **deleteExpiredReceivedContent**(`before`): `Promise`\<`number`\>
+
+#### Parameters
+
+##### before
+
+`number`
+
+#### Returns
+
+`Promise`\<`number`\>
+
+***
+
 ### deleteMessageRecord()
 
 > **deleteMessageRecord**(`sessionId`, `timestamp`): `Promise`\<`void`\>
@@ -458,6 +502,22 @@ Number of deleted keys
 #### Inherited from
 
 [`ISenderKeyStore`](ISenderKeyStore.md).[`deleteOldestSkippedSenderKeys`](ISenderKeyStore.md#deleteoldestskippedsenderkeys)
+
+***
+
+### deleteReceivedContent()
+
+> **deleteReceivedContent**(`id`): `Promise`\<`void`\>
+
+#### Parameters
+
+##### id
+
+`string`
+
+#### Returns
+
+`Promise`\<`void`\>
 
 ***
 
@@ -948,6 +1008,32 @@ Retrieve Kyber prekey.
 
 ***
 
+### getKyberPreKeyById()
+
+> **getKyberPreKeyById**(`keyId`, `identityType?`): `Promise`\<`RetainedKyberPreKey` \| `null`\>
+
+Retrieve the exact retained Kyber prekey instance named by a message.
+
+#### Parameters
+
+##### keyId
+
+`number`
+
+##### identityType?
+
+[`IdentityType`](../namespaces/keys/type-aliases/IdentityType.md)
+
+#### Returns
+
+`Promise`\<`RetainedKyberPreKey` \| `null`\>
+
+#### Inherited from
+
+[`IProtocolStore`](IProtocolStore.md).[`getKyberPreKeyById`](IProtocolStore.md#getkyberprekeybyid)
+
+***
+
 ### getKyberPreKeyMaxId()
 
 > **getKyberPreKeyMaxId**(`identityType?`): `Promise`\<`number`\>
@@ -1042,6 +1128,22 @@ Used for persisting operational timestamps (e.g., lastForcedPreKeyRotation).
 #### Returns
 
 `Promise`\<`string` \| `null`\>
+
+***
+
+### getReceivedContent()
+
+> **getReceivedContent**(`id`): `Promise`\<`ReceivedContent` \| `null`\>
+
+#### Parameters
+
+##### id
+
+`string`
+
+#### Returns
+
+`Promise`\<`ReceivedContent` \| `null`\>
 
 ***
 
@@ -1958,7 +2060,7 @@ Store sender key state for a group member device.
 
 ### storeSenderKeyRecord()
 
-> **storeSenderKeyRecord**(`groupId`, `userId`, `deviceId`, `states`): `Promise`\<`void`\>
+> **storeSenderKeyRecord**(`groupId`, `userId`, `deviceId`, `states`, `receive?`): `Promise`\<`void`\>
 
 Store all sender key states (current + previous) for a group member device.
 
@@ -1993,6 +2095,10 @@ Device identifier
 [`SenderKeyState`](SenderKeyState.md)[]
 
 Array of states (current first, then previous, capped at MAX_SENDER_KEY_STATES)
+
+##### receive?
+
+`SenderKeyReceiveCommit`
 
 #### Returns
 

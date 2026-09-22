@@ -342,6 +342,21 @@ async function rotateEcSignedPreKeyForIdentity(
 }
 
 /**
+ * The key id for the next Kyber last-resort prekey of one identity type.
+ *
+ * Each retained Kyber prekey keeps its own id, so a session that names an id
+ * resolves to exactly one key. The next id follows the current key, and a store
+ * with no current key starts at 1.
+ */
+export async function nextKyberLastResortPreKeyId(
+  storage: Pick<ISignalProtocolLocalStore, 'getKyberPreKey'>,
+  identityType: IdentityType
+): Promise<number> {
+  const current = await storage.getKyberPreKey(identityType);
+  return (current?.keyId ?? 0) + 1;
+}
+
+/**
  * Core post-quantum KEM prekey rotation.
  *
  * Generates fresh ML-KEM/Kyber-compatible key material and uploads it to the
@@ -427,7 +442,10 @@ async function rotateKyberPreKeyForIdentity(
       const identityKey = await getRequiredIdentityKey(storage, identityType);
 
       const { generateKyberLastResortPreKey } = await import('../keys/generation');
-      const kyberPreKey = await generateKyberLastResortPreKey(identityKey, 1);
+      const kyberPreKey = await generateKyberLastResortPreKey(
+        identityKey,
+        await nextKyberLastResortPreKeyId(storage, identityType)
+      );
 
       // TRANSACTIONAL PATTERN: Upload first, then commit locally
       // If upload fails, local state does not change, so a retry is safe.

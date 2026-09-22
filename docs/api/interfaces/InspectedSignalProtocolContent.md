@@ -20,6 +20,12 @@
 
 ***
 
+### senderKeyDistribution?
+
+> `optional` **senderKeyDistribution?**: `ParsedSenderKeyDistribution`
+
+***
+
 ### shouldSendDeliveryReceipt
 
 > **shouldSendDeliveryReceipt**: `boolean`

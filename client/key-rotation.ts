@@ -20,7 +20,11 @@ import {
   MAX_UNACKNOWLEDGED_SESSION_AGE_MS,
   getActiveIdentityTypes,
 } from './config';
-import { rotateEcSignedPreKeyCore, rotateKyberPreKeyCore } from './key-rotation-core';
+import {
+  nextKyberLastResortPreKeyId,
+  rotateEcSignedPreKeyCore,
+  rotateKyberPreKeyCore,
+} from './key-rotation-core';
 
 /**
  * Rotate EC signed prekey
@@ -125,7 +129,8 @@ async function rotateEcSignedPreKeyLocalOnly(
  * Generates fresh ML-KEM/Kyber-compatible key material and uploads it to the
  * relay if configured.
  *
- * Per PQXDH spec Section 3.2: Always use ID 1 (replaces previous).
+ * Each rotation takes the next key id, so a session that names an id resolves
+ * to exactly one retained key.
  * Uses the same timing as signed prekey rotation for synchronized PQ security.
  *
  * With relay: Checks key age and config.keyRefreshIntervalMs to decide on rotation.
@@ -194,10 +199,9 @@ async function rotateKyberPreKeyLocalOnly(
 
     await withRetry(
       async () => {
-        // Per PQXDH spec Section 3.2: Always use ID 1 (replaces previous)
         const newKyberPreKey = await generateKyberLastResortPreKey(
           identityKey,
-          1
+          await nextKyberLastResortPreKeyId(ctx.storage, identityType)
         );
         await ctx.storage.storeKyberPreKey(newKyberPreKey, identityType);
       },

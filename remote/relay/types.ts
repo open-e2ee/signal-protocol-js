@@ -41,11 +41,11 @@ export interface IRelayGroupServer {
   /** Encrypted group-state transport. */
   readonly server: IGroupServer;
   /** Issue an auth credential for the relay's authenticated account. */
-  issueAuthCredential(userId: string): Promise<Uint8Array>;
+  issueAuthCredential(userId: string, authorityKeyId?: string): Promise<Uint8Array>;
   /** Store the client-derived sealed-sender access key for the authenticated account. */
   setUnidentifiedAccessKey(userId: string, accessKey: Uint8Array): Promise<void>;
   /** Issue a profile-key credential from a blinded request for the authenticated account. */
-  issueProfileKeyCredential(userId: string, request: Uint8Array): Promise<Uint8Array>;
+  issueProfileKeyCredential(userId: string, request: Uint8Array, authorityKeyId?: string): Promise<Uint8Array>;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -175,14 +175,23 @@ export interface IProvisioningService {
 // IKEYROTATIONSERVICE
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Key rotation metadata service interface.
- *
- * Provides metadata queries for key rotation decisions.
- * Note: The actual key upload methods (uploadEcSignedPreKey, uploadKemLastResortPreKey, getPreKeyCount)
- * are already on ISignalProtocolRelayServer.
- *
- */
+/** Public metadata for a reusable prekey. */
+export interface PreKeyMetadata {
+  keyId: number;
+  createdAt: number;
+  expiresAt: number;
+  publicKey: string;
+}
+
+/** Read-only inventory observations for an account, device, and identity type. */
+export interface PreKeyInventory {
+  ecSignedPreKey: PreKeyMetadata | null;
+  kemLastResortPreKey: PreKeyMetadata | null;
+  ecOneTimePreKeyCount: number;
+  kemOneTimePreKeyCount: number;
+}
+
+/** Metadata queries for independent key-rotation decisions. */
 export interface IKeyRotationService {
   /**
    * Get EC signed prekey metadata for rotation checks and server key verification.
@@ -454,6 +463,18 @@ export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRo
     type: 'ec' | 'kem',
     identityType?: IdentityType
   ): Promise<number>;
+
+  /**
+   * Read both signed-key records and one-time-key counts for one sync decision.
+   * This does not consume keys or reserve an inventory version.
+   * Adapters can use separate read transactions. Counts can change before upload.
+   * Request new observations after intervening work.
+   */
+  getPreKeyInventory(
+    userId: string,
+    deviceId: number,
+    identityType?: IdentityType
+  ): Promise<PreKeyInventory>;
 
   /**
    * Clear stale KEM one-time prekeys during recovery.
@@ -956,7 +977,7 @@ export interface EcSignedPreKeyUpload {
  * Contains the full key including private key for local storage.
  */
 export interface KemLastResortPreKeyUpload {
-  /** Key ID (always 1 per PQXDH spec Section 3.2) */
+  /** Key ID. Each rotation takes the next id. */
   keyId: number;
   /** Device ID (1=primary, 2-5=linked) */
   deviceId: number;

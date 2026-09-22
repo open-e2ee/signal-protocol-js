@@ -10,6 +10,7 @@
  * the ISignalProtocolLocalStore interface for dependency injection.
  */
 
+import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
 import type {
   IdentityKeyPair,
   KyberPreKey,
@@ -20,12 +21,10 @@ import type {
   CompositeIdentityV1,
   ContactIdentityRecord,
 } from '../../../keys';
-import {
-  encodeCompositeIdentityV1,
-  UNPINNED_DEVICE_IDENTITY_KEY,
-} from '../../../keys/identity';
+import { encodeCompositeIdentityV1, UNPINNED_DEVICE_IDENTITY_KEY } from '../../../keys/identity';
 import type {
   ISignalProtocolLocalStore,
+  RetainedKyberPreKey,
   MessageRecord,
   SessionRecord,
   SessionState,
@@ -247,6 +246,13 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
     return result as KyberPreKey | null;
   }
 
+  async getKyberPreKeyById(
+    keyId: number,
+    identityType?: IdentityType
+  ): Promise<RetainedKyberPreKey | null> {
+    return await this.storage.getKyberPreKeyById(keyId, identityType);
+  }
+
   async markKyberPreKeyUsed(
     kyberPreKeyId: number,
     signedPreKeyId: number,
@@ -378,6 +384,14 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
     return this.storage.deleteMetadata(key);
   }
 
+  async compareAndSetMetadata(
+    key: string,
+    expected: string | null,
+    value: string | null
+  ): Promise<boolean> {
+    return this.storage.compareAndSetMetadata(key, expected, value);
+  }
+
   // ============================================================================
   // SESAME Multi-Device Session Management
   // ============================================================================
@@ -424,12 +438,7 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
       });
     }
 
-    return {
-      userId,
-      devices,
-      createdAt: now,
-      updatedAt: now,
-    };
+    return { userId, devices, createdAt: now, updatedAt: now };
   }
 
   async setUserRecord(_userId: string, _record: UserRecord): Promise<void> {
@@ -675,12 +684,37 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
     groupId: string,
     userId: string,
     deviceId: number,
-    states: SenderKeyState[]
+    states: SenderKeyState[],
+    receive?: SenderKeyReceiveCommit
   ): Promise<void> {
     if (states.length === 0) return;
 
+    const { getRawDatabase } = await import('./db');
     const { createSenderKey } = await import('./models/sender-key');
-    await createSenderKey({ groupId, senderId: userId, deviceId, states }).save();
+    const db = getRawDatabase();
+    await db.withTransactionAsync(async () => {
+      await createSenderKey({ groupId, senderId: userId, deviceId, states }).save();
+      if (receive) {
+        await this.storage.setMetadata(
+          `received-content:${receive.content.id}`,
+          JSON.stringify(receive.content)
+        );
+        if (receive.consumedChainIndex !== undefined)
+          await this.deleteSkippedSenderKey(groupId, userId, deviceId, receive.consumedChainIndex);
+      }
+    });
+  }
+
+  async getReceivedContent(id: string): Promise<ReceivedContent | null> {
+    return this.storage.getReceivedContent(id);
+  }
+
+  async deleteReceivedContent(id: string): Promise<void> {
+    await this.storage.deleteReceivedContent(id);
+  }
+
+  async deleteExpiredReceivedContent(before: number): Promise<number> {
+    return this.storage.deleteExpiredReceivedContent(before);
   }
 
   async getSenderKeyRecord(
@@ -958,7 +992,9 @@ export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
    *
    * @returns Counts of deleted prekeys by type
    */
-  async deleteAllPreKeys(identityType?: IdentityType): Promise<{
+  async deleteAllPreKeys(
+    identityType?: IdentityType
+  ): Promise<{
     ecSignedPreKeys: number;
     ecOneTimePreKeys: number;
     kyberPreKeys: number;

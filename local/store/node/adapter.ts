@@ -19,6 +19,7 @@
  * ```
  */
 
+import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
 import type {
   IdentityKeyPair,
   EcSignedPreKey,
@@ -35,20 +36,22 @@ import {
   verifyContactIdentityRecord,
 } from '../../../keys/identity';
 import type { SessionState } from '../../../types';
-import {
-  assertCurrentSessionRecord,
-  type SessionRecord,
-} from '../../../types/session';
+import { assertCurrentSessionRecord, type SessionRecord } from '../../../types/session';
 import { ProtocolAddress } from '../../../types/address';
 import { IdentityKeyChange, TrustDirection } from '../../../types/trust';
 import { EncryptionError, EncryptionErrorCode } from '../../../types';
 import { getNodeEncryptedDatabase } from './database';
 import type { NodeEncryptedDatabase, NodeSenderKeyTree } from './database';
 import type { MessageRecord, SessionTrustCommit, UserRecord, DeviceRecord } from '../../../types';
-import type { ISignalProtocolLocalStore, SkippedSenderMessageKey } from '../../../types/api';
+import type {
+  ISignalProtocolLocalStore,
+  RetainedKyberPreKey,
+  SkippedSenderMessageKey,
+} from '../../../types/api';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { encodeCompositeIdentityV1, UNPINNED_DEVICE_IDENTITY_KEY } from '../../../keys/identity';
 import { deserializeSessionRecord, serializeSessionRecord } from '../session-codec';
+import { parseReceivedContent } from '../received-content';
 
 /**
  * SESAME records as they are persisted.
@@ -359,7 +362,9 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
     keyId: number,
     identityType?: IdentityType
   ): Promise<KemOneTimePreKey | null> {
-    return (await this.getKemOneTimePreKeys(identityType)).find((key) => key.keyId === keyId) ?? null;
+    return (
+      (await this.getKemOneTimePreKeys(identityType)).find((key) => key.keyId === keyId) ?? null
+    );
   }
 
   async removeKemOneTimePreKey(keyId: number, identityType?: IdentityType): Promise<void> {
@@ -372,13 +377,19 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
 
   async storeKyberPreKey(kyberPreKey: KyberPreKey, identityType?: IdentityType): Promise<void> {
     const it = identityType ?? 'aci';
-    await this.db.storeKyberPreKey(kyberPreKey.keyId, kyberPreKey, it);
+    await this.db.storeKyberPreKey(kyberPreKey, it);
   }
 
   async getKyberPreKey(identityType?: IdentityType): Promise<KyberPreKey | null> {
     const it = identityType ?? 'aci';
-    // Always use ID 1 for Kyber prekey (following PQXDH spec)
-    return await this.db.getKyberPreKey<KyberPreKey>(1, it);
+    return await this.db.getCurrentKyberPreKey(it);
+  }
+
+  async getKyberPreKeyById(
+    keyId: number,
+    identityType?: IdentityType
+  ): Promise<RetainedKyberPreKey | null> {
+    return await this.db.getKyberPreKeyById(keyId, identityType ?? 'aci');
   }
 
   async markKyberPreKeyUsed(
@@ -388,10 +399,7 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
     identityType?: IdentityType
   ): Promise<void> {
     const it = identityType ?? 'aci';
-    await this.db.markKyberPreKeyUsed(`${it}:${kyberPreKeyId}`, {
-      signedPreKeyId,
-      baseKeyBytes: Array.from(baseKeyBytes),
-    });
+    await this.db.markKyberPreKeyUsed(it, { kyberPreKeyId, signedPreKeyId, baseKeyBytes });
   }
 
   // ============================================================================
@@ -401,7 +409,12 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
   async storeSessionRecord(address: ProtocolAddress, record: SessionRecord): Promise<void> {
     assertCurrentSessionRecord(record);
     const key = this.getAddressKey(address);
-    await this.db.storeSession(key, address.userId, address.deviceId, serializeSessionRecord(record));
+    await this.db.storeSession(
+      key,
+      address.userId,
+      address.deviceId,
+      serializeSessionRecord(record)
+    );
   }
 
   async getSessionRecord(address: ProtocolAddress): Promise<SessionRecord | null> {
@@ -447,7 +460,12 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
 
     // Set new session as current
     record.currentSession = newSession || null;
-    await this.db.storeSession(key, address.userId, address.deviceId, serializeSessionRecord(record));
+    await this.db.storeSession(
+      key,
+      address.userId,
+      address.deviceId,
+      serializeSessionRecord(record)
+    );
   }
 
   async getSessionsForUser(userId: string): Promise<SessionRecord[]> {
@@ -457,10 +475,7 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
 
   async commitSessionTrust(commit: SessionTrustCommit): Promise<void> {
     assertCurrentSessionRecord(commit.record);
-    const contactKey = this.getContactIdentityKey(
-      commit.address,
-      commit.contactIdentityType
-    );
+    const contactKey = this.getContactIdentityKey(commit.address, commit.contactIdentityType);
     await this.db.commitSessionTrust(
       this.getAddressKey(commit.address),
       commit.address.userId,
@@ -477,7 +492,9 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
         throw new Error(`Atomic session/trust commit rejected contact identity status ${status}`);
       },
       commit.oneTimePreKeyId,
-      commit.kemOneTimePreKeyId
+      commit.kemOneTimePreKeyId,
+      commit.receivedContent,
+      commit.kyberPreKeyUse
     );
   }
 
@@ -772,14 +789,19 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
     groupId: string,
     userId: string,
     deviceId: number,
-    states: SenderKeyState[]
+    states: SenderKeyState[],
+    receive?: SenderKeyReceiveCommit
   ): Promise<void> {
     if (states.length === 0) return;
-    await this.db.mutateSenderKeyState<SenderKeyState, void>(({ current, records }) => {
+    await this.db.mutateSenderKeyState<SenderKeyState, void>(({ current, records, skipped }) => {
       const device = String(deviceId);
       subtree(subtree(current, groupId), userId)[device] = states[0];
       subtree(subtree(records, groupId), userId)[device] = states;
-    });
+      if (receive?.consumedChainIndex !== undefined) {
+        const keys = skipped[groupId]?.[userId]?.[device];
+        if (keys) delete keys[String(receive.consumedChainIndex)];
+      }
+    }, receive?.content);
   }
 
   async getSenderKeyRecord(
@@ -821,8 +843,7 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
     chainIndex: number
   ): Promise<SkippedSenderMessageKey | null> {
     const { skipped } = await this.db.readSenderKeyState<SenderKeyState>();
-    const stored =
-      skipped[groupId]?.[senderId]?.[String(senderDeviceId)]?.[String(chainIndex)];
+    const stored = skipped[groupId]?.[senderId]?.[String(senderDeviceId)]?.[String(chainIndex)];
     return (stored as SkippedSenderMessageKey | undefined) ?? null;
   }
 
@@ -934,12 +955,33 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
     return await this.db.getMetadataValue(key);
   }
 
+  async getReceivedContent(id: string): Promise<ReceivedContent | null> {
+    const value = await this.db.getMetadataValue(`received-content:${id}`);
+    return value ? parseReceivedContent(value, id) : null;
+  }
+
+  async deleteReceivedContent(id: string): Promise<void> {
+    await this.db.deleteMetadataValue(`received-content:${id}`);
+  }
+
+  async deleteExpiredReceivedContent(before: number): Promise<number> {
+    return this.db.deleteExpiredReceivedContent(before);
+  }
+
   async setMetadata(key: string, value: string): Promise<void> {
     await this.db.setMetadataValue(key, value);
   }
 
   async deleteMetadata(key: string): Promise<void> {
     await this.db.deleteMetadataValue(key);
+  }
+
+  async compareAndSetMetadata(
+    key: string,
+    expected: string | null,
+    value: string | null
+  ): Promise<boolean> {
+    return this.db.compareAndSetMetadataValue(key, expected, value);
   }
 
   // ============================================================================
@@ -954,7 +996,9 @@ export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
     return await this.db.getKyberPreKeyMaxId(identityType ?? 'aci');
   }
 
-  async deleteAllPreKeys(identityType?: IdentityType): Promise<{
+  async deleteAllPreKeys(
+    identityType?: IdentityType
+  ): Promise<{
     ecSignedPreKeys: number;
     ecOneTimePreKeys: number;
     kyberPreKeys: number;

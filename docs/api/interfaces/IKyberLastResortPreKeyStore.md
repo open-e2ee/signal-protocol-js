@@ -48,6 +48,28 @@ Retrieve Kyber prekey.
 
 ***
 
+### getKyberPreKeyById()
+
+> **getKyberPreKeyById**(`keyId`, `identityType?`): `Promise`\<`RetainedKyberPreKey` \| `null`\>
+
+Retrieve the exact retained Kyber prekey instance named by a message.
+
+#### Parameters
+
+##### keyId
+
+`number`
+
+##### identityType?
+
+[`IdentityType`](../namespaces/keys/type-aliases/IdentityType.md)
+
+#### Returns
+
+`Promise`\<`RetainedKyberPreKey` \| `null`\>
+
+***
+
 ### markKyberPreKeyUsed()
 
 > **markKyberPreKeyUsed**(`kyberPreKeyId`, `signedPreKeyId`, `baseKeyBytes`, `identityType?`): `Promise`\<`void`\>

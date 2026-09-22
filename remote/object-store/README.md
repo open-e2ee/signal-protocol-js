@@ -46,5 +46,13 @@ Provider adapters:
 - [Convex R2](./convex-r2/README.md)
 - [Amazon S3 and compatible brokers](./s3/README.md)
 
+## Upload refusals
+
+A broker can throw `RemoteObjectUploadError` for a specific upload refusal.
+Use the exact `RemoteObjectUploadFailureCode` for expiry, clock skew, closed admission, unavailable objects, identity conflicts, or rejected authority.
+These errors stop automatic retries and preserve the original preparation for explicit recovery.
+Do not classify a storage URL expiry, network failure, or pending accepted settlement as a terminal upload refusal.
+The [media guide](../../media/README.md#durable-upload-preparation) defines the recovery actions.
+
 See the [media guide](../../media/README.md) and
 [API reference](../../docs/api/README.md).

@@ -365,6 +365,7 @@ export interface SignalProtocolClientConfig {
    *   identity: { userId },
    *   adapters: { storage, relay, remoteObjectStore },
    *   media: {
+   *     preparedUploads: appPreparedUploads,
    *     loadLocalAttachment: async ({ localMediaId }) => appDrafts.readBytes(localMediaId),
    *     saveUploadedAttachment: async ({ localMediaId, attachment }) =>
    *       appPointers.save(localMediaId, attachment),
@@ -830,11 +831,14 @@ export interface SignalProtocolClientConfig {
    */
   groups?: {
     /**
-     * Versioned serialized trust root pinned by the application at build time.
-     *
-     * This value is never fetched from the relay and trusted at runtime.
+     * Versioned group keys pinned by the application or authenticated under its pinned environment root.
+     * Unsigned runtime discovery cannot establish trust.
      */
     trustRoot: Uint8Array;
+    /** Exact issuer selection for transports with a verified rotation registry. */
+    authorityKeyId?: string;
+    /** Resolve a verified immutable authority before each group operation. */
+    resolveAuthority?: () => Promise<import('./group-authority').GroupAuthority>;
     /** This account's 32-byte profile key. */
     profileKey: Uint8Array;
     /** Override the SDK local storage adapter for group state. */

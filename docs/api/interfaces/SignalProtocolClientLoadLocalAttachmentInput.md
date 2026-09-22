@@ -8,7 +8,7 @@
 
 ## Extends
 
-- `StoredSignalProtocolClientMediaUpload`
+- `Omit`\<`StoredSignalProtocolClientMediaUpload`, `"preparedFingerprint"` \| `"preparationStarted"` \| `"preparedAt"` \| `"abandonment"` \| `"remoteObjectId"` \| `"transferCompletedAt"` \| `"callbackDelivered"` \| `"failureCode"`\>
 
 ## Properties
 
@@ -18,7 +18,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.blurHash`
+`Omit.blurHash`
 
 ***
 
@@ -28,7 +28,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.caption`
+`Omit.caption`
 
 ***
 
@@ -38,7 +38,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.cdnNumber`
+`Omit.cdnNumber`
 
 ***
 
@@ -48,7 +48,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.clientUuid`
+`Omit.clientUuid`
 
 ***
 
@@ -58,7 +58,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.contentType`
+`Omit.contentType`
 
 ***
 
@@ -68,7 +68,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.durationMs`
+`Omit.durationMs`
 
 ***
 
@@ -78,7 +78,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.fileName`
+`Omit.fileName`
 
 ***
 
@@ -88,7 +88,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.flags`
+`Omit.flags`
 
 ***
 
@@ -98,7 +98,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.height`
+`Omit.height`
 
 ***
 
@@ -108,7 +108,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.isViewOnce`
+`Omit.isViewOnce`
 
 ***
 
@@ -124,7 +124,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.localMediaId`
+`Omit.localMediaId`
 
 ***
 
@@ -134,7 +134,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.policy`
+`Omit.policy`
 
 ***
 
@@ -144,7 +144,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.requestId`
+`Omit.requestId`
 
 ***
 
@@ -154,7 +154,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.size`
+`Omit.size`
 
 ***
 
@@ -164,7 +164,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.thumbnail`
+`Omit.thumbnail`
 
 ***
 
@@ -174,7 +174,7 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.waveform`
+`Omit.waveform`
 
 ***
 
@@ -184,4 +184,4 @@
 
 #### Inherited from
 
-`StoredSignalProtocolClientMediaUpload.width`
+`Omit.width`

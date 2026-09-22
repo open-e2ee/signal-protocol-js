@@ -9,8 +9,8 @@
 > **pullHostedRelayAfterWake**(`options`): `Promise`\<[`HostedRelayWakeResult`](../interfaces/HostedRelayWakeResult.md)\>
 
 Authenticate, pull the durable mailbox, process each envelope, and acknowledge
-only successful decryptions. This operation is safe to call after repeated
-wake hints and can also be called when push is unavailable.
+only handled content. Register onMessageDecrypted to persist application
+content before calling this function. Push is not required.
 
 ## Parameters
 

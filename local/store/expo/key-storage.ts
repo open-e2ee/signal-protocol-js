@@ -14,6 +14,7 @@
  * See docs/E2EE.md for architecture details.
  */
 
+import type { ReceivedContent } from '../../../types';
 import type {
   IdentityKeyPair,
   EcSignedPreKey,
@@ -41,6 +42,7 @@ import {
 import { EncryptionError, EncryptionErrorCode } from '../../../types';
 import { ProtocolAddress } from '../../../types/address';
 import { getDatabaseKeyManager } from './database-key';
+import { parseReceivedContent } from '../received-content';
 import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 
@@ -71,6 +73,7 @@ import {
   createEcOneTimePreKey,
   // Kyber Prekey
   getCurrentKyberPreKey,
+  getKyberPreKeyByKeyId,
   deleteKyberPreKeyByKeyId,
   getMaxKyberPreKeyId,
   createKyberPreKey,
@@ -108,7 +111,7 @@ import {
   getRawDatabase,
 } from './models';
 import { buildContactIdentityId } from './models/identity-key-id';
-import type { SessionTrustCommit } from '../../../types';
+import type { RetainedKyberPreKey, SessionTrustCommit } from '../../../types';
 
 /**
  * Signal Protocol Session Record Version
@@ -228,11 +231,7 @@ export class KeyStorage {
         privateKey: signingKeyRaw.privateKey as PrivateKey,
       };
 
-      return {
-        dhKey,
-        signingKey,
-        registrationId,
-      };
+      return { dhKey, signingKey, registrationId };
     } catch (error) {
       this.logger.error('[KeyStorage] getIdentityKey failed', {
         category: 'E2EE',
@@ -577,7 +576,9 @@ export class KeyStorage {
    * Retrieve Kyber prekey
    *
    */
-  async getKyberPreKey(identityType: IdentityType = 'aci'): Promise<{
+  async getKyberPreKey(
+    identityType: IdentityType = 'aci'
+  ): Promise<{
     keyId: number;
     publicKey: string;
     privateKey: string;
@@ -593,6 +594,24 @@ export class KeyStorage {
     } catch (error) {
       throw new EncryptionError(
         'Failed to retrieve Kyber prekey',
+        EncryptionErrorCode.KEY_STORAGE_ERROR,
+        { originalError: error as Error }
+      );
+    }
+  }
+
+  async getKyberPreKeyById(
+    keyId: number,
+    identityType: IdentityType = 'aci'
+  ): Promise<RetainedKyberPreKey | null> {
+    try {
+      const prekey = await getKyberPreKeyByKeyId(keyId, identityType);
+      return prekey
+        ? { preKey: prekey.toKyberPreKey() as KyberPreKey, instanceId: prekey.instanceId }
+        : null;
+    } catch (error) {
+      throw new EncryptionError(
+        `Failed to retrieve Kyber prekey ${keyId}`,
         EncryptionErrorCode.KEY_STORAGE_ERROR,
         { originalError: error as Error }
       );
@@ -616,11 +635,16 @@ export class KeyStorage {
       const db = getRawDatabase();
       const baseKey = Buffer.from(baseKeyBytes).toString('base64');
 
+      const parent = await db.getFirstAsync<{ id: number }>(
+        `SELECT id FROM kyber_prekeys WHERE identity_type = ? AND prekey_id = ?`,
+        [identityType, kyberPreKeyId]
+      );
+      if (!parent) throw new Error(`Kyber prekey ${kyberPreKeyId} is not retained`);
       await db.runAsync(
         `INSERT INTO kyber_prekey_used
-         (kyber_prekey_id, signed_prekey_identity, signed_prekey_id, base_key)
+         (kyber_prekey_row_id, signed_prekey_identity, signed_prekey_id, base_key)
          VALUES (?, ?, ?, ?)`,
-        [kyberPreKeyId, identityType, signedPreKeyId, baseKey]
+        [parent.id, identityType, signedPreKeyId, baseKey]
       );
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -953,6 +977,24 @@ export class KeyStorage {
     return row?.value ?? null;
   }
 
+  async getReceivedContent(id: string): Promise<ReceivedContent | null> {
+    const value = await this.getMetadata(`received-content:${id}`);
+    return value ? parseReceivedContent(value, id) : null;
+  }
+
+  async deleteReceivedContent(id: string): Promise<void> {
+    await this.deleteMetadata(`received-content:${id}`);
+  }
+
+  async deleteExpiredReceivedContent(before: number): Promise<number> {
+    const db = getRawDatabase();
+    const result = await db.runAsync(
+      "DELETE FROM metadata WHERE key LIKE 'received-content:%' AND CAST(json_extract(value, '$.receivedAt') AS INTEGER) < ?",
+      [before]
+    );
+    return result.changes;
+  }
+
   async setMetadata(key: string, value: string): Promise<void> {
     const db = getRawDatabase();
     await db.runAsync('INSERT OR REPLACE INTO metadata (key, value, updated_at) VALUES (?, ?, ?)', [
@@ -965,6 +1007,28 @@ export class KeyStorage {
   async deleteMetadata(key: string): Promise<void> {
     const db = getRawDatabase();
     await db.runAsync('DELETE FROM metadata WHERE key = ?', [key]);
+  }
+
+  async compareAndSetMetadata(
+    key: string,
+    expected: string | null,
+    value: string | null
+  ): Promise<boolean> {
+    const db = getRawDatabase();
+    if (expected === null && value === null) return (await this.getMetadata(key)) === null;
+    const result =
+      expected === null
+        ? await db.runAsync(
+            'INSERT OR IGNORE INTO metadata (key, value, updated_at) VALUES (?, ?, ?)',
+            [key, value, Date.now()]
+          )
+        : value === null
+          ? await db.runAsync('DELETE FROM metadata WHERE key = ? AND value = ?', [key, expected])
+          : await db.runAsync(
+              'UPDATE metadata SET value = ?, updated_at = ? WHERE key = ? AND value = ?',
+              [value, Date.now(), key, expected]
+            );
+    return result.changes === 1;
   }
 
   /**
@@ -1031,10 +1095,7 @@ export class KeyStorage {
         await db.runAsync(`DELETE FROM sesame_device_records`);
       });
 
-      this.logger.info('All Signal Protocol data wiped', {
-        category: 'KeyStorage',
-        data: stats,
-      });
+      this.logger.info('All Signal Protocol data wiped', { category: 'KeyStorage', data: stats });
 
       return stats;
     } catch (error) {
@@ -1059,11 +1120,7 @@ export class KeyStorage {
       const ecSignedPreKey = await this.getEcSignedPreKey();
       const ecOneTimePreKeysCount = await this.getEcOneTimePreKeyCount();
 
-      return {
-        hasIdentityKey,
-        hasEcSignedPreKey: ecSignedPreKey !== null,
-        ecOneTimePreKeysCount,
-      };
+      return { hasIdentityKey, hasEcSignedPreKey: ecSignedPreKey !== null, ecOneTimePreKeysCount };
     } catch (error) {
       throw new EncryptionError(
         'Failed to get storage stats',
@@ -1339,25 +1396,56 @@ export class KeyStorage {
         commit.contactIdentity
       );
       if (contactStatus !== 'NEW' && contactStatus !== 'MATCH') {
-        throw new Error(`Atomic session/trust commit rejected contact identity status ${contactStatus}`);
+        throw new Error(
+          `Atomic session/trust commit rejected contact identity status ${contactStatus}`
+        );
       }
       if (
         commit.oneTimePreKeyId !== undefined &&
-        !(await getEcOneTimePreKeyByKeyId(
-          commit.oneTimePreKeyId,
-          commit.localIdentityType
-        ))
+        !(await getEcOneTimePreKeyByKeyId(commit.oneTimePreKeyId, commit.localIdentityType))
       ) {
         throw new Error('Atomic session/trust commit cannot consume a missing EC one-time prekey');
       }
       if (
         commit.kemOneTimePreKeyId !== undefined &&
-        !(await getKyberOneTimePreKeyByKeyId(
-          commit.kemOneTimePreKeyId,
-          commit.localIdentityType
-        ))
+        !(await getKyberOneTimePreKeyByKeyId(commit.kemOneTimePreKeyId, commit.localIdentityType))
       ) {
         throw new Error('Atomic session/trust commit cannot consume a missing KEM one-time prekey');
+      }
+      let kyberParentRowId: number | undefined;
+      let kyberBaseKey: string | undefined;
+      if (commit.kyberPreKeyUse) {
+        const parent = await db.getFirstAsync<{ id: number }>(
+          `SELECT id FROM kyber_prekeys
+           WHERE identity_type = ? AND prekey_id = ? AND instance_id = ?`,
+          [
+            commit.localIdentityType,
+            commit.kyberPreKeyUse.kyberPreKeyId,
+            commit.kyberPreKeyUse.kyberPreKeyInstanceId,
+          ]
+        );
+        if (!parent) {
+          throw new Error('Atomic session/trust commit rejected a Kyber prekey instance mismatch');
+        }
+        kyberParentRowId = parent.id;
+        kyberBaseKey = Buffer.from(commit.kyberPreKeyUse.baseKeyBytes).toString('base64');
+        const reused = await db.getFirstAsync<{ present: number }>(
+          `SELECT 1 AS present FROM kyber_prekey_used
+           WHERE kyber_prekey_row_id = ? AND signed_prekey_identity = ?
+           AND signed_prekey_id = ? AND base_key = ?`,
+          [
+            kyberParentRowId,
+            commit.localIdentityType,
+            commit.kyberPreKeyUse.signedPreKeyId,
+            kyberBaseKey,
+          ]
+        );
+        if (reused) {
+          throw new ReusedBaseKeyError(
+            commit.kyberPreKeyUse.kyberPreKeyId,
+            commit.kyberPreKeyUse.signedPreKeyId
+          );
+        }
       }
       if (contactStatus === 'NEW') {
         await modelSaveContactIdentity(
@@ -1387,6 +1475,24 @@ export class KeyStorage {
           [commit.localIdentityType, commit.kemOneTimePreKeyId]
         );
       }
+      if (commit.kyberPreKeyUse && kyberParentRowId !== undefined && kyberBaseKey) {
+        await db.runAsync(
+          `INSERT INTO kyber_prekey_used
+           (kyber_prekey_row_id, signed_prekey_identity, signed_prekey_id, base_key)
+           VALUES (?, ?, ?, ?)`,
+          [
+            kyberParentRowId,
+            commit.localIdentityType,
+            commit.kyberPreKeyUse.signedPreKeyId,
+            kyberBaseKey,
+          ]
+        );
+      }
+      if (commit.receivedContent)
+        await this.setMetadata(
+          `received-content:${commit.receivedContent.id}`,
+          JSON.stringify(commit.receivedContent)
+        );
     });
   }
 
@@ -1394,9 +1500,10 @@ export class KeyStorage {
    * Get session record by address
    *
    */
-  async getSessionRecord(
-    address: { userId: string; deviceId: number }
-  ): Promise<SessionRecord | null> {
+  async getSessionRecord(address: {
+    userId: string;
+    deviceId: number;
+  }): Promise<SessionRecord | null> {
     try {
       // Use colon separator to match ProtocolAddress.toString() format
       const sessionId = `${address.userId}:${address.deviceId}`;
@@ -1737,7 +1844,9 @@ export class KeyStorage {
    * NOTE: This preserves identity keys and sessions.
    *
    */
-  async deleteAllPreKeys(identityType: IdentityType = 'aci'): Promise<{
+  async deleteAllPreKeys(
+    identityType: IdentityType = 'aci'
+  ): Promise<{
     ecSignedPreKeys: number;
     ecOneTimePreKeys: number;
     kyberPreKeys: number;

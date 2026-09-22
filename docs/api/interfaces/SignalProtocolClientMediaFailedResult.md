@@ -8,6 +8,12 @@
 
 ## Properties
 
+### failure?
+
+> `optional` **failure?**: [`RemoteObjectUploadFailure`](RemoteObjectUploadFailure.md)
+
+***
+
 ### jobId
 
 > **jobId**: `string`

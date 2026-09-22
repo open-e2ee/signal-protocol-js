@@ -73,7 +73,7 @@
  * ```
  */
 export {};
-export { SignalProtocolClient } from './client';
+export { SignalProtocolClient } from "./client";
 export {
   BraidPolicy,
   advanceHostedRelayIdentityMigration,
@@ -85,7 +85,7 @@ export {
   registerHostedRelayPush,
   removeHostedRelayPush,
   PostQuantumPolicy,
-} from './client';
+} from "./client";
 export type {
   SignalProtocolClientAdapterConfig,
   SignalProtocolClientCompositionOptions,
@@ -121,7 +121,7 @@ export type {
   IdentityAssertionPurpose,
   IdentityAssertionRequest,
   SignalProtocolConfig,
-} from './client';
+} from "./client";
 export type {
   SignalProtocolClientConfig,
   ProgressCallback,
@@ -137,12 +137,13 @@ export type {
   // SPQR limits configuration types
   SPQRLimits,
   ResolvedSPQRLimits,
-} from './client/config';
+} from "./client/config";
 export type {
   SignalProtocolClientDeleteLocalAttachmentInput,
   SignalProtocolClientLoadedLocalAttachment,
   SignalProtocolClientLoadLocalAttachmentInput,
   SignalProtocolClientMedia,
+  SignalProtocolClientMediaAbandonmentResult,
   SignalProtocolClientMediaCompletedResult,
   SignalProtocolClientMediaCleanupInput,
   SignalProtocolClientMediaCleanupResult,
@@ -164,14 +165,14 @@ export type {
   SignalProtocolClientSaveDownloadedAttachmentInput,
   SignalProtocolClientSaveUploadedAttachmentInput,
   SignalProtocolClientSyncDeleteInput,
-} from './client';
+} from "./client";
 export {
   SPQR_LIMITS_DEFAULTS,
   resolveSPQRLimits,
   // Key rotation timing constants (profile defaults)
   KEY_REFRESH_INTERVAL_MS_DEFAULT,
   MAX_PREKEY_AGE_MS_DEFAULT,
-} from './client/config';
+} from "./client/config";
 export type {
   AttachmentTransferOptions,
   DownloadedAttachment,
@@ -186,8 +187,8 @@ export type {
   ProcessEnvelopeOptions,
   SessionHealthResult,
   TypingAction,
-} from './client/types';
-export { isOutgoingMessageError } from './client/types';
+} from "./client/types";
+export { isOutgoingMessageError } from "./client/types";
 export type {
   BlockedRecipientsSyncInput,
   InspectedSignalProtocolContent,
@@ -203,10 +204,10 @@ export type {
   VerificationStateSyncInput,
   ViewOnceOpenSyncInput,
   SignalProtocolContentAdapter,
-} from './client/content-adapter';
-export type { ForceKeyResetResult, PreKeyStatusResult } from './client/prekeys';
-export { EndorsementManager } from './client/endorsement-manager';
-export { createDefaultSignalProtocolContentAdapter } from './client/content-adapter';
+} from "./client/content-adapter";
+export type { ForceKeyResetResult, PreKeyStatusResult } from "./client/prekeys";
+export { EndorsementManager } from "./client/endorsement-manager";
+export { createDefaultSignalProtocolContentAdapter } from "./client/content-adapter";
 export {
   SignalProtocolBlockingManager,
   type SignalProtocolBlockingManagerOptions,
@@ -214,7 +215,7 @@ export {
   type SignalProtocolBlockingStore,
   type SignalProtocolBlockingMirror,
   type SignalProtocolBlockingHooks,
-} from './blocking';
+} from "./blocking";
 
 /**
  * Protocol Address for type-safe device addressing
@@ -231,7 +232,7 @@ export {
  * const str = ProtocolAddress.toString(bob); // "bob:1"
  * ```
  */
-export { ProtocolAddress } from './types/address';
+export { ProtocolAddress } from "./types/address";
 
 /**
  * The bounds applied to `SenderKeysConfig.maxSenderKeyAge`.
@@ -240,7 +241,10 @@ export { ProtocolAddress } from './types/address';
  * its value is clamped into. The alternative is discovering it from a log
  * line.
  */
-export { SENDER_KEY_AGE_CEILING, SENDER_KEY_AGE_FLOOR } from './types/protocol-config';
+export {
+  SENDER_KEY_AGE_CEILING,
+  SENDER_KEY_AGE_FLOOR,
+} from "./types/protocol-config";
 
 // ============================================================================
 // LOGGER UTILITIES
@@ -267,7 +271,11 @@ export { SENDER_KEY_AGE_CEILING, SENDER_KEY_AGE_FLOOR } from './types/protocol-c
  * });
  * ```
  */
-export { createDefaultSignalProtocolLogger, defaultSignalProtocolLogger, resolveSignalProtocolLogger } from './logger';
+export {
+  createDefaultSignalProtocolLogger,
+  defaultSignalProtocolLogger,
+  resolveSignalProtocolLogger,
+} from "./logger";
 
 // ============================================================================
 // NAMESPACED UTILITIES
@@ -291,7 +299,7 @@ export { createDefaultSignalProtocolLogger, defaultSignalProtocolLogger, resolve
  * safety.generateCompositeSafetyNumber(...);
  * ```
  */
-export * as safety from './safety';
+export * as safety from "./safety";
 
 /**
  * Key generation utilities namespace
@@ -303,7 +311,7 @@ export * as safety from './safety';
  * const signedPreKey = await keys.generateEcSignedPreKey(signingKey);
  * ```
  */
-export * as keys from './keys';
+export * as keys from "./keys";
 
 /**
  * Encoding utilities namespace (base64, hex, byte conversions)
@@ -315,9 +323,9 @@ export * as keys from './keys';
  * const hex = encoding.bytesToHex(data);
  * ```
  */
-export * as encoding from './encoding';
-export * as blocking from './blocking';
-export * as media from './media';
+export * as encoding from "./encoding";
+export * as blocking from "./blocking";
+export * as media from "./media";
 export {
   MediaAttachmentFlag,
   MediaAttachmentJobOperation,
@@ -348,10 +356,12 @@ export {
   planMediaAttachmentProcessing,
   planMediaAttachmentUploadJob,
   prepareMediaAttachmentUpload,
+  prepareMediaAttachmentUploadData,
+  uploadPreparedMediaAttachment,
   resolveMediaAttachment,
   serializeMediaAttachmentMessage,
   validateMediaAttachmentPolicy,
-} from './media';
+} from "./media";
 export type {
   CreateMediaAttachmentPointerInput,
   DeleteMediaAttachmentOptions,
@@ -394,10 +404,12 @@ export type {
   PlanMediaAttachmentProcessingInput,
   PlanMediaAttachmentUploadJobInput,
   PrepareMediaAttachmentUploadOptions,
+  PreparedMediaAttachmentUpload,
+  MediaAttachmentPreparedUploadStore,
   ResolveMediaAttachmentOptions,
   ResolvedMediaAttachment,
   TusMediaAttachmentTransferOptions,
-} from './media';
+} from "./media";
 
 // Group ID utilities (package-owned prefix format)
 //
@@ -410,9 +422,9 @@ export {
   encodeGroupTrustRoot,
   extractGroupId,
   isGroupId,
-} from './internal/groups';
+} from "./internal/groups";
 
-export type { GroupId, GroupTrustRoot } from './internal/groups';
+export type { GroupId, GroupTrustRoot } from "./internal/groups";
 
 /**
  * Remote infrastructure interfaces (DI contracts)
@@ -440,6 +452,8 @@ export type {
   DeviceRegistration,
   PreKeyUpload,
   PreKeyBundle as RelayPreKeyBundle, // Alias to avoid conflict with keys/PreKeyBundle
+  PreKeyInventory,
+  PreKeyMetadata,
   AccountIdentityProvisioning,
   AccountIdentityRotation,
   EcSignedPreKeyUpload,
@@ -448,16 +462,22 @@ export type {
   KemLastResortPreKeyUpload,
   SealedSenderAuth,
   Unsubscribe,
-} from './remote/relay/types';
+} from "./remote/relay/types";
 export type {
   RemoteObjectCompleteUploadRequest,
   RemoteObjectDeleteRequest,
   RemoteObjectDownload,
   RemoteObjectDownloadRequest,
   RemoteObjectUpload,
+  RemoteObjectUploadReceipt,
   RemoteObjectUploadRequest,
   SignalProtocolRemoteObjectStore,
-} from './remote/object-store';
+} from "./remote/object-store";
+export {
+  RemoteObjectUploadError,
+  RemoteObjectUploadFailureCode,
+} from "./remote/object-store";
+export type { RemoteObjectUploadFailure } from "./remote/object-store";
 
 // ============================================================================
 // TYPE EXPORTS
@@ -475,7 +495,7 @@ export type {
   EcOneTimePreKey,
   KyberPreKey,
   PreKeyBundle,
-} from './keys';
+} from "./keys";
 
 // Other types - from types/
 export type {
@@ -528,7 +548,7 @@ export type {
   Base64,
   Hex,
   Bytes,
-} from './types';
+} from "./types";
 
 // Supporting types referenced by public client, store, relay, and group APIs.
 export type {
@@ -537,7 +557,7 @@ export type {
   SesameMessage,
   SesameStats,
   UserRecord,
-} from './internal/sesame/types';
+} from "./internal/sesame/types";
 export type {
   GroupAuthorization,
   IGroupServer,
@@ -546,27 +566,31 @@ export type {
   GroupMemberInput,
   PresentedGroupMemberInput,
   InvitedGroupMemberInput,
-} from './internal/groups/manager';
-export type { DecryptedGroup } from './internal/groups/types';
-export type { SenderKeyState } from './internal/protocol/sender-keys/manager';
+} from "./internal/groups/manager";
+export type { DecryptedGroup } from "./internal/groups/types";
+export type { SenderKeyState } from "./internal/protocol/sender-keys/manager";
 export type {
   MLKEMBraidAgentState,
   MLKEMBraidMessage,
-} from './internal/protocol/spqr/ml-kem-braid/types';
-export type { ResolvedSPQRInfoStrings } from './internal/crypto/kdf/hkdf';
-export type { VersionNegotiationState } from './internal/protocol/version';
-export type { ServiceId } from './internal/protocol/zk/groups/uid-struct';
-export type { CredentialPublicKey } from './internal/protocol/zk/credentials/credentials';
-export { VerificationFailure } from './internal/protocol/zk/credentials/issuance';
+} from "./internal/protocol/spqr/ml-kem-braid/types";
+export type { ResolvedSPQRInfoStrings } from "./internal/crypto/kdf/hkdf";
+export type { VersionNegotiationState } from "./internal/protocol/version";
+export type { ServiceId } from "./internal/protocol/zk/groups/uid-struct";
+export type { CredentialPublicKey } from "./internal/protocol/zk/credentials/credentials";
+export { VerificationFailure } from "./internal/protocol/zk/credentials/issuance";
 export {
   ServerDerivedKeyPair,
   ServerDerivedPublicKey,
   ServerRootKeyPair,
   ServerRootPublicKey,
-} from './internal/protocol/zk/credentials/endorsements';
+} from "./internal/protocol/zk/credentials/endorsements";
 
 // Event hooks (callbacks for SignalProtocolClient) - from client/
-export type { SignalProtocolClientHooks, HookName, DecryptedEnvelope } from './client/event-hooks';
+export type {
+  SignalProtocolClientHooks,
+  HookName,
+  DecryptedEnvelope,
+} from "./client/event-hooks";
 
 // Error types, message types, and enums
 export {
@@ -576,7 +600,7 @@ export {
   ContentHint,
   IdentityKeyChange,
   TrustDirection,
-} from './types';
+} from "./types";
 
 /*
  * Errors an application is expected to catch and branch on, each beside its
@@ -600,7 +624,7 @@ export {
   isSealedSenderAuthError,
   UntrustedIdentityError,
   isUntrustedIdentityError,
-} from './types/errors';
+} from "./types/errors";
 
 // NOTE: Cryptographic constants moved to internal. Import from './internal/crypto' if needed.
 
@@ -610,14 +634,14 @@ export {
   MIN_REGISTRATION_ID,
   MAX_REGISTRATION_ID,
   ONE_TIME_PREKEY_BATCH_SIZE,
-} from './types/protocol-constants';
+} from "./types/protocol-constants";
 
 // Protocol limits
 export {
   MAX_MESSAGE_KEYS,
   MAX_SKIP,
   MAX_RECEIVER_CHAINS,
-} from './internal/protocol/double-ratchet';
+} from "./internal/protocol/double-ratchet";
 
 // Version constants - spec versions and wire format versions
 export {
@@ -638,10 +662,10 @@ export {
   parseVersion,
   isCompatible,
   formatVersion,
-} from './versions';
+} from "./versions";
 
 // NOTE: Protocol state types (DoubleRatchetState, SenderKeyState, etc.) moved to internal.
 // Internal crypto remains outside the supported public surface.
 
 // Sender-key type re-export for boundary-safe composition
-export type { SenderKeyDistributionMessage } from './internal/protocol/sender-keys';
+export type { SenderKeyDistributionMessage } from "./internal/protocol/sender-keys";

@@ -239,6 +239,12 @@ export interface SessionState {
   pendingPreKeyDeletion?: {
     oneTimePreKeyId?: number;
     kemOneTimePreKeyId?: number;
+    kyberPreKeyUse?: {
+      kyberPreKeyId: number;
+      kyberPreKeyInstanceId: string;
+      signedPreKeyId: number;
+      baseKeyBytes: number[];
+    };
     /** Identity type the prekeys belong to (for correct scoped deletion) */
     identityType: 'aci' | 'pni';
   };
@@ -707,7 +713,10 @@ export interface SessionRecordMetadata {
   isInitiator?: boolean;
 }
 
-function assertSessionStateIdentityProfile(value: unknown, label: string): asserts value is SessionState {
+function assertSessionStateIdentityProfile(
+  value: unknown,
+  label: string
+): asserts value is SessionState {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${label} must be a session-state object`);
   }

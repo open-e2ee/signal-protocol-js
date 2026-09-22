@@ -92,6 +92,7 @@ export class ConvexR2ObjectStore implements SignalProtocolRemoteObjectStore {
     validateUploadRequest(input, this.maxSizeBytes);
     const result = await this.convex.mutation(this.api.createUpload, {
       requestId: input.requestId,
+      preparedAt: input.preparedAt,
       contentType: input.contentType,
       contentLength: input.contentLength,
       digest: new Uint8Array(input.digest).buffer,

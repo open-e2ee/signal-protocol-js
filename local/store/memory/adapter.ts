@@ -8,6 +8,7 @@
  * DO NOT use in production.
  */
 
+import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
 import type {
   ISignalProtocolLocalStore,
   MessageRecord,
@@ -42,10 +43,16 @@ import { IdentityKeyChange, TrustDirection } from '../../../types/trust';
 import type { UserRecord, DeviceRecord } from '../../../types';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { generateRandomBytes } from '../../../internal/crypto/random';
+import { StoreFailureController, type StoreFailureOptions } from './failures';
 import {
-  StoreFailureController,
-  type StoreFailureOptions,
-} from './failures';
+  assertUnambiguousKyberPreKeyStore,
+  assertKyberPreKeyUse,
+  createKyberPreKeyInstanceId,
+  recordKyberPreKeyUse,
+  recordKyberPreKeyUseById,
+  type RetainedKyberPreKey,
+  type StoredKyberPreKeyInstance,
+} from '../kyber-prekey-lifecycle';
 
 export interface InMemorySignalProtocolStoreOptions {
   failures?: StoreFailureOptions;
@@ -89,11 +96,11 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
   private ecSignedPreKeys = new Map<string, EcSignedPreKey>();
   /** Map of "identityType:keyId" -> EcOneTimePreKey */
   private ecOneTimePreKeys = new Map<string, EcOneTimePreKey>();
-  /** Map of identityType -> KyberPreKey */
-  private kyberPreKeys = new Map<IdentityType, KyberPreKey>();
+  /** Retained reusable Kyber key instances, keyed by identity type and logical ID. */
+  private kyberPreKeys = new Map<string, StoredKyberPreKeyInstance>();
+  private currentKyberPreKeyIds = new Map<IdentityType, number>();
   /** Map of "identityType:keyId" -> KemOneTimePreKey */
   private kemOneTimePreKeys = new Map<string, KemOneTimePreKey>();
-  private kyberUsage = new Map<string, { signedPreKeyId: number; baseKeyBytes: Uint8Array }>();
   private sessionRecords = new Map<string, SessionRecord>();
   private databaseKey: Uint8Array | null = null;
 
@@ -117,6 +124,29 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
 
   // Metadata storage
   private readonly _metadata = new Map<string, string>();
+  private readonly receivedContent = new Map<string, ReceivedContent>();
+
+  async getReceivedContent(id: string): Promise<ReceivedContent | null> {
+    const value = this.receivedContent.get(id);
+    return value ? cloneStored(value) : null;
+  }
+
+  async deleteReceivedContent(id: string): Promise<void> {
+    this.failures.beforeWrite('deleteReceivedContent');
+    this.receivedContent.delete(id);
+  }
+
+  async deleteExpiredReceivedContent(before: number): Promise<number> {
+    this.failures.beforeWrite('deleteExpiredReceivedContent');
+    let count = 0;
+    for (const [id, value] of this.receivedContent) {
+      if (value.receivedAt < before) {
+        this.receivedContent.delete(id);
+        count++;
+      }
+    }
+    return count;
+  }
 
   constructor(options: InMemorySignalProtocolStoreOptions = {}) {
     this.failures = new StoreFailureController(options.failures);
@@ -256,8 +286,10 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
     identityType?: IdentityType
   ): Promise<boolean> {
     const saved = this.contactIdentities.get(this.getContactIdentityKey(address, identityType));
-    return evaluateContactIdentityCandidate(saved ?? null, identity) !== 'CHANGED' &&
-      evaluateContactIdentityCandidate(saved ?? null, identity) !== 'ROLLBACK';
+    return (
+      evaluateContactIdentityCandidate(saved ?? null, identity) !== 'CHANGED' &&
+      evaluateContactIdentityCandidate(saved ?? null, identity) !== 'ROLLBACK'
+    );
   }
 
   // ============================================================================
@@ -351,13 +383,41 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
   async storeKyberPreKey(kyberPreKey: KyberPreKey, identityType?: IdentityType): Promise<void> {
     this.failures.beforeWrite('storeKyberPreKey');
     const it = identityType ?? 'aci';
-    this.kyberPreKeys.set(it, cloneStored(kyberPreKey));
+    const storageKey = `${it}:${kyberPreKey.keyId}`;
+    const instanceId = await createKyberPreKeyInstanceId();
+    const existing = this.kyberPreKeys.get(storageKey);
+    assertUnambiguousKyberPreKeyStore(existing?.key, kyberPreKey, it);
+    if (existing) return;
+    const now = Date.now();
+    const currentId = this.currentKyberPreKeyIds.get(it);
+    if (currentId !== undefined) {
+      const current = this.kyberPreKeys.get(`${it}:${currentId}`);
+      if (current && current.replacedAt === null) current.replacedAt = now;
+    }
+    this.kyberPreKeys.set(storageKey, {
+      instanceId,
+      key: cloneStored(kyberPreKey),
+      replacedAt: null,
+      uses: Object.create(null),
+    });
+    this.currentKyberPreKeyIds.set(it, kyberPreKey.keyId);
   }
 
   async getKyberPreKey(identityType?: IdentityType): Promise<KyberPreKey | null> {
     const it = identityType ?? 'aci';
-    const preKey = this.kyberPreKeys.get(it);
+    const currentId = this.currentKyberPreKeyIds.get(it);
+    if (currentId === undefined) return null;
+    const preKey = this.kyberPreKeys.get(`${it}:${currentId}`)?.key;
     return preKey ? cloneStored(preKey) : null;
+  }
+
+  async getKyberPreKeyById(
+    keyId: number,
+    identityType?: IdentityType
+  ): Promise<RetainedKyberPreKey | null> {
+    const it = identityType ?? 'aci';
+    const instance = this.kyberPreKeys.get(`${it}:${keyId}`);
+    return instance ? { preKey: cloneStored(instance.key), instanceId: instance.instanceId } : null;
   }
 
   async markKyberPreKeyUsed(
@@ -368,9 +428,13 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
   ): Promise<void> {
     this.failures.beforeWrite('markKyberPreKeyUsed');
     const it = identityType ?? 'aci';
-    this.kyberUsage.set(
-      `${it}:${kyberPreKeyId}`,
-      cloneStored({ signedPreKeyId, baseKeyBytes })
+    const instance = this.kyberPreKeys.get(`${it}:${kyberPreKeyId}`);
+    recordKyberPreKeyUseById(
+      instance
+        ? { currentKeyId: kyberPreKeyId, instances: { [String(kyberPreKeyId)]: instance } }
+        : null,
+      it,
+      { kyberPreKeyId, signedPreKeyId, baseKeyBytes }
     );
   }
 
@@ -446,17 +510,13 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
     this.failures.beforeWrite('commitSessionTrust');
     assertCurrentSessionRecord(commit.record);
     const sessionKey = this.getAddressKey(commit.address);
-    const contactKey = this.getContactIdentityKey(
-      commit.address,
-      commit.contactIdentityType
-    );
+    const contactKey = this.getContactIdentityKey(commit.address, commit.contactIdentityType);
     const existingContact = this.contactIdentities.get(contactKey) ?? null;
-    const contactStatus = evaluateContactIdentityCandidate(
-      existingContact,
-      commit.contactIdentity
-    );
+    const contactStatus = evaluateContactIdentityCandidate(existingContact, commit.contactIdentity);
     if (contactStatus !== 'NEW' && contactStatus !== 'MATCH') {
-      throw new Error(`Atomic session/trust commit rejected contact identity status ${contactStatus}`);
+      throw new Error(
+        `Atomic session/trust commit rejected contact identity status ${contactStatus}`
+      );
     }
     const newContact =
       contactStatus === 'NEW'
@@ -476,12 +536,29 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
     if (kemKey && !this.kemOneTimePreKeys.has(kemKey)) {
       throw new Error('Atomic session/trust commit cannot consume a missing KEM one-time prekey');
     }
+    const kyberInstance = commit.kyberPreKeyUse
+      ? this.kyberPreKeys.get(`${commit.localIdentityType}:${commit.kyberPreKeyUse.kyberPreKeyId}`)
+      : undefined;
+    const kyberState = kyberInstance
+      ? {
+          currentKeyId: commit.kyberPreKeyUse!.kyberPreKeyId,
+          instances: { [String(commit.kyberPreKeyUse!.kyberPreKeyId)]: kyberInstance },
+        }
+      : null;
+    if (commit.kyberPreKeyUse) {
+      assertKyberPreKeyUse(kyberState, commit.localIdentityType, commit.kyberPreKeyUse);
+    }
 
     // Map mutations cannot fail after validation. This is one synchronous commit point.
     if (newContact) this.contactIdentities.set(contactKey, cloneStored(newContact));
     this.sessionRecords.set(sessionKey, cloneStored(commit.record));
     if (ecKey) this.ecOneTimePreKeys.delete(ecKey);
     if (kemKey) this.kemOneTimePreKeys.delete(kemKey);
+    if (commit.kyberPreKeyUse) {
+      recordKyberPreKeyUse(kyberState, commit.localIdentityType, commit.kyberPreKeyUse);
+    }
+    if (commit.receivedContent)
+      this.receivedContent.set(commit.receivedContent.id, cloneStored(commit.receivedContent));
   }
 
   /**
@@ -649,12 +726,7 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
     // Also keep sesameUserRecords in sync for getUserRecord()
     let userRecord = this.sesameUserRecords.get(userId);
     if (!userRecord) {
-      userRecord = {
-        userId,
-        devices: new Map(),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
+      userRecord = { userId, devices: new Map(), createdAt: Date.now(), updatedAt: Date.now() };
       this.sesameUserRecords.set(userId, userRecord);
     }
     userRecord.devices.set(deviceId, storedRecord);
@@ -932,7 +1004,8 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
     groupId: string,
     userId: string,
     deviceId: number,
-    states: SenderKeyState[]
+    states: SenderKeyState[],
+    receive?: SenderKeyReceiveCommit
   ): Promise<void> {
     this.failures.beforeWrite('storeSenderKeyRecord');
     if (states.length === 0) return;
@@ -950,6 +1023,14 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
     // Store the full record
     const key = this.getSenderKeyRecordKey(groupId, userId, deviceId);
     this.senderKeyRecords.set(key, cloneStored(states));
+    if (receive) {
+      this.receivedContent.set(receive.content.id, cloneStored(receive.content));
+      if (receive.consumedChainIndex !== undefined) {
+        this.skippedSenderKeys.delete(
+          this.getSkippedKeyId(groupId, userId, deviceId, receive.consumedChainIndex)
+        );
+      }
+    }
   }
 
   async getSenderKeyRecord(
@@ -1145,8 +1226,8 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
     this.ecSignedPreKeys.clear();
     this.ecOneTimePreKeys.clear();
     this.kyberPreKeys.clear();
+    this.currentKyberPreKeyIds.clear();
     this.kemOneTimePreKeys.clear();
-    this.kyberUsage.clear();
     this.sessionRecords.clear();
     this.databaseKey = null;
     this.sesameUserRecords.clear();
@@ -1155,6 +1236,7 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
     this.skippedSenderKeys.clear();
     this.messageRecords.clear();
     this._metadata.clear();
+    this.receivedContent.clear();
   }
 
   // ============================================================================
@@ -1173,6 +1255,18 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
   async deleteMetadata(key: string): Promise<void> {
     this.failures.beforeWrite('deleteMetadata');
     this._metadata.delete(key);
+  }
+
+  async compareAndSetMetadata(
+    key: string,
+    expected: string | null,
+    value: string | null
+  ): Promise<boolean> {
+    if ((this._metadata.get(key) ?? null) !== expected) return false;
+    this.failures.beforeWrite('compareAndSetMetadata');
+    if (value === null) this._metadata.delete(key);
+    else this._metadata.set(key, value);
+    return true;
   }
 
   // ============================================================================
@@ -1206,11 +1300,15 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
    */
   async getKyberPreKeyMaxId(identityType?: IdentityType): Promise<number> {
     const it = identityType ?? 'aci';
-    const kyberPreKey = this.kyberPreKeys.get(it);
-    if (!kyberPreKey) {
-      return 0;
+    const prefix = `${it}:`;
+    let maxId = 0;
+    for (const key of this.kyberPreKeys.keys()) {
+      if (key.startsWith(prefix)) {
+        const id = Number(key.slice(prefix.length));
+        if (id > maxId) maxId = id;
+      }
     }
-    return kyberPreKey.keyId;
+    return maxId;
   }
 
   /**
@@ -1219,7 +1317,9 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
    *
    * @returns Counts of deleted prekeys by type
    */
-  async deleteAllPreKeys(identityType?: IdentityType): Promise<{
+  async deleteAllPreKeys(
+    identityType?: IdentityType
+  ): Promise<{
     ecSignedPreKeys: number;
     ecOneTimePreKeys: number;
     kyberPreKeys: number;
@@ -1245,21 +1345,20 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
       }
     }
 
-    const kyberPreKeysCount = this.kyberPreKeys.has(it) ? 1 : 0;
-    this.kyberPreKeys.delete(it);
+    let kyberPreKeysCount = 0;
+    for (const key of this.kyberPreKeys.keys()) {
+      if (key.startsWith(prefix)) {
+        this.kyberPreKeys.delete(key);
+        kyberPreKeysCount++;
+      }
+    }
+    this.currentKyberPreKeyIds.delete(it);
 
     let kemOneTimePreKeysCount = 0;
     for (const key of this.kemOneTimePreKeys.keys()) {
       if (key.startsWith(prefix)) {
         this.kemOneTimePreKeys.delete(key);
         kemOneTimePreKeysCount++;
-      }
-    }
-
-    // Clean up kyber usage entries for this identity type
-    for (const key of this.kyberUsage.keys()) {
-      if (key.startsWith(prefix)) {
-        this.kyberUsage.delete(key);
       }
     }
 

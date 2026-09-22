@@ -431,6 +431,8 @@ const signal = await createSignalProtocolClient({
     }),
   },
   media: {
+    preparedUploads: appPreparedUploads,
+    maxPreparedUploadBytes: appUploadBudgetBytes,
     loadLocalAttachment: async ({ localMediaId }) =>
       appDraftMedia.readBytes(localMediaId),
     saveUploadedAttachment: async ({ localMediaId, attachment }) =>

@@ -1,24 +1,28 @@
 /**
  * Request for a short-lived, direct object upload operation.
  *
- * `requestId` is an idempotency key for one logical upload. It is not an
+ * `requestId` and `preparedAt` identify one immutable preparation. Neither is an
  * object identifier or a provider key. An authenticated backend maps it to a
  * stable canonical object identifier and a private provider key.
  */
 export type RemoteObjectUploadRequest = {
   /**
-   * Stable idempotency key for retries of one logical upload.
+   * Stable nonce for retries of one logical upload.
    *
    * The backend must scope this untrusted value to the authenticated principal
-   * and return the same object reservation when the caller retries the request.
+   * and preparation time. Exact retries return the same object reservation.
    */
   requestId: string;
+  /** Immutable preparation time in Unix milliseconds. Never refresh it for a retry. */
+  preparedAt: number;
   /** MIME type of the encrypted bytes in the upload. */
   contentType: string;
   /** Exact encrypted object length in bytes. */
   contentLength: number;
   /** SHA-256 digest of the exact encrypted bytes. */
   digest: Uint8Array;
+  /** Optional broker read-capability commitment. Required by hosted Relay. */
+  readCapabilityDigest?: Uint8Array;
 };
 
 /** Short-lived credentials for a direct object upload. */
@@ -32,13 +36,15 @@ export interface RemoteObjectUpload {
   /** Request headers that must accompany the upload. */
   headers?: Record<string, string>;
   /** Upload protocol. Direct PUT applies when omitted. */
-  protocol?: 'put' | 'tus';
+  protocol?: "put" | "tus";
 }
 
 /** Request for a short-lived, direct object download operation. */
 export type RemoteObjectDownloadRequest = {
   /** Opaque identifier from an encrypted attachment pointer. */
   objectId: string;
+  /** Read authority carried inside the encrypted pointer, never in a URL. */
+  readCapability?: string;
 };
 
 /** Short-lived credentials for a direct object download. */
@@ -57,6 +63,14 @@ export type RemoteObjectCompleteUploadRequest = {
   objectId: string;
 };
 
+/** Broker-verified bytes stored under the original upload authorization. */
+export interface RemoteObjectUploadReceipt {
+  objectId: string;
+  contentLength: number;
+  /** SHA-256 verified against stored bytes independently of caller metadata. */
+  digest: Uint8Array;
+}
+
 /** Request to delete a remote encrypted object. */
 export type RemoteObjectDeleteRequest = {
   /** Opaque identifier of the object to delete. */
@@ -74,8 +88,19 @@ export interface SignalProtocolRemoteObjectStore {
   /** Create a short-lived direct upload operation. */
   createUpload(input: RemoteObjectUploadRequest): Promise<RemoteObjectUpload>;
 
+  /**
+   * Refuse the original upload identity and delete its accepted object, if present.
+   * Never create an upload to find it. Preserve accepted accounting. Resolve only
+   * after durable refusal owns cleanup. A repeated request must be safe.
+   */
+  abandonUpload?(
+    input: Pick<RemoteObjectUploadRequest, "requestId" | "preparedAt">,
+  ): Promise<void>;
+
   /** Create a short-lived direct download operation. */
-  createDownload(input: RemoteObjectDownloadRequest): Promise<RemoteObjectDownload>;
+  createDownload(
+    input: RemoteObjectDownloadRequest,
+  ): Promise<RemoteObjectDownload>;
 
   /**
    * Finalize provider metadata after a successful upload, when required.
@@ -84,6 +109,19 @@ export interface SignalProtocolRemoteObjectStore {
    * retry it after an interrupted upload workflow.
    */
   completeUpload?(input: RemoteObjectCompleteUploadRequest): Promise<void>;
+
+  /**
+   * Recover an uncertain transfer using the original authorized object.
+   *
+   * Return a receipt only after verifying stored bytes and completing the
+   * backend's acceptance transition. Return null only when bytes are absent
+   * and the original authorization remains valid. Throw on unknown outcomes,
+   * mismatch, deletion, or expiry. Never reserve another object here.
+   * Omit this capability when the backend cannot provide that proof.
+   */
+  reconcileUpload?(
+    input: RemoteObjectCompleteUploadRequest,
+  ): Promise<RemoteObjectUploadReceipt | null>;
 
   /** Delete an encrypted object, when supported by the backend. */
   deleteObject?(input: RemoteObjectDeleteRequest): Promise<void>;

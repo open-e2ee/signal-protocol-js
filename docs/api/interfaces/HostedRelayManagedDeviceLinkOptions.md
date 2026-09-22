@@ -8,7 +8,7 @@
 
 ## Extends
 
-- `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md), `"adapters"` \| `"identity"` \| `"sealedSender"`\>
+- `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md), `"adapters"` \| `"identity"` \| `"sealedSender"` \| `"groups"`\>
 
 ## Properties
 
@@ -55,128 +55,7 @@ Recommended: Enable in development, disable in production
 
 ### groups?
 
-> `optional` **groups?**: `object`
-
-Group System configuration.
-Required for group state management (create, sync, membership changes).
-
-#### allowUnauthenticatedGroupHistory?
-
-> `optional` **allowUnauthenticatedGroupHistory?**: `boolean`
-
-Explicitly accept group history without server signatures.
-
-This selects the documented non-conforming deployment mode and emits a
-visible configuration warning.
-
-#### endorsementManager?
-
-> `optional` **endorsementManager?**: [`EndorsementManager`](../classes/EndorsementManager.md)
-
-Pre-constructed EndorsementManager for group send endorsement-based auth.
-
-#### issueCredential?
-
-> `optional` **issueCredential?**: () => `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
-
-Override the relay's auth-credential issuance transport.
-
-##### Returns
-
-`Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
-
-#### issueProfileKeyCredential?
-
-> `optional` **issueProfileKeyCredential?**: (`request`) => `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
-
-Override the relay's blinded profile-key credential issuance transport.
-
-##### Parameters
-
-###### request
-
-`Uint8Array`
-
-##### Returns
-
-`Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
-
-#### onConfigurationWarning?
-
-> `optional` **onConfigurationWarning?**: (`warning`) => `void`
-
-Receive the §12.3 non-conforming deployment warning.
-
-##### Parameters
-
-###### warning
-
-`GroupConfigurationWarning`
-
-##### Returns
-
-`void`
-
-#### profileKey
-
-> **profileKey**: `Uint8Array`
-
-This account's 32-byte profile key.
-
-#### resolveAciBytesByUserIds?
-
-> `optional` **resolveAciBytesByUserIds?**: (`userIds`) => `Promise`\<`Map`\<`string`, `Uint8Array`\<`ArrayBufferLike`\>\>\>
-
-Resolve member ACIs without importing app content models into the client.
-
-##### Parameters
-
-###### userIds
-
-`string`[]
-
-##### Returns
-
-`Promise`\<`Map`\<`string`, `Uint8Array`\<`ArrayBufferLike`\>\>\>
-
-#### server?
-
-> `optional` **server?**: [`IGroupServer`](IGroupServer.md)
-
-Override `relay.groupServer.server` for a custom deployment.
-
-#### store?
-
-> `optional` **store?**: [`IGroupStateStore`](IGroupStateStore.md)
-
-Override the SDK local storage adapter for group state.
-
-#### trustRoot
-
-> **trustRoot**: `Uint8Array`
-
-Versioned serialized trust root pinned by the application at build time.
-
-This value is never fetched from the relay and trusted at runtime.
-
-#### Example
-
-```typescript
-const signal = await SignalProtocolClient.create(userId, {
-  storage: customStorage,
-  relay,
-  aci,
-  pni,
-  groups: {
-    trustRoot: GROUP_TRUST_ROOT,
-    profileKey,
-  }
-});
-```
-
-#### Inherited from
-
-[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`groups`](SignalProtocolClientConfig.md#groups)
+> `readonly` `optional` **groups?**: `HostedGroupOptions`
 
 ***
 
@@ -426,6 +305,7 @@ const signal = await createSignalProtocolClient({
   identity: { userId },
   adapters: { storage, relay, remoteObjectStore },
   media: {
+    preparedUploads: appPreparedUploads,
     loadLocalAttachment: async ({ localMediaId }) => appDrafts.readBytes(localMediaId),
     saveUploadedAttachment: async ({ localMediaId, attachment }) =>
       appPointers.save(localMediaId, attachment),

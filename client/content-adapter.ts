@@ -2,6 +2,10 @@ import type { SenderKeyDistributionMessage } from '../internal/protocol/sender-k
 import type { DataMessageInput } from './types';
 import * as CryptoUtils from '../internal/crypto';
 import {
+  parseSenderKeyDistribution,
+  type ParsedSenderKeyDistribution,
+} from './sender-key-distribution';
+import {
   MediaAttachmentCleanupReason,
   MediaAttachmentMessageType,
   type MediaAttachmentDeleteSyncInput,
@@ -102,6 +106,7 @@ export interface ParsedSyncContent {
 }
 
 export interface InspectedSignalProtocolContent {
+  senderKeyDistribution?: ParsedSenderKeyDistribution;
   timestamp?: number;
   conversationId?: string;
   receipt: ParsedReceiptContent | null;
@@ -411,6 +416,9 @@ function inspectPayload(payload: JsonObject): InspectedSignalProtocolContent {
   return {
     timestamp: resolvedTimestamp,
     conversationId,
+    ...('senderKeyDistributionMessage' in payload
+      ? { senderKeyDistribution: parseSenderKeyDistribution(payload.senderKeyDistributionMessage) }
+      : {}),
     receipt,
     typing,
     sync,

@@ -12,40 +12,40 @@
 
 ### BackgroundRecovery
 
-> `readonly` **BackgroundRecovery**: `"background-recovery"` = `'background-recovery'`
+> `readonly` **BackgroundRecovery**: `"background-recovery"` = `"background-recovery"`
 
 ### ComposePreUpload
 
-> `readonly` **ComposePreUpload**: `"compose-pre-upload"` = `'compose-pre-upload'`
+> `readonly` **ComposePreUpload**: `"compose-pre-upload"` = `"compose-pre-upload"`
 
 ### IncomingMessage
 
-> `readonly` **IncomingMessage**: `"incoming-message"` = `'incoming-message'`
+> `readonly` **IncomingMessage**: `"incoming-message"` = `"incoming-message"`
 
 ### LinkedDeviceSync
 
-> `readonly` **LinkedDeviceSync**: `"linked-device-sync"` = `'linked-device-sync'`
+> `readonly` **LinkedDeviceSync**: `"linked-device-sync"` = `"linked-device-sync"`
 
 ### MessageDeleted
 
-> `readonly` **MessageDeleted**: `"message-deleted"` = `'message-deleted'`
+> `readonly` **MessageDeleted**: `"message-deleted"` = `"message-deleted"`
 
 ### MessageExpired
 
-> `readonly` **MessageExpired**: `"message-expired"` = `'message-expired'`
+> `readonly` **MessageExpired**: `"message-expired"` = `"message-expired"`
 
 ### OrphanCleanup
 
-> `readonly` **OrphanCleanup**: `"orphan-cleanup"` = `'orphan-cleanup'`
+> `readonly` **OrphanCleanup**: `"orphan-cleanup"` = `"orphan-cleanup"`
 
 ### Retry
 
-> `readonly` **Retry**: `"retry"` = `'retry'`
+> `readonly` **Retry**: `"retry"` = `"retry"`
 
 ### SentSync
 
-> `readonly` **SentSync**: `"sent-sync"` = `'sent-sync'`
+> `readonly` **SentSync**: `"sent-sync"` = `"sent-sync"`
 
 ### UserAction
 
-> `readonly` **UserAction**: `"user-action"` = `'user-action'`
+> `readonly` **UserAction**: `"user-action"` = `"user-action"`

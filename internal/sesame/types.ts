@@ -844,7 +844,7 @@ export interface ISesameManager {
    * @returns Decrypted plaintext
    * @see https://signal.org/docs/specifications/sesame/
    */
-  receive(message: SesameMessage): Promise<Uint8Array>;
+  receive(message: SesameMessage, receiveId?: string): Promise<Uint8Array>;
 
   /**
    * Handle a retry request from a recipient

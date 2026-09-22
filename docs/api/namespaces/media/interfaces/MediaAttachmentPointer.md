@@ -86,6 +86,14 @@
 
 ***
 
+### readCapability?
+
+> `optional` **readCapability?**: `string`
+
+Independent broker read authority. Never use the attachment encryption key.
+
+***
+
 ### segmentSize
 
 > **segmentSize**: `number`

@@ -16,6 +16,7 @@ import type {
   DeviceRegistration,
   PreKeyUpload,
   PreKeyBundle,
+  PreKeyInventory,
   EcSignedPreKeyUpload,
   KemLastResortPreKeyUpload,
   Unsubscribe,
@@ -710,6 +711,21 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
             signature: kemOneTimePreKey.signature! as Signature,
           }
         : null,
+    });
+  }
+
+  async getPreKeyInventory(
+    userId: string,
+    deviceId: number,
+    identityType?: IdentityType
+  ): Promise<PreKeyInventory> {
+    const key = this.storageKey(userId, deviceId, identityType);
+    // Copy all values without yielding to a concurrent mutation.
+    return cloneRelayValue({
+      ecSignedPreKey: this.ecSignedPreKeyMetadata.get(key) ?? null,
+      kemLastResortPreKey: this.kemLastResortPreKeyMetadata.get(key) ?? null,
+      ecOneTimePreKeyCount: this.ecPreKeys.get(key)?.length ?? 0,
+      kemOneTimePreKeyCount: this.kemOneTimePreKeys.get(key)?.length ?? 0,
     });
   }
 

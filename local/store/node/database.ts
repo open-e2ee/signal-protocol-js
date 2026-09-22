@@ -9,32 +9,49 @@
  * Security-critical mutable state (contact trust, one-time prekeys, and
  * sessions) is committed through one encrypted, versioned state file. A
  * write-fsync/rename/directory-fsync sequence provides a crash-durable commit
- * point, and an in-process mutation queue serializes compare-and-swap updates.
+ * point. A kernel file lock serializes state transactions across processes.
  * Other independent collections remain encrypted JSON records.
  *
  * All sensitive data encrypted before storage.
  */
 
-import { access, mkdir, open, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { access, mkdir, readFile, readdir, rm, unlink } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { EncryptionError, EncryptionErrorCode } from '../../../types';
+import { receivedContentKey, parseReceivedContent } from '../received-content';
+import type { ReceivedContent } from '../../../types';
 import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
-import { getErrorMessage } from '../../../utils/errors';
 import { encryptRecord, decryptRecord, type EncryptedRecord } from './database-encryption';
-import { getNodeDatabaseKeyManager } from './database-key';
+import { getNodeDatabaseKeyManager, NODE_DATABASE_RESET_FILE } from './database-key';
+import { withNodeDatabaseLock } from './database-lock';
+import {
+  commitNodeDatabaseFile,
+  isNodeDatabaseDataEntry,
+  isNodeDatabaseRecord,
+  syncNodeDatabaseDirectory,
+} from './database-file-commit';
+import type { KyberPreKey } from '../../../keys';
+import type { IdentityType } from '../../../keys/types';
+import {
+  createKyberPreKeyState,
+  createKyberPreKeyInstanceId,
+  getCurrentKyberPreKey,
+  getRetainedKyberPreKey,
+  retainKyberPreKey,
+  type KyberPreKeyUse,
+  type RetainedKyberPreKey,
+  type StoredKyberPreKeyState,
+  recordKyberPreKeyUse,
+  recordKyberPreKeyUseById,
+} from '../kyber-prekey-lifecycle';
 
 /**
  * Default data directory
  */
 export {};
 const DEFAULT_DATA_DIR = join(homedir(), '.config', 'open-e2ee', 'signal-protocol');
-
-/**
- * File permissions for encrypted data (0600 = owner read/write only)
- */
-const SECURE_FILE_MODE = 0o600;
 
 export interface StoredNodeSession {
   userId: string;
@@ -87,7 +104,7 @@ interface NodeAtomicSecurityState {
   messageRecords: Record<string, Record<string, unknown>>;
   metadata: Record<string, string>;
   registrationIds: Record<string, number>;
-  kyberUsage: Record<string, unknown>;
+  kyberPreKeyStates: Record<string, StoredKyberPreKeyState>;
 }
 
 function emptyDictionary<T>(): T {
@@ -108,7 +125,7 @@ function createEmptySecurityState(): NodeAtomicSecurityState {
     messageRecords: emptyDictionary(),
     metadata: emptyDictionary(),
     registrationIds: emptyDictionary(),
-    kyberUsage: emptyDictionary(),
+    kyberPreKeyStates: emptyDictionary(),
   };
 }
 
@@ -143,7 +160,6 @@ export class NodeEncryptedDatabase {
   private readonly securityStatePath: string;
   private readonly logger: Required<ILogger>;
   private securityStateMutation: Promise<void> = Promise.resolve();
-  private atomicWriteCounter = 0;
 
   /**
    * Create a new NodeEncryptedDatabase instance
@@ -170,28 +186,23 @@ export class NodeEncryptedDatabase {
     }
 
     // Create new initialization promise
-    this.initPromise = this._initialize();
+    this.initPromise = this._initialize().catch((error) => {
+      this.initPromise = null;
+      throw error;
+    });
     return this.initPromise;
   }
 
   private async _initialize(): Promise<void> {
     try {
-      // Create directory structure
-      await mkdir(this.dataDir, { recursive: true, mode: 0o700 });
-      await mkdir(this.sessionsDir, { recursive: true, mode: 0o700 });
-
-      // Get database encryption key
       const dbKeyManager = getNodeDatabaseKeyManager(this.dataDir);
-      const hasKey = await dbKeyManager.hasKey();
-
-      if (!hasKey) {
-        // First initialization - generate database key
-        await dbKeyManager.initialize();
-      }
-
-      this.dbKey = await dbKeyManager.getKeyOrThrow();
-      await this.initializeAtomicSecurityState();
+      await dbKeyManager.withKey(async (key) => {
+        await mkdir(this.sessionsDir, { recursive: true, mode: 0o700 });
+        this.dbKey = key;
+        await this.initializeAtomicSecurityState();
+      }, true);
     } catch (error) {
+      this.dbKey = null;
       throw new EncryptionError(
         'Failed to initialize encrypted database',
         EncryptionErrorCode.INITIALIZATION_FAILED,
@@ -204,9 +215,18 @@ export class NodeEncryptedDatabase {
    * Initialize the database if it is not initialized yet
    */
   private async ensureInitialized(): Promise<void> {
-    if (!this.dbKey) {
-      await this.initialize();
-    }
+    await this.initialize();
+  }
+
+  private async withCurrentKey<T>(operation: () => Promise<T>): Promise<T> {
+    return getNodeDatabaseKeyManager(this.dataDir).withKey(async (key) => {
+      if (!this.dbKey || !Buffer.from(key).equals(Buffer.from(this.dbKey))) {
+        throw new Error(
+          'Node database authority changed. Close and reopen the store before retrying.'
+        );
+      }
+      return operation();
+    });
   }
 
   /**
@@ -248,9 +268,7 @@ export class NodeEncryptedDatabase {
     value: unknown
   ): asserts value is Partial<NodeAtomicSecurityState> & { version: 1 | 2 } {
     if (!value || typeof value !== 'object') throw new Error('Invalid Node security state');
-    const state = value as Omit<Partial<NodeAtomicSecurityState>, 'version'> & {
-      version?: number;
-    };
+    const state = value as Omit<Partial<NodeAtomicSecurityState>, 'version'> & { version?: number };
     if (
       (state.version !== 1 && state.version !== 2) ||
       !state.contacts ||
@@ -288,38 +306,15 @@ export class NodeEncryptedDatabase {
       messageRecords: toNullPrototype(decoded.messageRecords, 2),
       metadata: toNullPrototype(decoded.metadata, 1),
       registrationIds: toNullPrototype(decoded.registrationIds, 1),
-      kyberUsage: toNullPrototype(decoded.kyberUsage, 1),
+      kyberPreKeyStates: toNullPrototype(decoded.kyberPreKeyStates, 1),
     };
   }
 
   private async writeSecurityStateFile(state: NodeAtomicSecurityState): Promise<void> {
     const encrypted = encryptRecord(state, this.dbKey!);
-    const tempPath = `${this.securityStatePath}.${process.pid}.${this.atomicWriteCounter++}.tmp`;
     try {
-      await writeFile(tempPath, JSON.stringify(encrypted), {
-        mode: SECURE_FILE_MODE,
-        encoding: 'utf8',
-      });
-      const handle = await open(tempPath, 'r');
-      try {
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      await rename(tempPath, this.securityStatePath);
-      // POSIX rename is atomic, but the containing directory must also be
-      // synchronized for the new directory entry to survive sudden power loss.
-      // Windows does not support opening directories this way.
-      if (process.platform !== 'win32') {
-        const directoryHandle = await open(this.dataDir, 'r');
-        try {
-          await directoryHandle.sync();
-        } finally {
-          await directoryHandle.close();
-        }
-      }
+      await commitNodeDatabaseFile(this.securityStatePath, JSON.stringify(encrypted));
     } catch (error) {
-      await unlink(tempPath).catch(() => undefined);
       throw new EncryptionError(
         'Failed to atomically write Node protocol security state',
         EncryptionErrorCode.KEY_STORAGE_ERROR,
@@ -331,19 +326,22 @@ export class NodeEncryptedDatabase {
   private async readSecurityState(): Promise<NodeAtomicSecurityState> {
     await this.ensureInitialized();
     await this.securityStateMutation;
-    return await this.readSecurityStateFile();
+    return this.withCurrentKey(() => this.readSecurityStateFile());
   }
 
   private async mutateSecurityState<T>(
-    mutation: (state: NodeAtomicSecurityState) => T
+    mutation: (state: NodeAtomicSecurityState) => T,
+    commitWhen: (result: T) => boolean = () => true
   ): Promise<T> {
     await this.ensureInitialized();
-    const operation = this.securityStateMutation.then(async () => {
-      const state = await this.readSecurityStateFile();
-      const result = mutation(state);
-      await this.writeSecurityStateFile(state);
-      return result;
-    });
+    const operation = this.securityStateMutation.then(() =>
+      this.withCurrentKey(async () => {
+        const state = await this.readSecurityStateFile();
+        const result = mutation(state);
+        if (commitWhen(result)) await this.writeSecurityStateFile(state);
+        return result;
+      })
+    );
     this.securityStateMutation = operation.then(
       () => undefined,
       () => undefined
@@ -355,7 +353,9 @@ export class NodeEncryptedDatabase {
    * Get file path for a collection
    */
   private getCollectionPath(collection: string): string {
-    return join(this.dataDir, `${collection}.json`);
+    const name = `${collection}.json`;
+    if (!isNodeDatabaseRecord(name)) throw new Error('Invalid Node database collection.');
+    return join(this.dataDir, name);
   }
 
   // ============================================================================
@@ -367,23 +367,24 @@ export class NodeEncryptedDatabase {
    */
   private async readCollection<T>(collection: string): Promise<T[]> {
     await this.ensureInitialized();
+    return this.withCurrentKey(async () => {
+      const filePath = this.getCollectionPath(collection);
 
-    const filePath = this.getCollectionPath(collection);
-
-    try {
-      const fileData = await readFile(filePath, 'utf8');
-      const encrypted: EncryptedRecord = JSON.parse(fileData);
-      return decryptRecord<T[]>(encrypted, this.dbKey!);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return [];
+      try {
+        const fileData = await readFile(filePath, 'utf8');
+        const encrypted: EncryptedRecord = JSON.parse(fileData);
+        return decryptRecord<T[]>(encrypted, this.dbKey!);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return [];
+        }
+        throw new EncryptionError(
+          `Failed to read collection: ${collection}`,
+          EncryptionErrorCode.KEY_STORAGE_ERROR,
+          { originalError: error as Error }
+        );
       }
-      throw new EncryptionError(
-        `Failed to read collection: ${collection}`,
-        EncryptionErrorCode.KEY_STORAGE_ERROR,
-        { originalError: error as Error }
-      );
-    }
+    });
   }
 
   /**
@@ -391,41 +392,43 @@ export class NodeEncryptedDatabase {
    */
   private async writeCollection<T>(collection: string, data: T[]): Promise<void> {
     await this.ensureInitialized();
+    return this.withCurrentKey(async () => {
+      const filePath = this.getCollectionPath(collection);
+      const encrypted = encryptRecord(data, this.dbKey!);
 
-    const filePath = this.getCollectionPath(collection);
-    const encrypted = encryptRecord(data, this.dbKey!);
-
-    try {
-      await writeFile(filePath, JSON.stringify(encrypted), {
-        mode: SECURE_FILE_MODE,
-        encoding: 'utf8',
-      });
-    } catch (error) {
-      throw new EncryptionError(
-        `Failed to write collection: ${collection}`,
-        EncryptionErrorCode.KEY_STORAGE_ERROR,
-        { originalError: error as Error }
-      );
-    }
+      try {
+        await commitNodeDatabaseFile(filePath, JSON.stringify(encrypted));
+      } catch (error) {
+        throw new EncryptionError(
+          `Failed to write collection: ${collection}`,
+          EncryptionErrorCode.KEY_STORAGE_ERROR,
+          { originalError: error as Error }
+        );
+      }
+    });
   }
 
   /**
    * Delete a collection from disk
    */
   private async deleteCollection(collection: string): Promise<void> {
-    const filePath = this.getCollectionPath(collection);
+    await this.ensureInitialized();
+    return this.withCurrentKey(async () => {
+      const filePath = this.getCollectionPath(collection);
 
-    try {
-      await unlink(filePath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw new EncryptionError(
-          `Failed to delete collection: ${collection}`,
-          EncryptionErrorCode.KEY_STORAGE_ERROR,
-          { originalError: error as Error }
-        );
+      try {
+        await unlink(filePath);
+        await syncNodeDatabaseDirectory(this.dataDir);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw new EncryptionError(
+            `Failed to delete collection: ${collection}`,
+            EncryptionErrorCode.KEY_STORAGE_ERROR,
+            { originalError: error as Error }
+          );
+        }
       }
-    }
+    });
   }
 
   // ============================================================================
@@ -627,36 +630,43 @@ export class NodeEncryptedDatabase {
   // Kyber PreKeys
   // ============================================================================
 
-  async storeKyberPreKey<T>(id: number, key: T, identityType: string = 'aci'): Promise<void> {
-    const collection = `kyber_prekeys_${identityType}`;
-    const keys = await this.readCollection<{ id: number; data: T }>(collection);
-    // Replace existing key with same ID
-    const filtered = keys.filter((k) => k.id !== id);
-    filtered.push({ id, data: key });
-    await this.writeCollection(collection, filtered);
+  async storeKyberPreKey(key: KyberPreKey, identityType: IdentityType = 'aci'): Promise<void> {
+    const instanceId = await createKyberPreKeyInstanceId();
+    await this.mutateSecurityState((state) => {
+      const kyberState =
+        state.kyberPreKeyStates[identityType] ??
+        (state.kyberPreKeyStates[identityType] = createKyberPreKeyState());
+      retainKyberPreKey(kyberState, key, identityType, Date.now(), instanceId);
+    });
   }
 
-  async getKyberPreKey<T>(id: number, identityType: string = 'aci'): Promise<T | null> {
-    const collection = `kyber_prekeys_${identityType}`;
-    const keys = await this.readCollection<{ id: number; data: T }>(collection);
-    const found = keys.find((k) => k.id === id);
-    return found ? found.data : null;
+  async getCurrentKyberPreKey(identityType: IdentityType = 'aci'): Promise<KyberPreKey | null> {
+    const state = await this.readSecurityState();
+    return getCurrentKyberPreKey(state.kyberPreKeyStates[identityType]);
   }
 
-  async deleteKyberPreKey(id: number, identityType: string = 'aci'): Promise<void> {
-    const collection = `kyber_prekeys_${identityType}`;
-    const keys = await this.readCollection<{ id: number; data: unknown }>(collection);
-    const filtered = keys.filter((k) => k.id !== id);
-    await this.writeCollection(collection, filtered);
+  async getKyberPreKeyById(
+    id: number,
+    identityType: IdentityType = 'aci'
+  ): Promise<RetainedKyberPreKey | null> {
+    const state = await this.readSecurityState();
+    return getRetainedKyberPreKey(state.kyberPreKeyStates[identityType], id);
+  }
+
+  async deleteKyberPreKey(id: number, identityType: IdentityType = 'aci'): Promise<void> {
+    await this.mutateSecurityState((state) => {
+      const kyberState = state.kyberPreKeyStates[identityType];
+      if (!kyberState) return;
+      delete kyberState.instances[String(id)];
+      if (kyberState.currentKeyId === id) kyberState.currentKeyId = null;
+    });
   }
 
   async deleteAllKyberPreKeys(identityType?: string): Promise<void> {
-    if (identityType) {
-      await this.deleteCollection(`kyber_prekeys_${identityType}`);
-    } else {
-      await this.deleteCollection('kyber_prekeys_aci');
-      await this.deleteCollection('kyber_prekeys_pni');
-    }
+    await this.mutateSecurityState((state) => {
+      if (identityType) delete state.kyberPreKeyStates[identityType];
+      else state.kyberPreKeyStates = emptyDictionary();
+    });
   }
 
   // ============================================================================
@@ -707,7 +717,9 @@ export class NodeEncryptedDatabase {
     contactKey: string,
     contactMutation: (existing: T | null) => T,
     oneTimePreKeyId?: number,
-    kemOneTimePreKeyId?: number
+    kemOneTimePreKeyId?: number,
+    receivedContent?: ReceivedContent,
+    kyberPreKeyUse?: KyberPreKeyUse
   ): Promise<void> {
     await this.mutateSecurityState((state) => {
       if (
@@ -726,10 +738,19 @@ export class NodeEncryptedDatabase {
       ) {
         throw new Error('Atomic session/trust commit cannot consume a missing KEM one-time prekey');
       }
+      if (kyberPreKeyUse) {
+        recordKyberPreKeyUse(
+          state.kyberPreKeyStates[localIdentityType],
+          localIdentityType as IdentityType,
+          kyberPreKeyUse
+        );
+      }
       state.contacts[contactKey] = contactMutation(
         (state.contacts[contactKey] as T | undefined) ?? null
       );
       state.sessions[sessionId] = { userId, deviceId, serializedRecord };
+      if (receivedContent)
+        state.metadata[receivedContentKey(receivedContent.id)] = JSON.stringify(receivedContent);
       if (oneTimePreKeyId !== undefined) {
         state.ecOneTimePreKeys[localIdentityType] = (
           (state.ecOneTimePreKeys[localIdentityType] ?? []) as Array<{ keyId: number }>
@@ -753,10 +774,7 @@ export class NodeEncryptedDatabase {
 
   async readSesameState<T>(): Promise<NodeSesameState<T>> {
     const state = await this.readSecurityState();
-    return {
-      users: state.sesameUsers as Record<string, T>,
-      sessions: state.sessions,
-    };
+    return { users: state.sesameUsers as Record<string, T>, sessions: state.sessions };
   }
 
   /** Drop every session and every SESAME device record in one commit. */
@@ -769,10 +787,7 @@ export class NodeEncryptedDatabase {
 
   async mutateSesameState<T, R>(mutation: (state: NodeSesameState<T>) => R): Promise<R> {
     return await this.mutateSecurityState((state) =>
-      mutation({
-        users: state.sesameUsers as Record<string, T>,
-        sessions: state.sessions,
-      })
+      mutation({ users: state.sesameUsers as Record<string, T>, sessions: state.sessions })
     );
   }
 
@@ -796,14 +811,20 @@ export class NodeEncryptedDatabase {
    * together. A crash between them would leave a sender key whose in-flight
    * messages can no longer be resolved.
    */
-  async mutateSenderKeyState<T, R>(mutation: (state: NodeSenderKeyState<T>) => R): Promise<R> {
-    return await this.mutateSecurityState((state) =>
-      mutation({
+  async mutateSenderKeyState<T, R>(
+    mutation: (state: NodeSenderKeyState<T>) => R,
+    receivedContent?: ReceivedContent
+  ): Promise<R> {
+    return await this.mutateSecurityState((state) => {
+      const result = mutation({
         current: state.senderKeys as NodeSenderKeyTree<T>,
         records: state.senderKeyRecords as NodeSenderKeyTree<T[]>,
         skipped: state.skippedSenderKeys,
-      })
-    );
+      });
+      if (receivedContent)
+        state.metadata[receivedContentKey(receivedContent.id)] = JSON.stringify(receivedContent);
+      return result;
+    });
   }
 
   // ============================================================================
@@ -844,6 +865,37 @@ export class NodeEncryptedDatabase {
     });
   }
 
+  async deleteExpiredReceivedContent(before: number): Promise<number> {
+    return this.mutateSecurityState((state) => {
+      let count = 0;
+      const prefix = receivedContentKey('');
+      for (const [key, value] of Object.entries(state.metadata)) {
+        if (!key.startsWith(prefix)) continue;
+        if (parseReceivedContent(value, key.slice(prefix.length)).receivedAt < before) {
+          delete state.metadata[key];
+          count++;
+        }
+      }
+      return count;
+    });
+  }
+
+  async compareAndSetMetadataValue(
+    key: string,
+    expected: string | null,
+    value: string | null
+  ): Promise<boolean> {
+    return this.mutateSecurityState(
+      (state) => {
+        if ((state.metadata[key] ?? null) !== expected) return false;
+        if (value === null) delete state.metadata[key];
+        else state.metadata[key] = value;
+        return true;
+      },
+      (changed) => changed
+    );
+  }
+
   async getRegistrationId(identityType: string): Promise<number> {
     const state = await this.readSecurityState();
     return state.registrationIds[identityType] ?? 0;
@@ -855,9 +907,12 @@ export class NodeEncryptedDatabase {
     });
   }
 
-  async markKyberPreKeyUsed<T>(key: string, usage: T): Promise<void> {
+  async markKyberPreKeyUsed(
+    identityType: IdentityType,
+    usage: Omit<KyberPreKeyUse, 'kyberPreKeyInstanceId'>
+  ): Promise<void> {
     await this.mutateSecurityState((state) => {
-      state.kyberUsage[key] = usage;
+      recordKyberPreKeyUseById(state.kyberPreKeyStates[identityType], identityType, usage);
     });
   }
 
@@ -871,41 +926,37 @@ export class NodeEncryptedDatabase {
   }
 
   async getKyberPreKeyMaxId(identityType: string = 'aci'): Promise<number> {
-    const keys = await this.readCollection<{ id: number }>(`kyber_prekeys_${identityType}`);
-    return keys.reduce((max, key) => (key.id > max ? key.id : max), 0);
+    const state = await this.readSecurityState();
+    const instances = state.kyberPreKeyStates[identityType]?.instances ?? {};
+    return Object.keys(instances).reduce((max, id) => Math.max(max, Number(id)), 0);
   }
 
-  async deleteAllPreKeys(identityType: string = 'aci'): Promise<{
+  async deleteAllPreKeys(
+    identityType: string = 'aci'
+  ): Promise<{
     ecSignedPreKeys: number;
     ecOneTimePreKeys: number;
     kyberPreKeys: number;
     kemOneTimePreKeys: number;
   }> {
-    const [signedPreKeys, kyberPreKeys] = await Promise.all([
-      this.readCollection<unknown>(`signed_prekeys_${identityType}`),
-      this.readCollection<unknown>(`kyber_prekeys_${identityType}`),
-    ]);
+    const signedPreKeys = await this.readCollection<unknown>(`signed_prekeys_${identityType}`);
 
     const oneTimeCounts = await this.mutateSecurityState((state) => {
       const ec = (state.ecOneTimePreKeys[identityType] ?? []).length;
       const kem = (state.kemOneTimePreKeys[identityType] ?? []).length;
+      const kyber = Object.keys(state.kyberPreKeyStates[identityType]?.instances ?? {}).length;
       delete state.ecOneTimePreKeys[identityType];
       delete state.kemOneTimePreKeys[identityType];
-      for (const key of Object.keys(state.kyberUsage)) {
-        if (key.startsWith(`${identityType}:`)) delete state.kyberUsage[key];
-      }
-      return { ec, kem };
+      delete state.kyberPreKeyStates[identityType];
+      return { ec, kem, kyber };
     });
 
-    await Promise.all([
-      this.deleteCollection(`signed_prekeys_${identityType}`),
-      this.deleteCollection(`kyber_prekeys_${identityType}`),
-    ]);
+    await Promise.all([this.deleteCollection(`signed_prekeys_${identityType}`)]);
 
     return {
       ecSignedPreKeys: signedPreKeys.length,
       ecOneTimePreKeys: oneTimeCounts.ec,
-      kyberPreKeys: kyberPreKeys.length,
+      kyberPreKeys: oneTimeCounts.kyber,
       kemOneTimePreKeys: oneTimeCounts.kem,
     };
   }
@@ -919,11 +970,9 @@ export class NodeEncryptedDatabase {
     users: number;
   }> {
     const state = await this.readSecurityState();
-    const [signedAci, signedPni, kyberAci, kyberPni] = await Promise.all([
+    const [signedAci, signedPni] = await Promise.all([
       this.readCollection(`signed_prekeys_aci`).then((keys) => keys.length),
       this.readCollection(`signed_prekeys_pni`).then((keys) => keys.length),
-      this.readCollection(`kyber_prekeys_aci`).then((keys) => keys.length),
-      this.readCollection(`kyber_prekeys_pni`).then((keys) => keys.length),
     ]);
 
     const total = (collection: Record<string, unknown[]>): number =>
@@ -933,7 +982,10 @@ export class NodeEncryptedDatabase {
       sessions: Object.keys(state.sessions).length,
       ecSignedPreKeys: signedAci + signedPni,
       ecOneTimePreKeys: total(state.ecOneTimePreKeys),
-      kyberPreKeys: kyberAci + kyberPni,
+      kyberPreKeys: Object.values(state.kyberPreKeyStates).reduce(
+        (count, kyberState) => count + Object.keys(kyberState.instances).length,
+        0
+      ),
       kemOneTimePreKeys: total(state.kemOneTimePreKeys),
       users: Object.keys(state.sesameUsers).length,
     };
@@ -953,14 +1005,7 @@ export class NodeEncryptedDatabase {
     await this.ensureInitialized();
 
     const securityState = await this.readSecurityState();
-    const [
-      identityAci,
-      identityPni,
-      signedAci,
-      signedPni,
-      kyberAci,
-      kyberPni,
-    ] = await Promise.all([
+    const [identityAci, identityPni, signedAci, signedPni] = await Promise.all([
       this.readCollection('identity_keys_aci')
         .then((keys) => keys.length)
         .catch(() => 0),
@@ -973,12 +1018,6 @@ export class NodeEncryptedDatabase {
       this.readCollection('signed_prekeys_pni')
         .then((keys) => keys.length)
         .catch(() => 0),
-      this.readCollection<{ id: number; data: unknown }>('kyber_prekeys_aci')
-        .then((keys) => keys.length)
-        .catch(() => 0),
-      this.readCollection<{ id: number; data: unknown }>('kyber_prekeys_pni')
-        .then((keys) => keys.length)
-        .catch(() => 0),
     ]);
 
     return {
@@ -988,7 +1027,10 @@ export class NodeEncryptedDatabase {
         (count, keys) => count + keys.length,
         0
       ),
-      kyberPreKeys: kyberAci + kyberPni,
+      kyberPreKeys: Object.values(securityState.kyberPreKeyStates).reduce(
+        (count, kyberState) => count + Object.keys(kyberState.instances).length,
+        0
+      ),
       sessions: Object.keys(securityState.sessions).length,
     };
   }
@@ -1001,6 +1043,8 @@ export class NodeEncryptedDatabase {
    * Close database (cleanup)
    */
   async close(): Promise<void> {
+    await this.initPromise?.catch(() => undefined);
+    await this.securityStateMutation;
     this.dbKey = null;
     this.initPromise = null;
   }
@@ -1014,54 +1058,38 @@ export class NodeEncryptedDatabase {
    * @returns true if database was deleted, false if it did not exist
    */
   async deleteDatabase(): Promise<boolean> {
-    try {
-      // Close database connection if open
-      await this.close();
-
-      // Check if directory exists
-      const exists = await this.databaseExists();
-      if (!exists) {
-        this.logger.info('[NodeEncryptedDatabase] Database does not exist, skipping deletion', {
-          dataDir: this.dataDir,
-        });
-        return false;
+    await this.initPromise?.catch(() => undefined);
+    await this.securityStateMutation;
+    return withNodeDatabaseLock(this.dataDir, async () => {
+      const entries = (await readdir(this.dataDir)).filter(isNodeDatabaseDataEntry);
+      if (entries.length === 0) return false;
+      if (this.dbKey && !entries.includes(NODE_DATABASE_RESET_FILE)) {
+        const key = await readFile(join(this.dataDir, 'db.key'));
+        if (!key.equals(Buffer.from(this.dbKey))) {
+          throw new Error('Node database authority changed. Refusing reset from a stale handle.');
+        }
       }
-
-      // Delete the database directory recursively
-      await rm(this.dataDir, { recursive: true, force: true });
-      this.logger.info('[NodeEncryptedDatabase] Database deleted successfully', {
-        dataDir: this.dataDir,
-      });
+      const marker = join(this.dataDir, NODE_DATABASE_RESET_FILE);
+      await commitNodeDatabaseFile(marker, 'reset');
+      for (const entry of entries) {
+        if (entry !== NODE_DATABASE_RESET_FILE)
+          await rm(join(this.dataDir, entry), { recursive: true, force: true });
+      }
+      await syncNodeDatabaseDirectory(this.dataDir);
+      await unlink(marker);
+      await syncNodeDatabaseDirectory(this.dataDir);
+      this.dbKey = null;
+      this.initPromise = null;
+      this.logger.info('[NodeEncryptedDatabase] Database reset complete');
       return true;
-    } catch (error) {
-      // Log error but do not throw - safe deletion should be idempotent
-      this.logger.warn('[NodeEncryptedDatabase] Error during database deletion (safe to ignore)', {
-        dataDir: this.dataDir,
-        error: getErrorMessage(error),
-      });
-      return false;
-    }
-  }
-
-  /**
-   * Check if database directory exists
-   *
-   * @returns true if database directory exists on filesystem
-   */
-  private async databaseExists(): Promise<boolean> {
-    try {
-      await access(this.dataDir);
-      return true;
-    } catch {
-      return false;
-    }
+    });
   }
 }
 
 /**
  * Singleton instance
  */
-let encryptedDatabaseInstance: NodeEncryptedDatabase | null = null;
+const encryptedDatabaseInstances = new Map<string, NodeEncryptedDatabase>();
 
 /**
  * Get singleton NodeEncryptedDatabase instance
@@ -1069,18 +1097,19 @@ let encryptedDatabaseInstance: NodeEncryptedDatabase | null = null;
  * @param dataDir Optional custom data directory
  */
 export function getNodeEncryptedDatabase(dataDir?: string): NodeEncryptedDatabase {
-  if (!encryptedDatabaseInstance || (dataDir && encryptedDatabaseInstance['dataDir'] !== dataDir)) {
-    encryptedDatabaseInstance = new NodeEncryptedDatabase(dataDir);
+  const path = resolve(dataDir ?? DEFAULT_DATA_DIR);
+  let instance = encryptedDatabaseInstances.get(path);
+  if (!instance) {
+    instance = new NodeEncryptedDatabase(path);
+    encryptedDatabaseInstances.set(path, instance);
   }
-  return encryptedDatabaseInstance;
+  return instance;
 }
 
 /**
  * Reset the singleton for controlled local teardown.
  */
 export async function resetNodeEncryptedDatabase(): Promise<void> {
-  if (encryptedDatabaseInstance) {
-    await encryptedDatabaseInstance.close();
-  }
-  encryptedDatabaseInstance = null;
+  await Promise.all([...encryptedDatabaseInstances.values()].map((instance) => instance.close()));
+  encryptedDatabaseInstances.clear();
 }

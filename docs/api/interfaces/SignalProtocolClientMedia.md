@@ -8,6 +8,22 @@
 
 ## Methods
 
+### abandonUpload()
+
+> **abandonUpload**(`jobId`): `Promise`\<[`SignalProtocolClientMediaAbandonmentResult`](../type-aliases/SignalProtocolClientMediaAbandonmentResult.md)\>
+
+#### Parameters
+
+##### jobId
+
+`string`
+
+#### Returns
+
+`Promise`\<[`SignalProtocolClientMediaAbandonmentResult`](../type-aliases/SignalProtocolClientMediaAbandonmentResult.md)\>
+
+***
+
 ### cleanup()
 
 > **cleanup**(`input`, `options?`): `Promise`\<[`SignalProtocolClientMediaCleanupResult`](../type-aliases/SignalProtocolClientMediaCleanupResult.md)\>

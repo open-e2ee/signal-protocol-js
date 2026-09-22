@@ -21,13 +21,138 @@ import {
   type ProgressCallback,
 } from './config';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from './config';
-import { MIN_PREKEY_REPLENISHMENT_THRESHOLD } from './key-rotation-core';
+import {
+  MIN_PREKEY_REPLENISHMENT_THRESHOLD,
+  nextKyberLastResortPreKeyId,
+} from './key-rotation-core';
 import type { SignalProtocolClientContext } from './types';
 
 /** Timestamp of last prekey check (for throttling). */
 export {};
 const lastPreKeySyncTimeByClient = new Map<string, number>();
 const lastPreKeyStatusCheckTimeByIdentity = new Map<string, number>();
+const PREKEY_PUBLICATION_CANDIDATE_VERSION = 1;
+
+interface PreKeyPublicationCandidate {
+  uploads: PreKeyUpload[];
+  version: typeof PREKEY_PUBLICATION_CANDIDATE_VERSION;
+}
+
+function publicationCandidateKey(
+  ctx: SignalProtocolClientContext,
+  identityType: IdentityType
+): string {
+  return `signal:prekey-publication-candidate:v1:${encodeURIComponent(ctx.userId)}:${String(ctx.deviceId)}:${identityType}`;
+}
+
+function parsePublicationCandidate(value: string): PreKeyUpload[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error('Stored prekey publication candidate is invalid');
+  }
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    !('version' in parsed) ||
+    parsed.version !== PREKEY_PUBLICATION_CANDIDATE_VERSION ||
+    !('uploads' in parsed) ||
+    !Array.isArray(parsed.uploads) ||
+    parsed.uploads.length > ONE_TIME_PREKEY_BATCH_SIZE * 2 ||
+    Object.keys(parsed).sort().join(',') !== 'uploads,version'
+  ) {
+    throw new Error('Stored prekey publication candidate is invalid');
+  }
+  const identifiers = new Set<string>();
+  const counts = new Map<PreKeyUpload['type'], number>();
+  return parsed.uploads.map((value) => {
+    if (
+      typeof value !== 'object' ||
+      value === null ||
+      Array.isArray(value) ||
+      !('type' in value) ||
+      (value.type !== 'ecPreKey' && value.type !== 'kemOneTimePreKey') ||
+      !('keyId' in value) ||
+      !Number.isSafeInteger(value.keyId) ||
+      (value.keyId as number) < 0 ||
+      !('publicKey' in value) ||
+      typeof value.publicKey !== 'string' ||
+      value.publicKey.length === 0 ||
+      ('signature' in value && value.signature !== undefined && typeof value.signature !== 'string')
+    ) {
+      throw new Error('Stored prekey publication candidate is invalid');
+    }
+    const upload = value as PreKeyUpload;
+    const expectedKeys =
+      upload.type === 'ecPreKey' ? 'keyId,publicKey,type' : 'keyId,publicKey,signature,type';
+    if (
+      Object.keys(value).sort().join(',') !== expectedKeys ||
+      (upload.type === 'ecPreKey' && upload.signature !== undefined) ||
+      (upload.type === 'kemOneTimePreKey' && !upload.signature)
+    ) {
+      throw new Error('Stored prekey publication candidate is invalid');
+    }
+    const identifier = `${upload.type}:${String(upload.keyId)}`;
+    if (identifiers.has(identifier)) {
+      throw new Error('Stored prekey publication candidate is invalid');
+    }
+    const count = (counts.get(upload.type) ?? 0) + 1;
+    if (count > ONE_TIME_PREKEY_BATCH_SIZE) {
+      throw new Error('Stored prekey publication candidate is invalid');
+    }
+    identifiers.add(identifier);
+    counts.set(upload.type, count);
+    return { ...upload };
+  });
+}
+
+async function loadPublicationCandidate(
+  ctx: SignalProtocolClientContext,
+  identityType: IdentityType
+): Promise<PreKeyUpload[] | null> {
+  const stored = await ctx.storage.getMetadata(publicationCandidateKey(ctx, identityType));
+  return stored === null ? null : parsePublicationCandidate(stored);
+}
+
+async function storePublicationCandidate(
+  ctx: SignalProtocolClientContext,
+  identityType: IdentityType,
+  uploads: readonly PreKeyUpload[]
+): Promise<void> {
+  const candidate: PreKeyPublicationCandidate = {
+    uploads: uploads.map((upload) => ({ ...upload })),
+    version: PREKEY_PUBLICATION_CANDIDATE_VERSION,
+  };
+  await ctx.storage.setMetadata(
+    publicationCandidateKey(ctx, identityType),
+    JSON.stringify(candidate)
+  );
+}
+
+function assertPublicationCandidatePrivateKeys(
+  candidate: readonly PreKeyUpload[],
+  ecPreKeys: Awaited<ReturnType<SignalProtocolClientContext['storage']['getEcOneTimePreKeys']>>,
+  kemPreKeys: Awaited<ReturnType<SignalProtocolClientContext['storage']['getKemOneTimePreKeys']>>
+): void {
+  for (const upload of candidate) {
+    const retained =
+      upload.type === 'ecPreKey'
+        ? ecPreKeys.some(
+            (prekey) => prekey.keyId === upload.keyId && prekey.publicKey === upload.publicKey
+          )
+        : kemPreKeys.some(
+            (prekey) =>
+              prekey.keyId === upload.keyId &&
+              prekey.publicKey === upload.publicKey &&
+              prekey.signature === upload.signature
+          );
+    if (!retained) {
+      throw new Error('Stored prekey publication candidate has no matching private key');
+    }
+  }
+}
 
 function getClientThrottleKey(ctx: SignalProtocolClientContext): string {
   return `${ctx.userId}:${ctx.deviceId}`;
@@ -56,12 +181,12 @@ async function isServerInSyncForIdentity(
     return false;
   }
 
-  const [serverSignedMeta, serverKyberMeta, serverEcCount, serverKemCount] = await Promise.all([
-    ctx.relay.getEcSignedPreKeyMetadata(ctx.userId, ctx.deviceId, identityType),
-    ctx.relay.getKemLastResortPreKeyMetadata(ctx.userId, ctx.deviceId, identityType),
-    ctx.relay.getPreKeyCount(ctx.userId, ctx.deviceId, 'ec', identityType),
-    ctx.relay.getPreKeyCount(ctx.userId, ctx.deviceId, 'kem', identityType),
-  ]);
+  const {
+    ecSignedPreKey: serverSignedMeta,
+    kemLastResortPreKey: serverKyberMeta,
+    ecOneTimePreKeyCount: serverEcCount,
+    kemOneTimePreKeyCount: serverKemCount,
+  } = await ctx.relay.getPreKeyInventory(ctx.userId, ctx.deviceId, identityType);
 
   if (!serverSignedMeta || !serverKyberMeta) {
     return false;
@@ -241,30 +366,13 @@ export async function syncIdentityToServer(
     });
   }
 
-  // Quick check: is the server already in sync for this identity type?
-  // This turns a 5+ mutation sequence into 3 lightweight query checks on most app opens.
-  const serverSignedMeta = await ctx.relay!.getEcSignedPreKeyMetadata(
-    ctx.userId,
-    ctx.deviceId,
-    identityType
-  );
-  const serverKyberMeta = await ctx.relay!.getKemLastResortPreKeyMetadata(
-    ctx.userId,
-    ctx.deviceId,
-    identityType
-  );
-  const serverEcCount = await ctx.relay!.getPreKeyCount(
-    ctx.userId,
-    ctx.deviceId,
-    'ec',
-    identityType
-  );
-  const serverKemCount = await ctx.relay!.getPreKeyCount(
-    ctx.userId,
-    ctx.deviceId,
-    'kem',
-    identityType
-  );
+  // Read again after local key generation. Do not reuse the throttle snapshot.
+  const {
+    ecSignedPreKey: serverSignedMeta,
+    kemLastResortPreKey: serverKyberMeta,
+    ecOneTimePreKeyCount: serverEcCount,
+    kemOneTimePreKeyCount: serverKemCount,
+  } = await ctx.relay!.getPreKeyInventory(ctx.userId, ctx.deviceId, identityType);
 
   const signedKeyMatches =
     serverSignedMeta &&
@@ -279,8 +387,9 @@ export async function syncIdentityToServer(
   const hasEnoughPreKeys =
     serverEcCount >= MIN_PREKEY_REPLENISHMENT_THRESHOLD &&
     serverKemCount >= MIN_PREKEY_REPLENISHMENT_THRESHOLD;
+  const pendingOneTimeUploads = await loadPublicationCandidate(ctx, identityType);
 
-  if (signedKeyMatches && kyberKeyMatches && hasEnoughPreKeys) {
+  if (signedKeyMatches && kyberKeyMatches && hasEnoughPreKeys && pendingOneTimeUploads === null) {
     ctx.logger.debug(`syncToServer: ${identityType} server already in sync, skipping uploads`, {
       category: 'E2EE',
       data: { identityType, serverEcCount, serverKemCount },
@@ -305,31 +414,37 @@ export async function syncIdentityToServer(
     identityType,
   });
 
-  // Replenish EC one-time prekeys if server is low (mirrors KEM replenishment below)
-  const MAX_EC_PREKEYS = 200;
-  const availableSlots = Math.max(0, MAX_EC_PREKEYS - serverEcCount);
+  const oneTimeUploads: PreKeyUpload[] = pendingOneTimeUploads
+    ? pendingOneTimeUploads.map((upload) => ({ ...upload }))
+    : [];
 
-  if (
-    serverEcCount < MIN_PREKEY_REPLENISHMENT_THRESHOLD &&
-    oneTimePreKeys.length < availableSlots
-  ) {
+  // Retained private keys are decrypt-only. A depleted server receives one
+  // exact fresh batch, never an arbitrary prefix of the private-key store.
+  if (pendingOneTimeUploads === null && serverEcCount < MIN_PREKEY_REPLENISHMENT_THRESHOLD) {
     // Mark existing active one-time prekeys as replaced before generating new batch
     await preKeyMaintenance?.markEcOneTimePreKeysReplaced(identityType);
 
     // Determine next key ID from existing local prekeys
     const maxExistingId = oneTimePreKeys.reduce((max, k) => Math.max(max, k.keyId), -1);
     const startId = maxExistingId + 1;
-    const toGenerate = Math.min(ONE_TIME_PREKEY_BATCH_SIZE, availableSlots - oneTimePreKeys.length);
-
-    const freshPreKeys = await generateEcOneTimePreKeys(toGenerate, startId);
+    const freshPreKeys = await generateEcOneTimePreKeys(ONE_TIME_PREKEY_BATCH_SIZE, startId);
     await ctx.storage.storeEcOneTimePreKeys(freshPreKeys, identityType);
-    oneTimePreKeys.push(...freshPreKeys);
+    oneTimeUploads.push(
+      ...freshPreKeys.map((prekey) => ({
+        type: 'ecPreKey' as const,
+        keyId: prekey.keyId,
+        publicKey: prekey.publicKey as string,
+      }))
+    );
 
     onProgress?.({
       stage: 'generating-keys',
       percent: 30,
       message: 'Encryption keys ready',
-      detail: { current: freshPreKeys.length, total: toGenerate },
+      detail: {
+        current: freshPreKeys.length,
+        total: ONE_TIME_PREKEY_BATCH_SIZE,
+      },
     });
 
     ctx.logger.debug('Generated fresh EC one-time prekeys', {
@@ -338,15 +453,12 @@ export async function syncIdentityToServer(
     });
   }
 
-  const oneTimePreKeysToUpload = oneTimePreKeys.slice(0, availableSlots);
-
   ctx.logger.debug('One-time prekey upload calculation', {
     category: 'E2EE',
     data: {
       identityType,
       serverPreKeyCount: serverEcCount,
-      availableSlots,
-      uploading: oneTimePreKeysToUpload.length,
+      uploading: oneTimeUploads.filter((upload) => upload.type === 'ecPreKey').length,
     },
   });
 
@@ -359,12 +471,6 @@ export async function syncIdentityToServer(
       publicKey: signedPreKey.publicKey as string,
       signature: signedPreKey.signature as string,
     },
-    // One-time prekeys (consumed on use) - only upload what server can accept
-    ...oneTimePreKeysToUpload.map((k) => ({
-      type: 'ecPreKey' as const,
-      keyId: k.keyId,
-      publicKey: k.publicKey as string,
-    })),
   ];
 
   // Add Kyber last-resort prekey if available (for post-quantum security)
@@ -386,7 +492,7 @@ export async function syncIdentityToServer(
     identityType
   );
 
-  if (serverKemPreKeyCount < MIN_PREKEY_REPLENISHMENT_THRESHOLD) {
+  if (pendingOneTimeUploads === null && serverKemPreKeyCount < MIN_PREKEY_REPLENISHMENT_THRESHOLD) {
     // Mark existing active KEM one-time prekeys as replaced before generating new batch
     await preKeyMaintenance?.markKyberOneTimePreKeysReplaced(identityType);
 
@@ -409,12 +515,15 @@ export async function syncIdentityToServer(
       stage: 'generating-kyber',
       percent: 65,
       message: 'Post-quantum prekeys ready',
-      detail: { current: kemOneTimePreKeys.length, total: ONE_TIME_PREKEY_BATCH_SIZE },
+      detail: {
+        current: kemOneTimePreKeys.length,
+        total: ONE_TIME_PREKEY_BATCH_SIZE,
+      },
     });
 
-    // Add to upload batch
+    // Add the exact fresh batch to the persistent publication candidate.
     for (const k of kemOneTimePreKeys) {
-      preKeyUploads.push({
+      oneTimeUploads.push({
         type: 'kemOneTimePreKey',
         keyId: k.keyId,
         publicKey: k.publicKey as string,
@@ -428,6 +537,19 @@ export async function syncIdentityToServer(
     });
   }
 
+  if (pendingOneTimeUploads === null && oneTimeUploads.length > 0) {
+    await storePublicationCandidate(ctx, identityType, oneTimeUploads);
+  }
+  if (oneTimeUploads.length > 0) {
+    const retainedKemPreKeys = await ctx.storage.getKemOneTimePreKeys(identityType);
+    assertPublicationCandidatePrivateKeys(
+      oneTimeUploads,
+      await ctx.storage.getEcOneTimePreKeys(identityType),
+      retainedKemPreKeys
+    );
+    preKeyUploads.push(...oneTimeUploads);
+  }
+
   // Upload all prekeys to server (with identity type)
   onProgress?.({
     stage: 'uploading',
@@ -436,6 +558,9 @@ export async function syncIdentityToServer(
   });
 
   await ctx.relay!.uploadPreKeys(ctx.userId, ctx.deviceId, preKeyUploads, identityType);
+  if (oneTimeUploads.length > 0) {
+    await ctx.storage.deleteMetadata(publicationCandidateKey(ctx, identityType));
+  }
 
   onProgress?.({
     stage: 'uploading',
@@ -505,16 +630,16 @@ export async function regeneratePreKeysWithFreshIds(
   const currentSignedId = await ctx.storage.getEcSignedPreKeyMaxId(identityType);
   const newSignedId = currentSignedId + 1;
 
-  // Per PQXDH spec Section 3.2: Kyber last-resort prekey always uses ID 1
-  // Unlike signed prekeys, Kyber prekeys use upsert semantics (replace, not accumulate)
-  const newKyberId = 1;
+  // The Kyber last-resort prekey also takes the next id. The store retains the
+  // replaced key under its own id for in-flight PQXDH messages.
+  const newKyberId = await nextKyberLastResortPreKeyId(ctx.storage, identityType);
 
   ctx.logger.info('Regenerating prekeys with fresh IDs (identifier collision recovery)', {
     category: 'E2EE',
     data: {
       oldSignedId: currentSignedId,
       newSignedId,
-      kyberIdFixed: newKyberId, // Always 1 per PQXDH spec
+      newKyberId,
     },
   });
 
@@ -644,7 +769,8 @@ export async function forceCompleteKeyReset(
   // Delete all prekeys
   const deletedPreKeys = await ctx.storage.deleteAllPreKeys(identityType);
 
-  // Generate fresh prekeys with keyId=1
+  // Generate fresh prekeys. The reset removed every retained prekey, so the
+  // Kyber id starts at 1 again.
   const newSignedPreKey = await generateEcSignedPreKey(
     identityKey,
     1 // Start fresh with ID 1
@@ -652,7 +778,7 @@ export async function forceCompleteKeyReset(
 
   const newKyberPreKey = await generateKyberLastResortPreKey(
     identityKey,
-    1 // Start fresh with ID 1
+    await nextKyberLastResortPreKeyId(ctx.storage, identityType)
   );
 
   // Store new prekeys

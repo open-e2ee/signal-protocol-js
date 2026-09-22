@@ -17,3 +17,11 @@ Request for a short-lived, direct object download operation.
 > **objectId**: `string`
 
 Opaque identifier from an encrypted attachment pointer.
+
+***
+
+### readCapability?
+
+> `optional` **readCapability?**: `string`
+
+Read authority carried inside the encrypted pointer, never in a URL.

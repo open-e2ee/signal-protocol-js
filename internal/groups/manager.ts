@@ -162,6 +162,8 @@ import {
  */
 export {};
 export interface GroupAuthorization {
+  /** Public issuer selection, not account or group authority. */
+  authorityKeyId?: string;
   /** Serialized AuthCredentialPresentation (ZK proof of group membership). */
   presentation: Uint8Array;
   /** Serialized GroupPublicParams (identifies the group for credential verification). */
@@ -326,6 +328,8 @@ export type OnEndorsementsInvalidated = (groupId: string) => Promise<void>;
 // ---------------------------------------------------------------------------
 
 export interface GroupManagerOptions {
+  /** Keeps issuance and verification on the same rotating issuer. */
+  authorityKeyId?: string;
   /** Local group state storage. */
   store: IGroupStateStore;
   /** Server-side group operations. */
@@ -500,6 +504,7 @@ export const MAX_SUPPORTED_CHANGE_EPOCH = 6;
 export class GroupManager {
   private readonly store: IGroupStateStore;
   private readonly server: IGroupServer;
+  private readonly authorityKeyId?: string;
   private readonly onSenderKeyRotation?: OnSenderKeyRotation;
   private readonly onEndorsementsInvalidated?: OnEndorsementsInvalidated;
   private readonly issueCredential: () => Promise<Uint8Array>;
@@ -522,6 +527,7 @@ export class GroupManager {
   constructor(options: GroupManagerOptions) {
     this.store = options.store;
     this.server = options.server;
+    this.authorityKeyId = options.authorityKeyId;
     this.onSenderKeyRotation = options.onSenderKeyRotation;
     this.onEndorsementsInvalidated = options.onEndorsementsInvalidated;
     this.issueCredential = options.issueCredential;
@@ -611,6 +617,7 @@ export class GroupManager {
     );
 
     return {
+      ...(this.authorityKeyId === undefined ? {} : { authorityKeyId: this.authorityKeyId }),
       presentation: serializeAuthCredentialPresentation(presentation),
       groupPublicParams: serializeGroupPublicParams(groupPublicParams),
     };

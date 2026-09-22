@@ -45,6 +45,7 @@
  */
 
 import AsyncLock from 'async-lock';
+import type { GroupAuthority } from './group-authority';
 import type { ISignalProtocolRelayServer, Envelope, Unsubscribe } from '../remote/relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import { SignalProtocolManager } from '../internal/manager';
@@ -204,6 +205,10 @@ export class SignalProtocolClient implements ISignalProtocolClient {
 
   // Group state management
   private groupManager?: GroupManager;
+  private groupSessionFor?: (authority: GroupAuthority) => {
+    manager: GroupManager;
+    endorsementManager?: GroupAuthority['endorsementManager'];
+  };
   private groupStore?: IGroupStateStore;
 
   // Cipher coordination (encrypts/decrypts, routes to appropriate cipher)
@@ -320,63 +325,74 @@ export class SignalProtocolClient implements ISignalProtocolClient {
 
     // Initialize the group manager if configured
     if (config?.groups) {
-      const capability = this.relay?.groupServer;
-      const server = config.groups.server ?? capability?.server;
-      const issueCredential =
-        config.groups.issueCredential ??
-        (capability ? () => capability.issueAuthCredential(this._userId) : undefined);
-      const issueProfileKeyCredential =
-        config.groups.issueProfileKeyCredential ??
-        (capability
-          ? async (request: Uint8Array) => {
-              const accessKey = await deriveAccessKey(config.groups!.profileKey);
-              await capability.setUnidentifiedAccessKey(this._userId, accessKey);
-              return capability.issueProfileKeyCredential(this._userId, request);
-            }
-          : undefined);
-
-      if (!server || !issueCredential || !issueProfileKeyCredential) {
-        const missing = [
-          !server ? 'server' : undefined,
-          !issueCredential ? 'issueCredential' : undefined,
-          !issueProfileKeyCredential ? 'issueProfileKeyCredential' : undefined,
-        ].filter((value): value is string => value !== undefined);
-        throw new Error(
-          `Groups require the relay.groupServer capability or explicit overrides; missing: ${missing.join(', ')}`
-        );
-      }
-      if (!config.aci) {
-        throw new Error('Groups require the client identity ACI; set identity.aci');
-      }
-
-      const trustRoot = decodeGroupTrustRoot(config.groups.trustRoot);
+      const groupConfig = config.groups;
       this.groupStore = config.groups.store ?? new SignalProtocolGroupStateStore(this._storage);
-      const endorsementManager = config.groups.endorsementManager;
-      endorsementManager?.assertEndorsementRootPublicKey(trustRoot.endorsementRootPublicKey);
+      const sessions = new WeakMap<GroupAuthority, { manager: GroupManager; endorsementManager?: GroupAuthority['endorsementManager'] }>();
+      this.groupSessionFor = (authority) => {
+        const cached = sessions.get(authority);
+        if (cached) return cached;
+        const capability = this.relay?.groupServer;
+        const server = groupConfig.server ?? capability?.server;
+        const issueCredential =
+          groupConfig.issueCredential ??
+          (capability ? () => capability.issueAuthCredential(this._userId, authority.authorityKeyId) : undefined);
+        const issueProfileKeyCredential =
+          groupConfig.issueProfileKeyCredential ??
+          (capability
+            ? async (request: Uint8Array) => {
+                const accessKey = await deriveAccessKey(groupConfig.profileKey);
+                await capability.setUnidentifiedAccessKey(this._userId, accessKey);
+                return capability.issueProfileKeyCredential(this._userId, request, authority.authorityKeyId);
+              }
+            : undefined);
 
-      this.groupManager = new GroupManager({
-        store: this.groupStore,
-        server,
-        issueCredential,
-        credentialPublicKey: trustRoot.credentialPublicKey,
-        serverSigningPublicKey: trustRoot.serverSigningPublicKey,
-        allowUnauthenticatedGroupHistory: config.groups.allowUnauthenticatedGroupHistory,
-        onConfigurationWarning: config.groups.onConfigurationWarning,
-        aci: config.aci,
-        pni: config.pni,
-        issueProfileKeyCredential,
-        profileKeyCredentialPublicKey: trustRoot.profileKeyCredentialPublicKey,
-        profileKey: config.groups.profileKey,
-        onSenderKeyRotation: async (groupId) => {
-          // Forward to existing sender key rotation
-          await this.rotateGroupSenderKey(groupId as string);
-        },
-        onEndorsementsInvalidated: endorsementManager
-          ? async (groupId) => {
-              await endorsementManager.clearGroupEndorsements(groupId);
-            }
-          : undefined,
-      });
+        if (!server || !issueCredential || !issueProfileKeyCredential) {
+          const missing = [
+            !server ? 'server' : undefined,
+            !issueCredential ? 'issueCredential' : undefined,
+            !issueProfileKeyCredential ? 'issueProfileKeyCredential' : undefined,
+          ].filter((value): value is string => value !== undefined);
+          throw new Error(
+            `Groups require the relay.groupServer capability or explicit overrides; missing: ${missing.join(', ')}`
+          );
+        }
+        if (!config.aci) {
+          throw new Error('Groups require the client identity ACI; set identity.aci');
+        }
+
+        const trustRoot = decodeGroupTrustRoot(authority.trustRoot);
+        const endorsementManager = authority.endorsementManager;
+        endorsementManager?.assertEndorsementRootPublicKey(trustRoot.endorsementRootPublicKey);
+
+        const manager = new GroupManager({
+          store: this.groupStore!,
+          authorityKeyId: authority.authorityKeyId,
+          server,
+          issueCredential,
+          credentialPublicKey: trustRoot.credentialPublicKey,
+          serverSigningPublicKey: trustRoot.serverSigningPublicKey,
+          allowUnauthenticatedGroupHistory: groupConfig.allowUnauthenticatedGroupHistory,
+          onConfigurationWarning: groupConfig.onConfigurationWarning,
+          aci: config.aci,
+          pni: config.pni,
+          issueProfileKeyCredential,
+          profileKeyCredentialPublicKey: trustRoot.profileKeyCredentialPublicKey,
+          profileKey: groupConfig.profileKey,
+          onSenderKeyRotation: async (groupId) => {
+            // Forward to existing sender key rotation
+            await this.rotateGroupSenderKey(groupId as string);
+          },
+          onEndorsementsInvalidated: endorsementManager
+            ? async (groupId) => {
+                await endorsementManager.clearGroupEndorsements(groupId);
+              }
+            : undefined,
+        });
+        const session = { manager, endorsementManager };
+        sessions.set(authority, session);
+        return session;
+      };
+      this.groupManager = this.groupSessionFor(config.groups).manager;
     }
 
     // Initialize cipher for encrypt/decrypt coordination
@@ -498,12 +514,31 @@ export class SignalProtocolClient implements ISignalProtocolClient {
 
     // Set up endorsement manager if configured
     if (config?.groups?.endorsementManager) {
-      this.cipher.setEndorsementManager(config.groups.endorsementManager);
+      this.cipher.setEndorsementManager(config.groups.endorsementManager,
+        config.groups.resolveAuthority ? async () => (await this.resolveGroupSession()).endorsementManager : undefined);
     }
 
     // Set up group secret params provider. Derives params from master key in store
     if (this.groupStore) {
       const store = this.groupStore;
+      const resolveAcis = config.groups?.resolveAciBytesByUserIds;
+      const localAci = config.aci?.uuid;
+      this.cipher.setGroupReceiveAuthorizer(async (groupId, senderId) => {
+        if (!resolveAcis || !localAci) {
+          throw new Error('Group reception requires authenticated account ACI resolution');
+        }
+        const state = await store.getGroupState(groupId);
+        const senderAci = (await resolveAcis([senderId])).get(senderId);
+        if (
+          !state || !senderAci ||
+          !state.members.some((member) => constantTimeEqual(member.aciBytes, senderAci)) ||
+          !state.members.some((member) => constantTimeEqual(member.aciBytes, localAci))
+        ) {
+          throw new Error(
+            'Group sender and recipient must be members of the verified local group'
+          );
+        }
+      });
       this.cipher.setGroupSecretParamsProvider(async (groupId: string) => {
         const masterKey = await store.getMasterKey(groupId);
         if (!masterKey) return null;
@@ -522,24 +557,26 @@ export class SignalProtocolClient implements ISignalProtocolClient {
       this.groupManager
     ) {
       const groupConfig = config.groups;
-      const endorsementManager = groupConfig.endorsementManager!;
       const groupStore = this.groupStore;
-      const groupManager = this.groupManager;
       const relay = this.relay;
       const selfUserId = this._userId;
 
       this.cipher.setEndorsementRefresher(async (groupId: string, memberUserIds: string[]) => {
+        const { manager: groupManager, endorsementManager } = await this.resolveGroupSession();
+        if (!endorsementManager) return false;
         // 1. Build ZK authorization (credential presentation + group public params)
         const authorization = await groupManager.getAuthorization(groupId);
 
         // 2. Get group secret params for endorsement processing
         const masterKey = await groupStore.getMasterKey(groupId);
         if (!masterKey) return false;
-        const { deriveGroupSecretParams } = await import('../internal/protocol/zk/groups');
+        const { deriveGroupSecretParams, getGroupPublicParams } = await import(
+          '../internal/protocol/zk/groups'
+        );
         const secretParams = deriveGroupSecretParams(masterKey);
 
-        // 3. Convert groupId to bytes for relay call
-        const groupIdBytes = new TextEncoder().encode(groupId);
+        // 3. Derive the protocol identifier, not the display identifier's UTF-8 bytes.
+        const groupIdBytes = getGroupPublicParams(secretParams).groupId;
 
         // 4. Fetch fresh endorsements from server
         const { endorsements } = await relay.refreshGroupSendEndorsements!(
@@ -726,14 +763,21 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Get GroupManager, throwing if not configured.
    */
-  private get groups(): GroupManager {
-    if (!this.groupManager) {
+  private async resolveGroupSession() {
+    if (!this.groupSessionFor || !this.config.groups) {
       throw new EncryptionError(
         'Groups not configured. Provide groups config to SignalProtocolClient.create().',
         EncryptionErrorCode.INITIALIZATION_FAILED
       );
     }
-    return this.groupManager;
+    const authority = this.config.groups.resolveAuthority
+      ? await this.config.groups.resolveAuthority()
+      : this.config.groups;
+    return this.groupSessionFor(authority);
+  }
+
+  private get groups(): Promise<GroupManager> {
+    return this.resolveGroupSession().then((session) => session.manager);
   }
 
   /**
@@ -1500,6 +1544,44 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     }
 
     return results;
+  }
+
+  /**
+   * Receive a pulled batch through the subscription content handler.
+   * The application must register onMessageDecrypted before calling this method.
+   * Successful IDs are ready for transport acknowledgment.
+   */
+  async receiveIncomingEnvelopes(envelopes: IncomingEnvelope[]): Promise<{
+    processedMessageIds: string[];
+    failedMessageIds: string[];
+  }> {
+    if (!this.hooks?.onMessageDecrypted) {
+      throw new Error('Register onMessageDecrypted before receiving Relay messages');
+    }
+    const processedMessageIds: string[] = [];
+    const failedMessageIds: string[] = [];
+    const context = { ...this.ctx, cipher: this.cipher };
+    for (const envelope of sortEnvelopesForDecryption(envelopes)) {
+      try {
+        const processed = await RelaySubscriptionOps.processRelayMessage(
+          context,
+          {
+            ...envelope,
+            targetUserId: this.userId,
+            targetDeviceId: this.deviceId,
+            deliveryClass: 'user-visible',
+            messageType: (envelope.messageType ?? 'ciphertext') as Envelope['messageType'],
+          },
+          this.relaySubscriptionState,
+          this.relaySubscriptionCallbacks,
+          { ...this.relaySubscriptionConfig, acknowledgeFailures: false }
+        );
+        (processed ? processedMessageIds : failedMessageIds).push(envelope.id);
+      } catch {
+        failedMessageIds.push(envelope.id);
+      }
+    }
+    return { processedMessageIds, failedMessageIds };
   }
 
   /**
@@ -2946,7 +3028,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   ): Promise<{ groupId: GroupId; masterKey: Uint8Array }> {
     return GroupOps.createGroup(
       this.ctx,
-      this.groups,
+      await this.groups,
       creatorAci,
       creatorProfileKey,
       members,
@@ -2959,14 +3041,14 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * Get decrypted group state (from cache or server).
    */
   async getGroupState(groupId: GroupId): Promise<DecryptedGroup> {
-    return GroupOps.getGroupState(this.ctx, this.groups, groupId);
+    return GroupOps.getGroupState(this.ctx, await this.groups, groupId);
   }
 
   /**
    * Sync group state from server.
    */
   async syncGroup(groupId: GroupId): Promise<DecryptedGroup> {
-    return GroupOps.syncGroup(this.ctx, this.groups, groupId);
+    return GroupOps.syncGroup(this.ctx, await this.groups, groupId);
   }
 
   /**
@@ -2977,12 +3059,12 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     editorAci: Uint8Array,
     member: GroupMemberInput
   ): Promise<void> {
-    return GroupOps.addGroupMember(this.ctx, this.groups, groupId, editorAci, member);
+    return GroupOps.addGroupMember(this.ctx, await this.groups, groupId, editorAci, member);
   }
 
   /** Accept this client's pending profile-key invitation. */
   async acceptGroupMemberInvitation(groupId: GroupId): Promise<void> {
-    return GroupOps.acceptGroupMemberInvitation(this.ctx, this.groups, groupId);
+    return GroupOps.acceptGroupMemberInvitation(this.ctx, await this.groups, groupId);
   }
 
   /**
@@ -2992,7 +3074,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     groupId: GroupId,
     identity: 'aci' | 'pni' = 'aci'
   ): Promise<void> {
-    return GroupOps.declineGroupMemberInvitation(this.ctx, this.groups, groupId, identity);
+    return GroupOps.declineGroupMemberInvitation(this.ctx, await this.groups, groupId, identity);
   }
 
   /**
@@ -3003,21 +3085,21 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     editorAci: Uint8Array,
     targetAci: Uint8Array
   ): Promise<void> {
-    return GroupOps.removeGroupMember(this.ctx, this.groups, groupId, editorAci, targetAci);
+    return GroupOps.removeGroupMember(this.ctx, await this.groups, groupId, editorAci, targetAci);
   }
 
   /**
    * Leave a group.
    */
   async leaveGroup(groupId: GroupId, userAci: Uint8Array): Promise<void> {
-    return GroupOps.leaveGroup(this.ctx, this.groups, groupId, userAci);
+    return GroupOps.leaveGroup(this.ctx, await this.groups, groupId, userAci);
   }
 
   /**
    * Update a group's title.
    */
   async updateGroupTitle(groupId: GroupId, editorAci: Uint8Array, title: string): Promise<void> {
-    return GroupOps.updateGroupTitle(this.ctx, this.groups, groupId, editorAci, title);
+    return GroupOps.updateGroupTitle(this.ctx, await this.groups, groupId, editorAci, title);
   }
 
   /**
@@ -3028,7 +3110,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     editorAci: Uint8Array,
     description: string
   ): Promise<void> {
-    return GroupOps.updateGroupDescription(this.ctx, this.groups, groupId, editorAci, description);
+    return GroupOps.updateGroupDescription(this.ctx, await this.groups, groupId, editorAci, description);
   }
 
   /**
@@ -3039,14 +3121,14 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     editorAci: Uint8Array,
     updates: Partial<AccessControl>
   ): Promise<void> {
-    return GroupOps.updateGroupAccessControl(this.ctx, this.groups, groupId, editorAci, updates);
+    return GroupOps.updateGroupAccessControl(this.ctx, await this.groups, groupId, editorAci, updates);
   }
 
   /**
    * Create an invite link for a group.
    */
   async createGroupInviteLink(groupId: GroupId, editorAci: Uint8Array): Promise<string> {
-    return GroupOps.createGroupInviteLink(this.ctx, this.groups, groupId, editorAci);
+    return GroupOps.createGroupInviteLink(this.ctx, await this.groups, groupId, editorAci);
   }
 
   /**
@@ -3057,7 +3139,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     userAci: Uint8Array,
     userProfileKey: Uint8Array
   ): Promise<{ groupId: GroupId; status: 'joined' | 'pending_approval' }> {
-    return GroupOps.joinGroupViaInviteLink(this.ctx, this.groups, url, userAci, userProfileKey);
+    return GroupOps.joinGroupViaInviteLink(this.ctx, await this.groups, url, userAci, userProfileKey);
   }
 
   // ============================================================================

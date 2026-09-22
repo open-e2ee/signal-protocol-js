@@ -402,6 +402,32 @@ Retrieve Kyber prekey.
 
 ***
 
+### getKyberPreKeyById()
+
+> **getKyberPreKeyById**(`keyId`, `identityType?`): `Promise`\<`RetainedKyberPreKey` \| `null`\>
+
+Retrieve the exact retained Kyber prekey instance named by a message.
+
+#### Parameters
+
+##### keyId
+
+`number`
+
+##### identityType?
+
+[`IdentityType`](../namespaces/keys/type-aliases/IdentityType.md)
+
+#### Returns
+
+`Promise`\<`RetainedKyberPreKey` \| `null`\>
+
+#### Inherited from
+
+[`IKyberLastResortPreKeyStore`](IKyberLastResortPreKeyStore.md).[`getKyberPreKeyById`](IKyberLastResortPreKeyStore.md#getkyberprekeybyid)
+
+***
+
 ### getLocalRegistrationId()
 
 > **getLocalRegistrationId**(`identityType?`): `Promise`\<`number`\>

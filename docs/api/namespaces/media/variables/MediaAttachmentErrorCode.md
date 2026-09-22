@@ -12,60 +12,60 @@
 
 ### BlobNotFound
 
-> `readonly` **BlobNotFound**: `"blob-not-found"` = `'blob-not-found'`
+> `readonly` **BlobNotFound**: `"blob-not-found"` = `"blob-not-found"`
 
 ### Cancelled
 
-> `readonly` **Cancelled**: `"cancelled"` = `'cancelled'`
+> `readonly` **Cancelled**: `"cancelled"` = `"cancelled"`
 
 ### CiphertextSizeMismatch
 
-> `readonly` **CiphertextSizeMismatch**: `"ciphertext-size-mismatch"` = `'ciphertext-size-mismatch'`
+> `readonly` **CiphertextSizeMismatch**: `"ciphertext-size-mismatch"` = `"ciphertext-size-mismatch"`
 
 ### DecryptionFailed
 
-> `readonly` **DecryptionFailed**: `"decryption-failed"` = `'decryption-failed'`
+> `readonly` **DecryptionFailed**: `"decryption-failed"` = `"decryption-failed"`
 
 ### DeleteFailed
 
-> `readonly` **DeleteFailed**: `"delete-failed"` = `'delete-failed'`
+> `readonly` **DeleteFailed**: `"delete-failed"` = `"delete-failed"`
 
 ### DeleteUnavailable
 
-> `readonly` **DeleteUnavailable**: `"delete-unavailable"` = `'delete-unavailable'`
+> `readonly` **DeleteUnavailable**: `"delete-unavailable"` = `"delete-unavailable"`
 
 ### DigestMismatch
 
-> `readonly` **DigestMismatch**: `"digest-mismatch"` = `'digest-mismatch'`
+> `readonly` **DigestMismatch**: `"digest-mismatch"` = `"digest-mismatch"`
 
 ### DownloadFailed
 
-> `readonly` **DownloadFailed**: `"download-failed"` = `'download-failed'`
+> `readonly` **DownloadFailed**: `"download-failed"` = `"download-failed"`
 
 ### InvalidPointer
 
-> `readonly` **InvalidPointer**: `"invalid-pointer"` = `'invalid-pointer'`
+> `readonly` **InvalidPointer**: `"invalid-pointer"` = `"invalid-pointer"`
 
 ### JobHandlerMissing
 
-> `readonly` **JobHandlerMissing**: `"job-handler-missing"` = `'job-handler-missing'`
+> `readonly` **JobHandlerMissing**: `"job-handler-missing"` = `"job-handler-missing"`
 
 ### PlaintextSizeMismatch
 
-> `readonly` **PlaintextSizeMismatch**: `"plaintext-size-mismatch"` = `'plaintext-size-mismatch'`
+> `readonly` **PlaintextSizeMismatch**: `"plaintext-size-mismatch"` = `"plaintext-size-mismatch"`
 
 ### PolicyViolation
 
-> `readonly` **PolicyViolation**: `"policy-violation"` = `'policy-violation'`
+> `readonly` **PolicyViolation**: `"policy-violation"` = `"policy-violation"`
 
 ### ResumeStateInvalid
 
-> `readonly` **ResumeStateInvalid**: `"resume-state-invalid"` = `'resume-state-invalid'`
+> `readonly` **ResumeStateInvalid**: `"resume-state-invalid"` = `"resume-state-invalid"`
 
 ### UploadFailed
 
-> `readonly` **UploadFailed**: `"upload-failed"` = `'upload-failed'`
+> `readonly` **UploadFailed**: `"upload-failed"` = `"upload-failed"`
 
 ### UploadIdentityChanged
 
-> `readonly` **UploadIdentityChanged**: `"upload-identity-changed"` = `'upload-identity-changed'`
+> `readonly` **UploadIdentityChanged**: `"upload-identity-changed"` = `"upload-identity-changed"`

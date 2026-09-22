@@ -12,8 +12,8 @@
 
 ### Completed
 
-> `readonly` **Completed**: `"completed"` = `'completed'`
+> `readonly` **Completed**: `"completed"` = `"completed"`
 
 ### Skipped
 
-> `readonly` **Skipped**: `"skipped"` = `'skipped'`
+> `readonly` **Skipped**: `"skipped"` = `"skipped"`
