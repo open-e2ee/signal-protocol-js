@@ -15,7 +15,7 @@ import type {
   MLKEMBraidMessage,
   SendResult,
   ReceiveResult,
-  IMLKEMBraidStateMachine,
+  MLKEMBraidStateMachine,
   EncoderState,
   DecoderState,
 } from './types';
@@ -101,7 +101,7 @@ const CT2_SIZE = MLKEM_768_SIZES.CT2_SIZE + PROTOCOL_CONSTANTS.MAC_SIZE;
  *
  * Manages the 11-state protocol for chunked ML-KEM key agreement.
  */
-export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
+export class DefaultMLKEMBraidStateMachine implements MLKEMBraidStateMachine {
   private kem = createIncrementalKEM();
   private authenticator = createAuthenticator();
 
@@ -1078,6 +1078,6 @@ export class MLKEMBraidStateMachine implements IMLKEMBraidStateMachine {
  */
 export function createStateMachine(
   randomBytes?: (length: number) => Promise<Uint8Array>
-): IMLKEMBraidStateMachine {
-  return new MLKEMBraidStateMachine(randomBytes);
+): MLKEMBraidStateMachine {
+  return new DefaultMLKEMBraidStateMachine(randomBytes);
 }

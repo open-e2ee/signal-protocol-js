@@ -55,9 +55,9 @@ export type {
   OutputKey,
 
   // Interfaces
-  IIncrementalKEM,
-  IAuthenticator,
-  IMLKEMBraidStateMachine,
+  IncrementalKEM,
+  Authenticator,
+  MLKEMBraidStateMachine,
 } from './types';
 
 // Streaming encoder/decoder interfaces (from rs, see Reed-Solomon section below)
@@ -109,7 +109,7 @@ export {
 // State Machine
 // =============================================================================
 
-export { MLKEMBraidStateMachine, createStateMachine, STATE_TRANSITIONS } from './state-machine';
+export { DefaultMLKEMBraidStateMachine, createStateMachine, STATE_TRANSITIONS } from './state-machine';
 
 // =============================================================================
 // Incremental KEM

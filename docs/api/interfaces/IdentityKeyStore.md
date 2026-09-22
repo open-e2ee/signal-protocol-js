@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / IIdentityKeyStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / IdentityKeyStore
 
-# Interface: IIdentityKeyStore
+# Interface: IdentityKeyStore
 
 Identity store with an SDK-oriented API and SDK composite-identity values.
 
@@ -13,7 +13,7 @@ changes after the store pins a tuple. It does not authenticate first contact.
 
 ## Extended by
 
-- [`IProtocolStore`](IProtocolStore.md)
+- [`ProtocolStore`](ProtocolStore.md)
 
 ## Methods
 

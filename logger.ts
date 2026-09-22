@@ -8,7 +8,7 @@ declare const __DEV__: boolean | undefined;
  * mutable module-global state.
  */
 
-export interface ILogger {
+export interface Logger {
   debug?(message: string, data?: unknown): void;
   info?(message: string, data?: unknown): void;
   warn?(message: string, data?: unknown): void;
@@ -16,7 +16,7 @@ export interface ILogger {
   breadcrumb?(message: string, data?: unknown): void;
 }
 
-function createDefaultLogger(): ILogger {
+function createDefaultLogger(): Logger {
   const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
   const isTest = typeof process !== 'undefined' && process.env.NODE_ENV === 'test';
 
@@ -40,13 +40,13 @@ function createDefaultLogger(): ILogger {
   };
 }
 
-export function createDefaultSignalProtocolLogger(): ILogger {
+export function createDefaultSignalProtocolLogger(): Logger {
   return createDefaultLogger();
 }
 
 const baseDefaultLogger = createDefaultLogger();
 
-export const defaultSignalProtocolLogger: Required<ILogger> = {
+export const defaultSignalProtocolLogger: Required<Logger> = {
   debug: (message: string, data?: unknown): void => {
     baseDefaultLogger.debug?.(message, data);
   },
@@ -64,7 +64,7 @@ export const defaultSignalProtocolLogger: Required<ILogger> = {
   },
 };
 
-export function resolveSignalProtocolLogger(logger?: ILogger): Required<ILogger> {
+export function resolveSignalProtocolLogger(logger?: Logger): Required<Logger> {
   if (!logger) {
     return defaultSignalProtocolLogger;
   }

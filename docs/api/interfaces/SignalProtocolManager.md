@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / ISignalProtocolManager
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolManager
 
-# Interface: ISignalProtocolManager
+# Interface: SignalProtocolManager
 
 Signal Protocol manager interface
 

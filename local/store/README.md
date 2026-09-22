@@ -1,6 +1,6 @@
 # Storage Guide
 
-> Infrastructure | Implements `ISignalProtocolLocalStore` | [Architecture](../../ARCHITECTURE.md)
+> Infrastructure | Implements `SignalProtocolLocalStore` | [Architecture](../../ARCHITECTURE.md)
 
 The storage layer owns device-local Signal Protocol state: identity keys,
 contact trust, prekeys, sessions, and retry/message-record metadata.
@@ -8,7 +8,7 @@ contact trust, prekeys, sessions, and retry/message-record metadata.
 ## Why it exists
 
 Protocol state must survive restarts and several security transitions must
-commit atomically. `ISignalProtocolLocalStore` makes those requirements explicit
+commit atomically. `SignalProtocolLocalStore` makes those requirements explicit
 without coupling the client to a database or platform.
 
 ## Current Support
@@ -50,7 +50,7 @@ exported backend-conformance kit described in the
 
 The experimental label comes off an adapter when every item below is a named,
 continuously running CI gate. Each gate tests the adapter's own contract,
-which is the set of promises `ISignalProtocolLocalStore` makes. No gate tests
+which is the set of promises `SignalProtocolLocalStore` makes. No gate tests
 the platform under it. Browsers, IndexedDB, and React Native are the
 environment an adapter must honor its promises in, not the subject of a test.
 
@@ -144,11 +144,11 @@ state, retry message records, and recovery helpers.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import { SignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
+import { DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 import { ExpoSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
 
 // Configure the application-owned Expo/SQLCipher database bindings first.
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: new ExpoSignalProtocolStore(),
 });
 ```
@@ -157,7 +157,7 @@ The [Expo guide](./expo/README.md) shows the required database bootstrap.
 
 ## Storage Responsibilities
 
-An `ISignalProtocolLocalStore` implementation must preserve:
+An `SignalProtocolLocalStore` implementation must preserve:
 
 - account identity key storage
 - contact identity trust / TOFU decisions

@@ -22,8 +22,8 @@
  */
 
 import { useCallback, useState } from 'react';
-import type { ILogger } from '../logger';
-import type { ISignalProtocolClient } from '../types/api';
+import type { Logger } from '../logger';
+import type { SignalProtocolClient } from '../types/api';
 
 /**
  * Hook result type
@@ -58,7 +58,7 @@ export interface UseGroupMembershipResult {
 export interface UseGroupMembershipOptions {
   /** Signal Protocol client used for sender-key rotation and distribution */
   signal: Pick<
-    ISignalProtocolClient,
+    SignalProtocolClient,
     | 'rotateGroupSenderKey'
     | 'distributeGroupSenderKey'
     | 'distributeSenderKeyToUser'
@@ -84,7 +84,7 @@ export function useGroupMembership({
 }: UseGroupMembershipOptions): UseGroupMembershipResult {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const logger: Required<ILogger> = signal.logger;
+  const logger: Required<Logger> = signal.logger;
 
   /**
    * Handle member removal - rotate and redistribute sender key

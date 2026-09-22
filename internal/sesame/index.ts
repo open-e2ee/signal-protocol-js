@@ -2,7 +2,7 @@
  * SESAME (Secure Encrypted Stored Authenticated Messaging Extension)
  *
  * @layer 2 - Orchestration
- * @implements ISesameManager
+ * @implements SesameManager
  *
  * Signal Protocol Section 7 - SESAME
  * Multi-device session management for encrypted asynchronous messaging.
@@ -19,8 +19,8 @@
 
 // Core SESAME manager
 export {};
-export { SesameManager, MAX_SEND_RETRIES } from './manager';
-export type { IProtocolManager } from './manager';
+export { DefaultSesameManager, MAX_SEND_RETRIES } from './manager';
+export type { ProtocolManager } from './manager';
 
 // Session resolution shared with the lower session domain
 export { SessionResolver } from '../session/session-resolver';
@@ -46,13 +46,13 @@ export type {
   DeviceListResponse,
   PreKeyBundleData,
   // Manager interface
-  ISesameManager,
+  SesameManager,
   // Send options
   SesameSendOptions,
   // Statistics
   SesameStats,
   // Storage interface
-  ISesameStorage,
+  SesameStorage,
 } from './types';
 
 // Enums, constants, and helpers

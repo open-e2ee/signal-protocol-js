@@ -147,7 +147,7 @@ Expo storage or the Convex R2 object store.
 - `createHostedSignalProtocolClient()` from the package root for the OpenE2EE
   Signal Protocol Relay
 - `InMemorySignalProtocolRelayServer` / `inMemoryRelay()` for local development
-- custom implementations via `ISignalProtocolRelayServer`
+- custom implementations via `SignalProtocolRelayServer`
 
 ### Storage implementations
 
@@ -162,7 +162,7 @@ Expo storage or the Convex R2 object store.
   backend-conformance kit)
 - `NodeSignalProtocolStore` / `nodeStore()` for Node environments
 - `InMemorySignalProtocolStore` / `inMemoryStore()` for local development
-- custom implementations via `ISignalProtocolLocalStore`
+- custom implementations via `SignalProtocolLocalStore`
 
 ### Remote object store
 
@@ -203,12 +203,12 @@ implement the same `MediaAttachmentTransfer` seam.
 
 ## Design notes
 
-- `SignalProtocolClient.create()` requires `storage`. There are no hidden
+- `DefaultSignalProtocolClient.create()` requires `storage`. There are no hidden
   default adapters.
 - `createSignalProtocolClient()` is the preferred composition helper when app
   code owns multiple adapters.
 - Linked devices must already contain provisioned identity material before
-  `SignalProtocolClient.create(..., { deviceId: 2 })`.
+  `DefaultSignalProtocolClient.create(..., { deviceId: 2 })`.
 - Username-only apps typically run ACI-only. Phone-capable apps can enable both
   ACI and PNI with `enablePniKeys: true`.
 - `protocol.postQuantum` and `protocol.braid` are product-facing policy.

@@ -23,7 +23,7 @@ export * from './messages';
 export * from './api';
 
 // Client configuration
-// Import directly: import { SignalProtocolClientConfig, ILogger, ProgressCallback } from './client/config'
+// Import directly: import { SignalProtocolClientConfig, Logger, ProgressCallback } from './client/config'
 
 // Error types (enhanced with specialized error classes)
 export * from './errors';

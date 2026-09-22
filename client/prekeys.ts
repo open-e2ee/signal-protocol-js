@@ -1,7 +1,7 @@
 /**
  * Prekey management and server synchronization for SignalProtocolClient
  *
- * Extracted from SignalProtocolClient class to reduce file size.
+ * Extracted from DefaultSignalProtocolClient class to reduce file size.
  * Handles prekey bundle upload, verification, and regeneration.
  */
 

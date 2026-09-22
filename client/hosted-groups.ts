@@ -3,7 +3,7 @@ import type {
   GroupChangeLogEntry,
   GroupChangeLogPage,
   GroupSnapshot,
-  IGroupServer,
+  GroupServer,
 } from '../internal/groups/manager';
 import { base64ToBytes, bytesToBase64 } from '../internal/crypto';
 import type { Base64 } from '../types';
@@ -131,7 +131,7 @@ export class HostedGroupError extends Error {
 }
 
 /** Presentation-authorized group state. Device credentials never enter this transport. */
-export class HostedGroupServer implements IGroupServer {
+export class HostedGroupServer implements GroupServer {
   constructor(private readonly connection: HostedRelayConnection) {}
 
   private async request(

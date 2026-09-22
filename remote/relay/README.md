@@ -1,6 +1,6 @@
 # Relay
 
-The relay module defines `ISignalProtocolRelayServer`, the application-backend contract
+The relay module defines `SignalProtocolRelayServer`, the application-backend contract
 for device discovery, public prekeys, encrypted envelopes, key rotation,
 provisioning, and related synchronization.
 
@@ -32,7 +32,7 @@ await client.syncToServer();
 
 For production, connect to the OpenE2EE Signal Protocol Relay through
 `createHostedSignalProtocolClient()` from the package root, or implement
-`ISignalProtocolRelayServer` against your own backend. That backend must authenticate
+`SignalProtocolRelayServer` against your own backend. That backend must authenticate
 mutations, allocate linked-device IDs, consume one-time prekeys atomically,
 enforce access policy, and store only encrypted envelopes plus required routing
 metadata.

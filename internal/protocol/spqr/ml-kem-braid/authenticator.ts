@@ -89,7 +89,7 @@
  *    replay attacks.
  */
 
-import type { AuthenticatorState, IAuthenticator } from './types';
+import type { AuthenticatorState, Authenticator } from './types';
 import { PROTOCOL_CONSTANTS } from './types';
 import { AuthenticatorError } from './errors';
 import { KDF_AUTH, uint64ToBytes } from './kdf';
@@ -103,7 +103,7 @@ import { constantTimeEqual, secureZeroBytes } from '../../../crypto';
  * preventing forgery and epoch confusion attacks.
  */
 export {};
-export class RatchetedAuthenticator implements IAuthenticator {
+export class RatchetedAuthenticator implements Authenticator {
   /**
    * Initialize authenticator for new session
    *
@@ -261,7 +261,7 @@ export class RatchetedAuthenticator implements IAuthenticator {
 /**
  * Create a new authenticator instance
  */
-export function createAuthenticator(): IAuthenticator {
+export function createAuthenticator(): Authenticator {
   return new RatchetedAuthenticator();
 }
 

@@ -16,7 +16,7 @@
  * - Transports receive encrypted transfer packets
  */
 
-import type { ILogger } from '../logger';
+import type { Logger } from '../logger';
 
 // ============================================================================
 // Transfer Key Types
@@ -234,7 +234,7 @@ export interface ConnectionConfig {
   /** Connection timeout (ms) */
   timeout?: number;
   /** Optional logger for transfer/runtime diagnostics */
-  logger?: ILogger;
+  logger?: Logger;
 }
 
 /**

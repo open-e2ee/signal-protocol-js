@@ -8,7 +8,7 @@
  * @see https://signal.org/docs/specifications/doubleratchet/#the-kdf-chains
  */
 
-import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
+import { defaultSignalProtocolLogger, type Logger } from '../../../logger';
 import {
   kdfChainKey,
   bytesToBase64,
@@ -40,7 +40,7 @@ const MAX_MESSAGE_COUNTER = Number.MAX_SAFE_INTEGER - 1;
  */
 export async function deriveSendingKey(
   state: DoubleRatchetState,
-  _logger: Required<ILogger> = defaultSignalProtocolLogger
+  _logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<{ messageKey: Uint8Array }> {
   // Check for counter overflow before incrementing
   if (state.Ns >= MAX_MESSAGE_COUNTER) {
@@ -89,7 +89,7 @@ export async function deriveSendingKey(
  */
 export async function deriveReceivingKey(
   state: DoubleRatchetState,
-  _logger: Required<ILogger> = defaultSignalProtocolLogger
+  _logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<{ messageKey: Uint8Array }> {
   // Check for counter overflow before incrementing
   if (state.Nr >= MAX_MESSAGE_COUNTER) {
@@ -147,7 +147,7 @@ export async function storeSkippedKeys(
   state: DoubleRatchetState,
   untilCounter: number,
   config: DoubleRatchetConfig = DEFAULT_RATCHET_CONFIG,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<void> {
   // Replay detection: if counter is less than current Nr, this is a replay
   // of an already-processed message. Throw MESSAGE_DUPLICATE error.
@@ -221,7 +221,7 @@ export function tryGetSkippedKey(
   state: DoubleRatchetState,
   ratchetKey: Base64,
   counter: number,
-  _logger: Required<ILogger> = defaultSignalProtocolLogger
+  _logger: Required<Logger> = defaultSignalProtocolLogger
 ): Uint8Array | null {
   return consumeMessageKeyFromChain(state, ratchetKey, counter);
 }
@@ -243,7 +243,7 @@ export function tryGetSkippedKey(
 export function cleanupExpiredKeys(
   state: DoubleRatchetState,
   config: DoubleRatchetConfig = DEFAULT_RATCHET_CONFIG,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): void {
   const now = Date.now();
   const expirationTime = now - config.maxMessageKeyAge;
@@ -350,7 +350,7 @@ export function cleanupExpiredKeys(
 export function getOrCreateReceiverChain(
   state: DoubleRatchetState,
   senderRatchetKey: Base64,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): ReceiverChain {
   // Create receiverChains if it is missing
   if (!state.receiverChains) {
@@ -415,7 +415,7 @@ export function countTotalMessageKeys(state: DoubleRatchetState): number {
  */
 export function evictOldestMessageKey(
   state: DoubleRatchetState,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): void {
   if (!state.receiverChains || state.receiverChains.length === 0) {
     return;
@@ -483,7 +483,7 @@ export function storeMessageKeyInChain(
   index: number,
   seed: Uint8Array,
   config: DoubleRatchetConfig = DEFAULT_RATCHET_CONFIG,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): void {
   const chain = getOrCreateReceiverChain(state, senderRatchetKey, logger);
 

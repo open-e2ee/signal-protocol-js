@@ -1,6 +1,6 @@
 # Expo Store
 
-`ExpoSignalProtocolStore` implements `ISignalProtocolLocalStore` for Expo and React Native with
+`ExpoSignalProtocolStore` implements `SignalProtocolLocalStore` for Expo and React Native with
 an application-owned SQLite/Drizzle database and a database key held through
 the local secret-vault boundary.
 

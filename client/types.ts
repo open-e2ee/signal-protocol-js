@@ -1,19 +1,19 @@
 /**
  * Internal types for SignalProtocolClient module
  *
- * These types are used to pass dependencies between the core SignalProtocolClient class
+ * These types are used to pass dependencies between the core DefaultSignalProtocolClient class
  * and the extracted operation modules.
  */
 
-import type { ISignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolRelayServer } from '../remote/relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
-import type { ISignalProtocolLocalStore, ISignalProtocolManager } from '../types';
+import type { SignalProtocolLocalStore, SignalProtocolManager } from '../types';
 import type { SignalProtocolClientConfig } from './config';
-import type { ISesameManager } from '../internal/sesame/types';
+import type { SesameManager } from '../internal/sesame/types';
 import type { SignalProtocolClientHooks } from './event-hooks';
 import { ContentHint } from '../types/messages';
 import type { SignalProtocolContentAdapter } from './content-adapter';
-import type { ILogger } from '../logger';
+import type { Logger } from '../logger';
 import type {
   MediaAttachmentCheckpointCallback,
   MediaAttachmentPointer,
@@ -41,13 +41,13 @@ export interface SignalProtocolClientContext {
   readonly deviceId: number;
 
   /** Protocol manager for encryption/decryption */
-  readonly manager: ISignalProtocolManager;
+  readonly manager: SignalProtocolManager;
 
   /** Key and session storage */
-  readonly storage: ISignalProtocolLocalStore;
+  readonly storage: SignalProtocolLocalStore;
 
   /** Optional relay server for server sync */
-  readonly relay?: ISignalProtocolRelayServer;
+  readonly relay?: SignalProtocolRelayServer;
 
   /** Optional brokered remote object store for encrypted attachments. */
   readonly remoteObjectStore?: SignalProtocolRemoteObjectStore;
@@ -56,13 +56,13 @@ export interface SignalProtocolClientContext {
   readonly config: SignalProtocolClientConfig;
 
   /** Resolved client logger */
-  readonly logger: Required<ILogger>;
+  readonly logger: Required<Logger>;
 
   /** Optional lifecycle hooks */
   readonly hooks?: SignalProtocolClientHooks;
 
   /** Sesame manager for multi-device support */
-  readonly sesameManager: ISesameManager;
+  readonly sesameManager: SesameManager;
 
   /** App-provided content adapter */
   readonly contentAdapter: SignalProtocolContentAdapter;

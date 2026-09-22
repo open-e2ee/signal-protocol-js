@@ -1,4 +1,4 @@
-import type { ISignalProtocolLocalStore } from "../types/api";
+import type { SignalProtocolLocalStore } from "../types/api";
 import type { MediaAttachmentBackgroundJob } from "../media";
 import { assertQueuedUploadCapacity } from "./media-upload-budget";
 
@@ -99,7 +99,7 @@ export class MediaQueuePersistence {
   private readonly snapshots = new WeakMap<object, string | null>();
 
   constructor(
-    private readonly storage: ISignalProtocolLocalStore,
+    private readonly storage: SignalProtocolLocalStore,
     private readonly key: string,
   ) {}
 

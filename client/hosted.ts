@@ -19,10 +19,10 @@ import {
   stringToBytes,
   urlSafeToBase64,
 } from '../internal/crypto';
-import type { ISignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolRelayServer } from '../remote/relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
-import type { ISignalProtocolLocalStore, Base64 } from '../types';
-import { SignalProtocolClient } from './client';
+import type { SignalProtocolLocalStore, Base64 } from '../types';
+import { DefaultSignalProtocolClient } from './client';
 import type { SignalProtocolClientCompositionOptions } from './compose';
 import { createSignalProtocolClientConfig } from './compose';
 import type { SealedSenderAccessMode } from './config';
@@ -164,7 +164,7 @@ export interface HostedRelayBootstrapResult {
   readonly canonicalAccountId: string;
   readonly deviceId: number;
   readonly relayScopeId: Uint8Array;
-  readonly relay: ISignalProtocolRelayServer;
+  readonly relay: SignalProtocolRelayServer;
 }
 
 export type HostedRelayIdentityMigrationAction =
@@ -283,7 +283,7 @@ export interface HostedRelayIdentityMigrationOptions {
   readonly authorization:
     | {
         readonly kind: 'active-device';
-        readonly storage: ISignalProtocolLocalStore;
+        readonly storage: SignalProtocolLocalStore;
       }
     | {
         readonly kind: 'assertion';
@@ -300,7 +300,7 @@ export interface HostedRelayManagedDeviceLinkOptions extends Omit<
     SignalProtocolClientCompositionOptions['adapters'],
     'relay'
   >;
-  readonly activeDeviceStorage: ISignalProtocolLocalStore;
+  readonly activeDeviceStorage: SignalProtocolLocalStore;
   readonly hosted: {
     /** Public environment-scoped Signal Protocol Relay connection URL. */
     readonly relayUrl: string;
@@ -504,12 +504,12 @@ async function decodeRegistrationSnapshot(
 }
 
 async function getOrCreateRegistrationSnapshot(
-  storage: ISignalProtocolLocalStore,
+  storage: SignalProtocolLocalStore,
   publishableKey: string,
   identity: CompositeIdentityV1,
   registrationId: number,
   identityKeyPair: NonNullable<
-    Awaited<ReturnType<ISignalProtocolLocalStore['getIdentityKey']>>
+    Awaited<ReturnType<SignalProtocolLocalStore['getIdentityKey']>>
   >,
 ): Promise<{
   operationId: string;
@@ -555,9 +555,9 @@ async function getOrCreateRegistrationSnapshot(
 }
 
 async function getOrCreateRegistrationPreKeys(
-  storage: ISignalProtocolLocalStore,
+  storage: SignalProtocolLocalStore,
   identity: NonNullable<
-    Awaited<ReturnType<ISignalProtocolLocalStore['getIdentityKey']>>
+    Awaited<ReturnType<SignalProtocolLocalStore['getIdentityKey']>>
   >,
 ): Promise<HostedRelayRegistrationPreKeys> {
   let signedPreKey = await storage.getEcSignedPreKey(undefined, 'aci');
@@ -643,7 +643,7 @@ function decodeStoredDeviceAuthentication(
 }
 
 async function getOrCreateDeviceAuthentication(
-  storage: ISignalProtocolLocalStore,
+  storage: SignalProtocolLocalStore,
   publishableKey: string,
 ): Promise<HostedRelayDeviceAuthentication> {
   const metadataKey = await deviceAuthenticationMetadataKey(publishableKey);
@@ -659,7 +659,7 @@ async function getOrCreateDeviceAuthentication(
 }
 
 async function getExistingDeviceAuthentication(
-  storage: ISignalProtocolLocalStore,
+  storage: SignalProtocolLocalStore,
   publishableKey: string,
 ): Promise<HostedRelayDeviceAuthentication> {
   const stored = await storage.getMetadata(
@@ -817,7 +817,7 @@ async function createClientFromHostedResult(
   sealedSenderAccessMode?: SealedSenderAccessMode,
   remoteObjectStore?: SignalProtocolRemoteObjectStore,
   hostedTransport?: HostedRelayTransportResult['transport'],
-): Promise<SignalProtocolClient> {
+): Promise<DefaultSignalProtocolClient> {
   const { certificateTrust } = connection;
   assertHostedBootstrapResult(result, certificateTrust);
   const { groups, ...rest } = clientOptions;
@@ -865,7 +865,7 @@ async function createClientFromHostedResult(
       ),
     },
   });
-  const client = await SignalProtocolClient.create(
+  const client = await DefaultSignalProtocolClient.create(
     result.canonicalAccountId,
     config,
   );
@@ -978,7 +978,7 @@ export async function advanceHostedRelayIdentityMigration(
  */
 export async function linkHostedRelayDevice(
   options: HostedRelayManagedDeviceLinkOptions,
-): Promise<SignalProtocolClient> {
+): Promise<DefaultSignalProtocolClient> {
   const { adapters, activeDeviceStorage, hosted, ...clientOptions } = options;
   const connection = await resolveHostedRelayConnection(hosted.relayUrl);
   const { protocolEndpoint, publishableKey } = connection;
@@ -1078,7 +1078,7 @@ export async function linkHostedRelayDevice(
  */
 export async function createHostedSignalProtocolClient(
   options: HostedSignalProtocolClientOptions,
-): Promise<SignalProtocolClient> {
+): Promise<DefaultSignalProtocolClient> {
   const { adapters, hosted, ...clientOptions } = options;
   const connection = await resolveHostedRelayConnection(hosted.relayUrl);
   const { publishableKey } = connection;

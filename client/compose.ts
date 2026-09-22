@@ -1,8 +1,8 @@
-import { SignalProtocolClient } from './client';
+import { DefaultSignalProtocolClient } from './client';
 import type { SignalProtocolClientConfig, SignalProtocolConfig } from './config';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
-import type { ISignalProtocolRelayServer } from '../remote/relay/types';
-import type { ISignalProtocolLocalStore, ISignalProtocolManager } from '../types/api';
+import type { SignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolLocalStore, SignalProtocolManager } from '../types/api';
 import type { ServiceId } from '../internal/protocol/zk/groups/uid-struct';
 
 /**
@@ -31,13 +31,13 @@ export interface SignalProtocolClientIdentityConfig {
  */
 export interface SignalProtocolClientAdapterConfig {
   /** Required local protocol store for the current runtime. */
-  storage: ISignalProtocolLocalStore;
+  storage: SignalProtocolLocalStore;
   /** Optional relay for server sync, prekeys, fanout, and subscriptions. */
-  relay?: ISignalProtocolRelayServer;
+  relay?: SignalProtocolRelayServer;
   /** Optional brokered remote object store for encrypted attachments. */
   remoteObjectStore?: SignalProtocolRemoteObjectStore;
   /** Advanced protocol manager override for tests and specialized integrations. */
-  protocolManager?: ISignalProtocolManager;
+  protocolManager?: SignalProtocolManager;
 }
 
 /**
@@ -142,8 +142,8 @@ export function createSignalProtocolClientConfig(
  */
 export async function createSignalProtocolClient(
   options: SignalProtocolClientCompositionOptions
-): Promise<SignalProtocolClient> {
-  return SignalProtocolClient.create(
+): Promise<DefaultSignalProtocolClient> {
+  return DefaultSignalProtocolClient.create(
     options.identity.userId,
     createSignalProtocolClientConfig(options)
   );

@@ -6,7 +6,7 @@
  */
 export {};
 import { ExpoSignalProtocolStore } from './adapter';
-import type { ILogger } from '../../../logger';
+import type { Logger } from '../../../logger';
 
 export { ExpoSignalProtocolStore } from './adapter';
 export { getKeyStorage, resetKeyStorage } from './key-storage';
@@ -19,10 +19,10 @@ export { getPrimaryIdentityKey, getContactIdentity } from './models';
 export { createPreKeyMaintenanceStore } from './maintenance';
 
 // MessageRecord types for SESAME retry request support
-export type { MessageRecord, IMessageRecordStore } from '../../../types';
+export type { MessageRecord, MessageRecordStore } from '../../../types';
 
 export interface ExpoSignalProtocolStoreFactoryOptions {
-  logger?: ILogger;
+  logger?: Logger;
 }
 
 export function expoStore(

@@ -37,7 +37,7 @@ import type React from 'react';
 import { useRef, useEffect, useCallback } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { defaultSignalProtocolLogger } from '../logger';
-import type { ISignalProtocolClient } from '../types';
+import type { SignalProtocolClient } from '../types';
 
 /**
  * Rate limiting interval (1 hour in milliseconds)
@@ -53,7 +53,7 @@ export interface UseKeyRotationOptions {
    * SignalProtocolClient instance to use for rotation.
    * If not provided, will be retrieved from context.
    */
-  signal?: ISignalProtocolClient;
+  signal?: SignalProtocolClient;
 
   /**
    * Custom rate limit interval in milliseconds.

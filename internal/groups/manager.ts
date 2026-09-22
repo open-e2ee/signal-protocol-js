@@ -176,7 +176,7 @@ export interface GroupAuthorization {
  * Stores master keys (the root secret for each group) and decrypted state
  * cache for offline access.
  */
-export interface IGroupStateStore {
+export interface GroupStateStore {
   /** Store a group master key. */
   storeMasterKey(groupId: string, masterKey: Uint8Array): Promise<void>;
   /** Get a group master key. */
@@ -217,7 +217,7 @@ export interface IGroupStateStore {
  * policy through deterministic ciphertext comparison, and enforces version
  * sequencing. It never decrypts group content.
  */
-export interface IGroupServer {
+export interface GroupServer {
   /** Create a new group on the server. */
   createGroup(
     groupId: Uint8Array,
@@ -331,9 +331,9 @@ export interface GroupManagerOptions {
   /** Keeps issuance and verification on the same rotating issuer. */
   authorityKeyId?: string;
   /** Local group state storage. */
-  store: IGroupStateStore;
+  store: GroupStateStore;
   /** Server-side group operations. */
-  server: IGroupServer;
+  server: GroupServer;
   /** Callback for sender key rotation on membership removal. */
   onSenderKeyRotation?: OnSenderKeyRotation;
   /** Callback to invalidate endorsement cache on membership changes. */
@@ -502,8 +502,8 @@ export const MAX_GROUP_SIZE = 1000;
 export const MAX_SUPPORTED_CHANGE_EPOCH = 6;
 
 export class GroupManager {
-  private readonly store: IGroupStateStore;
-  private readonly server: IGroupServer;
+  private readonly store: GroupStateStore;
+  private readonly server: GroupServer;
   private readonly authorityKeyId?: string;
   private readonly onSenderKeyRotation?: OnSenderKeyRotation;
   private readonly onEndorsementsInvalidated?: OnEndorsementsInvalidated;

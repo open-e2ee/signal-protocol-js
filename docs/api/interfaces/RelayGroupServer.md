@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / IRelayGroupServer
+[@open-e2ee/signal-protocol-sdk](../README.md) / RelayGroupServer
 
-# Interface: IRelayGroupServer
+# Interface: RelayGroupServer
 
 Optional relay capability for the Group System.
 
@@ -15,7 +15,7 @@ than discovering and trusting it from this runtime capability.
 
 ### server
 
-> `readonly` **server**: [`IGroupServer`](IGroupServer.md)
+> `readonly` **server**: [`GroupServer`](GroupServer.md)
 
 Encrypted group-state transport.
 

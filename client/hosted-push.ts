@@ -1,4 +1,4 @@
-import type { SignalProtocolClient } from './client';
+import type { DefaultSignalProtocolClient } from './client';
 import type { IncomingEnvelope } from './types';
 
 const PUSH_TOKEN_MAXIMUM_LENGTH = 4_096;
@@ -51,7 +51,7 @@ export interface HostedRelayPushRuntime {
 export interface HostedRelayWakeClient {
   receiveIncomingEnvelopes(
     envelopes: IncomingEnvelope[],
-  ): ReturnType<SignalProtocolClient['receiveIncomingEnvelopes']>;
+  ): ReturnType<DefaultSignalProtocolClient['receiveIncomingEnvelopes']>;
 }
 
 export interface HostedRelayWakeOptions {

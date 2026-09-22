@@ -27,11 +27,11 @@
  * hosts.
  */
 
-import type { IProvisioningService } from '../remote/relay/types';
+import type { ProvisioningService } from '../remote/relay/types';
 import * as crypto from '../internal/crypto';
 import type { IdentityKeyPair, IdentityType } from '../keys';
-import { resolveSignalProtocolLogger, type ILogger } from '../logger';
-import type { ISignalProtocolLocalStore } from '../types';
+import { resolveSignalProtocolLogger, type Logger } from '../logger';
+import type { SignalProtocolLocalStore } from '../types';
 import { asBase64 } from '../types/utils';
 import { DEVICE_ID_KEY, LOCAL_IDENTITY_KEY } from './constants';
 import { encryptDeviceName } from './device-name-crypto';
@@ -67,7 +67,7 @@ export interface ProvisioningGroupStateStore {
  * runtime client.
  */
 export interface ProvisioningIdentityStore extends Pick<
-  ISignalProtocolLocalStore,
+  SignalProtocolLocalStore,
   'getIdentityKey' | 'storeIdentityKey'
 > {
   deleteIdentityKey(identityType: IdentityType): Promise<void>;
@@ -103,7 +103,7 @@ export interface ProvisioningSendOptions {
    */
   identityTypes?: readonly IdentityType[];
   groupStateStore?: ProvisioningGroupStateStore;
-  logger?: ILogger;
+  logger?: Logger;
 }
 
 export interface ProvisioningReceiveOptions {
@@ -112,7 +112,7 @@ export interface ProvisioningReceiveOptions {
   groupStateStore?: ProvisioningGroupStateStore;
   usernameStateStore?: ProvisioningUsernameStateStore;
   deviceMetadata: LocalDeviceMetadata;
-  logger?: ILogger;
+  logger?: Logger;
 }
 
 // ============================================================================
@@ -260,9 +260,9 @@ export const DEFAULT_PROVISIONING_LINK_PREFIX = 'signalprotocol://link-device';
  * @returns QR code URL and ephemeral key pair
  */
 export async function generateProvisioningQR(
-  relay: IProvisioningService,
+  relay: ProvisioningService,
   userId: string,
-  providedLogger?: ILogger,
+  providedLogger?: Logger,
   linkPrefix: string = DEFAULT_PROVISIONING_LINK_PREFIX
 ): Promise<{
   qrCodeUrl: string;
@@ -308,7 +308,7 @@ export async function generateProvisioningQR(
  * @param userId - User ID
  */
 export async function provisionDevice(
-  relay: IProvisioningService,
+  relay: ProvisioningService,
   userProfile: UserProfile,
   sessionId: string,
   ephemeralPrivateKey: string,
@@ -390,7 +390,7 @@ export async function provisionDevice(
  */
 export function parseProvisioningQR(
   qrCodeData: string,
-  providedLogger?: ILogger,
+  providedLogger?: Logger,
   linkPrefix: string = DEFAULT_PROVISIONING_LINK_PREFIX
 ): {
   sessionId: string;
@@ -451,10 +451,10 @@ export function parseProvisioningQR(
  * @returns Ephemeral key pair for decryption
  */
 export async function connectToProvisioningSession(
-  relay: IProvisioningService,
+  relay: ProvisioningService,
   sessionId: string,
   deviceMetadata: LocalDeviceMetadata,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<ProvisioningKeyPair> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   try {
@@ -491,7 +491,7 @@ export async function connectToProvisioningSession(
  * @returns Provisioning message with identity keys and user info
  */
 export async function receiveProvisioningMessage(
-  relay: IProvisioningService,
+  relay: ProvisioningService,
   sessionId: string,
   ephemeralPrivateKey: string,
   primaryEphemeralPublicKey: string,
@@ -688,10 +688,10 @@ function toProvisioningConnectionMetadata(
  * @param sessionId - Session ID to cancel
  */
 export async function cancelProvisioning(
-  relay: IProvisioningService,
+  relay: ProvisioningService,
   sessionId: string,
   userId: string,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<void> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   try {

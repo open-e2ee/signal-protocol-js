@@ -388,7 +388,7 @@ export interface Encaps1Result {
  * The braid state machine depends on a two-phase encapsulation seam that
  * exposes the intermediate secret and ciphertext component.
  */
-export interface IIncrementalKEM {
+export interface IncrementalKEM {
   /**
    * Generate key pair with separated components
    * @param randomness - 32 bytes of randomness
@@ -433,7 +433,7 @@ export interface IIncrementalKEM {
 /**
  * Ratcheted authenticator interface
  */
-export interface IAuthenticator {
+export interface Authenticator {
   /**
    * Initialize authenticator for new session
    * @param state - Authenticator state to initialize
@@ -506,7 +506,7 @@ export interface IAuthenticator {
 /**
  * ML-KEM Braid state machine interface
  */
-export interface IMLKEMBraidStateMachine {
+export interface MLKEMBraidStateMachine {
   /**
    * Initialize Alice (initiator) state
    * @param initial_shared_secret - Shared secret from PQXDH

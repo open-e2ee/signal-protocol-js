@@ -12,7 +12,7 @@ Guide for debugging OpenE2EE Signal Protocol SDK encryption issues.
 Error occurred?
      │
      ├─► "Identity key not found"
-     │        └─► Did you use SignalProtocolClient.create()? (not constructor)
+     │        └─► Did you use DefaultSignalProtocolClient.create()? (not constructor)
      │             └─► See: Initialization Errors
      │
      ├─► "Failed to establish session"
@@ -52,11 +52,11 @@ Error occurred?
 <!-- doc-snippet:illustrative elided-call-arguments -->
 ```typescript
 // ❌ Wrong: forgot to initialize
-const signal = new SignalProtocolClient(); // Don't use constructor directly!
+const signal = new DefaultSignalProtocolClient(); // Don't use constructor directly!
 await signal.encryptMessage(...); // Error!
 
 // ✅ Correct: use factory method
-const signal = await SignalProtocolClient.create(userId, { storage });
+const signal = await DefaultSignalProtocolClient.create(userId, { storage });
 await signal.encryptMessage(...); // Works!
 ```
 
@@ -143,7 +143,7 @@ console.log('Has session with bob:1:', hasSession);
 
 <!-- doc-snippet:skip requires-external-context -->
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   enableDebugLogging: true,
 });
 // Now all crypto operations will log to console

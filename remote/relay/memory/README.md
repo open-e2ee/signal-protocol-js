@@ -1,6 +1,6 @@
 # In-Memory Relay
 
-`InMemorySignalProtocolRelayServer` implements `ISignalProtocolRelayServer` in memory for examples
+`InMemorySignalProtocolRelayServer` implements `SignalProtocolRelayServer` in memory for examples
 and local application development.
 
 The protocol and cryptography are real. The adapter simulates the

@@ -18,13 +18,13 @@ and sender-key rotation.
 import {
   GroupManager,
   createGroupId,
-  type IGroupServer,
-  type IGroupStateStore,
+  type GroupServer,
+  type GroupStateStore,
 } from "@open-e2ee/signal-protocol-sdk/groups";
 
 const groups = new GroupManager({
-  store: appGroupStore as IGroupStateStore,
-  server: appGroupServer as IGroupServer,
+  store: appGroupStore as GroupStateStore,
+  server: appGroupServer as GroupServer,
   issueCredential: () => appGroupCredentials.issue(),
   credentialPublicKey,
   serverSigningPublicKey,

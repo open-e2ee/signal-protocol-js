@@ -19,7 +19,7 @@
 
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import { resolveSignalProtocolLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import {
   generateECDHKeyPair,
   computeSharedSecret,
@@ -73,7 +73,7 @@ function decodeCanonicalBase64(value: unknown, label: string, expectedLength: nu
  * These keys are single-use and should be wiped after transfer.
  */
 export {};
-export async function generateTransferKeyPair(providedLogger?: ILogger): Promise<TransferKeyPair> {
+export async function generateTransferKeyPair(providedLogger?: Logger): Promise<TransferKeyPair> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   logger.debug('Device Transfer: Generating transfer key pair', {
     category: 'Device',
@@ -97,7 +97,7 @@ export async function generateTransferKeyPair(providedLogger?: ILogger): Promise
  * Wipe transfer keys from memory
  * Called after transfer completes or fails
  */
-export function wipeTransferKeys(keyPair: TransferKeyPair, providedLogger?: ILogger): void {
+export function wipeTransferKeys(keyPair: TransferKeyPair, providedLogger?: Logger): void {
   const logger = resolveSignalProtocolLogger(providedLogger);
   try {
     // Check if already wiped
@@ -151,7 +151,7 @@ export function wipeTransferKeys(keyPair: TransferKeyPair, providedLogger?: ILog
  */
 export async function generateTransferQRCode(
   keyPair: TransferKeyPair,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<string> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   const qrData: TransferQRCode = {
@@ -188,7 +188,7 @@ export async function generateTransferQRCode(
  */
 export async function verifyTransferQRCode(
   qrCodeData: string,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<TransferQRCode> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   const qrCode = JSON.parse(qrCodeData) as TransferQRCode;
@@ -249,7 +249,7 @@ export async function verifyTransferQRCode(
 export async function deriveTransferKeys(
   myPrivateKey: string,
   theirPublicKey: string,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<{
   encryptionKey: Uint8Array;
   authenticationKey: Uint8Array;
@@ -368,7 +368,7 @@ export function validateBackup(backup: DeviceBackup): void {
 export async function encryptBackup(
   backup: DeviceBackup,
   encryptionKey: Uint8Array,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<EncryptedBackup> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   // Serialize backup to JSON
@@ -406,7 +406,7 @@ export async function encryptBackup(
 export async function decryptBackup(
   encryptedBackup: EncryptedBackup,
   encryptionKey: Uint8Array,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<DeviceBackup> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   // Decrypt with AES-256-GCM (automatically verifies auth tag)
@@ -452,7 +452,7 @@ export async function decryptBackup(
  * 6. Encrypt backup
  * 7. Send to new device
  */
-export async function prepareOldDeviceTransfer(providedLogger?: ILogger): Promise<{
+export async function prepareOldDeviceTransfer(providedLogger?: Logger): Promise<{
   keyPair: TransferKeyPair;
 }> {
   const logger = resolveSignalProtocolLogger(providedLogger);
@@ -477,7 +477,7 @@ export async function prepareOldDeviceTransfer(providedLogger?: ILogger): Promis
  * 5. Decrypt backup
  * 6. Restore to SecureStore
  */
-export async function prepareNewDeviceTransfer(providedLogger?: ILogger): Promise<{
+export async function prepareNewDeviceTransfer(providedLogger?: Logger): Promise<{
   keyPair: TransferKeyPair;
   qrCode: string;
 }> {
@@ -570,7 +570,7 @@ export interface RestoreDeviceBackupResult {
  */
 export async function createDeviceBackup(
   storage: BackupStorage,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<DeviceBackup> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   logger.info('Device Transfer: Creating backup from storage', {
@@ -620,7 +620,7 @@ export async function createDeviceBackup(
 export async function restoreDeviceBackup(
   backup: DeviceBackup,
   storage: BackupStorage,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<RestoreDeviceBackupResult> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   logger.info('Device Transfer: Starting backup restoration', {
@@ -659,7 +659,7 @@ export async function restoreDeviceBackup(
  */
 export async function prepareOldDeviceTransferWithBackup(
   storage: BackupStorage,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<{
   keyPair: TransferKeyPair;
   getBackup: () => Promise<DeviceBackup>;

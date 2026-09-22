@@ -16,7 +16,7 @@
 
 ### logger?
 
-> `optional` **logger?**: [`ILogger`](ILogger.md)
+> `optional` **logger?**: [`Logger`](Logger.md)
 
 ***
 

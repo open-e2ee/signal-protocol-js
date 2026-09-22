@@ -14,7 +14,7 @@
  * @see https://signal.org/docs/specifications/doubleratchet/#decrypting-messages
  */
 
-import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import type { PreKeyMessage, RatchetMessage, SessionState } from '../../types';
 import { EncryptionError, EncryptionErrorCode } from '../../types';
 import * as CryptoUtils from '../crypto';
@@ -131,7 +131,7 @@ export async function trySkippedMessageKeys(
   message: RatchetMessage | PreKeyMessage,
   protobufMacContext?: ProtobufMacContext,
   pqRatchetBytes?: Uint8Array,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<string | null> {
   // Use tryGetSkippedKey which handles both v3 receiverChains and legacy MKSKIPPED
   // Cast session to DoubleRatchetState since tryGetSkippedKey expects that interface
@@ -259,7 +259,7 @@ export async function decryptWithKey(
   session: SessionState,
   protobufMacContext?: ProtobufMacContext,
   optionalPqSalt?: Uint8Array,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<string> {
   const { encryptionKey, authKey, iv } = await CryptoUtils.expandMessageKey(
     messageKey,

@@ -36,19 +36,19 @@
  * @see https://signal.org/docs/specifications/doubleratchet/ - Double Ratchet
  * @see https://signal.org/docs/specifications/pqxdh/ - Post-Quantum X3DH
  *
- * @example Basic usage with SignalProtocolClient (recommended)
+ * @example Basic usage with DefaultSignalProtocolClient (recommended)
  * ```typescript
- * import { SignalProtocolClient } from '../../index';
+ * import { DefaultSignalProtocolClient } from '../../index';
  *
- * const client = await SignalProtocolClient.create('user-123', { storage });
+ * const client = await DefaultSignalProtocolClient.create('user-123', { storage });
  * const encrypted = await client.encryptMessage(sessionId, 'Hello!');
  * ```
  *
  * @example Direct protocol manager usage (advanced)
  * ```typescript
- * import { SignalProtocolManager } from './';
+ * import { DefaultSignalProtocolManager } from './';
  *
- * const manager = new SignalProtocolManager(storage);
+ * const manager = new DefaultSignalProtocolManager(storage);
  * await manager.initialize();
  * await manager.generatePreKeyBundle(userId);
  * await manager.startSession(sessionId, remoteAddress, bundle, localUserId);
@@ -57,7 +57,7 @@
  */
 
 import AsyncLock from 'async-lock';
-import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import type {
   Ciphertext,
   IdentityKeyPair,
@@ -69,8 +69,8 @@ import type {
   EcSignedPreKey,
 } from '../../keys';
 import type {
-  ISignalProtocolLocalStore,
-  ISignalProtocolManager,
+  SignalProtocolLocalStore,
+  SignalProtocolManager,
   PreKeyMessage,
   SessionState,
   SessionRecord,
@@ -115,26 +115,26 @@ import { SessionBuilder, SessionCipher } from '../session';
  * - Key rotation (weekly for signed prekeys)
  * - Message key cleanup (per spec section 8.4)
  *
- * This class implements {@link ISignalProtocolManager} and is typically used
- * internally by {@link SignalProtocolClient}. Direct usage is for advanced scenarios.
+ * This class implements {@link SignalProtocolManager} and is typically used
+ * internally by {@link DefaultSignalProtocolClient}. Direct usage is for advanced scenarios.
  *
- * @implements {ISignalProtocolManager}
+ * @implements {SignalProtocolManager}
  *
  * @example Dependency injection for custom composition
  * ```typescript
  * const store = new InMemorySignalProtocolStore();
- * const manager = new SignalProtocolManager(store);
+ * const manager = new DefaultSignalProtocolManager(store);
  * await manager.initialize();
  * ```
  *
- * @see SignalProtocolClient - High-level API for most use cases
- * @see ISignalProtocolManager - Interface definition
+ * @see DefaultSignalProtocolClient - High-level API for most use cases
+ * @see SignalProtocolManager - Interface definition
  */
 export {};
-export class SignalProtocolManager implements ISignalProtocolManager {
-  private keyStorage: ISignalProtocolLocalStore;
+export class DefaultSignalProtocolManager implements SignalProtocolManager {
+  private keyStorage: SignalProtocolLocalStore;
   private initialized = false;
-  private readonly logger: Required<ILogger>;
+  private readonly logger: Required<Logger>;
 
   /** Protocol strategy configuration for PQXDH and SPQR. */
   private readonly protocolStrategy?: ProtocolStrategyConfig;
@@ -170,15 +170,15 @@ export class SignalProtocolManager implements ISignalProtocolManager {
   private sessionCipher: SessionCipher | null = null;
 
   /**
-   * Create a new SignalProtocolManager instance
+   * Create a new DefaultSignalProtocolManager instance
    *
    * @param storage - Local protocol storage implementation.
    * @param protocolStrategy - Optional protocol strategy for PQXDH/SPQR behavior.
    */
   constructor(
-    storage: ISignalProtocolLocalStore,
+    storage: SignalProtocolLocalStore,
     protocolStrategy?: ProtocolStrategyConfig,
-    logger: Required<ILogger> = defaultSignalProtocolLogger
+    logger: Required<Logger> = defaultSignalProtocolLogger
   ) {
     this.logger = logger;
     this.keyStorage = storage;
@@ -396,7 +396,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
         level: 'info',
         data: { userId, identityType },
       });
-      // NOTE: Prekey upload is handled at the SignalProtocolClient layer via ConvexBackendAdapter
+      // NOTE: Prekey upload is handled at the DefaultSignalProtocolClient layer via ConvexBackendAdapter
       // This low-level method only generates keys. The upload happens in the higher layer
     } catch (error) {
       throw new EncryptionError(
@@ -1211,21 +1211,21 @@ export class SignalProtocolManager implements ISignalProtocolManager {
    *
    * Per Signal Protocol architecture, the protocol layer handles local key
    * generation and storage. Server synchronization is handled at the
-   * application layer via SignalProtocolClient.rotateEcSignedPreKey().
+   * application layer via DefaultSignalProtocolClient.rotateEcSignedPreKey().
    *
    * This method (local only):
    * 1. Generates new EC signed prekey
    * 2. Signs with identity key
    * 3. Stores locally (replaces previous)
    *
-   * Full lifecycle (handled by SignalProtocolClient):
+   * Full lifecycle (handled by DefaultSignalProtocolClient):
    * 4. Upload new prekey to server
    * 5. Mark old prekey as deprecated (grace period for in-flight messages)
    * 6. Delete deprecated prekeys after ~1 week
    *
    * @param userId - User ID for logging purposes
    *
-   * @see SignalProtocolClient.rotateEcSignedPreKey() for full rotation with server sync
+   * @see DefaultSignalProtocolClient.rotateEcSignedPreKey() for full rotation with server sync
    * @see https://signal.org/docs/specifications/x3dh/#publishing-keys
    */
   async rotateEcSignedPreKey(userId: string, identityType: IdentityType = 'aci'): Promise<void> {
@@ -1239,7 +1239,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
       // Generate new EC signed prekey
       const newSignedPreKey = await this.generateEcSignedPreKey(identityType);
 
-      // Store new EC signed prekey locally (server upload handled by SignalProtocolClient)
+      // Store new EC signed prekey locally (server upload handled by DefaultSignalProtocolClient)
       await this.keyStorage.storeEcSignedPreKey(newSignedPreKey, identityType);
 
       this.logger.breadcrumb('EC signed prekey rotated (local)', {
@@ -1261,14 +1261,14 @@ export class SignalProtocolManager implements ISignalProtocolManager {
    *
    * Per Signal Protocol architecture, the protocol layer handles local key
    * generation and storage. Server synchronization is handled at the
-   * application layer via SignalProtocolClient.rotateKyberPreKey().
+   * application layer via DefaultSignalProtocolClient.rotateKyberPreKey().
    *
    * This method (local only):
    * 1. Generates new Kyber-1024 keypair
    * 2. Signs with identity key
    * 3. Stores locally (replaces previous)
    *
-   * Full lifecycle (handled by SignalProtocolClient):
+   * Full lifecycle (handled by DefaultSignalProtocolClient):
    * 4. Upload new Kyber prekey to server
    * 5. Mark old Kyber prekey as deprecated (grace period for in-flight messages)
    * 6. Delete deprecated Kyber prekeys after ~1 week
@@ -1277,7 +1277,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
    *
    * @param userId - User ID for logging purposes
    *
-   * @see SignalProtocolClient.rotateKyberPreKey() for full rotation with server sync
+   * @see DefaultSignalProtocolClient.rotateKyberPreKey() for full rotation with server sync
    * @see https://signal.org/docs/specifications/pqxdh/#key-rotation
    */
   async rotateKyberPreKey(userId: string, identityType: IdentityType = 'aci'): Promise<void> {
@@ -1295,7 +1295,7 @@ export class SignalProtocolManager implements ISignalProtocolManager {
 
       const newKyberPreKey = await generateKyberLastResortPreKey(identityKey, nextKeyId);
 
-      // Store new Kyber prekey locally (server upload handled by SignalProtocolClient)
+      // Store new Kyber prekey locally (server upload handled by DefaultSignalProtocolClient)
       await this.keyStorage.storeKyberPreKey(newKyberPreKey, identityType);
 
       this.logger.breadcrumb('Kyber prekey rotated (local)', {
@@ -1421,5 +1421,5 @@ export class SignalProtocolManager implements ISignalProtocolManager {
     return generateEcOneTimePreKeys(count, 0);
   }
 }
-// Singleton pattern removed - use direct instantiation (new SignalProtocolManager())
-// or use SignalProtocolClient as the public API wrapper
+// Singleton pattern removed - use direct instantiation (new DefaultSignalProtocolManager())
+// or use DefaultSignalProtocolClient as the public API wrapper

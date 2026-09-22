@@ -23,7 +23,7 @@ import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
 import { openDB, IDBPDatabase, DBSchema } from 'idb';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 import type {
-  ISignalProtocolLocalStore,
+  SignalProtocolLocalStore,
   MessageRecord,
   SkippedSenderMessageKey,
   SessionTrustCommit,
@@ -310,13 +310,13 @@ function mapQuotaFailuresAtBoundary(store: IndexedDbSignalProtocolStore): void {
 /**
  * Web storage adapter using IndexedDB and Web Crypto API
  *
- * Implements ISignalProtocolLocalStore for web browsers with:
+ * Implements SignalProtocolLocalStore for web browsers with:
  * - IndexedDB for persistent storage
  * - Web Crypto API for AES-256-GCM encryption
  * - All sensitive data encrypted at rest
  * - TOFU (Trust On First Use) for contact verification
  */
-export class IndexedDbSignalProtocolStore implements ISignalProtocolLocalStore {
+export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
   private db: IDBPDatabase<SignalProtocolDBSchema> | null = null;
   private databaseKey: Uint8Array | null = null;
   private readonly dbName = 'signal-protocol-storage';

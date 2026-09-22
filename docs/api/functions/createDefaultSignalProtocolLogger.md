@@ -6,7 +6,7 @@
 
 # Function: createDefaultSignalProtocolLogger()
 
-> **createDefaultSignalProtocolLogger**(): [`ILogger`](../interfaces/ILogger.md)
+> **createDefaultSignalProtocolLogger**(): [`Logger`](../interfaces/Logger.md)
 
 Logging utilities for app composition
 
@@ -15,11 +15,11 @@ your app logger or custom diagnostics pipeline.
 
 ## Returns
 
-[`ILogger`](../interfaces/ILogger.md)
+[`Logger`](../interfaces/Logger.md)
 
 ## Example
 
-**Using custom logger with SignalProtocolClient**
+**Using custom logger with DefaultSignalProtocolClient**
 
 ```typescript
 import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';

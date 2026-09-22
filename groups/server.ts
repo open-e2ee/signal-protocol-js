@@ -14,7 +14,7 @@ export type {
   GroupChangeLogEntry,
   GroupChangeLogPage,
   GroupSnapshot,
-  IGroupServer,
+  GroupServer,
 } from '../internal/groups/manager';
 export { isGroupErrorDetail } from '../internal/groups/error-details';
 export type { GroupErrorDetail } from '../internal/groups/error-details';

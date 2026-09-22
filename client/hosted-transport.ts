@@ -9,8 +9,8 @@ import type {
   GroupChangeEntry,
   GroupChangePage,
   GroupMemberDevice,
-  ISignalProtocolRelayServer,
-  IRelayGroupServer,
+  SignalProtocolRelayServer,
+  RelayGroupServer,
   KemLastResortPreKeyUpload,
   PreKeyBundle,
   PreKeyInventory,
@@ -37,7 +37,7 @@ import {
   stringToBytes,
   urlSafeToBase64,
 } from "../internal/crypto";
-import type { Base64, ISignalProtocolLocalStore } from "../types";
+import type { Base64, SignalProtocolLocalStore } from "../types";
 import type { PublicKey, Signature } from "../keys";
 import type { IncomingEnvelope } from "./types";
 import type { HostedRelayConnection } from "./hosted-connection";
@@ -142,13 +142,13 @@ export interface HostedRelayTransportBootstrapRequest {
   readonly registrationId: number;
   readonly registrationPreKeys: HostedRelayRegistrationPreKeys;
   readonly signalIdentity: CompositeIdentityV1;
-  readonly storage: ISignalProtocolLocalStore;
+  readonly storage: SignalProtocolLocalStore;
 }
 
 export interface HostedRelayTransportResult {
   readonly canonicalAccountId: string;
   readonly deviceId: number;
-  readonly relay: ISignalProtocolRelayServer;
+  readonly relay: SignalProtocolRelayServer;
   readonly relayScopeId: Uint8Array;
   readonly remoteObjectStore: SignalProtocolRemoteObjectStore;
   readonly transport: HostedRelayHttpTransport;
@@ -536,10 +536,10 @@ function decodeDeliveryWire(value: Uint8Array): HostedDeliveryWireEnvelope {
 }
 
 export class HostedRelayHttpTransport
-  implements ISignalProtocolRelayServer, HostedRelayPushRuntime
+  implements SignalProtocolRelayServer, HostedRelayPushRuntime
 {
   private readonly groups: HostedGroupServer;
-  public readonly groupServer: IRelayGroupServer;
+  public readonly groupServer: RelayGroupServer;
   private readonly anonymousDelivery: HostedAnonymousDelivery;
   private refreshPromise?: Promise<void>;
   private readonly destinationGenerations = new Map<string, number>();
@@ -548,7 +548,7 @@ export class HostedRelayHttpTransport
 
   public constructor(
     private readonly connection: HostedRelayConnection,
-    private readonly storage: ISignalProtocolLocalStore,
+    private readonly storage: SignalProtocolLocalStore,
     private readonly deviceAuthentication: HostedRelayDeviceAuthentication,
     private session: StoredHostedRelaySession,
   ) {
@@ -1886,7 +1886,7 @@ export async function bootstrapHostedRelayTransport(
 export async function resumeHostedRelayTransport(options: {
   readonly connection: HostedRelayConnection;
   readonly deviceAuthentication: HostedRelayDeviceAuthentication;
-  readonly storage: ISignalProtocolLocalStore;
+  readonly storage: SignalProtocolLocalStore;
 }): Promise<HostedRelayTransportResult | undefined> {
   const stored = await options.storage.getMetadata(
     await sessionMetadataKey(options.connection),

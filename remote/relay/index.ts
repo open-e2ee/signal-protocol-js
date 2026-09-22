@@ -1,19 +1,19 @@
 /**
  * Provider-neutral relay contracts and adapters.
  *
- * `ISignalProtocolRelayServer` separates protocol operations from backend transport,
+ * `SignalProtocolRelayServer` separates protocol operations from backend transport,
  * persistence, authentication, and authorization. Applications can supply
  * their own adapter or use a provider-specific subpath.
  *
  * ## Usage
  *
  * ```typescript
- * import type { ISignalProtocolRelayServer } from '@open-e2ee/signal-protocol-sdk/remote/relay';
+ * import type { SignalProtocolRelayServer } from '@open-e2ee/signal-protocol-sdk/remote/relay';
  * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
  *
  * // Development relay. Production connects to the OpenE2EE Signal Protocol Relay
  * // through `createHostedSignalProtocolClient()` from the package root.
- * const relay: ISignalProtocolRelayServer = inMemoryRelay();
+ * const relay: SignalProtocolRelayServer = inMemoryRelay();
  * ```
  */
 
@@ -24,7 +24,7 @@
  */
 export {};
 export type {
-  ISignalProtocolRelayServer,
+  SignalProtocolRelayServer,
   DeliveryClass,
   Envelope,
   DeviceInfo,
@@ -37,7 +37,7 @@ export type {
   Unsubscribe,
   AccountIdentityProvisioning,
   AccountIdentityRotation,
-  IRelayGroupServer,
+  RelayGroupServer,
 } from './types';
 
 // The in-memory adapter is exported here for convenient local composition.

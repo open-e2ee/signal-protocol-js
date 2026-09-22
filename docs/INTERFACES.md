@@ -12,31 +12,31 @@ policy.
 
 ```text
 SignalProtocolClient
-├── ISignalProtocolLocalStore        device-local protocol state
-├── ISignalProtocolRelayServer       authenticated device, prekey, and envelope service
+├── SignalProtocolLocalStore        device-local protocol state
+├── SignalProtocolRelayServer       authenticated device, prekey, and envelope service
 ├── SignalProtocolRemoteObjectStore  brokered encrypted-object operations (optional)
 ├── media callbacks          application-owned attachment bytes and caches
 └── lifecycle hooks          application reactions and observability
 
 Local-store bootstrap
-└── ISignalProtocolLocalSecretVault  small platform-managed bootstrap secrets
+└── SignalProtocolLocalSecretVault  small platform-managed bootstrap secrets
 ```
 
 The interfaces are public contracts, but they do not make an implementation
 secure by themselves. Each adapter must preserve the ownership and atomicity
 requirements described below.
 
-## `ISignalProtocolLocalStore`
+## `SignalProtocolLocalStore`
 
-`ISignalProtocolLocalStore` persists the current device's identities, prekeys, sessions,
+`SignalProtocolLocalStore` persists the current device's identities, prekeys, sessions,
 sender keys, contact trust, retry records, and operational metadata.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import type { ISignalProtocolLocalStore } from "@open-e2ee/signal-protocol-sdk/local/store";
+import type { SignalProtocolLocalStore } from "@open-e2ee/signal-protocol-sdk/local/store";
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 
-const storage: ISignalProtocolLocalStore = appProtocolStore;
+const storage: SignalProtocolLocalStore = appProtocolStore;
 
 const client = await createSignalProtocolClient({
   identity: { userId },
@@ -57,17 +57,17 @@ A production implementation must:
 The [local-store guide](../local/store/README.md) lists the available adapters
 and their status.
 
-## `ISignalProtocolLocalSecretVault`
+## `SignalProtocolLocalSecretVault`
 
-`ISignalProtocolLocalSecretVault` is a deliberately small interface for bootstrap
+`SignalProtocolLocalSecretVault` is a deliberately small interface for bootstrap
 secrets that must live outside the main local store, such as a database
 encryption key.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import type { ISignalProtocolLocalSecretVault } from "@open-e2ee/signal-protocol-sdk";
+import type { SignalProtocolLocalSecretVault } from "@open-e2ee/signal-protocol-sdk";
 
-const vault: ISignalProtocolLocalSecretVault = {
+const vault: SignalProtocolLocalSecretVault = {
   getSecret: (name) => platformSecrets.getBytes(name),
   setSecret: (name, value) => platformSecrets.setBytes(name, value),
   deleteSecret: (name) => platformSecrets.delete(name),
@@ -79,21 +79,21 @@ device migration, uninstall persistence, and deletion behavior depend on the
 selected platform service and host configuration. See the
 [secret-vault guide](../local/vault/README.md).
 
-## `ISignalProtocolRelayServer`
+## `SignalProtocolRelayServer`
 
-`ISignalProtocolRelayServer` represents the authenticated application backend used for
+`SignalProtocolRelayServer` represents the authenticated application backend used for
 device registration, account identity state, public prekeys, encrypted-envelope
 delivery, provisioning, key rotation, and encrypted group coordination.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import type { ISignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
+import type { SignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
 import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
 
 // Development uses the in-memory relay. Production connects to the OpenE2EE
 // Signal Protocol Relay through `createHostedSignalProtocolClient()`, or to an
 // application backend that implements this interface.
-const relay: ISignalProtocolRelayServer = inMemoryRelay();
+const relay: SignalProtocolRelayServer = inMemoryRelay();
 ```
 
 The application backend must:

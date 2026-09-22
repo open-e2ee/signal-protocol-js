@@ -43,7 +43,7 @@ import { EncryptionError, EncryptionErrorCode } from '../../../types';
 import { ProtocolAddress } from '../../../types/address';
 import { getDatabaseKeyManager } from './database-key';
 import { parseReceivedContent } from '../received-content';
-import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
+import { resolveSignalProtocolLogger, type Logger } from '../../../logger';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 
 import {
@@ -152,13 +152,13 @@ interface SessionRow {
  * - Unified storage with content tables
  */
 export class KeyStorage {
-  private logger: Required<ILogger>;
+  private logger: Required<Logger>;
 
-  constructor(providedLogger?: ILogger) {
+  constructor(providedLogger?: Logger) {
     this.logger = resolveSignalProtocolLogger(providedLogger);
   }
 
-  setLogger(providedLogger?: ILogger): void {
+  setLogger(providedLogger?: Logger): void {
     this.logger = resolveSignalProtocolLogger(providedLogger);
   }
 
@@ -1915,7 +1915,7 @@ export class KeyStorage {
 
 let keyStorageInstance: KeyStorage | null = null;
 
-export function getKeyStorage(providedLogger?: ILogger): KeyStorage {
+export function getKeyStorage(providedLogger?: Logger): KeyStorage {
   if (!keyStorageInstance) {
     keyStorageInstance = new KeyStorage(providedLogger);
   } else if (providedLogger) {

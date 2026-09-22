@@ -2,7 +2,7 @@
  * Signal Protocol Manager Module
  *
  * @layer 2 - Orchestration
- * @implements ISignalProtocolManager
+ * @implements SignalProtocolManager
  *
  * High-level orchestrator for Signal Protocol operations:
  * - Identity key management and initialization
@@ -12,4 +12,4 @@
  * - Triple Ratchet (SPQR) integration for post-quantum security
  */
 export {};
-export { SignalProtocolManager } from './manager';
+export { DefaultSignalProtocolManager } from './manager';

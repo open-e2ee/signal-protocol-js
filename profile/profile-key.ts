@@ -24,7 +24,7 @@ import { getProfileKeyStorage } from './storage';
 import { bytesToBase64, base64ToBytes } from '../internal/crypto';
 import { asBase64 } from '../types/utils';
 import type { UpdateEncryptedProfileApi } from './update-service';
-import { resolveSignalProtocolLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import { deriveAccessKey } from '../internal/protocol/sealed-sender/delivery-token';
 import type { ApplicationProfileData } from './cipher';
 
@@ -187,7 +187,7 @@ export async function rotateOwnProfileKey(
   api: ProfileKeyApi,
   encryptedProfileApi: UpdateEncryptedProfileApi,
   localStore: OwnEncryptedProfileStateStore,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<string> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   logger.info('Starting profile key rotation', { category: 'Profile' });
@@ -274,7 +274,7 @@ async function reencryptAndUploadAvatar(
   convex: ConvexReactClient,
   api: ProfileKeyApi,
   avatarKey: string | null,
-  logger: Required<ILogger>
+  logger: Required<Logger>
 ): Promise<void> {
   if (!avatarKey) {
     logger.debug('No avatar to re-encrypt during rotation', { category: 'Profile' });

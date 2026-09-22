@@ -1,7 +1,7 @@
 /**
  * Group messaging operations for SignalProtocolClient (Sender Keys)
  *
- * Extracted from SignalProtocolClient class to reduce file size.
+ * Extracted from DefaultSignalProtocolClient class to reduce file size.
  * Implements Signal Protocol's Sender Keys for efficient group encryption.
  */
 

@@ -19,7 +19,7 @@ import type { IdentityKeyPair } from '../../keys';
  * Matches expo-secure-store API for production use.
  */
 export {};
-export interface ISecureStore {
+export interface DeviceLifecycleSecureStore {
   getItemAsync(key: string): Promise<string | null>;
   setItemAsync(key: string, value: string): Promise<void>;
   deleteItemAsync(key: string): Promise<void>;
@@ -29,7 +29,7 @@ export interface ISecureStore {
  * Convex client operations required by DeviceLifecycleManager.
  * Abstracts Convex React client for testability.
  */
-export interface IConvexClient {
+export interface DeviceLifecycleConvexClient {
   query<T>(func: unknown, args: unknown): Promise<T>;
   mutation<T>(func: unknown, args: unknown): Promise<T>;
 }
@@ -58,7 +58,7 @@ export interface DeviceLifecycleApi {
  * KeyStorage operations for crypto state cleanup.
  * Called when device becomes stale and needs re-registration.
  */
-export interface IKeyStorageOps {
+export interface KeyStorageOps {
   /** Clear all sessions (per SESAME spec: old sessions invalid after re-registration) */
   clearAllSessions(): Promise<void>;
   /** Clear all message records (orphaned after session clear) */
@@ -77,7 +77,7 @@ export interface IKeyStorageOps {
  * Logger interface for DeviceLifecycleManager.
  * Matches lib/logger API.
  */
-export interface ILogger {
+export interface DeviceLifecycleLogger {
   debug(message: string, meta?: { category?: string; data?: Record<string, unknown> }): void;
   info(message: string, meta?: { category?: string; data?: Record<string, unknown> }): void;
   warn(
@@ -100,15 +100,15 @@ export interface ILogger {
  */
 export interface DeviceLifecycleDeps {
   /** SecureStore for device ID persistence */
-  secureStore: ISecureStore;
+  secureStore: DeviceLifecycleSecureStore;
   /** Convex client for backend operations */
-  convex: IConvexClient;
+  convex: DeviceLifecycleConvexClient;
   /** App-owned Convex function references */
   api: DeviceLifecycleApi;
   /** KeyStorage for crypto cleanup */
-  keyStorage: IKeyStorageOps;
+  keyStorage: KeyStorageOps;
   /** Logger instance */
-  logger: ILogger;
+  logger: DeviceLifecycleLogger;
   /** Device name generator (defaults to expo-device based) */
   generateDeviceName?: () => string;
   /** Device fingerprint getter (defaults to RNDeviceInfo.getUniqueId()) */

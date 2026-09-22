@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / IProtocolStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / ProtocolStore
 
-# Interface: IProtocolStore
+# Interface: ProtocolStore
 
 Aggregate protocol store interface.
 
@@ -12,11 +12,11 @@ Combines the five focused local-store responsibilities into one interface.
 
 ## Extends
 
-- [`IIdentityKeyStore`](IIdentityKeyStore.md).[`IEcOneTimePreKeyStore`](IEcOneTimePreKeyStore.md).[`IEcSignedPreKeyStore`](IEcSignedPreKeyStore.md).[`IKyberLastResortPreKeyStore`](IKyberLastResortPreKeyStore.md).[`IKemPreKeyStore`](IKemPreKeyStore.md).[`ISessionStore`](ISessionStore.md)
+- [`IdentityKeyStore`](IdentityKeyStore.md).[`EcOneTimePreKeyStore`](EcOneTimePreKeyStore.md).[`EcSignedPreKeyStore`](EcSignedPreKeyStore.md).[`KyberLastResortPreKeyStore`](KyberLastResortPreKeyStore.md).[`KemPreKeyStore`](KemPreKeyStore.md).[`SessionStore`](SessionStore.md)
 
 ## Extended by
 
-- [`ISignalProtocolLocalStore`](ISignalProtocolLocalStore.md)
+- [`SignalProtocolLocalStore`](SignalProtocolLocalStore.md)
 
 ## Methods
 
@@ -51,7 +51,7 @@ that user. The previous tuple becomes rollback history.
 
 #### Inherited from
 
-[`IIdentityKeyStore`](IIdentityKeyStore.md).[`acceptContactIdentityRotation`](IIdentityKeyStore.md#acceptcontactidentityrotation)
+[`IdentityKeyStore`](IdentityKeyStore.md).[`acceptContactIdentityRotation`](IdentityKeyStore.md#acceptcontactidentityrotation)
 
 ***
 
@@ -116,7 +116,7 @@ Optional new session to set as current
 
 #### Inherited from
 
-[`ISessionStore`](ISessionStore.md).[`archiveCurrentSession`](ISessionStore.md#archivecurrentsession)
+[`SessionStore`](SessionStore.md).[`archiveCurrentSession`](SessionStore.md#archivecurrentsession)
 
 ***
 
@@ -158,7 +158,7 @@ Protocol address
 
 #### Inherited from
 
-[`ISessionStore`](ISessionStore.md).[`deleteSessionRecord`](ISessionStore.md#deletesessionrecord)
+[`SessionStore`](SessionStore.md).[`deleteSessionRecord`](SessionStore.md#deletesessionrecord)
 
 ***
 
@@ -184,7 +184,7 @@ Used for cleanup and debugging.
 
 #### Inherited from
 
-[`IEcSignedPreKeyStore`](IEcSignedPreKeyStore.md).[`getAllEcSignedPreKeys`](IEcSignedPreKeyStore.md#getallecsignedprekeys)
+[`EcSignedPreKeyStore`](EcSignedPreKeyStore.md).[`getAllEcSignedPreKeys`](EcSignedPreKeyStore.md#getallecsignedprekeys)
 
 ***
 
@@ -216,7 +216,7 @@ Contact's identity key or null
 
 #### Inherited from
 
-[`IIdentityKeyStore`](IIdentityKeyStore.md).[`getContactIdentity`](IIdentityKeyStore.md#getcontactidentity)
+[`IdentityKeyStore`](IdentityKeyStore.md).[`getContactIdentity`](IdentityKeyStore.md#getcontactidentity)
 
 ***
 
@@ -240,7 +240,7 @@ Retrieve all EC one-time prekeys.
 
 #### Inherited from
 
-[`IEcOneTimePreKeyStore`](IEcOneTimePreKeyStore.md).[`getEcOneTimePreKeys`](IEcOneTimePreKeyStore.md#geteconetimeprekeys)
+[`EcOneTimePreKeyStore`](EcOneTimePreKeyStore.md).[`getEcOneTimePreKeys`](EcOneTimePreKeyStore.md#geteconetimeprekeys)
 
 ***
 
@@ -272,7 +272,7 @@ The EC signed prekey, or null if not found
 
 #### Inherited from
 
-[`IEcSignedPreKeyStore`](IEcSignedPreKeyStore.md).[`getEcSignedPreKey`](IEcSignedPreKeyStore.md#getecsignedprekey)
+[`EcSignedPreKeyStore`](EcSignedPreKeyStore.md).[`getEcSignedPreKey`](EcSignedPreKeyStore.md#getecsignedprekey)
 
 ***
 
@@ -296,7 +296,7 @@ Retrieve our identity key pair.
 
 #### Inherited from
 
-[`IIdentityKeyStore`](IIdentityKeyStore.md).[`getIdentityKey`](IIdentityKeyStore.md#getidentitykey)
+[`IdentityKeyStore`](IdentityKeyStore.md).[`getIdentityKey`](IdentityKeyStore.md#getidentitykey)
 
 ***
 
@@ -325,7 +325,7 @@ Used during session establishment to find the key for decapsulation.
 
 #### Inherited from
 
-[`IKemPreKeyStore`](IKemPreKeyStore.md).[`getKemOneTimePreKey`](IKemPreKeyStore.md#getkemonetimeprekey)
+[`KemPreKeyStore`](KemPreKeyStore.md).[`getKemOneTimePreKey`](KemPreKeyStore.md#getkemonetimeprekey)
 
 ***
 
@@ -350,7 +350,7 @@ Used to determine when to replenish the prekey pool.
 
 #### Inherited from
 
-[`IKemPreKeyStore`](IKemPreKeyStore.md).[`getKemOneTimePreKeyCount`](IKemPreKeyStore.md#getkemonetimeprekeycount)
+[`KemPreKeyStore`](KemPreKeyStore.md).[`getKemOneTimePreKeyCount`](KemPreKeyStore.md#getkemonetimeprekeycount)
 
 ***
 
@@ -374,7 +374,7 @@ Retrieve all one-time KEM prekeys.
 
 #### Inherited from
 
-[`IKemPreKeyStore`](IKemPreKeyStore.md).[`getKemOneTimePreKeys`](IKemPreKeyStore.md#getkemonetimeprekeys)
+[`KemPreKeyStore`](KemPreKeyStore.md).[`getKemOneTimePreKeys`](KemPreKeyStore.md#getkemonetimeprekeys)
 
 ***
 
@@ -398,7 +398,7 @@ Retrieve Kyber prekey.
 
 #### Inherited from
 
-[`IKyberLastResortPreKeyStore`](IKyberLastResortPreKeyStore.md).[`getKyberPreKey`](IKyberLastResortPreKeyStore.md#getkyberprekey)
+[`KyberLastResortPreKeyStore`](KyberLastResortPreKeyStore.md).[`getKyberPreKey`](KyberLastResortPreKeyStore.md#getkyberprekey)
 
 ***
 
@@ -424,7 +424,7 @@ Retrieve the exact retained Kyber prekey instance named by a message.
 
 #### Inherited from
 
-[`IKyberLastResortPreKeyStore`](IKyberLastResortPreKeyStore.md).[`getKyberPreKeyById`](IKyberLastResortPreKeyStore.md#getkyberprekeybyid)
+[`KyberLastResortPreKeyStore`](KyberLastResortPreKeyStore.md).[`getKyberPreKeyById`](KyberLastResortPreKeyStore.md#getkyberprekeybyid)
 
 ***
 
@@ -451,7 +451,7 @@ Detects session resets when the user reinstalls the app.
 
 #### Inherited from
 
-[`IIdentityKeyStore`](IIdentityKeyStore.md).[`getLocalRegistrationId`](IIdentityKeyStore.md#getlocalregistrationid)
+[`IdentityKeyStore`](IdentityKeyStore.md).[`getLocalRegistrationId`](IdentityKeyStore.md#getlocalregistrationid)
 
 ***
 
@@ -469,7 +469,7 @@ Number of sessions stored
 
 #### Inherited from
 
-[`ISessionStore`](ISessionStore.md).[`getSessionCount`](ISessionStore.md#getsessioncount)
+[`SessionStore`](SessionStore.md).[`getSessionCount`](SessionStore.md#getsessioncount)
 
 ***
 
@@ -495,7 +495,7 @@ SessionRecord or null if no session exists
 
 #### Inherited from
 
-[`ISessionStore`](ISessionStore.md).[`getSessionRecord`](ISessionStore.md#getsessionrecord)
+[`SessionStore`](SessionStore.md).[`getSessionRecord`](SessionStore.md#getsessionrecord)
 
 ***
 
@@ -523,7 +523,7 @@ Array of session records for all of this user's devices
 
 #### Inherited from
 
-[`ISessionStore`](ISessionStore.md).[`getSessionsForUser`](ISessionStore.md#getsessionsforuser)
+[`SessionStore`](SessionStore.md).[`getSessionsForUser`](SessionStore.md#getsessionsforuser)
 
 ***
 
@@ -547,7 +547,7 @@ Check if identity key exists.
 
 #### Inherited from
 
-[`IIdentityKeyStore`](IIdentityKeyStore.md).[`hasIdentityKey`](IIdentityKeyStore.md#hasidentitykey)
+[`IdentityKeyStore`](IdentityKeyStore.md).[`hasIdentityKey`](IdentityKeyStore.md#hasidentitykey)
 
 ***
 
@@ -573,7 +573,7 @@ true if session exists
 
 #### Inherited from
 
-[`ISessionStore`](ISessionStore.md).[`hasSession`](ISessionStore.md#hassession)
+[`SessionStore`](SessionStore.md).[`hasSession`](SessionStore.md#hassession)
 
 ***
 
@@ -624,7 +624,7 @@ true if the store trusts the identity
 
 #### Inherited from
 
-[`IIdentityKeyStore`](IIdentityKeyStore.md).[`isTrustedIdentity`](IIdentityKeyStore.md#istrustedidentity)
+[`IdentityKeyStore`](IdentityKeyStore.md).[`isTrustedIdentity`](IdentityKeyStore.md#istrustedidentity)
 
 ***
 
@@ -669,7 +669,7 @@ Base key bytes for the session
 
 #### Inherited from
 
-[`IKyberLastResortPreKeyStore`](IKyberLastResortPreKeyStore.md).[`markKyberPreKeyUsed`](IKyberLastResortPreKeyStore.md#markkyberprekeyused)
+[`KyberLastResortPreKeyStore`](KyberLastResortPreKeyStore.md).[`markKyberPreKeyUsed`](KyberLastResortPreKeyStore.md#markkyberprekeyused)
 
 ***
 
@@ -699,7 +699,7 @@ ID of the prekey to remove
 
 #### Inherited from
 
-[`IEcOneTimePreKeyStore`](IEcOneTimePreKeyStore.md).[`removeEcOneTimePreKey`](IEcOneTimePreKeyStore.md#removeeconetimeprekey)
+[`EcOneTimePreKeyStore`](EcOneTimePreKeyStore.md).[`removeEcOneTimePreKey`](EcOneTimePreKeyStore.md#removeeconetimeprekey)
 
 ***
 
@@ -732,7 +732,7 @@ The key ID to remove
 
 #### Inherited from
 
-[`IEcSignedPreKeyStore`](IEcSignedPreKeyStore.md).[`removeEcSignedPreKey`](IEcSignedPreKeyStore.md#removeecsignedprekey)
+[`EcSignedPreKeyStore`](EcSignedPreKeyStore.md).[`removeEcSignedPreKey`](EcSignedPreKeyStore.md#removeecsignedprekey)
 
 ***
 
@@ -765,7 +765,7 @@ ID of the prekey to remove
 
 #### Inherited from
 
-[`IKemPreKeyStore`](IKemPreKeyStore.md).[`removeKemOneTimePreKey`](IKemPreKeyStore.md#removekemonetimeprekey)
+[`KemPreKeyStore`](KemPreKeyStore.md).[`removeKemOneTimePreKey`](KemPreKeyStore.md#removekemonetimeprekey)
 
 ***
 
@@ -812,7 +812,7 @@ IdentityKeyChange indicating if key is new or changed
 
 #### Inherited from
 
-[`IIdentityKeyStore`](IIdentityKeyStore.md).[`saveContactIdentity`](IIdentityKeyStore.md#savecontactidentity)
+[`IdentityKeyStore`](IdentityKeyStore.md).[`saveContactIdentity`](IdentityKeyStore.md#savecontactidentity)
 
 ***
 
@@ -844,7 +844,7 @@ Registration ID
 
 #### Inherited from
 
-[`IIdentityKeyStore`](IIdentityKeyStore.md).[`setLocalRegistrationId`](IIdentityKeyStore.md#setlocalregistrationid)
+[`IdentityKeyStore`](IdentityKeyStore.md).[`setLocalRegistrationId`](IdentityKeyStore.md#setlocalregistrationid)
 
 ***
 
@@ -872,7 +872,7 @@ Store EC one-time prekeys.
 
 #### Inherited from
 
-[`IEcOneTimePreKeyStore`](IEcOneTimePreKeyStore.md).[`storeEcOneTimePreKeys`](IEcOneTimePreKeyStore.md#storeeconetimeprekeys)
+[`EcOneTimePreKeyStore`](EcOneTimePreKeyStore.md).[`storeEcOneTimePreKeys`](EcOneTimePreKeyStore.md#storeeconetimeprekeys)
 
 ***
 
@@ -903,7 +903,7 @@ instead of deleting it, to handle in-flight messages.
 
 #### Inherited from
 
-[`IEcSignedPreKeyStore`](IEcSignedPreKeyStore.md).[`storeEcSignedPreKey`](IEcSignedPreKeyStore.md#storeecsignedprekey)
+[`EcSignedPreKeyStore`](EcSignedPreKeyStore.md).[`storeEcSignedPreKey`](EcSignedPreKeyStore.md#storeecsignedprekey)
 
 ***
 
@@ -933,7 +933,7 @@ Identity key pair to store
 
 #### Inherited from
 
-[`IIdentityKeyStore`](IIdentityKeyStore.md).[`storeIdentityKey`](IIdentityKeyStore.md#storeidentitykey)
+[`IdentityKeyStore`](IdentityKeyStore.md).[`storeIdentityKey`](IdentityKeyStore.md#storeidentitykey)
 
 ***
 
@@ -961,7 +961,7 @@ Store one-time KEM prekeys (batch storage).
 
 #### Inherited from
 
-[`IKemPreKeyStore`](IKemPreKeyStore.md).[`storeKemOneTimePreKeys`](IKemPreKeyStore.md#storekemonetimeprekeys)
+[`KemPreKeyStore`](KemPreKeyStore.md).[`storeKemOneTimePreKeys`](KemPreKeyStore.md#storekemonetimeprekeys)
 
 ***
 
@@ -989,7 +989,7 @@ Store Kyber prekey (post-quantum security).
 
 #### Inherited from
 
-[`IKyberLastResortPreKeyStore`](IKyberLastResortPreKeyStore.md).[`storeKyberPreKey`](IKyberLastResortPreKeyStore.md#storekyberprekey)
+[`KyberLastResortPreKeyStore`](KyberLastResortPreKeyStore.md).[`storeKyberPreKey`](KyberLastResortPreKeyStore.md#storekyberprekey)
 
 ***
 
@@ -1022,7 +1022,7 @@ SessionRecord containing current and archived sessions
 
 #### Inherited from
 
-[`ISessionStore`](ISessionStore.md).[`storeSessionRecord`](ISessionStore.md#storesessionrecord)
+[`SessionStore`](SessionStore.md).[`storeSessionRecord`](SessionStore.md#storesessionrecord)
 
 ***
 
@@ -1056,4 +1056,4 @@ Promote the exact current tuple after authenticated comparison.
 
 #### Inherited from
 
-[`IIdentityKeyStore`](IIdentityKeyStore.md).[`verifyContactIdentity`](IIdentityKeyStore.md#verifycontactidentity)
+[`IdentityKeyStore`](IdentityKeyStore.md).[`verifyContactIdentity`](IdentityKeyStore.md#verifycontactidentity)

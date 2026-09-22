@@ -14,7 +14,7 @@
 
 ### activeDeviceStorage
 
-> `readonly` **activeDeviceStorage**: [`ISignalProtocolLocalStore`](ISignalProtocolLocalStore.md)
+> `readonly` **activeDeviceStorage**: [`SignalProtocolLocalStore`](SignalProtocolLocalStore.md)
 
 ***
 
@@ -191,7 +191,7 @@ https://signal.org/docs/specifications/pqxdh/#publishing-keys
 
 ### logger?
 
-> `optional` **logger?**: [`ILogger`](ILogger.md)
+> `optional` **logger?**: [`Logger`](Logger.md)
 
 Custom logger implementation
 

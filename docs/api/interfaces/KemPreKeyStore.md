@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / IKemPreKeyStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / KemPreKeyStore
 
-# Interface: IKemPreKeyStore
+# Interface: KemPreKeyStore
 
 Kyber One-Time PreKey store interface (post-quantum security).
 
@@ -13,8 +13,8 @@ The protocol consumes a one-time KEM prekey after use. Each one adds a
 security layer beyond the last-resort Kyber prekey.
 
 Naming convention matches EC prekeys:
-- `IEcOneTimePreKeyStore` → one-time EC prekeys (`ecPreKeys`)
-- `IKemPreKeyStore` → one-time KEM prekeys (`kemOneTimePreKeys`)
+- `EcOneTimePreKeyStore` → one-time EC prekeys (`ecPreKeys`)
+- `KemPreKeyStore` → one-time KEM prekeys (`kemOneTimePreKeys`)
 
 ## See
 
@@ -22,7 +22,7 @@ https://signal.org/docs/specifications/pqxdh/ Section 3.2
 
 ## Extended by
 
-- [`IProtocolStore`](IProtocolStore.md)
+- [`ProtocolStore`](ProtocolStore.md)
 
 ## Methods
 

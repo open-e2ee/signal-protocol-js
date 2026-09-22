@@ -28,7 +28,7 @@ import * as Crypto from 'expo-crypto';
 import * as SignalProtocolCrypto from '../../../internal/crypto';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 import type {
-  ISignalProtocolLocalStore,
+  SignalProtocolLocalStore,
   MessageRecord,
   UserRecord,
   DeviceRecord,
@@ -251,7 +251,7 @@ interface SecurityEvent {
  * const keyPair = await storage.getIdentityKey();
  * ```
  */
-export class ReactNativeSignalProtocolStore implements ISignalProtocolLocalStore {
+export class ReactNativeSignalProtocolStore implements SignalProtocolLocalStore {
   private databaseKey: Uint8Array | null = null;
   private initialized = false;
   private readonly storageBackend: ReactNativeKeyValueStorage;

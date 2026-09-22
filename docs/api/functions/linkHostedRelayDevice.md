@@ -6,7 +6,7 @@
 
 # Function: linkHostedRelayDevice()
 
-> **linkHostedRelayDevice**(`options`): `Promise`\<[`SignalProtocolClient`](../classes/SignalProtocolClient.md)\>
+> **linkHostedRelayDevice**(`options`): `Promise`\<[`DefaultSignalProtocolClient`](../classes/DefaultSignalProtocolClient.md)\>
 
 Bind a provisioned linked-device store to the Relay-authoritative account.
 
@@ -22,4 +22,4 @@ prekey material crosses this managed boundary.
 
 ## Returns
 
-`Promise`\<[`SignalProtocolClient`](../classes/SignalProtocolClient.md)\>
+`Promise`\<[`DefaultSignalProtocolClient`](../classes/DefaultSignalProtocolClient.md)\>

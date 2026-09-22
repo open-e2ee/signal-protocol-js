@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / IGroupServer
+[@open-e2ee/signal-protocol-sdk](../README.md) / GroupServer
 
-# Interface: IGroupServer
+# Interface: GroupServer
 
 Interface for server-side group operations.
 

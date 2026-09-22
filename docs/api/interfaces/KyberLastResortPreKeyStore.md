@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / IKyberLastResortPreKeyStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / KyberLastResortPreKeyStore
 
-# Interface: IKyberLastResortPreKeyStore
+# Interface: KyberLastResortPreKeyStore
 
 Kyber Last-Resort PreKey store interface (post-quantum security).
 
@@ -13,10 +13,10 @@ This is a reusable fallback key (like EC signed prekeys) that rotates on the
 configured refresh interval (2 days by default).
 
 Naming convention matches EC prekeys:
-- `IEcOneTimePreKeyStore` → one-time EC prekeys (`ecPreKeys`)
-- `IEcSignedPreKeyStore` → reusable EC prekey (`ecSignedPreKeys`)
-- `IKemPreKeyStore` → one-time KEM prekeys (`kemOneTimePreKeys`) - FUTURE
-- `IKyberLastResortPreKeyStore` → reusable KEM prekey (`kemLastResortPreKeys`)
+- `EcOneTimePreKeyStore` → one-time EC prekeys (`ecPreKeys`)
+- `EcSignedPreKeyStore` → reusable EC prekey (`ecSignedPreKeys`)
+- `KemPreKeyStore` → one-time KEM prekeys (`kemOneTimePreKeys`) - FUTURE
+- `KyberLastResortPreKeyStore` → reusable KEM prekey (`kemLastResortPreKeys`)
 
 ## See
 
@@ -24,7 +24,7 @@ https://signal.org/docs/specifications/pqxdh/
 
 ## Extended by
 
-- [`IProtocolStore`](IProtocolStore.md)
+- [`ProtocolStore`](ProtocolStore.md)
 
 ## Methods
 

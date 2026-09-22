@@ -48,7 +48,7 @@ Canonical identity and authenticated Relay returned by hosted bootstrap.
 
 ### relay
 
-> `readonly` **relay**: [`ISignalProtocolRelayServer`](ISignalProtocolRelayServer.md)
+> `readonly` **relay**: [`SignalProtocolRelayServer`](SignalProtocolRelayServer.md)
 
 #### Inherited from
 

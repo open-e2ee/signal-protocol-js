@@ -17,7 +17,7 @@
  *
  * ```typescript
  * // Types (any platform)
- * import type { ISignalProtocolLocalStore } from '@open-e2ee/signal-protocol-sdk/local/store';
+ * import type { SignalProtocolLocalStore } from '@open-e2ee/signal-protocol-sdk/local/store';
  *
  * // Local development (any platform)
  * import { InMemorySignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store';
@@ -36,10 +36,10 @@
  * @see docs/INTERFACES.md
  */
 export {};
-export type { ISignalProtocolLocalStore } from '../../types';
+export type { SignalProtocolLocalStore } from '../../types';
 
 // MessageRecord types for SESAME retry request support
-export type { MessageRecord, IMessageRecordStore } from '../../types';
+export type { MessageRecord, MessageRecordStore } from '../../types';
 
 // In-memory local store (for local development on any platform)
 export { InMemorySignalProtocolStore } from './memory';

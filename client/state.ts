@@ -2,7 +2,7 @@
  * SignalProtocolClientState - Centralized State Management for SignalProtocolClient
  *
  * Consolidates all tracking state that was previously scattered across
- * the SignalProtocolClient class. Provides typed views for operation modules
+ * the DefaultSignalProtocolClient class. Provides typed views for operation modules
  * and centralized mutation methods.
  *
  * State categories:

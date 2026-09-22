@@ -15,8 +15,8 @@ contracts they validate.
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
 import type {
-  ISignalProtocolLocalStore,
-  ISignalProtocolClient,
+  SignalProtocolLocalStore,
+  SignalProtocolClient,
   SignalProtocolConfig,
 } from "@open-e2ee/signal-protocol-sdk/types";
 import { ProtocolAddress } from "@open-e2ee/signal-protocol-sdk/types/address";

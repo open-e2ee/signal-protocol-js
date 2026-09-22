@@ -22,10 +22,10 @@ import type {
   KemOneTimePreKey,
   IdentityType,
 } from '../../keys';
-import type { ISignalProtocolLocalStore, PreKeyMessage, SessionState } from '../../types';
+import type { SignalProtocolLocalStore, PreKeyMessage, SessionState } from '../../types';
 import type { ProtocolAddress } from '../../types/address';
 import type { ProtocolStrategyConfig } from '../../types';
-import type { ILogger } from '../../logger';
+import type { Logger } from '../../logger';
 
 // ============================================================================
 // SessionBuilder Input Types
@@ -53,7 +53,7 @@ export interface SessionBuilderInitiatorInput {
   /** Protocol strategy configuration (optional) */
   protocolStrategy?: ProtocolStrategyConfig;
   /** Resolved logger for session establishment */
-  logger?: Required<ILogger>;
+  logger?: Required<Logger>;
 }
 
 /**
@@ -83,7 +83,7 @@ export interface SessionBuilderResponderInput {
   /** Protocol strategy configuration (optional) */
   protocolStrategy?: ProtocolStrategyConfig;
   /** Resolved logger for session establishment */
-  logger?: Required<ILogger>;
+  logger?: Required<Logger>;
 }
 
 // ============================================================================
@@ -204,7 +204,7 @@ export type SessionEstablishmentCallback = (
  */
 export interface SessionCipherDependencies {
   /** Key storage for loading/storing sessions */
-  keyStorage: ISignalProtocolLocalStore;
+  keyStorage: SignalProtocolLocalStore;
   /**
    * Callback for establishing sessions from PreKeyMessages.
    * Called when decrypt() receives a PreKeyMessage and no session exists.

@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / ISessionStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / SessionStore
 
-# Interface: ISessionStore
+# Interface: SessionStore
 
 Session store for current package session records.
 
@@ -13,7 +13,7 @@ and the Sesame algorithm for session convergence.
 
 ## Extended by
 
-- [`IProtocolStore`](IProtocolStore.md)
+- [`ProtocolStore`](ProtocolStore.md)
 
 ## Methods
 

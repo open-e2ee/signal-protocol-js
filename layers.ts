@@ -7,7 +7,7 @@
  * ## Architecture Model
  * ```
  * Layer 0: EXTERNAL          - Your application (React Native, Node, etc.)
- * Layer 1: API               - client/ (SignalProtocolClient, ISignalProtocolClient)
+ * Layer 1: API               - client/ (SignalProtocolClient, SignalProtocolClient)
  * Layer 2: ORCHESTRATION     - manager/, sesame/, groups/ (SignalProtocolManager, SesameManager, GroupManager)
  * Layer 3: DOMAIN/SESSION    - session/, safety/ (establishment, cipher, handshake, safety numbers)
  * Layer 4: DOMAIN/ALGORITHMS - protocol/ (X3DH, PQXDH, Double Ratchet, SPQR, Sender Keys, Sealed Sender, ZK proofs)
@@ -115,8 +115,8 @@ export const LAYER_DEFINITIONS: Record<Layer, LayerDefinition> = {
     directories: ['client'],
     dependsOn: [LAYERS.ORCHESTRATION],
     spec: 'N/A (application boundary)',
-    description: 'Public API boundary - SignalProtocolClient implements ISignalProtocolClient',
-    interfaces: ['ISignalProtocolClient'],
+    description: 'Public API boundary - SignalProtocolClient implements SignalProtocolClient',
+    interfaces: ['SignalProtocolClient'],
   },
   [LAYERS.ORCHESTRATION]: {
     level: LAYERS.ORCHESTRATION,
@@ -131,12 +131,12 @@ export const LAYER_DEFINITIONS: Record<Layer, LayerDefinition> = {
     spec: 'SESAME §1-8, Signal Private Group System',
     description: 'Orchestration layer - coordinates domain, uses ports for I/O',
     interfaces: [
-      'ISignalProtocolManager',
-      'ISesameManager',
-      'IGroupStateStore',
-      'IGroupServer',
-      'ISignalProtocolRelayServer',
-      'ISignalProtocolLocalStore',
+      'SignalProtocolManager',
+      'SesameManager',
+      'GroupStateStore',
+      'GroupServer',
+      'SignalProtocolRelayServer',
+      'SignalProtocolLocalStore',
     ],
   },
   [LAYERS.DOMAIN_SESSION]: {
@@ -180,12 +180,12 @@ export const LAYER_DEFINITIONS: Record<Layer, LayerDefinition> = {
 export const INFRASTRUCTURE_MODULES = {
   local: {
     directories: ['local'],
-    implementsPorts: ['ISignalProtocolLocalStore'],
+    implementsPorts: ['SignalProtocolLocalStore'],
     description: 'Local persistence and secret vault adapters: Expo, Node, Memory, Web, React Native',
   },
   remote: {
     directories: ['remote'],
-    implementsPorts: ['ISignalProtocolRelayServer', 'SignalProtocolRemoteObjectStore'],
+    implementsPorts: ['SignalProtocolRelayServer', 'SignalProtocolRemoteObjectStore'],
     description: 'Remote relay and object-store adapters: Memory, Convex R2, S3',
   },
   device: {

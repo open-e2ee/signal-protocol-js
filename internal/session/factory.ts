@@ -11,7 +11,7 @@
 
 import { ProtocolAddress } from '../../types/address';
 import * as CryptoUtils from '../crypto';
-import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import type {
   CompositeIdentityV1,
   IdentityKeyPair,
@@ -69,7 +69,7 @@ export interface InitiatorSessionInput {
   kyberCiphertext?: string;
   usedKemOneTimePreKeyId?: number;
   kemOneTimePreKeyCiphertext?: string;
-  logger?: Required<ILogger>;
+  logger?: Required<Logger>;
 }
 
 /**
@@ -105,7 +105,7 @@ export interface ResponderSessionInput {
   sendingChainKey?: Uint8Array;
   /** Receiving chain key - undefined for lazy init, derived during DHRatchet */
   receivingChainKey?: Uint8Array;
-  logger?: Required<ILogger>;
+  logger?: Required<Logger>;
 }
 
 /**

@@ -1,7 +1,7 @@
 /**
  * Key rotation operations for SignalProtocolClient
  *
- * Extracted from SignalProtocolClient class to reduce file size.
+ * Extracted from DefaultSignalProtocolClient class to reduce file size.
  * Rotates EC signed prekeys and Kyber (post-quantum) prekeys.
  *
  * With relay configured: Delegates to key-rotation-core.ts for metadata-based

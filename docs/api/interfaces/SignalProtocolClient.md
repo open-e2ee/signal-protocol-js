@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / ISignalProtocolClient
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolClient
 
-# Interface: ISignalProtocolClient
+# Interface: SignalProtocolClient
 
 High-level encrypted messaging client interface.
 
@@ -32,7 +32,7 @@ Device ID for this client instance (1 = primary, 2-5 = linked)
 
 ### logger
 
-> `readonly` **logger**: `Required`\<[`ILogger`](ILogger.md)\>
+> `readonly` **logger**: `Required`\<[`Logger`](Logger.md)\>
 
 Resolved logger for this client instance.
 

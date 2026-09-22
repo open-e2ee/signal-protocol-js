@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.0.0
+
+- **Breaking: interfaces no longer carry an `I` prefix.** Every exported
+  contract uses its bare name: `SignalProtocolClient`,
+  `SignalProtocolRelayServer`, `ProtocolStore`, `SessionStore`,
+  `SenderKeyStore`, `IdentityKeyStore`, `KemPreKeyStore`,
+  `SignalProtocolLocalStore`, `Logger`, `GroupServer`, `ProvisioningService`,
+  `KeyRotationService`, and the rest. Where the bare
+  name belonged to the sole implementing class, the class is now
+  `DefaultSignalProtocolClient` or `DefaultSignalProtocolManager`, and the
+  low-level constructor call is `DefaultSignalProtocolClient.create()`.
+  `createSignalProtocolClient()` and `createHostedSignalProtocolClient()` are
+  unchanged. The device-lifecycle contracts are `DeviceLifecycleSecureStore`,
+  `DeviceLifecycleConvexClient`, `KeyStorageOps`, and `DeviceLifecycleLogger`,
+  so the lifecycle logger no longer shares a name with the SDK `Logger`.
+
 ## 3.0.0
 
 - **Breaking: the SDK is dual-licensed under MIT or Apache-2.0.** The package

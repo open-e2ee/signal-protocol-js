@@ -1,7 +1,7 @@
 /**
  * In-Memory Signal Protocol Relay Server
  *
- * Implementation of ISignalProtocolRelayServer for local development.
+ * Implementation of SignalProtocolRelayServer for local development.
  * Simulates a backend server without any network calls.
  *
  * WARNING: All data is lost when the adapter is destroyed.
@@ -9,7 +9,7 @@
  */
 
 import type {
-  ISignalProtocolRelayServer,
+  SignalProtocolRelayServer,
   Envelope,
   SealedSenderAuth,
   DeviceInfo,
@@ -26,7 +26,7 @@ import type {
   RetryRequest,
   AccountIdentityProvisioning,
   AccountIdentityRotation,
-  IRelayGroupServer,
+  RelayGroupServer,
 } from '../types';
 import type { GroupAuthorization } from '../../../internal/groups/manager';
 import type { PublicKey, Signature } from '../../../keys/branded';
@@ -123,7 +123,7 @@ function requireLiveProvisioningSession(session: { expiresAt: number }, sessionI
 /** Canonically encoded account identity. */
 export {};
 
-export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelayServer {
+export class InMemorySignalProtocolRelayServer implements SignalProtocolRelayServer {
   readonly failures: RelayFailureController;
 
   // Device registry
@@ -207,7 +207,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     this.serverSecretParams
   );
   private readonly unidentifiedAccessKeys = new Map<string, Uint8Array>();
-  readonly groupServer: IRelayGroupServer;
+  readonly groupServer: RelayGroupServer;
 
   constructor(options: InMemorySignalProtocolRelayServerOptions = {}) {
     this.failures = new RelayFailureController(
@@ -680,7 +680,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
     // This is SEPARATE from the one-time KEM prekeys
     const kemLastResortPreKey = this.kemLastResortPreKeys.get(deviceKey) || null;
 
-    // Cast to branded types - ISignalProtocolRelayServer returns PreKeyBundle with branded types
+    // Cast to branded types - SignalProtocolRelayServer returns PreKeyBundle with branded types
     // Adapters handle the casting internally so callers do not need to
     return cloneRelayValue({
       registrationId,
@@ -807,7 +807,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
   }
 
   // ============================================================================
-  // Provisioning Service (IProvisioningService)
+  // Provisioning Service (ProvisioningService)
   // ============================================================================
 
   async createProvisioningSession(
@@ -1037,7 +1037,7 @@ export class InMemorySignalProtocolRelayServer implements ISignalProtocolRelaySe
   }
 
   // ============================================================================
-  // Key Rotation Service (IKeyRotationService)
+  // Key Rotation Service (KeyRotationService)
   // ============================================================================
 
   async getEcSignedPreKeyMetadata(

@@ -10,7 +10,7 @@
  * import { rotateKeysHeadless } from '@open-e2ee/signal-protocol-sdk/client/headless';
  * import { expoStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
  *
- * // Any ISignalProtocolRelayServer the app composes, authenticated for this user.
+ * // Any SignalProtocolRelayServer the app composes, authenticated for this user.
  * const relay = createAuthenticatedRelay({ authToken, userId });
  * const storage = expoStore();
  *
@@ -19,10 +19,10 @@
  * ```
  */
 
-import { resolveSignalProtocolLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import { getErrorMessage } from '../utils/errors';
-import type { ISignalProtocolLocalStore } from '../types';
-import type { ISignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolLocalStore } from '../types';
+import type { SignalProtocolRelayServer } from '../remote/relay/types';
 import type { IdentityType } from '../keys/types';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS, type PreKeyMaintenanceStore } from './config';
 import {
@@ -52,13 +52,13 @@ export interface HeadlessRotationResult {
  */
 export interface HeadlessRotationOptions {
   /** Local store implementation for the current runtime. */
-  storage?: ISignalProtocolLocalStore;
+  storage?: SignalProtocolLocalStore;
   /** Identity types to rotate (defaults to ['aci', 'pni']) */
   identityTypes?: readonly IdentityType[];
   /** App-provided replaced-prekey maintenance store. */
   preKeyMaintenance?: PreKeyMaintenanceStore;
   /** Optional logger for headless/background execution. */
-  logger?: ILogger;
+  logger?: Logger;
 }
 
 /**
@@ -69,10 +69,10 @@ export interface HeadlessRotationOptions {
  *
  * This function suits background tasks that have no React
  * context. It uses the same core rotation logic
- * as SignalProtocolClient but works with any ISignalProtocolRelayServer implementation.
+ * as SignalProtocolClient but works with any SignalProtocolRelayServer implementation.
  *
  * Features:
- * - Works with any ISignalProtocolRelayServer implementation
+ * - Works with any SignalProtocolRelayServer implementation
  * - Checks whether the keys need rotation before it rotates them
  * - Handles errors gracefully (returns partial success)
  * - Logs all operations for debugging
@@ -86,7 +86,7 @@ export interface HeadlessRotationOptions {
  * @see https://signal.org/docs/specifications/pqxdh/#publishing-keys
  */
 export async function rotateKeysHeadless(
-  relay: ISignalProtocolRelayServer,
+  relay: SignalProtocolRelayServer,
   userId: string,
   deviceId: number,
   options?: HeadlessRotationOptions
@@ -217,7 +217,7 @@ export async function rotateKeysHeadless(
  * @returns Object indicating which keys need rotation
  */
 export async function checkRotationNeeded(
-  relay: ISignalProtocolRelayServer,
+  relay: SignalProtocolRelayServer,
   userId: string,
   deviceId: number
 ): Promise<{

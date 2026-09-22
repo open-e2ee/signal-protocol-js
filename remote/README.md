@@ -1,6 +1,6 @@
 # Remote Guide
 
-> Infrastructure | Implements `ISignalProtocolRelayServer` and `SignalProtocolRemoteObjectStore` | [Architecture](../ARCHITECTURE.md)
+> Infrastructure | Implements `SignalProtocolRelayServer` and `SignalProtocolRemoteObjectStore` | [Architecture](../ARCHITECTURE.md)
 
 The backend layer is responsible for server-owned protocol state: public
 prekeys, device registration, encrypted-envelope delivery, and provisioning
@@ -19,7 +19,7 @@ replaceable and prevent them from owning private keys or plaintext.
 
 - the OpenE2EE Signal Protocol Relay through `createHostedSignalProtocolClient()` from the package root
 - `InMemorySignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
-- custom implementations via `ISignalProtocolRelayServer`
+- custom implementations via `SignalProtocolRelayServer`
 
 ### Remote object store
 
@@ -51,7 +51,7 @@ const signal = await createHostedSignalProtocolClient({
 
 ## Relay Responsibilities
 
-An `ISignalProtocolRelayServer` implementation must preserve the package’s protocol semantics for:
+An `SignalProtocolRelayServer` implementation must preserve the package’s protocol semantics for:
 
 - identity and prekey upload
 - prekey bundle fetch
@@ -98,11 +98,11 @@ create, download, completion, and deletion.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import { SignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
+import { DefaultSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { convexR2ObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2";
 import { api } from "../convex/_generated/api";
 
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage,
   relay,
   remoteObjectStore: convexR2ObjectStore({
@@ -201,18 +201,18 @@ Use `InMemorySignalProtocolRelayServer` when multiple clients need a shared in-m
 <!-- doc-snippet:run remote-shared-memory-relay expect="" -->
 ```ts
 // Real protocol and cryptography; simulated in-memory infrastructure.
-import { SignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
+import { DefaultSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { InMemorySignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
 import { InMemorySignalProtocolStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
 
 const relay = new InMemorySignalProtocolRelayServer();
 
-const alice = await SignalProtocolClient.create("alice", {
+const alice = await DefaultSignalProtocolClient.create("alice", {
   storage: new InMemorySignalProtocolStore(),
   relay,
 });
 
-const bob = await SignalProtocolClient.create("bob", {
+const bob = await DefaultSignalProtocolClient.create("bob", {
   storage: new InMemorySignalProtocolStore(),
   relay,
 });

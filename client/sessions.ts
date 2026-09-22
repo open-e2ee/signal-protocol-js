@@ -1,7 +1,7 @@
 /**
  * Session management operations for SignalProtocolClient
  *
- * Extracted from SignalProtocolClient class to reduce file size.
+ * Extracted from DefaultSignalProtocolClient class to reduce file size.
  * Handles session establishment, deletion, and archiving.
  */
 
@@ -21,7 +21,7 @@ import { ProtocolAddress } from '../types/address';
 import { callHook } from './event-hooks';
 import type { SafetyNumberConfirmation, SignalProtocolClientContext, SafetyNumber } from './types';
 import type { SessionHealthResult, SessionHealthIssue, SessionHealthStatus } from './types';
-import type { ISesameManager } from '../internal/sesame/types';
+import type { SesameManager } from '../internal/sesame/types';
 import * as CryptoUtils from '../internal/crypto';
 
 /**
@@ -38,7 +38,7 @@ import * as CryptoUtils from '../internal/crypto';
 export {};
 export async function establishSession(
   ctx: SignalProtocolClientContext,
-  sesameManager: ISesameManager,
+  sesameManager: SesameManager,
   remoteAddress: ProtocolAddress,
   prekeyBundle: PreKeyBundle,
   recipientIdentityType: IdentityType = 'aci'

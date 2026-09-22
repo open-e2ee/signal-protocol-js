@@ -194,13 +194,13 @@ Resolve a verified immutable authority before each group operation.
 
 #### server?
 
-> `optional` **server?**: [`IGroupServer`](IGroupServer.md)
+> `optional` **server?**: [`GroupServer`](GroupServer.md)
 
 Override `relay.groupServer.server` for a custom deployment.
 
 #### store?
 
-> `optional` **store?**: [`IGroupStateStore`](IGroupStateStore.md)
+> `optional` **store?**: [`GroupStateStore`](GroupStateStore.md)
 
 Override the SDK local storage adapter for group state.
 
@@ -346,7 +346,7 @@ https://signal.org/docs/specifications/pqxdh/#publishing-keys
 
 ### logger?
 
-> `optional` **logger?**: [`ILogger`](ILogger.md)
+> `optional` **logger?**: [`Logger`](Logger.md)
 
 Custom logger implementation
 

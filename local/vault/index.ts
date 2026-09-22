@@ -7,4 +7,4 @@
  * does not drag a platform in behind it.
  */
 export {};
-export type { ISignalProtocolLocalSecretVault } from '../../types';
+export type { SignalProtocolLocalSecretVault } from '../../types';

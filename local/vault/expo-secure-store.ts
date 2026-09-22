@@ -1,6 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 
-import type { ISignalProtocolLocalSecretVault } from '../../types/api';
+import type { SignalProtocolLocalSecretVault } from '../../types/api';
 import { base64ToBytes, bytesToBase64 } from '../../encoding';
 import { asBase64 } from '../../types/utils';
 import { SIGNAL_PROTOCOL_SECURE_STORE_OPTIONS } from '../store/expo/secure-store-options';
@@ -8,7 +8,7 @@ import { SIGNAL_PROTOCOL_SECURE_STORE_OPTIONS } from '../store/expo/secure-store
 /**
  * Expo SecureStore-backed local secret vault for tiny bootstrap secrets.
  */
-export class ExpoSecureStoreSignalProtocolSecretVault implements ISignalProtocolLocalSecretVault {
+export class ExpoSecureStoreSignalProtocolSecretVault implements SignalProtocolLocalSecretVault {
   async getSecret(name: string): Promise<Uint8Array | null> {
     const stored = await SecureStore.getItemAsync(name, SIGNAL_PROTOCOL_SECURE_STORE_OPTIONS);
     if (!stored) {

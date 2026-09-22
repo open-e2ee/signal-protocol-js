@@ -18,8 +18,8 @@
 
 import * as Crypto from 'expo-crypto';
 import { EncryptionError, EncryptionErrorCode } from '../../../types/errors';
-import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
-import type { ISignalProtocolLocalSecretVault } from '../../../types/api';
+import { resolveSignalProtocolLogger, type Logger } from '../../../logger';
+import type { SignalProtocolLocalSecretVault } from '../../../types/api';
 import { bytesToHex } from '../../../encoding';
 import { ExpoSecureStoreSignalProtocolSecretVault } from '../../vault/expo-secure-store';
 
@@ -59,18 +59,18 @@ function storageErrorMessage(operation: string, error: unknown): string {
 export class DatabaseKeyManager {
   private cachedKey: Uint8Array | null = null;
   private initPromise: Promise<boolean> | null = null;
-  private logger: Required<ILogger>;
-  private secretVault: ISignalProtocolLocalSecretVault;
+  private logger: Required<Logger>;
+  private secretVault: SignalProtocolLocalSecretVault;
 
   constructor(
-    secretVault: ISignalProtocolLocalSecretVault = new ExpoSecureStoreSignalProtocolSecretVault(),
-    providedLogger?: ILogger
+    secretVault: SignalProtocolLocalSecretVault = new ExpoSecureStoreSignalProtocolSecretVault(),
+    providedLogger?: Logger
   ) {
     this.secretVault = secretVault;
     this.logger = resolveSignalProtocolLogger(providedLogger);
   }
 
-  setLogger(providedLogger?: ILogger): void {
+  setLogger(providedLogger?: Logger): void {
     this.logger = resolveSignalProtocolLogger(providedLogger);
   }
 
@@ -345,7 +345,7 @@ let dbKeyManagerInstance: DatabaseKeyManager | null = null;
 /**
  * Get singleton DatabaseKeyManager instance
  */
-export function getDatabaseKeyManager(providedLogger?: ILogger): DatabaseKeyManager {
+export function getDatabaseKeyManager(providedLogger?: Logger): DatabaseKeyManager {
   if (!dbKeyManagerInstance) {
     dbKeyManagerInstance = new DatabaseKeyManager(undefined, providedLogger);
   } else if (providedLogger) {

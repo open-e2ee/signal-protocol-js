@@ -44,7 +44,7 @@ import { getNodeEncryptedDatabase } from './database';
 import type { NodeEncryptedDatabase, NodeSenderKeyTree } from './database';
 import type { MessageRecord, SessionTrustCommit, UserRecord, DeviceRecord } from '../../../types';
 import type {
-  ISignalProtocolLocalStore,
+  SignalProtocolLocalStore,
   RetainedKyberPreKey,
   SkippedSenderMessageKey,
 } from '../../../types/api';
@@ -163,7 +163,7 @@ export interface NodeSignalProtocolStoreConfig {
  *
  * Provides encrypted filesystem storage for Signal Protocol keys.
  */
-export class NodeSignalProtocolStore implements ISignalProtocolLocalStore {
+export class NodeSignalProtocolStore implements SignalProtocolLocalStore {
   private db: NodeEncryptedDatabase;
 
   constructor(config?: NodeSignalProtocolStoreConfig) {

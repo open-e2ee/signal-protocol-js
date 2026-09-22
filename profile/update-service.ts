@@ -22,7 +22,7 @@ import {
   type ApplicationProfileData,
 } from './cipher';
 import { uuidToBytes } from '../internal/protocol/zk/groups/uid-struct';
-import { resolveSignalProtocolLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type Logger } from '../logger';
 
 // ============================================================================
 // Types
@@ -52,7 +52,7 @@ export interface UpdateEncryptedProfileParams {
   /** Explicit key used by staged rotations before it becomes locally active. */
   profileKey?: Uint8Array;
   /** Optional logger for the profile-update flow. */
-  logger?: ILogger;
+  logger?: Logger;
 }
 
 // ============================================================================

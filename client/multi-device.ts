@@ -1,7 +1,7 @@
 /**
  * Multi-device (SESAME) operations for SignalProtocolClient
  *
- * Extracted from SignalProtocolClient class to reduce file size.
+ * Extracted from DefaultSignalProtocolClient class to reduce file size.
  * Implements the SESAME protocol for multi-device session management.
  *
  * @see https://signal.org/docs/specifications/sesame/

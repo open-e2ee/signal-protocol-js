@@ -6,7 +6,7 @@
 
 # Variable: defaultSignalProtocolLogger
 
-> `const` **defaultSignalProtocolLogger**: `Required`\<[`ILogger`](../interfaces/ILogger.md)\>
+> `const` **defaultSignalProtocolLogger**: `Required`\<[`Logger`](../interfaces/Logger.md)\>
 
 Logging utilities for app composition
 
@@ -15,7 +15,7 @@ your app logger or custom diagnostics pipeline.
 
 ## Example
 
-**Using custom logger with SignalProtocolClient**
+**Using custom logger with DefaultSignalProtocolClient**
 
 ```typescript
 import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';

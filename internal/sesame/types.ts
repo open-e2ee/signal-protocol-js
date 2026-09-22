@@ -20,7 +20,7 @@ import {
   type SessionRecord,
 } from '../../types/session';
 import type { ProtocolAddress } from '../../types/address';
-import type { IMessageRecordStore } from '../../local/store';
+import type { MessageRecordStore } from '../../local/store';
 
 // ============================================================================
 // ID Types (Plain types per Signal Protocol spec)
@@ -751,7 +751,7 @@ export interface SesameSendOptions {
 /**
  * Public API for SESAME session management
  */
-export interface ISesameManager {
+export interface SesameManager {
   /**
    * Initialize the SESAME manager with local device information
    */
@@ -764,7 +764,7 @@ export interface ISesameManager {
    *
    * When set, sent messages are stored so they can be resent on retry request.
    */
-  setMessageRecordStore(store: IMessageRecordStore): void;
+  setMessageRecordStore(store: MessageRecordStore): void;
 
   /**
    * Register a newly established Double Ratchet session with SESAME
@@ -1151,7 +1151,7 @@ export class SesameDecryptionError extends SesameError {
  *
  * Implementations must be provided for different platforms.
  */
-export interface ISesameStorage {
+export interface SesameStorage {
   // User record operations
   getUserRecord(userId: UserID): Promise<UserRecord | null>;
   setUserRecord(userId: UserID, record: UserRecord): Promise<void>;

@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / IGroupStateStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / GroupStateStore
 
-# Interface: IGroupStateStore
+# Interface: GroupStateStore
 
 Interface for local group state storage.
 

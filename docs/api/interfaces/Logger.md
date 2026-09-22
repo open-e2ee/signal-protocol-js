@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / ILogger
+[@open-e2ee/signal-protocol-sdk](../README.md) / Logger
 
-# Interface: ILogger
+# Interface: Logger
 
 Signal Protocol package logging primitives.
 

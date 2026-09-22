@@ -1,6 +1,6 @@
 import { sha256, bytesToBase64 } from '../../internal/crypto';
 import type { Envelope } from '../../remote/relay/types';
-import type { ISignalProtocolLocalStore, ReceivedContent } from '../../types/api';
+import type { SignalProtocolLocalStore, ReceivedContent } from '../../types/api';
 import { RELIABILITY_RECORD_TTL_MS } from './reliability';
 
 /** Bind recovery to the exact envelope and the device that consumed it. */
@@ -53,7 +53,7 @@ export function parseReceivedContent(value: string, id: string): ReceivedContent
 const lastCleanup = new WeakMap<object, number>();
 
 /** Expired content follows the same thirty-day horizon as incoming retry evidence. */
-export async function pruneReceivedContent(store: ISignalProtocolLocalStore): Promise<void> {
+export async function pruneReceivedContent(store: SignalProtocolLocalStore): Promise<void> {
   const now = Date.now();
   const last = lastCleanup.get(store);
   if (last !== undefined && now >= last && now - last < 60_000) return;

@@ -1,11 +1,11 @@
 /**
- * SignalProtocolClient - initialized client class for encrypted messaging.
+ * DefaultSignalProtocolClient - initialized client class for encrypted messaging.
  *
  * @layer 1 - API
- * @boundary ISignalProtocolClient
+ * @boundary SignalProtocolClient
  *
  * Application code should usually create clients with `createSignalProtocolClient()`.
- * Use `SignalProtocolClient.create()` directly when lower-level integration code already
+ * Use `DefaultSignalProtocolClient.create()` directly when lower-level integration code already
  * owns the flattened config shape.
  *
  * @example Basic usage
@@ -35,9 +35,9 @@
  *
  * @example Low-level factory
  * ```typescript
- * import { SignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
+ * import { DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
  *
- * const signal = await SignalProtocolClient.create(userId, {
+ * const signal = await DefaultSignalProtocolClient.create(userId, {
  *   storage,
  *   relay,
  * });
@@ -46,16 +46,16 @@
 
 import AsyncLock from 'async-lock';
 import type { GroupAuthority } from './group-authority';
-import type { ISignalProtocolRelayServer, Envelope, Unsubscribe } from '../remote/relay/types';
+import type { SignalProtocolRelayServer, Envelope, Unsubscribe } from '../remote/relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
-import { SignalProtocolManager } from '../internal/manager';
-import { SesameManager } from '../internal/sesame';
+import { DefaultSignalProtocolManager } from '../internal/manager';
+import { DefaultSesameManager } from '../internal/sesame';
 import type { Ciphertext, IdentityType, PreKeyBundle, PublicKey } from '../keys';
 import { createCompositeIdentityV1 } from '../keys/identity';
 import type {
-  ISignalProtocolClient,
-  ISignalProtocolLocalStore,
-  ISignalProtocolManager,
+  SignalProtocolClient,
+  SignalProtocolLocalStore,
+  SignalProtocolManager,
   Base64,
 } from '../types';
 import { EncryptionError, EncryptionErrorCode } from '../types';
@@ -68,8 +68,8 @@ import {
   type ProgressCallback,
   type SignalProtocolClientConfig,
 } from './config';
-import type { ISesameManager, SesameMessage, SesameStats } from '../internal/sesame/types';
-import { resolveSignalProtocolLogger, type ILogger } from '../logger';
+import type { SesameManager, SesameMessage, SesameStats } from '../internal/sesame/types';
+import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import {
   SenderKeyManager,
   type SenderKeyDistributionMessage,
@@ -125,7 +125,7 @@ import type {
   DecryptedGroup,
   AccessControl,
   GroupMemberInput,
-  IGroupStateStore,
+  GroupStateStore,
 } from '../internal/groups';
 import type { GroupId } from '../internal/groups/group-id';
 import { SignalProtocolGroupStateStore } from '../internal/groups/sdk-store';
@@ -137,7 +137,7 @@ export { IMPLICIT_ENVELOPE_TYPES } from './constants';
 
 /**
  * Module-level lock for storage initialization.
- * Prevents multiple concurrent SignalProtocolClient.create() calls from creating
+ * Prevents multiple concurrent DefaultSignalProtocolClient.create() calls from creating
  * duplicate storage adapters that compete for database locks.
  */
 const storageLock = new AsyncLock({
@@ -171,19 +171,19 @@ function isDataMessage(
  * - Clear error handling
  * - Type-safe API
  *
- * This client implements the ISignalProtocolClient interface and wraps
- * SignalProtocolManager with additional high-level functionality.
+ * This client implements the SignalProtocolClient interface and wraps
+ * DefaultSignalProtocolManager with additional high-level functionality.
  *
  * @category Primary API
  */
-export class SignalProtocolClient implements ISignalProtocolClient {
-  private readonly manager: ISignalProtocolManager;
-  private readonly _storage: ISignalProtocolLocalStore;
-  private readonly relay?: ISignalProtocolRelayServer;
+export class DefaultSignalProtocolClient implements SignalProtocolClient {
+  private readonly manager: SignalProtocolManager;
+  private readonly _storage: SignalProtocolLocalStore;
+  private readonly relay?: SignalProtocolRelayServer;
   private readonly remoteObjectStore?: SignalProtocolRemoteObjectStore;
   private readonly config: SignalProtocolClientConfig;
   private readonly _userId: string;
-  public readonly logger: Required<ILogger>;
+  public readonly logger: Required<Logger>;
   private hooks: SignalProtocolClientHooks;
   private readonly contentAdapter: SignalProtocolContentAdapter;
 
@@ -192,12 +192,12 @@ export class SignalProtocolClient implements ISignalProtocolClient {
 
   /**
    * Get user ID for this client instance
-   * @see ISignalProtocolClient.userId
+   * @see SignalProtocolClient.userId
    */
   public get userId(): string {
     return this._userId;
   }
-  private readonly sesameManager: ISesameManager; // Sesame protocol manager for multi-device support
+  private readonly sesameManager: SesameManager; // Sesame protocol manager for multi-device support
   private readonly _address: ProtocolAddress; // Cached own address
 
   // Group messaging support (Sender Keys)
@@ -209,7 +209,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     manager: GroupManager;
     endorsementManager?: GroupAuthority['endorsementManager'];
   };
-  private groupStore?: IGroupStateStore;
+  private groupStore?: GroupStateStore;
 
   // Cipher coordination (encrypts/decrypts, routes to appropriate cipher)
   private readonly cipher: SignalProtocolServiceCipher;
@@ -258,7 +258,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   // See SIGNAL_PROTOCOL_CLIENT_CONSTANTS for timing and retry configuration
 
   /**
-   * Private constructor - use SignalProtocolClient.create() to instantiate
+   * Private constructor - use DefaultSignalProtocolClient.create() to instantiate
    *
    * @param userId - User identifier
    * @param deviceId - Device identifier (1 = primary, 2-5 = linked devices)
@@ -280,12 +280,12 @@ export class SignalProtocolClient implements ISignalProtocolClient {
 
     // Dependency injection: Storage is always provided by create() callers.
     if (!config.storage) {
-      throw new Error('Storage must be provided by SignalProtocolClient.create() callers');
+      throw new Error('Storage must be provided by DefaultSignalProtocolClient.create() callers');
     }
     this._storage = config.storage;
     (
-      this._storage as ISignalProtocolLocalStore & {
-        setLogger?: (logger?: ILogger) => void;
+      this._storage as SignalProtocolLocalStore & {
+        setLogger?: (logger?: Logger) => void;
       }
     ).setLogger?.(this.logger);
 
@@ -298,7 +298,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     // Dependency injection: Use provided protocol manager or create new one with our storage and protocol strategy
     this.manager =
       config.protocolManager ??
-      new SignalProtocolManager(this._storage, config.protocolStrategy, this.logger);
+      new DefaultSignalProtocolManager(this._storage, config.protocolStrategy, this.logger);
 
     // Validate manager was created successfully before initializing Sesame
     if (!this.manager) {
@@ -309,7 +309,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     }
 
     // Initialize Sesame manager for multi-device support
-    this.sesameManager = new SesameManager(
+    this.sesameManager = new DefaultSesameManager(
       this._storage,
       {}, // Use default Sesame config
       this.manager,
@@ -639,7 +639,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     // NOTE: hooks are initialized in constructor (this.hooks = config?.hooks || {})
 
     if (config?.enableDebugLogging) {
-      this.logger.debug('SignalProtocolClient created', {
+      this.logger.debug('DefaultSignalProtocolClient created', {
         category: 'E2EE',
         data: { userId, deviceId, config: this.sanitizeConfig(config) },
       });
@@ -766,7 +766,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   private async resolveGroupSession() {
     if (!this.groupSessionFor || !this.config.groups) {
       throw new EncryptionError(
-        'Groups not configured. Provide groups config to SignalProtocolClient.create().',
+        'Groups not configured. Provide groups config to DefaultSignalProtocolClient.create().',
         EncryptionErrorCode.INITIALIZATION_FAILED
       );
     }
@@ -818,7 +818,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   }
 
   /**
-   * Get relay subscription callbacks (delegate back to SignalProtocolClient methods)
+   * Get relay subscription callbacks (delegate back to DefaultSignalProtocolClient methods)
    */
   private get relaySubscriptionCallbacks(): RelaySubscriptionOps.RelaySubscriptionCallbacks {
     return {
@@ -839,7 +839,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   }
 
   /**
-   * Create and initialize a new SignalProtocolClient instance.
+   * Create and initialize a new DefaultSignalProtocolClient instance.
    *
    * This low-level factory fully initializes the client before it returns
    * it. Most app code should prefer `createSignalProtocolClient()`, which
@@ -850,27 +850,27 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    *
    * @param userId - User identifier for this device/client
    * @param config - Optional configuration for the client
-   * @returns Fully initialized SignalProtocolClient instance
+   * @returns Fully initialized DefaultSignalProtocolClient instance
    *
    * @example
    * ```typescript
-   * import { SignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
+   * import { DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
    * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
    *
    * // Local-only primary device.
-   * const signal = await SignalProtocolClient.create('user-123', {
+   * const signal = await DefaultSignalProtocolClient.create('user-123', {
    *   storage,
    * });
    *
    * // Linked device; storage must already contain provisioned identity material.
-   * const signal = await SignalProtocolClient.create('user-123', {
+   * const signal = await DefaultSignalProtocolClient.create('user-123', {
    *   deviceId: 2,
    *   storage: provisionedLinkedDeviceStorage
    * });
    *
    * // With relay sync.
    * const relay = inMemoryRelay();
-   * const signal = await SignalProtocolClient.create('user-123', {
+   * const signal = await DefaultSignalProtocolClient.create('user-123', {
    *   storage,
    *   relay,
    *   onProgress: ({ stage, percent, message }) => {
@@ -879,7 +879,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * });
    *
    * // With full configuration
-   * const signal = await SignalProtocolClient.create('user-123', {
+   * const signal = await DefaultSignalProtocolClient.create('user-123', {
    *   deviceId: 1,
    *   storage,
    *   relay,
@@ -890,7 +890,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * });
    *
    * // For local development with in-memory adapters
-   * const signal = await SignalProtocolClient.create('local-user', {
+   * const signal = await DefaultSignalProtocolClient.create('local-user', {
    *   protocolManager: inMemoryManager,
    *   storage: inMemoryStorage
    * });
@@ -899,18 +899,18 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   static async create(
     userId: string,
     config: SignalProtocolClientConfig
-  ): Promise<SignalProtocolClient> {
+  ): Promise<DefaultSignalProtocolClient> {
     const deviceId = config?.deviceId ?? 1; // Default to primary device
 
     // Use locking to prevent race conditions when multiple create() calls happen concurrently.
     // The lock allows only one storage instance per userId, which prevents database lock
     // contention and session state corruption.
     return storageLock.acquire(`storage-init-${userId}`, async () => {
-      // Storage is required - SignalProtocolClient is platform-agnostic
+      // Storage is required - DefaultSignalProtocolClient is platform-agnostic
       // Each platform must provide its own storage implementation
       if (!config?.storage) {
         throw new Error(
-          'SignalProtocolClient.create() requires storage. ' +
+          'DefaultSignalProtocolClient.create() requires storage. ' +
             'Expo: import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo"; ' +
             'Web: import { indexedDbStore } from "@open-e2ee/signal-protocol-sdk/local/store/web"; ' +
             'Node: import { nodeStore } from "@open-e2ee/signal-protocol-sdk/local/store/node";'
@@ -936,7 +936,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
         }
       }
 
-      const client = new SignalProtocolClient(userId, deviceId, finalConfig);
+      const client = new DefaultSignalProtocolClient(userId, deviceId, finalConfig);
       await client.initialize();
       await client.hydratePersistedState();
 
@@ -1198,8 +1198,8 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    *
    * @example
    * ```typescript
-   * const alice = await SignalProtocolClient.create('alice', { storage: aliceStorage });
-   * const bob = await SignalProtocolClient.create('bob', { storage: bobStorage });
+   * const alice = await DefaultSignalProtocolClient.create('alice', { storage: aliceStorage });
+   * const bob = await DefaultSignalProtocolClient.create('bob', { storage: bobStorage });
    *
    * // Use address() to reference the local device
    * await alice.encryptMessage(bob.address(), 'Hello');
@@ -1776,7 +1776,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   ): Promise<import('./types').DownloadedAttachment> {
     if (!this.remoteObjectStore) {
       throw new EncryptionError(
-        'Remote object storage not configured. Provide remoteObjectStore in SignalProtocolClient.create() config.',
+        'Remote object storage not configured. Provide remoteObjectStore in DefaultSignalProtocolClient.create() config.',
         EncryptionErrorCode.INITIALIZATION_FAILED
       );
     }
@@ -1799,7 +1799,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   ): Promise<void> {
     if (!this.remoteObjectStore) {
       throw new EncryptionError(
-        'Remote object storage not configured. Provide remoteObjectStore in SignalProtocolClient.create() config.',
+        'Remote object storage not configured. Provide remoteObjectStore in DefaultSignalProtocolClient.create() config.',
         EncryptionErrorCode.INITIALIZATION_FAILED
       );
     }
@@ -1915,7 +1915,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * Register a hook callback after construction
    *
    * Enables dependency injection patterns where callers register hooks
-   * after the SignalProtocolClient exists. ServicesProvider uses this
+   * after the DefaultSignalProtocolClient exists. ServicesProvider uses this
    * to wire up ContentManager's decryption hook.
    *
    * @param name - The hook name to register
@@ -1924,14 +1924,14 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * @example
    * ```typescript
    * // In ServicesProvider: wire up ContentManager after creation
-   * const signal = await SignalProtocolClient.create(userId, { storage, relay });
+   * const signal = await DefaultSignalProtocolClient.create(userId, { storage, relay });
    * const content = new ContentManager({ db, signal });
    *
    * signal.registerHook('onMessageDecrypted', content.getDecryptionHook());
    * signal.startRelaySubscription(); // Now safe to start
    * ```
    *
-   * @see ISignalProtocolClient.registerHook
+   * @see SignalProtocolClient.registerHook
    */
   registerHook<K extends keyof import('./event-hooks').SignalProtocolClientHooks>(
     name: K,
@@ -1952,7 +1952,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
   /**
    * Start relay subscription for automatic message decryption
    *
-   * When configured with both `relay` and `onMessageDecrypted` hook, SignalProtocolClient will:
+   * When configured with both `relay` and `onMessageDecrypted` hook, DefaultSignalProtocolClient will:
    * 1. Subscribe to incoming envelopes from the relay
    * 2. Decrypt messages appropriately (pairwise vs group/sender key)
    * 3. Call onMessageDecrypted hook with DecryptedEnvelope (for ContentManager storage)
@@ -1964,7 +1964,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * Callers can run this manually after registering hooks via registerHook().
    * Called automatically by create() when relay + hook configured.
    *
-   * @see ISignalProtocolClient.startRelaySubscription
+   * @see SignalProtocolClient.startRelaySubscription
    */
   public startRelaySubscription(): void {
     if (!this.relay) {
@@ -2024,12 +2024,12 @@ export class SignalProtocolClient implements ISignalProtocolClient {
    * Stop the relay subscription
    *
    * Pauses message processing via the relay subscription without destroying
-   * SignalProtocolClient state. startRelaySubscription() restarts the subscription.
+   * DefaultSignalProtocolClient state. startRelaySubscription() restarts the subscription.
    *
    * Use this when the app backgrounds to let the background task handle messages.
    * Resume when the app foregrounds for real-time message delivery.
    *
-   * @see ISignalProtocolClient.stopRelaySubscription
+   * @see SignalProtocolClient.stopRelaySubscription
    */
   public stopRelaySubscription(): void {
     // Flush any pending batched delivery receipts before unsubscribing
@@ -2398,7 +2398,7 @@ export class SignalProtocolClient implements ISignalProtocolClient {
     // 5. Clear internal tracking state via state manager
     this.state.clearForStop();
 
-    this.logger.debug('SignalProtocolClient stopped', {
+    this.logger.debug('DefaultSignalProtocolClient stopped', {
       category: 'E2EE',
       data: { userId: this.userId, deviceId: this.deviceId },
     });

@@ -20,7 +20,7 @@ import type { ProtocolAddress } from './address';
 import type { TrustDirection, IdentityKeyChange } from './trust';
 import type { UserRecord, DeviceRecord } from '../internal/sesame/types';
 import type { SenderKeyState } from '../internal/protocol/sender-keys/manager';
-import type { ILogger } from '../logger';
+import type { Logger } from '../logger';
 
 // Re-export IdentityType for consumers
 export {};
@@ -89,7 +89,7 @@ export interface SenderKeyReceiveCommit {
  * const encrypted = await signal.encryptMessage(bob, 'Hello!');
  * ```
  */
-export interface ISignalProtocolClient {
+export interface SignalProtocolClient {
   // ============================================================================
   // IDENTITY PROPERTIES
   // ============================================================================
@@ -109,7 +109,7 @@ export interface ISignalProtocolClient {
    *
    * This is the client-scoped logger used throughout the Signal Protocol runtime.
    */
-  readonly logger: Required<ILogger>;
+  readonly logger: Required<Logger>;
 
   // ============================================================================
   // LIFECYCLE METHODS
@@ -655,7 +655,7 @@ export interface ISignalProtocolClient {
 /**
  * Signal Protocol manager interface
  */
-export interface ISignalProtocolManager {
+export interface SignalProtocolManager {
   /**
    * Initialize identity keys on first launch
    * @param identityTypes - Identity types to generate keys for (defaults to ['aci', 'pni'])
@@ -758,7 +758,7 @@ export interface ISignalProtocolManager {
 // FOCUSED STORE INTERFACES
 // ============================================================================
 //
-// Breaking ISignalProtocolLocalStore into focused interfaces provides:
+// Breaking SignalProtocolLocalStore into focused interfaces provides:
 //
 // 1. Interface Segregation: Implementations only need to implement what they use
 // 2. Verifiable seams: substitute individual stores without implementing everything
@@ -774,7 +774,7 @@ export interface ISignalProtocolManager {
  * changes after the store pins a tuple. It does not authenticate first contact.
  *
  */
-export interface IIdentityKeyStore {
+export interface IdentityKeyStore {
   /**
    * Store our identity key pair (only done once per install per identity type).
    * @param keyPair - Identity key pair to store
@@ -894,7 +894,7 @@ export interface IIdentityKeyStore {
  * The protocol consumes a one-time prekey after use, and no caller may reuse it.
  *
  */
-export interface IEcOneTimePreKeyStore {
+export interface EcOneTimePreKeyStore {
   /**
    * Store EC one-time prekeys.
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
@@ -932,7 +932,7 @@ export interface IEcOneTimePreKeyStore {
  *
  * @see https://signal.org/docs/specifications/x3dh/
  */
-export interface IEcSignedPreKeyStore {
+export interface EcSignedPreKeyStore {
   /**
    * Store EC signed prekey.
    *
@@ -979,14 +979,14 @@ export interface IEcSignedPreKeyStore {
  * configured refresh interval (2 days by default).
  *
  * Naming convention matches EC prekeys:
- * - `IEcOneTimePreKeyStore` → one-time EC prekeys (`ecPreKeys`)
- * - `IEcSignedPreKeyStore` → reusable EC prekey (`ecSignedPreKeys`)
- * - `IKemPreKeyStore` → one-time KEM prekeys (`kemOneTimePreKeys`) - FUTURE
- * - `IKyberLastResortPreKeyStore` → reusable KEM prekey (`kemLastResortPreKeys`)
+ * - `EcOneTimePreKeyStore` → one-time EC prekeys (`ecPreKeys`)
+ * - `EcSignedPreKeyStore` → reusable EC prekey (`ecSignedPreKeys`)
+ * - `KemPreKeyStore` → one-time KEM prekeys (`kemOneTimePreKeys`) - FUTURE
+ * - `KyberLastResortPreKeyStore` → reusable KEM prekey (`kemLastResortPreKeys`)
  *
  * @see https://signal.org/docs/specifications/pqxdh/
  */
-export interface IKyberLastResortPreKeyStore {
+export interface KyberLastResortPreKeyStore {
   /**
    * Store Kyber prekey (post-quantum security).
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
@@ -1032,12 +1032,12 @@ export interface IKyberLastResortPreKeyStore {
  * security layer beyond the last-resort Kyber prekey.
  *
  * Naming convention matches EC prekeys:
- * - `IEcOneTimePreKeyStore` → one-time EC prekeys (`ecPreKeys`)
- * - `IKemPreKeyStore` → one-time KEM prekeys (`kemOneTimePreKeys`)
+ * - `EcOneTimePreKeyStore` → one-time EC prekeys (`ecPreKeys`)
+ * - `KemPreKeyStore` → one-time KEM prekeys (`kemOneTimePreKeys`)
  *
  * @see https://signal.org/docs/specifications/pqxdh/ Section 3.2
  */
-export interface IKemPreKeyStore {
+export interface KemPreKeyStore {
   /**
    * Store one-time KEM prekeys (batch storage).
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
@@ -1083,7 +1083,7 @@ export interface IKemPreKeyStore {
  * and the Sesame algorithm for session convergence.
  *
  */
-export interface ISessionStore {
+export interface SessionStore {
   /**
    * Store session record with current + archived sessions.
    *
@@ -1159,7 +1159,7 @@ export interface ISessionStore {
  *
  * @see https://signal.org/docs/specifications/sesame/
  */
-export interface ISesameStore {
+export interface SesameStore {
   /**
    * Get user record containing all devices for a user.
    */
@@ -1224,7 +1224,7 @@ export interface ISesameStore {
  * Manages sender keys for efficient group encryption using the
  * Sender Key Distribution Message protocol.
  */
-export interface ISenderKeyStore {
+export interface SenderKeyStore {
   /**
    * Store sender key state for a group member device.
    */
@@ -1430,14 +1430,14 @@ export interface SkippedSenderMessageKey {
  * Combines the five focused local-store responsibilities into one interface.
  *
  */
-export interface IProtocolStore
+export interface ProtocolStore
   extends
-    IIdentityKeyStore,
-    IEcOneTimePreKeyStore,
-    IEcSignedPreKeyStore,
-    IKyberLastResortPreKeyStore,
-    IKemPreKeyStore,
-    ISessionStore {
+    IdentityKeyStore,
+    EcOneTimePreKeyStore,
+    EcSignedPreKeyStore,
+    KyberLastResortPreKeyStore,
+    KemPreKeyStore,
+    SessionStore {
   /** Atomically pin/match trust, store the session, and consume referenced one-time prekeys. */
   commitSessionTrust(commit: SessionTrustCommit): Promise<void>;
 
@@ -1462,8 +1462,8 @@ export interface IProtocolStore
  * This is the interface that local store adapters should implement.
  *
  */
-export interface ISignalProtocolLocalStore
-  extends IProtocolStore, ISesameStore, ISenderKeyStore, IMessageRecordStore {
+export interface SignalProtocolLocalStore
+  extends ProtocolStore, SesameStore, SenderKeyStore, MessageRecordStore {
   getReceivedContent(id: string): Promise<ReceivedContent | null>;
   deleteReceivedContent(id: string): Promise<void>;
   deleteExpiredReceivedContent(before: number): Promise<number>;
@@ -1571,7 +1571,7 @@ export interface ISignalProtocolLocalStore
  * remain outside the main local store, such as a database encryption key.
  * It is not a second general-purpose Signal Protocol data store.
  */
-export interface ISignalProtocolLocalSecretVault {
+export interface SignalProtocolLocalSecretVault {
   /**
    * Read a named secret from local secure storage.
    */
@@ -1654,7 +1654,7 @@ export interface MessageRecord {
  * The client timestamp assigned before encryption indexes a message. The
  * primary lookup method is getMessageRecord(sessionId, timestamp).
  */
-export interface IMessageRecordStore {
+export interface MessageRecordStore {
   /** Store a message record after encryption */
   storeMessageRecord(record: MessageRecord): Promise<void>;
 
@@ -1687,8 +1687,8 @@ export interface IMessageRecordStore {
 // ════════════════════════════════════════════════════════════════════════════
 
 export type {
-  IGroupStateStore,
-  IGroupServer,
+  GroupStateStore,
+  GroupServer,
   GroupSnapshot,
   GroupChangeLogEntry,
 } from '../internal/groups/manager';

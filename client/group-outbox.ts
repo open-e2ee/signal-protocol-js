@@ -1,10 +1,10 @@
-import type { ISignalProtocolLocalStore } from '../types';
+import type { SignalProtocolLocalStore } from '../types';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { SealedSenderAuthError } from '../types/errors';
 import * as CryptoUtils from '../internal/crypto';
 import type {
   GroupMemberDevice,
-  ISignalProtocolRelayServer,
+  SignalProtocolRelayServer,
   SealedSenderAuth,
 } from '../remote/relay/types';
 import {
@@ -19,8 +19,8 @@ import {
 import type { SendOptions, SendResult } from './types';
 
 export interface GroupOutboxContext {
-  storage: ISignalProtocolLocalStore;
-  relay?: ISignalProtocolRelayServer;
+  storage: SignalProtocolLocalStore;
+  relay?: SignalProtocolRelayServer;
   senderUserId: string;
   senderDeviceId: number;
   deliveryMode: 'preferred' | 'required' | 'disabled';

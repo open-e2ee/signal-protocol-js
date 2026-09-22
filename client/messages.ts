@@ -1,7 +1,7 @@
 /**
  * Message encryption/decryption operations for SignalProtocolClient
  *
- * Extracted from SignalProtocolClient class to reduce file size.
+ * Extracted from DefaultSignalProtocolClient class to reduce file size.
  * Uses Double Ratchet algorithm for forward secrecy and post-compromise security.
  */
 

@@ -21,7 +21,7 @@ import { homedir } from 'node:os';
 import { EncryptionError, EncryptionErrorCode } from '../../../types';
 import { receivedContentKey, parseReceivedContent } from '../received-content';
 import type { ReceivedContent } from '../../../types';
-import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
+import { resolveSignalProtocolLogger, type Logger } from '../../../logger';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 import { encryptRecord, decryptRecord, type EncryptedRecord } from './database-encryption';
 import { getNodeDatabaseKeyManager, NODE_DATABASE_RESET_FILE } from './database-key';
@@ -158,7 +158,7 @@ export class NodeEncryptedDatabase {
   private readonly dataDir: string;
   private readonly sessionsDir: string;
   private readonly securityStatePath: string;
-  private readonly logger: Required<ILogger>;
+  private readonly logger: Required<Logger>;
   private securityStateMutation: Promise<void> = Promise.resolve();
 
   /**
@@ -166,7 +166,7 @@ export class NodeEncryptedDatabase {
    *
    * @param dataDir Optional data directory (defaults to ~/.config/signal)
    */
-  constructor(dataDir: string = DEFAULT_DATA_DIR, providedLogger?: ILogger) {
+  constructor(dataDir: string = DEFAULT_DATA_DIR, providedLogger?: Logger) {
     this.dataDir = dataDir;
     this.sessionsDir = join(dataDir, 'sessions');
     this.securityStatePath = join(dataDir, 'protocol_security_state_v1.json');

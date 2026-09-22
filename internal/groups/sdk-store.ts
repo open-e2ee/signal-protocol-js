@@ -3,10 +3,10 @@
  */
 
 import AsyncLock from 'async-lock';
-import type { ISignalProtocolLocalStore } from '../../types/api';
+import type { SignalProtocolLocalStore } from '../../types/api';
 import { base64ToBytes, bytesToBase64 } from '../../encoding/base64';
 import { asBase64 } from '../../types/utils';
-import type { IGroupStateStore } from './manager';
+import type { GroupStateStore } from './manager';
 import type { DecryptedGroup } from './types';
 
 export {};
@@ -61,10 +61,10 @@ function decodeRecord(encoded: string): StoredGroupRecord {
  * key rotation barrier for a group. State-and-barrier writes therefore cross
  * the local-store boundary atomically.
  */
-export class SignalProtocolGroupStateStore implements IGroupStateStore {
+export class SignalProtocolGroupStateStore implements GroupStateStore {
   private readonly lock = new AsyncLock();
 
-  constructor(private readonly storage: ISignalProtocolLocalStore) {}
+  constructor(private readonly storage: SignalProtocolLocalStore) {}
 
   async storeMasterKey(
     groupId: string,

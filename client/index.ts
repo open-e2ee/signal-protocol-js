@@ -2,7 +2,7 @@
  * Signal Protocol client module.
  *
  * This module exposes the app-facing composition helper and the low-level
- * SignalProtocolClient class for encrypted messaging.
+ * DefaultSignalProtocolClient class for encrypted messaging.
  *
  * @example
  * ```typescript
@@ -18,7 +18,7 @@
  * ```
  */
 export {};
-export { SignalProtocolClient } from "./client";
+export { DefaultSignalProtocolClient } from "./client";
 export {
   createSignalProtocolClient,
   createSignalProtocolClientConfig,

@@ -10,7 +10,7 @@
 
 import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
 import type {
-  ISignalProtocolLocalStore,
+  SignalProtocolLocalStore,
   MessageRecord,
   SkippedSenderMessageKey,
   SessionTrustCommit,
@@ -85,7 +85,7 @@ function cloneStored<T>(value: T): T {
  * ```
  */
 export {};
-export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
+export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
   readonly failures: StoreFailureController;
 
   // Identity keys and registration IDs keyed by identityType
@@ -563,7 +563,7 @@ export class InMemorySignalProtocolStore implements ISignalProtocolLocalStore {
 
   /**
    * Get session record
-   * Returns SessionRecord format for ISignalProtocolLocalStore interface compatibility
+   * Returns SessionRecord format for SignalProtocolLocalStore interface compatibility
    */
   async getSessionRecord(address: ProtocolAddress): Promise<SessionRecord | null> {
     const key = this.getAddressKey(address);

@@ -1,4 +1,4 @@
-import { resolveSignalProtocolLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import type {
   BlockedRecipientEntry,
   SignalProtocolBlockingHooks,
@@ -10,7 +10,7 @@ export interface SignalProtocolBlockingManagerOptions {
   store: SignalProtocolBlockingStore;
   mirror?: SignalProtocolBlockingMirror;
   hooks?: SignalProtocolBlockingHooks;
-  logger?: ILogger;
+  logger?: Logger;
 }
 
 /**
@@ -23,7 +23,7 @@ export class SignalProtocolBlockingManager {
   private readonly store: SignalProtocolBlockingStore;
   private readonly mirror?: SignalProtocolBlockingMirror;
   private readonly hooks?: SignalProtocolBlockingHooks;
-  private readonly logger: Required<ILogger>;
+  private readonly logger: Required<Logger>;
 
   constructor(options: SignalProtocolBlockingManagerOptions) {
     this.store = options.store;

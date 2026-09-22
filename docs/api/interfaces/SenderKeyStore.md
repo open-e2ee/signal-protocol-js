@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / ISenderKeyStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / SenderKeyStore
 
-# Interface: ISenderKeyStore
+# Interface: SenderKeyStore
 
 Sender Key store interface for group messaging.
 
@@ -13,7 +13,7 @@ Sender Key Distribution Message protocol.
 
 ## Extended by
 
-- [`ISignalProtocolLocalStore`](ISignalProtocolLocalStore.md)
+- [`SignalProtocolLocalStore`](SignalProtocolLocalStore.md)
 
 ## Methods
 

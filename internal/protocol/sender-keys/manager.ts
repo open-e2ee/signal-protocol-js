@@ -18,10 +18,10 @@
  */
 
 import * as crypto from '../../crypto';
-import type { ISignalProtocolLocalStore } from '../../../types/api';
+import type { SignalProtocolLocalStore } from '../../../types/api';
 import type { Signature, PublicKey, PrivateKey } from '../../../keys';
 import { SENDER_KEY_FORMAT, SENDER_KEY_MESSAGE_VERSION } from '../../../versions';
-import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
+import { defaultSignalProtocolLogger, type Logger } from '../../../logger';
 import { asBase64, type Base64 } from '../../../types/utils';
 import {
   type SenderKeysConfig,
@@ -163,7 +163,7 @@ const CHAIN_KEY_CONSTANT = new Uint8Array([0x02]);
  * All three are logged: a silent clamp would leave a host believing a rotation
  * interval it is not getting.
  */
-function resolveMaxSenderKeyAge(configured: number | undefined, logger: Required<ILogger>): number {
+function resolveMaxSenderKeyAge(configured: number | undefined, logger: Required<Logger>): number {
   if (configured === undefined) return SENDER_KEYS_DEFAULTS.maxSenderKeyAge;
 
   if (!Number.isFinite(configured) || configured <= 0) {
@@ -215,12 +215,12 @@ export class SenderKeyManager {
    *        (the current state is in storage, previous states are here)
    */
   private readonly previousStates = new Map<string, SenderKeyState[]>();
-  private readonly logger: Required<ILogger>;
+  private readonly logger: Required<Logger>;
 
   constructor(
-    private storage: ISignalProtocolLocalStore,
+    private storage: SignalProtocolLocalStore,
     config?: SenderKeysConfig,
-    logger: Required<ILogger> = defaultSignalProtocolLogger
+    logger: Required<Logger> = defaultSignalProtocolLogger
   ) {
     this.logger = logger;
     // Resolve config with defaults

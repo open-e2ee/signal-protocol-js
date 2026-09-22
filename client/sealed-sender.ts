@@ -9,8 +9,8 @@
 
 import type { SealedSenderConfig, SealedSenderDeliveryMode } from './config';
 import type { Envelope, SealedSenderAuth } from '../remote/relay/types';
-import { resolveSignalProtocolLogger, type ILogger } from '../logger';
-import type { Base64, ISignalProtocolLocalStore } from '../types';
+import { resolveSignalProtocolLogger, type Logger } from '../logger';
+import type { Base64, SignalProtocolLocalStore } from '../types';
 import { ProtocolAddress } from '../types/address';
 import { base64ToBytes } from '../internal/crypto';
 import type { EndorsementManager } from './endorsement-manager';
@@ -40,7 +40,7 @@ export interface ResolvedSealedSenderContext {
 }
 
 export interface SealedSenderResolutionContext {
-  storage: ISignalProtocolLocalStore;
+  storage: SignalProtocolLocalStore;
   deliveryMode: SealedSenderDeliveryMode;
   relaySupportsUnidentified: boolean;
   provider?: SealedSenderProvider;
@@ -49,7 +49,7 @@ export interface SealedSenderResolutionContext {
   groupSecretParamsProvider?: (
     groupId: string
   ) => Promise<import('../internal/protocol/zk/groups/group-params').GroupSecretParams | null>;
-  logger: Required<ILogger>;
+  logger: Required<Logger>;
   useIdentifiedDeliveryOrThrow(recipientUserId: string, reason: string): null;
 }
 
@@ -274,7 +274,7 @@ export async function unsealMessage(
   recipientDeviceId: number,
   config: SealedSenderConfig,
   relayEnqueueTime: number | undefined,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<{
   senderUserId: string;
   senderDeviceId: number;
@@ -327,7 +327,7 @@ async function unsealReceivedMessage(
   recipientDeviceId: number,
   config: SealedSenderConfig,
   relayEnqueueTime: number,
-  logger: Required<ILogger>
+  logger: Required<Logger>
 ): Promise<{
   senderUserId: string;
   senderDeviceId: number;

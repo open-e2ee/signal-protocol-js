@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / ISesameStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / SesameStore
 
-# Interface: ISesameStore
+# Interface: SesameStore
 
 SESAME store interface for multi-device session management.
 
@@ -19,7 +19,7 @@ https://signal.org/docs/specifications/sesame/
 
 ## Extended by
 
-- [`ISignalProtocolLocalStore`](ISignalProtocolLocalStore.md)
+- [`SignalProtocolLocalStore`](SignalProtocolLocalStore.md)
 
 ## Methods
 

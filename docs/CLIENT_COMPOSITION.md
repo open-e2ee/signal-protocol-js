@@ -95,14 +95,14 @@ app code does not have to compose queue callbacks for ordinary sends. See
 
 ## Direct Client Creation
 
-`SignalProtocolClient.create()` remains the low-level primitive. It uses the same
+`DefaultSignalProtocolClient.create()` remains the low-level primitive. It uses the same
 developer-facing protocol config:
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import { SignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
+import { DefaultSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   // Low-level creation uses the same storage/relay/protocol concepts.
   storage,
   relay,
@@ -116,7 +116,7 @@ const signal = await SignalProtocolClient.create(userId, {
 - Keep account/device identity in `identity`.
 - Keep product security policy in `protocol`.
 - Keep app logging, hooks, sealed sender, groups, and sender-key options at the
-  top level so they match `SignalProtocolClient.create()`.
+  top level so they match `DefaultSignalProtocolClient.create()`.
 - Use `protocol.postQuantum: 'compatible'` only when the product explicitly
   supports peers with no post-quantum material.
 - Use `protocol.braid: 'disabled'` only when a product-reviewed constraint

@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / ISignalProtocolRelayServer
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolRelayServer
 
-# Interface: ISignalProtocolRelayServer
+# Interface: SignalProtocolRelayServer
 
 Server-side relay for encrypted envelope push delivery.
 
@@ -18,7 +18,7 @@ The OpenE2EE Signal Protocol Relay and the in-memory relay implement it.
 ## Example
 
 ```typescript
-const relay: ISignalProtocolRelayServer = inMemoryRelay();
+const relay: SignalProtocolRelayServer = inMemoryRelay();
 
 // Subscribe to incoming envelopes
 const unsubscribe = relay.subscribe(userId, deviceId, (envelope) => {
@@ -38,13 +38,13 @@ await relay.send({
 
 ## Extends
 
-- `IProvisioningService`.`IKeyRotationService`
+- `ProvisioningService`.`KeyRotationService`
 
 ## Properties
 
 ### groupServer?
 
-> `readonly` `optional` **groupServer?**: [`IRelayGroupServer`](IRelayGroupServer.md)
+> `readonly` `optional` **groupServer?**: [`RelayGroupServer`](RelayGroupServer.md)
 
 Optional conforming Group System transport and issuance capability.
 
@@ -72,7 +72,7 @@ Session ID to finalize
 
 #### Inherited from
 
-`IProvisioningService.acknowledgeProvisioning`
+`ProvisioningService.acknowledgeProvisioning`
 
 ***
 
@@ -152,7 +152,7 @@ Final device metadata, including the encrypted device name
 
 #### Inherited from
 
-`IProvisioningService.completeProvisioning`
+`ProvisioningService.completeProvisioning`
 
 ***
 
@@ -198,7 +198,7 @@ Non-sensitive device information available before provisioning completes
 
 #### Inherited from
 
-`IProvisioningService.connectNewDevice`
+`ProvisioningService.connectNewDevice`
 
 ***
 
@@ -263,7 +263,7 @@ Session ID for the provisioning flow
 
 #### Inherited from
 
-`IProvisioningService.createProvisioningSession`
+`ProvisioningService.createProvisioningSession`
 
 ***
 
@@ -291,7 +291,7 @@ Session ID to delete
 
 #### Inherited from
 
-`IProvisioningService.deleteProvisioningSession`
+`ProvisioningService.deleteProvisioningSession`
 
 ***
 
@@ -440,7 +440,7 @@ Metadata with timestamps and publicKey, or null if no key exists
 
 #### Inherited from
 
-`IKeyRotationService.getEcSignedPreKeyMetadata`
+`KeyRotationService.getEcSignedPreKeyMetadata`
 
 ***
 
@@ -608,7 +608,7 @@ Metadata with timestamps, publicKey, and keyId, or null if no key exists
 
 #### Inherited from
 
-`IKeyRotationService.getKemLastResortPreKeyMetadata`
+`KeyRotationService.getKemLastResortPreKeyMetadata`
 
 ***
 
@@ -702,7 +702,7 @@ Status and encrypted message (if ready)
 
 #### Inherited from
 
-`IProvisioningService.getProvisioningMessage`
+`ProvisioningService.getProvisioningMessage`
 
 ***
 
@@ -939,7 +939,7 @@ Session ID to roll back
 
 #### Inherited from
 
-`IProvisioningService.rollbackProvisioning`
+`ProvisioningService.rollbackProvisioning`
 
 ***
 
@@ -1070,7 +1070,7 @@ AES-GCM encrypted payload (JSON string with ciphertext, iv, authTag)
 
 #### Inherited from
 
-`IProvisioningService.sendProvisioningMessage`
+`ProvisioningService.sendProvisioningMessage`
 
 ***
 

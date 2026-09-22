@@ -11,7 +11,7 @@
  * @see https://signal.org/docs/specifications/pqxdh/
  */
 
-import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import { getErrorMessage } from '../../utils/errors';
 import {
   performPQXDH as pqxdhKeyAgreement,
@@ -59,7 +59,7 @@ export interface KeyAgreementOptions {
   /** Remote address for error messages and callbacks (userId:deviceId) */
   remoteAddress?: string;
   /** Resolved logger for handshake diagnostics */
-  logger?: Required<ILogger>;
+  logger?: Required<Logger>;
 }
 
 /**
@@ -266,7 +266,7 @@ export async function performKeyAgreement(
 function invokeProtocolCallback(
   config: ProtocolStrategyConfig | undefined,
   event: ProtocolSelectionEvent,
-  logger: Required<ILogger>
+  logger: Required<Logger>
 ): void {
   if (config?.onProtocolSelected) {
     try {

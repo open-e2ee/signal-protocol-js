@@ -6,7 +6,7 @@
 
 # Function: createHostedSignalProtocolClient()
 
-> **createHostedSignalProtocolClient**(`options`): `Promise`\<[`SignalProtocolClient`](../classes/SignalProtocolClient.md)\>
+> **createHostedSignalProtocolClient**(`options`): `Promise`\<[`DefaultSignalProtocolClient`](../classes/DefaultSignalProtocolClient.md)\>
 
 Create a Signal Protocol Relay client without accepting a caller-supplied account or device ID.
 
@@ -21,7 +21,7 @@ account, registered device, scope, and authenticated transport used by the clien
 
 ## Returns
 
-`Promise`\<[`SignalProtocolClient`](../classes/SignalProtocolClient.md)\>
+`Promise`\<[`DefaultSignalProtocolClient`](../classes/DefaultSignalProtocolClient.md)\>
 
 ## Example
 

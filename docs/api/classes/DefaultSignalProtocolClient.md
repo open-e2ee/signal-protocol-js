@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolClient
+[@open-e2ee/signal-protocol-sdk](../README.md) / DefaultSignalProtocolClient
 
-# Class: SignalProtocolClient
+# Class: DefaultSignalProtocolClient
 
 Modern Signal Protocol Client
 
@@ -16,12 +16,12 @@ Uses static factory pattern for type-safe async initialization:
 - Clear error handling
 - Type-safe API
 
-This client implements the ISignalProtocolClient interface and wraps
-SignalProtocolManager with additional high-level functionality.
+This client implements the SignalProtocolClient interface and wraps
+DefaultSignalProtocolManager with additional high-level functionality.
 
 ## Implements
 
-- [`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md)
+- [`SignalProtocolClient`](../interfaces/SignalProtocolClient.md)
 
 ## Properties
 
@@ -33,13 +33,13 @@ Device ID for this client instance (1 = primary, 2-5 = linked)
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`deviceId`](../interfaces/ISignalProtocolClient.md#deviceid)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`deviceId`](../interfaces/SignalProtocolClient.md#deviceid)
 
 ***
 
 ### logger
 
-> `readonly` **logger**: `Required`\<[`ILogger`](../interfaces/ILogger.md)\>
+> `readonly` **logger**: `Required`\<[`Logger`](../interfaces/Logger.md)\>
 
 Resolved logger for this client instance.
 
@@ -47,7 +47,7 @@ This is the client-scoped logger used throughout the Signal Protocol runtime.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`logger`](../interfaces/ISignalProtocolClient.md#logger)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`logger`](../interfaces/SignalProtocolClient.md#logger)
 
 ***
 
@@ -98,7 +98,7 @@ Get user ID for this client instance
 
 ##### See
 
-ISignalProtocolClient.userId
+SignalProtocolClient.userId
 
 ##### Returns
 
@@ -108,7 +108,7 @@ User ID for this client instance
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`userId`](../interfaces/ISignalProtocolClient.md#userid)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`userId`](../interfaces/SignalProtocolClient.md#userid)
 
 ## Methods
 
@@ -199,8 +199,8 @@ ProtocolAddress for this client (userId:deviceId)
 #### Example
 
 ```typescript
-const alice = await SignalProtocolClient.create('alice', { storage: aliceStorage });
-const bob = await SignalProtocolClient.create('bob', { storage: bobStorage });
+const alice = await DefaultSignalProtocolClient.create('alice', { storage: aliceStorage });
+const bob = await DefaultSignalProtocolClient.create('bob', { storage: bobStorage });
 
 // Use address() to reference the local device
 await alice.encryptMessage(bob.address(), 'Hello');
@@ -451,7 +451,7 @@ for (const member of groupMembers) {
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`createGroupSenderKey`](../interfaces/ISignalProtocolClient.md#creategroupsenderkey)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`createGroupSenderKey`](../interfaces/SignalProtocolClient.md#creategroupsenderkey)
 
 ***
 
@@ -511,7 +511,7 @@ Decrypted file blob with correct MIME type
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`decryptFile`](../interfaces/ISignalProtocolClient.md#decryptfile)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`decryptFile`](../interfaces/SignalProtocolClient.md#decryptfile)
 
 ***
 
@@ -600,7 +600,7 @@ console.log('Message:', plaintext);
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`decryptGroupMessage`](../interfaces/ISignalProtocolClient.md#decryptgroupmessage)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`decryptGroupMessage`](../interfaces/SignalProtocolClient.md#decryptgroupmessage)
 
 ***
 
@@ -635,7 +635,7 @@ Decrypted plaintext
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`decryptMessage`](../interfaces/ISignalProtocolClient.md#decryptmessage)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`decryptMessage`](../interfaces/SignalProtocolClient.md#decryptmessage)
 
 ***
 
@@ -690,7 +690,7 @@ Group identifier
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`deleteGroupSenderKey`](../interfaces/ISignalProtocolClient.md#deletegroupsenderkey)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`deleteGroupSenderKey`](../interfaces/SignalProtocolClient.md#deletegroupsenderkey)
 
 ***
 
@@ -719,7 +719,7 @@ app-owned local message rows and local media caches.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`deleteRemoteAttachment`](../interfaces/ISignalProtocolClient.md#deleteremoteattachment)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`deleteRemoteAttachment`](../interfaces/SignalProtocolClient.md#deleteremoteattachment)
 
 ***
 
@@ -746,7 +746,7 @@ Remote device's protocol address
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`deleteSession`](../interfaces/ISignalProtocolClient.md#deletesession)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`deleteSession`](../interfaces/SignalProtocolClient.md#deletesession)
 
 ***
 
@@ -787,7 +787,7 @@ await signal.distributeGroupSenderKey('group-123', memberIds);
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`distributeGroupSenderKey`](../interfaces/ISignalProtocolClient.md#distributegroupsenderkey)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`distributeGroupSenderKey`](../interfaces/SignalProtocolClient.md#distributegroupsenderkey)
 
 ***
 
@@ -832,7 +832,7 @@ await signal.distributeSenderKeyToUser('group-123', 'bob');
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`distributeSenderKeyToUser`](../interfaces/ISignalProtocolClient.md#distributesenderkeytouser)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`distributeSenderKeyToUser`](../interfaces/SignalProtocolClient.md#distributesenderkeytouser)
 
 ***
 
@@ -861,7 +861,7 @@ and only returns plaintext after streaming AEAD authentication succeeds.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`downloadAttachment`](../interfaces/ISignalProtocolClient.md#downloadattachment)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`downloadAttachment`](../interfaces/SignalProtocolClient.md#downloadattachment)
 
 ***
 
@@ -904,7 +904,7 @@ Encrypted blob, key ID, and encrypted key
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`encryptFile`](../interfaces/ISignalProtocolClient.md#encryptfile)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`encryptFile`](../interfaces/SignalProtocolClient.md#encryptfile)
 
 ***
 
@@ -983,7 +983,7 @@ for (const member of groupMembers) {
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`encryptGroupMessage`](../interfaces/ISignalProtocolClient.md#encryptgroupmessage)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`encryptGroupMessage`](../interfaces/SignalProtocolClient.md#encryptgroupmessage)
 
 ***
 
@@ -1011,7 +1011,7 @@ MessageOps.encryptMessage
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`encryptMessage`](../interfaces/ISignalProtocolClient.md#encryptmessage)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`encryptMessage`](../interfaces/SignalProtocolClient.md#encryptmessage)
 
 ***
 
@@ -1092,7 +1092,7 @@ await signal.establishSession(remoteAddress, bundle);
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`establishSession`](../interfaces/ISignalProtocolClient.md#establishsession)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`establishSession`](../interfaces/SignalProtocolClient.md#establishsession)
 
 ***
 
@@ -1156,7 +1156,7 @@ Distribution message or null if no key exists
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`getGroupSenderKeyDistribution`](../interfaces/ISignalProtocolClient.md#getgroupsenderkeydistribution)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`getGroupSenderKeyDistribution`](../interfaces/SignalProtocolClient.md#getgroupsenderkeydistribution)
 
 ***
 
@@ -1272,7 +1272,7 @@ Delegates to SessionOps.getSessionHealth for implementation.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`getSessionHealth`](../interfaces/ISignalProtocolClient.md#getsessionhealth)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`getSessionHealth`](../interfaces/SignalProtocolClient.md#getsessionhealth)
 
 ***
 
@@ -1345,7 +1345,7 @@ if (result.rotated) {
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`handleGroupMembershipChange`](../interfaces/ISignalProtocolClient.md#handlegroupmembershipchange)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`handleGroupMembershipChange`](../interfaces/SignalProtocolClient.md#handlegroupmembershipchange)
 
 ***
 
@@ -1371,7 +1371,7 @@ True if sender key exists for this device
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`hasGroupSenderKey`](../interfaces/ISignalProtocolClient.md#hasgroupsenderkey)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`hasGroupSenderKey`](../interfaces/SignalProtocolClient.md#hasgroupsenderkey)
 
 ***
 
@@ -1397,7 +1397,7 @@ True if session exists
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`hasSession`](../interfaces/ISignalProtocolClient.md#hassession)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`hasSession`](../interfaces/SignalProtocolClient.md#hassession)
 
 ***
 
@@ -1547,7 +1547,7 @@ await signal.processGroupSenderKeyDistribution(
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`processGroupSenderKeyDistribution`](../interfaces/ISignalProtocolClient.md#processgroupsenderkeydistribution)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`processGroupSenderKeyDistribution`](../interfaces/SignalProtocolClient.md#processgroupsenderkeydistribution)
 
 ***
 
@@ -1592,7 +1592,7 @@ EncryptionError after sending retry request if decryption fails
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`processIncomingEnvelope`](../interfaces/ISignalProtocolClient.md#processincomingenvelope)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`processIncomingEnvelope`](../interfaces/SignalProtocolClient.md#processincomingenvelope)
 
 ***
 
@@ -1701,7 +1701,7 @@ Successful IDs are ready for transport acknowledgment.
 Register a hook callback after construction
 
 Enables dependency injection patterns where callers register hooks
-after the SignalProtocolClient exists. ServicesProvider uses this
+after the DefaultSignalProtocolClient exists. ServicesProvider uses this
 to wire up ContentManager's decryption hook.
 
 #### Type Parameters
@@ -1732,7 +1732,7 @@ The callback function to invoke
 
 ```typescript
 // In ServicesProvider: wire up ContentManager after creation
-const signal = await SignalProtocolClient.create(userId, { storage, relay });
+const signal = await DefaultSignalProtocolClient.create(userId, { storage, relay });
 const content = new ContentManager({ db, signal });
 
 signal.registerHook('onMessageDecrypted', content.getDecryptionHook());
@@ -1741,11 +1741,11 @@ signal.startRelaySubscription(); // Now safe to start
 
 #### See
 
-ISignalProtocolClient.registerHook
+SignalProtocolClient.registerHook
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`registerHook`](../interfaces/ISignalProtocolClient.md#registerhook)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`registerHook`](../interfaces/SignalProtocolClient.md#registerhook)
 
 ***
 
@@ -1799,7 +1799,7 @@ Normal sync and linked-device provisioning never call this operation.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`rotateAccountIdentity`](../interfaces/ISignalProtocolClient.md#rotateaccountidentity)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`rotateAccountIdentity`](../interfaces/SignalProtocolClient.md#rotateaccountidentity)
 
 ***
 
@@ -1823,7 +1823,7 @@ True if the client rotated the key, false if not needed yet
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`rotateEcSignedPreKey`](../interfaces/ISignalProtocolClient.md#rotateecsignedprekey)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`rotateEcSignedPreKey`](../interfaces/SignalProtocolClient.md#rotateecsignedprekey)
 
 ***
 
@@ -1902,7 +1902,7 @@ handleGroupMembershipChange - Helper method for common membership patterns
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`rotateGroupSenderKey`](../interfaces/ISignalProtocolClient.md#rotategroupsenderkey)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`rotateGroupSenderKey`](../interfaces/SignalProtocolClient.md#rotategroupsenderkey)
 
 ***
 
@@ -1925,7 +1925,7 @@ True if the client rotated the key, false if not needed yet
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`rotateKyberPreKey`](../interfaces/ISignalProtocolClient.md#rotatekyberprekey)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`rotateKyberPreKey`](../interfaces/SignalProtocolClient.md#rotatekyberprekey)
 
 ***
 
@@ -1952,7 +1952,7 @@ Number of entries cleaned up
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`runPeriodicCleanup`](../interfaces/ISignalProtocolClient.md#runperiodiccleanup)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`runPeriodicCleanup`](../interfaces/SignalProtocolClient.md#runperiodiccleanup)
 
 ***
 
@@ -2017,7 +2017,7 @@ await signal.send(createGroupId('abc123'), 'Hello everyone!');
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`send`](../interfaces/ISignalProtocolClient.md#send)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`send`](../interfaces/SignalProtocolClient.md#send)
 
 ***
 
@@ -2053,7 +2053,7 @@ Server timestamps of the messages the user read
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`sendReadReceipt`](../interfaces/ISignalProtocolClient.md#sendreadreceipt)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`sendReadReceipt`](../interfaces/SignalProtocolClient.md#sendreadreceipt)
 
 ***
 
@@ -2093,7 +2093,7 @@ Delegates to MessageOps.sendTypingIndicator for implementation.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`sendTypingIndicator`](../interfaces/ISignalProtocolClient.md#sendtypingindicator)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`sendTypingIndicator`](../interfaces/SignalProtocolClient.md#sendtypingindicator)
 
 ***
 
@@ -2121,7 +2121,7 @@ Uses the same privacy gate as read receipts.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`sendViewedReceipt`](../interfaces/ISignalProtocolClient.md#sendviewedreceipt)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`sendViewedReceipt`](../interfaces/SignalProtocolClient.md#sendviewedreceipt)
 
 ***
 
@@ -2131,7 +2131,7 @@ Uses the same privacy gate as read receipts.
 
 Start relay subscription for automatic message decryption
 
-When configured with both `relay` and `onMessageDecrypted` hook, SignalProtocolClient will:
+When configured with both `relay` and `onMessageDecrypted` hook, DefaultSignalProtocolClient will:
 1. Subscribe to incoming envelopes from the relay
 2. Decrypt messages appropriately (pairwise vs group/sender key)
 3. Call onMessageDecrypted hook with DecryptedEnvelope (for ContentManager storage)
@@ -2149,11 +2149,11 @@ Called automatically by create() when relay + hook configured.
 
 #### See
 
-ISignalProtocolClient.startRelaySubscription
+SignalProtocolClient.startRelaySubscription
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`startRelaySubscription`](../interfaces/ISignalProtocolClient.md#startrelaysubscription)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`startRelaySubscription`](../interfaces/SignalProtocolClient.md#startrelaysubscription)
 
 ***
 
@@ -2198,7 +2198,7 @@ await signal.stop();
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`stop`](../interfaces/ISignalProtocolClient.md#stop)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`stop`](../interfaces/SignalProtocolClient.md#stop)
 
 ***
 
@@ -2209,7 +2209,7 @@ await signal.stop();
 Stop the relay subscription
 
 Pauses message processing via the relay subscription without destroying
-SignalProtocolClient state. startRelaySubscription() restarts the subscription.
+DefaultSignalProtocolClient state. startRelaySubscription() restarts the subscription.
 
 Use this when the app backgrounds to let the background task handle messages.
 Resume when the app foregrounds for real-time message delivery.
@@ -2220,11 +2220,11 @@ Resume when the app foregrounds for real-time message delivery.
 
 #### See
 
-ISignalProtocolClient.stopRelaySubscription
+SignalProtocolClient.stopRelaySubscription
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`stopRelaySubscription`](../interfaces/ISignalProtocolClient.md#stoprelaysubscription)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`stopRelaySubscription`](../interfaces/SignalProtocolClient.md#stoprelaysubscription)
 
 ***
 
@@ -2248,7 +2248,7 @@ The payload is a full snapshot, not a block/unblock delta.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`syncBlockedRecipientsToLinkedDevices`](../interfaces/ISignalProtocolClient.md#syncblockedrecipientstolinkeddevices)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`syncBlockedRecipientsToLinkedDevices`](../interfaces/SignalProtocolClient.md#syncblockedrecipientstolinkeddevices)
 
 ***
 
@@ -2270,7 +2270,7 @@ Sync local account-level communication/privacy configuration to our other linked
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`syncConfigurationToLinkedDevices`](../interfaces/ISignalProtocolClient.md#syncconfigurationtolinkeddevices)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`syncConfigurationToLinkedDevices`](../interfaces/SignalProtocolClient.md#syncconfigurationtolinkeddevices)
 
 ***
 
@@ -2310,7 +2310,7 @@ Sync a local media attachment delete event to our other linked devices.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`syncMediaAttachmentDeleteToLinkedDevices`](../interfaces/ISignalProtocolClient.md#syncmediaattachmentdeletetolinkeddevices)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`syncMediaAttachmentDeleteToLinkedDevices`](../interfaces/SignalProtocolClient.md#syncmediaattachmentdeletetolinkeddevices)
 
 ***
 
@@ -2335,7 +2335,7 @@ happen regardless of the user's remote read-receipt privacy preference.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`syncReadToLinkedDevices`](../interfaces/ISignalProtocolClient.md#syncreadtolinkeddevices)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`syncReadToLinkedDevices`](../interfaces/SignalProtocolClient.md#syncreadtolinkeddevices)
 
 ***
 
@@ -2360,7 +2360,7 @@ them they should converge across the account's linked devices.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`syncRecipientUsernameToLinkedDevices`](../interfaces/ISignalProtocolClient.md#syncrecipientusernametolinkeddevices)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`syncRecipientUsernameToLinkedDevices`](../interfaces/SignalProtocolClient.md#syncrecipientusernametolinkeddevices)
 
 ***
 
@@ -2385,7 +2385,7 @@ on a task reminder, the user's other devices should cancel their copies.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`syncTaskNotificationAckToLinkedDevices`](../interfaces/ISignalProtocolClient.md#synctasknotificationacktolinkeddevices)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`syncTaskNotificationAckToLinkedDevices`](../interfaces/SignalProtocolClient.md#synctasknotificationacktolinkeddevices)
 
 ***
 
@@ -2433,7 +2433,7 @@ without rotating it.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`syncUsernameStateToLinkedDevices`](../interfaces/ISignalProtocolClient.md#syncusernamestatetolinkeddevices)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`syncUsernameStateToLinkedDevices`](../interfaces/SignalProtocolClient.md#syncusernamestatetolinkeddevices)
 
 ***
 
@@ -2459,7 +2459,7 @@ changes.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`syncVerificationStateToLinkedDevices`](../interfaces/ISignalProtocolClient.md#syncverificationstatetolinkeddevices)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`syncVerificationStateToLinkedDevices`](../interfaces/SignalProtocolClient.md#syncverificationstatetolinkeddevices)
 
 ***
 
@@ -2481,7 +2481,7 @@ Sync a local view-once open event to our other linked devices.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`syncViewOnceOpenToLinkedDevices`](../interfaces/ISignalProtocolClient.md#syncviewonceopentolinkeddevices)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`syncViewOnceOpenToLinkedDevices`](../interfaces/SignalProtocolClient.md#syncviewonceopentolinkeddevices)
 
 ***
 
@@ -2588,7 +2588,7 @@ atomically inside another message payload.
 
 #### Implementation of
 
-[`ISignalProtocolClient`](../interfaces/ISignalProtocolClient.md).[`uploadAttachment`](../interfaces/ISignalProtocolClient.md#uploadattachment)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`uploadAttachment`](../interfaces/SignalProtocolClient.md#uploadattachment)
 
 ***
 
@@ -2635,9 +2635,9 @@ const qrCode = generateQR(safetyNum.fingerprint);
 
 ### create()
 
-> `static` **create**(`userId`, `config`): `Promise`\<`SignalProtocolClient`\>
+> `static` **create**(`userId`, `config`): `Promise`\<`DefaultSignalProtocolClient`\>
 
-Create and initialize a new SignalProtocolClient instance.
+Create and initialize a new DefaultSignalProtocolClient instance.
 
 This low-level factory fully initializes the client before it returns
 it. Most app code should prefer `createSignalProtocolClient()`, which
@@ -2662,30 +2662,30 @@ Optional configuration for the client
 
 #### Returns
 
-`Promise`\<`SignalProtocolClient`\>
+`Promise`\<`DefaultSignalProtocolClient`\>
 
-Fully initialized SignalProtocolClient instance
+Fully initialized DefaultSignalProtocolClient instance
 
 #### Example
 
 ```typescript
-import { SignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
+import { DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
 
 // Local-only primary device.
-const signal = await SignalProtocolClient.create('user-123', {
+const signal = await DefaultSignalProtocolClient.create('user-123', {
   storage,
 });
 
 // Linked device; storage must already contain provisioned identity material.
-const signal = await SignalProtocolClient.create('user-123', {
+const signal = await DefaultSignalProtocolClient.create('user-123', {
   deviceId: 2,
   storage: provisionedLinkedDeviceStorage
 });
 
 // With relay sync.
 const relay = inMemoryRelay();
-const signal = await SignalProtocolClient.create('user-123', {
+const signal = await DefaultSignalProtocolClient.create('user-123', {
   storage,
   relay,
   onProgress: ({ stage, percent, message }) => {
@@ -2694,7 +2694,7 @@ const signal = await SignalProtocolClient.create('user-123', {
 });
 
 // With full configuration
-const signal = await SignalProtocolClient.create('user-123', {
+const signal = await DefaultSignalProtocolClient.create('user-123', {
   deviceId: 1,
   storage,
   relay,
@@ -2705,7 +2705,7 @@ const signal = await SignalProtocolClient.create('user-123', {
 });
 
 // For local development with in-memory adapters
-const signal = await SignalProtocolClient.create('local-user', {
+const signal = await DefaultSignalProtocolClient.create('local-user', {
   protocolManager: inMemoryManager,
   storage: inMemoryStorage
 });

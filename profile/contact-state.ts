@@ -5,7 +5,7 @@
  */
 
 import type { ConvexReactClient } from 'convex/react';
-import { resolveSignalProtocolLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import { base64ToBytes, constantTimeEqual } from '../internal/crypto';
 import { deriveAccessKey } from '../internal/protocol/sealed-sender/delivery-token';
 import { asBase64 } from '../types/utils';
@@ -96,7 +96,7 @@ export async function storeReceivedProfileKey(
   userId: string,
   profileKeyBase64: string,
   store: MutableContactProfileStateStore,
-  providedLogger?: ILogger
+  providedLogger?: Logger
 ): Promise<{ stored: boolean; keyChanged: boolean }> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   const keyBytes = base64ToBytes(asBase64(profileKeyBase64));

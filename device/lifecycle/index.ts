@@ -24,11 +24,11 @@ export { getLocalDeviceMetadata, getMissingMetadata } from './utils';
 
 export type {
   // Dependency interfaces
-  ISecureStore,
-  IConvexClient,
+  DeviceLifecycleSecureStore,
+  DeviceLifecycleConvexClient,
   DeviceLifecycleApi,
-  IKeyStorageOps,
-  ILogger,
+  KeyStorageOps,
+  DeviceLifecycleLogger,
   DeviceLifecycleDeps,
   // Device info
   DeviceInfo,

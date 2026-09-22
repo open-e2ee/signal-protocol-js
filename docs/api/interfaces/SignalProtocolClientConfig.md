@@ -244,13 +244,13 @@ Resolve a verified immutable authority before each group operation.
 
 #### server?
 
-> `optional` **server?**: [`IGroupServer`](IGroupServer.md)
+> `optional` **server?**: [`GroupServer`](GroupServer.md)
 
 Override `relay.groupServer.server` for a custom deployment.
 
 #### store?
 
-> `optional` **store?**: [`IGroupStateStore`](IGroupStateStore.md)
+> `optional` **store?**: [`GroupStateStore`](GroupStateStore.md)
 
 Override the SDK local storage adapter for group state.
 
@@ -378,7 +378,7 @@ https://signal.org/docs/specifications/pqxdh/#publishing-keys
 
 ### logger?
 
-> `optional` **logger?**: [`ILogger`](ILogger.md)
+> `optional` **logger?**: [`Logger`](Logger.md)
 
 Custom logger implementation
 
@@ -706,7 +706,7 @@ const signal = await SignalProtocolClient.create(userId, {
 
 ### protocolManager?
 
-> `optional` **protocolManager?**: [`ISignalProtocolManager`](ISignalProtocolManager.md)
+> `optional` **protocolManager?**: [`SignalProtocolManager`](SignalProtocolManager.md)
 
 Signal Protocol Manager implementation (for advanced use cases)
 Default: Creates new SignalProtocolManager instance
@@ -771,7 +771,7 @@ Double Ratchet algorithm configuration
 
 ### relay?
 
-> `optional` **relay?**: [`ISignalProtocolRelayServer`](ISignalProtocolRelayServer.md)
+> `optional` **relay?**: [`SignalProtocolRelayServer`](SignalProtocolRelayServer.md)
 
 Relay adapter for server synchronization.
 
@@ -923,7 +923,7 @@ const signal = await SignalProtocolClient.create(userId, {
 
 ### storage
 
-> **storage**: [`ISignalProtocolLocalStore`](ISignalProtocolLocalStore.md)
+> **storage**: [`SignalProtocolLocalStore`](SignalProtocolLocalStore.md)
 
 Local store implementation for the current runtime.
 Required by SignalProtocolClient.create().

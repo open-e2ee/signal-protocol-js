@@ -22,7 +22,7 @@
 
 ### authorization
 
-> `readonly` **authorization**: \{ `kind`: `"active-device"`; `storage`: [`ISignalProtocolLocalStore`](ISignalProtocolLocalStore.md); \} \| \{ `kind`: `"assertion"`; `providerRole`: [`IdentityAssertionProviderRole`](../type-aliases/IdentityAssertionProviderRole.md); \}
+> `readonly` **authorization**: \{ `kind`: `"active-device"`; `storage`: [`SignalProtocolLocalStore`](SignalProtocolLocalStore.md); \} \| \{ `kind`: `"assertion"`; `providerRole`: [`IdentityAssertionProviderRole`](../type-aliases/IdentityAssertionProviderRole.md); \}
 
 ***
 

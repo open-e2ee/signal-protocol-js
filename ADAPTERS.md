@@ -6,7 +6,7 @@
 
 ## Adapter Roles
 
-### Relay: `ISignalProtocolRelayServer`
+### Relay: `SignalProtocolRelayServer`
 
 The relay interface handles server-owned Signal Protocol state:
 
@@ -21,7 +21,7 @@ Use:
 - `InMemorySignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
 - or a custom implementation
 
-### Storage: `ISignalProtocolLocalStore`
+### Storage: `SignalProtocolLocalStore`
 
 The storage interface handles client-owned Signal Protocol state:
 
@@ -161,9 +161,9 @@ Use the public interfaces:
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import type { ISignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
+import type { SignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
 import type { SignalProtocolRemoteObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store";
-import type { ISignalProtocolLocalStore } from "@open-e2ee/signal-protocol-sdk/local/store";
+import type { SignalProtocolLocalStore } from "@open-e2ee/signal-protocol-sdk/local/store";
 ```
 
 Then compose them through `createSignalProtocolClient()`:

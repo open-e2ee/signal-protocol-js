@@ -16,7 +16,7 @@
  * @see https://signal.org/docs/specifications/pqxdh/
  */
 
-import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
+import { defaultSignalProtocolLogger, type Logger } from '../../../logger';
 import {
   generateECDHKeyPair,
   computeSharedSecret,
@@ -173,7 +173,7 @@ export async function performPQXDH(
   myIdentityKey: IdentityKeyPair,
   theirBundle: PreKeyBundle,
   infoString: string,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<PQXDHResult> {
   logger.breadcrumb('PQXDH initiator key agreement', {
     category: 'E2EE',
@@ -469,7 +469,7 @@ export async function performPQXDHResponder(
   myKemOneTimePreKey: KemOneTimePreKey | null,
   input: PQXDHResponderInput,
   infoString: string,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<PQXDHResponderResult> {
   logger.breadcrumb('PQXDH responder key agreement', {
     category: 'E2EE',

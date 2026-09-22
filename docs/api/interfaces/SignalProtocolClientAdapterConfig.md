@@ -15,7 +15,7 @@ only needed for encrypted attachments.
 
 ### protocolManager?
 
-> `optional` **protocolManager?**: [`ISignalProtocolManager`](ISignalProtocolManager.md)
+> `optional` **protocolManager?**: [`SignalProtocolManager`](SignalProtocolManager.md)
 
 Advanced protocol manager override for tests and specialized integrations.
 
@@ -23,7 +23,7 @@ Advanced protocol manager override for tests and specialized integrations.
 
 ### relay?
 
-> `optional` **relay?**: [`ISignalProtocolRelayServer`](ISignalProtocolRelayServer.md)
+> `optional` **relay?**: [`SignalProtocolRelayServer`](SignalProtocolRelayServer.md)
 
 Optional relay for server sync, prekeys, fanout, and subscriptions.
 
@@ -39,6 +39,6 @@ Optional brokered remote object store for encrypted attachments.
 
 ### storage
 
-> **storage**: [`ISignalProtocolLocalStore`](ISignalProtocolLocalStore.md)
+> **storage**: [`SignalProtocolLocalStore`](SignalProtocolLocalStore.md)
 
 Required local protocol store for the current runtime.

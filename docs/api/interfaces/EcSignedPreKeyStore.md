@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / IEcSignedPreKeyStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / EcSignedPreKeyStore
 
-# Interface: IEcSignedPreKeyStore
+# Interface: EcSignedPreKeyStore
 
 EC Signed PreKey store with an SDK-oriented API.
 
@@ -25,7 +25,7 @@ https://signal.org/docs/specifications/x3dh/
 
 ## Extended by
 
-- [`IProtocolStore`](IProtocolStore.md)
+- [`ProtocolStore`](ProtocolStore.md)
 
 ## Methods
 

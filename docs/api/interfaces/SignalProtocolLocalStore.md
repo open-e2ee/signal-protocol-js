@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / ISignalProtocolLocalStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolLocalStore
 
-# Interface: ISignalProtocolLocalStore
+# Interface: SignalProtocolLocalStore
 
 Signal Protocol local store interface.
 
@@ -18,7 +18,7 @@ This is the interface that local store adapters should implement.
 
 ## Extends
 
-- [`IProtocolStore`](IProtocolStore.md).[`ISesameStore`](ISesameStore.md).[`ISenderKeyStore`](ISenderKeyStore.md).`IMessageRecordStore`
+- [`ProtocolStore`](ProtocolStore.md).[`SesameStore`](SesameStore.md).[`SenderKeyStore`](SenderKeyStore.md).`MessageRecordStore`
 
 ## Methods
 
@@ -53,7 +53,7 @@ that user. The previous tuple becomes rollback history.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`acceptContactIdentityRotation`](IProtocolStore.md#acceptcontactidentityrotation)
+[`ProtocolStore`](ProtocolStore.md).[`acceptContactIdentityRotation`](ProtocolStore.md#acceptcontactidentityrotation)
 
 ***
 
@@ -87,7 +87,7 @@ Atomically rotate one per-user identity tuple and delete every bound device sess
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`acceptContactIdentityRotationAndDeleteSessions`](IProtocolStore.md#acceptcontactidentityrotationanddeletesessions)
+[`ProtocolStore`](ProtocolStore.md).[`acceptContactIdentityRotationAndDeleteSessions`](ProtocolStore.md#acceptcontactidentityrotationanddeletesessions)
 
 ***
 
@@ -122,7 +122,7 @@ Optional new session to set as current
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`archiveCurrentSession`](IProtocolStore.md#archivecurrentsession)
+[`ProtocolStore`](ProtocolStore.md).[`archiveCurrentSession`](ProtocolStore.md#archivecurrentsession)
 
 ***
 
@@ -144,7 +144,7 @@ Delete expired sessions (sessions older than MAXRECV threshold).
 
 #### Inherited from
 
-[`ISesameStore`](ISesameStore.md).[`cleanupExpiredSessions`](ISesameStore.md#cleanupexpiredsessions)
+[`SesameStore`](SesameStore.md).[`cleanupExpiredSessions`](SesameStore.md#cleanupexpiredsessions)
 
 ***
 
@@ -177,7 +177,7 @@ Clear all message records (for device re-registration)
 
 #### Inherited from
 
-`IMessageRecordStore.clearAllMessageRecords`
+`MessageRecordStore.clearAllMessageRecords`
 
 ***
 
@@ -212,7 +212,7 @@ Atomically pin/match trust, store the session, and consume referenced one-time p
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`commitSessionTrust`](IProtocolStore.md#commitsessiontrust)
+[`ProtocolStore`](ProtocolStore.md).[`commitSessionTrust`](ProtocolStore.md#commitsessiontrust)
 
 ***
 
@@ -278,7 +278,7 @@ Number of stored skipped keys for this sender
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`countSkippedSenderKeys`](ISenderKeyStore.md#countskippedsenderkeys)
+[`SenderKeyStore`](SenderKeyStore.md).[`countSkippedSenderKeys`](SenderKeyStore.md#countskippedsenderkeys)
 
 ***
 
@@ -323,7 +323,7 @@ Delete all sender keys for a group (when the caller deletes the group).
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`deleteAllSenderKeysForGroup`](ISenderKeyStore.md#deleteallsenderkeysforgroup)
+[`SenderKeyStore`](SenderKeyStore.md).[`deleteAllSenderKeysForGroup`](SenderKeyStore.md#deleteallsenderkeysforgroup)
 
 ***
 
@@ -349,7 +349,7 @@ Delete device record.
 
 #### Inherited from
 
-[`ISesameStore`](ISesameStore.md).[`deleteDeviceRecord`](ISesameStore.md#deletedevicerecord)
+[`SesameStore`](SesameStore.md).[`deleteDeviceRecord`](SesameStore.md#deletedevicerecord)
 
 ***
 
@@ -371,7 +371,7 @@ Delete all expired message records older than maxAgeMs
 
 #### Inherited from
 
-`IMessageRecordStore.deleteExpiredMessageRecords`
+`MessageRecordStore.deleteExpiredMessageRecords`
 
 ***
 
@@ -415,7 +415,7 @@ Called when processing delivery receipts to clean up confirmed messages.
 
 #### Inherited from
 
-`IMessageRecordStore.deleteMessageRecord`
+`MessageRecordStore.deleteMessageRecord`
 
 ***
 
@@ -437,7 +437,7 @@ Delete all message records for a session
 
 #### Inherited from
 
-`IMessageRecordStore.deleteMessageRecordsForSession`
+`MessageRecordStore.deleteMessageRecordsForSession`
 
 ***
 
@@ -501,7 +501,7 @@ Number of deleted keys
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`deleteOldestSkippedSenderKeys`](ISenderKeyStore.md#deleteoldestskippedsenderkeys)
+[`SenderKeyStore`](SenderKeyStore.md).[`deleteOldestSkippedSenderKeys`](SenderKeyStore.md#deleteoldestskippedsenderkeys)
 
 ***
 
@@ -547,7 +547,7 @@ Delete sender key for a group member device.
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`deleteSenderKey`](ISenderKeyStore.md#deletesenderkey)
+[`SenderKeyStore`](SenderKeyStore.md).[`deleteSenderKey`](SenderKeyStore.md#deletesenderkey)
 
 ***
 
@@ -571,7 +571,7 @@ Protocol address
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`deleteSessionRecord`](IProtocolStore.md#deletesessionrecord)
+[`ProtocolStore`](ProtocolStore.md).[`deleteSessionRecord`](ProtocolStore.md#deletesessionrecord)
 
 ***
 
@@ -615,7 +615,7 @@ The message index to delete
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`deleteSkippedSenderKey`](ISenderKeyStore.md#deleteskippedsenderkey)
+[`SenderKeyStore`](SenderKeyStore.md).[`deleteSkippedSenderKey`](SenderKeyStore.md#deleteskippedsenderkey)
 
 ***
 
@@ -637,7 +637,7 @@ Delete stale device records (orphaned sessions older than MAXLATENCY).
 
 #### Inherited from
 
-[`ISesameStore`](ISesameStore.md).[`deleteStaleRecords`](ISesameStore.md#deletestalerecords)
+[`SesameStore`](SesameStore.md).[`deleteStaleRecords`](SesameStore.md#deletestalerecords)
 
 ***
 
@@ -663,7 +663,7 @@ Used for cleanup and debugging.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getAllEcSignedPreKeys`](IProtocolStore.md#getallecsignedprekeys)
+[`ProtocolStore`](ProtocolStore.md).[`getAllEcSignedPreKeys`](ProtocolStore.md#getallecsignedprekeys)
 
 ***
 
@@ -685,7 +685,7 @@ Get all sender keys for a group (for admin operations).
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`getAllSenderKeysForGroup`](ISenderKeyStore.md#getallsenderkeysforgroup)
+[`SenderKeyStore`](SenderKeyStore.md).[`getAllSenderKeysForGroup`](SenderKeyStore.md#getallsenderkeysforgroup)
 
 ***
 
@@ -701,7 +701,7 @@ Get all user IDs with SESAME records.
 
 #### Inherited from
 
-[`ISesameStore`](ISesameStore.md).[`getAllUserIds`](ISesameStore.md#getalluserids)
+[`SesameStore`](SesameStore.md).[`getAllUserIds`](SesameStore.md#getalluserids)
 
 ***
 
@@ -733,7 +733,7 @@ Contact's identity key or null
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getContactIdentity`](IProtocolStore.md#getcontactidentity)
+[`ProtocolStore`](ProtocolStore.md).[`getContactIdentity`](ProtocolStore.md#getcontactidentity)
 
 ***
 
@@ -771,7 +771,7 @@ Get device record for a specific user's device.
 
 #### Inherited from
 
-[`ISesameStore`](ISesameStore.md).[`getDeviceRecord`](ISesameStore.md#getdevicerecord)
+[`SesameStore`](SesameStore.md).[`getDeviceRecord`](SesameStore.md#getdevicerecord)
 
 ***
 
@@ -799,7 +799,7 @@ The SessionRecord, or null if no session exists.
 
 #### Inherited from
 
-[`ISesameStore`](ISesameStore.md).[`getDeviceSession`](ISesameStore.md#getdevicesession)
+[`SesameStore`](SesameStore.md).[`getDeviceSession`](SesameStore.md#getdevicesession)
 
 ***
 
@@ -823,7 +823,7 @@ Retrieve all EC one-time prekeys.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getEcOneTimePreKeys`](IProtocolStore.md#geteconetimeprekeys)
+[`ProtocolStore`](ProtocolStore.md).[`getEcOneTimePreKeys`](ProtocolStore.md#geteconetimeprekeys)
 
 ***
 
@@ -855,7 +855,7 @@ The EC signed prekey, or null if not found
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getEcSignedPreKey`](IProtocolStore.md#getecsignedprekey)
+[`ProtocolStore`](ProtocolStore.md).[`getEcSignedPreKey`](ProtocolStore.md#getecsignedprekey)
 
 ***
 
@@ -902,7 +902,7 @@ Retrieve our identity key pair.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getIdentityKey`](IProtocolStore.md#getidentitykey)
+[`ProtocolStore`](ProtocolStore.md).[`getIdentityKey`](ProtocolStore.md#getidentitykey)
 
 ***
 
@@ -931,7 +931,7 @@ Used during session establishment to find the key for decapsulation.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getKemOneTimePreKey`](IProtocolStore.md#getkemonetimeprekey)
+[`ProtocolStore`](ProtocolStore.md).[`getKemOneTimePreKey`](ProtocolStore.md#getkemonetimeprekey)
 
 ***
 
@@ -956,7 +956,7 @@ Used to determine when to replenish the prekey pool.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getKemOneTimePreKeyCount`](IProtocolStore.md#getkemonetimeprekeycount)
+[`ProtocolStore`](ProtocolStore.md).[`getKemOneTimePreKeyCount`](ProtocolStore.md#getkemonetimeprekeycount)
 
 ***
 
@@ -980,7 +980,7 @@ Retrieve all one-time KEM prekeys.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getKemOneTimePreKeys`](IProtocolStore.md#getkemonetimeprekeys)
+[`ProtocolStore`](ProtocolStore.md).[`getKemOneTimePreKeys`](ProtocolStore.md#getkemonetimeprekeys)
 
 ***
 
@@ -1004,7 +1004,7 @@ Retrieve Kyber prekey.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getKyberPreKey`](IProtocolStore.md#getkyberprekey)
+[`ProtocolStore`](ProtocolStore.md).[`getKyberPreKey`](ProtocolStore.md#getkyberprekey)
 
 ***
 
@@ -1030,7 +1030,7 @@ Retrieve the exact retained Kyber prekey instance named by a message.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getKyberPreKeyById`](IProtocolStore.md#getkyberprekeybyid)
+[`ProtocolStore`](ProtocolStore.md).[`getKyberPreKeyById`](ProtocolStore.md#getkyberprekeybyid)
 
 ***
 
@@ -1080,7 +1080,7 @@ Detects session resets when the user reinstalls the app.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getLocalRegistrationId`](IProtocolStore.md#getlocalregistrationid)
+[`ProtocolStore`](ProtocolStore.md).[`getLocalRegistrationId`](ProtocolStore.md#getlocalregistrationid)
 
 ***
 
@@ -1108,7 +1108,7 @@ Per Signal Protocol, the client timestamp identifies a message.
 
 #### Inherited from
 
-`IMessageRecordStore.getMessageRecord`
+`MessageRecordStore.getMessageRecord`
 
 ***
 
@@ -1173,7 +1173,7 @@ Retrieve sender key state for a group member device.
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`getSenderKey`](ISenderKeyStore.md#getsenderkey)
+[`SenderKeyStore`](SenderKeyStore.md).[`getSenderKey`](SenderKeyStore.md#getsenderkey)
 
 ***
 
@@ -1213,7 +1213,7 @@ Array of states, or null if none exist
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`getSenderKeyRecord`](ISenderKeyStore.md#getsenderkeyrecord)
+[`SenderKeyStore`](SenderKeyStore.md).[`getSenderKeyRecord`](SenderKeyStore.md#getsenderkeyrecord)
 
 ***
 
@@ -1235,7 +1235,7 @@ Get all device IDs for a specific user.
 
 #### Inherited from
 
-[`ISesameStore`](ISesameStore.md).[`getSesameDeviceIds`](ISesameStore.md#getsesamedeviceids)
+[`SesameStore`](SesameStore.md).[`getSesameDeviceIds`](SesameStore.md#getsesamedeviceids)
 
 ***
 
@@ -1253,7 +1253,7 @@ Number of sessions stored
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getSessionCount`](IProtocolStore.md#getsessioncount)
+[`ProtocolStore`](ProtocolStore.md).[`getSessionCount`](ProtocolStore.md#getsessioncount)
 
 ***
 
@@ -1279,7 +1279,7 @@ SessionRecord or null if no session exists
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getSessionRecord`](IProtocolStore.md#getsessionrecord)
+[`ProtocolStore`](ProtocolStore.md).[`getSessionRecord`](ProtocolStore.md#getsessionrecord)
 
 ***
 
@@ -1307,7 +1307,7 @@ Array of session records for all of this user's devices
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`getSessionsForUser`](IProtocolStore.md#getsessionsforuser)
+[`ProtocolStore`](ProtocolStore.md).[`getSessionsForUser`](ProtocolStore.md#getsessionsforuser)
 
 ***
 
@@ -1351,7 +1351,7 @@ Message key or null if not found/expired
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`getSkippedSenderKey`](ISenderKeyStore.md#getskippedsenderkey)
+[`SenderKeyStore`](SenderKeyStore.md).[`getSkippedSenderKey`](SenderKeyStore.md#getskippedsenderkey)
 
 ***
 
@@ -1373,7 +1373,7 @@ Get user record containing all devices for a user.
 
 #### Inherited from
 
-[`ISesameStore`](ISesameStore.md).[`getUserRecord`](ISesameStore.md#getuserrecord)
+[`SesameStore`](SesameStore.md).[`getUserRecord`](SesameStore.md#getuserrecord)
 
 ***
 
@@ -1397,7 +1397,7 @@ Check if identity key exists.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`hasIdentityKey`](IProtocolStore.md#hasidentitykey)
+[`ProtocolStore`](ProtocolStore.md).[`hasIdentityKey`](ProtocolStore.md#hasidentitykey)
 
 ***
 
@@ -1423,7 +1423,7 @@ true if session exists
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`hasSession`](IProtocolStore.md#hassession)
+[`ProtocolStore`](ProtocolStore.md).[`hasSession`](ProtocolStore.md#hassession)
 
 ***
 
@@ -1474,7 +1474,7 @@ true if the store trusts the identity
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`isTrustedIdentity`](IProtocolStore.md#istrustedidentity)
+[`ProtocolStore`](ProtocolStore.md).[`isTrustedIdentity`](ProtocolStore.md#istrustedidentity)
 
 ***
 
@@ -1519,7 +1519,7 @@ Base key bytes for the session
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`markKyberPreKeyUsed`](IProtocolStore.md#markkyberprekeyused)
+[`ProtocolStore`](ProtocolStore.md).[`markKyberPreKeyUsed`](ProtocolStore.md#markkyberprekeyused)
 
 ***
 
@@ -1549,7 +1549,7 @@ ID of the prekey to remove
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`removeEcOneTimePreKey`](IProtocolStore.md#removeeconetimeprekey)
+[`ProtocolStore`](ProtocolStore.md).[`removeEcOneTimePreKey`](ProtocolStore.md#removeeconetimeprekey)
 
 ***
 
@@ -1582,7 +1582,7 @@ The key ID to remove
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`removeEcSignedPreKey`](IProtocolStore.md#removeecsignedprekey)
+[`ProtocolStore`](ProtocolStore.md).[`removeEcSignedPreKey`](ProtocolStore.md#removeecsignedprekey)
 
 ***
 
@@ -1615,7 +1615,7 @@ ID of the prekey to remove
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`removeKemOneTimePreKey`](IProtocolStore.md#removekemonetimeprekey)
+[`ProtocolStore`](ProtocolStore.md).[`removeKemOneTimePreKey`](ProtocolStore.md#removekemonetimeprekey)
 
 ***
 
@@ -1665,7 +1665,7 @@ The group ID, or null if this device has no such sender key
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`resolveGroupForSenderKeyId`](ISenderKeyStore.md#resolvegroupforsenderkeyid)
+[`SenderKeyStore`](SenderKeyStore.md).[`resolveGroupForSenderKeyId`](SenderKeyStore.md#resolvegroupforsenderkeyid)
 
 ***
 
@@ -1712,7 +1712,7 @@ IdentityKeyChange indicating if key is new or changed
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`saveContactIdentity`](IProtocolStore.md#savecontactidentity)
+[`ProtocolStore`](ProtocolStore.md).[`saveContactIdentity`](ProtocolStore.md#savecontactidentity)
 
 ***
 
@@ -1742,7 +1742,7 @@ Store device record.
 
 #### Inherited from
 
-[`ISesameStore`](ISesameStore.md).[`setDeviceRecord`](ISesameStore.md#setdevicerecord)
+[`SesameStore`](SesameStore.md).[`setDeviceRecord`](SesameStore.md#setdevicerecord)
 
 ***
 
@@ -1773,7 +1773,7 @@ This updates DeviceRecord.session.
 
 #### Inherited from
 
-[`ISesameStore`](ISesameStore.md).[`setDeviceSession`](ISesameStore.md#setdevicesession)
+[`SesameStore`](SesameStore.md).[`setDeviceSession`](SesameStore.md#setdevicesession)
 
 ***
 
@@ -1805,7 +1805,7 @@ Registration ID
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`setLocalRegistrationId`](IProtocolStore.md#setlocalregistrationid)
+[`ProtocolStore`](ProtocolStore.md).[`setLocalRegistrationId`](ProtocolStore.md#setlocalregistrationid)
 
 ***
 
@@ -1853,7 +1853,7 @@ Store user record.
 
 #### Inherited from
 
-[`ISesameStore`](ISesameStore.md).[`setUserRecord`](ISesameStore.md#setuserrecord)
+[`SesameStore`](SesameStore.md).[`setUserRecord`](SesameStore.md#setuserrecord)
 
 ***
 
@@ -1881,7 +1881,7 @@ Store EC one-time prekeys.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`storeEcOneTimePreKeys`](IProtocolStore.md#storeeconetimeprekeys)
+[`ProtocolStore`](ProtocolStore.md).[`storeEcOneTimePreKeys`](ProtocolStore.md#storeeconetimeprekeys)
 
 ***
 
@@ -1912,7 +1912,7 @@ instead of deleting it, to handle in-flight messages.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`storeEcSignedPreKey`](IProtocolStore.md#storeecsignedprekey)
+[`ProtocolStore`](ProtocolStore.md).[`storeEcSignedPreKey`](ProtocolStore.md#storeecsignedprekey)
 
 ***
 
@@ -1942,7 +1942,7 @@ Identity key pair to store
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`storeIdentityKey`](IProtocolStore.md#storeidentitykey)
+[`ProtocolStore`](ProtocolStore.md).[`storeIdentityKey`](ProtocolStore.md#storeidentitykey)
 
 ***
 
@@ -1970,7 +1970,7 @@ Store one-time KEM prekeys (batch storage).
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`storeKemOneTimePreKeys`](IProtocolStore.md#storekemonetimeprekeys)
+[`ProtocolStore`](ProtocolStore.md).[`storeKemOneTimePreKeys`](ProtocolStore.md#storekemonetimeprekeys)
 
 ***
 
@@ -1998,7 +1998,7 @@ Store Kyber prekey (post-quantum security).
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`storeKyberPreKey`](IProtocolStore.md#storekyberprekey)
+[`ProtocolStore`](ProtocolStore.md).[`storeKyberPreKey`](ProtocolStore.md#storekyberprekey)
 
 ***
 
@@ -2020,7 +2020,7 @@ Store a message record after encryption
 
 #### Inherited from
 
-`IMessageRecordStore.storeMessageRecord`
+`MessageRecordStore.storeMessageRecord`
 
 ***
 
@@ -2054,7 +2054,7 @@ Store sender key state for a group member device.
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`storeSenderKey`](ISenderKeyStore.md#storesenderkey)
+[`SenderKeyStore`](SenderKeyStore.md).[`storeSenderKey`](SenderKeyStore.md#storesenderkey)
 
 ***
 
@@ -2106,7 +2106,7 @@ Array of states (current first, then previous, capped at MAX_SENDER_KEY_STATES)
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`storeSenderKeyRecord`](ISenderKeyStore.md#storesenderkeyrecord)
+[`SenderKeyStore`](SenderKeyStore.md).[`storeSenderKeyRecord`](SenderKeyStore.md#storesenderkeyrecord)
 
 ***
 
@@ -2139,7 +2139,7 @@ SessionRecord containing current and archived sessions
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`storeSessionRecord`](IProtocolStore.md#storesessionrecord)
+[`ProtocolStore`](ProtocolStore.md).[`storeSessionRecord`](ProtocolStore.md#storesessionrecord)
 
 ***
 
@@ -2190,7 +2190,7 @@ Derived IV and cipher key (base64 encoded)
 
 #### Inherited from
 
-[`ISenderKeyStore`](ISenderKeyStore.md).[`storeSkippedSenderKey`](ISenderKeyStore.md#storeskippedsenderkey)
+[`SenderKeyStore`](SenderKeyStore.md).[`storeSkippedSenderKey`](SenderKeyStore.md#storeskippedsenderkey)
 
 ***
 
@@ -2224,4 +2224,4 @@ Promote the exact current tuple after authenticated comparison.
 
 #### Inherited from
 
-[`IProtocolStore`](IProtocolStore.md).[`verifyContactIdentity`](IProtocolStore.md#verifycontactidentity)
+[`ProtocolStore`](ProtocolStore.md).[`verifyContactIdentity`](ProtocolStore.md#verifycontactidentity)

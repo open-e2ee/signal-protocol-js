@@ -281,9 +281,9 @@ The library includes structured logging for errors:
 
 <!-- doc-snippet:skip requires-platform-adapters -->
 ```typescript
-import { SignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
+import { DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage,
   relay,
   logger: {

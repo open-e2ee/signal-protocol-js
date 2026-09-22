@@ -91,7 +91,7 @@
  * @see https://signal.org/docs/specifications/doubleratchet/#kdf-hybrid - KDF_HYBRID definition
  */
 
-import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
+import { defaultSignalProtocolLogger, type Logger } from '../../../logger';
 import { kdfHybrid, secureZeroBytes } from '../../crypto';
 import {
   performDHRatchetStep,
@@ -212,7 +212,7 @@ export async function deriveTripleRatchetSendKey(
   ecState: DoubleRatchetState,
   spqrState: SPQRState,
   versionNegotiation?: VersionNegotiationState,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<TripleRatchetKeyResult> {
   logger.debug('Triple Ratchet: Deriving sending key', {
     category: 'E2EE',
@@ -289,7 +289,7 @@ export async function deriveTripleRatchetReceiveKey(
   pqEpoch: number,
   pqIndex: number,
   versionNegotiation?: VersionNegotiationState,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<TripleRatchetKeyResult> {
   logger.debug('Triple Ratchet: Deriving receiving key', {
     category: 'E2EE',
@@ -361,7 +361,7 @@ export async function performTripleRatchetStep(
   receivedDHPublicKey: string,
   _receivedKyberCiphertext?: Uint8Array,
   _versionNegotiation?: VersionNegotiationState,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<void> {
   logger.breadcrumb('Triple Ratchet step (EC DH ratchet)', {
     category: 'E2EE',

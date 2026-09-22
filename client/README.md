@@ -186,11 +186,11 @@ const result = await rotateKeysHeadless(relay, userId, deviceId, { storage });
 
 - device `1` is the primary device
 - linked devices use device IDs `2-5`
-- provision linked-device identity material into the provided storage before `SignalProtocolClient.create(..., { deviceId: 2 })`
+- provision linked-device identity material into the provided storage before `DefaultSignalProtocolClient.create(..., { deviceId: 2 })`
 
 ## Notes
 
-- `SignalProtocolClient.create()` no longer provides hidden default adapters.
+- `DefaultSignalProtocolClient.create()` no longer provides hidden default adapters.
 - `createSignalProtocolClient()` is the preferred generic composition helper for app
   setup code.
 - App-specific React hooks and DB-backed view-state helpers should stay outside this module.

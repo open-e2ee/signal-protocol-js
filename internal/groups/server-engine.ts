@@ -10,7 +10,7 @@ import type {
   GroupAuthorization,
   GroupChangeLogEntry,
   GroupChangeLogPage,
-  IGroupServer,
+  GroupServer,
 } from './manager';
 import {
   AccessRequired,
@@ -1381,7 +1381,7 @@ function applyEncryptedChange(
   return next;
 }
 
-export class GroupAuthorizationServerEngine implements IGroupServer {
+export class GroupAuthorizationServerEngine implements GroupServer {
   private readonly groups = new Map<string, StoredGroup>();
 
   constructor(

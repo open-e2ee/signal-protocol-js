@@ -1,5 +1,5 @@
 import type { GroupMemberDevice } from '../remote/relay/types';
-import type { ISignalProtocolLocalStore, Base64 } from '../types';
+import type { SignalProtocolLocalStore, Base64 } from '../types';
 import { ProtocolAddress } from '../types/address';
 import { base64ToBytes, bytesToBase64 } from '../internal/crypto';
 import {
@@ -31,7 +31,7 @@ export interface PreparedGroupSharedMessage {
  * handled by a separately persisted per-device plan.
  */
 export async function prepareGroupSharedMessage(input: {
-  storage: ISignalProtocolLocalStore;
+  storage: SignalProtocolLocalStore;
   senderKeys: GroupSealedSenderKeys;
   members: GroupMemberDevice[];
   encryptedMessageBase64: string;

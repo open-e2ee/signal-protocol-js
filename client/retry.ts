@@ -1,11 +1,11 @@
 /**
  * Retry operations for SignalProtocolClient (SESAME Protocol)
  *
- * Extracted from SignalProtocolClient class to reduce file size.
+ * Extracted from DefaultSignalProtocolClient class to reduce file size.
  * Handles retry request creation, sending, and response handling.
  */
 
-import type { ISignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolRelayServer } from '../remote/relay/types';
 import type { PreKeyBundle } from '../keys';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { ContentHint } from '../types/messages';
@@ -20,7 +20,7 @@ import type {
 } from './types';
 import {
   RetryReason,
-  type ISesameManager,
+  type SesameManager,
   type SesameMessage,
   type RetryRequest,
 } from '../internal/sesame/types';
@@ -50,7 +50,7 @@ export interface RetryDedupState {
  * Extended context for retry operations (adds sesame and relay)
  */
 export interface RetryContext extends SignalProtocolClientContext {
-  sesameManager: ISesameManager;
+  sesameManager: SesameManager;
 }
 
 /**
@@ -161,7 +161,7 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
  */
 async function markMessageDeliveredSilently(
   messageId: string | undefined,
-  relay: ISignalProtocolRelayServer | undefined,
+  relay: SignalProtocolRelayServer | undefined,
   logger: RetryContext['logger'],
   options?: ProcessEnvelopeOptions
 ): Promise<void> {

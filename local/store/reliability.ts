@@ -1,4 +1,4 @@
-import type { ISignalProtocolLocalStore } from '../../types';
+import type { SignalProtocolLocalStore } from '../../types';
 import type { ContentHint } from '../../types/messages';
 
 const OUTBOX_PREFIX = 'reliability:exact-ciphertext-outbox:v2';
@@ -56,7 +56,7 @@ export interface StoredOutgoingMessageIntent {
 }
 
 type ReliabilityMetadataStore = Pick<
-  ISignalProtocolLocalStore,
+  SignalProtocolLocalStore,
   'getMetadata' | 'setMetadata' | 'deleteMetadata'
 >;
 type LedgerKind = 'outbox' | 'incoming';

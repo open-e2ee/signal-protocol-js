@@ -27,7 +27,7 @@
  *
  * @example
  * ```typescript
- * // Any ISignalProtocolRelayServer that reports presence.
+ * // Any SignalProtocolRelayServer that reports presence.
  * const relay = createAuthenticatedRelay({ userId, getAuthToken });
  * useConnectionPresence({
  *   relay,
@@ -40,9 +40,9 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import { useConvex } from 'convex/react';
-import type { ISignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolRelayServer } from '../remote/relay/types';
 import { useSingleFlight } from './use-single-flight';
-import { resolveSignalProtocolLogger, type ILogger } from '../logger';
+import { resolveSignalProtocolLogger, type Logger } from '../logger';
 
 /**
  * Heartbeat interval for presence keep-alive.
@@ -54,13 +54,13 @@ const HEARTBEAT_INTERVAL_MS = 10 * 1000;
 
 export interface UseConnectionPresenceOptions {
   /** Signal Protocol relay server instance */
-  relay: ISignalProtocolRelayServer;
+  relay: SignalProtocolRelayServer;
   /** Current device ID (1-5) */
   deviceId: number | null;
   /** Enable/disable presence tracking (default: true) */
   enabled?: boolean;
   /** Optional logger for presence operations */
-  logger?: ILogger;
+  logger?: Logger;
 }
 
 /**

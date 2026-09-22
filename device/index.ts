@@ -125,11 +125,11 @@ export {
 export { DeviceLifecycleManager } from './lifecycle';
 export type {
   // Dependency interfaces
-  ISecureStore,
-  IConvexClient,
+  DeviceLifecycleSecureStore,
+  DeviceLifecycleConvexClient,
   DeviceLifecycleApi,
-  IKeyStorageOps,
-  ILogger,
+  KeyStorageOps,
+  DeviceLifecycleLogger,
   DeviceLifecycleDeps,
   // Device info
   DeviceInfo,

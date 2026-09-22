@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / IEcOneTimePreKeyStore
+[@open-e2ee/signal-protocol-sdk](../README.md) / EcOneTimePreKeyStore
 
-# Interface: IEcOneTimePreKeyStore
+# Interface: EcOneTimePreKeyStore
 
 EC one-time PreKey store with an SDK-oriented API.
 
@@ -13,7 +13,7 @@ The protocol consumes a one-time prekey after use, and no caller may reuse it.
 
 ## Extended by
 
-- [`IProtocolStore`](IProtocolStore.md)
+- [`ProtocolStore`](ProtocolStore.md)
 
 ## Methods
 

@@ -15,22 +15,22 @@
 
 import AsyncLock from 'async-lock';
 import type {
-  ISignalProtocolRelayServer,
+  SignalProtocolRelayServer,
   Envelope,
   StaleSessionErrorData,
   SealedSenderAuth,
   GroupMemberDevice,
 } from '../remote/relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
-import type { ISignalProtocolLocalStore, Base64, ReceivedContent } from '../types';
+import type { SignalProtocolLocalStore, Base64, ReceivedContent } from '../types';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { SealedSenderAuthError } from '../types/errors';
 import { base64ToBytes } from '../internal/crypto';
 import type { DecryptedEnvelope } from './event-hooks';
 import { recordServerClockSample } from '../server-clock';
 import { ProtocolAddress } from '../types/address';
-import type { ISesameManager, SesameMessage, OutgoingMessageBatch } from '../internal/sesame/types';
-import { defaultSignalProtocolLogger, type ILogger } from '../logger';
+import type { SesameManager, SesameMessage, OutgoingMessageBatch } from '../internal/sesame/types';
+import { defaultSignalProtocolLogger, type Logger } from '../logger';
 import { SenderKeyManager } from '../internal/protocol/sender-keys';
 import { isGroupId, extractGroupId } from '../internal/groups';
 import type { EndorsementManager } from './endorsement-manager';
@@ -276,13 +276,13 @@ export class SignalProtocolServiceCipher {
   constructor(
     private readonly userId: string,
     private readonly deviceId: number,
-    private readonly sesameManager: ISesameManager,
+    private readonly sesameManager: SesameManager,
     private readonly senderKeyManager: SenderKeyManager,
-    private readonly storage: ISignalProtocolLocalStore,
-    private readonly relay?: ISignalProtocolRelayServer,
+    private readonly storage: SignalProtocolLocalStore,
+    private readonly relay?: SignalProtocolRelayServer,
     private readonly remoteObjectStore?: SignalProtocolRemoteObjectStore,
     private readonly contentAdapter?: SignalProtocolContentAdapter,
-    private readonly logger: Required<ILogger> = defaultSignalProtocolLogger
+    private readonly logger: Required<Logger> = defaultSignalProtocolLogger
   ) {}
 
   private getResolvedContentAdapter(): SignalProtocolContentAdapter {

@@ -16,11 +16,11 @@
  * @see https://signal.org/docs/specifications/sesame/
  */
 
-import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import { getErrorMessage } from '../../utils/errors';
 import {
-  ISesameManager,
-  ISesameStorage,
+  SesameManager,
+  SesameStorage,
   UserID,
   DeviceID,
   SessionID,
@@ -52,7 +52,7 @@ import {
   // Send options
   SesameSendOptions,
 } from './types';
-import type { IMessageRecordStore } from '../../local/store';
+import type { MessageRecordStore } from '../../local/store';
 import { validateSesameConfig } from './validation';
 import type { SessionState, SessionRecord } from '../../types/session';
 import { ProtocolAddress } from '../../types/address';
@@ -138,7 +138,7 @@ interface PreKeyMessageResult {
  * Protocol manager interface for encryption/decryption
  * Uses ProtocolAddress for type-safe session identification
  */
-export interface IProtocolManager {
+export interface ProtocolManager {
   encrypt(remoteAddress: ProtocolAddress, plaintext: string): Promise<Ciphertext>;
   decrypt(remoteAddress: ProtocolAddress, ciphertext: Ciphertext, receiveId?: string): Promise<string>;
   /**
@@ -157,20 +157,20 @@ export interface IProtocolManager {
  *
  * Supports event callbacks for observability via the SesameEvents interface.
  */
-export class SesameManager implements ISesameManager {
-  private storage: ISesameStorage;
+export class DefaultSesameManager implements SesameManager {
+  private storage: SesameStorage;
   private config: SesameConfig;
   private localUserId: UserID | null = null;
   private localDeviceId: DeviceID | null = null;
-  private protocol: IProtocolManager | null = null;
-  private readonly logger: Required<ILogger>;
+  private protocol: ProtocolManager | null = null;
+  private readonly logger: Required<Logger>;
 
   /**
    * Optional MessageRecord store for SESAME retry request support.
    * When set, sent messages are stored so they can be resent on retry request.
    * Per SESAME Specification Section 6.2.
    */
-  private messageRecordStore: IMessageRecordStore | null = null;
+  private messageRecordStore: MessageRecordStore | null = null;
 
   /**
    * O(1) session lookup index: sessionId -> { userId, deviceId }
@@ -189,11 +189,11 @@ export class SesameManager implements ISesameManager {
   private events: SesameEvents = {};
 
   constructor(
-    storage: ISesameStorage,
+    storage: SesameStorage,
     config?: Partial<SesameConfig>,
-    protocol?: IProtocolManager,
+    protocol?: ProtocolManager,
     events?: SesameEvents,
-    logger: Required<ILogger> = defaultSignalProtocolLogger
+    logger: Required<Logger> = defaultSignalProtocolLogger
   ) {
     this.logger = logger;
     // Validate configuration per SESAME specification
@@ -225,7 +225,7 @@ export class SesameManager implements ISesameManager {
    * Set the Signal Protocol manager for encryption/decryption
    * This must be called before using send/receive
    */
-  setProtocolManager(protocol: IProtocolManager): void {
+  setProtocolManager(protocol: ProtocolManager): void {
     this.protocol = protocol;
   }
 
@@ -236,7 +236,7 @@ export class SesameManager implements ISesameManager {
    *
    * When set, sent messages are stored so they can be resent on retry request.
    */
-  setMessageRecordStore(store: IMessageRecordStore): void {
+  setMessageRecordStore(store: MessageRecordStore): void {
     this.messageRecordStore = store;
   }
 
@@ -549,7 +549,7 @@ export class SesameManager implements ISesameManager {
     options?: SesameSendOptions
   ): Promise<SesameMessage> {
     if (!this.localUserId || !this.localDeviceId) {
-      throw new SesameError('SesameManager not initialized', 'NOT_INITIALIZED');
+      throw new SesameError('DefaultSesameManager not initialized', 'NOT_INITIALIZED');
     }
 
     if (!this.protocol) {
@@ -752,7 +752,7 @@ export class SesameManager implements ISesameManager {
     options?: SesameSendOptions
   ): Promise<OutgoingMessageBatch> {
     if (!this.localUserId || !this.localDeviceId) {
-      throw new SesameError('SesameManager not initialized', 'NOT_INITIALIZED');
+      throw new SesameError('DefaultSesameManager not initialized', 'NOT_INITIALIZED');
     }
 
     if (!this.protocol) {
@@ -846,7 +846,7 @@ export class SesameManager implements ISesameManager {
     options?: SesameSendOptions
   ): Promise<SesameMessage[]> {
     if (!this.localUserId || !this.localDeviceId) {
-      throw new SesameError('SesameManager not initialized', 'NOT_INITIALIZED');
+      throw new SesameError('DefaultSesameManager not initialized', 'NOT_INITIALIZED');
     }
 
     const localUserRecord = await this.getUserRecord(this.localUserId);
@@ -1043,7 +1043,7 @@ export class SesameManager implements ISesameManager {
    */
   async receive(message: SesameMessage, receiveId?: string): Promise<Uint8Array> {
     if (!this.localUserId || !this.localDeviceId) {
-      throw new SesameError('SesameManager not initialized', 'NOT_INITIALIZED');
+      throw new SesameError('DefaultSesameManager not initialized', 'NOT_INITIALIZED');
     }
 
     if (!this.protocol) {
@@ -1280,7 +1280,7 @@ export class SesameManager implements ISesameManager {
     }
 
     if (!this.localUserId || !this.localDeviceId) {
-      throw new SesameError('SesameManager not initialized', 'NOT_INITIALIZED');
+      throw new SesameError('DefaultSesameManager not initialized', 'NOT_INITIALIZED');
     }
 
     // Require timestamp for retry request
@@ -1345,7 +1345,7 @@ export class SesameManager implements ISesameManager {
     }
 
     if (!this.localUserId || !this.localDeviceId) {
-      throw new SesameError('SesameManager not initialized', 'NOT_INITIALIZED');
+      throw new SesameError('DefaultSesameManager not initialized', 'NOT_INITIALIZED');
     }
 
     // Validate retry request is addressed to this device

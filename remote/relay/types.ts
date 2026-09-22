@@ -2,7 +2,7 @@
  * Signal Protocol relay interfaces for remote infrastructure.
  *
  * These are the DI contracts for relay-oriented remote services:
- * - ISignalProtocolRelayServer: Envelope delivery, device registry, prekey management
+ * - SignalProtocolRelayServer: Envelope delivery, device registry, prekey management
  *
  * @see docs/INTERFACES.md for full documentation
  */
@@ -11,7 +11,7 @@
 import type { PreKeyBundle, IdentityType, CompositeIdentityV1 } from '../../keys/types';
 import type { RetryRequest } from '../../internal/sesame/types';
 import { ContentHint } from '../../types/messages';
-import type { GroupAuthorization, IGroupServer } from '../../internal/groups/manager';
+import type { GroupAuthorization, GroupServer } from '../../internal/groups/manager';
 
 // Re-export for consumers of this module
 export {};
@@ -37,9 +37,9 @@ export interface AccountIdentityRotation extends AccountIdentityProvisioning {
  * The trust root is intentionally absent: clients pin it out of band rather
  * than discovering and trusting it from this runtime capability.
  */
-export interface IRelayGroupServer {
+export interface RelayGroupServer {
   /** Encrypted group-state transport. */
-  readonly server: IGroupServer;
+  readonly server: GroupServer;
   /** Issue an auth credential for the relay's authenticated account. */
   issueAuthCredential(userId: string, authorityKeyId?: string): Promise<Uint8Array>;
   /** Store the client-derived sealed-sender access key for the authenticated account. */
@@ -62,7 +62,7 @@ export interface IRelayGroupServer {
  * 4. New device decrypts and initializes
  *
  */
-export interface IProvisioningService {
+export interface ProvisioningService {
   /**
    * Create a new provisioning session.
    *
@@ -192,7 +192,7 @@ export interface PreKeyInventory {
 }
 
 /** Metadata queries for independent key-rotation decisions. */
-export interface IKeyRotationService {
+export interface KeyRotationService {
   /**
    * Get EC signed prekey metadata for rotation checks and server key verification.
    *
@@ -248,7 +248,7 @@ export interface IKeyRotationService {
  *
  * @example
  * ```typescript
- * const relay: ISignalProtocolRelayServer = inMemoryRelay();
+ * const relay: SignalProtocolRelayServer = inMemoryRelay();
  *
  * // Subscribe to incoming envelopes
  * const unsubscribe = relay.subscribe(userId, deviceId, (envelope) => {
@@ -266,9 +266,9 @@ export interface IKeyRotationService {
  * });
  * ```
  */
-export interface ISignalProtocolRelayServer extends IProvisioningService, IKeyRotationService {
+export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotationService {
   /** Optional conforming Group System transport and issuance capability. */
-  readonly groupServer?: IRelayGroupServer;
+  readonly groupServer?: RelayGroupServer;
 
   // ════════════════════════════════════════════════════════════
   // ENVELOPE DELIVERY

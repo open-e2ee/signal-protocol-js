@@ -1,7 +1,7 @@
 /**
  * Relay subscription operations for SignalProtocolClient
  *
- * Extracted from SignalProtocolClient class to reduce file size (~330 lines).
+ * Extracted from DefaultSignalProtocolClient class to reduce file size (~330 lines).
  * Handles the relay subscription callback logic for incoming message processing.
  */
 

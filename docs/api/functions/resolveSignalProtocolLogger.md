@@ -6,7 +6,7 @@
 
 # Function: resolveSignalProtocolLogger()
 
-> **resolveSignalProtocolLogger**(`logger?`): `Required`\<[`ILogger`](../interfaces/ILogger.md)\>
+> **resolveSignalProtocolLogger**(`logger?`): `Required`\<[`Logger`](../interfaces/Logger.md)\>
 
 Logging utilities for app composition
 
@@ -17,15 +17,15 @@ your app logger or custom diagnostics pipeline.
 
 ### logger?
 
-[`ILogger`](../interfaces/ILogger.md)
+[`Logger`](../interfaces/Logger.md)
 
 ## Returns
 
-`Required`\<[`ILogger`](../interfaces/ILogger.md)\>
+`Required`\<[`Logger`](../interfaces/Logger.md)\>
 
 ## Example
 
-**Using custom logger with SignalProtocolClient**
+**Using custom logger with DefaultSignalProtocolClient**
 
 ```typescript
 import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';

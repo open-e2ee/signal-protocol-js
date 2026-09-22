@@ -10,7 +10,7 @@
  * Status: Implemented via ./noble-pq (internal fork of @noble/post-quantum)
  */
 
-import type { IIncrementalKEM, KeyGenResult, Encaps1Result } from './types';
+import type { IncrementalKEM, KeyGenResult, Encaps1Result } from './types';
 
 import { MLKEM_768_SIZES } from './types';
 import { IncrementalKEMError } from './errors';
@@ -30,7 +30,7 @@ import {
  *
  */
 export {};
-export class IncrementalMLKEM768 implements IIncrementalKEM {
+export class IncrementalMLKEM768 implements IncrementalKEM {
   /** Stored hek for Encaps2 verification */
   private currentHek: Uint8Array | null = null;
 
@@ -181,7 +181,7 @@ export class IncrementalMLKEM768 implements IIncrementalKEM {
  *
  * @returns Incremental ML-KEM-768 implementation
  */
-export function createIncrementalKEM(): IIncrementalKEM {
+export function createIncrementalKEM(): IncrementalKEM {
   return new IncrementalMLKEM768();
 }
 

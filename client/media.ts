@@ -8,7 +8,7 @@ import {
 } from "../remote/object-store/upload-error";
 import { matchesUploadReceipt } from "../remote/object-store/validation";
 import { assertPreparedUploadByteLimit } from "./media-upload-budget";
-import type { ISignalProtocolLocalStore } from "../types/api";
+import type { SignalProtocolLocalStore } from "../types/api";
 import {
   MediaQueuePersistence,
   MediaQueueConcurrentUpdateError,
@@ -251,7 +251,7 @@ export interface SignalProtocolClientMediaProcessResult {
 }
 
 interface StorageBackedSignalProtocolClientMediaOptions {
-  storage: ISignalProtocolLocalStore;
+  storage: SignalProtocolLocalStore;
   remoteObjectStore?: SignalProtocolRemoteObjectStore;
   config?: SignalProtocolClientMediaConfig;
 }
@@ -618,7 +618,7 @@ function preparedUploadMatchesQueue(
 
 /** @internal */
 export class StorageBackedSignalProtocolClientMedia implements SignalProtocolClientMedia {
-  private readonly storage: ISignalProtocolLocalStore;
+  private readonly storage: SignalProtocolLocalStore;
   private readonly remoteObjectStore?: SignalProtocolRemoteObjectStore;
   private readonly config?: SignalProtocolClientMediaConfig;
   private storeLock: Promise<void> = Promise.resolve();

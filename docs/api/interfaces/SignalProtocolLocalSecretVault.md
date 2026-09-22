@@ -2,9 +2,9 @@
 
 ***
 
-[@open-e2ee/signal-protocol-sdk](../README.md) / ISignalProtocolLocalSecretVault
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolLocalSecretVault
 
-# Interface: ISignalProtocolLocalSecretVault
+# Interface: SignalProtocolLocalSecretVault
 
 Small local secret vault used to bootstrap a local Signal Protocol store.
 

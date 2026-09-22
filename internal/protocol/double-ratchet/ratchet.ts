@@ -43,7 +43,7 @@
  * ```
  */
 
-import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
+import { defaultSignalProtocolLogger, type Logger } from '../../../logger';
 import {
   generateECDHKeyPair,
   computeSharedSecret,
@@ -296,7 +296,7 @@ function validateDHPublicKey(dhPublicKeyB64: string): void {
 export async function performDHRatchetStep(
   state: DoubleRatchetState,
   receivedDHPublicKey: string,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<void> {
   // Validate received DH public key before any state changes
   validateDHPublicKey(receivedDHPublicKey);

@@ -11,7 +11,7 @@
     "db:generate": "drizzle-kit generate && node scripts/bundle-migrations.mjs"
   },
   "dependencies": {
-    "@open-e2ee/signal-protocol-sdk": "3.0.0",
+    "@open-e2ee/signal-protocol-sdk": "4.0.0",
     "drizzle-orm": "0.45.2",
     "expo": "~55.0.31",
     "expo-crypto": "~55.0.19",

@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { SessionHealthResult } from '../client/types';
-import type { ISignalProtocolClient } from '../types/api';
+import type { SignalProtocolClient } from '../types/api';
 
 /**
  * Hook result type
@@ -41,7 +41,7 @@ export interface UseSessionHealthResult {
 
 export interface UseSessionHealthOptions {
   /** Signal Protocol client used to run the health check */
-  signal: Pick<ISignalProtocolClient, 'getSessionHealth'>;
+  signal: Pick<SignalProtocolClient, 'getSessionHealth'>;
   /** User ID to check session health for (undefined to skip) */
   userId: string | undefined;
 }

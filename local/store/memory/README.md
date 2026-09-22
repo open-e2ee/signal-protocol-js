@@ -1,6 +1,6 @@
 # In-Memory Store
 
-`InMemorySignalProtocolStore` implements `ISignalProtocolLocalStore` in memory for examples, local
+`InMemorySignalProtocolStore` implements `SignalProtocolLocalStore` in memory for examples, local
 development, and deterministic application prototypes.
 
 The protocol and cryptography are real. The adapter simulates the

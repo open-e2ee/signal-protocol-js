@@ -480,4 +480,4 @@ Re-exports [validateMediaAttachmentPolicy](namespaces/media/functions/validateMe
 
 ## Primary API
 
-- [SignalProtocolClient](classes/SignalProtocolClient.md)
+- [DefaultSignalProtocolClient](classes/DefaultSignalProtocolClient.md)

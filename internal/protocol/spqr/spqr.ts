@@ -115,7 +115,7 @@ import {
   resolveSPQRInfoStrings,
   type ResolvedSPQRInfoStrings,
 } from '../../crypto';
-import { defaultSignalProtocolLogger, type ILogger } from '../../../logger';
+import { defaultSignalProtocolLogger, type Logger } from '../../../logger';
 
 // SPQR limits configuration (profile protocol defaults)
 import {
@@ -954,7 +954,7 @@ export async function processSPQRReceivedCiphertext(
  */
 export async function deriveSPQRSendKey(
   spqrState: SPQRState,
-  logger: Required<ILogger> = defaultSignalProtocolLogger,
+  logger: Required<Logger> = defaultSignalProtocolLogger,
   epochOverride?: number
 ): Promise<SPQRKeyResult | null> {
   // Validate state before operation
@@ -1117,7 +1117,7 @@ export async function deriveSPQRReceiveKey(
   spqrState: SPQRState,
   index: number,
   epoch: number,
-  logger: Required<ILogger> = defaultSignalProtocolLogger
+  logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<Uint8Array | null> {
   // Validate state before operation
   validateSPQRState(spqrState, 'deriveSPQRReceiveKey');
@@ -1374,9 +1374,9 @@ export async function cleanupSPQRState(spqrState: SPQRState, maxAge?: number): P
 // Cached braid state machine singleton. The state machine is stateless (all
 // mutable state is passed as arguments to Send/Receive), so a single instance
 // is safe to reuse across calls.
-import type { IMLKEMBraidStateMachine } from './ml-kem-braid/types';
+import type { MLKEMBraidStateMachine } from './ml-kem-braid/types';
 import { createStateMachine, MessageType } from './ml-kem-braid';
-let braidStateMachine: IMLKEMBraidStateMachine | undefined;
+let braidStateMachine: MLKEMBraidStateMachine | undefined;
 
 /**
  * Report braid chunk progress to the host's diagnostic hook.
@@ -1390,7 +1390,7 @@ let braidStateMachine: IMLKEMBraidStateMachine | undefined;
 function reportBraidProgress(
   braidState: MLKEMBraidAgentState,
   emittedEpochKey: boolean,
-  logger: Required<ILogger>,
+  logger: Required<Logger>,
   config?: ProtocolStrategyConfig
 ): void {
   if (!config?.onBraidProgress) {
@@ -1458,7 +1458,7 @@ export interface SPQRRecvResult {
  */
 export async function spqrSend(
   state: SPQRState,
-  logger: Required<ILogger> = defaultSignalProtocolLogger,
+  logger: Required<Logger> = defaultSignalProtocolLogger,
   config?: ProtocolStrategyConfig
 ): Promise<SPQRSendResult> {
   const emptyResult: SPQRSendResult = { msgBytes: new Uint8Array(0), messageKey: null };
@@ -1593,7 +1593,7 @@ export async function spqrSend(
 export async function spqrRecv(
   state: SPQRState,
   msgBytes: Uint8Array | undefined,
-  logger: Required<ILogger> = defaultSignalProtocolLogger,
+  logger: Required<Logger> = defaultSignalProtocolLogger,
   config?: ProtocolStrategyConfig
 ): Promise<SPQRRecvResult> {
   // No PQ data during bootstrap or malformed transport with no pq_ratchet field.

@@ -7,7 +7,7 @@
  * - an application-configured Expo SQLite/SQLCipher database
  *
  * This class wraps the KeyStorage implementation and provides
- * the ISignalProtocolLocalStore interface for dependency injection.
+ * the SignalProtocolLocalStore interface for dependency injection.
  */
 
 import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
@@ -23,7 +23,7 @@ import type {
 } from '../../../keys';
 import { encodeCompositeIdentityV1, UNPINNED_DEVICE_IDENTITY_KEY } from '../../../keys/identity';
 import type {
-  ISignalProtocolLocalStore,
+  SignalProtocolLocalStore,
   RetainedKyberPreKey,
   MessageRecord,
   SessionRecord,
@@ -37,7 +37,7 @@ import type { SenderKeyState } from '../../../internal/protocol/sender-keys/mana
 
 import { getDatabaseKeyManager } from './database-key';
 import { KeyStorage } from './key-storage';
-import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
+import { resolveSignalProtocolLogger, type Logger } from '../../../logger';
 
 /**
  * Expo Signal Protocol Store
@@ -52,7 +52,7 @@ import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
  *
  * ## Security
  *
- * - Key custody follows the configured `ISignalProtocolLocalSecretVault`
+ * - Key custody follows the configured `SignalProtocolLocalSecretVault`
  * - Protocol records are stored in the encrypted database, not the secret vault
  * - Account reset coordinates logical record and key deletion
  * - TOFU (Trust On First Use) for contact identities
@@ -70,19 +70,19 @@ import { resolveSignalProtocolLogger, type ILogger } from '../../../logger';
  * ```
  *
  * @category Key Storage
- * @see {@link ISignalProtocolLocalStore} for interface documentation
+ * @see {@link SignalProtocolLocalStore} for interface documentation
  */
 export {};
-export class ExpoSignalProtocolStore implements ISignalProtocolLocalStore {
+export class ExpoSignalProtocolStore implements SignalProtocolLocalStore {
   private storage: KeyStorage;
-  private logger: Required<ILogger>;
+  private logger: Required<Logger>;
 
-  constructor(providedLogger?: ILogger) {
+  constructor(providedLogger?: Logger) {
     this.logger = resolveSignalProtocolLogger(providedLogger);
     this.storage = new KeyStorage(this.logger);
   }
 
-  setLogger(providedLogger?: ILogger): void {
+  setLogger(providedLogger?: Logger): void {
     this.logger = resolveSignalProtocolLogger(providedLogger);
     this.storage.setLogger(this.logger);
   }

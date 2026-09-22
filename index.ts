@@ -41,7 +41,7 @@
  *
  * ## Architecture
  *
- * - **SignalProtocolClient**: Primary API (factory pattern, type-safe initialization)
+ * - **DefaultSignalProtocolClient**: Primary API (factory pattern, type-safe initialization)
  * - **Namespaces**: Organized utilities (safety, keys, encoding)
  * - **Types**: TypeScript definitions
  * - **Internal Protocol**: SCREAMING_SNAKE_CASE matching Signal Protocol notation
@@ -50,7 +50,7 @@
  */
 
 // ============================================================================
-// PRIMARY API: createSignalProtocolClient() and SignalProtocolClient
+// PRIMARY API: createSignalProtocolClient() and DefaultSignalProtocolClient
 // ============================================================================
 
 /**
@@ -58,7 +58,7 @@
  *
  * Most app code should create this through `createSignalProtocolClient()` so identity,
  * adapters, and security policy are grouped in one object. Use
- * `SignalProtocolClient.create()` directly when lower-level integration code already owns
+ * `DefaultSignalProtocolClient.create()` directly when lower-level integration code already owns
  * the flattened config shape.
  *
  * @example
@@ -73,7 +73,7 @@
  * ```
  */
 export {};
-export { SignalProtocolClient } from "./client";
+export { DefaultSignalProtocolClient } from "./client";
 export {
   BraidPolicy,
   advanceHostedRelayIdentityMigration,
@@ -125,7 +125,7 @@ export type {
 export type {
   SignalProtocolClientConfig,
   ProgressCallback,
-  ILogger,
+  Logger,
   DoubleRatchetConfig,
   PreKeyMaintenanceStore,
   ProtocolStrategyConfig,
@@ -256,7 +256,7 @@ export {
  * Pass a logger into `createSignalProtocolClient()` to route Signal Protocol logs through
  * your app logger or custom diagnostics pipeline.
  *
- * @example Using custom logger with SignalProtocolClient
+ * @example Using custom logger with DefaultSignalProtocolClient
  * ```typescript
  * import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
  *
@@ -429,22 +429,22 @@ export type { GroupId, GroupTrustRoot } from "./internal/groups";
 /**
  * Remote infrastructure interfaces (DI contracts)
  *
- * - **ISignalProtocolRelayServer**: Envelope delivery, device registry, and prekeys
+ * - **SignalProtocolRelayServer**: Envelope delivery, device registry, and prekeys
  * - **SignalProtocolRemoteObjectStore**: Brokered remote storage for encrypted objects
  *
  * @see docs/INTERFACES.md for full documentation
  *
  * @example
  * ```typescript
- * import type { ISignalProtocolRelayServer, SignalProtocolRemoteObjectStore } from '@open-e2ee/signal-protocol-sdk';
+ * import type { SignalProtocolRelayServer, SignalProtocolRemoteObjectStore } from '@open-e2ee/signal-protocol-sdk';
  * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
  *
- * const relay: ISignalProtocolRelayServer = inMemoryRelay();
+ * const relay: SignalProtocolRelayServer = inMemoryRelay();
  * ```
  */
 export type {
-  IRelayGroupServer,
-  ISignalProtocolRelayServer,
+  RelayGroupServer,
+  SignalProtocolRelayServer,
   DeliveryClass,
   Envelope,
   DeviceInfo,
@@ -522,23 +522,23 @@ export type {
   // application needs.
 
   // API types
-  ISignalProtocolClient,
-  ISignalProtocolManager,
-  ISignalProtocolLocalStore,
-  ISignalProtocolLocalSecretVault,
+  SignalProtocolClient,
+  SignalProtocolManager,
+  SignalProtocolLocalStore,
+  SignalProtocolLocalSecretVault,
   MessageRecord,
   SkippedSenderMessageKey,
 
   // Focused store interfaces with independently replaceable responsibilities.
-  IIdentityKeyStore,
-  IEcOneTimePreKeyStore,
-  IEcSignedPreKeyStore,
-  IKyberLastResortPreKeyStore,
-  IKemPreKeyStore,
-  ISessionStore,
-  ISesameStore,
-  ISenderKeyStore,
-  IProtocolStore,
+  IdentityKeyStore,
+  EcOneTimePreKeyStore,
+  EcSignedPreKeyStore,
+  KyberLastResortPreKeyStore,
+  KemPreKeyStore,
+  SessionStore,
+  SesameStore,
+  SenderKeyStore,
+  ProtocolStore,
   SessionTrustCommit,
 
   // Error context
@@ -560,8 +560,8 @@ export type {
 } from "./internal/sesame/types";
 export type {
   GroupAuthorization,
-  IGroupServer,
-  IGroupStateStore,
+  GroupServer,
+  GroupStateStore,
   GroupSnapshot,
   GroupMemberInput,
   PresentedGroupMemberInput,
@@ -585,7 +585,7 @@ export {
   ServerRootPublicKey,
 } from "./internal/protocol/zk/credentials/endorsements";
 
-// Event hooks (callbacks for SignalProtocolClient) - from client/
+// Event hooks (callbacks for DefaultSignalProtocolClient) - from client/
 export type {
   SignalProtocolClientHooks,
   HookName,

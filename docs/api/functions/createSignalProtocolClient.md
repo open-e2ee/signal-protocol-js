@@ -6,7 +6,7 @@
 
 # Function: createSignalProtocolClient()
 
-> **createSignalProtocolClient**(`options`): `Promise`\<[`SignalProtocolClient`](../classes/SignalProtocolClient.md)\>
+> **createSignalProtocolClient**(`options`): `Promise`\<[`DefaultSignalProtocolClient`](../classes/DefaultSignalProtocolClient.md)\>
 
 Create and initialize a Signal Protocol client from the app-facing composition shape.
 
@@ -20,7 +20,7 @@ This is the recommended entry point for application code.
 
 ## Returns
 
-`Promise`\<[`SignalProtocolClient`](../classes/SignalProtocolClient.md)\>
+`Promise`\<[`DefaultSignalProtocolClient`](../classes/DefaultSignalProtocolClient.md)\>
 
 ## Example
 

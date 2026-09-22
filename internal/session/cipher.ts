@@ -77,7 +77,7 @@
  */
 
 import AsyncLock from 'async-lock';
-import { defaultSignalProtocolLogger, type ILogger } from '../../logger';
+import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import {
   MAX_UNACKNOWLEDGED_SESSION_AGE_MS,
   type ProtocolStrategyConfig,
@@ -89,7 +89,7 @@ import {
   encodeCompositeIdentityV1,
 } from '../../keys/identity';
 import type {
-  ISignalProtocolLocalStore,
+  SignalProtocolLocalStore,
   PreKeyMessage,
   RatchetMessage,
   SessionState,
@@ -265,8 +265,8 @@ export class SessionCipher {
   private static readonly DEFAULT_MAX_SKIP = 25000;
 
   /** Storage adapter for session state and keys */
-  private readonly keyStorage: ISignalProtocolLocalStore;
-  private readonly logger: Required<ILogger>;
+  private readonly keyStorage: SignalProtocolLocalStore;
+  private readonly logger: Required<Logger>;
 
   /** Callback to establish new sessions from PreKeyMessages */
   private readonly establishSession: SessionEstablishmentCallback;
@@ -296,11 +296,11 @@ export class SessionCipher {
    *   per-message diagnostic hooks.
    */
   constructor(
-    keyStorage: ISignalProtocolLocalStore,
+    keyStorage: SignalProtocolLocalStore,
     establishSession: SessionEstablishmentCallback,
     lock: AsyncLock,
     config: SessionCipherConfig = {},
-    logger: Required<ILogger> = defaultSignalProtocolLogger
+    logger: Required<Logger> = defaultSignalProtocolLogger
   ) {
     this.keyStorage = keyStorage;
     this.establishSession = establishSession;

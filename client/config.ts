@@ -5,11 +5,11 @@
  * applications can compose the client for their own runtime.
  */
 
-import type { ISignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolRelayServer } from '../remote/relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
-import type { ISignalProtocolLocalStore, ISignalProtocolManager } from '../types/api';
+import type { SignalProtocolLocalStore, SignalProtocolManager } from '../types/api';
 import type { IdentityType } from '../keys/types';
-import type { ILogger } from '../logger';
+import type { Logger } from '../logger';
 import type { SignalProtocolClientHooks } from './event-hooks';
 import type { SignalProtocolContentAdapter } from './content-adapter';
 import type { SignalProtocolClientMediaConfig } from './media';
@@ -19,7 +19,7 @@ import type {
   SignalProtocolConfig,
   SenderKeysConfig,
 } from '../types/protocol-config';
-export type { ILogger } from '../logger';
+export type { Logger } from '../logger';
 export {};
 export type {
   BraidProgressEvent,
@@ -307,7 +307,7 @@ export interface SignalProtocolClientConfig {
    * });
    * ```
    */
-  relay?: ISignalProtocolRelayServer;
+  relay?: SignalProtocolRelayServer;
 
   /**
    * Remote object store adapter for encrypted file uploads (two-layer encryption)
@@ -395,13 +395,13 @@ export interface SignalProtocolClientConfig {
    * Local store implementation for the current runtime.
    * Required by SignalProtocolClient.create().
    */
-  storage: ISignalProtocolLocalStore;
+  storage: SignalProtocolLocalStore;
 
   /**
    * Signal Protocol Manager implementation (for advanced use cases)
    * Default: Creates new SignalProtocolManager instance
    */
-  protocolManager?: ISignalProtocolManager;
+  protocolManager?: SignalProtocolManager;
 
   /**
    * Double Ratchet algorithm configuration
@@ -567,7 +567,7 @@ export interface SignalProtocolClientConfig {
    * });
    * ```
    */
-  logger?: ILogger;
+  logger?: Logger;
 
   /**
    * Enable debug logging
@@ -834,9 +834,9 @@ export interface SignalProtocolClientConfig {
     /** This account's 32-byte profile key. */
     profileKey: Uint8Array;
     /** Override the SDK local storage adapter for group state. */
-    store?: import('../internal/groups/manager').IGroupStateStore;
+    store?: import('../internal/groups/manager').GroupStateStore;
     /** Override `relay.groupServer.server` for a custom deployment. */
-    server?: import('../internal/groups/manager').IGroupServer;
+    server?: import('../internal/groups/manager').GroupServer;
     /** Override the relay's auth-credential issuance transport. */
     issueCredential?: () => Promise<Uint8Array>;
     /** Override the relay's blinded profile-key credential issuance transport. */

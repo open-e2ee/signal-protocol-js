@@ -1,7 +1,7 @@
 /**
  * File encryption/decryption operations for SignalProtocolClient
  *
- * Extracted from SignalProtocolClient class to reduce file size.
+ * Extracted from DefaultSignalProtocolClient class to reduce file size.
  * Uses two-layer encryption: AES-GCM for files, Signal Protocol for key exchange.
  */
 
