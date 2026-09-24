@@ -14,6 +14,7 @@ import type {
   PreKeyInventory,
   PreKeyPublicationPlan,
   PreKeyUpload,
+  RelayConnectionState,
   SealedSenderAuth,
   Unsubscribe,
 } from "../remote/relay/types";
@@ -54,6 +55,7 @@ import type {
   SignalProtocolRemoteObjectStore,
 } from "../remote/object-store";
 import { RemoteObjectUploadError } from "../remote/object-store";
+import { RelayConnectionStateOwner } from "../remote/relay/connection-state";
 import type {
   HostedRelayPushRegistration,
   HostedRelayPushRuntime,
@@ -602,6 +604,8 @@ export class HostedRelayHttpTransport
   private readonly destinationGenerations = new Map<string, number>();
   private readonly ephemeralAcknowledgments = new Set<string>();
   private subscription?: MailboxSubscriptionHandle;
+  private subscriptionGeneration = 0;
+  private readonly connectionState = new RelayConnectionStateOwner();
 
   public constructor(
     private readonly connection: HostedRelayConnection,
@@ -1388,8 +1392,14 @@ export class HostedRelayHttpTransport
     options?: { onBatchStart?: () => void; onBatchEnd?: () => void },
   ): Unsubscribe {
     this.assertCurrentIdentity(userId, deviceId);
+    // Only the newest subscription reports the connection state.
+    const generation = ++this.subscriptionGeneration;
     const subscription = subscribeHostedMailbox({
       ...options,
+      onConnectionState: (state, reason) => {
+        if (generation === this.subscriptionGeneration)
+          this.connectionState.move(state, reason);
+      },
       authenticate: async () => {
         const token = await this.token();
         const url = new URL(
@@ -1437,6 +1447,16 @@ export class HostedRelayHttpTransport
       if (this.subscription === subscription) this.subscription = undefined;
       subscription.unsubscribe();
     };
+  }
+
+  public get relayConnectionState(): RelayConnectionState {
+    return this.connectionState.current;
+  }
+
+  public subscribeRelayConnectionState(
+    listener: (state: RelayConnectionState) => void,
+  ): Unsubscribe {
+    return this.connectionState.subscribe(listener);
   }
 
   /**

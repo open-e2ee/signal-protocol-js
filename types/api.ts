@@ -21,6 +21,7 @@ import type { TrustDirection, IdentityKeyChange } from './trust';
 import type { UserRecord, DeviceRecord } from '../internal/sesame/types';
 import type { SenderKeyState } from '../internal/protocol/sender-keys/manager';
 import type { Logger } from '../logger';
+import type { RelayConnectionState, Unsubscribe } from '../remote/relay/types';
 
 // Re-export IdentityType for consumers
 export {};
@@ -166,8 +167,32 @@ export interface SignalProtocolClient {
    * Pauses message processing without destroying client state.
    * Use when app backgrounds to let background task handle messages.
    * Call startRelaySubscription() to resume when app foregrounds.
+   * `bindRelayLifecycle` and the `useRelayLifecycle` hook make both calls
+   * from the app state.
    */
   stopRelaySubscription(): void;
+
+  /**
+   * The connection state of the relay subscription.
+   *
+   * It reads `stopped` before `startRelaySubscription()`, after
+   * `stopRelaySubscription()`, and when no relay is configured. Use it for a
+   * local indicator of this device's connection.
+   */
+  readonly relayConnectionState: RelayConnectionState;
+
+  /**
+   * Subscribe to relay connection transitions.
+   *
+   * The listener receives each new state once. Read `relayConnectionState` for
+   * the current state.
+   *
+   * @param listener - Callback for each transition
+   * @returns Unsubscribe function
+   */
+  subscribeRelayConnectionState(
+    listener: (state: RelayConnectionState) => void
+  ): Unsubscribe;
 
   /**
    * Stop the client and cleanup resources

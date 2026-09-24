@@ -76,6 +76,35 @@ Whether the client enables and configures sealed sender.
 
 ***
 
+### relayConnectionState
+
+#### Get Signature
+
+> **get** **relayConnectionState**(): [`RelayConnectionState`](../interfaces/RelayConnectionState.md)
+
+The connection state of the relay subscription. Reads `stopped` when no
+relay is configured.
+
+##### See
+
+SignalProtocolClient.relayConnectionState
+
+##### Returns
+
+[`RelayConnectionState`](../interfaces/RelayConnectionState.md)
+
+The connection state of the relay subscription.
+
+It reads `stopped` before `startRelaySubscription()`, after
+`stopRelaySubscription()`, and when no relay is configured. Use it for a
+local indicator of this device's connection.
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`relayConnectionState`](../interfaces/SignalProtocolClient.md#relayconnectionstate)
+
+***
+
 ### syncStatus
 
 #### Get Signature
@@ -2202,6 +2231,33 @@ SignalProtocolClient.stopRelaySubscription
 #### Implementation of
 
 [`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`stopRelaySubscription`](../interfaces/SignalProtocolClient.md#stoprelaysubscription)
+
+***
+
+### subscribeRelayConnectionState()
+
+> **subscribeRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+Subscribe to relay connection transitions. Without a relay, the listener
+never runs.
+
+#### Parameters
+
+##### listener
+
+(`state`) => `void`
+
+#### Returns
+
+[`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+#### See
+
+SignalProtocolClient.subscribeRelayConnectionState
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`subscribeRelayConnectionState`](../interfaces/SignalProtocolClient.md#subscriberelayconnectionstate)
 
 ***
 

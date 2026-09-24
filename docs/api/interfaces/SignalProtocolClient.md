@@ -40,6 +40,18 @@ This is the client-scoped logger used throughout the Signal Protocol runtime.
 
 ***
 
+### relayConnectionState
+
+> `readonly` **relayConnectionState**: [`RelayConnectionState`](RelayConnectionState.md)
+
+The connection state of the relay subscription.
+
+It reads `stopped` before `startRelaySubscription()`, after
+`stopRelaySubscription()`, and when no relay is configured. Use it for a
+local indicator of this device's connection.
+
+***
+
 ### userId
 
 > `readonly` **userId**: `string`
@@ -955,10 +967,37 @@ Stop the relay subscription
 Pauses message processing without destroying client state.
 Use when app backgrounds to let background task handle messages.
 Call startRelaySubscription() to resume when app foregrounds.
+`bindRelayLifecycle` and the `useRelayLifecycle` hook make both calls
+from the app state.
 
 #### Returns
 
 `void`
+
+***
+
+### subscribeRelayConnectionState()
+
+> **subscribeRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+Subscribe to relay connection transitions.
+
+The listener receives each new state once. Read `relayConnectionState` for
+the current state.
+
+#### Parameters
+
+##### listener
+
+(`state`) => `void`
+
+Callback for each transition
+
+#### Returns
+
+[`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+Unsubscribe function
 
 ***
 

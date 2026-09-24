@@ -75,6 +75,11 @@
 export {};
 export { DefaultSignalProtocolClient } from "./client";
 export {
+  bindRelayLifecycle,
+  type RelayLifecycleAppState,
+  type RelayLifecycleOptions,
+} from "./client/relay-lifecycle";
+export {
   BraidPolicy,
   advanceHostedRelayIdentityMigration,
   createHostedSignalProtocolClient,
@@ -459,6 +464,8 @@ export type {
   GroupChangeEntry,
   GroupMemberDevice,
   PreKeyPublicationPlan,
+  RelayConnectionReason,
+  RelayConnectionState,
   SealedSenderAuth,
   Unsubscribe,
 } from "./remote/relay/types";

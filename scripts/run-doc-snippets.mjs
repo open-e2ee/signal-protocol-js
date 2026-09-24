@@ -35,6 +35,7 @@ const packageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf
 const internalMarkdownSources = [
   'docs/DEVICE_LIFECYCLE.md',
   'docs/PREKEY_ARCHITECTURE.md',
+  'docs/RELAY_CONNECTION.md',
 ];
 const markdownSources = [
   ...new Set([

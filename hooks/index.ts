@@ -28,3 +28,11 @@ export {
   type UseGroupMembershipOptions,
   type UseGroupMembershipResult,
 } from './use-group-membership';
+export {
+  useRelayConnectionState,
+  type UseRelayConnectionStateOptions,
+} from './use-relay-connection-state';
+export {
+  useRelayLifecycle,
+  type UseRelayLifecycleOptions,
+} from './use-relay-lifecycle';

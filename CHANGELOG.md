@@ -1,5 +1,44 @@
 # Changelog
 
+## 6.0.0
+
+- **Breaking: the `SignalProtocolRelayServer` contract requires the relay
+  connection state.** `SignalProtocolClient` gains the `relayConnectionState`
+  getter and `subscribeRelayConnectionState(listener)`, which returns an
+  `Unsubscribe`. The `RelayConnectionState` type has a `state` (`stopped`,
+  `connecting`, `connected`, or `reconnecting`), a `since` time, and on
+  `reconnecting` a `reason` (`handshake`, `protocol`, `closed`, `error`,
+  `frame`, `authentication`, or `silent`). The reason names the site that
+  failed, never an error message. The state reads `stopped` before
+  `startRelaySubscription()` and after `stopRelaySubscription()`. A token
+  renewal emits nothing unless its new socket fails, and the same value never
+  emits twice. `SignalProtocolRelayServer` requires both members, so a custom
+  adapter must implement them. The memory and Convex adapters report
+  `connected` and `stopped` only. The state is local to this device and is not
+  presence.
+
+- **New: `useRelayConnectionState` and `useRelayLifecycle` hooks, and
+  `bindRelayLifecycle`.** `useRelayConnectionState({ signal })` gives the
+  state to a component for a local indicator. `bindRelayLifecycle(signal,
+  appState, { keepOpenInBackground })` from `./client` takes an object with the
+  shape of React Native's `AppState`, so the client entry imports no
+  react-native. `useRelayLifecycle({ signal, keepOpenInBackground })` from
+  `./hooks` passes `AppState` to it and does nothing on web.
+
+- **Behavior change: the lifecycle binding closes the socket in the
+  background.** With `bindRelayLifecycle` or `useRelayLifecycle`, `background`
+  calls `stopRelaySubscription()`, which closes the socket with code 1000.
+  `active` starts the subscription again after that stop, and the Relay
+  replays retained messages over the new socket. `inactive` changes nothing,
+  and there is no grace delay. A stop that the app made stays in effect.
+  `keepOpenInBackground: true` keeps the socket open, for example while an
+  Android foreground service runs.
+
+- **Behavior change: the hosted subscription gives up on a silent socket at
+  60 s.** The ping watchdog reconnects 60 s after the open or after the last
+  answered ping, not 90 s. The Relay closes a silent socket at 75 s, so the
+  client now gives up first.
+
 ## 5.0.0
 
 - **Breaking: one rotation entry point publishes every due prekey in one

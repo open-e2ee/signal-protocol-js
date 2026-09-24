@@ -66,6 +66,11 @@ export {
   type IdentityAssertionPurpose,
   type IdentityAssertionRequest,
 } from "./hosted";
+export {
+  bindRelayLifecycle,
+  type RelayLifecycleAppState,
+  type RelayLifecycleOptions,
+} from "./relay-lifecycle";
 export { BraidPolicy, PostQuantumPolicy } from "./config";
 export type {
   HostedSealedSenderConfig,

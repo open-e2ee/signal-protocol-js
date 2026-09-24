@@ -307,6 +307,27 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
   ): Unsubscribe;
 
   /**
+   * The connection state of this device's envelope subscription.
+   *
+   * It reads `stopped` before `subscribe` and after its unsubscribe. The value
+   * is replaced on each transition and is stable between transitions.
+   */
+  readonly relayConnectionState: RelayConnectionState;
+
+  /**
+   * Subscribe to transitions of `relayConnectionState`.
+   *
+   * The listener receives each new state once. It does not receive the
+   * current state when it subscribes.
+   *
+   * @param listener - Callback for each transition
+   * @returns Unsubscribe function
+   */
+  subscribeRelayConnectionState(
+    listener: (state: RelayConnectionState) => void
+  ): Unsubscribe;
+
+  /**
    * Mark envelope as delivered.
    * Depending on privacy settings, may delete immediately or mark for cleanup.
    *
@@ -711,6 +732,44 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
 
 /** Unsubscribe function returned by subscribe() */
 export type Unsubscribe = () => void;
+
+/**
+ * The transition site that moved a relay connection to `reconnecting`.
+ *
+ * - `handshake`: the socket did not open within 10 seconds.
+ * - `protocol`: the socket opened with a subprotocol other than the mailbox one.
+ * - `closed`: the socket closed.
+ * - `error`: the socket reported an error, or a frame could not be sent.
+ * - `frame`: the socket delivered a frame that the client refuses.
+ * - `authentication`: the device token for the socket could not be issued.
+ * - `silent`: the Relay did not answer a ping before the next one was due.
+ */
+export type RelayConnectionReason =
+  | 'handshake'
+  | 'protocol'
+  | 'closed'
+  | 'error'
+  | 'frame'
+  | 'authentication'
+  | 'silent';
+
+/**
+ * The local device's relay connection, as its envelope subscription sees it.
+ *
+ * - `stopped`: no subscription is running.
+ * - `connecting`: the subscription started and has not connected yet.
+ * - `connected`: the subscription has a live connection.
+ * - `reconnecting`: the connection failed and the subscription retries it.
+ *
+ * `reason` names the transition site of the last move to `reconnecting`. It is
+ * never an error message. `since` is the Unix time in milliseconds of the
+ * transition. A planned token renewal on a live connection is not a transition.
+ */
+export interface RelayConnectionState {
+  readonly state: 'stopped' | 'connecting' | 'connected' | 'reconnecting';
+  readonly reason?: RelayConnectionReason;
+  readonly since: number;
+}
 
 /**
  * Discriminated union for sealed sender authentication.

@@ -48,6 +48,17 @@ await relay.send({
 
 Optional conforming Group System transport and issuance capability.
 
+***
+
+### relayConnectionState
+
+> `readonly` **relayConnectionState**: [`RelayConnectionState`](RelayConnectionState.md)
+
+The connection state of this device's envelope subscription.
+
+It reads `stopped` before `subscribe` and after its unsubscribe. The value
+is replaced on each transition and is stable between transitions.
+
 ## Methods
 
 ### acknowledgeProvisioning()
@@ -1174,6 +1185,31 @@ Called when batch is complete (idle detected)
 () => `void`
 
 Called when first message in a batch arrives
+
+#### Returns
+
+[`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+Unsubscribe function
+
+***
+
+### subscribeRelayConnectionState()
+
+> **subscribeRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+Subscribe to transitions of `relayConnectionState`.
+
+The listener receives each new state once. It does not receive the
+current state when it subscribes.
+
+#### Parameters
+
+##### listener
+
+(`state`) => `void`
+
+Callback for each transition
 
 #### Returns
 

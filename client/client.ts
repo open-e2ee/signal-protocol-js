@@ -46,7 +46,12 @@
 
 import AsyncLock from 'async-lock';
 import type { GroupAuthority } from './group-authority';
-import type { SignalProtocolRelayServer, Envelope, Unsubscribe } from '../remote/relay/types';
+import type {
+  SignalProtocolRelayServer,
+  Envelope,
+  RelayConnectionState,
+  Unsubscribe,
+} from '../remote/relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import { DefaultSignalProtocolManager } from '../internal/manager';
 import { DefaultSesameManager } from '../internal/sesame';
@@ -230,6 +235,33 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   private _syncStatus: 'synced' | 'failed' | 'none' = 'none';
   get syncStatus(): 'synced' | 'failed' | 'none' {
     return this._syncStatus;
+  }
+
+  private readonly stoppedRelayConnection: RelayConnectionState = {
+    state: 'stopped',
+    since: Date.now(),
+  };
+
+  /**
+   * The connection state of the relay subscription. Reads `stopped` when no
+   * relay is configured.
+   *
+   * @see SignalProtocolClient.relayConnectionState
+   */
+  get relayConnectionState(): RelayConnectionState {
+    return this.relay?.relayConnectionState ?? this.stoppedRelayConnection;
+  }
+
+  /**
+   * Subscribe to relay connection transitions. Without a relay, the listener
+   * never runs.
+   *
+   * @see SignalProtocolClient.subscribeRelayConnectionState
+   */
+  public subscribeRelayConnectionState(
+    listener: (state: RelayConnectionState) => void
+  ): Unsubscribe {
+    return this.relay?.subscribeRelayConnectionState(listener) ?? (() => undefined);
   }
 
   private relayUnsubscribe?: Unsubscribe;

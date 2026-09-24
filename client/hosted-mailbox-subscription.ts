@@ -1,11 +1,20 @@
-import type { Envelope, Unsubscribe } from "../remote/relay/types";
+import type {
+  Envelope,
+  RelayConnectionReason,
+  RelayConnectionState,
+  Unsubscribe,
+} from "../remote/relay/types";
 
 const MAILBOX_PROTOCOL = "open-e2ee-relay.v1";
 const AUTH_PROTOCOL_PREFIX = "open-e2ee-relay.auth.";
 const RECOVERY_MILLISECONDS = 2_000;
 /** The Relay answers each `ping` text frame with `pong` without waking the mailbox. */
 const PING_MILLISECONDS = 30_000;
-/** The Relay closes a socket silent for 75 s; the client gives up one miss sooner. */
+/**
+ * The tick that would send this many unanswered pings closes the socket
+ * instead. That is 60 s after the last answered ping. The Relay closes a socket
+ * whose last answered ping is 75 s old, so the client gives up first.
+ */
 const MAXIMUM_UNANSWERED_PINGS = 2;
 const MAXIMUM_FRAME_CHARACTERS = 1024 * 1024;
 const MAXIMUM_PENDING_FRAMES = 100;
@@ -24,6 +33,15 @@ interface MailboxSubscription {
   receiveEphemeral(message: unknown, current: () => boolean): Promise<string>;
   onBatchStart?(): void;
   onBatchEnd?(): void;
+  /**
+   * Receives each connection transition. The subscription starts at
+   * `connecting` and ends at `stopped`. A token renewal on a live socket is not
+   * a transition.
+   */
+  onConnectionState(
+    state: RelayConnectionState["state"],
+    reason?: RelayConnectionReason,
+  ): void;
 }
 
 export interface MailboxSubscriptionHandle {
@@ -177,9 +195,10 @@ export function subscribeHostedMailbox(
     }
   };
 
-  const retryConnection = () => {
+  const retryConnection = (reason: RelayConnectionReason) => {
     if (!active || reconnectTimer !== undefined) return;
     disconnect();
+    options.onConnectionState("reconnecting", reason);
     // One recovery pull per reconnect attempt, paced by the reconnect backoff.
     recoverLater();
     const delay = reconnectDelay;
@@ -203,8 +222,10 @@ export function subscribeHostedMailbox(
 
   const connect = async () => {
     const generation = ++connectionGeneration;
+    let authenticated = false;
     try {
       const authority = await options.authenticate();
+      authenticated = true;
       if (!active || generation !== connectionGeneration) return;
       const candidate = new WebSocket(authority.url, [
         MAILBOX_PROTOCOL,
@@ -213,12 +234,12 @@ export function subscribeHostedMailbox(
       socket = candidate;
       const current = () => active && socket === candidate;
       handshakeTimer = setTimeout(() => {
-        if (current()) retryConnection();
+        if (current()) retryConnection("handshake");
       }, 10_000);
       candidate.addEventListener("open", () => {
         if (!current()) return;
         if (candidate.protocol !== MAILBOX_PROTOCOL) {
-          retryConnection();
+          retryConnection("protocol");
           return;
         }
         clearTimeout(handshakeTimer);
@@ -226,20 +247,22 @@ export function subscribeHostedMailbox(
         clearTimeout(recoveryTimer);
         recoveryTimer = undefined;
         reconnectDelay = 1_000;
+        options.onConnectionState("connected");
         const schedulePing = () => {
           pingTimer = setTimeout(() => {
             if (!current()) return;
-            if (unansweredPings >= MAXIMUM_UNANSWERED_PINGS) {
-              retryConnection();
+            if (unansweredPings + 1 >= MAXIMUM_UNANSWERED_PINGS) {
+              retryConnection("silent");
               return;
             }
+            // Count the ping first: a pong can arrive during `send`.
+            unansweredPings++;
             try {
               candidate.send("ping");
             } catch {
-              retryConnection();
+              retryConnection("error");
               return;
             }
-            unansweredPings++;
             schedulePing();
           }, PING_MILLISECONDS);
         };
@@ -281,20 +304,22 @@ export function subscribeHostedMailbox(
           } else if (frame.type !== "acknowledged")
             throw new Error("Invalid mailbox frame.");
         } catch {
-          retryConnection();
+          retryConnection("frame");
         }
       });
       candidate.addEventListener("close", () => {
-        if (current()) retryConnection();
+        if (current()) retryConnection("closed");
       });
       candidate.addEventListener("error", () => {
-        if (current()) retryConnection();
+        if (current()) retryConnection("error");
       });
     } catch {
-      if (active && generation === connectionGeneration) retryConnection();
+      if (active && generation === connectionGeneration)
+        retryConnection(authenticated ? "error" : "authentication");
     }
   };
 
+  options.onConnectionState("connecting");
   void connect();
   return {
     acknowledge: (messageId) => {
@@ -314,6 +339,7 @@ export function subscribeHostedMailbox(
       clearTimeout(reconnectTimer);
       clearTimeout(recoveryTimer);
       disconnect();
+      options.onConnectionState("stopped");
     },
   };
 }

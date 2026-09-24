@@ -34,6 +34,8 @@ export type {
   PreKeyBundle,
   PreKeyInventory,
   PreKeyMetadata,
+  RelayConnectionReason,
+  RelayConnectionState,
   Unsubscribe,
   AccountIdentityProvisioning,
   AccountIdentityRotation,

@@ -18,6 +18,7 @@ import type {
   PreKeyBundle,
   PreKeyInventory,
   PreKeyPublicationPlan,
+  RelayConnectionState,
   Unsubscribe,
   GroupMemberDevice,
   GroupChangeEntry,
@@ -27,6 +28,7 @@ import type {
   AccountIdentityRotation,
   RelayGroupServer,
 } from '../types';
+import { RelayConnectionStateOwner } from '../connection-state';
 import type { GroupAuthorization } from '../../../internal/groups/manager';
 import type { PublicKey, Signature } from '../../../keys/branded';
 import type { CompositeIdentityV1, IdentityType } from '../../../keys/types';
@@ -148,6 +150,8 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
 
   // Subscriptions
   private subscriptions = new Map<string, ((envelope: Envelope) => void)[]>();
+  private readonly liveSubscriptions = new Set<object>();
+  private readonly connectionState = new RelayConnectionStateOwner();
 
   // Provisioning sessions
   private provisioningSessions = new Map<
@@ -330,6 +334,9 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
     const isFirstSubscriber = subscribers.length === 0;
     subscribers.push(onEnvelope);
     this.subscriptions.set(key, subscribers);
+    const live = {};
+    this.liveSubscriptions.add(live);
+    this.connectionState.move('connected');
 
     // Deliver any pending messages only to the newly added subscriber.
     if (!this.failures.isDisconnected(key)) {
@@ -349,7 +356,25 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
       if (idx >= 0) {
         subs.splice(idx, 1);
       }
+      this.liveSubscriptions.delete(live);
+      if (this.liveSubscriptions.size === 0) this.connectionState.move('stopped');
     };
+  }
+
+  /**
+   * `connected` while any envelope subscription on this server is live, and
+   * `stopped` otherwise. Every client that shares this server reads the same
+   * value. The in-memory relay has no connection to lose, so it never reads
+   * `connecting` or `reconnecting`.
+   */
+  get relayConnectionState(): RelayConnectionState {
+    return this.connectionState.current;
+  }
+
+  subscribeRelayConnectionState(
+    listener: (state: RelayConnectionState) => void
+  ): Unsubscribe {
+    return this.connectionState.subscribe(listener);
   }
 
   async markDelivered(envelopeId: string): Promise<void> {
@@ -1385,6 +1410,8 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
     this.pendingMessages.clear();
     this.clientMessageReceipts.clear();
     this.subscriptions.clear();
+    this.liveSubscriptions.clear();
+    this.connectionState.move('stopped');
     this.provisioningSessions.clear();
     this.ecSignedPreKeyMetadata.clear();
     this.kemLastResortPreKeyMetadata.clear();
