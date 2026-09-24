@@ -37,7 +37,7 @@ import type React from 'react';
 import { useRef, useEffect, useCallback } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { defaultSignalProtocolLogger } from '../logger';
-import type { SignalProtocolClient } from '../types';
+import type { PreKeyRotationResult, SignalProtocolClient } from '../types';
 
 /**
  * Rate limiting interval (1 hour in milliseconds)
@@ -71,7 +71,7 @@ export interface UseKeyRotationOptions {
   /**
    * Callback when rotation completes
    */
-  onRotationComplete?: (result: { signedRotated: boolean; kyberRotated: boolean }) => void;
+  onRotationComplete?: (result: PreKeyRotationResult) => void;
 
   /**
    * Callback when rotation fails
@@ -128,22 +128,25 @@ function useKeyRotationInternal(options: UseKeyRotationOptions): UseKeyRotationI
     lastRotationCheckRef.current = Date.now();
 
     try {
-      const signedRotated = await signal.rotateEcSignedPreKey();
-      const kyberRotated = await signal.rotateKyberPreKey();
+      const result = await signal.rotatePreKeys();
 
       // Do not invoke callbacks if unmounted during async operation
       if (!isMountedRef.current) {
         return;
       }
 
-      if (signedRotated || kyberRotated) {
+      if (result.signedRotated || result.kyberRotated || result.oneTimeReplenished) {
         logger.info('Foreground key rotation completed', {
           category: 'E2EE',
-          data: { signedRotated, kyberRotated },
+          data: {
+            signedRotated: result.signedRotated,
+            kyberRotated: result.kyberRotated,
+            oneTimeReplenished: result.oneTimeReplenished,
+          },
         });
       }
 
-      onRotationComplete?.({ signedRotated, kyberRotated });
+      onRotationComplete?.(result);
     } catch (error) {
       // Do not invoke error callback if unmounted during async operation
       if (!isMountedRef.current) {

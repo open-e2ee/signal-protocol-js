@@ -371,15 +371,13 @@ export class EcOneTimePreKey {
       replacedAt: this.data.replacedAt ?? null,
     };
 
-    // Use raw SQL for upsert on the composite unique index (identity_type, prekey_id)
+    // Plain insert. The unique index (identity_type, prekey_id) rejects a
+    // reused ID: a conflict is a defect in the caller's ID sequence, and an
+    // overwrite would replace a private key that a peer may still address.
     const rawDb = getRawDatabase();
     await rawDb.runAsync(
       `INSERT INTO ec_one_time_prekeys (identity_type, prekey_id, public_key, private_key, created_at, replaced_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (identity_type, prekey_id) DO UPDATE SET
-         public_key = excluded.public_key,
-         private_key = excluded.private_key,
-         created_at = excluded.created_at`,
+       VALUES (?, ?, ?, ?, ?, ?)`,
       [
         insertData.identityType ?? 'aci',
         insertData.prekeyId,

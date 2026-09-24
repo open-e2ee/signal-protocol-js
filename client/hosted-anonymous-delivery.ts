@@ -152,7 +152,6 @@ export class HostedAnonymousDelivery {
       const safeCodes = [
         "NOT_FOUND",
         "STALE_DEVICE",
-        "RECIPIENT_OFFLINE",
         "RETRY_CONFLICT",
         "OPERATION_EXPIRED",
         "DELIVERY_UNCERTAIN",
@@ -298,16 +297,32 @@ export class HostedAnonymousDelivery {
     }
     let serverTimestamp = timestamp;
     for (const { recipientPrefix, ...destination } of destinations) {
-      const result = await this.post("/delivery/send", {
-        auth,
-        destination,
-        deliveryClass,
-        messageId: clientMessageId,
-        operationEpochMilliseconds: timestamp,
-        envelope: bytesToBase64(
-          concatBytes(bytes(recipientPrefix), parsed.messageCiphertext),
-        ),
-      });
+      const deliver = () =>
+        this.post("/delivery/send", {
+          auth,
+          destination,
+          deliveryClass,
+          messageId: clientMessageId,
+          operationEpochMilliseconds: timestamp,
+          envelope: bytesToBase64(
+            concatBytes(bytes(recipientPrefix), parsed.messageCiphertext),
+          ),
+        });
+      let result: JsonRecord;
+      try {
+        result = await deliver();
+      } catch (error) {
+        // A mailbox reset inside the durable acknowledgment hold answers
+        // 503 DELIVERY_UNCERTAIN. The operation identifier makes one repeat
+        // exact; a second uncertain answer reaches the caller.
+        if (
+          deliveryClass === "ephemeral" ||
+          !(error instanceof HostedAnonymousDeliveryError) ||
+          error.code !== "DELIVERY_UNCERTAIN"
+        )
+          throw error;
+        result = await deliver();
+      }
       if (
         result.messageId !== clientMessageId ||
         (result.enqueuedAt !== undefined &&

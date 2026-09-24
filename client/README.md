@@ -139,10 +139,10 @@ await appMessages.insertOutgoing({
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-// Publish fresh public prekeys and rotate long-lived prekeys on schedule.
+// Publish fresh public prekeys, then rotate every due prekey in one publication.
 await signal.syncToServer();
-await signal.rotateEcSignedPreKey();
-await signal.rotateKyberPreKey();
+const rotation = await signal.rotatePreKeys();
+// { signedRotated, kyberRotated, oneTimeReplenished, errors }
 ```
 
 ### Hosted mailbox receive

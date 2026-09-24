@@ -65,7 +65,6 @@ const PLATFORM_BOUND = new Map([
   ['./remote/relay/convex', 'convex — Convex-backed relay adapter'],
   ['./remote/object-store/convex-r2/server', '@convex-dev/r2 — Convex R2 server half'],
   ['./hooks', 'react — React hooks, unusable without a renderer'],
-  ['./hooks/use-connection-presence', 'react — React hook, unusable without a renderer'],
   ['./local/store/expo', 'expo-sqlite — Expo SQLite-backed store'],
   ['./local/store/expo/db', 'expo-sqlite — Expo SQLite handle'],
   ['./local/store/expo/schema', 'expo-sqlite — Expo SQLite schema'],

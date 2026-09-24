@@ -86,7 +86,7 @@ import {
  * @param envelopes - Array of encrypted envelopes to sort
  * @returns New sorted array (does not mutate input)
  *
- * @internal Used by SignalProtocolClient.processIncomingEnvelopes and background sync
+ * @internal Used by DefaultSignalProtocolClient.processIncomingEnvelopes and background sync
  * @see https://signal.org/docs/specifications/sesame/ Section 3.4
  */
 export {};
@@ -830,7 +830,7 @@ export class SignalProtocolServiceCipher {
   /**
    * Decrypt a pairwise message via SESAME
    *
-   * Public for use by SignalProtocolClient.receive() which takes raw SesameMessage.
+   * Public for use by DefaultSignalProtocolClient.receive() which takes raw SesameMessage.
    *
    * @throws {EncryptionError} DECRYPTION_FAILED if decryption fails
    */
@@ -1988,7 +1988,7 @@ export class SignalProtocolServiceCipher {
   ): Promise<PreparedAttachmentUpload> {
     if (!this.remoteObjectStore) {
       throw new EncryptionError(
-        'Remote object storage not configured. Provide remoteObjectStore in SignalProtocolClient.create() config.',
+        'Remote object storage not configured. Provide remoteObjectStore in DefaultSignalProtocolClient.create() config.',
         EncryptionErrorCode.INITIALIZATION_FAILED
       );
     }

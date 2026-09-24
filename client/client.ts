@@ -53,6 +53,7 @@ import { DefaultSesameManager } from '../internal/sesame';
 import type { Ciphertext, IdentityType, PreKeyBundle, PublicKey } from '../keys';
 import { createCompositeIdentityV1 } from '../keys/identity';
 import type {
+  PreKeyRotationResult,
   SignalProtocolClient,
   SignalProtocolLocalStore,
   SignalProtocolManager,
@@ -2476,32 +2477,18 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   // ============================================================================
 
   /**
-   * Rotate EC signed prekey
+   * Rotate the device's prekeys in one publication.
    *
-   * Rotates only once the current prekey is older than the configured refresh
-   * interval ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default). It
-   * is therefore safe to call more often than that. Generates a new EC signed
-   * prekey
-   * and uploads it to the relay if configured.
+   * One inventory read decides whether the EC signed prekey, the KEM
+   * last-resort prekey, or a one-time prekey batch is due. Signed keys rotate
+   * once they are older than the configured refresh interval
+   * ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default). Nothing due
+   * costs one read and no publication, so it is safe to call often.
    *
-   * @returns True if the client rotated the key, false if not needed yet
+   * @returns Which keys the rotation published, and one error per failed identity type
    */
-  async rotateEcSignedPreKey(): Promise<boolean> {
-    return KeyRotationOps.rotateEcSignedPreKey(this.ctx);
-  }
-
-  /**
-   * Rotate the post-quantum KEM last-resort prekey.
-   *
-   * Shares the signed prekey's refresh interval
-   * ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default) and rotates
-   * only after that interval elapses. Generates fresh ML-KEM/Kyber-compatible
-   * key material and uploads it to the relay if configured.
-   *
-   * @returns True if the client rotated the key, false if not needed yet
-   */
-  async rotateKyberPreKey(): Promise<boolean> {
-    return KeyRotationOps.rotateKyberPreKey(this.ctx);
+  async rotatePreKeys(): Promise<PreKeyRotationResult> {
+    return KeyRotationOps.rotatePreKeys(this.ctx);
   }
 
   // ============================================================================

@@ -8,12 +8,7 @@
 import type { PreKeyUpload } from '../remote/relay/types';
 import { EncryptionError, EncryptionErrorCode, ONE_TIME_PREKEY_BATCH_SIZE } from '../types';
 import { base64ToBytes } from '../internal/crypto';
-import {
-  generateKemOneTimePreKeys,
-  generateEcOneTimePreKeys,
-  generateEcSignedPreKey,
-  generateKyberLastResortPreKey,
-} from '../keys';
+import { generateEcSignedPreKey, generateKyberLastResortPreKey } from '../keys';
 import type { IdentityType } from '../keys/types';
 import {
   getActiveIdentityTypes,
@@ -21,10 +16,8 @@ import {
   type ProgressCallback,
 } from './config';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from './config';
-import {
-  MIN_PREKEY_REPLENISHMENT_THRESHOLD,
-  nextKyberLastResortPreKeyId,
-} from './key-rotation-core';
+import { nextKyberLastResortPreKeyId } from './key-rotation-core';
+import { MIN_PREKEY_REPLENISHMENT_THRESHOLD, refillOneTimePreKeys } from './one-time-prekey-refill';
 import type { SignalProtocolClientContext } from './types';
 
 /** Timestamp of last prekey check (for throttling). */
@@ -336,7 +329,6 @@ export async function syncIdentityToServer(
   // Get keys from storage
   const identityKey = await ctx.storage.getIdentityKey(identityType);
   const signedPreKey = await ctx.storage.getEcSignedPreKey(undefined, identityType);
-  const oneTimePreKeys = await ctx.storage.getEcOneTimePreKeys(identityType);
 
   if (!identityKey || !signedPreKey) {
     throw new Error(`Keys not generated - identity or signed prekey missing (${identityType})`);
@@ -418,50 +410,6 @@ export async function syncIdentityToServer(
     ? pendingOneTimeUploads.map((upload) => ({ ...upload }))
     : [];
 
-  // Retained private keys are decrypt-only. A depleted server receives one
-  // exact fresh batch, never an arbitrary prefix of the private-key store.
-  if (pendingOneTimeUploads === null && serverEcCount < MIN_PREKEY_REPLENISHMENT_THRESHOLD) {
-    // Mark existing active one-time prekeys as replaced before generating new batch
-    await preKeyMaintenance?.markEcOneTimePreKeysReplaced(identityType);
-
-    // Determine next key ID from existing local prekeys
-    const maxExistingId = oneTimePreKeys.reduce((max, k) => Math.max(max, k.keyId), -1);
-    const startId = maxExistingId + 1;
-    const freshPreKeys = await generateEcOneTimePreKeys(ONE_TIME_PREKEY_BATCH_SIZE, startId);
-    await ctx.storage.storeEcOneTimePreKeys(freshPreKeys, identityType);
-    oneTimeUploads.push(
-      ...freshPreKeys.map((prekey) => ({
-        type: 'ecPreKey' as const,
-        keyId: prekey.keyId,
-        publicKey: prekey.publicKey as string,
-      }))
-    );
-
-    onProgress?.({
-      stage: 'generating-keys',
-      percent: 30,
-      message: 'Encryption keys ready',
-      detail: {
-        current: freshPreKeys.length,
-        total: ONE_TIME_PREKEY_BATCH_SIZE,
-      },
-    });
-
-    ctx.logger.debug('Generated fresh EC one-time prekeys', {
-      category: 'E2EE',
-      data: { identityType, count: freshPreKeys.length, startId },
-    });
-  }
-
-  ctx.logger.debug('One-time prekey upload calculation', {
-    category: 'E2EE',
-    data: {
-      identityType,
-      serverPreKeyCount: serverEcCount,
-      uploading: oneTimeUploads.filter((upload) => upload.type === 'ecPreKey').length,
-    },
-  });
-
   // Build prekey batch for upload
   const preKeyUploads: PreKeyUpload[] = [
     // Signed prekey (rotated on the configured refresh interval, 2 days by default)
@@ -483,59 +431,52 @@ export async function syncIdentityToServer(
     });
   }
 
-  // Check and upload KEM one-time prekeys (per-session post-quantum forward secrecy)
-  // Re-fetch KEM count because a concurrent consumer may have changed it.
-  const serverKemPreKeyCount = await ctx.relay!.getPreKeyCount(
-    ctx.userId,
-    ctx.deviceId,
-    'kem',
-    identityType
-  );
-
-  if (pendingOneTimeUploads === null && serverKemPreKeyCount < MIN_PREKEY_REPLENISHMENT_THRESHOLD) {
-    // Mark existing active KEM one-time prekeys as replaced before generating new batch
-    await preKeyMaintenance?.markKyberOneTimePreKeysReplaced(identityType);
-
-    // Get existing local KEM one-time prekeys to determine next ID
-    const existingKemPreKeys = await ctx.storage.getKemOneTimePreKeys(identityType);
-    const maxExistingId = existingKemPreKeys.reduce((max, k) => Math.max(max, k.keyId), -1);
-    const startId = maxExistingId + 1;
-
-    // Generate new KEM one-time prekeys
-    const kemOneTimePreKeys = await generateKemOneTimePreKeys(
-      identityKey,
-      ONE_TIME_PREKEY_BATCH_SIZE,
-      startId
+  // Retained private keys are decrypt-only. A depleted server receives one
+  // exact fresh batch, never an arbitrary prefix of the private-key store.
+  if (pendingOneTimeUploads === null) {
+    // Re-fetch the KEM count because a concurrent consumer may have changed it.
+    const serverKemPreKeyCount = await ctx.relay!.getPreKeyCount(
+      ctx.userId,
+      ctx.deviceId,
+      'kem',
+      identityType
     );
-
-    // Store locally
-    await ctx.storage.storeKemOneTimePreKeys(kemOneTimePreKeys, identityType);
-
-    onProgress?.({
-      stage: 'generating-kyber',
-      percent: 65,
-      message: 'Post-quantum prekeys ready',
-      detail: {
-        current: kemOneTimePreKeys.length,
-        total: ONE_TIME_PREKEY_BATCH_SIZE,
-      },
+    const refill = await refillOneTimePreKeys({
+      storage: ctx.storage,
+      identityType,
+      serverEcCount,
+      serverKemCount: serverKemPreKeyCount,
+      preKeyMaintenance,
+      logger: ctx.logger,
     });
+    oneTimeUploads.push(...refill.uploads);
 
-    // Add the exact fresh batch to the persistent publication candidate.
-    for (const k of kemOneTimePreKeys) {
-      oneTimeUploads.push({
-        type: 'kemOneTimePreKey',
-        keyId: k.keyId,
-        publicKey: k.publicKey as string,
-        signature: k.signature as string,
+    if (refill.ecGenerated > 0) {
+      onProgress?.({
+        stage: 'generating-keys',
+        percent: 30,
+        message: 'Encryption keys ready',
+        detail: { current: refill.ecGenerated, total: ONE_TIME_PREKEY_BATCH_SIZE },
       });
     }
-
-    ctx.logger.debug('Generated and uploading KEM one-time prekeys', {
-      category: 'E2EE',
-      data: { identityType, count: kemOneTimePreKeys.length, startId },
-    });
+    if (refill.kemGenerated > 0) {
+      onProgress?.({
+        stage: 'generating-kyber',
+        percent: 65,
+        message: 'Post-quantum prekeys ready',
+        detail: { current: refill.kemGenerated, total: ONE_TIME_PREKEY_BATCH_SIZE },
+      });
+    }
   }
+
+  ctx.logger.debug('One-time prekey upload calculation', {
+    category: 'E2EE',
+    data: {
+      identityType,
+      serverPreKeyCount: serverEcCount,
+      uploading: oneTimeUploads.filter((upload) => upload.type === 'ecPreKey').length,
+    },
+  });
 
   if (pendingOneTimeUploads === null && oneTimeUploads.length > 0) {
     await storePublicationCandidate(ctx, identityType, oneTimeUploads);

@@ -351,27 +351,6 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
 
   // Push token management belongs to the relay implementation, keyed by device.
 
-  /**
-   * Mark device as connected (online).
-   * Called when WebSocket connects.
-   * The server derives userId from the JWT.
-   *
-   * @param deviceId - Device ID (1-5)
-   */
-  markDeviceConnected(deviceId: number): Promise<void>;
-
-  /**
-   * Mark device as disconnected (offline).
-   * Called when WebSocket disconnects gracefully.
-   * The server derives userId from the JWT.
-   *
-   * @param deviceId - Device ID (1-5)
-   */
-  markDeviceDisconnected(deviceId: number): Promise<void>;
-
-  /** Lightweight heartbeat. Writes only to heartbeat table, triggers 0 query reruns */
-  heartbeat(deviceId: number): Promise<void>;
-
   // ════════════════════════════════════════════════════════════
   // IDENTITY KEYS
   // Maps to: accounts table (account-level identity keys)
@@ -488,35 +467,25 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
     identityType?: IdentityType
   ): Promise<{ cleared: number }>;
 
-  // ════════════════════════════════════════════════════════════
-  // CONVENIENCE METHODS (wrap uploadPreKeys for common operations)
-  // ════════════════════════════════════════════════════════════
-
   /**
-   * Upload an EC signed prekey.
-   * Convenience wrapper around uploadPreKeys for key rotation.
+   * Publish the prekeys that one rotation decision calls for, in one
+   * publication.
+   *
+   * The adapter reads the inventory, hands it to `plan`, and publishes the
+   * uploads the plan returns through the same path as `uploadPreKeys`. An
+   * empty plan publishes nothing, so a check that finds nothing due costs one
+   * inventory read. The plan runs inside the adapter's publication fence, so
+   * a concurrent publication cannot separate the read from the write.
    *
    * @param userId - User ID
-   * @param ecSignedPreKey - EC signed prekey to upload
+   * @param deviceId - Device ID
+   * @param plan - Decides the uploads from the inventory the adapter read
    * @param identityType - 'aci' or 'pni' (defaults to 'aci')
    */
-  uploadEcSignedPreKey(
+  publishPlannedPreKeys(
     userId: string,
-    ecSignedPreKey: EcSignedPreKeyUpload,
-    identityType?: IdentityType
-  ): Promise<void>;
-
-  /**
-   * Upload a KEM last-resort (post-quantum) prekey.
-   * Convenience wrapper around uploadPreKeys for key rotation.
-   *
-   * @param userId - User ID
-   * @param kemLastResortPreKey - KEM last-resort prekey to upload
-   * @param identityType - 'aci' or 'pni' (defaults to 'aci')
-   */
-  uploadKemLastResortPreKey(
-    userId: string,
-    kemLastResortPreKey: KemLastResortPreKeyUpload,
+    deviceId: number,
+    plan: PreKeyPublicationPlan,
     identityType?: IdentityType
   ): Promise<void>;
 
@@ -911,10 +880,12 @@ export interface DeviceInfo {
   linked: boolean;
   /** Whether device can receive messages (user-controlled) */
   enabled: boolean;
-  /** Whether device is currently online, when the relay exposes presence. */
-  active?: boolean;
-  /** Last observed activity, when the relay exposes device observations. */
-  lastSeen?: number;
+  /**
+   * When the device's mailbox last saw it, in Unix milliseconds, or `null`
+   * before its first connection. The hosted relay reports it only in the
+   * caller's own account listing.
+   */
+  lastSeenAt?: number | null;
   /** Registration time, when the relay exposes device observations. */
   createdAt?: number;
   /** When the user linked the device (for secondary devices) */
@@ -949,38 +920,13 @@ export interface PreKeyUpload {
 }
 
 /**
- * EC signed prekey upload for key rotation.
- * Contains the full key including private key for local storage.
+ * The uploads one rotation decision calls for, decided from the inventory the
+ * relay adapter read for it. The adapter publishes the returned uploads in one
+ * publication. An empty array publishes nothing.
  */
-export interface EcSignedPreKeyUpload {
-  /** Key ID */
-  keyId: number;
-  /** Device ID (1=primary, 2-5=linked) */
-  deviceId: number;
-  /** Public key (base64 encoded) */
-  publicKey: string;
-  /** Signature from identity key (base64 encoded) */
-  signature: string;
-  /** Timestamp when generated */
-  timestamp: number;
-}
-
-/**
- * KEM last-resort prekey upload for key rotation.
- * Contains the full key including private key for local storage.
- */
-export interface KemLastResortPreKeyUpload {
-  /** Key ID. Each rotation takes the next id. */
-  keyId: number;
-  /** Device ID (1=primary, 2-5=linked) */
-  deviceId: number;
-  /** Public key (base64 encoded, ~1.5KB for ML-KEM-1024) */
-  publicKey: string;
-  /** Signature from identity key (base64 encoded) */
-  signature: string;
-  /** Timestamp when generated */
-  timestamp: number;
-}
+export type PreKeyPublicationPlan = (
+  inventory: PreKeyInventory
+) => Promise<readonly PreKeyUpload[]>;
 
 /**
  * Group member device info for message fanout.

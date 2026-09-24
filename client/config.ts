@@ -212,7 +212,7 @@ export interface DoubleRatchetConfig {
  * });
  *
  * // Low-level factory with the same underlying options.
- * const advancedSignalProtocol = await SignalProtocolClient.create(userId, {
+ * const advancedSignalProtocol = await DefaultSignalProtocolClient.create(userId, {
  *   storage,
  *   relay,
  *   onProgress,
@@ -233,7 +233,7 @@ export interface SignalProtocolClientConfig {
    *
    * Device 1 bootstraps identity locally. Devices 2-5 must already have a
    * provisioned identity imported into the provided storage before the app
-   * calls `SignalProtocolClient.create()`.
+   * calls `DefaultSignalProtocolClient.create()`.
    *
    * Prekeys and sessions remain device-specific. Devices share account identity.
    * Maximum 5 devices per user (1 primary + 4 linked).
@@ -243,13 +243,13 @@ export interface SignalProtocolClientConfig {
    * @example
    * ```typescript
    * // Primary device
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   deviceId: 1
    * });
    *
    * // Linked device (from QR code provisioning)
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: provisionedLinkedDeviceStorage,
    *   deviceId: 2
    * });
@@ -393,7 +393,7 @@ export interface SignalProtocolClientConfig {
 
   /**
    * Local store implementation for the current runtime.
-   * Required by SignalProtocolClient.create().
+   * Required by DefaultSignalProtocolClient.create().
    */
   storage: SignalProtocolLocalStore;
 
@@ -420,7 +420,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Strict post-quantum mode
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   protocol: {
    *     postQuantum: 'required',
@@ -431,7 +431,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Compatibility with non-PQ peers
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   protocol: {
    *     postQuantum: 'compatible',
@@ -442,7 +442,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Explicit direct SPQR mode
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   protocol: {
    *     postQuantum: 'required',
@@ -461,7 +461,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Track protocol usage
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   protocolStrategy: {
    *     onProtocolSelected: (event) => {
@@ -478,7 +478,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Show ML-KEM Braid key-agreement progress
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   protocolStrategy: {
    *     onBraidProgress: (event) => {
@@ -502,7 +502,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Custom protocol branding
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   senderKeys: {
    *     hkdfInfoString: 'MyApp Group V1'
@@ -512,7 +512,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Production-recommended limits (these are the defaults)
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   senderKeys: {
    *     maxChainAdvance: 2000,      // DoS protection
@@ -532,7 +532,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Using custom logger
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   logger: {
    *     info: (msg, data) => myLogger.log('info', msg, data),
@@ -544,7 +544,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Using console directly
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   logger: console // Works directly!
    * });
@@ -553,7 +553,7 @@ export interface SignalProtocolClientConfig {
    * @example Using pino
    * ```typescript
    * import pino from 'pino';
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   logger: pino({ level: 'info' })
    * });
@@ -561,7 +561,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Silent mode
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   logger: {} // All methods optional
    * });
@@ -596,7 +596,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Basic usage
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   hooks: {
    *     onSessionEstablished: (sessionId) => {
@@ -611,7 +611,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Error tracking
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   hooks: {
    *     onDecryptionError: (sessionId, error) => {
@@ -649,7 +649,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   onPreKeyLow: (remaining) => {
    *     console.warn(`Only ${remaining} prekeys remaining, replenishment needed`);
@@ -678,7 +678,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Default rotation interval
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   keyRefreshIntervalMs: 2 * 24 * 60 * 60 * 1000 // 2 days
    * });
@@ -686,7 +686,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Weekly rotation (lower bandwidth)
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   keyRefreshIntervalMs: 7 * 24 * 60 * 60 * 1000 // 7 days
    * });
@@ -709,7 +709,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example Default maximum age
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   maxPreKeyAgeMs: 14 * 24 * 60 * 60 * 1000 // 14 days
    * });
@@ -750,7 +750,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   onGroupSenderKeyRotated: (groupId, newGeneration) => {
    *     console.log(`Group ${groupId} sender key rotated to gen ${newGeneration}`);
@@ -787,7 +787,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   sealedSender: {
    *     trustRoots: [trustRootPublicKeyBytes],
@@ -809,7 +809,7 @@ export interface SignalProtocolClientConfig {
    *
    * @example
    * ```typescript
-   * const signal = await SignalProtocolClient.create(userId, {
+   * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
    *   relay,
    *   aci,

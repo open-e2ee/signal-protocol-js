@@ -1,8 +1,8 @@
 # React Hooks
 
 The hooks module adapts client lifecycle operations to React components. It
-includes connection presence, key rotation, group membership, session health,
-and single-flight helpers.
+includes key rotation, group membership, session health, and single-flight
+helpers.
 
 ## Why it exists
 
@@ -13,22 +13,12 @@ subscribe to SDK state without duplicating effect cleanup.
 ## Usage
 
 ```tsx
-import {
-  useConnectionPresence,
-  useSessionHealth,
-} from "@open-e2ee/signal-protocol-sdk/hooks";
+import { useSessionHealth } from "@open-e2ee/signal-protocol-sdk/hooks";
 
 function ConversationStatus({ client, address }) {
-  const connection = useConnectionPresence({ client });
   const session = useSessionHealth({ client, address });
 
-  return (
-    <p>
-      {connection.isConnected && session.isHealthy
-        ? "Ready"
-        : "Reconnecting…"}
-    </p>
-  );
+  return <p>{session.isHealthy ? "Ready" : "Reconnecting…"}</p>;
 }
 ```
 

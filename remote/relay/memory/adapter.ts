@@ -17,8 +17,7 @@ import type {
   PreKeyUpload,
   PreKeyBundle,
   PreKeyInventory,
-  EcSignedPreKeyUpload,
-  KemLastResortPreKeyUpload,
+  PreKeyPublicationPlan,
   Unsubscribe,
   GroupMemberDevice,
   GroupChangeEntry,
@@ -410,8 +409,6 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
       registered: true, // Setup complete
       linked: isPrimary ? false : true, // Primary is never "linked", secondary is linked
       enabled: true, // Can receive messages
-      active: false, // Not online yet (set by markDeviceConnected)
-      lastSeen: now,
       createdAt: now,
       linkedAt: isPrimary ? undefined : now,
     };
@@ -435,7 +432,6 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
       device.registered = false;
       device.linked = false;
       device.enabled = false;
-      device.active = false;
     }
 
     // Clean up device-scoped keys for both identity types
@@ -455,40 +451,6 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
   }
 
   // Note: updatePushToken removed - push tokens are managed by convex/signal/push.ts
-
-  /**
-   * Mark device as connected.
-   * In local development, pass userId directly since there is no JWT.
-   */
-  async markDeviceConnected(deviceId: number, userId?: string): Promise<void> {
-    if (!userId) return; // No-op without userId (matches production behavior without auth)
-
-    const devices = this.devices.get(userId) || [];
-    const device = devices.find((d) => d.deviceId === deviceId);
-    if (device) {
-      device.active = true;
-      device.lastSeen = Date.now();
-    }
-  }
-
-  /**
-   * Mark device as disconnected.
-   * In local development, pass userId directly since there is no JWT.
-   */
-  async markDeviceDisconnected(deviceId: number, userId?: string): Promise<void> {
-    if (!userId) return; // No-op without userId (matches production behavior without auth)
-
-    const devices = this.devices.get(userId) || [];
-    const device = devices.find((d) => d.deviceId === deviceId);
-    if (device) {
-      device.active = false;
-      device.lastSeen = Date.now();
-    }
-  }
-
-  async heartbeat(_deviceId: number): Promise<void> {
-    // No-op in the in-memory adapter. Heartbeats do not affect local state.
-  }
 
   // ============================================================================
   // Identity Keys
@@ -755,48 +717,15 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
     return { cleared: clearedCount };
   }
 
-  // ============================================================================
-  // Convenience Methods (Key Rotation)
-  // ============================================================================
-
-  async uploadEcSignedPreKey(
+  async publishPlannedPreKeys(
     userId: string,
-    ecSignedPreKey: EcSignedPreKeyUpload,
+    deviceId: number,
+    plan: PreKeyPublicationPlan,
     identityType?: IdentityType
   ): Promise<void> {
-    await this.uploadPreKeys(
-      userId,
-      ecSignedPreKey.deviceId,
-      [
-        {
-          type: 'ecSignedPreKey',
-          keyId: ecSignedPreKey.keyId,
-          publicKey: ecSignedPreKey.publicKey,
-          signature: ecSignedPreKey.signature,
-        },
-      ],
-      identityType
-    );
-  }
-
-  async uploadKemLastResortPreKey(
-    userId: string,
-    kemLastResortPreKey: KemLastResortPreKeyUpload,
-    identityType?: IdentityType
-  ): Promise<void> {
-    await this.uploadPreKeys(
-      userId,
-      kemLastResortPreKey.deviceId,
-      [
-        {
-          type: 'kemLastResortPreKey',
-          keyId: kemLastResortPreKey.keyId,
-          publicKey: kemLastResortPreKey.publicKey,
-          signature: kemLastResortPreKey.signature,
-        },
-      ],
-      identityType
-    );
+    const uploads = await plan(await this.getPreKeyInventory(userId, deviceId, identityType));
+    if (uploads.length === 0) return;
+    await this.uploadPreKeys(userId, deviceId, [...uploads], identityType);
   }
 
   async getActiveDevices(userId: string): Promise<GroupMemberDevice[]> {
@@ -978,8 +907,6 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
       registered: true,
       linked: true,
       enabled: true,
-      active: true,
-      lastSeen: now,
       createdAt: now,
       linkedAt: now,
     };

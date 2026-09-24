@@ -85,7 +85,7 @@ Common use cases:
 **Basic usage**
 
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   hooks: {
     onSessionEstablished: (sessionId) => {
@@ -101,7 +101,7 @@ const signal = await SignalProtocolClient.create(userId, {
 **Error tracking**
 
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   hooks: {
     onDecryptionError: (sessionId, error) => {
@@ -164,7 +164,7 @@ schedule for synchronized post-quantum security.
 **Default rotation interval**
 
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   keyRefreshIntervalMs: 2 * 24 * 60 * 60 * 1000 // 2 days
 });
@@ -173,7 +173,7 @@ const signal = await SignalProtocolClient.create(userId, {
 **Weekly rotation (lower bandwidth)**
 
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   keyRefreshIntervalMs: 7 * 24 * 60 * 60 * 1000 // 7 days
 });
@@ -204,7 +204,7 @@ Default: Environment-aware console logging
 **Using custom logger**
 
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   logger: {
     info: (msg, data) => myLogger.log('info', msg, data),
@@ -217,7 +217,7 @@ const signal = await SignalProtocolClient.create(userId, {
 **Using console directly**
 
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   logger: console // Works directly!
 });
@@ -227,7 +227,7 @@ const signal = await SignalProtocolClient.create(userId, {
 
 ```typescript
 import pino from 'pino';
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   logger: pino({ level: 'info' })
 });
@@ -236,7 +236,7 @@ const signal = await SignalProtocolClient.create(userId, {
 **Silent mode**
 
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   logger: {} // All methods optional
 });
@@ -271,7 +271,7 @@ a twelve-day recovery window.
 **Default maximum age**
 
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   maxPreKeyAgeMs: 14 * 24 * 60 * 60 * 1000 // 14 days
 });
@@ -352,7 +352,7 @@ The new generation number of the sender key
 #### Example
 
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   onGroupSenderKeyRotated: (groupId, newGeneration) => {
     console.log(`Group ${groupId} sender key rotated to gen ${newGeneration}`);
@@ -390,7 +390,7 @@ establishment failures.
 #### Example
 
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   onPreKeyLow: (remaining) => {
     console.warn(`Only ${remaining} prekeys remaining, replenishment needed`);
@@ -524,7 +524,7 @@ message handling for group encryption.
 **Custom protocol branding**
 
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   senderKeys: {
     hkdfInfoString: 'MyApp Group V1'
@@ -535,7 +535,7 @@ const signal = await SignalProtocolClient.create(userId, {
 **Production-recommended limits (these are the defaults)**
 
 ```typescript
-const signal = await SignalProtocolClient.create(userId, {
+const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   senderKeys: {
     maxChainAdvance: 2000,      // DoS protection

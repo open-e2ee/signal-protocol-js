@@ -157,7 +157,7 @@ export interface SafetyNumber {
  *
  * This low-level primitive does not authenticate the package's complete
  * X25519 + Ed25519 composite identity. Callers MUST NOT use it for contact identity
- * verification. Applications must use SignalProtocolClient.verify(), or the explicitly
+ * verification. Applications must use DefaultSignalProtocolClient.verify(), or the explicitly
  * composite generateCompositeSafetyNumber() helper.
  *
  * Uses SHA-512 iteration with 5,200 iterations per Signal Protocol spec.
@@ -302,7 +302,7 @@ export { generateEmojiFingerprint, base64ToBytes, FINGERPRINT_ITERATIONS, FINGER
  * - Advanced operations (QR code scanning, etc.)
  *
  * These classes expose single-key fingerprint primitives. Composite contact
- * verification must use SignalProtocolClient.verify(), which authenticates both
+ * verification must use DefaultSignalProtocolClient.verify(), which authenticates both
  * composite components and the locally pinned trust record.
  */
 export {

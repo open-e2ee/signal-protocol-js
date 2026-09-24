@@ -10,14 +10,6 @@ Device info returned by getDevices()
 
 ## Properties
 
-### active?
-
-> `optional` **active?**: `boolean`
-
-Whether device is currently online, when the relay exposes presence.
-
-***
-
 ### createdAt?
 
 > `optional` **createdAt?**: `number`
@@ -52,11 +44,13 @@ Whether device can receive messages (user-controlled)
 
 ***
 
-### lastSeen?
+### lastSeenAt?
 
-> `optional` **lastSeen?**: `number`
+> `optional` **lastSeenAt?**: `number` \| `null`
 
-Last observed activity, when the relay exposes device observations.
+When the device's mailbox last saw it, in Unix milliseconds, or `null`
+before its first connection. The hosted relay reports it only in the
+caller's own account listing.
 
 ***
 

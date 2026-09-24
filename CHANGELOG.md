@@ -1,5 +1,79 @@
 # Changelog
 
+## 5.0.0
+
+- **Breaking: one rotation entry point publishes every due prekey in one
+  publication.** `SignalProtocolClient.rotatePreKeys()` replaces
+  `rotateEcSignedPreKey()` and `rotateKyberPreKey()`. It reads the prekey
+  inventory once per identity type, decides which keys are due (the EC signed
+  prekey and the Kyber last-resort prekey by the 2-day rule, the one-time sets
+  by the refill threshold of 10), and publishes every due key in one
+  `uploadPreKeys` call. It returns a `PreKeyRotationResult`
+  (`signedRotated`, `kyberRotated`, `oneTimeReplenished`, `errors`).
+  `rotateKeysHeadless` and `useKeyRotation` call the same entry point;
+  `HeadlessRotationResult` is gone. The relay contract gains
+  `publishPlannedPreKeys(userId, deviceId, plan, identityType?)` with the
+  `PreKeyPublicationPlan` type: the adapter reads the inventory, the plan
+  decides the uploads, and an empty plan publishes nothing. The
+  `SignalProtocolRelayServer` methods `uploadEcSignedPreKey` and
+  `uploadKemLastResortPreKey`, the Convex mutations of the same names, the
+  `EcSignedPreKeyUpload` and `KemLastResortPreKeyUpload` types, and the
+  `rotateEcSignedPreKeyCore`, `rotateKyberPreKeyCore`, and
+  `replenishOneTimePreKeysCore` functions are gone. `checkRotationNeeded` and
+  the pre-send `ensurePreKeysValid` check read the inventory once. On the
+  hosted transport a rotation with nothing due makes one HTTP call (the status
+  read) and a rotation that publishes makes three (status, publish, status);
+  before, a full rotation made eight and a check with nothing due made two.
+
+- **A one-time prekey refill keeps retained private keys and refills each
+  set on its own count.** `replenishOneTimePreKeysCore` and the server sync
+  share one refill owner, `client/one-time-prekey-refill.ts`. It checks the EC
+  and KEM server counts separately against the threshold of 10, marks a set
+  replaced only when it makes a new batch of that type, starts every batch at
+  the highest local ID plus one (retained replaced keys included), and returns
+  both batches for one upload. Before, the rotation core checked only the EC
+  count, marked both sets replaced, uploaded no KEM keys, and generated every
+  EC batch at IDs 0 to 99, so each refill overwrote the private keys that a
+  peer could still address. The rotation cores and `rotateKeysHeadless`
+  default to the active identity types (`['aci']` unless PNI keys are
+  enabled) instead of `['aci', 'pni']`. The Expo store rejects a one-time
+  prekey that reuses a stored ID instead of overwriting the row.
+
+- **Breaking: the SDK reports no device presence.** `useConnectionPresence`
+  and its `hooks/use-connection-presence` subpath, the
+  `SignalProtocolRelayServer` methods `markDeviceConnected`,
+  `markDeviceDisconnected`, and `heartbeat`, and the `active` and `lastSeen`
+  device fields are gone from every adapter, together with the Convex
+  `deviceHeartbeats` table and the `presenceHeartbeat` function. The hosted
+  mailbox subscription sends the text frame `ping` every 30 seconds while its
+  socket is open, treats the Relay's `pong` as no frame, and reconnects
+  through its normal path after two unanswered pings. `getDevices` on the
+  hosted transport carries `lastSeenAt` (Unix milliseconds, or `null` before
+  the first connection) for the caller's own account.
+
+- **An ephemeral send no longer reports an offline recipient.** The Relay
+  accepts an `ephemeral` delivery to a device with no live connection and
+  drops it, with the same response as an online delivery. The hosted
+  anonymous delivery path no longer classifies `RECIPIENT_OFFLINE`; a Relay
+  that still answers it surfaces as `DELIVERY_FAILED`. No sender can learn
+  whether a recipient is connected from a delivery response.
+
+- **Documentation names `DefaultSignalProtocolClient` for class-only members.**
+  JSDoc examples in the client configuration, the `Remote object storage not
+  configured` error text, and the media, safety, and package-surface documents
+  name `DefaultSignalProtocolClient` for `create`, `verify`, `media`, `receive`,
+  and `processIncomingEnvelopes`, which exist on the class and not on the
+  `SignalProtocolClient` interface. The generated API reference follows.
+
+- **A durable hosted send repeats one uncertain delivery.** When the Relay
+  answers a `user-visible` or `background-sync` delivery with 503
+  `DELIVERY_UNCERTAIN`, the hosted transport and the anonymous delivery path
+  post the identical request once more under the same message identifier
+  before the error reaches the caller. An `ephemeral` delivery is not
+  repeated. `HostedRelayHttpError` carries the Relay's `retryable` hint, and
+  its constructor takes `{ data, retryable }` options in place of a bare
+  `data` argument.
+
 ## 4.0.0
 
 - **Breaking: interfaces no longer carry an `I` prefix.** Every exported

@@ -92,8 +92,6 @@ export class DeviceLifecycleManager {
       registered: server.registered,
       linked: server.linked,
       enabled: server.enabled,
-      active: server.active,
-      lastSeen: server.lastSeen,
       createdAt: server.createdAt,
       linkedAt: server.linkedAt,
       platform: server.platform,
@@ -923,7 +921,6 @@ export class DeviceLifecycleManager {
       data: {
         found: !!deviceByIdfv,
         deviceId: deviceByIdfv?.deviceId,
-        active: deviceByIdfv?.active,
       },
     });
 

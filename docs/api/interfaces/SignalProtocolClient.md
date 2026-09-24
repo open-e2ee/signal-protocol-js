@@ -693,22 +693,6 @@ Explicitly rotate the account-level relay identity with compare-and-swap.
 
 ***
 
-### rotateEcSignedPreKey()
-
-> **rotateEcSignedPreKey**(): `Promise`\<`boolean`\>
-
-Rotate EC signed prekey
-
-Rotates only once the current prekey is older than the configured refresh
-interval ([KEY\_REFRESH\_INTERVAL\_MS\_DEFAULT](../variables/KEY_REFRESH_INTERVAL_MS_DEFAULT.md), 2 days by default).
-Returns false if rotation is not needed yet.
-
-#### Returns
-
-`Promise`\<`boolean`\>
-
-***
-
 ### rotateGroupSenderKey()
 
 > **rotateGroupSenderKey**(`groupId`): `Promise`\<\{ `distributionMessage`: [`SenderKeyDistributionMessage`](SenderKeyDistributionMessage.md); `senderKeyId`: `string`; \}\>
@@ -731,19 +715,22 @@ New sender key ID and distribution message
 
 ***
 
-### rotateKyberPreKey()
+### rotatePreKeys()
 
-> **rotateKyberPreKey**(): `Promise`\<`boolean`\>
+> **rotatePreKeys**(): `Promise`\<[`PreKeyRotationResult`](PreKeyRotationResult.md)\>
 
-Rotate Kyber prekey (post-quantum)
+Rotate the device's prekeys in one publication.
 
-Shares the signed prekey's refresh interval
-([KEY\_REFRESH\_INTERVAL\_MS\_DEFAULT](../variables/KEY_REFRESH_INTERVAL_MS_DEFAULT.md), 2 days by default).
-Returns false if rotation is not needed yet.
+One inventory read decides whether the EC signed prekey, the KEM
+last-resort prekey, or a one-time prekey batch is due. Signed keys rotate
+once they are older than the configured refresh interval
+([KEY\_REFRESH\_INTERVAL\_MS\_DEFAULT](../variables/KEY_REFRESH_INTERVAL_MS_DEFAULT.md), 2 days by default). One-time
+prekeys refill when a server count is below the threshold. Nothing due
+costs one read and no publication, so the method is safe to call often.
 
 #### Returns
 
-`Promise`\<`boolean`\>
+`Promise`\<[`PreKeyRotationResult`](PreKeyRotationResult.md)\>
 
 ***
 

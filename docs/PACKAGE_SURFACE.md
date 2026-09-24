@@ -12,7 +12,7 @@ It also defines the vocabulary the rest of the documentation assumes.
 ## Core model
 
 - `createSignalProtocolClient()` is the recommended app-facing entry point.
-- `SignalProtocolClient` is the primary class returned by the factory.
+- `DefaultSignalProtocolClient` is the class the factory returns. `SignalProtocolClient` is its interface.
 - Every client requires `storage`, which owns local encryption state for one
   user/device.
 - `relay` is optional for local development. Real messaging apps use it for
@@ -89,7 +89,6 @@ Expo storage or the Convex R2 object store.
 - `@open-e2ee/signal-protocol-sdk/groups`
 - `@open-e2ee/signal-protocol-sdk/groups/server`
 - `@open-e2ee/signal-protocol-sdk/hooks`
-- `@open-e2ee/signal-protocol-sdk/hooks/use-connection-presence`
 - `@open-e2ee/signal-protocol-sdk/keys`
 - `@open-e2ee/signal-protocol-sdk/keys/generation`
 - `@open-e2ee/signal-protocol-sdk/keys/types`

@@ -139,10 +139,6 @@ export interface ServerDeviceInfo {
   linked: boolean;
   /** Whether device can receive messages (user-controlled) */
   enabled: boolean;
-  /** Whether device is currently online (system-controlled) */
-  active: boolean;
-  /** Last seen timestamp */
-  lastSeen: number;
   /** Device creation timestamp */
   createdAt: number;
   /** Timestamp when linked (for non-primary devices) */
@@ -174,10 +170,6 @@ export interface DeviceInfo {
   linked: boolean;
   /** Whether device can receive messages (user-controlled) */
   enabled: boolean;
-  /** Whether device is currently online (system-controlled) */
-  active: boolean;
-  /** Last seen timestamp */
-  lastSeen: number;
   /** Device creation timestamp */
   createdAt: number;
   /** Timestamp when linked (for non-primary devices) */
@@ -193,7 +185,7 @@ export interface DeviceInfo {
 }
 
 /**
- * Metadata fields that can be backfilled via heartbeat.
+ * Metadata fields a device record can backfill after registration.
  */
 export interface DeviceMetadata {
   idfv?: string;

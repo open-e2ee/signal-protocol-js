@@ -213,10 +213,10 @@ import { withRetry } from '@open-e2ee/signal-protocol-sdk/utils/retry';
 
 await withRetry(
   async () => {
-    await signal.rotateEcSignedPreKey();
+    await signal.rotatePreKeys();
   },
   {
-    operationName: 'rotateEcSignedPreKey',
+    operationName: 'rotatePreKeys',
     maxRetries: 2,
     baseDelay: 2000,
     maxDelay: 30000,

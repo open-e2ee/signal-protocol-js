@@ -9,12 +9,12 @@
  *
  * @example
  * ```typescript
- * const markConnected = useSingleFlight(useMutation(api.signal.devices.markDeviceConnected));
+ * const removeDevice = useSingleFlight(useMutation(api.signal.devices.removeDevice));
  *
  * // Even if called rapidly, only one request is in-flight at a time
- * markConnected({ deviceId: 1 });
- * markConnected({ deviceId: 1 }); // Queued, replaces any previous queued call
- * markConnected({ deviceId: 1 }); // Replaces the previous queued call
+ * removeDevice({ deviceId: 2 });
+ * removeDevice({ deviceId: 2 }); // Queued, replaces any previous queued call
+ * removeDevice({ deviceId: 2 }); // Replaces the previous queued call
  * ```
  */
 

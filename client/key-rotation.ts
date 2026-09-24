@@ -2,16 +2,17 @@
  * Key rotation operations for SignalProtocolClient
  *
  * Extracted from DefaultSignalProtocolClient class to reduce file size.
- * Rotates EC signed prekeys and Kyber (post-quantum) prekeys.
+ * One entry point rotates the EC signed prekey, the Kyber (post-quantum)
+ * last-resort prekey, and the one-time prekey batches.
  *
- * With relay configured: Delegates to key-rotation-core.ts for metadata-based
- * rotation decisions (skips if key is fresh).
+ * With relay configured: Delegates to key-rotation-core.ts, which reads the
+ * inventory once and publishes every due key in one publication.
  *
- * Without relay (local-only): Always rotates unconditionally since we cannot
- * check server metadata.
+ * Without relay (local-only): Always rotates both signed keys unconditionally
+ * since we cannot check server metadata. No one-time refill runs.
  */
 
-import { EncryptionError, EncryptionErrorCode } from '../types';
+import { EncryptionError, EncryptionErrorCode, type PreKeyRotationResult } from '../types';
 import { callHook } from './event-hooks';
 import type { SignalProtocolClientContext } from './types';
 import type { IdentityType } from '../keys/types';
@@ -20,59 +21,60 @@ import {
   MAX_UNACKNOWLEDGED_SESSION_AGE_MS,
   getActiveIdentityTypes,
 } from './config';
-import {
-  nextKyberLastResortPreKeyId,
-  rotateEcSignedPreKeyCore,
-  rotateKyberPreKeyCore,
-} from './key-rotation-core';
+import { nextKyberLastResortPreKeyId, rotatePreKeysCore } from './key-rotation-core';
 
 /**
- * Rotate EC signed prekey
+ * Rotate the device's prekeys.
  *
  * Call this periodically (default: every 2 days) to maintain forward secrecy.
- * Generates new EC signed prekey and uploads to relay server if configured.
+ * Safe to call more often: nothing due costs one inventory read.
  *
- * With relay: Checks key age and config.keyRefreshIntervalMs to decide on rotation.
- * Without relay: Always rotates (local-only development mode).
+ * With relay: One inventory read decides on the signed keys (config.keyRefreshIntervalMs)
+ * and the one-time refill, and one publication carries every due key.
+ * Without relay: Always rotates both signed keys (local-only development mode).
  *
  * @param ctx - Client context with dependencies
- * @returns True if the function rotated the key, false if the key is still fresh
+ * @returns Which keys the rotation published, and one error per failed identity type
  */
 export {};
-export async function rotateEcSignedPreKey(ctx: SignalProtocolClientContext): Promise<boolean> {
+export async function rotatePreKeys(ctx: SignalProtocolClientContext): Promise<PreKeyRotationResult> {
   // Use config value if provided, otherwise use profile default (2 days)
   const refreshIntervalMs = ctx.config.keyRefreshIntervalMs ?? KEY_REFRESH_INTERVAL_MS_DEFAULT;
 
-  // With relay: delegate to core function for metadata-based rotation check
+  // With relay: delegate to the core for the inventory-based rotation decision
   if (ctx.relay) {
-    const rotated = await rotateEcSignedPreKeyCore(
-      ctx.relay,
-      ctx.userId,
-      ctx.deviceId,
-      ctx.storage,
+    const result = await rotatePreKeysCore(ctx.relay, ctx.userId, ctx.deviceId, ctx.storage, {
       refreshIntervalMs,
-      getActiveIdentityTypes(ctx.config),
-      ctx.logger
-    );
+      identityTypes: getActiveIdentityTypes(ctx.config),
+      preKeyMaintenance: ctx.config.preKeyMaintenance,
+      logger: ctx.logger,
+    });
 
-    if (rotated) {
-      ctx.logger.debug('EC signed prekey rotated', {
-        category: 'E2EE',
-        data: { userId: ctx.userId, refreshIntervalMs },
-      });
+    if (result.signedRotated) {
       await callHook(ctx.hooks, 'onKeyRotated', 'ecSignedPreKey');
+    }
+    if (result.kyberRotated) {
+      await callHook(ctx.hooks, 'onKeyRotated', 'kemLastResortPreKey');
+    }
+    if (result.signedRotated || result.kyberRotated || result.oneTimeReplenished) {
+      ctx.logger.debug('Prekeys rotated', {
+        category: 'E2EE',
+        data: { userId: ctx.userId, refreshIntervalMs, ...result, errors: result.errors.length },
+      });
       await cullReplacedPreKeysQuietly(ctx);
     }
 
-    return rotated;
+    return result;
   }
 
-  // Without relay: unconditional local-only rotation
-  const localResult = await rotateEcSignedPreKeyLocalOnly(ctx);
-  if (localResult) {
+  // Without relay: unconditional local-only rotation of both signed keys
+  const errors: string[] = [];
+  const signedRotated = await rotateEcSignedPreKeyLocalOnly(ctx, errors);
+  const kyberRotated = await rotateKyberPreKeyLocalOnly(ctx, errors);
+  if (signedRotated || kyberRotated) {
     await cullReplacedPreKeysQuietly(ctx);
   }
-  return localResult;
+  return { signedRotated, kyberRotated, oneTimeReplenished: false, errors };
 }
 
 /**
@@ -83,6 +85,7 @@ export async function rotateEcSignedPreKey(ctx: SignalProtocolClientContext): Pr
  */
 async function rotateEcSignedPreKeyLocalOnly(
   ctx: SignalProtocolClientContext,
+  errors: string[],
   identityType: IdentityType = 'aci'
 ): Promise<boolean> {
   const { withRetry } = await import('../utils/retry');
@@ -118,71 +121,21 @@ async function rotateEcSignedPreKeyLocalOnly(
       error: error as Error,
       data: { userId: ctx.userId },
     });
+    errors.push(`ecSignedPreKey: ${(error as Error).message}`);
     return false;
   }
-}
-
-/**
- * Rotate the post-quantum KEM last-resort prekey.
- *
- * Call this periodically (default: every 2 days) alongside signed prekey rotation.
- * Generates fresh ML-KEM/Kyber-compatible key material and uploads it to the
- * relay if configured.
- *
- * Each rotation takes the next key id, so a session that names an id resolves
- * to exactly one retained key.
- * Uses the same timing as signed prekey rotation for synchronized PQ security.
- *
- * With relay: Checks key age and config.keyRefreshIntervalMs to decide on rotation.
- * Without relay: Always rotates (local-only development mode).
- *
- * @param ctx - Client context with dependencies
- * @returns True if the function rotated the key, false if the key is still fresh
- */
-export async function rotateKyberPreKey(ctx: SignalProtocolClientContext): Promise<boolean> {
-  // Use config value if provided, otherwise use profile default (2 days)
-  const refreshIntervalMs = ctx.config.keyRefreshIntervalMs ?? KEY_REFRESH_INTERVAL_MS_DEFAULT;
-
-  // With relay: delegate to core function for metadata-based rotation check
-  if (ctx.relay) {
-    const rotated = await rotateKyberPreKeyCore(
-      ctx.relay,
-      ctx.userId,
-      ctx.deviceId,
-      ctx.storage,
-      refreshIntervalMs,
-      getActiveIdentityTypes(ctx.config),
-      ctx.logger
-    );
-
-    if (rotated) {
-      ctx.logger.debug('Kyber prekey rotated (PQXDH security maintained)', {
-        category: 'E2EE',
-        data: { userId: ctx.userId, refreshIntervalMs },
-      });
-      await callHook(ctx.hooks, 'onKeyRotated', 'kemLastResortPreKey');
-      await cullReplacedPreKeysQuietly(ctx);
-    }
-
-    return rotated;
-  }
-
-  // Without relay: unconditional local-only rotation
-  const localResult = await rotateKyberPreKeyLocalOnly(ctx);
-  if (localResult) {
-    await cullReplacedPreKeysQuietly(ctx);
-  }
-  return localResult;
 }
 
 /**
  * Local-only Kyber prekey rotation (no relay)
  *
  * Always rotates unconditionally since we cannot check server metadata.
- * Used for local development without a backend.
+ * Each rotation takes the next key id, so a session that names an id resolves
+ * to exactly one retained key.
  */
 async function rotateKyberPreKeyLocalOnly(
   ctx: SignalProtocolClientContext,
+  errors: string[],
   identityType: IdentityType = 'aci'
 ): Promise<boolean> {
   const { withRetry } = await import('../utils/retry');
@@ -221,6 +174,7 @@ async function rotateKyberPreKeyLocalOnly(
       error: error as Error,
       data: { userId: ctx.userId },
     });
+    errors.push(`kemLastResortPreKey: ${(error as Error).message}`);
     return false;
   }
 }

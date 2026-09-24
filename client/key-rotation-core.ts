@@ -1,58 +1,60 @@
 /**
  * Key Rotation Core
  *
- * Shared rotation logic that works with SignalProtocolRelayServer interface.
- * Used by both:
+ * Shared rotation logic that works with the SignalProtocolRelayServer
+ * interface. Used by both:
  * - SignalProtocolClient (foreground, via key-rotation.ts)
  * - Background tasks (headless, via headless.ts)
  *
- * This module handles the actual key generation and upload logic,
- * independent of React context or specific backend implementation.
+ * One rotation reads the inventory once, decides which of the EC signed
+ * prekey, the KEM last-resort prekey, and the one-time prekey batches are due,
+ * and publishes every due key in one publication. A rotation with nothing due
+ * costs one inventory read and no publication.
  *
  * ## Thread Safety
  *
- * Uses per-key-type AsyncLock to prevent race conditions when multiple
- * callers attempt key rotation concurrently. This protects against:
- * - Multiple React components calling rotation simultaneously
- * - Background tasks racing with foreground rotation
- * - Network requests completing out of order
- *
- * The lock wraps the entire check → generate → upload → store sequence
- * to make key rotation atomic.
+ * A per-identity AsyncLock serializes concurrent rotations for one device, so
+ * two callers cannot both generate and publish different keys. The lock wraps
+ * the whole read → decide → generate → publish → store sequence.
  *
  * ## Transactional Pattern
  *
- * Key rotation uses upload-first ordering for consistency:
- * 1. Check if rotation needed (metadata from server)
- * 2. Generate new key locally
- * 3. Upload to server (may fail - local state unchanged)
- * 4. Store locally only after successful upload
+ * Signed keys use publish-first ordering:
+ * 1. Read the inventory (through the relay adapter's publication fence)
+ * 2. Generate the due keys locally
+ * 3. Publish (may fail - the signed keys are not stored)
+ * 4. Store the signed keys locally only after the publication succeeds
  *
- * This keeps client and server in sync. If upload fails, local state does not
- * change, and the caller can safely retry rotation.
+ * One-time prekeys are stored before the publication, because their private
+ * halves must exist before a peer can consume the public halves.
  */
 
 import AsyncLock from 'async-lock';
 import { defaultSignalProtocolLogger, type Logger } from '../logger';
-import type { SignalProtocolLocalStore } from '../types';
-import type { IdentityKeyPair } from '../keys';
+import type { PreKeyRotationResult, SignalProtocolLocalStore } from '../types';
+import type { EcSignedPreKey, IdentityKeyPair, KyberPreKey } from '../keys';
+import { generateEcSignedPreKey, generateKyberLastResortPreKey } from '../keys';
 import type { IdentityType } from '../keys/types';
 import type { PublicKey, PrivateKey, Signature } from '../keys/branded';
-import { ONE_TIME_PREKEY_BATCH_SIZE } from '../types';
-import type { SignalProtocolRelayServer } from '../remote/relay/types';
+import type { PreKeyInventory, PreKeyUpload, SignalProtocolRelayServer } from '../remote/relay/types';
+import { getErrorMessage } from '../utils/errors';
 import {
+  getActiveIdentityTypes,
   KEY_REFRESH_INTERVAL_MS_DEFAULT,
   MAX_PREKEY_AGE_MS_DEFAULT,
   type PreKeyMaintenanceStore,
 } from './config';
+import {
+  MIN_PREKEY_REPLENISHMENT_THRESHOLD,
+  refillOneTimePreKeys,
+  type OneTimePreKeyRefill,
+} from './one-time-prekey-refill';
 
 /**
  * Lock for key rotation operations.
  *
- * Prevents concurrent callers from both generating and uploading different keys,
- * which would result in one upload overwriting the other.
- *
- * Uses per-key-type locks so signed and Kyber rotations do not block each other.
+ * One lock per user, device, and identity type. A rotation holds it for the
+ * whole read, decide, publish, and store sequence.
  */
 export {};
 const rotationLock = new AsyncLock({
@@ -97,35 +99,33 @@ async function getRequiredIdentityKey(
   return identityKey;
 }
 
-/**
- * Key type for rotation operations.
- * Includes identity-type-scoped variants (e.g., 'signed:aci', 'kyber:pni').
- */
-type KeyType = string;
+type LockedOutcome<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /**
- * Execute a rotation operation with locking and error handling
+ * Run one rotation step under the per-identity lock. A thrown error is logged
+ * and returned as a message, so one failed identity type does not stop the
+ * others.
  */
 async function withRotationLock<T>(
   userId: string,
   deviceId: number,
-  keyType: KeyType,
+  identityType: IdentityType,
   operation: () => Promise<T>,
   errorMessage: string,
   logger: Required<Logger>
-): Promise<T | false> {
-  const lockKey = `${userId}:${deviceId}:${keyType}`;
+): Promise<LockedOutcome<T>> {
+  const lockKey = `${userId}:${deviceId}:rotation:${identityType}`;
 
-  return rotationLock.acquire(lockKey, async () => {
+  return rotationLock.acquire(lockKey, async (): Promise<LockedOutcome<T>> => {
     try {
-      return await operation();
+      return { ok: true, value: await operation() };
     } catch (error) {
       logger.error(errorMessage, {
         category: 'E2EE',
         error: error as Error,
-        data: { userId, deviceId },
+        data: { userId, deviceId, identityType },
       });
-      return false;
+      return { ok: false, error: getErrorMessage(error) };
     }
   });
 }
@@ -165,12 +165,7 @@ function checkRotationNeeded(
 // EXPORTS
 // ============================================================================
 
-/**
- * Minimum one-time prekeys before replenishment starts.
- * When the count drops below this threshold, the client generates and uploads
- * new prekeys.
- */
-export const MIN_PREKEY_REPLENISHMENT_THRESHOLD = 10;
+export { MIN_PREKEY_REPLENISHMENT_THRESHOLD } from './one-time-prekey-refill';
 
 /**
  * Check if a key needs rotation based on age
@@ -221,127 +216,6 @@ export function isPreKeyExpired(
 }
 
 /**
- * Core signed prekey rotation
- *
- * Generates a new signed prekey and uploads to server.
- * Works without React context.
- *
- * @param relay - Signal Protocol relay server interface
- * @param userId - User identifier
- * @param deviceId - Device identifier
- * @param providedStorage - Local store instance for the current runtime
- * @param refreshIntervalMs - Custom refresh interval (defaults to 2 days)
- * @returns true if the function rotated the key
- */
-export async function rotateEcSignedPreKeyCore(
-  relay: SignalProtocolRelayServer,
-  userId: string,
-  deviceId: number,
-  providedStorage?: SignalProtocolLocalStore,
-  refreshIntervalMs: number = KEY_REFRESH_INTERVAL_MS_DEFAULT,
-  identityTypes: readonly IdentityType[] = ['aci', 'pni'],
-  logger: Required<Logger> = defaultSignalProtocolLogger
-): Promise<boolean> {
-  // Rotate for active identity types. The reference implementation rotates PNI
-  // on the same schedule as ACI.
-  // Use && so the function only returns true when ALL identities succeed.
-  // The reference implementation uses exception propagation. If any identity fails, the entire job
-  // fails, and the next rotation cycle retries it.
-  let allRotated = true;
-  for (const type of identityTypes) {
-    const rotated = await rotateEcSignedPreKeyForIdentity(
-      relay,
-      userId,
-      deviceId,
-      type,
-      providedStorage,
-      refreshIntervalMs,
-      logger
-    );
-    allRotated = allRotated && rotated;
-  }
-  return allRotated;
-}
-
-/**
- * Rotate signed prekey for a specific identity type.
- *
- * @param relay - Signal Protocol relay server interface
- * @param userId - User identifier
- * @param deviceId - Device identifier
- * @param identityType - 'aci' or 'pni'
- * @param providedStorage - Optional storage instance
- * @param refreshIntervalMs - Custom refresh interval
- * @returns true if the function rotated the key
- */
-async function rotateEcSignedPreKeyForIdentity(
-  relay: SignalProtocolRelayServer,
-  userId: string,
-  deviceId: number,
-  identityType: IdentityType,
-  providedStorage?: SignalProtocolLocalStore,
-  refreshIntervalMs: number = KEY_REFRESH_INTERVAL_MS_DEFAULT,
-  logger: Required<Logger> = defaultSignalProtocolLogger
-): Promise<boolean> {
-  return withRotationLock(
-    userId,
-    deviceId,
-    `signed:${identityType}` as KeyType,
-    async () => {
-      // Check whether this identity type needs rotation
-      const metadata = await relay.getEcSignedPreKeyMetadata(userId, deviceId, identityType);
-      if (
-        !checkRotationNeeded(
-          metadata,
-          refreshIntervalMs,
-          `EC signed prekey (${identityType})`,
-          logger
-        )
-      ) {
-        return false;
-      }
-
-      logger.info(`Rotating EC signed prekey (${identityType})`, {
-        category: 'E2EE',
-        data: { userId, deviceId, identityType },
-      });
-
-      const { generateEcSignedPreKey } = await import('../keys');
-      const storage = await resolveStorage(providedStorage, logger);
-      const identityKey = await getRequiredIdentityKey(storage, identityType);
-
-      // Generate new EC signed prekey (but do not store yet)
-      const newSignedPreKey = await generateEcSignedPreKey(identityKey);
-
-      // TRANSACTIONAL PATTERN: Upload first, then commit locally
-      // If upload fails, local state does not change, so a retry is safe.
-      await relay.uploadEcSignedPreKey(
-        userId,
-        {
-          keyId: newSignedPreKey.keyId,
-          deviceId,
-          publicKey: newSignedPreKey.publicKey as string,
-          signature: newSignedPreKey.signature as string,
-          timestamp: newSignedPreKey.timestamp,
-        },
-        identityType
-      );
-
-      await storage.storeEcSignedPreKey(newSignedPreKey, identityType);
-
-      logger.info(`EC signed prekey rotated successfully (${identityType})`, {
-        category: 'E2EE',
-        data: { userId, deviceId, identityType },
-      });
-
-      return true;
-    },
-    `Failed to rotate EC signed prekey (${identityType})`,
-    logger
-  ) as Promise<boolean>;
-}
-
-/**
  * The key id for the next Kyber last-resort prekey of one identity type.
  *
  * Each retained Kyber prekey keeps its own id, so a session that names an id
@@ -356,251 +230,217 @@ export async function nextKyberLastResortPreKeyId(
   return (current?.keyId ?? 0) + 1;
 }
 
+/** Options for one prekey rotation. */
+export interface PreKeyRotationOptions {
+  /** Signed-key refresh interval (defaults to 2 days). */
+  refreshIntervalMs?: number;
+  /** One-time prekey count below which a refill starts (defaults to 10). */
+  threshold?: number;
+  /** Identity types to rotate (defaults to the active identity types). */
+  identityTypes?: readonly IdentityType[];
+  /** App-provided replaced-prekey maintenance store. */
+  preKeyMaintenance?: PreKeyMaintenanceStore;
+  logger?: Required<Logger>;
+}
+
+/** The keys one rotation generated and the publication accepted. */
+interface PlannedKeys {
+  signed: EcSignedPreKey | null;
+  kyber: KyberPreKey | null;
+  refill: OneTimePreKeyRefill | null;
+}
+
+/** Whether one inventory calls for a refill of either one-time prekey set. */
+export function oneTimePreKeysDue(inventory: PreKeyInventory, threshold: number): boolean {
+  return inventory.ecOneTimePreKeyCount < threshold || inventory.kemOneTimePreKeyCount < threshold;
+}
+
 /**
- * Core post-quantum KEM prekey rotation.
+ * Rotate the prekeys of one device: one inventory read and one publication
+ * per identity type.
  *
- * Generates fresh ML-KEM/Kyber-compatible key material and uploads it to the
- * relay.
- * Works without React context.
+ * Per PQXDH spec Section 3.2, the EC signed prekey and the KEM last-resort
+ * prekey rotate on the same schedule. The one-time prekey batches refill in
+ * the same publication when a server count is below the threshold. Nothing
+ * due costs one inventory read.
  *
- * @param relay - Signal Protocol relay server interface
- * @param userId - User identifier
- * @param deviceId - Device identifier
- * @param providedStorage - Local store instance for the current runtime
- * @param refreshIntervalMs - Custom refresh interval (defaults to 2 days)
- * @returns true if the function rotated the key
+ * A failed identity type is reported in `errors` and does not stop the other
+ * identity types. The result booleans are true when any identity type rotated
+ * that key.
+ *
+ * @see https://signal.org/docs/specifications/pqxdh/#publishing-keys
  */
-export async function rotateKyberPreKeyCore(
+export async function rotatePreKeysCore(
   relay: SignalProtocolRelayServer,
   userId: string,
   deviceId: number,
   providedStorage?: SignalProtocolLocalStore,
-  refreshIntervalMs: number = KEY_REFRESH_INTERVAL_MS_DEFAULT,
-  identityTypes: readonly IdentityType[] = ['aci', 'pni'],
-  logger: Required<Logger> = defaultSignalProtocolLogger
-): Promise<boolean> {
-  // Rotate for active identity types. The reference implementation rotates PNI
-  // on the same schedule as ACI.
-  // Use && so the function only returns true when ALL identities succeed.
-  // The reference implementation uses exception propagation. If any identity fails, the entire job
-  // fails, and the next rotation cycle retries it.
-  let allRotated = true;
-  for (const type of identityTypes) {
-    const rotated = await rotateKyberPreKeyForIdentity(
-      relay,
+  options: PreKeyRotationOptions = {}
+): Promise<PreKeyRotationResult> {
+  const {
+    refreshIntervalMs = KEY_REFRESH_INTERVAL_MS_DEFAULT,
+    threshold = MIN_PREKEY_REPLENISHMENT_THRESHOLD,
+    identityTypes = getActiveIdentityTypes(),
+    preKeyMaintenance,
+    logger = defaultSignalProtocolLogger,
+  } = options;
+  const result: PreKeyRotationResult = {
+    signedRotated: false,
+    kyberRotated: false,
+    oneTimeReplenished: false,
+    errors: [],
+  };
+  const storage = await resolveStorage(providedStorage, logger);
+
+  for (const identityType of identityTypes) {
+    const outcome = await withRotationLock(
       userId,
       deviceId,
-      type,
-      providedStorage,
-      refreshIntervalMs,
+      identityType,
+      () =>
+        rotatePreKeysForIdentity(relay, userId, deviceId, storage, identityType, {
+          refreshIntervalMs,
+          threshold,
+          preKeyMaintenance,
+          logger,
+        }),
+      `Failed to rotate prekeys (${identityType})`,
       logger
     );
-    allRotated = allRotated && rotated;
+    if (!outcome.ok) {
+      result.errors.push(`${identityType}: ${outcome.error}`);
+      continue;
+    }
+    result.signedRotated = result.signedRotated || outcome.value.signed !== null;
+    result.kyberRotated = result.kyberRotated || outcome.value.kyber !== null;
+    result.oneTimeReplenished = result.oneTimeReplenished || outcome.value.refill !== null;
   }
-  return allRotated;
+
+  return result;
 }
 
 /**
- * Rotate Kyber prekey for a specific identity type.
+ * Rotate the prekeys of one identity type under the caller's lock.
  *
- * @param relay - Signal Protocol relay server interface
- * @param userId - User identifier
- * @param deviceId - Device identifier
- * @param identityType - 'aci' or 'pni'
- * @param providedStorage - Optional storage instance
- * @param refreshIntervalMs - Custom refresh interval
- * @returns true if the function rotated the key
+ * The plan runs inside the relay adapter's publication fence with the
+ * inventory the adapter read. The signed keys are stored only after the
+ * publication returns.
  */
-async function rotateKyberPreKeyForIdentity(
-  relay: SignalProtocolRelayServer,
-  userId: string,
-  deviceId: number,
-  identityType: IdentityType,
-  providedStorage?: SignalProtocolLocalStore,
-  refreshIntervalMs: number = KEY_REFRESH_INTERVAL_MS_DEFAULT,
-  logger: Required<Logger> = defaultSignalProtocolLogger
-): Promise<boolean> {
-  return withRotationLock(
-    userId,
-    deviceId,
-    `kyber:${identityType}` as KeyType,
-    async () => {
-      // Check whether this identity type needs rotation
-      const metadata = await relay.getKemLastResortPreKeyMetadata(userId, deviceId, identityType);
-      if (
-        !checkRotationNeeded(metadata, refreshIntervalMs, `Kyber prekey (${identityType})`, logger)
-      ) {
-        return false;
-      }
-
-      logger.info(`Rotating Kyber prekey for post-quantum security (${identityType})`, {
-        category: 'E2EE',
-        data: { userId, deviceId, identityType },
-      });
-
-      const storage = await resolveStorage(providedStorage, logger);
-      const identityKey = await getRequiredIdentityKey(storage, identityType);
-
-      const { generateKyberLastResortPreKey } = await import('../keys/generation');
-      const kyberPreKey = await generateKyberLastResortPreKey(
-        identityKey,
-        await nextKyberLastResortPreKeyId(storage, identityType)
-      );
-
-      // TRANSACTIONAL PATTERN: Upload first, then commit locally
-      // If upload fails, local state does not change, so a retry is safe.
-      const publicKyberPreKey = {
-        keyId: kyberPreKey.keyId,
-        publicKey: kyberPreKey.publicKey,
-        signature: kyberPreKey.signature,
-        timestamp: kyberPreKey.timestamp,
-      };
-      await relay.uploadKemLastResortPreKey(
-        userId,
-        { ...publicKyberPreKey, deviceId },
-        identityType
-      );
-
-      await storage.storeKyberPreKey(
-        {
-          ...kyberPreKey,
-          publicKey: kyberPreKey.publicKey as PublicKey,
-          privateKey: kyberPreKey.privateKey as PrivateKey,
-          signature: kyberPreKey.signature as Signature,
-        },
-        identityType
-      );
-
-      logger.info(
-        `Kyber prekey rotated successfully (${identityType}, PQXDH security maintained)`,
-        {
-          category: 'E2EE',
-          data: { userId, deviceId, identityType },
-        }
-      );
-
-      return true;
-    },
-    `Failed to rotate Kyber prekey (${identityType})`,
-    logger
-  ) as Promise<boolean>;
-}
-
-/**
- * Check and replenish one-time prekeys if running low
- *
- * Iterates both ACI and PNI identity types for consistency with
- * rotateEcSignedPreKeyCore and rotateKyberPreKeyCore.
- *
- * @param relay - Signal Protocol relay server interface
- * @param userId - User identifier
- * @param deviceId - Device identifier
- * @param storage - Key storage for local persistence
- * @param threshold - Minimum number of prekeys before replenishment (default: 10)
- * @returns true if the function replenished both identity types
- */
-export async function replenishOneTimePreKeysCore(
+async function rotatePreKeysForIdentity(
   relay: SignalProtocolRelayServer,
   userId: string,
   deviceId: number,
   storage: SignalProtocolLocalStore,
-  threshold: number = MIN_PREKEY_REPLENISHMENT_THRESHOLD,
-  identityTypes: readonly IdentityType[] = ['aci', 'pni'],
-  preKeyMaintenance?: PreKeyMaintenanceStore,
-  logger: Required<Logger> = defaultSignalProtocolLogger
-): Promise<boolean> {
-  // Replenish for active identity types (consistent with rotateEcSignedPreKeyCore/rotateKyberPreKeyCore)
-  let allReplenished = true;
-  for (const type of identityTypes) {
-    const replenished = await replenishOneTimePreKeysForIdentity(
-      relay,
-      userId,
-      deviceId,
-      storage,
-      threshold,
-      type,
-      preKeyMaintenance,
-      logger
-    );
-    allReplenished = allReplenished && replenished;
-  }
-  return allReplenished;
-}
-
-/**
- * Replenish one-time prekeys for a specific identity type.
- *
- * @param relay - Signal Protocol relay server interface
- * @param userId - User identifier
- * @param deviceId - Device identifier
- * @param storage - Key storage for local persistence
- * @param threshold - Minimum number of prekeys before replenishment
- * @param identityType - 'aci' or 'pni'
- * @returns true if the function replenished the prekeys
- */
-async function replenishOneTimePreKeysForIdentity(
-  relay: SignalProtocolRelayServer,
-  userId: string,
-  deviceId: number,
-  storage: SignalProtocolLocalStore,
-  threshold: number,
   identityType: IdentityType,
-  preKeyMaintenance?: PreKeyMaintenanceStore,
-  logger: Required<Logger> = defaultSignalProtocolLogger
-): Promise<boolean> {
-  return withRotationLock(
+  options: Required<Pick<PreKeyRotationOptions, 'refreshIntervalMs' | 'threshold' | 'logger'>> &
+    Pick<PreKeyRotationOptions, 'preKeyMaintenance'>
+): Promise<PlannedKeys> {
+  const { refreshIntervalMs, threshold, preKeyMaintenance, logger } = options;
+  const planned: PlannedKeys = { signed: null, kyber: null, refill: null };
+
+  await relay.publishPlannedPreKeys(
     userId,
     deviceId,
-    `prekeys:${identityType}`,
-    async () => {
-      const count = await relay.getPreKeyCount(userId, deviceId, 'ec', identityType);
-
-      if (count >= threshold) {
-        logger.breadcrumb('One-time prekeys sufficient, no replenishment needed', {
+    async (inventory) => {
+      const signedDue = checkRotationNeeded(
+        inventory.ecSignedPreKey,
+        refreshIntervalMs,
+        `EC signed prekey (${identityType})`,
+        logger
+      );
+      const kyberDue = checkRotationNeeded(
+        inventory.kemLastResortPreKey,
+        refreshIntervalMs,
+        `Kyber prekey (${identityType})`,
+        logger
+      );
+      const refillDue = oneTimePreKeysDue(inventory, threshold);
+      if (!signedDue && !kyberDue && !refillDue) {
+        logger.breadcrumb('Prekeys current, no publication needed', {
           category: 'E2EE',
           level: 'debug',
-          data: { count, threshold, identityType },
+          data: { identityType, threshold },
         });
-        return false;
+        return [];
       }
 
-      logger.info('Replenishing one-time prekeys', {
+      logger.info('Rotating prekeys', {
         category: 'E2EE',
-        data: { currentCount: count, threshold, identityType },
+        data: { userId, deviceId, identityType, signedDue, kyberDue, refillDue },
       });
+      const uploads: PreKeyUpload[] = [];
+      if (signedDue || kyberDue) {
+        const identityKey = await getRequiredIdentityKey(storage, identityType);
+        if (signedDue) {
+          planned.signed = await generateEcSignedPreKey(identityKey);
+          uploads.push({
+            type: 'ecSignedPreKey',
+            keyId: planned.signed.keyId,
+            publicKey: planned.signed.publicKey as string,
+            signature: planned.signed.signature as string,
+          });
+        }
+        if (kyberDue) {
+          planned.kyber = await generateKyberLastResortPreKey(
+            identityKey,
+            await nextKyberLastResortPreKeyId(storage, identityType)
+          );
+          uploads.push({
+            type: 'kemLastResortPreKey',
+            keyId: planned.kyber.keyId,
+            publicKey: planned.kyber.publicKey as string,
+            signature: planned.kyber.signature as string,
+          });
+        }
+      }
+      if (refillDue) {
+        // Local store first (private keys needed for decryption), then one upload.
+        planned.refill = await refillOneTimePreKeys({
+          storage,
+          identityType,
+          serverEcCount: inventory.ecOneTimePreKeyCount,
+          serverKemCount: inventory.kemOneTimePreKeyCount,
+          threshold,
+          preKeyMaintenance,
+          logger,
+        });
+        uploads.push(...planned.refill.uploads);
+      }
+      return uploads;
+    },
+    identityType
+  );
 
-      // Mark active one-time prekeys as replaced before generating a new batch.
-      await preKeyMaintenance?.markEcOneTimePreKeysReplaced(identityType);
-      await preKeyMaintenance?.markKyberOneTimePreKeysReplaced(identityType);
-
-      const keys = await import('../keys');
-      const newPreKeys = await keys.generateEcOneTimePreKeys(ONE_TIME_PREKEY_BATCH_SIZE);
-
-      // Store locally first (private keys needed for decryption)
-      await storage.storeEcOneTimePreKeys(newPreKeys, identityType);
-
-      // Upload public keys to server (with identity type)
-      await relay.uploadPreKeys(
+  // TRANSACTIONAL PATTERN: the publication succeeded, so commit the signed keys locally.
+  if (planned.signed) {
+    await storage.storeEcSignedPreKey(planned.signed, identityType);
+  }
+  if (planned.kyber) {
+    await storage.storeKyberPreKey(
+      {
+        ...planned.kyber,
+        publicKey: planned.kyber.publicKey as PublicKey,
+        privateKey: planned.kyber.privateKey as PrivateKey,
+        signature: planned.kyber.signature as Signature,
+      },
+      identityType
+    );
+  }
+  if (planned.signed || planned.kyber || planned.refill) {
+    logger.info('Prekeys rotated', {
+      category: 'E2EE',
+      data: {
         userId,
         deviceId,
-        newPreKeys.map((pk) => ({
-          type: 'ecPreKey' as const,
-          keyId: pk.keyId,
-          publicKey: pk.publicKey as string,
-        })),
-        identityType
-      );
-
-      logger.info('One-time prekeys replenished', {
-        category: 'E2EE',
-        data: { addedCount: newPreKeys.length, previousCount: count, identityType },
-      });
-
-      return true;
-    },
-    `Failed to replenish one-time prekeys (${identityType})`,
-    logger
-  ) as Promise<boolean>;
+        identityType,
+        signedRotated: planned.signed !== null,
+        kyberRotated: planned.kyber !== null,
+        ecAdded: planned.refill?.ecGenerated ?? 0,
+        kemAdded: planned.refill?.kemGenerated ?? 0,
+      },
+    });
+  }
+  return planned;
 }
 
 // ============================================================================
@@ -658,12 +498,10 @@ export async function ensurePreKeysValid(
   identityType: IdentityType = 'aci',
   logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<PreKeySendCheckResult> {
-  // Check EC signed prekey metadata for the specified identity type
-  const signedMetadata = await relay.getEcSignedPreKeyMetadata(userId, deviceId, identityType);
+  // One inventory read gives both signed-key records for the identity type.
+  const inventory = await relay.getPreKeyInventory(userId, deviceId, identityType);
+  const { ecSignedPreKey: signedMetadata, kemLastResortPreKey: kyberMetadata } = inventory;
   const signedExpired = signedMetadata ? isPreKeyExpired(signedMetadata.createdAt, maxAgeMs) : true;
-
-  // Check Kyber prekey metadata for the specified identity type
-  const kyberMetadata = await relay.getKemLastResortPreKeyMetadata(userId, deviceId, identityType);
   const kyberExpired = kyberMetadata ? isPreKeyExpired(kyberMetadata.createdAt, maxAgeMs) : true;
 
   // If neither key expired, sending can proceed
@@ -691,52 +529,20 @@ export async function ensurePreKeysValid(
     },
   });
 
-  let signedRotated = !signedExpired;
-  let kyberRotated = !kyberExpired;
+  // An expired key is older than the refresh interval, so the rotation finds it due.
+  const rotation = await rotatePreKeysCore(relay, userId, deviceId, storage, {
+    identityTypes: [identityType],
+    logger,
+  });
+  const signedRotated = !signedExpired || rotation.signedRotated;
+  const kyberRotated = !kyberExpired || rotation.kyberRotated;
 
-  // Rotate signed prekey if expired
-  if (signedExpired) {
-    signedRotated = await rotateEcSignedPreKeyCore(
-      relay,
-      userId,
-      deviceId,
-      storage,
-      undefined,
-      [identityType],
-      logger
-    );
-    if (!signedRotated) {
-      logger.error('Failed to rotate EC signed prekey before send', {
-        category: 'E2EE',
-        error: new Error('EC signed prekey rotation failed'),
-        data: { userId, deviceId, identityType },
-      });
-    }
-  }
-
-  // Rotate Kyber prekey if expired
-  if (kyberExpired) {
-    kyberRotated = await rotateKyberPreKeyCore(
-      relay,
-      userId,
-      deviceId,
-      storage,
-      undefined,
-      [identityType],
-      logger
-    );
-    if (!kyberRotated) {
-      logger.error('Failed to rotate Kyber prekey before send', {
-        category: 'E2EE',
-        error: new Error('Kyber prekey rotation failed'),
-        data: { userId, deviceId, identityType },
-      });
-    }
-  }
-
-  const allRotated = signedRotated && kyberRotated;
-
-  if (!allRotated) {
+  if (!signedRotated || !kyberRotated) {
+    logger.error('Failed to rotate prekeys before send', {
+      category: 'E2EE',
+      error: new Error(rotation.errors.join('; ') || 'Prekey rotation left an expired key'),
+      data: { userId, deviceId, identityType, signedRotated, kyberRotated },
+    });
     return {
       canSend: false,
       rotationAttempted: true,

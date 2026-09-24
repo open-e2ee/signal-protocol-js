@@ -15,37 +15,20 @@
  * const storage = expoStore();
  *
  * const result = await rotateKeysHeadless(relay, userId, deviceId, { storage });
- * console.log(result); // { signedRotated: true, kyberRotated: false, oneTimeReplenished: true }
+ * console.log(result); // { signedRotated: true, kyberRotated: false, oneTimeReplenished: true, errors: [] }
  * ```
  */
 
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
-import { getErrorMessage } from '../utils/errors';
-import type { SignalProtocolLocalStore } from '../types';
+import type { PreKeyRotationResult, SignalProtocolLocalStore } from '../types';
 import type { SignalProtocolRelayServer } from '../remote/relay/types';
 import type { IdentityType } from '../keys/types';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS, type PreKeyMaintenanceStore } from './config';
-import {
-  rotateEcSignedPreKeyCore,
-  rotateKyberPreKeyCore,
-  replenishOneTimePreKeysCore,
-  MIN_PREKEY_REPLENISHMENT_THRESHOLD,
-} from './key-rotation-core';
+import { oneTimePreKeysDue, rotatePreKeysCore, shouldRotateKey } from './key-rotation-core';
+import { MIN_PREKEY_REPLENISHMENT_THRESHOLD } from './one-time-prekey-refill';
 
-/**
- * Result of headless key rotation
- */
 export {};
-export interface HeadlessRotationResult {
-  /** Whether the call rotated the signed prekey */
-  signedRotated: boolean;
-  /** Whether the call rotated the Kyber prekey */
-  kyberRotated: boolean;
-  /** Whether the call replenished the one-time prekeys */
-  oneTimeReplenished: boolean;
-  /** Any errors that occurred (non-fatal) */
-  errors: string[];
-}
+export type { PreKeyRotationResult };
 
 /**
  * Options for headless key rotation
@@ -53,7 +36,7 @@ export interface HeadlessRotationResult {
 export interface HeadlessRotationOptions {
   /** Local store implementation for the current runtime. */
   storage?: SignalProtocolLocalStore;
-  /** Identity types to rotate (defaults to ['aci', 'pni']) */
+  /** Identity types to rotate (defaults to the active identity types, `['aci']` unless PNI keys are enabled) */
   identityTypes?: readonly IdentityType[];
   /** App-provided replaced-prekey maintenance store. */
   preKeyMaintenance?: PreKeyMaintenanceStore;
@@ -65,7 +48,8 @@ export interface HeadlessRotationOptions {
  * Rotate encryption keys in headless/background mode
  *
  * Per PQXDH spec Section 3.2, rotates BOTH signed and Kyber prekeys
- * together to maintain synchronized post-quantum forward secrecy.
+ * together to maintain synchronized post-quantum forward secrecy, and refills
+ * the one-time prekey batches in the same publication.
  *
  * This function suits background tasks that have no React
  * context. It uses the same core rotation logic
@@ -73,7 +57,7 @@ export interface HeadlessRotationOptions {
  *
  * Features:
  * - Works with any SignalProtocolRelayServer implementation
- * - Checks whether the keys need rotation before it rotates them
+ * - One inventory read decides what is due; nothing due publishes nothing
  * - Handles errors gracefully (returns partial success)
  * - Logs all operations for debugging
  *
@@ -90,10 +74,9 @@ export async function rotateKeysHeadless(
   userId: string,
   deviceId: number,
   options?: HeadlessRotationOptions
-): Promise<HeadlessRotationResult> {
+): Promise<PreKeyRotationResult> {
   const { storage, identityTypes, preKeyMaintenance, logger: providedLogger } = options ?? {};
   const logger = resolveSignalProtocolLogger(providedLogger);
-  const errors: string[] = [];
 
   logger.info('Starting headless key rotation', {
     category: 'E2EE',
@@ -107,86 +90,28 @@ export async function rotateKeysHeadless(
     );
   }
 
-  // Rotate signed prekey
-  let signedRotated = false;
-  try {
-    signedRotated = await rotateEcSignedPreKeyCore(
-      relay,
-      userId,
-      deviceId,
-      storage,
-      undefined,
-      identityTypes,
-      logger
-    );
-  } catch (error) {
-    const message = getErrorMessage(error);
-    errors.push(`signedPreKey: ${message}`);
-    logger.error('Headless signed prekey rotation failed', {
-      category: 'E2EE',
-      error: error as Error,
-      data: { userId, deviceId },
-    });
-  }
-
-  // Rotate Kyber prekey
-  let kyberRotated = false;
-  try {
-    kyberRotated = await rotateKyberPreKeyCore(
-      relay,
-      userId,
-      deviceId,
-      storage,
-      undefined,
-      identityTypes,
-      logger
-    );
-  } catch (error) {
-    const message = getErrorMessage(error);
-    errors.push(`kyberPreKey: ${message}`);
-    logger.error('Headless Kyber prekey rotation failed', {
-      category: 'E2EE',
-      error: error as Error,
-      data: { userId, deviceId },
-    });
-  }
-
-  // Replenish one-time prekeys
-  let oneTimeReplenished = false;
-  try {
-    oneTimeReplenished = await replenishOneTimePreKeysCore(
-      relay,
-      userId,
-      deviceId,
-      storage,
-      undefined,
-      identityTypes,
-      preKeyMaintenance,
-      logger
-    );
-  } catch (error) {
-    const message = getErrorMessage(error);
-    errors.push(`oneTimePreKeys: ${message}`);
-    logger.error('Headless one-time prekey replenishment failed', {
-      category: 'E2EE',
-      error: error as Error,
-      data: { userId, deviceId },
-    });
-  }
+  const result = await rotatePreKeysCore(relay, userId, deviceId, storage, {
+    identityTypes,
+    preKeyMaintenance,
+    logger,
+  });
 
   logger.info('Headless key rotation completed', {
     category: 'E2EE',
     data: {
       userId,
       deviceId,
-      signedRotated,
-      kyberRotated,
-      oneTimeReplenished,
-      errorCount: errors.length,
+      signedRotated: result.signedRotated,
+      kyberRotated: result.kyberRotated,
+      oneTimeReplenished: result.oneTimeReplenished,
+      errorCount: result.errors.length,
     },
   });
 
-  if (preKeyMaintenance && (signedRotated || kyberRotated || oneTimeReplenished)) {
+  if (
+    preKeyMaintenance &&
+    (result.signedRotated || result.kyberRotated || result.oneTimeReplenished)
+  ) {
     try {
       await preKeyMaintenance.cullReplacedPreKeys(MAX_UNACKNOWLEDGED_SESSION_AGE_MS);
     } catch (error) {
@@ -197,18 +122,13 @@ export async function rotateKeysHeadless(
     }
   }
 
-  return {
-    signedRotated,
-    kyberRotated,
-    oneTimeReplenished,
-    errors,
-  };
+  return result;
 }
 
 /**
  * Check if any keys need rotation
  *
- * Lightweight check that does not rotate anything.
+ * One inventory read that does not rotate anything.
  * Useful for deciding whether to run the full rotation.
  *
  * @param relay - Signal Protocol relay server interface
@@ -225,19 +145,14 @@ export async function checkRotationNeeded(
   kyberPreKeyNeeded: boolean;
   oneTimePreKeysNeeded: boolean;
 }> {
-  const { shouldRotateKey } = await import('./key-rotation-core');
-
-  const [signedMeta, kyberMeta, oneTimeCount] = await Promise.all([
-    relay.getEcSignedPreKeyMetadata(userId, deviceId),
-    relay.getKemLastResortPreKeyMetadata(userId, deviceId),
-    relay.getPreKeyCount(userId, deviceId, 'ec'),
-  ]);
+  const inventory = await relay.getPreKeyInventory(userId, deviceId);
+  const { ecSignedPreKey: signedMeta, kemLastResortPreKey: kyberMeta } = inventory;
 
   return {
     signedPreKeyNeeded: signedMeta
       ? shouldRotateKey(signedMeta.createdAt, signedMeta.expiresAt)
       : true,
     kyberPreKeyNeeded: kyberMeta ? shouldRotateKey(kyberMeta.createdAt, kyberMeta.expiresAt) : true,
-    oneTimePreKeysNeeded: oneTimeCount < MIN_PREKEY_REPLENISHMENT_THRESHOLD,
+    oneTimePreKeysNeeded: oneTimePreKeysDue(inventory, MIN_PREKEY_REPLENISHMENT_THRESHOLD),
   };
 }

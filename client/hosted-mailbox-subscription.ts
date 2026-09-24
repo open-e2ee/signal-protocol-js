@@ -3,6 +3,10 @@ import type { Envelope, Unsubscribe } from "../remote/relay/types";
 const MAILBOX_PROTOCOL = "open-e2ee-relay.v1";
 const AUTH_PROTOCOL_PREFIX = "open-e2ee-relay.auth.";
 const RECOVERY_MILLISECONDS = 2_000;
+/** The Relay answers each `ping` text frame with `pong` without waking the mailbox. */
+const PING_MILLISECONDS = 30_000;
+/** The Relay closes a socket silent for 75 s; the client gives up one miss sooner. */
+const MAXIMUM_UNANSWERED_PINGS = 2;
 const MAXIMUM_FRAME_CHARACTERS = 1024 * 1024;
 const MAXIMUM_PENDING_FRAMES = 100;
 /** The Relay refuses an acknowledgment frame that carries more ids. */
@@ -47,6 +51,8 @@ export function subscribeHostedMailbox(
   let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
   let renewalTimer: ReturnType<typeof setTimeout> | undefined;
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+  let pingTimer: ReturnType<typeof setTimeout> | undefined;
+  let unansweredPings = 0;
   let acknowledgmentTimer: ReturnType<typeof setTimeout> | undefined;
   let draining = false;
   let pullRequested = false;
@@ -162,6 +168,8 @@ export function subscribeHostedMailbox(
     durable.length = 0;
     clearTimeout(handshakeTimer);
     clearTimeout(renewalTimer);
+    clearTimeout(pingTimer);
+    unansweredPings = 0;
     try {
       previous?.close(1000, "Subscription connection ended.");
     } catch {
@@ -218,6 +226,24 @@ export function subscribeHostedMailbox(
         clearTimeout(recoveryTimer);
         recoveryTimer = undefined;
         reconnectDelay = 1_000;
+        const schedulePing = () => {
+          pingTimer = setTimeout(() => {
+            if (!current()) return;
+            if (unansweredPings >= MAXIMUM_UNANSWERED_PINGS) {
+              retryConnection();
+              return;
+            }
+            try {
+              candidate.send("ping");
+            } catch {
+              retryConnection();
+              return;
+            }
+            unansweredPings++;
+            schedulePing();
+          }, PING_MILLISECONDS);
+        };
+        schedulePing();
         renewalTimer = setTimeout(
           () => {
             if (!current()) return;
@@ -238,6 +264,10 @@ export function subscribeHostedMailbox(
             event.data.length > MAXIMUM_FRAME_CHARACTERS
           )
             throw new Error("Invalid mailbox frame.");
+          if (event.data === "pong") {
+            unansweredPings = 0;
+            return;
+          }
           const frame: unknown = JSON.parse(event.data);
           if (typeof frame !== "object" || frame === null || !("type" in frame))
             throw new Error("Invalid mailbox frame.");

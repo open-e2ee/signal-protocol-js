@@ -1803,30 +1803,6 @@ Normal sync and linked-device provisioning never call this operation.
 
 ***
 
-### rotateEcSignedPreKey()
-
-> **rotateEcSignedPreKey**(): `Promise`\<`boolean`\>
-
-Rotate EC signed prekey
-
-Rotates only once the current prekey is older than the configured refresh
-interval ([KEY\_REFRESH\_INTERVAL\_MS\_DEFAULT](../variables/KEY_REFRESH_INTERVAL_MS_DEFAULT.md), 2 days by default). It
-is therefore safe to call more often than that. Generates a new EC signed
-prekey
-and uploads it to the relay if configured.
-
-#### Returns
-
-`Promise`\<`boolean`\>
-
-True if the client rotated the key, false if not needed yet
-
-#### Implementation of
-
-[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`rotateEcSignedPreKey`](../interfaces/SignalProtocolClient.md#rotateecsignedprekey)
-
-***
-
 ### rotateGroupSenderKey()
 
 > **rotateGroupSenderKey**(`groupId`): `Promise`\<\{ `distributionMessage`: [`SenderKeyDistributionMessage`](../interfaces/SenderKeyDistributionMessage.md); `senderKeyId`: `string`; \}\>
@@ -1906,26 +1882,27 @@ handleGroupMembershipChange - Helper method for common membership patterns
 
 ***
 
-### rotateKyberPreKey()
+### rotatePreKeys()
 
-> **rotateKyberPreKey**(): `Promise`\<`boolean`\>
+> **rotatePreKeys**(): `Promise`\<[`PreKeyRotationResult`](../interfaces/PreKeyRotationResult.md)\>
 
-Rotate the post-quantum KEM last-resort prekey.
+Rotate the device's prekeys in one publication.
 
-Shares the signed prekey's refresh interval
-([KEY\_REFRESH\_INTERVAL\_MS\_DEFAULT](../variables/KEY_REFRESH_INTERVAL_MS_DEFAULT.md), 2 days by default) and rotates
-only after that interval elapses. Generates fresh ML-KEM/Kyber-compatible
-key material and uploads it to the relay if configured.
+One inventory read decides whether the EC signed prekey, the KEM
+last-resort prekey, or a one-time prekey batch is due. Signed keys rotate
+once they are older than the configured refresh interval
+([KEY\_REFRESH\_INTERVAL\_MS\_DEFAULT](../variables/KEY_REFRESH_INTERVAL_MS_DEFAULT.md), 2 days by default). Nothing due
+costs one read and no publication, so it is safe to call often.
 
 #### Returns
 
-`Promise`\<`boolean`\>
+`Promise`\<[`PreKeyRotationResult`](../interfaces/PreKeyRotationResult.md)\>
 
-True if the client rotated the key, false if not needed yet
+Which keys the rotation published, and one error per failed identity type
 
 #### Implementation of
 
-[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`rotateKyberPreKey`](../interfaces/SignalProtocolClient.md#rotatekyberprekey)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`rotatePreKeys`](../interfaces/SignalProtocolClient.md#rotateprekeys)
 
 ***
 

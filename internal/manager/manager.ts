@@ -1211,7 +1211,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
    *
    * Per Signal Protocol architecture, the protocol layer handles local key
    * generation and storage. Server synchronization is handled at the
-   * application layer via DefaultSignalProtocolClient.rotateEcSignedPreKey().
+   * application layer via DefaultSignalProtocolClient.rotatePreKeys().
    *
    * This method (local only):
    * 1. Generates new EC signed prekey
@@ -1225,7 +1225,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
    *
    * @param userId - User ID for logging purposes
    *
-   * @see DefaultSignalProtocolClient.rotateEcSignedPreKey() for full rotation with server sync
+   * @see DefaultSignalProtocolClient.rotatePreKeys() for full rotation with server sync
    * @see https://signal.org/docs/specifications/x3dh/#publishing-keys
    */
   async rotateEcSignedPreKey(userId: string, identityType: IdentityType = 'aci'): Promise<void> {
@@ -1261,7 +1261,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
    *
    * Per Signal Protocol architecture, the protocol layer handles local key
    * generation and storage. Server synchronization is handled at the
-   * application layer via DefaultSignalProtocolClient.rotateKyberPreKey().
+   * application layer via DefaultSignalProtocolClient.rotatePreKeys().
    *
    * This method (local only):
    * 1. Generates new Kyber-1024 keypair
@@ -1277,7 +1277,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
    *
    * @param userId - User ID for logging purposes
    *
-   * @see DefaultSignalProtocolClient.rotateKyberPreKey() for full rotation with server sync
+   * @see DefaultSignalProtocolClient.rotatePreKeys() for full rotation with server sync
    * @see https://signal.org/docs/specifications/pqxdh/#key-rotation
    */
   async rotateKyberPreKey(userId: string, identityType: IdentityType = 'aci'): Promise<void> {

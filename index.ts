@@ -456,10 +456,9 @@ export type {
   PreKeyMetadata,
   AccountIdentityProvisioning,
   AccountIdentityRotation,
-  EcSignedPreKeyUpload,
   GroupChangeEntry,
   GroupMemberDevice,
-  KemLastResortPreKeyUpload,
+  PreKeyPublicationPlan,
   SealedSenderAuth,
   Unsubscribe,
 } from "./remote/relay/types";
@@ -527,6 +526,7 @@ export type {
   SignalProtocolLocalStore,
   SignalProtocolLocalSecretVault,
   MessageRecord,
+  PreKeyRotationResult,
   SkippedSenderMessageKey,
 
   // Focused store interfaces with independently replaceable responsibilities.

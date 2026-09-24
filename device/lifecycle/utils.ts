@@ -38,7 +38,7 @@ export async function getLocalDeviceMetadata(): Promise<DeviceMetadata> {
 
 /**
  * Compute which metadata fields a device record lacks.
- * Only returns fields that a heartbeat must carry.
+ * Only returns fields the server record lacks.
  *
  * @param serverDevice - Device record from server (from getDevices query)
  * @param localMetadata - Current device metadata (from getLocalDeviceMetadata)
@@ -52,9 +52,7 @@ export async function getLocalDeviceMetadata(): Promise<DeviceMetadata> {
  * const missingMeta = getMissingMetadata(myDevice, localMeta);
  *
  * if (missingMeta) {
- *   await relay.heartbeat(userId, deviceId, missingMeta);
- * } else {
- *   await relay.heartbeat(userId, deviceId); // No metadata needed
+ *   await backfillDeviceMetadata(deviceId, missingMeta);
  * }
  * ```
  */

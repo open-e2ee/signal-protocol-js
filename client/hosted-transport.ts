@@ -4,16 +4,15 @@ import type {
   DeliveryClass,
   DeviceInfo,
   DeviceRegistration,
-  EcSignedPreKeyUpload,
   Envelope,
   GroupChangeEntry,
   GroupChangePage,
   GroupMemberDevice,
   SignalProtocolRelayServer,
   RelayGroupServer,
-  KemLastResortPreKeyUpload,
   PreKeyBundle,
   PreKeyInventory,
+  PreKeyPublicationPlan,
   PreKeyUpload,
   SealedSenderAuth,
   Unsubscribe,
@@ -121,6 +120,31 @@ interface HostedDeviceDirectoryEntry {
   deviceId: number;
   generation: number;
   mailboxGeneration: number;
+  /** Present only in the caller's own account listing. */
+  lastSeenAt?: number | null;
+}
+
+/** The rotation inventory that one status read describes. */
+function inventoryFromStatus(status: HostedPreKeyStatus): PreKeyInventory {
+  const metadata = (algorithm: string) => {
+    const key = status.signedPreKeys.find(
+      (candidate) => candidate.algorithm === algorithm,
+    );
+    return key
+      ? {
+          keyId: key.keyId,
+          createdAt: key.acceptedAtMilliseconds,
+          expiresAt: key.acceptedAtMilliseconds + PREKEY_EXPIRY_MILLISECONDS,
+          publicKey: bytesToBase64(key.publicKey),
+        }
+      : null;
+  };
+  return {
+    ecSignedPreKey: metadata("ec-x25519"),
+    kemLastResortPreKey: metadata("kem-ml-kem-1024"),
+    ecOneTimePreKeyCount: status.oneTimePreKeyCounts["ec-x25519"] ?? 0,
+    kemOneTimePreKeyCount: status.oneTimePreKeyCounts["kem-ml-kem-1024"] ?? 0,
+  };
 }
 
 const hostedPreKeyPublicationLock = new AsyncLock({ maxPending: 100 });
@@ -158,18 +182,49 @@ export class HostedRelayHttpError extends Error {
   public readonly code: string;
   public readonly data?: Readonly<Record<string, unknown>>;
   public readonly status: number;
+  /** The Relay's own hint that the same operation can be sent again. */
+  public readonly retryable: boolean;
 
   public constructor(
     status: number,
     code: string,
     message: string,
-    data?: Readonly<Record<string, unknown>>,
+    options?: {
+      readonly data?: Readonly<Record<string, unknown>>;
+      readonly retryable?: boolean;
+    },
   ) {
     super(message);
     this.name = "HostedRelayHttpError";
     this.status = status;
     this.code = code;
-    this.data = data;
+    this.data = options?.data;
+    this.retryable = options?.retryable ?? false;
+  }
+}
+
+/**
+ * A durable delivery whose mailbox reset inside its acknowledgment hold
+ * answers 503 `DELIVERY_UNCERTAIN`. The operation identifier makes a repeat
+ * exact, so the transport sends the same request once more before it
+ * surfaces the error. An ephemeral delivery is best-effort, so an uncertain
+ * answer on that class is not repeated.
+ */
+async function withOneUncertainRetry<T>(
+  deliveryClass: DeliveryClass,
+  post: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await post();
+  } catch (error) {
+    if (
+      deliveryClass === "ephemeral" ||
+      !(error instanceof HostedRelayHttpError) ||
+      error.code !== "DELIVERY_UNCERTAIN"
+    ) {
+      throw error;
+    }
+    return post();
   }
 }
 
@@ -254,7 +309,9 @@ async function parseResponse(response: Response): Promise<unknown> {
       typeof error.message === "string"
         ? error.message
         : "Signal Protocol Relay request failed";
-    throw new HostedRelayHttpError(response.status, code, message);
+    throw new HostedRelayHttpError(response.status, code, message, {
+      retryable: error.retryable === true,
+    });
   }
   return parsed;
 }
@@ -804,7 +861,7 @@ export class HostedRelayHttpTransport
     return value.devices.map((candidate) => {
       if (!record(candidate))
         throw new Error("Signal Protocol Relay returned an invalid device directory");
-      const device = {
+      const device: HostedDeviceDirectoryEntry = {
         deviceId: requiredNumber(candidate, "deviceId"),
         generation: requiredNumber(candidate, "generation"),
         mailboxGeneration: requiredNumber(candidate, "mailboxGeneration"),
@@ -815,6 +872,13 @@ export class HostedRelayHttpTransport
         device.mailboxGeneration < 0
       ) {
         throw new Error("Signal Protocol Relay returned an invalid device directory");
+      }
+      if ("lastSeenAt" in candidate) {
+        const lastSeenAt = candidate.lastSeenAt;
+        if (lastSeenAt !== null && !Number.isSafeInteger(lastSeenAt)) {
+          throw new Error("Signal Protocol Relay returned an invalid device directory");
+        }
+        device.lastSeenAt = lastSeenAt as number | null;
       }
       this.destinationGenerations.set(
         `${userId}\0${String(device.deviceId)}`,
@@ -866,8 +930,14 @@ export class HostedRelayHttpTransport
     await this.persistSession();
   }
 
+  /**
+   * One publication under the account's publication fence. The plan sees the
+   * inventory from the status read that opens the fence, so its decision and
+   * the publication share one observation. An empty plan with no pending
+   * publication returns after that one read.
+   */
   private async publishCurrentPrekeys(
-    uploads: readonly PreKeyUpload[],
+    plan: PreKeyPublicationPlan,
   ): Promise<void> {
     await hostedPreKeyPublicationLock.acquire(
       await sessionMetadataKey(this.connection),
@@ -914,6 +984,8 @@ export class HostedRelayHttpTransport
           );
         }
 
+        const uploads = await plan(inventoryFromStatus(status));
+        if (uploads.length === 0 && retryPending === undefined) return;
         const target =
           retryPending === undefined
             ? applyPreKeyUploads(statusPreKeys(status), uploads)
@@ -1258,21 +1330,23 @@ export class HostedRelayHttpTransport
       throw new Error("Signal Protocol Relay destination device does not exist");
     let value: unknown;
     try {
-      value = await this.authenticatedPost("/delivery/send", {
-        deliveryClass: envelope.deliveryClass,
-        destination: {
-          accountAddress: envelope.targetUserId,
-          deviceId: envelope.targetDeviceId,
-          generation,
-        },
-        envelope: bytesToBase64(encodeDeliveryWire(envelope)),
-        messageId,
-        operationEpochMilliseconds: envelope.timestamp,
-        publishableKey: this.connection.publishableKey,
-        ...(envelope.recipientRegistrationId === undefined
-          ? {}
-          : { recipientRegistrationId: envelope.recipientRegistrationId }),
-      });
+      value = await withOneUncertainRetry(envelope.deliveryClass, () =>
+        this.authenticatedPost("/delivery/send", {
+          deliveryClass: envelope.deliveryClass,
+          destination: {
+            accountAddress: envelope.targetUserId,
+            deviceId: envelope.targetDeviceId,
+            generation,
+          },
+          envelope: bytesToBase64(encodeDeliveryWire(envelope)),
+          messageId,
+          operationEpochMilliseconds: envelope.timestamp,
+          publishableKey: this.connection.publishableKey,
+          ...(envelope.recipientRegistrationId === undefined
+            ? {}
+            : { recipientRegistrationId: envelope.recipientRegistrationId }),
+        }),
+      );
     } catch (error) {
       if (
         error instanceof HostedRelayHttpError &&
@@ -1283,10 +1357,13 @@ export class HostedRelayHttpTransport
           error.code,
           error.message,
           {
-            code: "STALE_DEVICE",
-            message: error.message,
-            reason: "device_reinstalled",
-            staleDevices: [envelope.targetDeviceId],
+            data: {
+              code: "STALE_DEVICE",
+              message: error.message,
+              reason: "device_reinstalled",
+              staleDevices: [envelope.targetDeviceId],
+            },
+            retryable: error.retryable,
           },
         );
       }
@@ -1378,6 +1455,7 @@ export class HostedRelayHttpTransport
       registered: true,
       linked: device.deviceId > 1,
       enabled: true,
+      ...(device.lastSeenAt === undefined ? {} : { lastSeenAt: device.lastSeenAt }),
     }));
   }
 
@@ -1437,7 +1515,7 @@ export class HostedRelayHttpTransport
     identityType: IdentityType = "aci",
   ): Promise<void> {
     this.assertCurrentIdentity(userId, deviceId, identityType);
-    await this.publishCurrentPrekeys(keys);
+    await this.publishCurrentPrekeys(async () => keys);
   }
 
   public async fetchPreKeyBundle(
@@ -1534,26 +1612,19 @@ export class HostedRelayHttpTransport
     deviceId: number,
     identityType: IdentityType = "aci",
   ): Promise<PreKeyInventory> {
-    const status = await this.prekeyStatus(userId, deviceId, identityType);
-    const metadata = (algorithm: string) => {
-      const key = status.signedPreKeys.find(
-        (candidate) => candidate.algorithm === algorithm,
-      );
-      return key
-        ? {
-            keyId: key.keyId,
-            createdAt: key.acceptedAtMilliseconds,
-            expiresAt: key.acceptedAtMilliseconds + PREKEY_EXPIRY_MILLISECONDS,
-            publicKey: bytesToBase64(key.publicKey),
-          }
-        : null;
-    };
-    return {
-      ecSignedPreKey: metadata("ec-x25519"),
-      kemLastResortPreKey: metadata("kem-ml-kem-1024"),
-      ecOneTimePreKeyCount: status.oneTimePreKeyCounts["ec-x25519"] ?? 0,
-      kemOneTimePreKeyCount: status.oneTimePreKeyCounts["kem-ml-kem-1024"] ?? 0,
-    };
+    return inventoryFromStatus(
+      await this.prekeyStatus(userId, deviceId, identityType),
+    );
+  }
+
+  public async publishPlannedPreKeys(
+    userId: string,
+    deviceId: number,
+    plan: PreKeyPublicationPlan,
+    identityType: IdentityType = "aci",
+  ): Promise<void> {
+    this.assertCurrentIdentity(userId, deviceId, identityType);
+    await this.publishCurrentPrekeys(plan);
   }
 
   public async getPreKeyCount(
@@ -1602,38 +1673,6 @@ export class HostedRelayHttpTransport
     return { cleared: requiredNumber(value, "cleared") };
   }
 
-  public async uploadEcSignedPreKey(
-    userId: string,
-    key: EcSignedPreKeyUpload,
-    identityType: IdentityType = "aci",
-  ): Promise<void> {
-    this.assertCurrentIdentity(userId, this.session.deviceId, identityType);
-    await this.publishCurrentPrekeys([
-      {
-        keyId: key.keyId,
-        publicKey: key.publicKey,
-        signature: key.signature,
-        type: "ecSignedPreKey",
-      },
-    ]);
-  }
-
-  public async uploadKemLastResortPreKey(
-    userId: string,
-    key: KemLastResortPreKeyUpload,
-    identityType: IdentityType = "aci",
-  ): Promise<void> {
-    this.assertCurrentIdentity(userId, this.session.deviceId, identityType);
-    await this.publishCurrentPrekeys([
-      {
-        keyId: key.keyId,
-        publicKey: key.publicKey,
-        signature: key.signature,
-        type: "kemLastResortPreKey",
-      },
-    ]);
-  }
-
   public async rotateIdentityKey(
     _request: AccountIdentityRotation,
   ): Promise<void> {
@@ -1648,15 +1687,6 @@ export class HostedRelayHttpTransport
   }
   public async removeDevice(_userId: string, _deviceId: number): Promise<void> {
     unsupported("direct device removal");
-  }
-  public async markDeviceConnected(_deviceId: number): Promise<void> {
-    unsupported("connection presence");
-  }
-  public async markDeviceDisconnected(_deviceId: number): Promise<void> {
-    unsupported("connection presence");
-  }
-  public async heartbeat(_deviceId: number): Promise<void> {
-    unsupported("connection presence");
   }
   public async createProvisioningSession(
     _userId: string,

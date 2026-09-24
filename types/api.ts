@@ -30,6 +30,24 @@ export type { IdentityType };
 export type { SessionRecord };
 
 /**
+ * Result of one prekey rotation.
+ *
+ * Each boolean is true when the rotation published that kind of key for any
+ * identity type. `errors` holds one message per identity type whose rotation
+ * failed; the other identity types still complete.
+ */
+export interface PreKeyRotationResult {
+  /** Whether the rotation published a new EC signed prekey */
+  signedRotated: boolean;
+  /** Whether the rotation published a new KEM last-resort prekey */
+  kyberRotated: boolean;
+  /** Whether the rotation published a fresh one-time prekey batch */
+  oneTimeReplenished: boolean;
+  /** One message per failed identity type (non-fatal) */
+  errors: string[];
+}
+
+/**
  * All durable trust/session effects of establishing or advancing a session.
  * The same transaction consumes optional one-time-prekey identifiers
  * for responder-side PreKey decrypts. The local identity namespace remains
@@ -179,22 +197,16 @@ export interface SignalProtocolClient {
   // ============================================================================
 
   /**
-   * Rotate EC signed prekey
+   * Rotate the device's prekeys in one publication.
    *
-   * Rotates only once the current prekey is older than the configured refresh
-   * interval ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default).
-   * Returns false if rotation is not needed yet.
+   * One inventory read decides whether the EC signed prekey, the KEM
+   * last-resort prekey, or a one-time prekey batch is due. Signed keys rotate
+   * once they are older than the configured refresh interval
+   * ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default). One-time
+   * prekeys refill when a server count is below the threshold. Nothing due
+   * costs one read and no publication, so the method is safe to call often.
    */
-  rotateEcSignedPreKey(): Promise<boolean>;
-
-  /**
-   * Rotate Kyber prekey (post-quantum)
-   *
-   * Shares the signed prekey's refresh interval
-   * ({@link KEY_REFRESH_INTERVAL_MS_DEFAULT}, 2 days by default).
-   * Returns false if rotation is not needed yet.
-   */
-  rotateKyberPreKey(): Promise<boolean>;
+  rotatePreKeys(): Promise<PreKeyRotationResult>;
 
   /** Explicitly rotate the account-level relay identity with compare-and-swap. */
   rotateAccountIdentity(

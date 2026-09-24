@@ -7,14 +7,10 @@
  *
  * @example
  * ```typescript
- * import { useKeyRotation, useConnectionPresence, useSingleFlight } from './';
+ * import { useKeyRotation, useSingleFlight } from './';
  * ```
  */
 export {};
-export {
-  useConnectionPresence,
-  type UseConnectionPresenceOptions,
-} from './use-connection-presence';
 export { useSingleFlight } from './use-single-flight';
 export {
   useKeyRotation,

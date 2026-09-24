@@ -706,24 +706,6 @@ Status and encrypted message (if ready)
 
 ***
 
-### heartbeat()
-
-> **heartbeat**(`deviceId`): `Promise`\<`void`\>
-
-Lightweight heartbeat. Writes only to heartbeat table, triggers 0 query reruns
-
-#### Parameters
-
-##### deviceId
-
-`number`
-
-#### Returns
-
-`Promise`\<`void`\>
-
-***
-
 ### issueAuthCredential()
 
 > **issueAuthCredential**(`userId`): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
@@ -767,50 +749,6 @@ ID from send() or subscription
 
 ***
 
-### markDeviceConnected()
-
-> **markDeviceConnected**(`deviceId`): `Promise`\<`void`\>
-
-Mark device as connected (online).
-Called when WebSocket connects.
-The server derives userId from the JWT.
-
-#### Parameters
-
-##### deviceId
-
-`number`
-
-Device ID (1-5)
-
-#### Returns
-
-`Promise`\<`void`\>
-
-***
-
-### markDeviceDisconnected()
-
-> **markDeviceDisconnected**(`deviceId`): `Promise`\<`void`\>
-
-Mark device as disconnected (offline).
-Called when WebSocket disconnects gracefully.
-The server derives userId from the JWT.
-
-#### Parameters
-
-##### deviceId
-
-`number`
-
-Device ID (1-5)
-
-#### Returns
-
-`Promise`\<`void`\>
-
-***
-
 ### provisionIdentityKey()
 
 > **provisionIdentityKey**(`request`): `Promise`\<`void`\>
@@ -824,6 +762,51 @@ devices, and rejects a different tuple without mutating device metadata.
 ##### request
 
 [`AccountIdentityProvisioning`](AccountIdentityProvisioning.md)
+
+#### Returns
+
+`Promise`\<`void`\>
+
+***
+
+### publishPlannedPreKeys()
+
+> **publishPlannedPreKeys**(`userId`, `deviceId`, `plan`, `identityType?`): `Promise`\<`void`\>
+
+Publish the prekeys that one rotation decision calls for, in one
+publication.
+
+The adapter reads the inventory, hands it to `plan`, and publishes the
+uploads the plan returns through the same path as `uploadPreKeys`. An
+empty plan publishes nothing, so a check that finds nothing due costs one
+inventory read. The plan runs inside the adapter's publication fence, so
+a concurrent publication cannot separate the read from the write.
+
+#### Parameters
+
+##### userId
+
+`string`
+
+User ID
+
+##### deviceId
+
+`number`
+
+Device ID
+
+##### plan
+
+[`PreKeyPublicationPlan`](../type-aliases/PreKeyPublicationPlan.md)
+
+Decides the uploads from the inventory the adapter read
+
+##### identityType?
+
+[`IdentityType`](../namespaces/keys/type-aliases/IdentityType.md)
+
+'aci' or 'pni' (defaults to 'aci')
 
 #### Returns
 
@@ -1238,72 +1221,6 @@ Callback for each incoming retry request
 [`Unsubscribe`](../type-aliases/Unsubscribe.md)
 
 Unsubscribe function
-
-***
-
-### uploadEcSignedPreKey()
-
-> **uploadEcSignedPreKey**(`userId`, `ecSignedPreKey`, `identityType?`): `Promise`\<`void`\>
-
-Upload an EC signed prekey.
-Convenience wrapper around uploadPreKeys for key rotation.
-
-#### Parameters
-
-##### userId
-
-`string`
-
-User ID
-
-##### ecSignedPreKey
-
-[`EcSignedPreKeyUpload`](EcSignedPreKeyUpload.md)
-
-EC signed prekey to upload
-
-##### identityType?
-
-[`IdentityType`](../namespaces/keys/type-aliases/IdentityType.md)
-
-'aci' or 'pni' (defaults to 'aci')
-
-#### Returns
-
-`Promise`\<`void`\>
-
-***
-
-### uploadKemLastResortPreKey()
-
-> **uploadKemLastResortPreKey**(`userId`, `kemLastResortPreKey`, `identityType?`): `Promise`\<`void`\>
-
-Upload a KEM last-resort (post-quantum) prekey.
-Convenience wrapper around uploadPreKeys for key rotation.
-
-#### Parameters
-
-##### userId
-
-`string`
-
-User ID
-
-##### kemLastResortPreKey
-
-[`KemLastResortPreKeyUpload`](KemLastResortPreKeyUpload.md)
-
-KEM last-resort prekey to upload
-
-##### identityType?
-
-[`IdentityType`](../namespaces/keys/type-aliases/IdentityType.md)
-
-'aci' or 'pni' (defaults to 'aci')
-
-#### Returns
-
-`Promise`\<`void`\>
 
 ***
 
