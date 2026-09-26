@@ -68,6 +68,7 @@ import {
 import {
   subscribeHostedMailbox,
   type MailboxSubscriptionHandle,
+  type PresenceSocketEvent,
 } from "./hosted-mailbox-subscription";
 import { HostedGroupServer } from "./hosted-groups";
 import {
@@ -614,6 +615,9 @@ export class HostedRelayHttpTransport
   private subscription?: MailboxSubscriptionHandle;
   private subscriptionGeneration = 0;
   private readonly connectionState = new RelayConnectionStateOwner();
+  private readonly presenceListeners = new Set<
+    (event: PresenceSocketEvent) => void
+  >();
 
   public constructor(
     private readonly connection: HostedRelayConnection,
@@ -1268,6 +1272,16 @@ export class HostedRelayHttpTransport
     return this.subscription;
   }
 
+  /** Receives the presence events of the newest subscription's socket. */
+  public subscribePresenceSocket(
+    listener: (event: PresenceSocketEvent) => void,
+  ): Unsubscribe {
+    this.presenceListeners.add(listener);
+    return () => {
+      this.presenceListeners.delete(listener);
+    };
+  }
+
   /** Posts one presence request, for a wake client with no socket. */
   public postPresence(request: HostedRelayPresenceRequest): Promise<unknown> {
     return this.authenticatedPost(
@@ -1431,6 +1445,19 @@ export class HostedRelayHttpTransport
       onConnectionState: (state, reason) => {
         if (generation === this.subscriptionGeneration)
           this.connectionState.move(state, reason);
+      },
+      onPresence: (event) => {
+        if (generation !== this.subscriptionGeneration) return;
+        // A listener that throws does not reach the socket's frame handling.
+        for (const listener of [...this.presenceListeners]) {
+          try {
+            listener(event);
+          } catch (error) {
+            queueMicrotask(() => {
+              throw error;
+            });
+          }
+        }
       },
       authenticate: async () => {
         const token = await this.token();

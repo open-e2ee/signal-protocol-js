@@ -18,12 +18,16 @@ import type {
   Unsubscribe,
 } from "../remote/relay/types";
 import type { DefaultSignalProtocolClient } from "./client";
-import type { MailboxSubscriptionHandle } from "./hosted-mailbox-subscription";
+import type {
+  MailboxSubscriptionHandle,
+  PresenceSocketEvent,
+} from "./hosted-mailbox-subscription";
 import type { HostedRelayWakeClient } from "./hosted-push";
 import { HostedRelayHttpError } from "./hosted-transport";
 import {
   HostedRelayPresenceError,
   PRESENCE_READ_LIMIT,
+  PRESENCE_WATCH_LIMIT,
   assertPresenceAccount,
   assertPresenceKey,
   decodePresenceResult,
@@ -50,8 +54,18 @@ export {
   type HostedRelayPresenceVisibility,
 } from "./hosted-presence-frames";
 
-/** The interval of the `watch()` poll while the mailbox socket is connected. */
+/**
+ * The interval of the `watch()` poll. It reads only the accounts that no
+ * answered presence watch covers.
+ */
 export const PRESENCE_WATCH_POLL_MILLISECONDS = 30_000;
+
+/**
+ * The interval of the `watch()` renewal. Each renewal sends the whole watch
+ * set again, and its answer is the read of the watched accounts. The Relay
+ * drops a watch that is not renewed in two intervals.
+ */
+export const PRESENCE_WATCH_RENEWAL_MILLISECONDS = 120_000;
 
 /** The HKDF info of the presence key. No other key uses this label. */
 const PRESENCE_KEY_INFO = stringToBytes("open-e2ee-presence-key-v1");
@@ -87,9 +101,14 @@ export interface HostedRelayPresence {
   ): Promise<(HostedRelayPresenceStatus | null)[]>;
   /**
    * Calls `onChange` with the account's presence, then again after each
-   * change. It reads every 30 s while the mailbox socket is connected, and at
-   * once when the socket connects. A failed read keeps the last value. After
-   * a `FRAME_REJECTED` read, it waits 30 s after the reconnect.
+   * change. While the mailbox socket is connected, the client registers one
+   * presence watch for the first 16 watched accounts. It registers at once,
+   * at each change of that set, at each new socket, and again every 120 s.
+   * The Relay then pushes each change. The client reads the other accounts
+   * every 30 s. After a failed watch, or when no answer arrives in 10 s, it
+   * reads every account every 30 s and tries the watch again 120 s later. A
+   * failed read keeps the last value. After a `FRAME_REJECTED` request, it
+   * waits 30 s after the reconnect to read and 120 s to watch.
    */
   watch(
     account: string,
@@ -136,6 +155,10 @@ export interface HostedRelayPresenceRuntime {
   subscribeRelayConnectionState(
     listener: (state: RelayConnectionState) => void,
   ): Unsubscribe;
+  /** Receives each new mailbox socket and each pushed presence edge. */
+  subscribePresenceSocket(
+    listener: (event: PresenceSocketEvent) => void,
+  ): Unsubscribe;
 }
 
 const runtimes = new WeakMap<object, HostedRelayPresenceRuntime>();
@@ -178,25 +201,31 @@ function grantMetadataKey(
   return `${PRESENCE_GRANT_METADATA_PREFIX}${runtime.presenceScope}:${account}`;
 }
 
+/** The account with the key that `grant()` stored for it, if any. */
+async function presenceTarget(
+  runtime: HostedRelayPresenceRuntime,
+  account: string,
+): Promise<HostedRelayPresenceTarget> {
+  const stored = await runtime.presenceStore.getMetadata(
+    grantMetadataKey(runtime, account),
+  );
+  return stored === null
+    ? { account }
+    : { account, presenceKey: assertPresenceKey(stored) };
+}
+
+type PresenceSend = (request: HostedRelayPresenceRequest) => Promise<unknown>;
+
 function presenceOperations(
   runtime: HostedRelayPresenceRuntime,
-  send: (request: HostedRelayPresenceRequest) => Promise<unknown>,
+  send: PresenceSend,
 ): HostedRelayWakePresence {
   const request = async <Request extends HostedRelayPresenceRequest>(
     value: Request,
   ): Promise<HostedRelayPresenceResults[Request["type"]]> =>
     decodePresenceResult(value, await send(value));
 
-  const target = async (
-    account: string,
-  ): Promise<HostedRelayPresenceTarget> => {
-    const stored = await runtime.presenceStore.getMetadata(
-      grantMetadataKey(runtime, account),
-    );
-    return stored === null
-      ? { account }
-      : { account, presenceKey: assertPresenceKey(stored) };
-  };
+  const target = (account: string) => presenceTarget(runtime, account);
 
   return {
     policy: () => request({ type: "presence-policy" }),
@@ -248,27 +277,74 @@ interface WatchedAccount {
   status: HostedRelayPresenceStatus | null;
 }
 
+function sameAccounts(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((account, index) => account === right[index])
+  );
+}
+
+function refused(error: unknown): boolean {
+  return (
+    error instanceof HostedRelayPresenceError && error.code === "FRAME_REJECTED"
+  );
+}
+
 /**
- * One poll for every watched account of a client. It runs only while the
- * mailbox socket is connected, which the lifecycle binding limits to the
- * foreground.
+ * The presence watch of a client, shared by all its `watch()` calls. It runs
+ * only while the mailbox socket is connected, which the lifecycle binding
+ * limits to the foreground.
+ *
+ * The first PRESENCE_WATCH_LIMIT watched accounts, in watch order, are the
+ * watch set. One `presence-watch` request registers that set on the socket.
+ * Its answer is the read of those accounts, and the Relay then pushes each
+ * change as a `presence-update` frame. The client sends the set again at each
+ * change of the set, at each new socket, and every
+ * PRESENCE_WATCH_RENEWAL_MILLISECONDS. The Relay drops a watch that is not
+ * renewed, and it can lose a watch without a signal, so the renewal is also
+ * the bound of a lost watch.
+ *
+ * The poll reads the accounts past the watch set, and every account while no
+ * answered watch covers the set: after a failed watch, until a watch answers
+ * again.
  */
 class PresenceWatch {
   private readonly watched = new Map<string, WatchedAccount>();
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  /** The next registration: at once, or the renewal of the last one. */
+  private registerTimer: ReturnType<typeof setTimeout> | undefined;
+  private registering = false;
+  private registerAgain = false;
+  /**
+   * The accounts of the last watch request on this socket. An empty list
+   * means that the socket holds no watch, so an empty set sends nothing.
+   */
+  private requested: readonly string[] = [];
+  /** The presence keys of the last watch request, for each account. */
+  private requestedKeys = new Map<string, string | undefined>();
+  /** The last watch request on this socket was answered. */
+  private confirmed = false;
+  private pollTimer: ReturnType<typeof setTimeout> | undefined;
   private polling = false;
   private pollAgain = false;
   /**
-   * The Signal Protocol Relay closed the socket on the last read frame. The
-   * next read waits one full interval after the reconnect, so a Relay without
-   * presence frames does not see a reconnect loop.
+   * The Signal Protocol Relay closed the socket on the last presence frame.
+   * After the reconnect, the client reads one full poll interval later and
+   * watches one full renewal interval later, so a Relay without these frames
+   * does not see a reconnect loop.
    */
   private rejected = false;
-  private stopStateListener: Unsubscribe | undefined;
+  private stopListeners: Unsubscribe | undefined;
 
   public constructor(
     private readonly runtime: HostedRelayPresenceRuntime,
     private readonly read: HostedRelayPresence["read"],
+    private readonly target: (
+      account: string,
+    ) => Promise<HostedRelayPresenceTarget>,
+    private readonly send: PresenceSend,
   ) {}
 
   public watch(account: string, onChange: WatchListener): Unsubscribe {
@@ -276,6 +352,7 @@ class PresenceWatch {
     if (typeof onChange !== "function")
       throw new Error("Signal Protocol Relay presence listener is invalid");
     let entry = this.watched.get(account);
+    const added = entry === undefined;
     if (entry === undefined) {
       entry = { listeners: new Set(), known: false, status: null };
       this.watched.set(account, entry);
@@ -284,31 +361,84 @@ class PresenceWatch {
     // Each call owns its own listener, so one callback can watch twice.
     const listener: WatchListener = (status) => onChange(status);
     watchedEntry.listeners.add(listener);
-    this.stopStateListener ??= this.runtime.subscribeRelayConnectionState(
-      (state) => {
-        if (state.state !== "connected") this.cancel();
-        else if (this.rejected) this.schedule(PRESENCE_WATCH_POLL_MILLISECONDS);
-        else this.pollSoon();
-      },
-    );
+    this.listen();
     if (watchedEntry.known) {
       queueMicrotask(() => {
         if (watchedEntry.listeners.has(listener))
           notify(listener, watchedEntry.status);
       });
-    } else this.pollSoon();
+    }
+    if (added) this.changed();
     return () => {
       if (!watchedEntry.listeners.delete(listener)) return;
       if (
         watchedEntry.listeners.size === 0 &&
         this.watched.get(account) === watchedEntry
-      )
+      ) {
         this.watched.delete(account);
-      if (this.watched.size > 0) return;
-      this.cancel();
-      this.stopStateListener?.();
-      this.stopStateListener = undefined;
+        this.changed();
+      }
+      this.release();
     };
+  }
+
+  /** A new key for a watched account goes to the Relay with the watch. */
+  public granted(account: string, presenceKey: string): void {
+    if (
+      this.connected() &&
+      this.watchSet().includes(account) &&
+      this.requestedKeys.get(account) !== presenceKey
+    )
+      this.registerSoon();
+  }
+
+  private listen(): void {
+    if (this.stopListeners !== undefined) return;
+    const stopState = this.runtime.subscribeRelayConnectionState((state) => {
+      if (state.state === "connected") return;
+      // A closed socket holds no watch. A new socket registers again.
+      this.cancel();
+      this.requested = [];
+      this.confirmed = false;
+      this.release();
+    });
+    const stopSocket = this.runtime.subscribePresenceSocket((event) => {
+      if (event.type === "update") {
+        this.apply(event.update.account, event.update.presence);
+        return;
+      }
+      this.cancel();
+      this.requested = [];
+      this.confirmed = false;
+      if (this.watched.size === 0) return;
+      if (!this.rejected) {
+        this.changed();
+        return;
+      }
+      this.schedulePoll(PRESENCE_WATCH_POLL_MILLISECONDS);
+      this.registerTimer = setTimeout(
+        () => void this.register(),
+        PRESENCE_WATCH_RENEWAL_MILLISECONDS,
+      );
+    });
+    this.stopListeners = () => {
+      stopState();
+      stopSocket();
+    };
+  }
+
+  /** Stops listening when nothing is watched and no request waits. */
+  private release(): void {
+    if (
+      this.watched.size > 0 ||
+      this.registering ||
+      this.registerTimer !== undefined
+    )
+      return;
+    clearTimeout(this.pollTimer);
+    this.pollTimer = undefined;
+    this.stopListeners?.();
+    this.stopListeners = undefined;
   }
 
   private connected(): boolean {
@@ -316,54 +446,146 @@ class PresenceWatch {
   }
 
   private cancel(): void {
-    clearTimeout(this.timer);
-    this.timer = undefined;
+    clearTimeout(this.registerTimer);
+    this.registerTimer = undefined;
+    clearTimeout(this.pollTimer);
+    this.pollTimer = undefined;
   }
 
-  private schedule(milliseconds: number): void {
-    this.cancel();
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
+  private watchSet(): string[] {
+    return [...this.watched.keys()].slice(0, PRESENCE_WATCH_LIMIT);
+  }
+
+  /** The accounts that the poll reads. */
+  private pollSet(): string[] {
+    const accounts = [...this.watched.keys()];
+    return this.registering || this.confirmed
+      ? accounts.slice(PRESENCE_WATCH_LIMIT)
+      : accounts;
+  }
+
+  /** Registers when the watch set changed, and reads a new account past it. */
+  private changed(): void {
+    if (!this.connected()) return;
+    if (!sameAccounts(this.watchSet(), this.requested)) this.registerSoon();
+    const unknown = [...this.watched.values()]
+      .slice(PRESENCE_WATCH_LIMIT)
+      .some((entry) => !entry.known);
+    if (unknown) this.pollSoon();
+  }
+
+  /** Registers at the next turn, so watches that start together share one. */
+  private registerSoon(): void {
+    if (!this.connected()) return;
+    if (this.registering) {
+      this.registerAgain = true;
+      return;
+    }
+    clearTimeout(this.registerTimer);
+    this.registerTimer = setTimeout(() => void this.register(), 0);
+  }
+
+  private async register(): Promise<void> {
+    this.registerTimer = undefined;
+    if (this.registering || !this.connected()) return;
+    const accounts = this.watchSet();
+    if (accounts.length === 0 && this.requested.length === 0) {
+      this.release();
+      return;
+    }
+    this.registering = true;
+    this.registerAgain = false;
+    this.requested = accounts;
+    try {
+      const targets = await Promise.all(accounts.map(this.target));
+      this.requestedKeys = new Map(
+        targets.map((target) => [target.account, target.presenceKey]),
+      );
+      const request = { type: "presence-watch", accounts: targets } as const;
+      const results = decodePresenceResult(request, await this.send(request));
+      this.rejected = false;
+      this.confirmed = true;
+      accounts.forEach((account, index) =>
+        this.apply(account, results[index] ?? null),
+      );
+    } catch (error) {
+      // The Relay can hold the new set or the old one. The poll reads every
+      // account until a watch answers again.
+      this.confirmed = false;
+      if (refused(error)) this.rejected = true;
+    } finally {
+      this.registering = false;
+      if (this.connected()) {
+        if (this.registerAgain) this.registerSoon();
+        else if (this.watched.size > 0)
+          this.registerTimer = setTimeout(
+            () => void this.register(),
+            PRESENCE_WATCH_RENEWAL_MILLISECONDS,
+          );
+        this.schedulePoll(PRESENCE_WATCH_POLL_MILLISECONDS);
+      }
+      this.release();
+    }
+  }
+
+  /**
+   * Starts the poll when it has accounts to read, and stops it when it has
+   * none. A running poll keeps its interval.
+   */
+  private schedulePoll(milliseconds: number): void {
+    if (this.pollSet().length === 0) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = undefined;
+      return;
+    }
+    if (this.pollTimer !== undefined && milliseconds > 0) return;
+    clearTimeout(this.pollTimer);
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = undefined;
       void this.poll();
     }, milliseconds);
   }
 
   /** Reads at the next turn, so watches that start together share one read. */
   private pollSoon(): void {
-    if (!this.connected() || this.watched.size === 0) return;
+    if (!this.connected()) return;
     if (this.polling) this.pollAgain = true;
-    else this.schedule(0);
+    else this.schedulePoll(0);
   }
 
   private async poll(): Promise<void> {
-    if (this.polling || !this.connected() || this.watched.size === 0) return;
+    if (this.polling || !this.connected()) return;
+    const accounts = this.pollSet();
+    if (accounts.length === 0) return;
     this.polling = true;
     this.pollAgain = false;
-    const accounts = [...this.watched.keys()];
     try {
       const results = await this.read(accounts);
       this.rejected = false;
-      accounts.forEach((account, index) => {
-        const entry = this.watched.get(account);
-        const status = results[index] ?? null;
-        if (entry === undefined || (entry.known && sameStatus(entry.status, status)))
-          return;
-        entry.known = true;
-        entry.status = status;
-        for (const listener of [...entry.listeners]) notify(listener, status);
-      });
+      accounts.forEach((account, index) =>
+        this.apply(account, results[index] ?? null),
+      );
     } catch (error) {
       // A failed read keeps the last value. The next poll reads again.
-      if (
-        error instanceof HostedRelayPresenceError &&
-        error.code === "FRAME_REJECTED"
-      )
-        this.rejected = true;
+      if (refused(error)) this.rejected = true;
     } finally {
       this.polling = false;
-      if (this.connected() && this.watched.size > 0)
-        this.schedule(this.pollAgain ? 0 : PRESENCE_WATCH_POLL_MILLISECONDS);
+      if (this.connected())
+        this.schedulePoll(this.pollAgain ? 0 : PRESENCE_WATCH_POLL_MILLISECONDS);
     }
+  }
+
+  /** Notifies the listeners of a watched account when its presence changed. */
+  private apply(
+    account: string,
+    status: HostedRelayPresenceStatus | null,
+  ): void {
+    const entry = this.watched.get(account);
+    if (entry === undefined || (entry.known && sameStatus(entry.status, status)))
+      return;
+    entry.known = true;
+    entry.status = status;
+    for (const listener of [...entry.listeners]) notify(listener, status);
   }
 }
 
@@ -384,7 +606,7 @@ function notify(
 /**
  * The presence of a hosted client with a mailbox subscription. Every request
  * goes over the socket, so start the subscription first. Each client has one
- * presence object, and its watches share one poll.
+ * presence object, and its watches share one presence watch and one poll.
  */
 export function hostedRelayPresence(
   client: DefaultSignalProtocolClient,
@@ -393,7 +615,7 @@ export function hostedRelayPresence(
   if (existing !== undefined) return existing;
   const runtime = presenceRuntime(client);
   // Every request goes over the socket, never over HTTP.
-  const operations = presenceOperations(runtime, async (request) => {
+  const send: PresenceSend = async (request) => {
     const socket = runtime.presenceSocket;
     if (socket === undefined)
       throw new HostedRelayPresenceError(
@@ -402,10 +624,20 @@ export function hostedRelayPresence(
         true,
       );
     return socket.presence(request);
-  });
-  const watch = new PresenceWatch(runtime, operations.read);
+  };
+  const operations = presenceOperations(runtime, send);
+  const watch = new PresenceWatch(
+    runtime,
+    operations.read,
+    (account) => presenceTarget(runtime, account),
+    send,
+  );
   const presence: HostedRelayPresence = {
     ...operations,
+    grant: async (account, presenceKey) => {
+      await operations.grant(account, presenceKey);
+      watch.granted(account, presenceKey);
+    },
     watch: (account, onChange) => watch.watch(account, onChange),
   };
   presences.set(client, presence);

@@ -10,7 +10,7 @@
 
 The presence of a hosted client with a mailbox subscription. Every request
 goes over the socket, so start the subscription first. Each client has one
-presence object, and its watches share one poll.
+presence object, and its watches share one presence watch and one poll.
 
 ## Parameters
 

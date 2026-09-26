@@ -216,10 +216,14 @@ changes. A new profile key revokes the old presence key, and the next message
 delivers the new one. Each device of the account must return the same
 profile key. Group messages do not carry the key.
 
-`watch()` reads when the socket connects and then every 30 s while it stays
-connected. It calls the listener only on a change. With `bindRelayLifecycle`,
-the socket closes in the background, so the poll stops there. On web, a
-hidden tab continues to poll.
+`watch()` registers one presence watch for the first 16 watched accounts. It
+registers when the socket connects, at each change of that set, and again
+every 120 s. The Relay then pushes each change of a watched account. The
+client reads the other accounts every 30 s. After a watch fails, or has no
+answer in 10 s, it reads every account every 30 s until a watch answers
+again. It calls the listener only on a change. With `bindRelayLifecycle`, the
+socket closes in the background, so the watch and the poll stop there. On
+web, a hidden tab keeps its watch and renews it.
 
 A wake client has no socket. Use `hostedRelayWakePresence(client)` beside
 `pullHostedRelayAfterWake()`. It has the same members without `watch()`, and

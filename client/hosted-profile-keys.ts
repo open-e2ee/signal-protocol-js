@@ -7,7 +7,7 @@
  * presence key, and the Relay revokes the old one.
  *
  * The profile key goes only in encrypted content. The presence key goes only
- * in the `presence-key` frame and the `presence-read` frame.
+ * in the `presence-key`, `presence-read`, and `presence-watch` frames.
  */
 import { base64ToBytes, bytesToBase64 } from "../internal/crypto";
 import type { Logger } from "../logger";

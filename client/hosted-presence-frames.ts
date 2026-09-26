@@ -9,9 +9,15 @@
  * The SDK has no fallback for that close. It rejects the pending requests
  * with `FRAME_REJECTED`.
  *
+ * On the socket only, a `presence-watch` request registers the device's
+ * whole watch set. After its answer, the Relay pushes one `presence-update`
+ * frame for each socket edge of a watched account. That frame has no `id`,
+ * because it answers no request.
+ *
  * A wake client has no socket. It sends the same request body, without `id`
  * and with `publishableKey`, as an authenticated `POST /presence`, and the
- * response body is the `result` object of the same request type.
+ * response body is the `result` object of the same request type. The HTTP
+ * carrier has no watch.
  */
 import {
   base64ToBytes,
@@ -25,6 +31,9 @@ export const PRESENCE_FRAME_VERSION = 1;
 
 /** The Relay refuses a presence read with more accounts. */
 export const PRESENCE_READ_LIMIT = 100;
+
+/** The Relay refuses a presence watch with more accounts. */
+export const PRESENCE_WATCH_LIMIT = 16;
 
 /** A presence key is 16 bytes, sent as 22 canonical base64url characters. */
 const PRESENCE_KEY_BYTES = 16;
@@ -112,6 +121,11 @@ export type HostedRelayPresenceRequest =
   | {
       readonly type: "presence-read";
       readonly accounts: readonly HostedRelayPresenceTarget[];
+    }
+  | {
+      /** The whole watch set of the device. No account stops the watch. */
+      readonly type: "presence-watch";
+      readonly accounts: readonly HostedRelayPresenceTarget[];
     };
 
 /** The decoded result of each presence request type. */
@@ -121,6 +135,14 @@ export interface HostedRelayPresenceResults {
   readonly "presence-setting": HostedRelayPresenceAccount;
   readonly "presence-key": undefined;
   readonly "presence-read": readonly (HostedRelayPresenceStatus | null)[];
+  readonly "presence-watch": readonly (HostedRelayPresenceStatus | null)[];
+}
+
+/** One pushed socket edge of a watched account. */
+export interface HostedRelayPresenceUpdate {
+  /** The account address, as the watch sent it. */
+  readonly account: string;
+  readonly presence: HostedRelayPresenceStatus;
 }
 
 /**
@@ -210,6 +232,19 @@ export function assertPresenceKey(presenceKey: unknown): string {
   return presenceKey;
 }
 
+function targetFields(
+  targets: readonly HostedRelayPresenceTarget[],
+): JsonRecord[] {
+  return targets.map((target) =>
+    target.presenceKey === undefined
+      ? { account: assertPresenceAccount(target.account) }
+      : {
+          account: assertPresenceAccount(target.account),
+          presenceKey: assertPresenceKey(target.presenceKey),
+        },
+  );
+}
+
 /** The request fields after `type` and `version`, in their wire order. */
 function requestFields(request: HostedRelayPresenceRequest): JsonRecord {
   switch (request.type) {
@@ -229,16 +264,14 @@ function requestFields(request: HostedRelayPresenceRequest): JsonRecord {
         request.accounts.length > PRESENCE_READ_LIMIT
       )
         throw new Error("Signal Protocol Relay presence read is invalid");
-      return {
-        accounts: request.accounts.map((target) =>
-          target.presenceKey === undefined
-            ? { account: assertPresenceAccount(target.account) }
-            : {
-                account: assertPresenceAccount(target.account),
-                presenceKey: assertPresenceKey(target.presenceKey),
-              },
-        ),
-      };
+      return { accounts: targetFields(request.accounts) };
+    case "presence-watch":
+      if (
+        !Array.isArray(request.accounts) ||
+        request.accounts.length > PRESENCE_WATCH_LIMIT
+      )
+        throw new Error("Signal Protocol Relay presence watch is invalid");
+      return { accounts: targetFields(request.accounts) };
     default:
       throw new Error("Signal Protocol Relay presence request is invalid");
   }
@@ -259,11 +292,18 @@ export function encodePresenceFrame(
   });
 }
 
-/** The HTTP body of one presence request from a client with no socket. */
+/**
+ * The HTTP body of one presence request from a client with no socket. A watch
+ * exists only on the socket, so this carrier refuses it.
+ */
 export function presenceHttpBody(
   publishableKey: string,
   request: HostedRelayPresenceRequest,
 ): JsonRecord {
+  if (request.type === "presence-watch")
+    throw new Error(
+      "Signal Protocol Relay presence watch needs the mailbox socket",
+    );
   return {
     type: request.type,
     version: PRESENCE_FRAME_VERSION,
@@ -317,6 +357,37 @@ export function decodePresenceAnswer(frame: JsonRecord): PresenceAnswer {
       frame.retryable,
     ),
   };
+}
+
+/** True for the frame type of a pushed presence edge. */
+export function isPresenceUpdateType(type: unknown): boolean {
+  return type === "presence-update";
+}
+
+/**
+ * Decodes a `presence-update` frame. A malformed frame throws, and the
+ * subscription treats it as an invalid frame. The Relay never pushes `null`.
+ */
+export function decodePresenceUpdate(
+  frame: JsonRecord,
+): HostedRelayPresenceUpdate {
+  if (
+    frame.type !== "presence-update" ||
+    frame.version !== PRESENCE_FRAME_VERSION ||
+    !exactKeys(frame, ["type", "version", "account", "presence"]) ||
+    typeof frame.account !== "string" ||
+    frame.account.length === 0 ||
+    frame.account.length > MAXIMUM_ACCOUNT_CHARACTERS
+  )
+    throw new Error("Invalid presence frame.");
+  let presence: HostedRelayPresenceStatus | null;
+  try {
+    presence = decodeStatus(frame.presence);
+  } catch {
+    throw new Error("Invalid presence frame.");
+  }
+  if (presence === null) throw new Error("Invalid presence frame.");
+  return { account: frame.account, presence };
 }
 
 const MODES: readonly unknown[] = ["off", "default-on", "default-off", "forced"];
@@ -410,7 +481,8 @@ export function decodePresenceResult<
       if (!record(value) || Object.keys(value).length !== 0)
         throw invalidResult();
       return undefined as Result;
-    case "presence-read": {
+    case "presence-read":
+    case "presence-watch": {
       if (
         !record(value) ||
         !exactKeys(value, ["results"]) ||
@@ -418,7 +490,7 @@ export function decodePresenceResult<
         value.results.length !== request.accounts.length
       )
         throw invalidResult();
-      const results: HostedRelayPresenceResults["presence-read"] =
+      const results: readonly (HostedRelayPresenceStatus | null)[] =
         value.results.map(decodeStatus);
       return results as unknown as Result;
     }

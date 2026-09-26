@@ -1,5 +1,23 @@
 # Changelog
 
+## 7.1.0
+
+- **New: `watch()` registers a presence watch and receives pushed updates.**
+  On the mailbox socket, `watch()` now sends one `presence-watch` request for
+  the first 16 watched accounts. It sends the request when the socket
+  connects, at each change of that set, and again every 120 s
+  (`PRESENCE_WATCH_RENEWAL_MILLISECONDS`). The answer is the current presence
+  of those accounts. After that, the Signal Protocol Relay pushes a
+  `presence-update` frame for each change, and `watch()` calls the listener
+  as it does for a changed read. The 30 s poll now reads only the accounts
+  past the first 16. After a watch fails, or has no answer in 10 s, the poll
+  reads every account every 30 s, and the watch tries again 120 s later. A
+  new presence key from `grant()` for a watched account sends the watch
+  again. A malformed `presence-update` frame reconnects the socket. The wake
+  client and the HTTP carrier have no watch. A Relay without
+  `presence-watch` closes the socket with 1008. The client then reads after
+  30 s and tries the watch again after 120 s.
+
 ## 7.0.0
 
 - **Breaking: 1:1 content can carry the profile key, with

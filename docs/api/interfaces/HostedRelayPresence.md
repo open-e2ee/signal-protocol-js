@@ -126,9 +126,14 @@ Writes the local account's setting. It fails with
 > **watch**(`account`, `onChange`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
 
 Calls `onChange` with the account's presence, then again after each
-change. It reads every 30 s while the mailbox socket is connected, and at
-once when the socket connects. A failed read keeps the last value. After
-a `FRAME_REJECTED` read, it waits 30 s after the reconnect.
+change. While the mailbox socket is connected, the client registers one
+presence watch for the first 16 watched accounts. It registers at once,
+at each change of that set, at each new socket, and again every 120 s.
+The Relay then pushes each change. The client reads the other accounts
+every 30 s. After a failed watch, or when no answer arrives in 10 s, it
+reads every account every 30 s and tries the watch again 120 s later. A
+failed read keeps the last value. After a `FRAME_REJECTED` request, it
+waits 30 s after the reconnect to read and 120 s to watch.
 
 #### Parameters
 

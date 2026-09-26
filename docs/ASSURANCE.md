@@ -21,11 +21,11 @@ Most recent full run on 2026-09-26:
 | | |
 |---|---|
 | Test modules | 432 |
-| Test cases | 7,611 |
-| Passed | 7,609 |
+| Test cases | 7,620 |
+| Passed | 7,618 |
 | Skipped | 2 |
 | Failed | 0 |
-| Wall time | 239 s |
+| Wall time | 219 s |
 
 The total counts test cases. One test case can contain several assertions. Separate commands run the longer performance and endurance checks.
 

@@ -11,7 +11,7 @@ Add encrypted messaging to Expo, React Native, browser, and Node applications. T
 
 The default policy requires post-quantum session establishment and ratcheting. The protocol implementation is open source under the MIT License or the Apache License 2.0, at your option.
 
-[**Run an encrypted exchange in your browser**](https://open-e2ee.dev/playground) · [Edit on StackBlitz](https://stackblitz.com/fork/github/open-e2ee/signal-protocol-js/tree/v7.0.0/examples/browser) · [Run on Expo / Hermes](./examples/expo/README.md)
+[**Run an encrypted exchange in your browser**](https://open-e2ee.dev/playground) · [Edit on StackBlitz](https://stackblitz.com/fork/github/open-e2ee/signal-protocol-js/tree/v7.1.0/examples/browser) · [Run on Expo / Hermes](./examples/expo/README.md)
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-2f6f5e)](./LICENSE)
 [![npm version](https://img.shields.io/npm/v/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
@@ -43,7 +43,7 @@ The relay never needs message plaintext or device private keys.
 
 OpenE2EE implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
-Version `7.0.x`. Public APIs and persisted formats follow semantic versioning.
+Version `7.1.x`. Public APIs and persisted formats follow semantic versioning.
 
 ## Install
 

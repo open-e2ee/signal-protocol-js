@@ -7,9 +7,12 @@ import type {
 import {
   HostedRelayPresenceError,
   decodePresenceAnswer,
+  decodePresenceUpdate,
   encodePresenceFrame,
   isPresenceAnswerType,
+  isPresenceUpdateType,
   type HostedRelayPresenceRequest,
+  type HostedRelayPresenceUpdate,
 } from "./hosted-presence-frames";
 
 const MAILBOX_PROTOCOL = "open-e2ee-relay.v1";
@@ -34,6 +37,14 @@ const PRESENCE_ANSWER_MILLISECONDS = 10_000;
 /** The Relay closes the socket with this code on a frame that it refuses. */
 const POLICY_VIOLATION_CLOSE_CODE = 1008;
 
+/**
+ * A presence event of the live socket: `open` when a new socket opens, which
+ * holds no presence watch, and `update` for each pushed presence edge.
+ */
+export type PresenceSocketEvent =
+  | { readonly type: "open" }
+  | { readonly type: "update"; readonly update: HostedRelayPresenceUpdate };
+
 interface MailboxSubscription {
   authenticate(): Promise<{ url: string; token: string; renewAt: number }>;
   /** Decodes the `message` of a `durable-message` frame. */
@@ -55,6 +66,11 @@ interface MailboxSubscription {
     state: RelayConnectionState["state"],
     reason?: RelayConnectionReason,
   ): void;
+  /**
+   * Receives each presence event. A token renewal opens a new socket without
+   * a connection transition, and the new socket holds no watch.
+   */
+  onPresence?(event: PresenceSocketEvent): void;
 }
 
 export interface MailboxSubscriptionHandle {
@@ -307,6 +323,7 @@ export function subscribeHostedMailbox(
         recoveryTimer = undefined;
         reconnectDelay = 1_000;
         options.onConnectionState("connected");
+        options.onPresence?.({ type: "open" });
         const schedulePing = () => {
           pingTimer = setTimeout(() => {
             if (!current()) return;
@@ -355,7 +372,12 @@ export function subscribeHostedMailbox(
             throw new Error("Invalid mailbox frame.");
           if (isPresenceAnswerType(frame.type))
             answerPresence(frame as Record<string, unknown>);
-          else if (frame.type === "durable-message" && "message" in frame)
+          else if (isPresenceUpdateType(frame.type)) {
+            const update = decodePresenceUpdate(
+              frame as Record<string, unknown>,
+            );
+            options.onPresence?.({ type: "update", update });
+          } else if (frame.type === "durable-message" && "message" in frame)
             queueDurable(candidate, frame.message);
           else if (frame.type === "ephemeral-message" && "message" in frame) {
             if (ephemeral.length >= MAXIMUM_PENDING_FRAMES)
