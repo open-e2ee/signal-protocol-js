@@ -92,6 +92,8 @@ import {
   type ViewOnceOpenSyncInput,
 } from './content-adapter';
 // Note: group utilities (isGroupId, extractGroupId, createGroupId) are used by SignalProtocolServiceCipher
+import { isGroupId } from '../internal/groups';
+import { profileKeyExchange } from './profile-key-exchange';
 import { SignalProtocolServiceCipher, sortEnvelopesForDecryption } from './signal-service-cipher';
 import { establishMultiDeviceSessions } from '../internal/sesame/device-registry';
 import { isRetryableDecryptionError } from './retry-utils';
@@ -698,6 +700,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       hooks: this.hooks,
       sesameManager: this.sesameManager,
       contentAdapter: this.contentAdapter,
+      profileKeys: profileKeyExchange(this),
     };
   }
 
@@ -1776,16 +1779,23 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     // Normalize all inputs to Uint8Array before calling cipher.encrypt()
     let plaintextBytes: Uint8Array;
     let clientTimestamp: number | undefined;
+    // A 1:1 send to a contact carries this account's profile key when an exchange is bound.
+    const profileKeys =
+      isGroupId(recipientId) || recipientId === this.userId ? undefined : profileKeyExchange(this);
+    let profileKey: string | undefined;
 
     if (isDataMessage(content)) {
       // DataMessage path: build Content, set timestamp, serialize to protobuf (application send-pipeline ordering)
       const timestamp = (content.timestamp as number | undefined) ?? Date.now();
       clientTimestamp = timestamp;
-      const dm: DataMessageInput = { ...content, timestamp };
+      profileKey = await profileKeys?.outgoing();
+      const dm: DataMessageInput = { ...content, timestamp, ...(profileKey && { profileKey }) };
       plaintextBytes = this.contentAdapter.serializeDataMessage(dm);
     } else if (typeof content === 'string') {
+      await profileKeys?.offer(recipientId);
       plaintextBytes = new TextEncoder().encode(content);
     } else {
+      await profileKeys?.offer(recipientId);
       plaintextBytes = content; // already Uint8Array
     }
 
@@ -1793,6 +1803,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       ...options,
       ...(clientTimestamp !== undefined && { timestamp: clientTimestamp }),
     });
+    if (profileKey) await profileKeys?.delivered(recipientId, profileKey);
     return clientTimestamp !== undefined ? { ...result, clientTimestamp } : result;
   }
 

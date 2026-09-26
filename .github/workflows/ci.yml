@@ -17,6 +17,7 @@ jobs:
   build:
     name: Build, typecheck, and audit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -46,6 +47,7 @@ jobs:
   quickstart:
     name: README quickstart runs as printed
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -80,6 +82,7 @@ jobs:
   csp:
     name: Quickstart runs with code generation disallowed
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -102,6 +105,7 @@ jobs:
   import-surface:
     name: Every export subpath imports without optional peers
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -126,6 +130,7 @@ jobs:
   doc-snippets:
     name: Shipped doc snippets run as printed
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 

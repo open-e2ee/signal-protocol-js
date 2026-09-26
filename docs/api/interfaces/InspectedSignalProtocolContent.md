@@ -14,6 +14,22 @@
 
 ***
 
+### profileKey?
+
+> `optional` **profileKey?**: `string`
+
+The sender's profile key, from `dataMessage.profileKey`, as standard base64.
+
+***
+
+### profileKeyUpdate?
+
+> `optional` **profileKeyUpdate?**: `boolean`
+
+True for a DataMessage with the Signal `PROFILE_KEY_UPDATE` flag.
+
+***
+
 ### receipt
 
 > **receipt**: [`ParsedReceiptContent`](ParsedReceiptContent.md) \| `null`

@@ -4,6 +4,13 @@ import type {
   RelayConnectionState,
   Unsubscribe,
 } from "../remote/relay/types";
+import {
+  HostedRelayPresenceError,
+  decodePresenceAnswer,
+  encodePresenceFrame,
+  isPresenceAnswerType,
+  type HostedRelayPresenceRequest,
+} from "./hosted-presence-frames";
 
 const MAILBOX_PROTOCOL = "open-e2ee-relay.v1";
 const AUTH_PROTOCOL_PREFIX = "open-e2ee-relay.auth.";
@@ -20,6 +27,12 @@ const MAXIMUM_FRAME_CHARACTERS = 1024 * 1024;
 const MAXIMUM_PENDING_FRAMES = 100;
 /** The Relay refuses an acknowledgment frame that carries more ids. */
 const MAXIMUM_ACKNOWLEDGMENT_IDS = 100;
+/** A presence request fails with `BUSY` while this many wait for an answer. */
+const MAXIMUM_PENDING_PRESENCE_REQUESTS = 16;
+/** A presence request fails with `TIMEOUT` when its answer takes longer. */
+const PRESENCE_ANSWER_MILLISECONDS = 10_000;
+/** The Relay closes the socket with this code on a frame that it refuses. */
+const POLICY_VIOLATION_CLOSE_CODE = 1008;
 
 interface MailboxSubscription {
   authenticate(): Promise<{ url: string; token: string; renewAt: number }>;
@@ -51,6 +64,27 @@ export interface MailboxSubscriptionHandle {
    * Queued ids leave in one frame when the delivered frames are drained.
    */
   acknowledge(messageId: string): boolean;
+  /**
+   * Sends one presence request frame on the live socket and resolves with the
+   * `result` of its answer. It rejects with a `HostedRelayPresenceError`: the
+   * Relay's error, or `NOT_CONNECTED`, `TIMEOUT`, `BUSY`, or
+   * `FRAME_REJECTED`. There is no HTTP fallback.
+   */
+  presence(request: HostedRelayPresenceRequest): Promise<unknown>;
+}
+
+interface PendingPresence {
+  readonly resolve: (result: unknown) => void;
+  readonly reject: (error: HostedRelayPresenceError) => void;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
+function notConnected(): HostedRelayPresenceError {
+  return new HostedRelayPresenceError(
+    "NOT_CONNECTED",
+    "The mailbox socket is not connected",
+    true,
+  );
 }
 
 /**
@@ -77,9 +111,32 @@ export function subscribeHostedMailbox(
   const ephemeral: { socket: WebSocket; message: unknown }[] = [];
   const durable: Envelope[] = [];
   const acknowledgments: string[] = [];
+  const presenceRequests = new Map<string, PendingPresence>();
+  let presenceSequence = 0;
 
   const liveSocket = () =>
     active && socket?.readyState === 1 ? socket : undefined;
+
+  /** Settles every pending presence request with one error. */
+  const rejectPresence = (error: HostedRelayPresenceError) => {
+    const pending = [...presenceRequests.values()];
+    presenceRequests.clear();
+    for (const request of pending) {
+      clearTimeout(request.timer);
+      request.reject(error);
+    }
+  };
+
+  const answerPresence = (frame: Record<string, unknown>) => {
+    const answer = decodePresenceAnswer(frame);
+    const request = presenceRequests.get(answer.id);
+    // An answer after its timeout has nothing to settle.
+    if (request === undefined) return;
+    presenceRequests.delete(answer.id);
+    clearTimeout(request.timer);
+    if ("error" in answer) request.reject(answer.error);
+    else request.resolve(answer.result);
+  };
 
   const flushAcknowledgments = () => {
     clearTimeout(acknowledgmentTimer);
@@ -188,6 +245,8 @@ export function subscribeHostedMailbox(
     clearTimeout(renewalTimer);
     clearTimeout(pingTimer);
     unansweredPings = 0;
+    // An answer can arrive only on the socket that carried the request.
+    rejectPresence(notConnected());
     try {
       previous?.close(1000, "Subscription connection ended.");
     } catch {
@@ -294,7 +353,9 @@ export function subscribeHostedMailbox(
           const frame: unknown = JSON.parse(event.data);
           if (typeof frame !== "object" || frame === null || !("type" in frame))
             throw new Error("Invalid mailbox frame.");
-          if (frame.type === "durable-message" && "message" in frame)
+          if (isPresenceAnswerType(frame.type))
+            answerPresence(frame as Record<string, unknown>);
+          else if (frame.type === "durable-message" && "message" in frame)
             queueDurable(candidate, frame.message);
           else if (frame.type === "ephemeral-message" && "message" in frame) {
             if (ephemeral.length >= MAXIMUM_PENDING_FRAMES)
@@ -307,8 +368,17 @@ export function subscribeHostedMailbox(
           retryConnection("frame");
         }
       });
-      candidate.addEventListener("close", () => {
-        if (current()) retryConnection("closed");
+      candidate.addEventListener("close", (event: CloseEvent) => {
+        if (!current()) return;
+        if (event.code === POLICY_VIOLATION_CLOSE_CODE)
+          rejectPresence(
+            new HostedRelayPresenceError(
+              "FRAME_REJECTED",
+              "The Relay closed the mailbox socket on a refused frame",
+              false,
+            ),
+          );
+        retryConnection("closed");
       });
       candidate.addEventListener("error", () => {
         if (current()) retryConnection("error");
@@ -331,6 +401,47 @@ export function subscribeHostedMailbox(
         // An acknowledgment outside a delivery batch leaves on its own.
         acknowledgmentTimer = setTimeout(flushAcknowledgments, 0);
       return true;
+    },
+    presence: (request) => {
+      const live = liveSocket();
+      if (live === undefined) return Promise.reject(notConnected());
+      if (presenceRequests.size >= MAXIMUM_PENDING_PRESENCE_REQUESTS)
+        return Promise.reject(
+          new HostedRelayPresenceError(
+            "BUSY",
+            "Too many presence requests wait for an answer",
+            true,
+          ),
+        );
+      presenceSequence += 1;
+      const id = presenceSequence.toString(36);
+      let frame: string;
+      try {
+        frame = encodePresenceFrame(id, request);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      return new Promise<unknown>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          if (!presenceRequests.delete(id)) return;
+          reject(
+            new HostedRelayPresenceError(
+              "TIMEOUT",
+              "The Relay did not answer the presence request",
+              true,
+            ),
+          );
+        }, PRESENCE_ANSWER_MILLISECONDS);
+        presenceRequests.set(id, { resolve, reject, timer });
+        try {
+          live.send(frame);
+        } catch {
+          presenceRequests.delete(id);
+          clearTimeout(timer);
+          reject(notConnected());
+          retryConnection("error");
+        }
+      });
     },
     unsubscribe: () => {
       if (!active) return;

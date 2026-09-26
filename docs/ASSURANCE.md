@@ -16,16 +16,16 @@ Private testing also exists in other open-source projects. [SQLite publishes som
 
 Engineering CI runs the default automated checks on pull requests and changes to the main branch. Release preparation requires a passing run.
 
-Most recent full run on 2026-09-24:
+Most recent full run on 2026-09-26:
 
 | | |
 |---|---|
-| Test modules | 430 |
-| Test cases | 7,590 |
-| Passed | 7,588 |
+| Test modules | 432 |
+| Test cases | 7,611 |
+| Passed | 7,609 |
 | Skipped | 2 |
 | Failed | 0 |
-| Wall time | 250 s |
+| Wall time | 239 s |
 
 The total counts test cases. One test case can contain several assertions. Separate commands run the longer performance and endurance checks.
 

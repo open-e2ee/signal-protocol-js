@@ -170,6 +170,61 @@ Recovery rejects changes to the envelope identity or ciphertext.
 `processIncomingEnvelopes()` remains a lower-level decryption API. It returns
 plaintext to its caller. It does not run the application handler.
 
+### Hosted presence
+
+`hostedRelayPresence(client)` reads and writes presence over the mailbox
+socket, so start the subscription first. A request without a connected
+socket fails with `NOT_CONNECTED`, and the SDK does not send it over HTTP.
+
+<!-- doc-snippet:skip requires-external-context -->
+```ts
+import { hostedRelayPresence } from '@open-e2ee/signal-protocol-sdk';
+
+const presence = hostedRelayPresence(client);
+const policy = await presence.policy(); // show or disable the toggle
+await presence.setVisibility('hidden');
+
+const stop = presence.watch(contactAccount, (status) => {
+  // null, or { online, lastSeen }
+});
+```
+
+A contact's presence needs the contact's presence key. Give the hosted client
+`hosted.profileKeys`, and the SDK exchanges the keys with no app code:
+
+<!-- doc-snippet:skip requires-external-context -->
+```ts
+const client = await createHostedSignalProtocolClient({
+  adapters,
+  hosted: {
+    getIdentityAssertion,
+    relayUrl,
+    profileKeys: {
+      getOwnProfileKey: async () => profileKey, // 32 bytes, or null
+      contacts, // a MutableContactProfileStateStore
+    },
+  },
+});
+```
+
+Each 1:1 DataMessage carries the profile key in `profileKey`, inside the
+encrypted content. Before a 1:1 string or byte send, the SDK sends one key
+update to a contact that does not have the current key. The receiving SDK
+keeps the key in `contacts`, derives the presence key, and calls `grant()`.
+The SDK calls `accessKey()` when the socket connects and when the profile key
+changes. A new profile key revokes the old presence key, and the next message
+delivers the new one. Each device of the account must return the same
+profile key. Group messages do not carry the key.
+
+`watch()` reads when the socket connects and then every 30 s while it stays
+connected. It calls the listener only on a change. With `bindRelayLifecycle`,
+the socket closes in the background, so the poll stops there. On web, a
+hidden tab continues to poll.
+
+A wake client has no socket. Use `hostedRelayWakePresence(client)` beside
+`pullHostedRelayAfterWake()`. It has the same members without `watch()`, and
+it sends each request as one authenticated HTTP request.
+
 ### Background key maintenance
 
 Use the dedicated headless entry point from a background task after restoring

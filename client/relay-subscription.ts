@@ -231,8 +231,20 @@ async function handleDecryptionSuccess(
     senderDeviceId: decryptedEnvelope.senderDeviceId,
   };
 
+  // A peer's profile key in authenticated 1:1 content. The exchange never throws.
+  if (
+    inspectedContent.profileKey !== undefined &&
+    !decryptedEnvelope.isGroup &&
+    decryptedEnvelope.senderId !== ctx.userId
+  ) {
+    await ctx.profileKeys?.incoming(decryptedEnvelope.senderId, inspectedContent.profileKey);
+  }
+
   if (inspectedContent.senderKeyDistribution) {
     // The cipher installed this authenticated distribution before returning.
+    return;
+  } else if (inspectedContent.profileKeyUpdate) {
+    // A key-update DataMessage carries only the profile key, kept above.
     return;
   } else if (receipt) {
     await callbacks.handleDeliveryReceipt(authenticatedEnvelope, receipt);

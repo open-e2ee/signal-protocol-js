@@ -135,6 +135,14 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
 
 > `readonly` `optional` **onProgress?**: [`HostedRelayIdentityProgressCallback`](../type-aliases/HostedRelayIdentityProgressCallback.md)
 
+#### profileKeys?
+
+> `readonly` `optional` **profileKeys?**: [`HostedRelayProfileKeys`](HostedRelayProfileKeys.md)
+
+Carries this account's profile key in each end-to-end encrypted 1:1
+message and keeps the key that each contact sends. The SDK then
+registers and grants the presence keys, so the app sends no key itself.
+
 #### relayUrl
 
 > `readonly` **relayUrl**: `string`

@@ -60,6 +60,11 @@ import type {
   HostedRelayPushRegistration,
   HostedRelayPushRuntime,
 } from "./hosted-push";
+import type { HostedRelayPresenceRuntime } from "./hosted-presence";
+import {
+  presenceHttpBody,
+  type HostedRelayPresenceRequest,
+} from "./hosted-presence-frames";
 import {
   subscribeHostedMailbox,
   type MailboxSubscriptionHandle,
@@ -595,7 +600,10 @@ function decodeDeliveryWire(value: Uint8Array): HostedDeliveryWireEnvelope {
 }
 
 export class HostedRelayHttpTransport
-  implements SignalProtocolRelayServer, HostedRelayPushRuntime
+  implements
+    SignalProtocolRelayServer,
+    HostedRelayPushRuntime,
+    HostedRelayPresenceRuntime
 {
   private readonly groups: HostedGroupServer;
   public readonly groupServer: RelayGroupServer;
@@ -1242,6 +1250,30 @@ export class HostedRelayHttpTransport
     if (value !== undefined) {
       throw new Error("Signal Protocol Relay returned an invalid push result");
     }
+  }
+
+  public get presenceScope(): string {
+    return this.session.relayScopeId;
+  }
+
+  public get presenceStore(): Pick<
+    SignalProtocolLocalStore,
+    "getMetadata" | "setMetadata"
+  > {
+    return this.storage;
+  }
+
+  /** The live mailbox socket, or `undefined` while no subscription runs. */
+  public get presenceSocket(): MailboxSubscriptionHandle | undefined {
+    return this.subscription;
+  }
+
+  /** Posts one presence request, for a wake client with no socket. */
+  public postPresence(request: HostedRelayPresenceRequest): Promise<unknown> {
+    return this.authenticatedPost(
+      "/presence",
+      presenceHttpBody(this.connection.publishableKey, request),
+    );
   }
 
   public async pullMailbox(): Promise<readonly IncomingEnvelope[]> {

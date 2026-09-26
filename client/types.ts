@@ -13,6 +13,7 @@ import type { SesameManager } from '../internal/sesame/types';
 import type { SignalProtocolClientHooks } from './event-hooks';
 import { ContentHint } from '../types/messages';
 import type { SignalProtocolContentAdapter } from './content-adapter';
+import type { ProfileKeyExchange } from './profile-key-exchange';
 import type { Logger } from '../logger';
 import type {
   MediaAttachmentCheckpointCallback,
@@ -66,6 +67,9 @@ export interface SignalProtocolClientContext {
 
   /** App-provided content adapter */
   readonly contentAdapter: SignalProtocolContentAdapter;
+
+  /** The profile key exchange of a hosted client, or `undefined` */
+  readonly profileKeys?: ProfileKeyExchange;
 }
 
 /**

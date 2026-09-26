@@ -37,6 +37,13 @@ import {
   type HostedRelayTransportResult,
 } from './hosted-transport';
 import { bindHostedRelayPushRuntime } from './hosted-push';
+import { bindHostedRelayPresenceRuntime } from './hosted-presence';
+import {
+  assertHostedRelayProfileKeys,
+  bindHostedRelayProfileKeys,
+  type HostedRelayProfileKeys,
+} from './hosted-profile-keys';
+import { resolveSignalProtocolLogger } from '../logger';
 import {
   resolveHostedGroupOptions,
   type HostedGroupOptions,
@@ -47,6 +54,26 @@ export {
   registerHostedRelayPush,
   removeHostedRelayPush,
 } from './hosted-push';
+export {
+  HostedRelayPresenceError,
+  hostedRelayPresence,
+  hostedRelayWakePresence,
+} from './hosted-presence';
+export type {
+  HostedRelayPresence,
+  HostedRelayPresenceAccount,
+  HostedRelayPresenceApproximateLastSeen,
+  HostedRelayPresenceAudience,
+  HostedRelayPresenceErrorCode,
+  HostedRelayPresenceLastSeenPolicy,
+  HostedRelayPresenceMode,
+  HostedRelayPresencePolicy,
+  HostedRelayPresenceSetting,
+  HostedRelayPresenceStatus,
+  HostedRelayPresenceVisibility,
+  HostedRelayWakePresence,
+} from './hosted-presence';
+export type { HostedRelayProfileKeys } from './hosted-profile-keys';
 export type {
   HostedRelayPushPlatform,
   HostedRelayPushProfile,
@@ -268,6 +295,12 @@ export interface HostedSignalProtocolClientOptions extends Omit<
     readonly assurance?: IdentityAssertionAssurance;
     readonly onProgress?: HostedRelayIdentityProgressCallback;
     readonly sealedSenderAccessMode?: SealedSenderAccessMode;
+    /**
+     * Carries this account's profile key in each end-to-end encrypted 1:1
+     * message and keeps the key that each contact sends. The SDK then
+     * registers and grants the presence keys, so the app sends no key itself.
+     */
+    readonly profileKeys?: HostedRelayProfileKeys;
   };
 }
 
@@ -817,6 +850,7 @@ async function createClientFromHostedResult(
   sealedSenderAccessMode?: SealedSenderAccessMode,
   remoteObjectStore?: SignalProtocolRemoteObjectStore,
   hostedTransport?: HostedRelayTransportResult['transport'],
+  profileKeys?: HostedRelayProfileKeys,
 ): Promise<DefaultSignalProtocolClient> {
   const { certificateTrust } = connection;
   assertHostedBootstrapResult(result, certificateTrust);
@@ -871,6 +905,14 @@ async function createClientFromHostedResult(
   );
   if (hostedTransport !== undefined) {
     bindHostedRelayPushRuntime(client, hostedTransport);
+    bindHostedRelayPresenceRuntime(client, hostedTransport);
+    if (profileKeys !== undefined)
+      bindHostedRelayProfileKeys(
+        client,
+        hostedTransport,
+        profileKeys,
+        resolveSignalProtocolLogger(config.logger),
+      );
   }
   return client;
 }
@@ -1080,6 +1122,7 @@ export async function createHostedSignalProtocolClient(
   options: HostedSignalProtocolClientOptions,
 ): Promise<DefaultSignalProtocolClient> {
   const { adapters, hosted, ...clientOptions } = options;
+  if (hosted.profileKeys !== undefined) assertHostedRelayProfileKeys(hosted.profileKeys);
   const connection = await resolveHostedRelayConnection(hosted.relayUrl);
   const { publishableKey } = connection;
   const operation =
@@ -1112,6 +1155,7 @@ export async function createHostedSignalProtocolClient(
       hosted.sealedSenderAccessMode,
       resumed.remoteObjectStore,
       resumed.transport,
+      hosted.profileKeys,
     );
     if (client.syncStatus === 'failed') {
       await client.stop();
@@ -1157,6 +1201,7 @@ export async function createHostedSignalProtocolClient(
     hosted.sealedSenderAccessMode,
     result.remoteObjectStore,
     result.transport,
+    hosted.profileKeys,
   );
   if (client.syncStatus === 'failed') {
     await client.stop();

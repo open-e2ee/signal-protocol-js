@@ -1,5 +1,62 @@
 # Changelog
 
+## 7.0.0
+
+- **Breaking: 1:1 content can carry the profile key, with
+  `hosted.profileKeys`.** Give `createHostedSignalProtocolClient` a
+  `HostedRelayProfileKeys` object: a `getOwnProfileKey()` function and a
+  `contacts` store. Each 1:1 DataMessage then carries the account's profile
+  key in the Signal `DataMessage.profileKey` field, inside the encrypted
+  content. Before a 1:1 string or byte send to a contact that does not have
+  the current key, the SDK sends one `PROFILE_KEY_UPDATE` DataMessage (flag
+  4). The receiving SDK keeps the key with `storeReceivedProfileKey`, derives
+  the contact's presence key, and calls `grant()`. It gives a key update to no
+  application hook. The SDK calls `accessKey()` when the socket connects and
+  when the profile key changes, so a rotation revokes the old presence key and
+  the next message delivers the new one. The app writes no key code. No key
+  goes in a field that the Relay can read: the profile key goes only in
+  encrypted content, and the presence key goes only in the `presence-key` and
+  `presence-read` frames. Group messages do not carry the key. Each device of
+  an account must return the same profile key. A 6.0.x receiver does not know
+  the key update and gives it to `onMessageDecrypted`. Update all clients to
+  7.0.0 before you set `hosted.profileKeys`.
+
+- **New: hosted presence with `hostedRelayPresence(client)`.** It has
+  `policy()`, `setting()`, `setVisibility()`, `read()`, and `watch()`. Each
+  request is one versioned frame on the mailbox socket. Its answer comes back
+  on the same socket. One read frame carries at most 100 accounts, and
+  `read()` splits a longer list. A null result hides why the account has no
+  presence.
+
+- **New: `HostedRelayPresenceError`.** Its `code` is the Signal Protocol
+  Relay's own code, for example `PRESENCE_SETTING_FORCED` or `QUOTA_EXCEEDED`.
+  The SDK adds the codes `NOT_CONNECTED`, `BUSY`, `TIMEOUT`, and
+  `FRAME_REJECTED` too. With code 1008, a Signal Protocol Relay without
+  presence frames closes the socket. Each pending request then fails with
+  `FRAME_REJECTED`, and the subscription reconnects.
+
+- **New: `watch()` polls every 30 s in the foreground.** It reads when the
+  socket connects and then every 30 s. It calls the listener only on a change.
+  The poll stops while the socket is down. With `bindRelayLifecycle`, the
+  socket closes in the background, so the poll stops there too. On web, a
+  hidden tab continues to poll.
+
+- **No heartbeat.** The SDK sends no presence heartbeat and reports no
+  presence state. The Signal Protocol Relay records the socket edges.
+
+- **New: the presence key, with `accessKey()` and `grant()`.**
+  `accessKey(profileKey)` derives a 16-byte key from the 32-byte profile key.
+  It uses HKDF-SHA-256 with an empty salt and the info
+  `open-e2ee-presence-key-v1`. It registers the key and returns it as 22
+  base64url characters. A new key revokes the old one.
+  `grant(account, presenceKey)` keeps a contact's key for `read()`.
+
+- **New: `hostedRelayWakePresence(client)` for a client with no socket.** A
+  wake client has no mailbox subscription. It runs in a push handler or a
+  background task. Its presence has the same members without `watch()`. Each
+  request is one authenticated `POST /v1/signal/presence`. Neither carrier
+  falls back to the other.
+
 ## 6.0.0
 
 - **Breaking: the `SignalProtocolRelayServer` contract requires the relay

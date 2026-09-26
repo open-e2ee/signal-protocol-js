@@ -5,6 +5,7 @@ import {
   parseSenderKeyDistribution,
   type ParsedSenderKeyDistribution,
 } from './sender-key-distribution';
+import { PROFILE_KEY_UPDATE_FLAG } from './profile-key-exchange';
 import {
   MediaAttachmentCleanupReason,
   MediaAttachmentMessageType,
@@ -113,6 +114,10 @@ export interface InspectedSignalProtocolContent {
   typing: ParsedTypingContent | null;
   sync: ParsedSyncContent | null;
   shouldSendDeliveryReceipt: boolean;
+  /** The sender's profile key, from `dataMessage.profileKey`, as standard base64. */
+  profileKey?: string;
+  /** True for a DataMessage with the Signal `PROFILE_KEY_UPDATE` flag. */
+  profileKeyUpdate?: boolean;
 }
 
 export interface SignalProtocolContentAdapter {
@@ -180,6 +185,8 @@ function isMediaAttachmentCleanupReason(value: unknown): value is MediaAttachmen
 function inspectPayload(payload: JsonObject): InspectedSignalProtocolContent {
   const dataMessage = getDataMessage(payload);
   const timestamp = dataMessage?.timestamp;
+  const profileKey = dataMessage?.profileKey;
+  const flags = dataMessage?.flags;
   const mediaTimestamp =
     payload.type === MediaAttachmentMessageType.Attachment &&
     payload.version === 1 &&
@@ -423,6 +430,10 @@ function inspectPayload(payload: JsonObject): InspectedSignalProtocolContent {
     typing,
     sync,
     shouldSendDeliveryReceipt: Boolean(dataMessage?.message || dataMessage?.taskComment),
+    ...(typeof profileKey === 'string' ? { profileKey } : {}),
+    ...(typeof flags === 'number' && (flags & PROFILE_KEY_UPDATE_FLAG) !== 0
+      ? { profileKeyUpdate: true }
+      : {}),
   };
 }
 
