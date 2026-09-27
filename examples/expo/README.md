@@ -6,9 +6,9 @@ The app sends your message, decrypts it on Bob, and sends an encrypted reply to 
 
 ## Requirements
 
-Use Node.js 20.19 or later and Expo SDK 55. This example pins React Native 0.83 and uses Hermes.
+Use Node.js 22.13 or later and Expo SDK 57. This example pins React Native 0.86, which runs Hermes V1 on the New Architecture. The SDK also supports earlier lines back to Expo SDK 55. The [README](../../README.md#use-your-apps-storage-and-relay) lists the supported versions.
 
-For iOS, install Xcode and CocoaPods on macOS. For Android, install Android Studio, the Android SDK, and JDK 17. See [Expo local development](https://docs.expo.dev/guides/local-app-development/).
+For iOS, install Xcode 26.4 or later and CocoaPods on macOS. For Android, install Android Studio, the Android SDK, and JDK 17. See [Expo local development](https://docs.expo.dev/guides/local-app-development/).
 
 SQLCipher requires a native build. This example does not run in Expo Go. The protocol code is Pure TypeScript. Native Expo modules provide secure randomness and encrypted storage.
 

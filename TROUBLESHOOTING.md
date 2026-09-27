@@ -45,6 +45,16 @@ Error occurred?
 
 ## Common Errors
 
+### Installation Errors
+
+**npm stops with `ERESOLVE` on a `react-native`, `expo`, or `expo-*` peer**
+
+The SDK declares React Native and the Expo packages as optional peers. npm
+checks an optional peer when your project installs that package. The ranges
+start at React Native 0.83.6 and Expo SDK 55, and they have no upper bound.
+Upgrade a project that is below those versions. Do not bypass the conflict
+with `--force` or `--legacy-peer-deps`.
+
 ### Initialization Errors
 
 **"Identity key not found - client not initialized"**

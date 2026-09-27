@@ -102,7 +102,8 @@ function useKeyRotationInternal(options: UseKeyRotationOptions): UseKeyRotationI
     onRotationError,
   } = options;
 
-  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  // The state stays null when the native AppState module is not available.
+  const appStateRef = useRef<string | null | undefined>(AppState.currentState);
   const lastRotationCheckRef = useRef<number>(0);
   const isRotatingRef = useRef<boolean>(false);
   const isMountedRef = useRef<boolean>(true);
@@ -188,7 +189,7 @@ function useKeyRotationInternal(options: UseKeyRotationOptions): UseKeyRotationI
 
       // Only trigger on foreground transition
       const isComingToForeground =
-        previousState.match(/inactive|background/) && nextState === 'active';
+        (previousState === 'inactive' || previousState === 'background') && nextState === 'active';
 
       if (!isComingToForeground) {
         return;

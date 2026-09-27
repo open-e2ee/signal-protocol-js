@@ -22,6 +22,13 @@
       "when": 1789242529311,
       "tag": "0002_protocol_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790526330632,
+      "tag": "0003_kyber_prekey_instance",
+      "breakpoints": true
     }
   ]
 }

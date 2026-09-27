@@ -1,5 +1,67 @@
 # Changelog
 
+## 7.2.0
+
+- **Fixed: a send now reaches every device that the relay lists for the
+  recipient.** Before, after one device of the recipient had a session, a
+  send used only the devices that the sender already knew. A device that the
+  recipient linked later received nothing. When the first message came from
+  one device of the recipient, the reply went only to that device. A device
+  that the relay removed still got a copy. Now a 1:1 send, and a sender key
+  distribution to a group member, reads the recipient's device list from the
+  relay (`getActiveDevices`) when the last read is older than 60 s. The send
+  then makes a session for each listed device that has none, and removes each
+  local device that the relay does not list. Inside the 60 s window, a send
+  makes no relay read. If the read fails and a session exists, the send goes
+  to the known devices and the next send reads the list again.
+  `SendResult.recipientDeviceCount` now counts the devices that the relay
+  accepted a copy for.
+- Changed: the relay's `getActiveDevices` now decides which devices a 1:1
+  send goes to, also after a manual `establishSession`. On the in-memory
+  relay, call `registerDevice` for each recipient device, as the examples
+  do. A device that is not registered gets no copy, and a send to a
+  recipient with no registered device fails with `RECIPIENT_NOT_REGISTERED`.
+- **Changed: the React Native and Expo peer ranges have no upper bound.**
+  Each peer now has only a lower bound. The bounds are `react-native` 0.83.6
+  and `expo` 55.0.27, or later versions. The Expo module bounds are
+  `expo-constants` 55.0.7, `expo-crypto` 55.0.16, and `expo-device` 55.0.15,
+  or later versions. The `expo-secure-store` bound is 55.0.15 and the
+  `expo-sqlite` bound is 55.0.17, or later versions. Before, a project on
+  React Native 0.84, Expo SDK 56, or a later line got `ERESOLVE` from
+  `npm install`. The README lists the versions that CI installs, bundles, and
+  runs on an Android emulator.
+- **Changed: every other peer range has a lower bound only.** A new major
+  release of a peer now installs. The `react` peer changes from `^19.0.0` to
+  `>=19.0.0`, `convex` from `^1.42.1` to `>=1.42.1`, `idb` from `^8.0.3` to
+  `>=8.0.3`, and `react-native-device-info` from `^15.0.1` to `>=15.0.1`. The
+  `fs-native-extensions` peer changes from the exact `1.2.7` to `>=1.2.7`.
+  Version 1.5.1 passes the Node store checks on Node.js 22 and 26. The
+  `drizzle-orm` peer changes from `^0.45.1` to `>=0.45.1`, and the
+  `@convex-dev/r2` peer from `^0.10.2` to `>=0.10.2`. A weekly check installs
+  the latest and next release of each peer against the SDK. CONTRIBUTING.md
+  states the range rules.
+- Changed: the Expo example uses Expo SDK 57, React Native 0.86.3, and
+  React 19.2.3.
+- Fixed: the Drizzle migrations of the Expo example did not build the store
+  schema of the SDK. On a device, the first sync failed with
+  `no such column: instance_id`. The new migration
+  `0003_kyber_prekey_instance` adds `kyber_prekeys.instance_id` and
+  `kyber_prekey_used.kyber_prekey_row_id`, and it keeps the existing rows.
+  It also marks each earlier current Kyber prekey as replaced, so that each
+  identity has one current Kyber prekey. The Expo bundle check in CI now
+  fails when the example migrations do not build the packed SDK schema.
+- Fixed: `useKeyRotation` threw a `TypeError` on the first app state change
+  when `AppState.currentState` was `null`. React Native keeps it `null` when
+  its native AppState module is not available. Now the hook rotates only
+  after the app returns from `background` or `inactive`. The `currentState`
+  property of `RelayLifecycleAppState` now accepts `null` and `undefined`,
+  as the React Native 0.87 types declare. The SDK source now typechecks
+  against those types.
+- Fixed: the bare React Native store documentation said that the store needs
+  a Web Crypto polyfill. It does not. AES-256-GCM uses the bundled Noble
+  implementation when `crypto.subtle` is absent. The store does need
+  `expo-crypto`, so a bare application must install Expo modules.
+
 ## 7.1.0
 
 - **New: `watch()` registers a presence watch and receives pushed updates.**

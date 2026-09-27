@@ -15,9 +15,11 @@ react-native, so any source with this shape can drive the binding.
 
 ### currentState
 
-> `readonly` **currentState**: `string`
+> `readonly` **currentState**: `string` \| `null` \| `undefined`
 
-The state at bind time, for example `active` or `background`.
+The state at bind time, for example `active` or `background`. React
+Native reports `null` when its native AppState module is not available.
+The binding then acts only on a change.
 
 ## Methods
 

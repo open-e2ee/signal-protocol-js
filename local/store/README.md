@@ -45,6 +45,8 @@ from experimental by completing every gate on the checklist below.
 The supplied backend is the application's responsibility: verify it with the
 exported backend-conformance kit described in the
 [React Native adapter guide](./react-native/README.md).
+The store uses `expo-crypto` for random bytes, so a bare application must
+install Expo modules.
 
 #### Graduation checklist
 
@@ -113,12 +115,13 @@ environment an adapter must honor its promises in, not the subject of a test.
       change to the source repository.
 - [x] Reference backend passes that kit on Hermes in CI. The SDK ships
       `createReferenceReactNativeBackend`, which specifies the backend
-      contract in executable form. A named gate bundles the kit with esbuild
-      and runs it against the reference backend. That gate uses the
-      sha256-pinned Hermes CLI, the engine React Native ships with. It runs
-      on every change to the source repository. The runner requires an
-      explicit pass sentinel because Hermes exits 0 on an unhandled async
-      rejection.
+      contract in executable form. On each source-repository change, a named
+      gate bundles the kit with esbuild and runs it on the reference backend.
+      That gate uses the sha256-pinned Hermes v0.13.0 CLI,
+      the last standalone Hermes release. It does not cover Hermes V1, which
+      React Native 0.84 and later ship. The
+      runner requires an explicit pass sentinel because Hermes exits 0 on an
+      unhandled async rejection.
 - [x] Interruption tests against the reference backend. A simulated process
       kill before commit leaves each atomic security write fully absent
       after reopen. Those writes are a session/trust commit, an identity

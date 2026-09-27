@@ -16,16 +16,16 @@ Private testing also exists in other open-source projects. [SQLite publishes som
 
 Engineering CI runs the default automated checks on pull requests and changes to the main branch. Release preparation requires a passing run.
 
-Most recent full run on 2026-09-26:
+Most recent full run on 2026-09-27:
 
 | | |
 |---|---|
-| Test modules | 432 |
-| Test cases | 7,620 |
-| Passed | 7,618 |
+| Test modules | 435 |
+| Test cases | 7,655 |
+| Passed | 7,653 |
 | Skipped | 2 |
 | Failed | 0 |
-| Wall time | 219 s |
+| Wall time | 194 s |
 
 The total counts test cases. One test case can contain several assertions. Separate commands run the longer performance and endurance checks.
 
@@ -38,8 +38,9 @@ Release tooling generates this table from a completed run. It refuses results fr
 - **Generated inputs:** check protocol and encoding properties across randomized inputs.
 - **Messaging flows:** exercise device fanout, groups, device linking, provisioning, PNI-to-ACI changes, and relay delivery.
 - **Storage contracts:** check persistence, concurrency, interruption, recovery, and storage pressure at adapter boundaries.
-- **Runtime behavior:** run the browser storage contracts in Chromium, Firefox, and WebKit. Run the React Native backend contract on Hermes.
+- **Runtime behavior:** run the browser storage contracts in Chromium, Firefox, and WebKit. Run the React Native backend contract on the Hermes v0.13.0 command-line engine. Run a release build of the Expo example on an Android emulator. That build uses Expo SDK 57, React Native 0.86, and Hermes V1.
 - **Public API:** check exported types, import paths, documented calls, and expected example output against the packed package.
+- **React Native hosts:** add the packed package to React Native and Expo projects without an override of peer conflicts. The projects cover React Native 0.83 through 0.87 and the Expo SDK 55 through 57 lines. Build the Expo example's Hermes bundle on Expo SDK 55 and 57.
 - **Errors:** check construction sites for exported error classes and codes. Reject unresolved code forwarding.
 
 The browser storage job also runs 2,000 open, write, read, and close cycles. It checks for upward memory and latency drift.

@@ -9,6 +9,15 @@ Bare React Native applications choose different native storage engines. The
 adapter keeps that choice outside the SDK while requiring the atomic operations
 needed for trust, session, and one-time-prekey transitions.
 
+## Requirements
+
+The store gets random bytes from `expo-crypto`. Install Expo modules in the
+bare application with `npx install-expo-modules@latest`, and then install
+`expo-crypto`. The store needs no Web Crypto polyfill. AES-256-GCM uses Web
+Crypto when `crypto.subtle` exists and the bundled Noble implementation
+otherwise. The [README](../../../README.md#use-your-apps-storage-and-relay)
+lists the supported React Native versions.
+
 ## Usage
 
 <!-- doc-snippet:skip requires-external-context -->
@@ -63,8 +72,9 @@ specifies the contract in executable form. It is an in-memory backend that
 passes the kit, and it is useful as a comparison point and as a test double.
 
 Continuous integration runs the kit against the reference backend on the Hermes
-engine. It also drives the adapter over that backend through interruption and
-storage-pressure suites. The parent [storage guide](../README.md) holds the
+v0.13.0 command-line engine. This gate does not cover Hermes V1, which React
+Native 0.84 and later ship. Continuous integration also drives the adapter over
+that backend through interruption and storage-pressure suites. The parent [storage guide](../README.md) holds the
 checklist that graduated this adapter.
 
 Key custody, crash durability, and backup behavior remain properties of your

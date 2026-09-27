@@ -4,14 +4,15 @@
  * Storage adapter for React Native applications without Expo.
  * Uses:
  * - a caller-provided persistent key-value backend
- * - expo-crypto for secure random number generation
- * - Signal Protocol crypto module for AES-256-GCM encryption (via Web Crypto API)
+ * - expo-crypto for secure random number generation. A bare React Native app
+ *   must install Expo modules for expo-crypto to load.
+ * - Signal Protocol crypto module for AES-256-GCM encryption. It uses Web Crypto
+ *   when `crypto.subtle` exists and the bundled Noble AES otherwise.
  *
  * Security Considerations:
  * - All sensitive data encrypted with AES-256-GCM (128-bit auth tag)
  * - Database encryption key stored in the provided key-value backend
  * - For production apps, keep the database key in a platform secret vault
- * - Requires a Web Crypto API polyfill (e.g., react-native-quick-crypto) for bare RN
  *
  * @example
  * ```typescript
@@ -1109,10 +1110,10 @@ export class ReactNativeSignalProtocolStore implements SignalProtocolLocalStore 
   }
 
   /**
-   * AES-256-GCM encryption using Web Crypto API
+   * AES-256-GCM encryption
    *
-   * Uses the Signal Protocol crypto module which provides proper AES-256-GCM.
-   * Requires a Web Crypto API polyfill in bare React Native (e.g., react-native-quick-crypto).
+   * Uses the Signal Protocol crypto module, which uses Web Crypto when
+   * `crypto.subtle` exists and the bundled Noble AES otherwise.
    *
    * @param data - Plaintext to encrypt
    * @param key - 32-byte AES-256 key
@@ -1139,10 +1140,10 @@ export class ReactNativeSignalProtocolStore implements SignalProtocolLocalStore 
   }
 
   /**
-   * AES-256-GCM decryption using Web Crypto API
+   * AES-256-GCM decryption
    *
-   * Uses the Signal Protocol crypto module which provides proper AES-256-GCM.
-   * Requires a Web Crypto API polyfill in bare React Native (e.g., react-native-quick-crypto).
+   * Uses the Signal Protocol crypto module, which uses Web Crypto when
+   * `crypto.subtle` exists and the bundled Noble AES otherwise.
    *
    * @param ciphertext - Encrypted data with appended 16-byte auth tag
    * @param key - 32-byte AES-256 key

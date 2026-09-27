@@ -14,8 +14,7 @@
  * applies those batches silently breaks that guarantee.
  *
  * The kit has no framework or platform dependencies, and avoids class syntax.
- * It runs unchanged under jest, Node, a browser, or the Hermes engine that
- * ships with React Native.
+ * It runs unchanged under jest, Node, a browser, or Hermes.
  *
  * @example
  * ```typescript

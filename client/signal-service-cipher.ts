@@ -77,6 +77,13 @@ import {
 } from '../profile/contact-state';
 
 /**
+ * How long a recipient's relay device list stays current before a send reads
+ * it again. A device linked or removed inside this window is found by the
+ * first send after it ends.
+ */
+export const RECIPIENT_DEVICE_LIST_FRESH_MILLISECONDS = 60_000;
+
+/**
  * Sort envelopes so PreKeyMessages are processed first
  *
  * PreKeyMessages establish new sessions, so they must be processed before
@@ -196,10 +203,12 @@ function isConclusiveDeviceRejection(error: unknown): boolean {
 export type SealedSenderProvider = SealedSenderProviderContract;
 
 /**
- * Callback for establishing sessions when none exist
+ * Callback for reconciling a recipient's sessions with the relay's device list
  * Allows SignalProtocolClient to inject its session establishment logic
  */
 export type SessionEstablisher = (recipientUserId: string) => Promise<{
+  /** Device IDs the relay lists as receiving for the recipient */
+  activeDevices: number[];
   establishedDevices: number[];
   failedDevices: number[];
   failedDeviceErrors: Array<{ deviceId: number; error: Error }>;
@@ -259,6 +268,7 @@ export type GroupSendBarrierChecker = (groupId: string) => Promise<void>;
 export class SignalProtocolServiceCipher {
   private readonly lock = new AsyncLock();
   private sessionEstablisher?: SessionEstablisher;
+  private readonly recipientDeviceListCheckedAt = new Map<string, number>();
   private staleSessionRefresher?: StaleSessionRefresher;
   private sealedSenderProvider?: SealedSenderProvider;
   private sealedSenderDeliveryMode: import('./config').SealedSenderDeliveryMode = 'preferred';
@@ -965,33 +975,42 @@ export class SignalProtocolServiceCipher {
   // ============================================================================
 
   /**
-   * Create sessions with a recipient user if none exist
+   * Reconcile a recipient's sessions with the relay's device list
    *
-   * Checks if any session exists with the recipient. If not, uses the session
-   * establisher callback to fetch prekey bundles and create sessions.
+   * A send must reach every device the relay lists for the recipient, and no
+   * device the relay no longer lists. The session establisher reads that list
+   * again when the last read is older than
+   * RECIPIENT_DEVICE_LIST_FRESH_MILLISECONDS, creates a session for each listed
+   * device that has none, and this method removes each local device that is not
+   * listed. Inside the window, a recipient with an active session is sent to
+   * without a relay read. The relay gives no device-set version, so the window
+   * is the only bound on how long a linked or removed device goes unseen.
    *
    * @throws {EncryptionError} SESSION_NOT_FOUND if sessions cannot be established
    */
   private async ensureSessionsForUser(recipientUserId: string): Promise<void> {
-    // Check if we have any session with this user via SESAME UserRecord
     const userRecord = await this.sesameManager.getUserRecord(recipientUserId);
-    if (userRecord && userRecord.devices.size > 0) {
-      // Check if at least one device has an active session
-      const hasActiveSession = Array.from(userRecord.devices.values()).some(
-        (device) => device.session?.currentSession !== null
+    const hasActiveSession =
+      !!userRecord &&
+      Array.from(userRecord.devices.values()).some(
+        (device) => device.session?.currentSession != null
       );
-      if (hasActiveSession) {
-        return; // Sessions exist, nothing to do
-      }
+    const checkedAt = this.recipientDeviceListCheckedAt.get(recipientUserId);
+    if (
+      hasActiveSession &&
+      checkedAt !== undefined &&
+      Date.now() - checkedAt < RECIPIENT_DEVICE_LIST_FRESH_MILLISECONDS
+    ) {
+      return;
     }
 
-    // No sessions exist - need to establish them
-    this.logger.debug('No session exists, auto-establishing', {
+    this.logger.debug('Reconciling recipient devices with the relay', {
       category: 'E2EE',
-      data: { recipientUserId, hasUserRecord: !!userRecord },
+      data: { recipientUserId, hasActiveSession },
     });
 
     if (!this.sessionEstablisher) {
+      if (hasActiveSession) return;
       throw new EncryptionError(
         `No session with ${recipientUserId} and auto-establishment not configured`,
         EncryptionErrorCode.SESSION_NOT_FOUND,
@@ -1000,6 +1019,7 @@ export class SignalProtocolServiceCipher {
     }
 
     if (!this.relay) {
+      if (hasActiveSession) return;
       throw new EncryptionError(
         'Cannot auto-establish session: relay server not configured',
         EncryptionErrorCode.INITIALIZATION_FAILED,
@@ -1025,6 +1045,16 @@ export class SignalProtocolServiceCipher {
         }
       );
     } catch (error) {
+      if (hasActiveSession) {
+        // The known devices still receive; the next send reads the list again.
+        this.logger.warn('Recipient device list refresh failed, sending to known devices', {
+          category: 'E2EE',
+          error: error as Error,
+          data: { recipientUserId },
+        });
+        return;
+      }
+
       // Re-throw EncryptionErrors, wrap others
       if (error instanceof EncryptionError) {
         throw error;
@@ -1047,6 +1077,15 @@ export class SignalProtocolServiceCipher {
       );
     }
 
+    const listedDevices = new Set(result.activeDevices);
+    const removedDevices: number[] = [];
+    const reconciledRecord = await this.sesameManager.getUserRecord(recipientUserId);
+    for (const deviceId of Array.from(reconciledRecord?.devices.keys() ?? [])) {
+      if (listedDevices.has(deviceId)) continue;
+      await this.sesameManager.removeDevice(recipientUserId, deviceId);
+      removedDevices.push(deviceId);
+    }
+
     if (result.establishedDevices.length === 0) {
       throw new EncryptionError(
         `Recipient ${recipientUserId} has no available prekey bundles - they may not have registered encryption keys`,
@@ -1055,12 +1094,17 @@ export class SignalProtocolServiceCipher {
       );
     }
 
-    this.logger.info('Auto-established sessions', {
+    // A device that failed stays unreached until the window ends, which keeps
+    // a recipient with a broken device from costing a relay read on every send.
+    this.recipientDeviceListCheckedAt.set(recipientUserId, Date.now());
+
+    this.logger.info('Reconciled recipient devices', {
       category: 'E2EE',
       data: {
         recipientUserId,
         establishedDevices: result.establishedDevices,
         failedDevices: result.failedDevices,
+        removedDevices,
       },
     });
   }

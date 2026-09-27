@@ -80,6 +80,7 @@ export interface DeviceMessage {
  */
 export interface MultiDeviceSessionResult {
   userId: string;
+  activeDevices: number[]; // Device IDs the relay lists as receiving
   establishedDevices: number[]; // Device IDs that were successfully established
   failedDevices: number[]; // Device IDs that failed
   /** Underlying per-device failures, omitted when a relay simply has no bundle. */
@@ -158,9 +159,11 @@ export async function getActiveDevices(
 /**
  * Establish sessions with all active devices for a user
  *
- * Fetches prekey bundles for all active devices and establishes sessions.
- * This is typically called once when first messaging a user, or when
- * they link a new device.
+ * Reads the relay's list of receiving devices, then fetches a prekey bundle
+ * and establishes a session for each listed device that has no session. A
+ * device that already has a session counts as established. The cipher calls
+ * this again when its copy of the device list is no longer fresh, so a newly
+ * linked device is found by a later send.
  *
  * @param signal - DefaultSignalProtocolClient instance
  * @param relay - Signal Protocol relay server interface
@@ -180,8 +183,8 @@ export async function establishMultiDeviceSessions(
 ): Promise<MultiDeviceSessionResult> {
   const logger = signal.logger;
   try {
-    // First get all active devices
-    const devices = await relay.getDevices(userId);
+    // The relay's receiving devices: registered and enabled, never soft-deleted
+    const devices = await relay.getActiveDevices(userId);
 
     // Use the current user (signal.userId) as the fetcher for rate limiting
     const fetcherUserId = signal.userId;
@@ -239,6 +242,7 @@ export async function establishMultiDeviceSessions(
 
     return {
       userId,
+      activeDevices: devices.map((device) => device.deviceId),
       establishedDevices,
       failedDevices,
       failedDeviceErrors,

@@ -11,14 +11,14 @@
     "db:generate": "drizzle-kit generate && node scripts/bundle-migrations.mjs"
   },
   "dependencies": {
-    "@open-e2ee/signal-protocol-sdk": "7.1.0",
+    "@open-e2ee/signal-protocol-sdk": "7.2.0",
     "drizzle-orm": "0.45.2",
-    "expo": "~55.0.31",
-    "expo-crypto": "~55.0.19",
-    "expo-secure-store": "~55.0.18",
-    "expo-sqlite": "~55.0.20",
-    "react": "19.2.0",
-    "react-native": "0.83.10"
+    "expo": "~57.0.25",
+    "expo-crypto": "~57.0.3",
+    "expo-secure-store": "~57.0.4",
+    "expo-sqlite": "~57.0.3",
+    "react": "19.2.3",
+    "react-native": "0.86.3"
   },
   "overrides": {
     "xcode": {

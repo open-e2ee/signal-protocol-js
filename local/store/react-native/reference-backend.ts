@@ -10,8 +10,8 @@
  *
  * It holds data in memory, so it is not a production backend: a real
  * application supplies storage that survives process termination. Continuous
- * integration runs the kit against this backend on the Hermes engine React
- * Native ships with, which is why the module avoids class syntax.
+ * integration runs the kit against this backend on the pinned Hermes v0.13.0
+ * CLI. That CLI parses no class syntax, which is why the module avoids it.
  *
  * Passing `state` lets separate instances share one persistence medium, which
  * models a process restart. Create a second backend over the same map, and the

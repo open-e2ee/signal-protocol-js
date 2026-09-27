@@ -21,7 +21,8 @@ export default function App() {
     };
     try {
       const hermes = 'HermesInternal' in globalThis;
-      log(`Signal Protocol SDK ${sdkVersion} · Expo 55 · ${Platform.OS} · Hermes: ${hermes}`);
+      const { major, minor, patch } = Platform.constants.reactNativeVersion;
+      log(`Signal Protocol SDK ${sdkVersion} · React Native ${major}.${minor}.${patch} · ${Platform.OS} · Hermes: ${hermes}`);
       log(`Build: ${__DEV__ ? 'development' : 'release'}`);
       if (!hermes) throw new Error('This example requires the Hermes engine.');
       await runExchange(message, log);

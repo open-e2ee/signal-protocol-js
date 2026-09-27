@@ -23,11 +23,12 @@ boundary while allowing each deployment to choose an explicit data directory.
 Install the Node adapter's native file-lock dependency:
 
 ```sh
-npm install fs-native-extensions@1.2.7
+npm install fs-native-extensions
 ```
 
-The exact version passes the supported-runtime checks on Node.js 22 and 26.
-Dependency upgrades must pass the supported-runtime checks. Other adapters do not load this dependency.
+The SDK accepts version 1.2.7 or a later 1.x release. Version 1.5.1 passes the
+supported-runtime checks on Node.js 22 and 26. Dependency upgrades must pass the
+supported-runtime checks. Other adapters do not load this dependency.
 If the native module or file locking is unavailable, the Node store refuses to open.
 
 <!-- doc-snippet:skip requires-external-context -->

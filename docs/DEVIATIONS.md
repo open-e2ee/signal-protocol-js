@@ -82,7 +82,7 @@ model and what is out of scope.
 | **Padding** | — | **Extension.** ISO 7816-4 bit padding to 160-byte buckets inside the library | Length hiding by default rather than left to the application | `libsignal` does not pad at this layer; Signal Messenger's apps do. PKCS#7 then adds a block, so ciphertext lands 16 bytes past each boundary |
 | **SPQR / ML-KEM Braid** | ML-KEM Braid rev. 1 | **Deviation.** Same protocol, same KDF labels, same Reed–Solomon parameters, byte-identical message framing — except `hek = SHA3-256(ek_seed ‖ ek_vector)`, the operand order the specification states, which is the reverse of `libsignal`'s implementation | The normative text was followed over the executable reference | Wire-visible. Headers, ciphertexts, and shared secrets diverge; a braid session cannot complete a single epoch against `libsignal`'s implementation. Also means the KEM is not FIPS 203 in braid mode |
 | **Triple Ratchet** | `libsignal` `triple_ratchet.rs` | **Faithful.** The PQ secret enters as the HKDF salt at message-key expansion, same label, same order | — | The braiding construction follows the ML-KEM Braid specification |
-| **Sesame** | Sesame rev. 2 | **Deviation** on session expiry (§4.2 applies only to unacknowledged sessions) and on deleted devices (hard-removed rather than marked stale). **Extensions:** QR provisioning, device transfer, encrypted device names, identity-change gating, a 5-device cap | Product requirements the specification does not address | Hard deletion **drops the MAXLATENCY window, so in-flight messages from a just-removed device become permanently undecryptable**. Device transfer clones ratchet state, which weakens the forward-secrecy bound |
+| **Sesame** | Sesame rev. 2 | **Deviation** on session expiry (§4.2 applies only to unacknowledged sessions), on deleted devices (hard-removed rather than marked stale), and on device-list currency (the sender reads the relay's list at most once per 60 s instead of the server rejecting a stale send). **Extensions:** QR provisioning, device transfer, encrypted device names, identity-change gating, a 5-device cap | Product requirements the specification does not address | Hard deletion **drops the MAXLATENCY window, so in-flight messages from a just-removed device become permanently undecryptable**. A device linked or removed less than 60 s ago can miss a send or still receive one. Device transfer clones ratchet state, which weakens the forward-secrecy bound |
 | **Sealed sender** | `libsignal` `sealed_sender.rs` | **Faithful** on the multi-recipient transport labels, KEM, AES-256-GCM-SIV, binary format, and `0x3FFF` registration-ID mask. **Extension:** sender and server certificates require signed Relay scope and issuer validity under operator-owned Ed25519 roots | Binds anonymous delivery to one Relay deployment and supports explicit issuer rotation and revocation | The transport follows `libsignal`; certificates are not interchangeable with Signal Messenger or another deployment |
 | **Delivery token** | `libsignal` `profile_key.rs` | **Faithful.** `deriveAccessKey` follows `libsignal`'s `ProfileKey::derive_access_key`, and reproduces `libsignal`'s published known-answer values | — | Not an SDK invention, despite what the module name suggests |
 | **Sender keys** | `libsignal` `sender_keys.rs` | **Deviation.** Protobuf field numbers and `0x33` framing match, and the `0x01`/`0x02` seeds match, but message-key derivation **omits HKDF-Extract**, signatures are Ed25519 not XEdDSA, and `distributionUuid` carries a UTF-8 string rather than 16 UUID bytes | The Ed25519 choice follows the identity profile; the missing Extract appears unintentional | Group message keys differ from `libsignal`'s for the same chain key. Confirmed numerically, not merely by inspection |
@@ -681,7 +681,8 @@ The per-user identity model is one of the two models the specification permits
 §3.1 and §3.3 require an implementation to mark a removed device's record stale
 and keep it for MAXLATENCY. Messages already in flight from that device then
 still decrypt. The SDK removes the record immediately
-(`internal/sesame/manager.ts:2098-2102`).
+(`internal/sesame/manager.ts:2098-2102`). A send also removes, immediately, each
+device record that the relay no longer lists for the recipient (§5.5).
 
 **State the consequence plainly. A message that a device sent moments before its
 removal becomes permanently undecryptable.** The specification's staleness window
@@ -752,6 +753,29 @@ rev. 2 has no such concept. This is a genuine improvement.
 sign a server-issued nonce with its identity private key. Registration therefore
 trusts the relay more than §6.3 assumes. A deployment that needs proof of
 possession must add it at the application layer.
+
+### 5.5 The sender reads the device list; the server does not reject a stale send
+
+§3.3 steps 3 and 4 make the server the check. The server accepts a send only
+when the sender's list of device IDs is current, and otherwise rejects it with
+the old and new device IDs. The Signal Protocol Relay takes one message per
+device and has no whole-user device-set check, so it cannot reject a send
+that omits a device.
+
+The SDK therefore reads the recipient's device list from the relay
+(`getActiveDevices`) before a direct send or a sender key distribution, when
+the last read for that recipient is more than 60 s old
+(`RECIPIENT_DEVICE_LIST_FRESH_MILLISECONDS` in
+`client/signal-service-cipher.ts`). It makes a session for each listed device
+that has none, and removes each local device record that the relay does not
+list. The time of the last read is kept in memory only, so a restarted client
+reads the list on its first send to each recipient.
+
+**Consequence.** A device linked less than 60 s before a send can miss that
+send, and a device removed less than 60 s before a send can still receive it.
+The SESAME stale-device-list retry loop (`StaleDeviceListError`) stays in
+`internal/sesame/manager.ts`, but no caller supplies a device-list version, so
+it never runs.
 
 ---
 

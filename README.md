@@ -11,7 +11,7 @@ Add encrypted messaging to Expo, React Native, browser, and Node applications. T
 
 The default policy requires post-quantum session establishment and ratcheting. The protocol implementation is open source under the MIT License or the Apache License 2.0, at your option.
 
-[**Run an encrypted exchange in your browser**](https://open-e2ee.dev/playground) · [Edit on StackBlitz](https://stackblitz.com/fork/github/open-e2ee/signal-protocol-js/tree/v7.1.0/examples/browser) · [Run on Expo / Hermes](./examples/expo/README.md)
+[**Run an encrypted exchange in your browser**](https://open-e2ee.dev/playground) · [Edit on StackBlitz](https://stackblitz.com/fork/github/open-e2ee/signal-protocol-js/tree/v7.2.0/examples/browser) · [Run on Expo / Hermes](./examples/expo/README.md)
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-2f6f5e)](./LICENSE)
 [![npm version](https://img.shields.io/npm/v/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
@@ -43,7 +43,7 @@ The relay never needs message plaintext or device private keys.
 
 OpenE2EE implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
-Version `7.1.x`. Public APIs and persisted formats follow semantic versioning.
+Version `7.2.x`. Public APIs and persisted formats follow semantic versioning.
 
 ## Install
 
@@ -108,8 +108,18 @@ Choose the device-local store for your runtime. Then supply a relay that authent
 |---|---|---|
 | Expo | [`expoStore`](./local/store/expo/README.md) | Configure SQLCipher before schema access. Requires a native development or release build. [Run the Hermes example](./examples/expo/README.md); Expo Go does not include SQLCipher. |
 | Browser | [`indexedDbStore`](./local/store/web/README.md) | Use a secure context and a restrictive CSP. Same-origin JavaScript can access stored records and their key. [Browser setup](https://docs.open-e2ee.dev/start/browser). |
-| Bare React Native | [`reactNativeStore`](./local/store/react-native/README.md) | Provide an atomic, durable key-value backend and run the exported backend conformance kit. |
-| Node | [`nodeStore`](./local/store/node/README.md) | Install `fs-native-extensions@1.2.7` and set an explicit private directory on a trusted local filesystem. |
+| Bare React Native | [`reactNativeStore`](./local/store/react-native/README.md) | Provide an atomic, durable key-value backend and run the exported backend conformance kit. Install Expo modules, because the store uses `expo-crypto`. |
+| Node | [`nodeStore`](./local/store/node/README.md) | Install `fs-native-extensions` and set an explicit private directory on a trusted local filesystem. |
+
+React Native support starts at React Native 0.83.6 and Expo SDK 55. The peer ranges have no upper bound. CI checks these versions:
+
+| CI check | Versions |
+|---|---|
+| Add the packed package to a project | React Native 0.83, 0.85, 0.86, and 0.87; Expo SDK 55, 56, and 57 |
+| Build the Expo example's Hermes bundle | Expo SDK 55 and 57 |
+| Run the Expo example's release build on an Android emulator | Expo SDK 57 with React Native 0.86 |
+
+React Native 0.84 and later use Hermes V1 by default. React Native 0.82 and later run only on the New Architecture.
 
 The [adapter guide](./ADAPTERS.md) defines every storage, relay, vault, and object-store boundary. The [client composition guide](./docs/CLIENT_COMPOSITION.md) shows an Expo client on the OpenE2EE Signal Protocol Relay.
 

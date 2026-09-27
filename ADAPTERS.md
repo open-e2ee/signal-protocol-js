@@ -41,6 +41,8 @@ Use:
 - `InMemorySignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/memory`
 - or a custom implementation
 
+The bare React Native store uses `expo-crypto` for random bytes. A bare React Native application must install Expo modules.
+
 ### Remote object store: `SignalProtocolRemoteObjectStore`
 
 Optional encrypted file upload/download support for two-layer attachment encryption.

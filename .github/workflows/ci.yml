@@ -9,9 +9,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request supersedes the run in flight. A push to main
+# never cancels an earlier main run, so every main commit gets a verdict.
 concurrency:
   group: checks-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -151,3 +153,47 @@ jobs:
         run: >-
           node scripts/run-doc-snippets.mjs
           "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz
+
+  react-native-hosts:
+    name: React Native and Expo hosts install and bundle the package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            examples/expo/package-lock.json
+
+      - name: Install from the committed lockfile
+        run: npm ci --ignore-scripts
+
+      - name: Build and pack
+        run: |
+          npm run build
+          npm pack --pack-destination "$RUNNER_TEMP"
+
+      # Adds the package to a project on each supported React Native and Expo
+      # line, without --force or --legacy-peer-deps, and requires a refusal
+      # below the peer floor.
+      - name: Resolve the peer ranges on each supported line
+        run: >-
+          node scripts/smoke-react-native-install.mjs
+          "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz
+
+      # Builds the Expo example's Android bundle with the packed package and
+      # checks that the bytecode comes from the Hermes compiler that
+      # React Native pins.
+      - name: Bundle the Expo example with Hermes on Expo SDK 57
+        run: >-
+          node scripts/smoke-expo-bundle.mjs
+          "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz 57
+
+      - name: Bundle the Expo example with Hermes on Expo SDK 55
+        run: >-
+          node scripts/smoke-expo-bundle.mjs
+          "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz 55

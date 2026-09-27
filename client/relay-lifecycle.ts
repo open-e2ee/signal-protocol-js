@@ -8,8 +8,12 @@ import type { SignalProtocolClient } from '../types/api';
  * react-native, so any source with this shape can drive the binding.
  */
 export interface RelayLifecycleAppState {
-  /** The state at bind time, for example `active` or `background`. */
-  readonly currentState: string;
+  /**
+   * The state at bind time, for example `active` or `background`. React
+   * Native reports `null` when its native AppState module is not available.
+   * The binding then acts only on a change.
+   */
+  readonly currentState: string | null | undefined;
   /** Returns a subscription with `remove()`, or a function that removes the listener. */
   addEventListener(
     type: 'change',
@@ -67,7 +71,7 @@ export function bindRelayLifecycle(
 ): Unsubscribe {
   if (keepOpenInBackground) return () => undefined;
   let stoppedByBinding = false;
-  const apply = (state: string) => {
+  const apply = (state: string | null | undefined) => {
     if (state === 'background') {
       if (stoppedByBinding || signal.relayConnectionState.state === 'stopped') return;
       stoppedByBinding = true;

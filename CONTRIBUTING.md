@@ -38,6 +38,26 @@ Practical consequences:
 - Protocol-behavior changes need the paired internal test changes, which you
   cannot see. A maintainer writes those during porting, so expect questions.
 
+## Dependency ranges
+
+A peer range states the oldest version that the SDK needs, not the versions
+that we tested. The README states the tested versions.
+
+- Each peer has a lower bound and no upper bound, for example `>=19.0.0`.
+  Developers start new applications on the latest React, React Native, Expo,
+  and Convex releases, and an upper bound refuses those applications before
+  anyone has tried the new release.
+- The weekly peer canary installs the `latest` and `next` release of each peer
+  against the packed SDK. A failed canary opens an issue.
+- A peer gets an upper bound only after we reproduce a break. A maintainer
+  records the reason and the first version that fails, and removes the bound
+  when the SDK supports that version.
+- A peer never uses `^`, `~`, or an exact version.
+- A regular dependency can use an exact version only when we choose that
+  version for security. An example is `@noble/hashes`.
+- npm enforces an optional peer when the application installs that peer. An
+  optional peer therefore needs a correct range too.
+
 ## Security issues
 
 Never open a public issue for a suspected vulnerability. Use the private

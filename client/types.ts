@@ -232,7 +232,11 @@ export interface SendResult {
    */
   clientTimestamp?: number;
 
-  /** Number of recipient devices that received the message */
+  /**
+   * Number of recipient devices that the relay accepted a copy of the message
+   * for. Acceptance is not delivery: a device receives its copy when it next
+   * reads its mailbox.
+   */
   recipientDeviceCount: number;
 
   /** Group ID if sent to a group */
