@@ -31,7 +31,7 @@
  *
  * ```typescript
  * // 1. Establish sessions with all devices when first messaging a user
- * const result = await establishMultiDeviceSessions(signal, relay, userId);
+ * const result = await establishMultiDeviceSessions(signal, relay, userId, establishment);
  *
  * // 2. Encrypt message for all devices
  * const encrypted = await encryptForAllDevices(signal, relay, userId, 'Hello!');
@@ -157,6 +157,16 @@ export async function getActiveDevices(
 // ============================================================================
 
 /**
+ * How establishMultiDeviceSessions establishes the session of one device.
+ */
+export interface DeviceSessionEstablishment {
+  /** Establish the session of one device from its prekey bundle. */
+  establishSession(remoteAddress: ProtocolAddress, bundle: PreKeyBundle): Promise<void>;
+  /** Rethrow an error that ends the whole call, not the attempt for one device. */
+  rethrowFatal(error: unknown): void;
+}
+
+/**
  * Establish sessions with all active devices for a user
  *
  * Reads the relay's list of receiving devices, then fetches a prekey bundle
@@ -168,18 +178,23 @@ export async function getActiveDevices(
  * @param signal - DefaultSignalProtocolClient instance
  * @param relay - Signal Protocol relay server interface
  * @param userId - Target user ID
+ * @param establishment - Establishes each session and names the errors that end the call
  * @returns Result containing successful and failed device IDs
  *
  * @example
  * ```typescript
- * const result = await establishMultiDeviceSessions(signal, relay, 'user_abc123');
+ * const result = await establishMultiDeviceSessions(signal, relay, 'user_abc123', {
+ *   establishSession: (address, bundle) => signal.establishSession(address, bundle),
+ *   rethrowFatal: () => {},
+ * });
  * console.log(`Established ${result.establishedDevices.length}/${result.totalDevices} sessions`);
  * ```
  */
 export async function establishMultiDeviceSessions(
   signal: DefaultSignalProtocolClient,
   relay: SignalProtocolRelayServer,
-  userId: string
+  userId: string,
+  establishment: DeviceSessionEstablishment
 ): Promise<MultiDeviceSessionResult> {
   const logger = signal.logger;
   try {
@@ -221,13 +236,14 @@ export async function establishMultiDeviceSessions(
         }
 
         // Establish new session
-        await signal.establishSession(remoteAddress, bundle);
+        await establishment.establishSession(remoteAddress, bundle);
         establishedDevices.push(device.deviceId);
         logger.info('[MultiDevice] Session established', {
           address: ProtocolAddress.toString(remoteAddress),
           deviceId: device.deviceId,
         });
       } catch (error) {
+        establishment.rethrowFatal(error);
         const normalizedError =
           error instanceof Error ? error : new Error(String(error));
         logger.error('[MultiDevice] Failed to establish session', {
@@ -249,6 +265,7 @@ export async function establishMultiDeviceSessions(
       totalDevices: devices.length,
     };
   } catch (error) {
+    establishment.rethrowFatal(error);
     logger.error('[MultiDevice] Failed to establish multi-device sessions', {
       category: 'MultiDevice',
       error: error as Error,

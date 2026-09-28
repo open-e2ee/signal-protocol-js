@@ -474,7 +474,7 @@ Two related extensions go with this. A `processedChains` map rejects messages
 that bear a ratchet key from a retired chain
 (`internal/protocol/double-ratchet/ratchet.ts:141-153`), which closes a replay gap
 that `libsignal` handles only through its five-chain window. Self-sessions get a
-finite 100,000-message skip limit (`internal/session/validation.ts:453-461`)
+finite 100,000-message skip limit (`internal/session/validation.ts:252-260`)
 where `libsignal` uses `usize::MAX`.
 
 ### 3.4 Session archiving and serialization

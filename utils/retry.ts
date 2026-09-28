@@ -27,6 +27,8 @@ export interface SignalProtocolRetryConfig {
   maxDelay?: number;
   /** Operation name for logging */
   operationName?: string;
+  /** Return false to end the retries at an error. Default: retry each retryable error */
+  shouldRetry?: (error: Error) => boolean;
 }
 
 const SIGNAL_RETRY_CONFIG = {
@@ -181,6 +183,7 @@ export async function withRetry<T>(
     enableJitter = true,
     maxDelay = 10000,
     operationName = 'unknown operation',
+    shouldRetry = () => true,
   } = config;
 
   const totalAttempts = maxRetries + 1;
@@ -194,7 +197,11 @@ export async function withRetry<T>(
         error instanceof Error ? error : new Error(`${operationName} failed: ${String(error)}`);
       lastError = normalizedError;
 
-      if (attempt === totalAttempts - 1 || !isRetryableError(normalizedError)) {
+      if (
+        attempt === totalAttempts - 1 ||
+        !isRetryableError(normalizedError) ||
+        !shouldRetry(normalizedError)
+      ) {
         break;
       }
 

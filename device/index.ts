@@ -59,6 +59,7 @@ export type {
   TransferSession,
   TransferStatus,
   BackupIdentityKeyPair,
+  TransferDeviceInfo,
   // Connection types
   LocalConnection,
   ConnectionConfig,
@@ -81,8 +82,9 @@ export {
 // Provisioning functions (device linking via QR code)
 //
 // `getDeviceMetadata` is deliberately absent: it reads the platform, and lives
-// on `./device/expo` so that the provisioning protocol stays importable
-// off Expo. Callers elsewhere build `LocalDeviceMetadata` themselves.
+// on `./device/expo` and `./device/react-native` so that the provisioning
+// protocol stays importable everywhere. Callers elsewhere build
+// `LocalDeviceMetadata` themselves.
 export {
   generateProvisioningQR,
   provisionDevice,
@@ -125,7 +127,7 @@ export {
 export { DeviceLifecycleManager } from './lifecycle';
 export type {
   // Dependency interfaces
-  DeviceLifecycleSecureStore,
+  DeviceLifecyclePlatform,
   DeviceLifecycleConvexClient,
   DeviceLifecycleApi,
   KeyStorageOps,

@@ -6,6 +6,7 @@
  * @see https://signal.org/docs/specifications/doubleratchet/#implementation-fingerprinting
  */
 
+import { utf8Decode } from '../platform';
 import { type Base64, asBase64 } from '../../types/utils';
 
 // ============================================================================
@@ -208,8 +209,7 @@ export function stringToBytes(str: string): Uint8Array {
  * Convert Uint8Array to string (UTF-8)
  */
 export function bytesToString(bytes: Uint8Array): string {
-  const decoder = new TextDecoder();
-  return decoder.decode(bytes);
+  return utf8Decode(bytes);
 }
 
 /**
@@ -304,11 +304,15 @@ export function cloneProtocolState<T>(value: T, forcePortableClone = false): T {
   const clone = (input: unknown): unknown => {
     if (input === null || typeof input !== 'object') return input;
     if (seen.has(input)) return seen.get(input);
-    if (input instanceof Uint8Array) return Uint8Array.from(input);
     if (input instanceof ArrayBuffer) return input.slice(0);
     if (ArrayBuffer.isView(input)) {
-      const bytes = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
-      return Uint8Array.from(bytes);
+      const buffer = new Uint8Array(input.buffer, input.byteOffset, input.byteLength).slice().buffer;
+      // Keep the view type, as structuredClone does. The tag names the type
+      // across realms, and this realm's constructor builds the copy.
+      const type = Object.prototype.toString.call(input).slice(8, -1);
+      if (type === 'DataView') return new DataView(buffer);
+      const View = (globalThis as unknown as Record<string, new (buffer: ArrayBuffer) => unknown>)[type]!;
+      return new View(buffer);
     }
     if (input instanceof Map) {
       const output = new Map<unknown, unknown>();

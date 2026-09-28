@@ -9,9 +9,12 @@
  *
  * Platform-specific adapters must be imported from their subpaths:
  * - `@open-e2ee/signal-protocol-sdk/local/store/expo` → Expo adapter
+ * - `@open-e2ee/signal-protocol-sdk/local/store/react-native` → bare React Native SQLite adapter
  * - `@open-e2ee/signal-protocol-sdk/local/store/web` → browser adapter
- * - `@open-e2ee/signal-protocol-sdk/local/store/react-native` → bare React Native adapter
- * - `@open-e2ee/signal-protocol-sdk/local/store/node` → Node.js adapter
+ * - `@open-e2ee/signal-protocol-sdk/local/store/web-sqlite` → browser SQLite store in OPFS
+ * - `@open-e2ee/signal-protocol-sdk/local/store/key-value` → key-value store over an application-supplied engine
+ * - `@open-e2ee/signal-protocol-sdk/local/store/key-value/realm` → Realm backend for the key-value store
+ * - `@open-e2ee/signal-protocol-sdk/local/store/node` → Node and Electron SQLite store
  *
  * ## Usage
  *
@@ -23,10 +26,12 @@
  * import { InMemorySignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store';
  *
  * // Platform-specific (choose one)
- * import { ExpoSignalProtocolStore, getKeyStorage } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
+ * import { expoStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
+ * import { reactNativeStore } from '@open-e2ee/signal-protocol-sdk/local/store/react-native';
  * import { IndexedDbSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store/web';
- * import { ReactNativeSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store/react-native';
- * import { NodeSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store/node';
+ * import { webSqliteStore } from '@open-e2ee/signal-protocol-sdk/local/store/web-sqlite';
+ * import { KeyValueSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store/key-value';
+ * import { nodeStore } from '@open-e2ee/signal-protocol-sdk/local/store/node';
  * ```
  */
 

@@ -43,6 +43,7 @@
 
 // URL-safe base64 encoding utilities (RFC 4648 §5)
 import { base64ToUrlSafe, urlSafeToBase64 } from '../internal/crypto';
+import { encodeQuery, parseUrl, queryValues, type ParsedUrl } from '../internal/platform';
 
 // ============================================================================
 // Configuration
@@ -101,13 +102,13 @@ export interface VerifyUrlParams {
 // ============================================================================
 
 function encodeParams(params: VerifyUrlParams): string {
-  return new URLSearchParams({
-    g: params.generatorUserId, // Who generated this QR code
-    u: params.otherUserId, // The "other user" from generator's perspective
-    t: params.contextType,
-    c: params.contextId,
-    d: base64ToUrlSafe(params.qrData), // Use base64url to avoid +/= corruption in URLs
-  }).toString();
+  return encodeQuery([
+    ['g', params.generatorUserId], // Who generated this QR code
+    ['u', params.otherUserId], // The "other user" from generator's perspective
+    ['t', params.contextType],
+    ['c', params.contextId],
+    ['d', base64ToUrlSafe(params.qrData)], // Use base64url to avoid +/= corruption in URLs
+  ]);
 }
 
 /**
@@ -179,31 +180,29 @@ export function generateVerifySchemeUrl(
 /**
  * Structural match of a candidate URL against one configured target (the
  * universal-link base or the custom scheme). Requires protocol, host, and
- * pathname to match exactly and rejects embedded credentials and fragments. So
- * lookalikes like `…/safety-number.evil` or `signalprotocol://verify-evil` are
- * NOT accepted (a plain prefix check would accept both).
+ * pathname to match exactly. `parseUrl` rejects embedded credentials and
+ * fragments. So lookalikes like `…/safety-number.evil` or
+ * `signalprotocol://verify-evil` are NOT accepted (a plain prefix check would
+ * accept both).
  */
-function matchesTarget(candidate: URL, target: string): boolean {
-  let expected: URL;
+function matchesTarget(candidate: ParsedUrl, target: string): boolean {
+  let expected: ParsedUrl;
   try {
-    expected = new URL(target);
+    expected = parseUrl(target);
   } catch {
     return false;
   }
   if (candidate.protocol !== expected.protocol) return false;
   if (candidate.host !== expected.host) return false;
   // Custom schemes yield an empty pathname. Normalize "" and "/".
-  if ((candidate.pathname || '/') !== (expected.pathname || '/')) return false;
-  if (candidate.username !== '' || candidate.password !== '') return false;
-  if (candidate.hash !== '') return false;
-  return true;
+  return (candidate.pathname || '/') === (expected.pathname || '/');
 }
 
 /** Parse a candidate string into a URL only if it matches a configured target. */
-function asVerifyTarget(data: string, config: VerifyLinkConfig): URL | null {
-  let candidate: URL;
+function asVerifyTarget(data: string, config: VerifyLinkConfig): ParsedUrl | null {
+  let candidate: ParsedUrl;
   try {
-    candidate = new URL(data);
+    candidate = parseUrl(data);
   } catch {
     return null;
   }
@@ -236,20 +235,18 @@ export function parseVerifyUrl(
   }
 
   try {
-    const params = target.searchParams;
-
     // Reject duplicate required params (ambiguous / potentially hostile).
     for (const key of ['g', 'u', 't', 'c', 'd']) {
-      if (params.getAll(key).length > 1) {
+      if (queryValues(target, key).length > 1) {
         return null;
       }
     }
 
-    const generatorUserId = params.get('g');
-    const otherUserId = params.get('u');
-    const contextType = params.get('t');
-    const contextId = params.get('c');
-    const qrData = params.get('d');
+    const generatorUserId = queryValues(target, 'g')[0];
+    const otherUserId = queryValues(target, 'u')[0];
+    const contextType = queryValues(target, 't')[0];
+    const contextId = queryValues(target, 'c')[0];
+    const qrData = queryValues(target, 'd')[0];
 
     // Validate required params (g is required for new URLs)
     if (!generatorUserId || !otherUserId || !contextType || !contextId || !qrData) {

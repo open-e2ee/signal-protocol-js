@@ -18,6 +18,7 @@ import type {
   RelayConfig,
 } from './types';
 import { DEFAULT_RETRY_CONFIG } from './types';
+import { bytesToHex, generateRandomBytesSync, sha256 } from '../internal/crypto';
 
 // ============================================================================
 // Utility Functions
@@ -28,11 +29,7 @@ import { DEFAULT_RETRY_CONFIG } from './types';
  */
 export {};
 async function calculateChecksum(data: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const dataBuffer = encoder.encode(data);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return bytesToHex(await sha256(new TextEncoder().encode(data)));
 }
 
 /**
@@ -307,13 +304,9 @@ export function createRelayConnection(config: RelayConfig): LocalConnection {
 
 /**
  * Generate unique device ID for connection.
- * Uses Web Crypto CSPRNG for the random component.
+ * Uses the SDK secure random seam for the random component.
  * Connection IDs are for routing uniqueness (not security-critical).
  */
 export function generateConnectionId(): string {
-  const bytes = new Uint8Array(6);
-  // Web Crypto API is always available in React Native and Node 19+
-  globalThis.crypto.getRandomValues(bytes);
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  return `device_${Date.now()}_${hex}`;
+  return `device_${Date.now()}_${bytesToHex(generateRandomBytesSync(6))}`;
 }

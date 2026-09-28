@@ -10,6 +10,7 @@ import { EncryptionError, EncryptionErrorCode } from '../types';
 import { ProtocolAddress } from '../types/address';
 import type { Envelope } from '../remote/relay/types';
 import { callHook } from './event-hooks';
+import { rethrowRelayWorkStopped } from './relay-work';
 import type { ParsedReceiptContent, ParsedTypingContent } from './content-adapter';
 import type { SignalProtocolClientContext } from './types';
 import { TypingAction, ReceiptType, type DeliveryReceipt } from './types';
@@ -101,6 +102,7 @@ export async function encryptMessage(
 
     return ciphertext;
   } catch (error) {
+    rethrowRelayWorkStopped(error);
     // Call hook: encryption error
     await callHook(ctx.hooks, 'onEncryptionError', sessionId, error as Error);
 
@@ -444,6 +446,7 @@ export async function handleTypingIndicator(
       action
     );
   } catch (error) {
+    rethrowRelayWorkStopped(error);
     ctx.logger.warn('Failed to process typing indicator', {
       category: 'E2EE',
       data: {
@@ -533,7 +536,8 @@ async function sendReceiptToDevice(
   };
   try {
     await sendPrepared();
-  } catch {
+  } catch (error) {
+    rethrowRelayWorkStopped(error);
     ctx.logger.warn(`Receipt send failed, scheduling retry`, {
       category: 'E2EE',
       data: { recipientUserId, deviceId },
@@ -700,6 +704,7 @@ export async function handleDeliveryReceipt(
       );
     }
   } catch (error) {
+    rethrowRelayWorkStopped(error);
     ctx.logger.warn('Failed to process receipt', {
       category: 'E2EE',
       data: {

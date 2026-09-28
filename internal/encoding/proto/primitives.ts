@@ -27,6 +27,8 @@
  * @internal
  */
 
+import { utf8Decode } from '../../platform';
+
 // ============================================================================
 // Wire Type Constants
 // ============================================================================
@@ -652,7 +654,7 @@ export class ProtoReader {
 
   /** Read a string field value, decoded from UTF-8. */
   readString(): string {
-    return new TextDecoder().decode(this.readBytes());
+    return utf8Decode(this.readBytes());
   }
 
   /**

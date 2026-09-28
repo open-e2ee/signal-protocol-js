@@ -20,9 +20,9 @@
 import type { ConvexReactClient } from 'convex/react';
 import type { FunctionReference } from 'convex/server';
 import { uploadBinary, downloadBinary } from '../utils/binary-transfer';
-import { getProfileKeyStorage } from './storage';
-import { bytesToBase64, base64ToBytes } from '../internal/crypto';
-import { asBase64 } from '../types/utils';
+import { bytesToBase64 } from '../internal/crypto';
+import type { SignalProtocolLocalSecretVault } from '../types/api';
+import { requireSecretVault } from '../local/vault/require';
 import type { UpdateEncryptedProfileApi } from './update-service';
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import { deriveAccessKey } from '../internal/protocol/sealed-sender/delivery-token';
@@ -51,7 +51,7 @@ import {
 // Constants
 // ============================================================================
 
-/** Storage key for own profile key */
+/** Vault secret name for the own profile key (the raw 32 bytes) */
 const OWN_PROFILE_KEY_ID = 'signal_profile_key_v1';
 
 export interface ProfileKeyApi {
@@ -99,38 +99,39 @@ export class ProfileKeyRotationError extends Error {
 }
 
 // ============================================================================
-// Own Profile Key (Secure Storage)
+// Own Profile Key (Local Secret Vault)
 // ============================================================================
 
 /**
- * Get the current user's profile key from the configured profile-key storage.
+ * Get the current user's profile key from the application's local secret vault.
  *
- * The default React Native path uses `expo-secure-store`. The browser fallback
- * uses JavaScript-accessible localStorage and should be replaced when the host
- * requires a stronger storage boundary.
+ * The profile key lives only in the vault that the application passes. With no
+ * vault, this throws `SECRET_VAULT_REQUIRED`.
  *
+ * @param vault - Local secret vault that holds the profile key
  * @returns Profile key as Uint8Array, or null if not set
  */
-export async function getOwnProfileKey(): Promise<Uint8Array | null> {
-  const storage = getProfileKeyStorage();
-  const stored = await storage.getItem(OWN_PROFILE_KEY_ID);
-  if (!stored) {
-    return null;
-  }
-  return base64ToBytes(asBase64(stored));
+export async function getOwnProfileKey(
+  vault: SignalProtocolLocalSecretVault
+): Promise<Uint8Array | null> {
+  return requireSecretVault(vault, 'getOwnProfileKey').getSecret(OWN_PROFILE_KEY_ID);
 }
 
 /**
- * Set own profile key in secure storage
+ * Set own profile key in the application's local secret vault
  *
+ * @param vault - Local secret vault that holds the profile key
  * @param key - 32-byte profile key
  */
-export async function setOwnProfileKey(key: Uint8Array): Promise<void> {
+export async function setOwnProfileKey(
+  vault: SignalProtocolLocalSecretVault,
+  key: Uint8Array
+): Promise<void> {
+  const secretVault = requireSecretVault(vault, 'setOwnProfileKey');
   if (key.length !== PROFILE_KEY_SIZE) {
     throw new Error(`Profile key must be ${PROFILE_KEY_SIZE} bytes, got ${key.length}`);
   }
-  const storage = getProfileKeyStorage();
-  await storage.setItem(OWN_PROFILE_KEY_ID, bytesToBase64(key));
+  await secretVault.setSecret(OWN_PROFILE_KEY_ID, key);
 }
 
 /**
@@ -138,26 +139,35 @@ export async function setOwnProfileKey(key: Uint8Array): Promise<void> {
  *
  * If no profile key exists, generates a new one and stores it.
  *
+ * @param vault - Local secret vault that holds the profile key
  * @returns Profile key as Uint8Array
  */
-export async function getOrCreateOwnProfileKey(): Promise<Uint8Array> {
-  const existing = await getOwnProfileKey();
+export async function getOrCreateOwnProfileKey(
+  vault: SignalProtocolLocalSecretVault
+): Promise<Uint8Array> {
+  const secretVault = requireSecretVault(vault, 'getOrCreateOwnProfileKey');
+  const existing = await getOwnProfileKey(secretVault);
   if (existing) {
     return existing;
   }
 
   const newKey = await generateProfileKey();
-  await setOwnProfileKey(newKey);
+  await setOwnProfileKey(secretVault, newKey);
   return newKey;
 }
 
 /**
  * Get own profile key as base64 string (for DataMessage.profileKey)
  *
+ * @param vault - Local secret vault that holds the profile key
  * @returns Profile key as base64 string
  */
-export async function getOwnProfileKeyBase64(): Promise<string> {
-  const key = await getOrCreateOwnProfileKey();
+export async function getOwnProfileKeyBase64(
+  vault: SignalProtocolLocalSecretVault
+): Promise<string> {
+  const key = await getOrCreateOwnProfileKey(
+    requireSecretVault(vault, 'getOwnProfileKeyBase64')
+  );
   return bytesToBase64(key);
 }
 
@@ -174,26 +184,29 @@ export async function getOwnProfileKeyBase64(): Promise<string> {
  * Flow:
  * 1. Generate new profile key
  * 2. Re-encrypt and re-upload avatar with new key (mustReuploadAvatar: true)
- * 3. Only AFTER successful upload, store new key in secure storage
+ * 3. Only AFTER successful upload, store new key in the local secret vault
  *
  * The blocked user therefore cannot decrypt any future profile fetches.
  *
+ * @param vault - Local secret vault that holds the profile key
  * @param convex - Convex client for avatar re-upload
  * @returns New profile key (base64)
  *
  */
 export async function rotateOwnProfileKey(
+  vault: SignalProtocolLocalSecretVault,
   convex: ConvexReactClient,
   api: ProfileKeyApi,
   encryptedProfileApi: UpdateEncryptedProfileApi,
   localStore: OwnEncryptedProfileStateStore,
   providedLogger?: Logger
 ): Promise<string> {
+  const secretVault = requireSecretVault(vault, 'rotateOwnProfileKey');
   const logger = resolveSignalProtocolLogger(providedLogger);
   logger.info('Starting profile key rotation', { category: 'Profile' });
 
   // 1. Get current profile key (needed to decrypt existing avatar)
-  const oldKey = await getOwnProfileKey();
+  const oldKey = await getOwnProfileKey(secretVault);
 
   // 2. Generate new profile key
   const newKey = await generateProfileKey();
@@ -241,7 +254,7 @@ export async function rotateOwnProfileKey(
 
     // The local active key is the transaction's commit marker.
     stage = 'local-key-commit';
-    await getProfileKeyStorage().setItem(OWN_PROFILE_KEY_ID, newKeyBase64);
+    await secretVault.setSecret(OWN_PROFILE_KEY_ID, newKey);
   } catch (cause) {
     logger.error('Profile key rotation incomplete; retry is mandatory', {
       category: 'Profile',

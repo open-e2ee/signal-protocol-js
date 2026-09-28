@@ -1,3 +1,4 @@
+import { utf8Decode, websocketUrl } from "../internal/platform";
 import type {
   AccountIdentityProvisioning,
   AccountIdentityRotation,
@@ -32,6 +33,7 @@ import {
   bytesToBase64,
   bytesToUrlSafeBase64,
   concatBytes,
+  generateRandomBytes,
   generateUuidV4,
   sha256,
   stringToBytes,
@@ -358,7 +360,7 @@ function assertionIdentifier(assertion: string): string {
   let claims: unknown;
   try {
     claims = JSON.parse(
-      new TextDecoder().decode(decodeBase64Url(parts[1]!, "Assertion claims")),
+      utf8Decode(decodeBase64Url(parts[1]!, "Assertion claims")),
     );
   } catch {
     throw new Error("Identity provider returned an invalid assertion");
@@ -518,7 +520,7 @@ function tokenExpiration(
   if (parts.length !== 3) return 0;
   try {
     const claims: unknown = JSON.parse(
-      new TextDecoder().decode(decodeBase64Url(parts[1]!, "Device token")),
+      utf8Decode(decodeBase64Url(parts[1]!, "Device token")),
     );
     if (
       !record(claims) ||
@@ -580,7 +582,7 @@ function encodeDeliveryWire(envelope: Envelope): Uint8Array {
 function decodeDeliveryWire(value: Uint8Array): HostedDeliveryWireEnvelope {
   let wire: unknown;
   try {
-    wire = JSON.parse(new TextDecoder().decode(value));
+    wire = JSON.parse(utf8Decode(value));
   } catch {
     throw new Error("Signal Protocol Relay mailbox envelope is invalid");
   }
@@ -769,7 +771,7 @@ export class HostedRelayHttpTransport
 
   private async refreshToken(): Promise<void> {
     const requestedAtSeconds = Math.floor(Date.now() / 1_000);
-    const nonce = crypto.getRandomValues(new Uint8Array(32));
+    const nonce = await generateRandomBytes(32);
     const challenge = await sha256(
       concatBytes(
         TOKEN_REFRESH_CHALLENGE_LABEL,
@@ -1141,7 +1143,7 @@ export class HostedRelayHttpTransport
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const token = await this.token(attempt > 0);
       const claims: unknown = JSON.parse(
-        new TextDecoder().decode(
+        utf8Decode(
           decodeBase64Url(token.split(".")[1]!, "Device token"),
         ),
       );
@@ -1152,9 +1154,7 @@ export class HostedRelayHttpTransport
         claims.jti.includes("\0")
       )
         throw new Error("Signal Protocol Relay certificate token is invalid");
-      const nonce = bytesToUrlSafeBase64(
-        crypto.getRandomValues(new Uint8Array(32)),
-      );
+      const nonce = bytesToUrlSafeBase64(await generateRandomBytes(32));
       const proof = await this.deviceAuthentication.signCertificateRequest(
         claims.jti,
         nonce,
@@ -1461,13 +1461,12 @@ export class HostedRelayHttpTransport
       },
       authenticate: async () => {
         const token = await this.token();
-        const url = new URL(
+        const url = websocketUrl(
           `${identifiedEndpoint(this.connection)}/mailbox/connect`,
+          [["publishableKey", this.connection.publishableKey]],
         );
-        url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-        url.searchParams.set("publishableKey", this.connection.publishableKey);
         return {
-          url: url.toString(),
+          url,
           token,
           renewAt:
             (tokenExpiration(token, this.session) -

@@ -6,11 +6,30 @@
  */
 
 import * as CryptoUtils from '../internal/crypto';
+import { binaryBlob } from '../internal/platform';
 import type { Ciphertext } from '../keys';
 import { EncryptionError, EncryptionErrorCode, asBase64 } from '../types';
 import { ProtocolAddress } from '../types/address';
 import { callHook } from './event-hooks';
 import type { SignalProtocolClientContext } from './types';
+
+/**
+ * The runtime's binary `Blob`, or throw before any work.
+ *
+ * Failing here, before the key message is decrypted, keeps the ratchet message
+ * unconsumed so the app can decrypt it on a supported path.
+ */
+function requireBinaryBlob(): typeof Blob {
+  const BinaryBlob = binaryBlob();
+  if (!BinaryBlob) {
+    throw new EncryptionError(
+      'This runtime has no Blob that holds binary data. Use streamingEncrypt and ' +
+        'streamingDecrypt from @open-e2ee/signal-protocol-sdk/files to encrypt file bytes.',
+      EncryptionErrorCode.BINARY_BLOB_UNAVAILABLE
+    );
+  }
+  return BinaryBlob;
+}
 
 /**
  * Encrypt file blob with two-layer encryption
@@ -37,6 +56,7 @@ export async function encryptFile(
   keyId: string;
   encryptedKey: Ciphertext;
 }> {
+  const BinaryBlob = requireBinaryBlob();
   const sessionId = ProtocolAddress.toString(remoteAddress);
   // Generate random symmetric key for file OUTSIDE try block
   // so we can best-effort overwrite the owned bytes in finally.
@@ -54,7 +74,7 @@ export async function encryptFile(
 
     // Store encrypted data as JSON string in Blob
     const encryptedDataString = JSON.stringify(encrypted);
-    const encryptedBlob = new Blob([encryptedDataString], { type: 'application/json' });
+    const encryptedBlob = new BinaryBlob([encryptedDataString], { type: 'application/json' });
 
     // Encrypt the symmetric key with Signal Protocol
     // Include MIME type in encrypted metadata for proper decryption
@@ -102,6 +122,7 @@ export async function decryptFile(
   encryptedBlob: Blob,
   encryptedKey: Ciphertext
 ): Promise<Blob> {
+  const BinaryBlob = requireBinaryBlob();
   const sessionId = ProtocolAddress.toString(remoteAddress);
   // Track fileKey outside try block so we can zero it in finally
   let fileKey: Uint8Array | undefined;
@@ -169,7 +190,7 @@ export async function decryptFile(
       fileBytes.byteOffset,
       fileBytes.byteOffset + fileBytes.byteLength
     ) as ArrayBuffer;
-    return new Blob([arrayBuffer], { type: finalMimeType });
+    return new BinaryBlob([arrayBuffer], { type: finalMimeType });
   } catch (error) {
     // Call hook: decryption error
     await callHook(ctx.hooks, 'onDecryptionError', sessionId, error as Error);

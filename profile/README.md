@@ -18,12 +18,9 @@ import {
   decryptProfileName,
   encryptProfileName,
   getOrCreateOwnProfileKey,
-  setProfileKeyStorage,
 } from "@open-e2ee/signal-protocol-sdk/profile";
 
-setProfileKeyStorage(appProfileKeyStorage);
-
-const profileKey = await getOrCreateOwnProfileKey();
+const profileKey = await getOrCreateOwnProfileKey(secretVault);
 const encryptedName = await encryptProfileName(profileKey, "Alice");
 const { name } = await decryptProfileName(profileKey, encryptedName);
 ```
@@ -33,13 +30,14 @@ an application-owned API. Profile-key rotation is a coordinated operation.
 Persist the new encrypted snapshot, distribute the new key through encrypted
 messages, and retain enough local state to recover from interruption.
 
-`appProfileKeyStorage` implements `ProfileKeyStorage` with `getItem`,
-`setItem`, and `deleteItem`. Configure it before the first profile-key call.
-The built-in React Native path uses Expo SecureStore. The browser fallback is
-JavaScript-accessible localStorage. Node and server-side runtimes must provide a
-persistent implementation if profile keys need to survive process restarts.
-Storage confidentiality, backup, migration, and account-reset behavior remain
-host-application responsibilities.
+`secretVault` is the `SignalProtocolLocalSecretVault` that the application
+passes to every own-profile-key call. The key is kept only in that vault, as
+its raw 32 bytes. On Expo, use `ExpoSecureStoreSignalProtocolSecretVault` from
+`@open-e2ee/signal-protocol-sdk/local/vault/expo-secure-store`. Other runtimes
+pass their own implementation. The SDK has no fallback store: it never writes
+the key to `localStorage`, and a call with no vault throws an `EncryptionError`
+with code `SECRET_VAULT_REQUIRED`. Storage confidentiality, backup, migration,
+and account-reset behavior remain host-application responsibilities.
 
 See the [security model](../docs/SECURITY.md) and
 [API reference](../docs/api/README.md).

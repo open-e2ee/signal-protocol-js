@@ -45,8 +45,8 @@ export interface TransferQRCode {
   publicKey: string;
   /** Protocol version (for future compatibility) */
   version: number;
-  /** Device platform type */
-  deviceType: 'ios' | 'android';
+  /** Device platform type (absent when the new device did not supply it) */
+  deviceType?: 'ios' | 'android';
   /** Creation timestamp (for freshness check) */
   timestamp: number;
 }
@@ -76,6 +76,19 @@ export interface BackupIdentityKeyPair {
 }
 
 /**
+ * Device metadata that a transfer QR code and a linked-device bundle carry.
+ *
+ * The shared `./device` entry reads no platform API. Get this from
+ * `getTransferDeviceInfo()` in `./device/expo` or `./device/react-native`, or
+ * supply it. Each absent field is omitted from the QR code and the bundle.
+ */
+export interface TransferDeviceInfo {
+  platform?: 'ios' | 'android';
+  osVersion?: string;
+  appVersion?: string;
+}
+
+/**
  * Linked-device provisioning bundle.
  *
  * It transfers only the account identity needed to bind a new device. The new
@@ -90,11 +103,7 @@ export interface DeviceBackup {
   timestamp: number;
 
   /** Device metadata */
-  deviceInfo: {
-    platform: 'ios' | 'android';
-    osVersion: string;
-    appVersion: string;
-  };
+  deviceInfo: TransferDeviceInfo;
 
   /** Long-lived identity key */
   identityKey: BackupIdentityKeyPair;

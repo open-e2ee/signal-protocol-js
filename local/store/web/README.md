@@ -9,6 +9,15 @@ Browser applications need durable protocol state without importing mobile or
 Node filesystem dependencies. The adapter provides that boundary while making
 the browser-origin threat model explicit.
 
+## Setup
+
+Install the peer `idb` 8.0.3 or later. The store opens its IndexedDB database
+through it.
+
+```sh
+npm install idb
+```
+
 ## Usage
 
 <!-- doc-snippet:skip requires-external-context -->

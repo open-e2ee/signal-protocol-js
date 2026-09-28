@@ -6,7 +6,7 @@
 
 import type { ConvexReactClient } from 'convex/react';
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
-import { base64ToBytes, constantTimeEqual } from '../internal/crypto';
+import { base64ToBytes, constantTimeEqual, hmac } from '../internal/crypto';
 import { deriveAccessKey } from '../internal/protocol/sealed-sender/delivery-token';
 import { asBase64 } from '../types/utils';
 import { PROFILE_KEY_SIZE } from './crypto';
@@ -70,20 +70,7 @@ export async function verifyUnidentifiedAccessMode(
   }
 
   const accessKey = await deriveAccessKey(profileKey);
-  const hmacKey = await crypto.subtle.importKey(
-    'raw',
-    accessKey as Uint8Array<ArrayBuffer>,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const localChecksum = await crypto.subtle.sign(
-    'HMAC',
-    hmacKey,
-    new Uint8Array(32) as Uint8Array<ArrayBuffer>
-  );
-
-  const localChecksumBytes = new Uint8Array(localChecksum);
+  const localChecksumBytes = hmac(accessKey, new Uint8Array(32));
   const serverChecksumBytes = base64ToBytes(asBase64(serverResult.checksum));
   const match = constantTimeEqual(localChecksumBytes, serverChecksumBytes);
 

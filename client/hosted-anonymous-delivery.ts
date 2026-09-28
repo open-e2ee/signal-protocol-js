@@ -1,3 +1,4 @@
+import { utf8Decode } from "../internal/platform";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -100,7 +101,7 @@ async function responseObject(response: Response): Promise<JsonRecord> {
     reader.releaseLock();
   }
   const value: unknown = JSON.parse(
-    new TextDecoder().decode(concatBytes(...chunks)),
+    utf8Decode(concatBytes(...chunks)),
   );
   if (!record(value)) throw new Error("Anonymous delivery receipt is invalid");
   return value;

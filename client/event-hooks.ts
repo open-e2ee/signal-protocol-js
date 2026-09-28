@@ -36,6 +36,8 @@
  * ```
  */
 
+import { rethrowRelayWorkStopped } from './relay-work';
+
 /**
  * Decrypted envelope passed to onMessageDecrypted hook
  *
@@ -370,6 +372,7 @@ export async function callHook<T extends HookName>(
       Reflect.apply(hook as (...hookArgs: unknown[]) => unknown, undefined, args as unknown[])
     );
   } catch (error) {
+    rethrowRelayWorkStopped(error);
     // Log hook error but do not let it break core functionality
     console.error(`Hook ${hookName} failed:`, error);
   }

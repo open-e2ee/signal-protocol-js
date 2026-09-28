@@ -1,0 +1,36 @@
+{
+  "release": "v2.5.1",
+  "sqlite": "3.53.4",
+  "releaseUrl": "https://github.com/utelle/SQLite3MultipleCiphers/releases/tag/v2.5.1",
+  "archive": {
+    "url": "https://github.com/utelle/SQLite3MultipleCiphers/releases/download/v2.5.1/sqlite3mc-2.5.1-sqlite-3.53.4-wasm.zip",
+    "sha256": "761a41b8dc996cfa21f193fc044739fbb0c4a31a1fd657a4df49cc59085577ce"
+  },
+  "checksums": {
+    "url": "https://github.com/utelle/SQLite3MultipleCiphers/releases/download/v2.5.1/sqlite3mc-2.5.1-SHA256SUMS",
+    "signatureUrl": "https://github.com/utelle/SQLite3MultipleCiphers/releases/download/v2.5.1/sqlite3mc-2.5.1-SHA256SUMS.sig",
+    "certificateUrl": "https://github.com/utelle/SQLite3MultipleCiphers/releases/download/v2.5.1/sqlite3mc-2.5.1-SHA256SUMS.pem"
+  },
+  "signer": {
+    "identity": "https://github.com/utelle/SQLite3MultipleCiphers/.github/workflows/build-reusable.yml@refs/heads/main",
+    "issuer": "https://token.actions.githubusercontent.com"
+  },
+  "files": {
+    "sqlite3.mjs": {
+      "archivePath": "sqlite3mc-wasm-3530400/jswasm/sqlite3.mjs",
+      "releaseSha256": "058b526608afdd81c244540f525286275d7bcc6a11676d19fdda7be50502f10e",
+      "patches": [
+        "keep-pool-on-failed-install",
+        "settle-handles-before-release",
+        "report-quota-as-full"
+      ],
+      "sha256": "e04bde7a1eef5ef51d5b4aaba7bb50fcb19071b9c472717432e40353e8d3a415"
+    },
+    "sqlite3.wasm": {
+      "archivePath": "sqlite3mc-wasm-3530400/jswasm/sqlite3.wasm",
+      "releaseSha256": "b6aedab9eee5cd5de0f13498e0bf64bb5ee9cc786d1d0303cc365578b64d18ab",
+      "patches": [],
+      "sha256": "b6aedab9eee5cd5de0f13498e0bf64bb5ee9cc786d1d0303cc365578b64d18ab"
+    }
+  }
+}

@@ -1,3 +1,4 @@
+import { parseUrl, type ParsedUrl } from "../../internal/platform";
 import type {
   RemoteObjectDownload,
   RemoteObjectUpload,
@@ -38,9 +39,9 @@ function requireRecord(value: unknown, field: string): Record<string, unknown> {
 
 function requireSecureUrl(value: unknown, field: string): string {
   const url = requireNonEmptyString(value, field);
-  let parsed: URL;
+  let parsed: ParsedUrl;
   try {
-    parsed = new URL(url);
+    parsed = parseUrl(url);
   } catch {
     throw new TypeError(`${field} must be an absolute URL`);
   }

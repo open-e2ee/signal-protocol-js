@@ -1,6 +1,8 @@
+import { parseUrl, utf8Decode, type ParsedUrl } from '../internal/platform';
 import {
   base64ToBytes,
   bytesToUrlSafeBase64,
+  concatBytes,
   urlSafeToBase64,
 } from '../internal/crypto';
 import type { Base64 } from '../types';
@@ -14,7 +16,7 @@ export interface HostedRelayCertificateTrust {
 export interface HostedRelayConnection {
   readonly certificateTrust: HostedRelayCertificateTrust;
   readonly configurationVersion: number;
-  readonly environment: 'development' | 'production';
+  readonly environment: 'sandbox' | 'production';
   readonly protocolEndpoint: string;
   readonly publishableKey: string;
   readonly relayScopeId: Uint8Array;
@@ -22,7 +24,7 @@ export interface HostedRelayConnection {
 }
 
 type ManagedRelayProfile = keyof typeof MANAGED_RELAY_PROFILES;
-const CONNECTION_PATH = /^\/v1\/connection\/([A-Za-z0-9_-]{1,255})$/u;
+const CONNECTION_PATH = /^\/signal\/v1\/connection\/([A-Za-z0-9_-]{1,255})$/u;
 const CONNECTION_FRESH_MILLISECONDS = 5 * 60 * 1_000;
 const CONNECTION_STALE_MILLISECONDS = 60 * 60 * 1_000;
 const CONNECTION_DOCUMENT_MAXIMUM_BYTES = 8 * 1_024;
@@ -49,9 +51,9 @@ function parseRelayUrl(value: string): {
   profile: ManagedRelayProfile;
   relayUrl: string;
 } {
-  let url: URL;
+  let url: ParsedUrl;
   try {
-    url = new URL(value);
+    url = parseUrl(value);
   } catch {
     throw new Error('Signal Protocol Relay connection URL is invalid');
   }
@@ -62,10 +64,7 @@ function parseRelayUrl(value: string): {
   if (
     profile === undefined ||
     locator === undefined ||
-    url.username !== '' ||
-    url.password !== '' ||
     url.search !== '' ||
-    url.hash !== '' ||
     url.href !== value
   ) {
     throw new Error('Signal Protocol Relay connection URL is invalid');
@@ -164,9 +163,8 @@ async function boundedJson(response: Response): Promise<unknown> {
     const body = response.body as ReadableStream<Uint8Array> | null | undefined;
     if (typeof body?.getReader === 'function') {
       const reader = body.getReader();
-      const decoder = new TextDecoder();
+      const chunks: Uint8Array[] = [];
       let size = 0;
-      let text = '';
       for (;;) {
         const result = await reader.read();
         if (result.done) break;
@@ -175,10 +173,9 @@ async function boundedJson(response: Response): Promise<unknown> {
           await reader.cancel();
           throw new Error('Signal Protocol Relay returned an invalid connection');
         }
-        text += decoder.decode(result.value, { stream: true });
+        chunks.push(result.value);
       }
-      text += decoder.decode();
-      return JSON.parse(text) as unknown;
+      return JSON.parse(utf8Decode(concatBytes(...chunks))) as unknown;
     }
 
     // React Native and Expo use a fetch implementation without response body
@@ -250,7 +247,7 @@ export async function resolveHostedRelayConnection(
     !Number.isSafeInteger(valueFromRelay.configurationVersion) ||
     (valueFromRelay.configurationVersion as number) < 1 ||
     valueFromRelay.environment !== input.environment ||
-    valueFromRelay.protocolEndpoint !== `${expectedOrigin}/v1/signal` ||
+    valueFromRelay.protocolEndpoint !== `${expectedOrigin}/signal/v1` ||
     valueFromRelay.publishableKey !== input.locator ||
     relayScopeId === undefined
   ) {

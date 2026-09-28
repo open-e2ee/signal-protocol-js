@@ -12,7 +12,7 @@
  *
  * // Any SignalProtocolRelayServer the app composes, authenticated for this user.
  * const relay = createAuthenticatedRelay({ authToken, userId });
- * const storage = expoStore();
+ * const storage = await expoStore();
  *
  * const result = await rotateKeysHeadless(relay, userId, deviceId, { storage });
  * console.log(result); // { signedRotated: true, kyberRotated: false, oneTimeReplenished: true, errors: [] }

@@ -11,7 +11,7 @@ Add encrypted messaging to Expo, React Native, browser, and Node applications. T
 
 The default policy requires post-quantum session establishment and ratcheting. The protocol implementation is open source under the MIT License or the Apache License 2.0, at your option.
 
-[**Run an encrypted exchange in your browser**](https://open-e2ee.dev/playground) · [Edit on StackBlitz](https://stackblitz.com/fork/github/open-e2ee/signal-protocol-js/tree/v7.2.0/examples/browser) · [Run on Expo / Hermes](./examples/expo/README.md)
+[**Run an encrypted exchange in your browser**](https://open-e2ee.dev/playground) · [Edit on StackBlitz](https://stackblitz.com/fork/github/open-e2ee/signal-protocol-js/tree/v8.0.0/examples/browser) · [Run on Expo / Hermes](./examples/expo/README.md)
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-2f6f5e)](./LICENSE)
 [![npm version](https://img.shields.io/npm/v/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
@@ -43,7 +43,7 @@ The relay never needs message plaintext or device private keys.
 
 OpenE2EE implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
-Version `7.2.x`. Public APIs and persisted formats follow semantic versioning.
+Version `8.0.x`. Public APIs and persisted formats follow semantic versioning.
 
 ## Install
 
@@ -106,10 +106,12 @@ Choose the device-local store for your runtime. Then supply a relay that authent
 
 | Runtime | Storage path | Deployment boundary |
 |---|---|---|
-| Expo | [`expoStore`](./local/store/expo/README.md) | Configure SQLCipher before schema access. Requires a native development or release build. [Run the Hermes example](./examples/expo/README.md); Expo Go does not include SQLCipher. |
+| Expo | [`expoStore`](./local/store/expo/README.md) | Enable SQLCipher in the expo-sqlite config plugin. The SDK owns the database file, its key, and its migrations. Requires a native development or release build. [Run the Hermes example](./examples/expo/README.md); Expo Go does not include SQLCipher. |
 | Browser | [`indexedDbStore`](./local/store/web/README.md) | Use a secure context and a restrictive CSP. Same-origin JavaScript can access stored records and their key. [Browser setup](https://docs.open-e2ee.dev/start/browser). |
-| Bare React Native | [`reactNativeStore`](./local/store/react-native/README.md) | Provide an atomic, durable key-value backend and run the exported backend conformance kit. Install Expo modules, because the store uses `expo-crypto`. |
-| Node | [`nodeStore`](./local/store/node/README.md) | Install `fs-native-extensions` and set an explicit private directory on a trusted local filesystem. |
+| Browser, SQLite | [`webSqliteStore`](./local/store/web-sqlite/README.md) | Needs the origin private file system and a CSP that allows `'wasm-unsafe-eval'`. The SDK owns the database file, its key, and its migrations. The key sits in IndexedDB in the same origin, so same-origin JavaScript can read it. |
+| Bare React Native | [`reactNativeStore`](./local/store/react-native/README.md) | Enable SQLCipher with `"op-sqlite": { "sqlcipher": true }` in the app's `package.json`, and install `react-native-keychain`. The SDK owns the database file, its key, and its migrations. Requires a native build; with SQLCipher on, op-sqlite conflicts on iOS with `expo-sqlite`, `expo-updates`, and `use_frameworks!`. |
+| Own key-value engine | [`keyValueStore`](./local/store/key-value/README.md) | Provide an atomic, durable key-value backend and a keychain-backed secret vault, and run the exported backend conformance kit. A Realm backend is included. |
+| Node and Electron | [`nodeStore`](./local/store/node/README.md) | Install `better-sqlite3-multiple-ciphers` and pass a private directory on a local file system and a secret vault. In Electron, open it in the main process with the safeStorage vault. The SDK owns the database file, its key, and its migrations. |
 
 React Native support starts at React Native 0.83.6 and Expo SDK 55. The peer ranges have no upper bound. CI checks these versions:
 
@@ -120,6 +122,8 @@ React Native support starts at React Native 0.83.6 and Expo SDK 55. The peer ran
 | Run the Expo example's release build on an Android emulator | Expo SDK 57 with React Native 0.86 |
 
 React Native 0.84 and later use Hermes V1 by default. React Native 0.82 and later run only on the New Architecture.
+
+On React Native and Expo, the SDK reads random bytes only from the global `crypto.getRandomValues`. Install `react-native-get-random-values` 2.x or `react-native-quick-crypto`, and load it before the first SDK call. Without a global source, the SDK throws `SecureRandomUnavailableError`.
 
 The [adapter guide](./ADAPTERS.md) defines every storage, relay, vault, and object-store boundary. The [client composition guide](./docs/CLIENT_COMPOSITION.md) shows an Expo client on the OpenE2EE Signal Protocol Relay.
 

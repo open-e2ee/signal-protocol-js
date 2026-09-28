@@ -4,33 +4,31 @@
  * Helper functions for device metadata management.
  */
 
-import { Platform } from 'react-native';
-import * as Device from 'expo-device';
-import RNDeviceInfo from 'react-native-device-info';
-import type { DeviceInfo, DeviceMetadata } from './types';
+import type { DeviceInfo, DeviceLifecyclePlatform, DeviceMetadata } from './types';
 
 /**
- * Get current device metadata from system APIs.
+ * Get current device metadata from the facts that the application passes.
  *
+ * Each absent fact is omitted.
+ *
+ * @param device - Local device facts, such as `getDeviceLifecyclePlatform()`
+ *   from `./device/expo` or `./device/react-native`
  * @returns Current device metadata
  */
 export {};
-export async function getLocalDeviceMetadata(): Promise<DeviceMetadata> {
-  const metadata: DeviceMetadata = {
-    platform: Platform.OS,
-    osVersion: Device.osVersion ?? undefined,
-  };
+export async function getLocalDeviceMetadata(
+  device: DeviceLifecyclePlatform
+): Promise<DeviceMetadata> {
+  const metadata: DeviceMetadata = {};
+  if (device.platform) metadata.platform = device.platform;
+  if (device.osVersion) metadata.osVersion = device.osVersion;
+  if (device.appVersion) metadata.appVersion = device.appVersion;
 
   try {
-    metadata.idfv = await RNDeviceInfo.getUniqueId();
+    const idfv = await device.getDeviceFingerprint?.();
+    if (idfv) metadata.idfv = idfv;
   } catch {
     // Non-fatal - IDFV may not be available on all platforms
-  }
-
-  try {
-    metadata.appVersion = RNDeviceInfo.getVersion();
-  } catch {
-    // Non-fatal - app version is optional
   }
 
   return metadata;
@@ -48,7 +46,7 @@ export async function getLocalDeviceMetadata(): Promise<DeviceMetadata> {
  * ```typescript
  * const devices = await relay.getDevices(userId);
  * const myDevice = devices.find(d => d.deviceId === deviceId);
- * const localMeta = await getLocalDeviceMetadata();
+ * const localMeta = await getLocalDeviceMetadata(getDeviceLifecyclePlatform());
  * const missingMeta = getMissingMetadata(myDevice, localMeta);
  *
  * if (missingMeta) {

@@ -19,6 +19,7 @@
  * ```
  */
 
+import { utf8Decode } from '../../../internal/platform';
 import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
 import { openDB, IDBPDatabase, DBSchema } from 'idb';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
@@ -29,6 +30,8 @@ import type {
   SessionTrustCommit,
 } from '../../../types';
 import { getErrorMessage } from '../../../utils/errors';
+import { generateRandomBytes } from '../../../internal/crypto/random';
+import { decryptAes, encryptAes } from '../../../internal/crypto/symmetric/aes-provider';
 import type {
   IdentityKeyPair,
   EcSignedPreKey,
@@ -44,10 +47,13 @@ import {
   validateContactIdentityRecord,
   verifyContactIdentityRecord,
 } from '../../../keys/identity';
-import type { SessionState, ProtocolAddress } from '../../../types';
+import type { SessionState } from '../../../types';
+import { ProtocolAddress } from '../../../types/address';
 import { IdentityKeyChange, StorageQuotaExceededError, TrustDirection } from '../../../types';
 import { assertCurrentSessionRecord, type SessionRecord } from '../../../types/session';
-import type { UserRecord, DeviceRecord, DeviceID } from '../../../types';
+import type { UserRecord, DeviceRecord } from '../../../types';
+import { withSession } from '../device-record';
+import { decodeUserRecord, encodeUserRecord } from './device-record';
 import type { Base64 } from '../../../types/utils';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { deserializeSessionRecord, serializeSessionRecord } from '../session-codec';
@@ -69,6 +75,15 @@ function equalBytes(left: Uint8Array | undefined, right: Uint8Array | undefined)
   if (left.length !== right.length) return false;
   return left.every((value, index) => value === right[index]);
 }
+
+/** The IndexedDB key of the sender key record of one sender in one group. */
+type SenderKeyRecordId = [groupId: string, userId: string, deviceId: number];
+
+/** The IndexedDB key of one sender in one group, for skipped sender keys. */
+type SkippedSenderKeySender = [groupId: string, senderId: string, senderDeviceId: number];
+
+/** The IndexedDB key of one skipped sender key. */
+type SkippedSenderKeyId = [...SkippedSenderKeySender, chainIndex: number];
 
 /**
  * IndexedDB schema for Signal Protocol storage
@@ -144,11 +159,12 @@ interface SignalProtocolDBSchema extends DBSchema {
     };
   };
 
-  // Sender key records (current + previous states) for group messaging
+  // Sender key records (current + previous states) for group messaging. The
+  // keys are arrays, so a group or user name that contains `:` cannot collide.
   senderKeyRecords: {
-    key: string;
+    key: SenderKeyRecordId;
     value: {
-      key: string;
+      key: SenderKeyRecordId;
       groupId: string;
       userId: string;
       deviceId: number;
@@ -169,17 +185,19 @@ interface SignalProtocolDBSchema extends DBSchema {
     indexes: { 'by-group': string; 'by-sender-key-id': string };
   };
 
-  // Skipped sender keys for out-of-order sender-key messages
+  // Skipped sender keys for out-of-order sender-key messages. The keys are
+  // arrays, so a group or sender name that contains `:` cannot collide.
   skippedSenderKeys: {
-    key: string;
+    key: SkippedSenderKeyId;
     value: {
-      key: string;
-      senderKey: string;
+      key: SkippedSenderKeyId;
+      groupId: string;
+      senderKey: SkippedSenderKeySender;
       chainIndex: number;
       data: Uint8Array;
       createdAt: number;
     };
-    indexes: { 'by-sender': string; 'by-created': number };
+    indexes: { 'by-group': string; 'by-sender': SkippedSenderKeySender; 'by-created': number };
   };
 
   // Message records for SESAME retry support
@@ -195,12 +213,6 @@ interface SignalProtocolDBSchema extends DBSchema {
     indexes: { 'by-session': string; 'by-created': number };
   };
 }
-
-type SerializedDeviceRecord = Omit<DeviceRecord, 'identityKey'> & { identityKey: number[] };
-
-type SerializedUserRecord = Omit<UserRecord, 'devices'> & {
-  devices: Array<[DeviceID, SerializedDeviceRecord]>;
-};
 
 /**
  * Compares stored ciphertext, not secret material - corrupt-row cleanup only
@@ -320,7 +332,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
   private db: IDBPDatabase<SignalProtocolDBSchema> | null = null;
   private databaseKey: Uint8Array | null = null;
   private readonly dbName = 'signal-protocol-storage';
-  private readonly dbVersion = 6; // v6 indexes sender key records by senderKeyId
+  private readonly dbVersion = 7; // v7 keys sender keys by arrays and indexes skipped keys by group
 
   constructor() {
     mapQuotaFailuresAtBoundary(this);
@@ -392,10 +404,11 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
         // A received group message names its sender key
         // by an opaque `senderKeyId` and nothing else, so records need an
         // index on that field. Rows written before v6 do not carry it and
-        // cannot be indexed retroactively without decrypting each one. The
-        // cost of dropping them is a round of sender key redistribution,
-        // which the protocol already handles.
-        if (oldVersion > 0 && oldVersion < 6 && db.objectStoreNames.contains('senderKeyRecords')) {
+        // cannot be indexed retroactively without decrypting each one. Rows
+        // written before v7 have `:`-joined keys that collide when a group or
+        // user name contains `:`. The cost of dropping them is a round of
+        // sender key redistribution, which the protocol already handles.
+        if (oldVersion > 0 && oldVersion < 7 && db.objectStoreNames.contains('senderKeyRecords')) {
           db.deleteObjectStore('senderKeyRecords');
         }
         if (!db.objectStoreNames.contains('senderKeyRecords')) {
@@ -404,8 +417,17 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
           senderKeyStore.createIndex('by-sender-key-id', 'senderKeyIds', { multiEntry: true });
         }
 
+        // Deleting a group deletes its skipped sender keys through a group
+        // index. Rows written before v7 do not carry the group, and their
+        // `:`-joined storage keys collide when a group or sender name
+        // contains `:`. The cost of dropping them is that the messages they
+        // were kept for no longer decrypt.
+        if (oldVersion > 0 && oldVersion < 7 && db.objectStoreNames.contains('skippedSenderKeys')) {
+          db.deleteObjectStore('skippedSenderKeys');
+        }
         if (!db.objectStoreNames.contains('skippedSenderKeys')) {
           const skippedStore = db.createObjectStore('skippedSenderKeys', { keyPath: 'key' });
+          skippedStore.createIndex('by-group', 'groupId');
           skippedStore.createIndex('by-sender', 'senderKey');
           skippedStore.createIndex('by-created', 'createdAt');
         }
@@ -423,11 +445,11 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     if (storedKey) {
       this.databaseKey = storedKey as Uint8Array;
     } else {
-      // Generate new 32-byte key using Web Crypto. The add() call refuses to
+      // Generate a new 32-byte key from the secure random seam. The add() call refuses to
       // overwrite, so when two connections bootstrap a fresh database
       // concurrently, exactly one key is ever stored. The loser adopts the
       // winner's key instead of encrypting records nobody else can read.
-      const candidate = crypto.getRandomValues(new Uint8Array(32));
+      const candidate = await generateRandomBytes(32);
       try {
         await this.db.add('metadata', candidate, 'databaseKey');
         this.databaseKey = candidate;
@@ -1209,7 +1231,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     await this.db!.clear('messageRecords');
 
     // Generate new database encryption key after clearing
-    this.databaseKey = crypto.getRandomValues(new Uint8Array(32));
+    this.databaseKey = await generateRandomBytes(32);
     await this.db!.put('metadata', this.databaseKey, 'databaseKey');
   }
 
@@ -1291,7 +1313,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
   }
 
   /**
-   * Encrypt data using AES-256-GCM with Web Crypto API
+   * Encrypt data using AES-256-GCM through the SDK AES provider
    *
    * @param plaintext - Data to encrypt
    * @returns IV (12 bytes) + ciphertext + auth tag (16 bytes)
@@ -1301,35 +1323,26 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
       throw new Error('Database key not available');
     }
 
-    // Import key for AES-GCM
-    const key = await crypto.subtle.importKey(
-      'raw',
-      this.databaseKey as BufferSource,
-      { name: 'AES-GCM' },
-      false,
-      ['encrypt']
-    );
-
     // Generate random IV (12 bytes for GCM)
-    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const iv = await generateRandomBytes(12);
 
     // Encode plaintext
     const encoder = new TextEncoder();
     const data = encoder.encode(plaintext);
 
     // Encrypt
-    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
+    const ciphertext = await encryptAes('AES-GCM', this.databaseKey, iv, data);
 
-    // Combine IV + ciphertext (auth tag is included in ciphertext by Web Crypto)
+    // Combine IV + ciphertext (the auth tag ends the AES-GCM ciphertext)
     const result = new Uint8Array(12 + ciphertext.byteLength);
     result.set(iv, 0);
-    result.set(new Uint8Array(ciphertext), 12);
+    result.set(ciphertext, 12);
 
     return result;
   }
 
   /**
-   * Decrypt data using AES-256-GCM with Web Crypto API
+   * Decrypt data using AES-256-GCM through the SDK AES provider
    *
    * @param encrypted - IV (12 bytes) + ciphertext + auth tag (16 bytes)
    * @returns Decrypted plaintext
@@ -1343,130 +1356,105 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     const iv = encrypted.slice(0, 12);
     const ciphertext = encrypted.slice(12);
 
-    // Import key for AES-GCM
-    const key = await crypto.subtle.importKey(
-      'raw',
-      this.databaseKey as BufferSource,
-      { name: 'AES-GCM' },
-      false,
-      ['decrypt']
-    );
-
     // Decrypt
     try {
-      const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+      const plaintext = await decryptAes('AES-GCM', this.databaseKey, iv, ciphertext);
 
       // Decode plaintext
-      const decoder = new TextDecoder();
-      return decoder.decode(plaintext);
+      return utf8Decode(new Uint8Array(plaintext));
     } catch (error) {
       throw new Error(`Decryption failed: ${getErrorMessage(error)}`);
     }
   }
 
   // ============================================================================
-  // SESAME Serialization Helpers
-  // ============================================================================
-
-  /**
-   * Serialize UserRecord for JSON storage
-   * Converts Map<DeviceID, DeviceRecord> to array of [deviceId, deviceRecord] pairs
-   */
-  private serializeUserRecord(record: UserRecord): SerializedUserRecord {
-    return {
-      ...record,
-      devices: Array.from(record.devices.entries(), ([deviceId, device]) => [
-        deviceId,
-        { ...device, identityKey: Array.from(device.identityKey) },
-      ]),
-    };
-  }
-
-  /**
-   * Deserialize UserRecord from JSON storage
-   * Converts array of [deviceId, deviceRecord] pairs back to Map
-   */
-  private deserializeUserRecord(data: SerializedUserRecord): UserRecord {
-    return {
-      ...data,
-      devices: new Map(
-        data.devices.map(([deviceId, device]) => [
-          deviceId,
-          { ...device, identityKey: new Uint8Array(device.identityKey) },
-        ])
-      ),
-    };
-  }
-
-  // ============================================================================
   // SESAME Multi-Device Session Management
   // ============================================================================
 
+  // A device's session lives only in the `sessions` store; see `./device-record`.
   async getUserRecord(userId: string): Promise<UserRecord | null> {
-    this.ensureInitialized();
-
-    const entry = await this.db!.get('sesameUsers', userId);
-    if (!entry) {
-      return null;
+    const record = await this.getStoredUserRecord(userId);
+    if (!record) return null;
+    for (const [deviceId, device] of record.devices) {
+      const session = await this.getSessionRecord(ProtocolAddress.create(userId, deviceId));
+      record.devices.set(deviceId, withSession(userId, deviceId, device, session)!);
     }
-
-    const json = await this.decrypt(entry.data);
-    return this.deserializeUserRecord(JSON.parse(json));
+    return record;
   }
 
   async setUserRecord(userId: string, record: UserRecord): Promise<void> {
     this.ensureInitialized();
-
-    const serialized = this.serializeUserRecord(record);
-    const encrypted = await this.encrypt(JSON.stringify(serialized));
-
+    const encrypted = await this.encrypt(JSON.stringify(encodeUserRecord(record)));
     await this.db!.put('sesameUsers', { key: userId, data: encrypted, updatedAt: Date.now() });
   }
 
   async getDeviceRecord(userId: string, deviceId: number): Promise<DeviceRecord | null> {
-    const userRecord = await this.getUserRecord(userId);
-    if (!userRecord) {
-      return null;
-    }
-
-    return userRecord.devices.get(deviceId) || null;
+    const stored = (await this.getStoredUserRecord(userId))?.devices.get(deviceId) ?? null;
+    const session = await this.getSessionRecord(ProtocolAddress.create(userId, deviceId));
+    return withSession(userId, deviceId, stored, session);
   }
 
   async setDeviceRecord(userId: string, deviceId: number, record: DeviceRecord): Promise<void> {
-    // Get or create UserRecord
-    let userRecord = await this.getUserRecord(userId);
-    if (!userRecord) {
-      // Auto-create UserRecord when adding first device
-      userRecord = {
-        userId: userId,
-        devices: new Map(),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-    }
-
-    // Update device
+    if (record.session) assertCurrentSessionRecord(record.session);
+    const now = Date.now();
+    const userRecord = (await this.getStoredUserRecord(userId)) ?? {
+      userId,
+      devices: new Map(),
+      createdAt: now,
+      updatedAt: now,
+    };
     userRecord.devices.set(deviceId, record);
-    userRecord.updatedAt = Date.now();
+    userRecord.updatedAt = now;
 
-    await this.setUserRecord(userId, userRecord);
+    // Encryption awaits Web Crypto, so it finishes before the transaction
+    // opens. Both writes then enter the transaction in one synchronous batch.
+    const user = await this.encrypt(JSON.stringify(encodeUserRecord(userRecord)));
+    const session = record.session
+      ? await this.encrypt(serializeSessionRecord(record.session))
+      : null;
+    const tx = this.db!.transaction(['sesameUsers', 'sessions'], 'readwrite');
+    const writes: Promise<unknown>[] = [
+      tx.objectStore('sesameUsers').put({ key: userId, data: user, updatedAt: now }),
+    ];
+    if (session) {
+      writes.push(
+        tx.objectStore('sessions').put({
+          key: this.serializeAddress(ProtocolAddress.create(userId, deviceId)),
+          userId,
+          deviceId,
+          data: session,
+          updatedAt: now,
+        })
+      );
+    }
+    await Promise.all([...writes, tx.done]);
   }
 
   async deleteDeviceRecord(userId: string, deviceId: number): Promise<void> {
-    const userRecord = await this.getUserRecord(userId);
-    if (!userRecord) {
-      return;
-    }
+    const now = Date.now();
+    const userRecord = await this.getStoredUserRecord(userId);
+    userRecord?.devices.delete(deviceId);
+    const user =
+      userRecord && userRecord.devices.size > 0
+        ? await this.encrypt(JSON.stringify(encodeUserRecord({ ...userRecord, updatedAt: now })))
+        : null;
 
-    userRecord.devices.delete(deviceId);
-    userRecord.updatedAt = Date.now();
+    // A device can exist through its session alone, so the session goes even
+    // when no stored user record names the device.
+    const sessionKey = this.serializeAddress(ProtocolAddress.create(userId, deviceId));
+    const tx = this.db!.transaction(['sesameUsers', 'sessions'], 'readwrite');
+    const users = tx.objectStore('sesameUsers');
+    const writes: Promise<unknown>[] = [tx.objectStore('sessions').delete(sessionKey)];
+    if (user) writes.push(users.put({ key: userId, data: user, updatedAt: now }));
+    else if (userRecord) writes.push(users.delete(userId));
+    await Promise.all([...writes, tx.done]);
+  }
 
-    // Auto-cleanup: remove UserRecord if no devices remain
-    if (userRecord.devices.size === 0) {
-      await this.db!.delete('sesameUsers', userId);
-    } else {
-      await this.setUserRecord(userId, userRecord);
-    }
+  private async getStoredUserRecord(userId: string): Promise<UserRecord | null> {
+    this.ensureInitialized();
+    const entry = await this.db!.get('sesameUsers', userId);
+    if (!entry) return null;
+    return decodeUserRecord(JSON.parse(await this.decrypt(entry.data)));
   }
 
   async deleteStaleRecords(maxLatency: number): Promise<number> {
@@ -1582,7 +1570,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
   }
 
   async getSesameDeviceIds(userId: string): Promise<number[]> {
-    const userRecord = await this.getUserRecord(userId);
+    const userRecord = await this.getStoredUserRecord(userId);
     if (!userRecord) {
       return [];
     }
@@ -1627,10 +1615,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
 
   async deleteSenderKey(groupId: string, userId: string, deviceId: number): Promise<void> {
     this.ensureInitialized();
-    await this.db!.delete(
-      'senderKeyRecords',
-      this.getSenderKeyRecordStorageKey(groupId, userId, deviceId)
-    );
+    await this.db!.delete('senderKeyRecords', [groupId, userId, deviceId]);
   }
 
   async resolveGroupForSenderKeyId(
@@ -1687,16 +1672,21 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
   async deleteAllSenderKeysForGroup(groupId: string): Promise<number> {
     this.ensureInitialized();
 
-    const keys: string[] = [];
-    const tx = this.db!.transaction('senderKeyRecords', 'readonly');
-    const index = tx.objectStore('senderKeyRecords').index('by-group');
-
-    for await (const cursor of index.iterate(groupId)) {
-      keys.push(cursor.primaryKey as string);
-    }
-
-    await Promise.all(keys.map((key) => this.db!.delete('senderKeyRecords', key)));
-    return keys.length;
+    // Read the doomed keys before mutating, then enter every delete in one
+    // synchronous batch, so the sender keys and skipped keys go together.
+    const tx = this.db!.transaction(['senderKeyRecords', 'skippedSenderKeys'], 'readwrite');
+    const senderKeyRecords = tx.objectStore('senderKeyRecords');
+    const skippedSenderKeys = tx.objectStore('skippedSenderKeys');
+    const [recordKeys, skippedKeys] = await Promise.all([
+      senderKeyRecords.index('by-group').getAllKeys(groupId),
+      skippedSenderKeys.index('by-group').getAllKeys(groupId),
+    ]);
+    await Promise.all([
+      ...recordKeys.map((key) => senderKeyRecords.delete(key)),
+      ...skippedKeys.map((key) => skippedSenderKeys.delete(key)),
+      tx.done,
+    ]);
+    return recordKeys.length;
   }
 
   async storeSenderKeyRecord(
@@ -1721,7 +1711,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     try {
       writes.push(
         tx.objectStore('senderKeyRecords').put({
-          key: this.getSenderKeyRecordStorageKey(groupId, userId, deviceId),
+          key: [groupId, userId, deviceId],
           groupId,
           userId,
           deviceId,
@@ -1799,10 +1789,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     deviceId: number
   ): Promise<SenderKeyState[] | null> {
     this.ensureInitialized();
-    const stored = await this.db!.get(
-      'senderKeyRecords',
-      this.getSenderKeyRecordStorageKey(groupId, userId, deviceId)
-    );
+    const stored = await this.db!.get('senderKeyRecords', [groupId, userId, deviceId]);
     if (!stored) {
       return null;
     }
@@ -1826,6 +1813,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     const encrypted = await this.encrypt(JSON.stringify(messageKey));
     await this.db!.put('skippedSenderKeys', {
       key: this.getSkippedSenderKeyStorageKey(groupId, senderId, senderDeviceId, chainIndex),
+      groupId,
       senderKey: this.getSkippedSenderKeyPrefix(groupId, senderId, senderDeviceId),
       chainIndex,
       data: encrypted,
@@ -1892,14 +1880,14 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     count: number
   ): Promise<number> {
     this.ensureInitialized();
-    const matches: Array<{ key: string; chainIndex: number }> = [];
+    const matches: Array<{ key: SkippedSenderKeyId; chainIndex: number }> = [];
     const tx = this.db!.transaction('skippedSenderKeys', 'readonly');
     const index = tx.objectStore('skippedSenderKeys').index('by-sender');
 
     for await (const cursor of index.iterate(
       this.getSkippedSenderKeyPrefix(groupId, senderId, senderDeviceId)
     )) {
-      matches.push({ key: cursor.primaryKey as string, chainIndex: cursor.value.chainIndex });
+      matches.push({ key: cursor.primaryKey, chainIndex: cursor.value.chainIndex });
     }
 
     matches.sort((a, b) => a.chainIndex - b.chainIndex);
@@ -2093,16 +2081,12 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     };
   }
 
-  private getSenderKeyRecordStorageKey(groupId: string, userId: string, deviceId: number): string {
-    return `${groupId}:${userId}:${deviceId}`;
-  }
-
   private getSkippedSenderKeyPrefix(
     groupId: string,
     senderId: string,
     senderDeviceId: number
-  ): string {
-    return `${groupId}:${senderId}:${senderDeviceId}`;
+  ): SkippedSenderKeySender {
+    return [groupId, senderId, senderDeviceId];
   }
 
   private getSkippedSenderKeyStorageKey(
@@ -2110,8 +2094,8 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     senderId: string,
     senderDeviceId: number,
     chainIndex: number
-  ): string {
-    return `${this.getSkippedSenderKeyPrefix(groupId, senderId, senderDeviceId)}:${chainIndex}`;
+  ): SkippedSenderKeyId {
+    return [groupId, senderId, senderDeviceId, chainIndex];
   }
 
   private getMessageRecordStorageKey(sessionId: string, timestamp: number): string {

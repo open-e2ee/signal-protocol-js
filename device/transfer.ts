@@ -17,8 +17,6 @@
  * - Relays receive only encrypted transfer packets
  */
 
-import { Platform } from 'react-native';
-import Constants from 'expo-constants';
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import {
   generateECDHKeyPair,
@@ -40,6 +38,7 @@ import type {
   DeviceBackup,
   EncryptedBackup,
   BackupIdentityKeyPair,
+  TransferDeviceInfo,
 } from './types';
 import { QR_CODE_MAX_AGE, TRANSFER_PROTOCOL_VERSION, BACKUP_FORMAT_VERSION } from './types';
 
@@ -148,16 +147,19 @@ export function wipeTransferKeys(keyPair: TransferKeyPair, providedLogger?: Logg
  * - ECDH provides encryption of the actual transfer
  *
  * Old device scans this QR code to start the transfer.
+ *
+ * @param device - This device's metadata; the QR code omits an absent platform
  */
 export async function generateTransferQRCode(
   keyPair: TransferKeyPair,
+  device: TransferDeviceInfo,
   providedLogger?: Logger
 ): Promise<string> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   const qrData: TransferQRCode = {
     publicKey: keyPair.publicKey,
     version: TRANSFER_PROTOCOL_VERSION,
-    deviceType: Platform.OS === 'ios' ? 'ios' : 'android',
+    ...(device.platform ? { deviceType: device.platform } : {}),
     timestamp: Date.now(),
   };
 
@@ -202,7 +204,11 @@ export async function verifyTransferQRCode(
     throw new Error('QR code timestamp must be a finite integer');
   }
 
-  if (qrCode.deviceType !== 'ios' && qrCode.deviceType !== 'android') {
+  if (
+    qrCode.deviceType !== undefined &&
+    qrCode.deviceType !== 'ios' &&
+    qrCode.deviceType !== 'android'
+  ) {
     throw new Error('Invalid QR code device type');
   }
 
@@ -475,15 +481,20 @@ export async function prepareOldDeviceTransfer(providedLogger?: Logger): Promise
  * 3. Wait for old device to scan
  * 4. Receive encrypted backup
  * 5. Decrypt backup
- * 6. Restore to SecureStore
+ * 6. Restore to local storage
+ *
+ * @param device - This device's metadata for the QR code
  */
-export async function prepareNewDeviceTransfer(providedLogger?: Logger): Promise<{
+export async function prepareNewDeviceTransfer(
+  device: TransferDeviceInfo,
+  providedLogger?: Logger
+): Promise<{
   keyPair: TransferKeyPair;
   qrCode: string;
 }> {
   const logger = resolveSignalProtocolLogger(providedLogger);
   const keyPair = await generateTransferKeyPair(logger);
-  const qrCode = await generateTransferQRCode(keyPair, logger);
+  const qrCode = await generateTransferQRCode(keyPair, device, logger);
 
   logger.info('Device Transfer: New device prepared for transfer', {
     category: 'Device',
@@ -516,20 +527,27 @@ export function formatBackupSize(sizeBytes: number): string {
   }
 }
 
+/** Copy the present device metadata fields, and omit each absent one. */
+function copyTransferDeviceInfo(device: TransferDeviceInfo): TransferDeviceInfo {
+  return {
+    ...(device.platform ? { platform: device.platform } : {}),
+    ...(device.osVersion ? { osVersion: device.osVersion } : {}),
+    ...(device.appVersion ? { appVersion: device.appVersion } : {}),
+  };
+}
+
 /**
  * Create empty device backup template
  *
  * Used when building a backup incrementally
+ *
+ * @param device - This device's metadata; each absent field is omitted
  */
-export function createEmptyBackup(): DeviceBackup {
+export function createEmptyBackup(device: TransferDeviceInfo): DeviceBackup {
   return {
     version: BACKUP_FORMAT_VERSION,
     timestamp: Date.now(),
-    deviceInfo: {
-      platform: Platform.OS === 'ios' ? 'ios' : 'android',
-      osVersion: Platform.Version.toString(),
-      appVersion: Constants.expoConfig?.version || 'unknown',
-    },
+    deviceInfo: copyTransferDeviceInfo(device),
     identityKey: {
       dhKey: { publicKey: '', privateKey: '' },
       signingKey: { publicKey: '', privateKey: '' },
@@ -567,9 +585,11 @@ export interface RestoreDeviceBackupResult {
  * fresh device prekeys after import and establishes fresh sessions normally.
  *
  * @param storage - Key storage adapter to read from
+ * @param device - This device's metadata; each absent field is omitted
  */
 export async function createDeviceBackup(
   storage: BackupStorage,
+  device: TransferDeviceInfo,
   providedLogger?: Logger
 ): Promise<DeviceBackup> {
   const logger = resolveSignalProtocolLogger(providedLogger);
@@ -587,11 +607,7 @@ export async function createDeviceBackup(
   const backup: DeviceBackup = {
     version: BACKUP_FORMAT_VERSION,
     timestamp: Date.now(),
-    deviceInfo: {
-      platform: Platform.OS === 'ios' ? 'ios' : 'android',
-      osVersion: Platform.Version.toString(),
-      appVersion: Constants.expoConfig?.version || 'unknown',
-    },
+    deviceInfo: copyTransferDeviceInfo(device),
     identityKey,
   };
 
@@ -656,9 +672,11 @@ export async function restoreDeviceBackup(
  * Enhanced version that includes a getBackup callback
  *
  * @param storage - Key storage adapter
+ * @param device - This device's metadata for the backup
  */
 export async function prepareOldDeviceTransferWithBackup(
   storage: BackupStorage,
+  device: TransferDeviceInfo,
   providedLogger?: Logger
 ): Promise<{
   keyPair: TransferKeyPair;
@@ -667,7 +685,8 @@ export async function prepareOldDeviceTransferWithBackup(
   const logger = resolveSignalProtocolLogger(providedLogger);
   const keyPair = await generateTransferKeyPair(logger);
 
-  const getBackup = async (): Promise<DeviceBackup> => createDeviceBackup(storage, logger);
+  const getBackup = async (): Promise<DeviceBackup> =>
+    createDeviceBackup(storage, device, logger);
 
   logger.info('Device Transfer: Old device prepared for transfer with backup', {
     category: 'Device',

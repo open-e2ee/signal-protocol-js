@@ -29,6 +29,7 @@
 
 import type { ProvisioningService } from '../remote/relay/types';
 import * as crypto from '../internal/crypto';
+import { parseUrl, queryValues } from '../internal/platform';
 import type { IdentityKeyPair, IdentityType } from '../keys';
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import type { SignalProtocolLocalStore } from '../types';
@@ -399,22 +400,19 @@ export function parseProvisioningQR(
   const logger = resolveSignalProtocolLogger(providedLogger);
   try {
     // Parse URL: signalprotocol://link-device?session=xxx&key=xxx
-    const url = new URL(qrCodeData);
-    const expected = new URL(linkPrefix);
+    const url = parseUrl(qrCodeData);
+    const expected = parseUrl(linkPrefix);
     if (
       url.protocol !== expected.protocol ||
       url.hostname !== expected.hostname ||
       url.port !== expected.port ||
-      url.pathname !== expected.pathname ||
-      url.username !== expected.username ||
-      url.password !== expected.password ||
-      url.hash !== ''
+      url.pathname !== expected.pathname
     ) {
       throw new Error('Invalid provisioning QR code prefix');
     }
 
-    const sessionId = url.searchParams.get('session');
-    const keyBase64 = url.searchParams.get('key');
+    const sessionId = queryValues(url, 'session')[0];
+    const keyBase64 = queryValues(url, 'key')[0];
 
     if (!sessionId || !keyBase64) {
       throw new Error('Invalid provisioning QR code: missing session or key');

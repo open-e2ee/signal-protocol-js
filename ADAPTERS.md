@@ -33,15 +33,39 @@ The storage interface handles client-owned Signal Protocol state:
 
 Use:
 
-- `ExpoSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/expo`
-- Expo integration helpers like `getKeyStorage`, `getDatabaseKeyManager`, `clearDatabaseKeyCache`, and `createPreKeyMaintenanceStore` from `@open-e2ee/signal-protocol-sdk/local/store/expo`
+- `expoStore` and `ExpoSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/expo` (`await expoStore()` opens the SDK-owned SQLCipher database; `resetExpoStore` deletes it and opens an empty one; `createPreKeyMaintenanceStore` takes an open store)
+- `reactNativeStore` and `ReactNativeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/react-native` (bare React Native: `await reactNativeStore()` opens the SDK-owned SQLCipher database on op-sqlite with its key in the react-native-keychain vault; `resetReactNativeStore` deletes it and opens an empty one; `createPreKeyMaintenanceStore` takes an open store)
 - `IndexedDbSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/web`
-- `ReactNativeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/react-native` (use `await ReactNativeSignalProtocolStore.create({ storage })` with a caller-provided key-value backend, verified with the exported backend-conformance kit)
-- `NodeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/node`
+- `webSqliteStore` and `WebSqliteSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/web-sqlite` (`await webSqliteStore()` opens the SDK-owned SQLite database in the origin private file system, encrypted in a Wasm worker; `resetWebSqliteStore` deletes it and opens an empty one; `createPreKeyMaintenanceStore` takes an open store; the page's Content Security Policy must allow `'wasm-unsafe-eval'`)
+- `KeyValueSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/key-value` (use `await KeyValueSignalProtocolStore.create({ storage, vault })` with a caller-provided key-value backend, verified with the exported backend-conformance kit, and a secret vault that holds the value key)
+- `createRealmKeyValueBackend` from `@open-e2ee/signal-protocol-sdk/local/store/key-value/realm` (a key-value backend over an application-installed Realm)
+- `createTransactionalKeyValueBackend` from `@open-e2ee/signal-protocol-sdk/local/store/key-value` (a key-value backend over another engine's transaction, through a synchronous `KeyValueTransaction` handle; the SDK applies each `atomicWrite` batch inside the transaction)
+- `nodeStore` and `NodeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/node` (`await nodeStore({ directory, vault })` opens the SDK-owned SQLCipher database on the `better-sqlite3-multiple-ciphers` peer; `resetNodeStore` deletes it and opens an empty one; one process at a time owns the file; `createPreKeyMaintenanceStore` takes an open store)
 - `InMemorySignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/memory`
 - or a custom implementation
 
-The bare React Native store uses `expo-crypto` for random bytes. A bare React Native application must install Expo modules.
+On React Native and Expo, the SDK reads random bytes only from the global `crypto.getRandomValues`. Install `react-native-get-random-values` 2.x or `react-native-quick-crypto`, and load it before the first SDK call. Without a global source, the SDK throws `SecureRandomUnavailableError`.
+
+### Local secret vault: `SignalProtocolLocalSecretVault`
+
+The device ID, the device-lifecycle state, the own profile key, and the value
+key of the key-value store live in the vault that the application passes. The SDK does not choose a vault, and it
+never writes these secrets to `localStorage`. A call without a vault throws an
+`EncryptionError` with code `SECRET_VAULT_REQUIRED`.
+
+Use:
+
+- `ExpoSecureStoreSignalProtocolSecretVault` from `@open-e2ee/signal-protocol-sdk/local/vault/expo-secure-store`
+- or a custom implementation
+
+### Device metadata
+
+The shared `./device` entries take platform metadata as an input and omit each
+field that the application does not supply. These entries read it from the
+platform:
+
+- `@open-e2ee/signal-protocol-sdk/device/expo` (`react-native`, `expo-constants`, `expo-device`)
+- `@open-e2ee/signal-protocol-sdk/device/react-native` (`react-native`, `react-native-device-info`)
 
 ### Remote object store: `SignalProtocolRemoteObjectStore`
 
@@ -64,6 +88,30 @@ canonical `objectId` used in encrypted attachment pointers. Provider keys stay
 private to the backend. The Convex server helper can supply generic validators,
 R2 calls, expiry parsing, and metadata verification, while app-owned internal
 functions retain authentication, authorization, and persistence.
+
+### Local secret vault: `SignalProtocolLocalSecretVault`
+
+Stores small bootstrap secrets, such as a database encryption key, in the
+platform secret store, apart from the local store.
+
+Use:
+
+- `ExpoSecureStoreSignalProtocolSecretVault` from `@open-e2ee/signal-protocol-sdk/local/vault/expo-secure-store`
+- `ReactNativeKeychainSignalProtocolSecretVault` from `@open-e2ee/signal-protocol-sdk/local/vault/react-native-keychain` (optional peer `react-native-keychain` 10.0.0 or later)
+- `ElectronSafeStorageSignalProtocolSecretVault` from `@open-e2ee/signal-protocol-sdk/local/vault/electron-safe-storage`, in the Electron main process, with the app's `safeStorage`
+- or a custom implementation
+
+The Expo and React Native adapters keep the secret on this device. The Electron
+adapter keeps only ciphertexts in a file that the app names, and the key that
+decrypts them stays in the OS secret store. It fails closed on the Linux
+`basic_text` backend. The react-native-keychain adapter
+sets fixed options that the application cannot change: iOS
+`AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY`, Android `AES_GCM_NO_AUTH` storage at the
+`SECURE_SOFTWARE` level, and no `cloudSync` key. react-native-keychain 10.0.0
+turns iCloud sync on for any `cloudSync` value, `false` included
+([issue #800](https://github.com/oblador/react-native-keychain/issues/800)).
+The [secret-vault guide](./local/vault/README.md) gives the reason for each
+option.
 
 ## Composition
 
@@ -88,11 +136,10 @@ const signal = await createSignalProtocolClient({
 import { createHostedSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
 
-// Initialize the application-owned Expo/SQLCipher database bindings first.
 const signal = await createHostedSignalProtocolClient({
   adapters: {
     // Expo storage owns this device's private keys and session state.
-    storage: expoStore(),
+    storage: await expoStore(),
   },
   hosted: {
     // The environment-scoped connection URL from the OpenE2EE console.

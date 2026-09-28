@@ -2,6 +2,19 @@ import { hostRandomBytes } from '#secure-random-host';
 
 /** Generate secure random bytes from the runtime host. */
 export async function generateRandomBytes(size: number): Promise<Uint8Array> {
+  return generateRandomBytesSync(size);
+}
+
+/**
+ * Generate secure random bytes from the runtime host, synchronously.
+ *
+ * For call sites that cannot await, such as the randomness that a zkgroup
+ * presentation or a group attribute encryption takes. Every host source is
+ * synchronous, so this seam and {@link generateRandomBytes} read the same
+ * source. A runtime with no secure source throws
+ * `SecureRandomUnavailableError`.
+ */
+export function generateRandomBytesSync(size: number): Uint8Array {
   if (!Number.isSafeInteger(size) || size < 0) {
     throw new RangeError('Random byte length must be a nonnegative safe integer.');
   }
@@ -12,9 +25,8 @@ export async function generateRandomBytes(size: number): Promise<Uint8Array> {
  * Generate a random RFC 4122 version 4 UUID.
  *
  * Built from {@link generateRandomBytes} rather than `crypto.randomUUID`, which
- * is absent from some React Native runtimes this package supports, the same
- * reason `generateRandomBytes` resolves its source across three runtimes. All
- * 122 free bits come from the secure random source.
+ * is absent from some React Native runtimes this package supports. All 122 free
+ * bits come from the secure random source.
  */
 export async function generateUuidV4(): Promise<string> {
   const bytes = await generateRandomBytes(16);

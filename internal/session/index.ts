@@ -144,19 +144,11 @@ export {
 
 // Validation utilities
 export {
-  decodeIdentityKeyOrDummy,
-  validateIdentityKey,
   validateSessionKeyOwnership,
   validateSessionStateIntegrity,
-  checkSessionUsability,
-  assertSessionUsability,
   isSelfSession,
   getMaxSkipForSession,
-  DEFAULT_USABILITY_REQUIREMENTS,
-  STRICT_USABILITY_REQUIREMENTS,
 } from './validation';
-
-export type { SessionUsabilityRequirements } from './validation';
 
 export type {
   // SessionBuilder types

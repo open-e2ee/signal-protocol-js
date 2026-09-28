@@ -17,6 +17,7 @@
  * @see https://signal.org/docs/specifications/doubleratchet/ (Section 7.2 for KDF)
  */
 
+import { utf8Decode } from '../../platform';
 import * as crypto from '../../crypto';
 import type { SignalProtocolLocalStore } from '../../../types/api';
 import type { Signature, PublicKey, PrivateKey } from '../../../keys';
@@ -244,7 +245,7 @@ export class SenderKeyManager {
    * not, so we return base64 for those and let the content layer deserialize it.
    */
   private encodeLosslessPlaintext(plaintextBytes: Uint8Array): string {
-    const text = new TextDecoder().decode(plaintextBytes);
+    const text = utf8Decode(plaintextBytes);
     const roundTrip = new TextEncoder().encode(text);
 
     if (
@@ -668,7 +669,7 @@ export class SenderKeyManager {
       const { protobufBytes } = parseSenderKeyMessage(framedMessage);
       const decoded = decodeSenderKeyMessage(protobufBytes);
       if (!decoded.distributionUuid) return null;
-      senderKeyId = new TextDecoder().decode(decoded.distributionUuid);
+      senderKeyId = utf8Decode(decoded.distributionUuid);
     } catch {
       // Not a well-formed frame, so it names no distribution and no group.
       return null;
@@ -693,7 +694,7 @@ export class SenderKeyManager {
     // Convert to internal representation
     const message: EncryptedGroupMessage = {
       senderKeyId: decoded.distributionUuid
-        ? new TextDecoder().decode(decoded.distributionUuid)
+        ? utf8Decode(decoded.distributionUuid)
         : '',
       generation: 0, // Not in SenderKeyMessage wire format (derived from state)
       chainIndex: decoded.iteration,

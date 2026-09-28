@@ -23,22 +23,43 @@ The primary device uses ID `1`. The backend allocates linked device IDs from
 
 ## Platform requirements
 
-The top-level device module currently uses Expo and React Native platform APIs.
-Install the optional peer dependencies required by the exports you use. The
-framework-neutral lifecycle core is available from:
+The shared device entries import no platform package. They keep the device ID
+and lifecycle state in the `SignalProtocolLocalSecretVault` that the
+application passes, and they take platform metadata as an input. They omit each
+metadata field that the application does not supply.
+
+Two platform entries read that metadata:
+
+- `@open-e2ee/signal-protocol-sdk/device/expo` reads `react-native`,
+  `expo-constants`, and `expo-device`.
+- `@open-e2ee/signal-protocol-sdk/device/react-native` reads `react-native` and
+  `react-native-device-info`.
+
+Install the optional peer dependencies of the platform entry you use. The
+lifecycle core is available from:
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import {
-  DeviceLifecycleManager,
-  type DeviceLifecycleDeps,
-} from "@open-e2ee/signal-protocol-sdk/device/lifecycle";
+import { DeviceLifecycleManager } from "@open-e2ee/signal-protocol-sdk/device/lifecycle";
+import { getDeviceLifecyclePlatform } from "@open-e2ee/signal-protocol-sdk/device/expo";
+import { ExpoSecureStoreSignalProtocolSecretVault } from "@open-e2ee/signal-protocol-sdk/local/vault/expo-secure-store";
+
+const manager = new DeviceLifecycleManager(userId, {
+  vault: new ExpoSecureStoreSignalProtocolSecretVault(),
+  convex,
+  api,
+  keyStorage,
+  logger,
+  ...getDeviceLifecyclePlatform(),
+});
 ```
 
-`DeviceLifecycleManager` receives storage, generated backend references, key
-operations, logging, and device metadata through `DeviceLifecycleDeps`. The
-application remains responsible for authenticated backend functions and for
-placing initialization in its own startup lifecycle.
+`DeviceLifecycleManager` takes the user ID and a `DeviceLifecycleDeps` object.
+That object holds the secret vault, the Convex client, the generated backend
+references, key operations, logging, and device metadata. The constructor
+throws an `EncryptionError` with code `SECRET_VAULT_REQUIRED` when the vault
+is absent. The application remains responsible for authenticated backend
+functions and for placing initialization in its own startup lifecycle.
 
 ## Device ID access
 
@@ -49,9 +70,13 @@ import {
   preloadDeviceId,
 } from "@open-e2ee/signal-protocol-sdk/device/device-id";
 
-await preloadDeviceId();
-const deviceId = await getDeviceId();
+await preloadDeviceId(secretVault);
+const deviceId = await getDeviceId(secretVault);
 ```
+
+Both functions read the device ID from the application's
+`SignalProtocolLocalSecretVault`. With no vault, they throw an
+`EncryptionError` with code `SECRET_VAULT_REQUIRED`.
 
 `getDeviceIdSync()` returns the cached value or the primary-device default. Use
 it only after preload or in code that can safely tolerate that fallback.
@@ -89,8 +114,8 @@ await provisionDevice(
 );
 ```
 
-The new device parses the QR data, joins the session, and stores the encrypted
-provisioning result:
+The new device parses the QR data, joins the session, and then receives,
+decrypts, and stores the provisioning message:
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
@@ -99,8 +124,8 @@ import {
   parseProvisioningQR,
   receiveProvisioningMessage,
 } from "@open-e2ee/signal-protocol-sdk/device/provisioning";
-// Reads `react-native` and `expo-constants`, so it is imported separately from
-// the protocol itself. Off Expo, build the same four fields by hand.
+// Reads the local platform, so it is imported separately from the protocol
+// itself. Use `./device/react-native` off Expo, or build the fields by hand.
 import { getDeviceMetadata } from "@open-e2ee/signal-protocol-sdk/device/expo";
 
 const {
@@ -143,13 +168,19 @@ import {
   prepareNewDeviceTransfer,
   prepareOldDeviceTransferWithBackup,
 } from "@open-e2ee/signal-protocol-sdk/device";
+import { getTransferDeviceInfo } from "@open-e2ee/signal-protocol-sdk/device/expo";
 
-const receiving = await prepareNewDeviceTransfer();
+const device = getTransferDeviceInfo();
+
+const receiving = await prepareNewDeviceTransfer(device);
 await appQr.show(receiving.qrCode);
 
-const sending = await prepareOldDeviceTransferWithBackup(backupStorage);
+const sending = await prepareOldDeviceTransferWithBackup(backupStorage, device);
 const backup = await sending.getBackup();
 ```
+
+The QR code and the backup carry only the metadata fields that `device`
+supplies. Pass `{}` to send none.
 
 The application owns transport selection, peer confirmation, progress UI,
 interruption recovery, and wiping old-device state after a successful

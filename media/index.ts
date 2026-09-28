@@ -19,6 +19,7 @@ import {
   streamingEncrypt,
   urlSafeToBase64,
 } from "../internal/crypto";
+import { resolveUrl } from "../internal/platform";
 import type { SignalProtocolRemoteObjectStore } from "../remote/object-store";
 import { RemoteObjectUploadError } from "../remote/object-store";
 import { matchesUploadReceipt } from "../remote/object-store/validation";
@@ -1944,7 +1945,7 @@ function resolveTusLocation(
       MediaAttachmentErrorCode.UploadFailed,
     );
   }
-  return new URL(location, creationUrl).toString();
+  return resolveUrl(location, creationUrl);
 }
 
 function isInvalidTusResumeResponse(response: Response): boolean {

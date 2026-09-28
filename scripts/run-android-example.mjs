@@ -1,34 +1,85 @@
 /*
- * Installs the Expo example's release APK on a running Android emulator, runs
- * it twice, and checks the logcat output of each run.
+ * Installs an example's release APK on a running Android emulator, runs it
+ * twice, and checks the logcat output of each run.
  *
  * The app starts an encrypted exchange on launch and logs each step through
  * console.log, which React Native writes to logcat under the ReactNativeJS tag.
- * The first run must create Alice in SQLCipher and complete the exchange on
- * Hermes. The script then stops the process and launches the app again. The
- * second run must resume the stored Alice identity and complete another
- * exchange.
+ * The first run must create Alice in the example's storage and complete the
+ * exchange on Hermes. The script then stops the process and launches the app
+ * again. The second run must resume the stored Alice identity and complete
+ * another exchange.
+ *
+ * The Expo app opens `expoStore()`, and the bare React Native app opens
+ * `reactNativeStore()`, each with the default encryption. Each run must also
+ * log a SQLCipher version and the first 16 bytes of the SDK database file.
+ * The script requires that these bytes are not the plaintext SQLite header.
+ * The version shows only that the app has the SQLCipher build, because
+ * SQLCipher reports it also with no key. The header shows that SQLCipher
+ * encrypted the file.
+ *
+ * The bare React Native example also requires that a wrong key fails the
+ * open of an SDK database and, in a checkout that has the Hermes gate, runs
+ * each gate flow. Each run must log a `CASE PASS` line for every step in the
+ * gate manifest. The script compares the app's global names with the gate
+ * prelude and prints each difference.
  *
  * Usage:
- *   node ./scripts/run-android-example.mjs <app-release.apk> <logcat-output.txt>
+ *   node ./scripts/run-android-example.mjs <expo|react-native> <app-release.apk> <logcat-output.txt>
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const [apkArgument, logArgument] = process.argv.slice(2);
+const [exampleArgument, apkArgument, logArgument] = process.argv.slice(2);
+const usage = 'Usage: node scripts/run-android-example.mjs <expo|react-native> <app-release.apk> <logcat-output.txt>';
 
-if (!apkArgument || !logArgument) {
-  throw new Error('Usage: node scripts/run-android-example.mjs <app-release.apk> <logcat-output.txt>');
+const passLine = 'PASS: both devices decrypted the expected messages.';
+const exactly = (line) => new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+const plaintextHeader = Buffer.from('SQLite format 3\0').toString('hex');
+const gateRoot = join(dirname(fileURLToPath(import.meta.url)), '..', 'hermes-tests');
+
+/** The lines that a React Native example logs on each run of the gate flows. */
+async function gateLines() {
+  const manifest = join(gateRoot, 'flows.mjs');
+  if (!existsSync(manifest)) return [exactly('The Hermes gate flows run only in the private repository.')];
+  const { flows } = await import(pathToFileURL(manifest).href);
+  const steps = flows.flatMap((flow) => flow.steps.map((step) => `CASE PASS ${flow.name}: ${step}`));
+  if (steps.length === 0) throw new Error('The gate manifest names no flow steps.');
+  return [...steps.map(exactly), exactly(`Gate flows: ${steps.length} cases passed in ${flows.length} flows.`)];
 }
 
+/** The lines that show that SQLCipher encrypts the SDK database. */
+const encryptedAtRest = [
+  /SQLCipher version: \d+\.\d+/,
+  new RegExp(`SDK database header: (?!${plaintextHeader})[0-9a-f]{32}(?![0-9a-f])`),
+];
+
+const examples = {
+  expo: async () => ({
+    applicationId: 'dev.opene2ee.exchange',
+    runTimeoutMs: 5 * 60 * 1000,
+    every: encryptedAtRest,
+  }),
+  'react-native': async () => ({
+    applicationId: 'dev.opene2ee.bare',
+    runTimeoutMs: 10 * 60 * 1000,
+    every: [
+      /Global names: \d+/,
+      ...encryptedAtRest,
+      exactly('Wrong key: the open failed with SqliteKeyMismatchError (KEY_STORAGE_ERROR).'),
+      ...(await gateLines()),
+    ],
+  }),
+};
+
+if (!Object.hasOwn(examples, exampleArgument) || !apkArgument || !logArgument) throw new Error(usage);
+
+const example = await examples[exampleArgument]();
 const apkPath = resolve(apkArgument);
 const logPath = resolve(logArgument);
-const applicationId = 'dev.opene2ee.exchange';
-const runTimeoutMs = 5 * 60 * 1000;
-const passLine = 'PASS: both devices decrypted the expected messages.';
 
 const runs = [
   {
@@ -36,19 +87,20 @@ const runs = [
     required: [
       /Hermes: true/,
       /Build: release/,
-      /SQLCipher \d+\.\d+\.\d+/,
+      ...example.every,
       /Create the first persistent Alice identity\./,
       /alice decrypted: Received: hello from Hermes/,
-      new RegExp(passLine.replace(/\./g, '\\.')),
+      exactly(passLine),
     ],
   },
   {
     name: 'relaunch after the process stops',
     required: [
       /Hermes: true/,
+      ...example.every,
       /Resumed Alice identity after 1 completed exchanges\./,
       /alice decrypted: Received: hello from Hermes/,
-      new RegExp(passLine.replace(/\./g, '\\.')),
+      exactly(passLine),
     ],
   },
 ];
@@ -82,13 +134,27 @@ function streamLog() {
   return stream;
 }
 
+// The app logs its global names in parts: `Globals <part>/<parts>: <names>`.
+function reportGlobals(run, log) {
+  const prelude = join(gateRoot, 'prelude-globals.json');
+  const parts = [...log.matchAll(/Globals (\d+)\/(\d+): (.*)$/gm)];
+  if (parts.length === 0 || !existsSync(prelude)) return;
+  const app = new Set(parts.flatMap((part) => part[3].trim().split(' ')));
+  const gate = new Set(JSON.parse(readFileSync(prelude, 'utf8')));
+  const onlyApp = [...app].filter((name) => !gate.has(name)).sort();
+  const onlyGate = [...gate].filter((name) => !app.has(name)).sort();
+  console.log(`${run.name}: ${app.size} app globals, ${gate.size} gate prelude globals.`);
+  console.log(`${run.name}: only in the app: ${onlyApp.join(' ') || 'none'}`);
+  console.log(`${run.name}: only in the gate prelude: ${onlyGate.join(' ') || 'none'}`);
+}
+
 async function launchAndWait(run) {
   adb(['logcat', '-c']);
   const stream = streamLog();
   try {
-    adb(['shell', 'am', 'start', '-W', '-n', `${applicationId}/.MainActivity`]);
+    adb(['shell', 'am', 'start', '-W', '-n', `${example.applicationId}/.MainActivity`]);
 
-    const deadline = Date.now() + runTimeoutMs;
+    const deadline = Date.now() + example.runTimeoutMs;
     while (Date.now() < deadline) {
       await sleep(2000);
       if (stream.log.includes(passLine) || /FAIL: |FATAL EXCEPTION/.test(stream.log)) break;
@@ -98,6 +164,7 @@ async function launchAndWait(run) {
   }
   const { log } = stream;
   appendFileSync(logPath, `===== ${run.name} =====\n${log}\n`);
+  reportGlobals(run, log);
 
   const missing = run.required.filter((pattern) => !pattern.test(log));
   if (missing.length > 0) {
@@ -115,7 +182,7 @@ adb(['wait-for-device']);
 adb(['install', '-r', apkPath]);
 
 await launchAndWait(runs[0]);
-adb(['shell', 'am', 'force-stop', applicationId]);
+adb(['shell', 'am', 'force-stop', example.applicationId]);
 await launchAndWait(runs[1]);
 
 console.log(`PASS: the release build completed both runs. The logcat output is in ${logPath}.`);

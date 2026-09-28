@@ -7,30 +7,25 @@
     "start": "expo start",
     "ios": "expo run:ios",
     "android": "expo run:android",
-    "typecheck": "tsc --noEmit",
-    "db:generate": "drizzle-kit generate && node scripts/bundle-migrations.mjs"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@open-e2ee/signal-protocol-sdk": "7.2.0",
-    "drizzle-orm": "0.45.2",
+    "@open-e2ee/signal-protocol-sdk": "8.0.0",
     "expo": "~57.0.25",
-    "expo-crypto": "~57.0.3",
+    "expo-file-system": "~57.0.7",
     "expo-secure-store": "~57.0.4",
     "expo-sqlite": "~57.0.3",
     "react": "19.2.3",
-    "react-native": "0.86.3"
+    "react-native": "0.86.3",
+    "react-native-get-random-values": "2.0.0"
   },
   "overrides": {
     "xcode": {
       "uuid": "11.1.1"
-    },
-    "@esbuild-kit/core-utils": {
-      "esbuild": "0.27.0"
     }
   },
   "devDependencies": {
     "@types/react": "~19.2.10",
-    "drizzle-kit": "0.31.10",
     "typescript": "5.9.3"
   }
 }

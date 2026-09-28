@@ -13,6 +13,19 @@ Provides extensive error code set.
 
 ## Enumeration Members
 
+### BINARY\_BLOB\_UNAVAILABLE
+
+> **BINARY\_BLOB\_UNAVAILABLE**: `"BINARY_BLOB_UNAVAILABLE"`
+
+The runtime's `Blob` cannot hold binary data.
+
+React Native's `Blob` rejects `ArrayBuffer` and typed array parts and has
+no `arrayBuffer()` or `text()`, so `encryptFile` and `decryptFile` cannot
+work there. Encrypt and decrypt bytes with `streamingEncrypt` and
+`streamingDecrypt` from `@open-e2ee/signal-protocol-sdk/files` instead.
+
+***
+
 ### COUNTER\_OVERFLOW
 
 > **COUNTER\_OVERFLOW**: `"COUNTER_OVERFLOW"`
@@ -102,6 +115,19 @@ Key storage operation failed
 
 ***
 
+### LOCAL\_STORE\_KEY\_LOST
+
+> **LOCAL\_STORE\_KEY\_LOST**: `"LOCAL_STORE_KEY_LOST"`
+
+A local store holds data, but its secret vault holds no key for it.
+
+The data cannot be decrypted, and the store does not replace the key on
+its own, because a replacement key would silently orphan that data. The
+application decides: restore the vault entry, or reset the store, which
+deletes the data and then creates a new key.
+
+***
+
 ### MESSAGE\_DUPLICATE
 
 > **MESSAGE\_DUPLICATE**: `"MESSAGE_DUPLICATE"`
@@ -109,6 +135,34 @@ Key storage operation failed
 Duplicate message detected (replay attack).
 
 The session already processed this message number.
+
+***
+
+### OPFS\_FILE\_BUSY
+
+> **OPFS\_FILE\_BUSY**: `"OPFS_FILE_BUSY"`
+
+The web SQLite store could not open its database file in the origin
+private file system (OPFS) this time.
+
+The usual cause is another tab or worker of the origin that still holds
+the file's access handles, for example a tab that is closing. The database
+file is unchanged. Retry the operation later. Do not change to another
+store: the data stays in this one.
+
+***
+
+### OPFS\_UNAVAILABLE
+
+> **OPFS\_UNAVAILABLE**: `"OPFS_UNAVAILABLE"`
+
+The browser cannot keep a SQLite database in the origin private file
+system (OPFS).
+
+The runtime has no OPFS synchronous access handles, no Web Locks, or no
+`BroadcastChannel`, or it refused the OPFS storage, as a private or
+ephemeral browsing context can. The condition holds for the life of the
+browsing context. Use the IndexedDB store in this runtime.
 
 ***
 
@@ -210,6 +264,31 @@ Required anonymous delivery is unavailable or its authorization was rejected.
 
 ***
 
+### SECRET\_VAULT\_REQUIRED
+
+> **SECRET\_VAULT\_REQUIRED**: `"SECRET_VAULT_REQUIRED"`
+
+An operation that keeps a local secret ran without a
+`SignalProtocolLocalSecretVault`.
+
+The SDK keeps the device ID, the device lifecycle state, and the own
+profile key only in the vault that the application passes. It has no
+fallback store. Pass a vault, such as
+`ExpoSecureStoreSignalProtocolSecretVault`, or the application's own.
+
+***
+
+### SECURE\_RANDOM\_UNAVAILABLE
+
+> **SECURE\_RANDOM\_UNAVAILABLE**: `"SECURE_RANDOM_UNAVAILABLE"`
+
+The runtime has no cryptographically secure random source.
+
+On React Native, the app must install a global `crypto.getRandomValues`
+provider: react-native-get-random-values 2.x or react-native-quick-crypto.
+
+***
+
 ### SENDER\_KEY\_EXPIRED
 
 > **SENDER\_KEY\_EXPIRED**: `"SENDER_KEY_EXPIRED"`
@@ -306,6 +385,21 @@ SPQR version negotiation failed.
 
 Peer's maximum supported version is below our minimum required version.
 For example, peer only supports V0 but we require V1.
+
+***
+
+### SQLITE\_ENGINE\_UNAVAILABLE
+
+> **SQLITE\_ENGINE\_UNAVAILABLE**: `"SQLITE_ENGINE_UNAVAILABLE"`
+
+The SQLite Wasm engine did not load in its web worker.
+
+The usual cause is a Content Security Policy on the worker script that
+does not allow `'wasm-unsafe-eval'` in `script-src`. A dedicated worker
+takes its policy from its own response headers, so the header on the
+worker script must allow it. Other causes: the runtime has no module
+`Worker`, the Wasm file did not download, or the server sent it with a
+type other than `application/wasm`.
 
 ***
 

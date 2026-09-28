@@ -1,6 +1,6 @@
 {
   "name": "@open-e2ee/signal-protocol-sdk",
-  "version": "7.2.0",
+  "version": "8.0.0",
   "description": "Pure TypeScript Signal Protocol SDK for encrypted chat in Expo, React Native, browsers, and Node. Post-quantum by default.",
   "keywords": [
     "open-e2ee",
@@ -123,6 +123,10 @@
       "types": "./dist/device/provisioning.d.ts",
       "default": "./dist/device/provisioning.js"
     },
+    "./device/react-native": {
+      "types": "./dist/device/react-native/index.d.ts",
+      "default": "./dist/device/react-native/index.js"
+    },
     "./encoding": {
       "types": "./dist/encoding/index.d.ts",
       "default": "./dist/encoding/index.js"
@@ -195,13 +199,13 @@
       "types": "./dist/local/store/expo/index.d.ts",
       "default": "./dist/local/store/expo/index.js"
     },
-    "./local/store/expo/db": {
-      "types": "./dist/local/store/expo/db.d.ts",
-      "default": "./dist/local/store/expo/db.js"
+    "./local/store/key-value": {
+      "types": "./dist/local/store/key-value/index.d.ts",
+      "default": "./dist/local/store/key-value/index.js"
     },
-    "./local/store/expo/schema": {
-      "types": "./dist/local/store/expo/schema.d.ts",
-      "default": "./dist/local/store/expo/schema.js"
+    "./local/store/key-value/realm": {
+      "types": "./dist/local/store/key-value/realm/index.d.ts",
+      "default": "./dist/local/store/key-value/realm/index.js"
     },
     "./local/store/memory": {
       "types": "./dist/local/store/memory/index.d.ts",
@@ -219,13 +223,25 @@
       "types": "./dist/local/store/web/index.d.ts",
       "default": "./dist/local/store/web/index.js"
     },
+    "./local/store/web-sqlite": {
+      "types": "./dist/local/store/web-sqlite/index.d.ts",
+      "default": "./dist/local/store/web-sqlite/index.js"
+    },
     "./local/vault": {
       "types": "./dist/local/vault/index.d.ts",
       "default": "./dist/local/vault/index.js"
     },
+    "./local/vault/electron-safe-storage": {
+      "types": "./dist/local/vault/electron-safe-storage.d.ts",
+      "default": "./dist/local/vault/electron-safe-storage.js"
+    },
     "./local/vault/expo-secure-store": {
       "types": "./dist/local/vault/expo-secure-store.d.ts",
       "default": "./dist/local/vault/expo-secure-store.js"
+    },
+    "./local/vault/react-native-keychain": {
+      "types": "./dist/local/vault/react-native-keychain.d.ts",
+      "default": "./dist/local/vault/react-native-keychain.js"
     },
     "./remote/object-store": {
       "types": "./dist/remote/object-store/index.d.ts",
@@ -323,10 +339,12 @@
     "keys/README.md",
     "local/store/README.md",
     "local/store/expo/README.md",
+    "local/store/key-value/README.md",
     "local/store/memory/README.md",
     "local/store/node/README.md",
     "local/store/react-native/README.md",
     "local/store/web/README.md",
+    "local/store/web-sqlite/README.md",
     "local/vault/README.md",
     "media/README.md",
     "profile/README.md",
@@ -350,9 +368,10 @@
   },
   "scripts": {
     "audit:dependencies": "npm audit --omit=dev --audit-level=moderate && npm audit --audit-level=moderate",
-    "build": "npm run clean && npm run build:dist && npm run build:fix-esm",
+    "build": "npm run clean && npm run build:dist && npm run build:fix-esm && npm run build:sqlite-engine",
     "build:dist": "tsc -p tsconfig.build.json",
     "build:fix-esm": "node ./scripts/fix-esm-specifiers.mjs ./dist",
+    "build:sqlite-engine": "node ./scripts/sqlite-engine.mjs copy ./dist",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit -p tsconfig.build.json",
     "docs:api": "npx -y -p typedoc@0.28.20 -p typedoc-plugin-markdown@4.12.0 -p typescript@5.8.3 typedoc && node ./scripts/normalize-api-doc-paths.mjs",
@@ -362,37 +381,37 @@
   },
   "peerDependencies": {
     "@convex-dev/r2": ">=0.10.2",
+    "@op-engineering/op-sqlite": ">=18.2.5",
+    "better-sqlite3-multiple-ciphers": ">=13.0.3",
     "convex": ">=1.42.1",
-    "drizzle-orm": ">=0.45.1",
     "expo": ">=55.0.27",
     "expo-constants": ">=55.0.7",
-    "expo-crypto": ">=55.0.16",
     "expo-device": ">=55.0.15",
     "expo-secure-store": ">=55.0.15",
     "expo-sqlite": ">=55.0.17",
-    "fs-native-extensions": ">=1.2.7",
     "idb": ">=8.0.3",
     "react": ">=19.0.0",
     "react-native": ">=0.83.6",
-    "react-native-device-info": ">=15.0.1"
+    "react-native-device-info": ">=15.0.1",
+    "react-native-keychain": ">=10.0.0"
   },
   "peerDependenciesMeta": {
     "@convex-dev/r2": {
       "optional": true
     },
-    "convex": {
+    "@op-engineering/op-sqlite": {
       "optional": true
     },
-    "drizzle-orm": {
+    "better-sqlite3-multiple-ciphers": {
+      "optional": true
+    },
+    "convex": {
       "optional": true
     },
     "expo": {
       "optional": true
     },
     "expo-constants": {
-      "optional": true
-    },
-    "expo-crypto": {
       "optional": true
     },
     "expo-device": {
@@ -402,9 +421,6 @@
       "optional": true
     },
     "expo-sqlite": {
-      "optional": true
-    },
-    "fs-native-extensions": {
       "optional": true
     },
     "idb": {
@@ -417,6 +433,9 @@
       "optional": true
     },
     "react-native-device-info": {
+      "optional": true
+    },
+    "react-native-keychain": {
       "optional": true
     }
   },
@@ -437,24 +456,24 @@
   },
   "devDependencies": {
     "@convex-dev/r2": "^0.10.2",
+    "@op-engineering/op-sqlite": "^18.2.5",
     "@swc/core": "^1.15.43",
     "@types/async-lock": "^1.4.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.0",
+    "better-sqlite3-multiple-ciphers": "^13.0.3",
     "convex": "^1.46.0",
-    "drizzle-orm": "^0.45.3",
     "esbuild": "^0.27.0",
     "expo": "~57.0.25",
     "expo-constants": "~57.0.19",
-    "expo-crypto": "~57.0.3",
     "expo-device": "~57.0.2",
     "expo-secure-store": "~57.0.4",
     "expo-sqlite": "~57.0.3",
-    "fs-native-extensions": "^1.5.1",
     "idb": "^8.0.3",
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-device-info": "^15.0.1",
+    "react-native-keychain": "^10.0.0",
     "typescript": "^7.0.2"
   }
 }

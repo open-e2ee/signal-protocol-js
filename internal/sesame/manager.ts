@@ -16,6 +16,7 @@
  * @see https://signal.org/docs/specifications/sesame/
  */
 
+import { utf8Decode } from '../platform';
 import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import { getErrorMessage } from '../../utils/errors';
 import {
@@ -600,7 +601,7 @@ export class DefaultSesameManager implements SesameManager {
 
     try {
       // Encrypt the plaintext using the Signal Protocol
-      const plaintextString = new TextDecoder().decode(plaintext);
+      const plaintextString = utf8Decode(plaintext);
       const ciphertext = await this.protocol.encrypt(recipientAddress, plaintextString);
 
       // Phase 3: Validate device list version (SESAME spec §3.3)
@@ -718,7 +719,7 @@ export class DefaultSesameManager implements SesameManager {
    * Deserialize Uint8Array back to Ciphertext object
    */
   private deserializeCiphertext(bytes: Uint8Array): Ciphertext {
-    const text = new TextDecoder().decode(bytes);
+    const text = utf8Decode(bytes);
     return text as Ciphertext;
   }
 

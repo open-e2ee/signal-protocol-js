@@ -2189,7 +2189,13 @@ Call this manually if you need to restart the subscription.
 Stop the Signal Protocol client and clean up resources
 
 Call this when the user logs out or the app shuts down.
-Unsubscribes from relay server and cleans up any pending operations.
+Unsubscribes from relay server, waits for the SDK work of the
+deliveries, retry requests, and receipt sends in progress, and cleans up
+any pending operations.
+
+It does not wait for app hooks, so a hook can await stop(). When a hook
+returns after stop(), the SDK drops the work after the hook and writes
+nothing more. The relay delivers the envelope again after the next start.
 
 #### Returns
 

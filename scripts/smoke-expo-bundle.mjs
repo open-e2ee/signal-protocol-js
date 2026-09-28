@@ -11,9 +11,6 @@
  * install the SDK from the tarball, typecheck the example, and run
  * `expo export --platform android`.
  *
- * The example's committed Drizzle migrations must build the store schema that
- * the tarball ships. `drizzle-kit generate` in the copy must find no change.
- *
  * Expo compiles the Metro bundle with the `hermesc` from the `hermes-compiler`
  * package that `react-native` depends on. This script reads that pin, runs the
  * same binary for its bytecode version, and requires the exported .hbc header
@@ -103,17 +100,6 @@ try {
     run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund'], appDir);
   }
   const installed = installPackedSdk(appDir, tarballPath);
-
-  // drizzle-kit exits 0 when it stops at a rename prompt, so only its
-  // no-change message counts as a pass.
-  const generate = spawnSync('npx', ['drizzle-kit', 'generate'], { cwd: appDir, env: environment, encoding: 'utf8' });
-  const generateOutput = [generate.stdout, generate.stderr].filter(Boolean).join('\n');
-  if (generate.status !== 0 || !generateOutput.includes('No schema changes')) {
-    throw new Error(
-      'The examples/expo migrations do not build the schema of the packed SDK. ' +
-        `Run \`npm run db:generate\` in examples/expo.\n${generateOutput}`.trim()
-    );
-  }
 
   const appRequire = createRequire(join(appDir, 'package.json'));
   const reactNativeManifestPath = appRequire.resolve('react-native/package.json');

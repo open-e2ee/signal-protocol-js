@@ -42,6 +42,7 @@
  * @internal
  */
 
+import { utf8Decode } from '../../platform';
 import type { ProtocolAddress } from '../../../types/address';
 import {
   ProtoReader,
@@ -163,7 +164,7 @@ function decodeAddress(
     throw new Error('Address binding truncated while reading userId');
   }
 
-  const userId = new TextDecoder().decode(bytes.slice(offset, offset + userIdLength));
+  const userId = utf8Decode(bytes.slice(offset, offset + userIdLength));
   offset += userIdLength;
   const deviceId = readUint32BE(bytes, offset);
   offset += 4;

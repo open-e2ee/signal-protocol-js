@@ -11,6 +11,8 @@
 import type { ConvexReactClient } from 'convex/react';
 import type { FunctionReference } from 'convex/server';
 import { getOrCreateOwnProfileKey } from './profile-key';
+import type { SignalProtocolLocalSecretVault } from '../types/api';
+import { requireSecretVault } from '../local/vault/require';
 import { computeProfileKeyVersion } from '../internal/protocol/zk/groups/profile-key-version';
 import { computeProfileKeyCommitment } from '../internal/protocol/zk/groups/profile-key-commitment';
 import {
@@ -49,6 +51,11 @@ export interface UpdateEncryptedProfileParams {
   avatarStorageId?: string;
   /** Optional versioned opaque application data */
   applicationData?: ApplicationProfileData;
+  /**
+   * Local secret vault that holds the own profile key. Required unless
+   * `profileKey` is set.
+   */
+  vault?: SignalProtocolLocalSecretVault;
   /** Explicit key used by staged rotations before it becomes locally active. */
   profileKey?: Uint8Array;
   /** Optional logger for the profile-update flow. */
@@ -76,7 +83,9 @@ export async function updateEncryptedProfile(params: UpdateEncryptedProfileParam
   const logger = resolveSignalProtocolLogger(params.logger);
 
   // 1. Get own profile key
-  const profileKey = params.profileKey ?? (await getOrCreateOwnProfileKey());
+  const profileKey =
+    params.profileKey ??
+    (await getOrCreateOwnProfileKey(requireSecretVault(params.vault, 'updateEncryptedProfile')));
 
   // 2. Convert UUID string to 16-byte raw bytes
   const uidBytes = uuidToBytes(uuid);

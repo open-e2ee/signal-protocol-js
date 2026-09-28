@@ -1,3 +1,4 @@
+import { parseUrl, type ParsedUrl } from '../internal/platform';
 import type { DefaultSignalProtocolClient } from './client';
 import type { IncomingEnvelope } from './types';
 
@@ -135,9 +136,9 @@ function validatedRegistration(
       'Signal Protocol Relay push profile is not supported by this platform',
     );
   }
-  let endpoint: URL;
+  let endpoint: ParsedUrl;
   try {
-    endpoint = new URL(registration.endpoint);
+    endpoint = parseUrl(registration.endpoint);
   } catch {
     throw new Error('Signal Protocol Relay Web Push endpoint is invalid');
   }

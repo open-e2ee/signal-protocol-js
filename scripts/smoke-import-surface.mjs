@@ -27,6 +27,10 @@
  * allowlist line. The second half is what stops this list from quietly growing
  * into the thing it was meant to prevent.
  *
+ * The same packed modules also check the store and vault guides. A consumer
+ * who bundles an entry needs each optional peer that the entry loads, and only
+ * the entry's guide tells them which peers those are. See ENTRY_GUIDES.
+ *
  * Usage:
  *   node ./scripts/smoke-import-surface.mjs             # build, pack, probe
  *   node ./scripts/smoke-import-surface.mjs --no-build  # reuse an existing dist/
@@ -43,6 +47,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +55,7 @@ import { fileURLToPath } from 'node:url';
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
 const packageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+const { parseSync } = createRequire(import.meta.url)('@swc/core');
 
 /**
  * Entry points that cannot load without an optional peer, and should not.
@@ -66,12 +72,13 @@ const PLATFORM_BOUND = new Map([
   ['./remote/object-store/convex-r2/server', '@convex-dev/r2 — Convex R2 server half'],
   ['./hooks', 'react — React hooks, unusable without a renderer'],
   ['./local/store/expo', 'expo-sqlite — Expo SQLite-backed store'],
-  ['./local/store/expo/db', 'expo-sqlite — Expo SQLite handle'],
-  ['./local/store/expo/schema', 'expo-sqlite — Expo SQLite schema'],
-  ['./local/store/react-native', 'react-native — React Native store adapter'],
+  ['./local/store/react-native', '@op-engineering/op-sqlite, react-native-keychain — bare React Native SQLite store'],
   ['./local/store/web', 'idb — IndexedDB-backed store'],
+  ['./local/store/web-sqlite', 'idb — IndexedDB vault that holds the database key'],
   ['./local/vault/expo-secure-store', 'expo-secure-store — Expo SecureStore vault'],
-  ['./device/expo', 'react-native, expo-constants — reads the local platform'],
+  ['./local/vault/react-native-keychain', 'react-native-keychain — React Native Keychain vault'],
+  ['./device/expo', 'react-native, expo-constants, expo-device — reads the local platform'],
+  ['./device/react-native', 'react-native, react-native-device-info — reads the local platform'],
 ]);
 
 /**
@@ -84,26 +91,36 @@ const PLATFORM_BOUND = new Map([
  * a platform" and "we have not fixed this yet" survives in the file rather than
  * in someone's memory.
  */
-const KNOWN_DEFECTS = new Map([
-  [
-    './device',
-    'react-native, expo-constants, expo-secure-store, expo-device — three ' +
-      'independent bindings, not one: the barrel re-exports ./transfer ' +
-      '(device/index.ts:40), ./device-id (:115) and ./lifecycle (:128), and each ' +
-      'reaches a platform on its own. Fixing any one of them leaves the barrel ' +
-      'unimportable; only the last of the three lets this line go',
-  ],
-  [
-    './device/device-id',
-    'expo-secure-store — the device-ID cache reads Expo SecureStore directly ' +
-      'instead of taking an injected vault',
-  ],
-  [
-    './device/lifecycle',
-    'expo-device, react-native, react-native-device-info — DeviceLifecycleManager ' +
-      'names and registers devices from platform APIs throughout',
-  ],
+const KNOWN_DEFECTS = new Map([]);
+
+/**
+ * The guide of each store and vault entry.
+ *
+ * An app installs an optional peer only when a guide tells it to, and a bundler
+ * fails the whole build of an app that imports an entry without the peers that
+ * the entry loads. So each guide names those peers in an install command, and
+ * this script checks the commands against the peers that the entry's packed
+ * modules load. A guide may document several entries; its commands then cover
+ * the peers of all of them, and a command that installs a peer no documented
+ * entry loads is stale.
+ */
+const ENTRY_GUIDES = new Map([
+  ['./local/store', 'local/store/README.md'],
+  ['./local/store/expo', 'local/store/expo/README.md'],
+  ['./local/store/key-value', 'local/store/key-value/README.md'],
+  ['./local/store/key-value/realm', 'local/store/key-value/README.md'],
+  ['./local/store/memory', 'local/store/memory/README.md'],
+  ['./local/store/node', 'local/store/node/README.md'],
+  ['./local/store/react-native', 'local/store/react-native/README.md'],
+  ['./local/store/web', 'local/store/web/README.md'],
+  ['./local/store/web-sqlite', 'local/store/web-sqlite/README.md'],
+  ['./local/vault', 'local/vault/README.md'],
+  ['./local/vault/electron-safe-storage', 'local/vault/README.md'],
+  ['./local/vault/expo-secure-store', 'local/vault/README.md'],
+  ['./local/vault/react-native-keychain', 'local/vault/README.md'],
 ]);
+const isGuidedEntry = (subpath) => subpath.startsWith('./local/');
+const INSTALL_COMMAND = /^\s*(?:npm install|npx expo install)\s+(.+)$/gm;
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -159,6 +176,167 @@ function mirrorNodeModules(sourceDir, targetDir, excluded) {
     if (excluded.has(entry.name)) continue;
     symlinkSync(join(sourceDir, entry.name), join(targetDir, entry.name), 'dir');
   }
+}
+
+/**
+ * The module specifiers that one built module loads: static imports and
+ * re-exports, `import()`, `require()`, and `new URL(..., import.meta.url)`,
+ * which is how a worker is started. A `require` of a module-level string
+ * constant counts, because a driver names its native binding that way.
+ */
+function loadedSpecifiers(code) {
+  const module = parseSync(code, { syntax: 'ecmascript', target: 'es2022' });
+  const constants = new Map();
+  for (const statement of module.body) {
+    if (statement.type !== 'VariableDeclaration' || statement.kind !== 'const') continue;
+    for (const declaration of statement.declarations) {
+      if (declaration.id.type === 'Identifier' && declaration.init?.type === 'StringLiteral') {
+        constants.set(declaration.id.value, declaration.init.value);
+      }
+    }
+  }
+  const text = (node) =>
+    node?.type === 'StringLiteral'
+      ? node.value
+      : node?.type === 'Identifier'
+        ? constants.get(node.value)
+        : undefined;
+  const isImportMetaUrl = (node) =>
+    node?.type === 'MemberExpression' &&
+    node.object.type === 'MetaProperty' &&
+    node.property.type === 'Identifier' &&
+    node.property.value === 'url';
+
+  const specifiers = [];
+  const add = (specifier) => {
+    if (specifier !== undefined) specifiers.push(specifier);
+  };
+  walk(module, (node) => {
+    switch (node.type) {
+      case 'ImportDeclaration':
+      case 'ExportAllDeclaration':
+      case 'ExportNamedDeclaration':
+        add(node.source?.value);
+        break;
+      case 'CallExpression':
+        if (
+          node.callee.type === 'Import' ||
+          (node.callee.type === 'Identifier' && node.callee.value === 'require')
+        ) {
+          add(text(node.arguments[0]?.expression));
+        }
+        break;
+      case 'NewExpression':
+        if (
+          node.callee.type === 'Identifier' &&
+          node.callee.value === 'URL' &&
+          isImportMetaUrl(node.arguments?.[1]?.expression)
+        ) {
+          add(text(node.arguments[0].expression));
+        }
+        break;
+    }
+  });
+  return specifiers;
+}
+
+function walk(node, visit) {
+  if (node === null || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const item of node) walk(item, visit);
+    return;
+  }
+  if (typeof node.type === 'string') visit(node);
+  for (const key of Object.keys(node)) {
+    if (key === 'span') continue;
+    walk(node[key], visit);
+  }
+}
+
+const packageNameOf = (specifier) =>
+  specifier.split('/').slice(0, specifier.startsWith('@') ? 2 : 1).join('/');
+
+/** The optional peers that an entry file and every module it reaches load. */
+function peersLoadedFrom(entryFile, peers) {
+  const loaded = new Set();
+  const seen = new Set();
+  const pending = [entryFile];
+  while (pending.length > 0) {
+    const file = pending.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const specifier of loadedSpecifiers(readFileSync(file, 'utf8'))) {
+      if (specifier.startsWith('.')) {
+        /* Only modules are followed; a Wasm file or another asset loads nothing. */
+        if (specifier.endsWith('.js')) pending.push(resolve(dirname(file), specifier));
+      } else if (peers.has(packageNameOf(specifier))) {
+        loaded.add(packageNameOf(specifier));
+      }
+    }
+  }
+  return loaded;
+}
+
+/** The optional peers that the install commands of a guide name. */
+function peersInstalledBy(guide, peers) {
+  const installed = new Set();
+  for (const [, packages] of guide.matchAll(INSTALL_COMMAND)) {
+    for (const word of packages.split(/\s+/)) {
+      if (word.startsWith('-')) continue;
+      const versionAt = word.lastIndexOf('@');
+      const name = versionAt > 0 ? word.slice(0, versionAt) : word;
+      if (peers.has(name)) installed.add(name);
+    }
+  }
+  return installed;
+}
+
+/**
+ * Checks that each guide names the optional peers of its entries, and nothing
+ * else, against the packed package in `packageRoot`.
+ */
+function checkEntryGuides(packageRoot, peers) {
+  const problems = [];
+  for (const subpath of subpaths.filter(isGuidedEntry)) {
+    if (!ENTRY_GUIDES.has(subpath)) {
+      problems.push(`${specifierFor(subpath)} has no guide in ENTRY_GUIDES.`);
+    }
+  }
+  for (const subpath of ENTRY_GUIDES.keys()) {
+    if (!subpaths.includes(subpath)) {
+      problems.push(`ENTRY_GUIDES names ${subpath}, which is not in the export map.`);
+    }
+  }
+
+  const loadedByGuide = new Map();
+  for (const [subpath, guidePath] of ENTRY_GUIDES) {
+    if (!subpaths.includes(subpath)) continue;
+    const target = packageJson.exports[subpath];
+    const entryFile = join(packageRoot, typeof target === 'string' ? target : target.default);
+    const loaded = peersLoadedFrom(entryFile, peers);
+    const installed = peersInstalledBy(readFileSync(join(repoRoot, guidePath), 'utf8'), peers);
+    for (const peer of loaded) {
+      if (!installed.has(peer)) {
+        problems.push(
+          `${guidePath} has no install command for the optional peer ${peer}, which ` +
+            `${specifierFor(subpath)} loads.`
+        );
+      }
+    }
+    loadedByGuide.set(guidePath, new Set([...(loadedByGuide.get(guidePath) ?? []), ...loaded]));
+  }
+  for (const [guidePath, loaded] of loadedByGuide) {
+    const installed = peersInstalledBy(readFileSync(join(repoRoot, guidePath), 'utf8'), peers);
+    for (const peer of installed) {
+      if (!loaded.has(peer)) {
+        problems.push(
+          `${guidePath} installs the optional peer ${peer}, which no entry that it ` +
+            `documents loads.`
+        );
+      }
+    }
+  }
+  return problems;
 }
 
 /*
@@ -265,6 +443,15 @@ for (const [subpath, specifier] of specifiers) {
   }
 
   const problems = [];
+  const guideProblems = checkEntryGuides(join(fixtureNodeModules, ...nameSegments), excluded);
+  if (guideProblems.length > 0) {
+    problems.push(
+      `${guideProblems.length} store or vault guide problem(s):\n` +
+        guideProblems.map((problem) => `  - ${problem}`).join('\n') +
+        `\n\n  A guide names each optional peer that its entry loads in an install ` +
+        `command, and no other.`
+    );
+  }
   if (failures.length > 0) {
     problems.push(
       `${failures.length} export subpath(s) cannot be imported without an optional peer ` +
@@ -302,6 +489,10 @@ for (const [subpath, specifier] of specifiers) {
     `Import surface: ${results.length - byDesign - deferred} of ${results.length} export ` +
       `subpaths load with no optional peer dependency installed; ${byDesign} are ` +
       `platform-bound by design; ${deferred} are known defects with findings entries.`
+  );
+  console.log(
+    `Entry guides: the guides of ${ENTRY_GUIDES.size} store and vault entries name ` +
+      `each optional peer that the entry loads.`
   );
 } finally {
   rmSync(fixtureRoot, { recursive: true, force: true });

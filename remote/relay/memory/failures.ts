@@ -1,4 +1,5 @@
 import type { Envelope } from '../types';
+import { cloneProtocolState } from '../../../internal/crypto/utils';
 
 export interface RelayFailureOptions {
   /**
@@ -104,7 +105,7 @@ export class RelayFailureController {
     if (this.options.reorderDeliveryPairs) {
       const held = this.reorderBuffers.get(targetKey);
       if (!held) {
-        this.reorderBuffers.set(targetKey, structuredClone(envelope));
+        this.reorderBuffers.set(targetKey, cloneProtocolState(envelope));
         return;
       }
       this.reorderBuffers.delete(targetKey);

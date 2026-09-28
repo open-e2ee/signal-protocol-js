@@ -14,6 +14,7 @@
  */
 
 import { GROUP_MASTER_KEY_LEN } from '../protocol/zk/groups';
+import { generateRandomBytesSync } from '../crypto/random';
 import { bytesToUrlSafeBase64, urlSafeToBase64, base64ToBytes } from '../crypto/utils';
 import { asBase64 } from '../../types/utils';
 
@@ -47,7 +48,7 @@ const INVITE_LINK_DATA_LEN = 1 + GROUP_MASTER_KEY_LEN + INVITE_LINK_PASSWORD_LEN
  * @returns A 16-byte random password.
  */
 export function generateInviteLinkPassword(): Uint8Array {
-  return crypto.getRandomValues(new Uint8Array(INVITE_LINK_PASSWORD_LEN));
+  return generateRandomBytesSync(INVITE_LINK_PASSWORD_LEN);
 }
 
 /**

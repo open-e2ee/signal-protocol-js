@@ -306,6 +306,7 @@ export {
 // use the stable `@open-e2ee/signal-protocol-sdk/files` subpath instead of reaching into
 // internal crypto modules.
 
+import * as safety from "./safety";
 /**
  * Safety number utilities
  *
@@ -320,8 +321,9 @@ export {
  * safety.generateCompositeSafetyNumber(...);
  * ```
  */
-export * as safety from "./safety";
+export { safety };
 
+import * as keys from "./keys";
 /**
  * Key generation utilities namespace
  *
@@ -332,8 +334,9 @@ export * as safety from "./safety";
  * const signedPreKey = await keys.generateEcSignedPreKey(signingKey);
  * ```
  */
-export * as keys from "./keys";
+export { keys };
 
+import * as encoding from "./encoding";
 /**
  * Encoding utilities namespace (base64, hex, byte conversions)
  *
@@ -344,9 +347,10 @@ export * as keys from "./keys";
  * const hex = encoding.bytesToHex(data);
  * ```
  */
-export * as encoding from "./encoding";
-export * as blocking from "./blocking";
-export * as media from "./media";
+export { encoding };
+import * as blocking from "./blocking";
+import * as media from "./media";
+export { blocking, media };
 export {
   MediaAttachmentFlag,
   MediaAttachmentJobOperation,
