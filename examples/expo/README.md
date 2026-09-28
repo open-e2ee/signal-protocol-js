@@ -1,6 +1,6 @@
 # Encrypted exchange on Expo and Hermes
 
-Run Alice and Bob inside an Expo application. Alice stores her identity and sessions in SQLCipher. Bob and the relay use memory.
+Run Alice and Bob inside an Expo application. Alice stores her identity and sessions in the SDK-owned SQLite database. Bob and the relay use memory.
 
 The app sends your message, decrypts it on Bob, and sends an encrypted reply to Alice. The screen and console show the actual output.
 
@@ -10,7 +10,7 @@ Use Node.js 22.13 or later and Expo SDK 57. This example pins React Native 0.86,
 
 For iOS, install Xcode 26.4 or later and CocoaPods on macOS. For Android, install Android Studio, the Android SDK, and JDK 17. See [Expo local development](https://docs.expo.dev/guides/local-app-development/).
 
-SQLCipher requires a native build. This example does not run in Expo Go. The protocol code is Pure TypeScript. Native Expo modules provide secure randomness and encrypted storage.
+SQLCipher requires a native build. This example does not run in Expo Go. The protocol code is Pure TypeScript. `index.ts` loads `react-native-get-random-values` first, which gives the SDK its global random source. Native Expo modules provide encrypted storage.
 
 ## Run
 
@@ -29,11 +29,11 @@ npx expo run:android
 
 The app starts an exchange on launch. The first run generates keys and can take longer than later runs. Wait for both decrypted messages.
 
-The output must identify `Hermes: true` and a SQLCipher version. A completed run ends with:
+The output must identify `Hermes: true`. Each run also logs `SQLCipher version:` and `SDK database header:`, the first 16 bytes of the SDK database file in hex. The run fails when the build has no SQLCipher, or when the file starts with the plaintext SQLite header `SQLite format 3\0`. A completed run ends with:
 
 ```text
 alice decrypted: Received: hello from Hermes
-Alice identity and session state remain in SQLCipher. Close and reopen the app to check persistence.
+Alice identity and session state remain in the device-local store. Close and reopen the app to check persistence.
 PASS: both devices decrypted the expected messages.
 ```
 
@@ -52,13 +52,9 @@ These commands build the JavaScript bundle into the native app. Metro is not req
 
 ## Storage setup
 
-[app.json](./app.json) enables SQLCipher. [storage.ts](./storage.ts) gets the database key from Expo SecureStore and applies it before schema access. It requires a SQLCipher version before it opens the SDK store.
+[app.json](./app.json) enables SQLCipher. [storage.ts](./storage.ts) opens the store with one call, `await expoStore()`. The SDK owns the database file: it keeps the database key in Expo SecureStore, applies the key, and applies its own migrations. The app has no SDK schema or migration code.
 
-The app applies the committed Drizzle migrations at startup. To regenerate them after a schema change:
-
-```sh
-npm run db:generate
-```
+The example keeps its run counters in a separate file, `opene2ee-example-state.db`. Keep your own tables out of the SDK database.
 
 Read [exchange.ts](./exchange.ts) for the public SDK calls. Use the [Expo integration guide](https://docs.open-e2ee.dev/start/expo) to add the SDK to your app.
 

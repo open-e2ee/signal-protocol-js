@@ -13,6 +13,7 @@
  * @see https://signal.org/docs/specifications/sesame/
  */
 
+import { utf8Decode } from '../internal/platform';
 import AsyncLock from 'async-lock';
 import type {
   SignalProtocolRelayServer,
@@ -61,6 +62,7 @@ import {
   type StoredOutgoingMessageIntent,
 } from '../local/store/reliability';
 import { withRetry } from '../utils/retry';
+import { acquireUntilStopped, RelayWorkStopped, rethrowRelayWorkStopped } from './relay-work';
 import { prepareGroupSharedMessage } from './group-sealed-sender';
 import { sendGroupWithExactOutbox } from './group-outbox';
 import {
@@ -118,7 +120,7 @@ export function sortEnvelopesForDecryption<T extends { messageType?: string }>(
  * @returns 'prekey_bundle' for PreKeyMessages, 'ciphertext' for regular messages
  */
 function getEnvelopeMessageType(ciphertext: string | Uint8Array): 'prekey_bundle' | 'ciphertext' {
-  const text = typeof ciphertext === 'string' ? ciphertext : new TextDecoder().decode(ciphertext);
+  const text = typeof ciphertext === 'string' ? ciphertext : utf8Decode(ciphertext);
 
   // Binary protobuf format: base64 decode, check first protobuf tag
   try {
@@ -232,6 +234,15 @@ export type StaleSessionRefresher = (
 ) => Promise<boolean>;
 
 /**
+ * The session callbacks of a send. The client binds them to the hooks of the
+ * work that sends, so a resend in relay work calls the app through that work.
+ */
+export interface SendSessionCallbacks {
+  establishSessions: SessionEstablisher;
+  refreshStaleSession: StaleSessionRefresher;
+}
+
+/**
  * Callback for refreshing group send endorsements before V2 sealed sender send.
  *
  * Called when `shouldRefreshEndorsements()` indicates refresh is needed.
@@ -267,9 +278,8 @@ export type GroupSendBarrierChecker = (groupId: string) => Promise<void>;
  */
 export class SignalProtocolServiceCipher {
   private readonly lock = new AsyncLock();
-  private sessionEstablisher?: SessionEstablisher;
+  private sessionCallbacks?: SendSessionCallbacks;
   private readonly recipientDeviceListCheckedAt = new Map<string, number>();
-  private staleSessionRefresher?: StaleSessionRefresher;
   private sealedSenderProvider?: SealedSenderProvider;
   private sealedSenderDeliveryMode: import('./config').SealedSenderDeliveryMode = 'preferred';
   private sealedSenderIdentifiedFallback?: import('./config').SealedSenderConfig['onIdentifiedFallback'];
@@ -319,7 +329,7 @@ export class SignalProtocolServiceCipher {
   }
 
   private encodeLosslessPlaintext(plaintextBytes: Uint8Array): string {
-    const text = new TextDecoder().decode(plaintextBytes);
+    const text = utf8Decode(plaintextBytes);
     const roundTrip = new TextEncoder().encode(text);
 
     if (
@@ -439,21 +449,14 @@ export class SignalProtocolServiceCipher {
   }
 
   /**
-   * Set the session establisher callback
+   * Set the session callbacks of a send that passes none
    * Called by SignalProtocolClient after construction to inject session establishment logic
-   */
-  setSessionEstablisher(establisher: SessionEstablisher): void {
-    this.sessionEstablisher = establisher;
-  }
-
-  /**
-   * Set the stale session refresher callback
-   * Called by SignalProtocolClient after construction to inject session refresh logic
    *
-   * Used when server returns STALE_DEVICE errors (device reinstalled).
+   * The stale-session refresher runs when the server returns STALE_DEVICE
+   * errors (device reinstalled).
    */
-  setStaleSessionRefresher(refresher: StaleSessionRefresher): void {
-    this.staleSessionRefresher = refresher;
+  setSessionCallbacks(callbacks: SendSessionCallbacks): void {
+    this.sessionCallbacks = callbacks;
   }
 
   /**
@@ -764,6 +767,11 @@ export class SignalProtocolServiceCipher {
    * @param recipientId - User ID or group ID (groups use the package group ID prefix)
    * @param content - Uint8Array bytes to encrypt and send
    * @param options - Optional send options (mimeType for binary content, etc.)
+   * @param sessions - Session callbacks of this send. Default: the callbacks
+   *   that setSessionCallbacks set
+   * @param stopSignal - The stop signal of the relay work that sends. When it
+   *   aborts while the send waits for the recipient's lock, the send throws
+   *   RelayWorkStopped. Default: none, and the send waits
    * @returns SendResult with messageId, timestamp, and device count
    *
    * @see https://signal.org/docs/specifications/sesame/
@@ -771,27 +779,34 @@ export class SignalProtocolServiceCipher {
   async encrypt(
     recipientId: string,
     content: Uint8Array,
-    options?: SendOptions
+    options?: SendOptions,
+    sessions = this.sessionCallbacks,
+    stopSignal?: AbortSignal
   ): Promise<SendResult> {
     const clientMessageId = options?.clientMessageId ?? (await CryptoUtils.generateUuidV4());
     const durableOptions = { ...options, clientMessageId };
     const lockKey = `encrypt:${recipientId}`;
 
     try {
-      return await this.lock.acquire(lockKey, async () => {
-        // 1. Route binary file data (Uint8Array with isBinary flag) to blob encryption
-        if (durableOptions.isBinary) {
-          return this.encryptBinaryAttachment(recipientId, content, durableOptions);
-        }
+      return await acquireUntilStopped(
+        this.lock,
+        lockKey,
+        async () => {
+          // 1. Route binary file data (Uint8Array with isBinary flag) to blob encryption
+          if (durableOptions.isBinary) {
+            return this.encryptBinaryAttachment(recipientId, content, durableOptions, sessions);
+          }
 
-        // 2. Detect recipient type (group vs user)
-        if (isGroupId(recipientId)) {
-          return this.encryptToGroup(recipientId, content, durableOptions);
-        }
+          // 2. Detect recipient type (group vs user)
+          if (isGroupId(recipientId)) {
+            return this.encryptToGroup(recipientId, content, durableOptions, sessions);
+          }
 
-        // 3. Send to user (existing SESAME path)
-        return this.encryptToUser(recipientId, content, durableOptions);
-      });
+          // 3. Send to user (existing SESAME path)
+          return this.encryptToUser(recipientId, content, durableOptions, sessions);
+        },
+        stopSignal
+      );
     } catch (error) {
       throw attachClientMessageId(error, clientMessageId);
     }
@@ -988,7 +1003,10 @@ export class SignalProtocolServiceCipher {
    *
    * @throws {EncryptionError} SESSION_NOT_FOUND if sessions cannot be established
    */
-  private async ensureSessionsForUser(recipientUserId: string): Promise<void> {
+  private async ensureSessionsForUser(
+    recipientUserId: string,
+    sessions: SendSessionCallbacks | undefined
+  ): Promise<void> {
     const userRecord = await this.sesameManager.getUserRecord(recipientUserId);
     const hasActiveSession =
       !!userRecord &&
@@ -1009,7 +1027,7 @@ export class SignalProtocolServiceCipher {
       data: { recipientUserId, hasActiveSession },
     });
 
-    if (!this.sessionEstablisher) {
+    if (!sessions) {
       if (hasActiveSession) return;
       throw new EncryptionError(
         `No session with ${recipientUserId} and auto-establishment not configured`,
@@ -1032,7 +1050,7 @@ export class SignalProtocolServiceCipher {
       // Use retry logic for transient network failures
       result = await withRetry(
         async () => {
-          const attempt = await this.sessionEstablisher!(recipientUserId);
+          const attempt = await sessions.establishSessions(recipientUserId);
           if (attempt.establishedDevices.length === 0 && attempt.failedDeviceErrors.length > 0) {
             throw attempt.failedDeviceErrors[0]!.error;
           }
@@ -1042,9 +1060,11 @@ export class SignalProtocolServiceCipher {
           operationName: 'establishSession',
           maxRetries: 2,
           baseDelay: 500,
+          shouldRetry: (error) => !(error instanceof RelayWorkStopped),
         }
       );
     } catch (error) {
+      rethrowRelayWorkStopped(error);
       if (hasActiveSession) {
         // The known devices still receive; the next send reads the list again.
         this.logger.warn('Recipient device list refresh failed, sending to known devices', {
@@ -1115,24 +1135,27 @@ export class SignalProtocolServiceCipher {
   private async encryptToUser(
     recipientUserId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & { clientMessageId: string }
+    options: SendOptions & { clientMessageId: string },
+    sessions: SendSessionCallbacks | undefined
   ): Promise<SendResult> {
-    return this.encryptToUserWithOutbox(recipientUserId, plaintextBytes, options);
+    return this.encryptToUserWithOutbox(recipientUserId, plaintextBytes, options, sessions);
   }
   private async encryptToUserWithOutbox(
     recipientUserId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & { clientMessageId: string }
+    options: SendOptions & { clientMessageId: string },
+    sessions: SendSessionCallbacks | undefined
   ): Promise<SendResult> {
     return withOutgoingMessageIntentLock(this.storage, options.clientMessageId, () =>
-      this.encryptToUserWithOutboxLocked(recipientUserId, plaintextBytes, options)
+      this.encryptToUserWithOutboxLocked(recipientUserId, plaintextBytes, options, sessions)
     );
   }
 
   private async encryptToUserWithOutboxLocked(
     recipientUserId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & { clientMessageId: string }
+    options: SendOptions & { clientMessageId: string },
+    sessions: SendSessionCallbacks | undefined
   ): Promise<SendResult> {
     const plaintextDigest = CryptoUtils.bytesToBase64(await CryptoUtils.sha256(plaintextBytes));
     const existing = await getOutgoingMessageIntent(this.storage, options.clientMessageId);
@@ -1147,10 +1170,10 @@ export class SignalProtocolServiceCipher {
         throw new Error('A clientMessageId cannot identify two different logical sends');
       }
       if (existing.result) return existing.result;
-      return this.sendStoredDirectIntent(existing, plaintextBytes);
+      return this.sendStoredDirectIntent(existing, plaintextBytes, sessions);
     }
 
-    await this.ensureSessionsForUser(recipientUserId);
+    await this.ensureSessionsForUser(recipientUserId, sessions);
     const sealedSender = this.relay ? await this.resolveSealedSenderContext(recipientUserId) : null;
     const directSealedSender =
       sealedSender && this.relay?.sendMultiRecipientUnidentified ? sealedSender : null;
@@ -1230,7 +1253,7 @@ export class SignalProtocolServiceCipher {
       syncMessages,
     };
     await storeOutgoingMessageIntent(this.storage, intent);
-    return this.sendStoredDirectIntent(intent, plaintextBytes);
+    return this.sendStoredDirectIntent(intent, plaintextBytes, sessions);
   }
 
   private async prepareStoredDirectDeviceMessage(
@@ -1273,10 +1296,11 @@ export class SignalProtocolServiceCipher {
   private async repairRejectedDirectDeviceMessage(
     intent: StoredOutgoingMessageIntent,
     rejected: StoredOutgoingDeviceMessage,
-    plaintextBytes: Uint8Array
+    plaintextBytes: Uint8Array,
+    sessions: SendSessionCallbacks | undefined
   ): Promise<StoredOutgoingDeviceMessage> {
-    if (!this.staleSessionRefresher) throw new Error('Stale-session refresh is not configured');
-    const refreshed = await this.staleSessionRefresher(
+    if (!sessions) throw new Error('Stale-session refresh is not configured');
+    const refreshed = await sessions.refreshStaleSession(
       rejected.recipientUserId,
       rejected.recipientDeviceId
     );
@@ -1353,7 +1377,8 @@ export class SignalProtocolServiceCipher {
 
   private async sendStoredDirectIntent(
     intent: StoredOutgoingMessageIntent,
-    plaintextBytes: Uint8Array
+    plaintextBytes: Uint8Array,
+    sessions: SendSessionCallbacks | undefined
   ): Promise<SendResult> {
     if (intent.kind !== 'direct') throw new Error('Expected a direct outbox intent');
     if (!this.relay) {
@@ -1379,7 +1404,8 @@ export class SignalProtocolServiceCipher {
         const replacement = await this.repairRejectedDirectDeviceMessage(
           intent,
           msg,
-          plaintextBytes
+          plaintextBytes,
+          sessions
         );
         result = await this.sendStoredDirectDeviceMessage(intent, replacement);
       }
@@ -1416,7 +1442,8 @@ export class SignalProtocolServiceCipher {
   private async encryptToGroupWithOutbox(
     actualGroupId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & { clientMessageId: string }
+    options: SendOptions & { clientMessageId: string },
+    sessions: SendSessionCallbacks | undefined
   ): Promise<SendResult> {
     return sendGroupWithExactOutbox(
       {
@@ -1426,7 +1453,12 @@ export class SignalProtocolServiceCipher {
         senderDeviceId: this.deviceId,
         deliveryMode: this.sealedSenderDeliveryMode,
         preparePayload: async (groupId, bytes, sendOptions) => {
-          const prepared = await this.prepareGroupSenderKeyPayload(groupId, bytes, sendOptions);
+          const prepared = await this.prepareGroupSenderKeyPayload(
+            groupId,
+            bytes,
+            sendOptions,
+            sessions
+          );
           return {
             ciphertext: CryptoUtils.bytesToBase64(prepared.ciphertext),
             preMessages: prepared.preMessages,
@@ -1858,7 +1890,8 @@ export class SignalProtocolServiceCipher {
   private async prepareGroupSenderKeyPayload(
     actualGroupId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & { clientMessageId: string; timestamp: number }
+    options: SendOptions & { clientMessageId: string; timestamp: number },
+    sessions: SendSessionCallbacks | undefined
   ): Promise<{
     ciphertext: Uint8Array;
     preMessages: StoredOutgoingDeviceMessage[];
@@ -1920,7 +1953,7 @@ export class SignalProtocolServiceCipher {
       const otherMembers = members.filter((member) => member.userId !== this.userId);
       const recipientUserIds = [...new Set(otherMembers.map((member) => member.userId))];
       for (const recipientUserId of recipientUserIds) {
-        await this.ensureSessionsForUser(recipientUserId);
+        await this.ensureSessionsForUser(recipientUserId, sessions);
         const skdmBytes = this.contentAdapter
           ? this.contentAdapter.serializeSenderKeyDistributionBytes(
               actualGroupId,
@@ -1967,11 +2000,12 @@ export class SignalProtocolServiceCipher {
   private async encryptToGroup(
     groupId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & { clientMessageId: string }
+    options: SendOptions & { clientMessageId: string },
+    sessions: SendSessionCallbacks | undefined
   ): Promise<SendResult> {
     const actualGroupId = extractGroupId(groupId);
     await this.groupSendBarrierChecker?.(actualGroupId);
-    return this.encryptToGroupWithOutbox(actualGroupId, plaintextBytes, options);
+    return this.encryptToGroupWithOutbox(actualGroupId, plaintextBytes, options, sessions);
   }
   /**
    * Encrypt binary attachment with two-layer encryption
@@ -1993,7 +2027,8 @@ export class SignalProtocolServiceCipher {
   private async encryptBinaryAttachment(
     recipientId: string,
     data: Uint8Array,
-    options: SendOptions & { clientMessageId: string }
+    options: SendOptions & { clientMessageId: string },
+    sessions: SendSessionCallbacks | undefined
   ): Promise<SendResult> {
     if (!this.relay) {
       throw new EncryptionError(
@@ -2011,9 +2046,9 @@ export class SignalProtocolServiceCipher {
     const attachmentBytes = new TextEncoder().encode(attachmentPayload);
     let result: SendResult;
     if (isGroupId(recipientId)) {
-      result = await this.encryptToGroup(recipientId, attachmentBytes, options);
+      result = await this.encryptToGroup(recipientId, attachmentBytes, options, sessions);
     } else {
-      result = await this.encryptToUser(recipientId, attachmentBytes, options);
+      result = await this.encryptToUser(recipientId, attachmentBytes, options, sessions);
     }
 
     return {

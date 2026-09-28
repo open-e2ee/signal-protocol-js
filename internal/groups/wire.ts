@@ -8,6 +8,7 @@
  * @module groups/wire
  */
 
+import { utf8Decode } from '../platform';
 import { bytesToHex, hexToBytes } from '../../encoding/hex';
 import {
   EnabledState,
@@ -109,7 +110,7 @@ export function serializeGroupWire(value: unknown): Uint8Array {
 }
 
 export function deserializeGroupWire<T>(bytes: Uint8Array): T {
-  return JSON.parse(new TextDecoder().decode(bytes), (_key, item) => {
+  return JSON.parse(utf8Decode(bytes), (_key, item) => {
     if (item && typeof item === 'object' && '__bytes' in item) {
       if (
         Object.keys(item).length !== 1 ||

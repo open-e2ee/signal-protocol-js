@@ -1,16 +1,20 @@
 /**
- * Node.js Storage Package
+ * Node and Electron Signal Protocol Store Package
  *
- * Storage for Node.js applications using filesystem.
+ * Local Signal Protocol state in an SDK-owned SQLCipher database on
+ * better-sqlite3-multiple-ciphers. The key of the database lives in the app's
+ * secret vault, for example the Electron safeStorage vault.
  */
 export {};
-import { NodeSignalProtocolStore, type NodeSignalProtocolStoreConfig } from './adapter';
 
-export { NodeSignalProtocolStore } from './adapter';
-export type { NodeSignalProtocolStoreConfig } from './adapter';
+export {
+  NodeSignalProtocolStore,
+  nodeStore,
+  resetNodeStore,
+  type NodeSignalProtocolStoreOptions,
+} from './adapter';
+export { createPreKeyMaintenanceStore } from './maintenance';
+export { sqliteDatabaseKeySlot } from '../sqlite/open-store';
 
-export async function nodeStore(config?: NodeSignalProtocolStoreConfig): Promise<NodeSignalProtocolStore> {
-  const store = new NodeSignalProtocolStore(config);
-  await store.initialize();
-  return store;
-}
+// MessageRecord types for SESAME retry request support
+export type { MessageRecord, MessageRecordStore } from '../../../types';

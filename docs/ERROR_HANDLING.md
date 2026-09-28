@@ -117,12 +117,18 @@ holds each member to a production construction site.
 |---|---|---|
 | `KEY_STORAGE_ERROR` | A key-storage operation failed. | Inspect `originalError`, then retry or reinitialize storage. |
 | `STORAGE_QUOTA_EXCEEDED` | The storage origin ran out of space. | Free storage space, then retry the rejected write. |
+| `SECRET_VAULT_REQUIRED` | An operation that keeps a local secret ran without a `SignalProtocolLocalSecretVault`. | Pass a vault, such as `ExpoSecureStoreSignalProtocolSecretVault`, or the application's own. |
+| `LOCAL_STORE_KEY_LOST` | A local store holds data, but its secret vault holds no key for that data. | Restore the vault entry, or reset the store. A reset deletes the local data. |
+| `SQLITE_ENGINE_UNAVAILABLE` | The SQLite Wasm engine did not load in its web worker. Usually the worker's Content Security Policy does not allow `'wasm-unsafe-eval'`. | Allow `'wasm-unsafe-eval'` in `script-src` on the worker script response, and serve the Wasm file as `application/wasm`. |
+| `OPFS_UNAVAILABLE` | The browser cannot keep a SQLite database in the origin private file system, for example in a private or ephemeral context. | Use the IndexedDB store in this runtime. |
+| `OPFS_FILE_BUSY` | The web SQLite store could not open its database file this time, usually because another tab of the origin still holds the file. The file is unchanged. | Retry later. Do not change to another store: the data stays in this one. |
 
 ### Initialization and Protocol Policy Errors
 
 | Code | Cause | Application response |
 |---|---|---|
 | `INITIALIZATION_FAILED` | Client or group initialization failed. | Inspect `originalError` and the configuration. |
+| `SECURE_RANDOM_UNAVAILABLE` | The runtime has no global `crypto.getRandomValues`. The SDK throws `SecureRandomUnavailableError` from `@open-e2ee/signal-protocol-sdk/types`. | On React Native and Expo, install `react-native-get-random-values` 2.x or `react-native-quick-crypto` and load it before the first SDK call. |
 | `PQXDH_REQUIRED` | Policy requires PQXDH, but the peer lacks required keys. | Wait for new peer keys or queue the message. |
 | `PQXDH_FAILED` | The PQXDH exchange failed. | Abort setup and inspect `originalError`. |
 | `TRIPLE_RATCHET_REQUIRED` | Triple Ratchet policy lacks a PQXDH session. | Establish the required PQXDH session first. |

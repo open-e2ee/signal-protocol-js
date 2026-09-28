@@ -12,7 +12,7 @@
  */
 
 import { sha3_256, sha3_512, shake128, shake256 } from '@noble/hashes/sha3.js';
-import { u32, randomBytes, swap32IfBE } from '@noble/hashes/utils.js';
+import { u32, swap32IfBE } from '@noble/hashes/utils.js';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { constantTimeEqual } from '../../../../crypto/utils';
 import { MLKEM_Q as Q, reduceModQ as mod } from './arithmetic';
@@ -522,23 +522,22 @@ export function KeyGen(seed?: Uint8Array): KeyGenResult {
  *
  * @param ek_seed Encapsulation key seed (rho, 32 bytes)
  * @param hek Public key commitment SHA3-256(ek) (32 bytes)
- * @param msg Optional 32-byte message (random if not provided)
+ * @param msg 32-byte random message from the caller, which owns and clears it
  * @returns Encaps1Result with encaps_secret, ct1, shared_secret
  */
-export function Encaps1(ek_seed: Uint8Array, hek: Uint8Array, msg?: Uint8Array): Encaps1Result {
+export function Encaps1(ek_seed: Uint8Array, hek: Uint8Array, msg: Uint8Array): Encaps1Result {
   if (ek_seed.length !== SIZES.EK_SEED) {
     throw new Error(`Invalid ek_seed length: expected ${SIZES.EK_SEED}, got ${ek_seed.length}`);
   }
   if (hek.length !== SIZES.HEK) {
     throw new Error(`Invalid hek length: expected ${SIZES.HEK}, got ${hek.length}`);
   }
-
-  // Generate or use provided message (using @noble/hashes portable randomBytes)
-  const m = msg ?? randomBytes(32);
-  const ownsMessage = msg === undefined;
+  if (msg.length !== 32) {
+    throw new Error(`Invalid msg length: expected 32, got ${msg.length}`);
+  }
 
   // Derive randomness: kr = G(m || hek) = SHA3-512(m || hek)
-  const kr = sha3_512.create().update(m).update(hek).digest();
+  const kr = sha3_512.create().update(msg).update(hek).digest();
   let sharedSecret: Uint8Array | undefined;
   let rHat: Uint16Array[] | undefined;
   let u: Uint16Array[] | undefined;
@@ -555,7 +554,7 @@ export function Encaps1(ek_seed: Uint8Array, hek: Uint8Array, msg?: Uint8Array):
 
     // Serialize encaps_secret: [m (32) | r_seed (32) | rHat (K*N*2)].
     encapsSecret = new Uint8Array(SIZES.ENCAPS_SECRET);
-    encapsSecret.set(m, 0);
+    encapsSecret.set(msg, 0);
     encapsSecret.set(rSeed, 32);
     // Explicit little-endian encoding avoids host-dependent persisted state.
     let offset = 64;
@@ -570,7 +569,6 @@ export function Encaps1(ek_seed: Uint8Array, hek: Uint8Array, msg?: Uint8Array):
     secureZero(kr);
     secureZeroPolynomials(rHat);
     secureZeroPolynomials(u);
-    if (ownsMessage) secureZero(m);
     if (!completed) {
       if (sharedSecret) secureZero(sharedSecret);
       if (encapsSecret) secureZero(encapsSecret);
@@ -862,12 +860,12 @@ export function reconstructPublicKey(ek_seed: Uint8Array, ek_vector: Uint8Array)
  * Convenience function that wraps Encaps1 + Encaps2.
  *
  * @param publicKey Full public key (1184 bytes)
- * @param msg Optional 32-byte message
+ * @param msg 32-byte random message from the caller
  * @returns { cipherText, sharedSecret }
  */
 export function Encapsulate(
   publicKey: Uint8Array,
-  msg?: Uint8Array
+  msg: Uint8Array
 ): { cipherText: Uint8Array; sharedSecret: Uint8Array } {
   const ek_vector = publicKey.subarray(0, SIZES.EK_VECTOR);
   const ek_seed = publicKey.subarray(SIZES.EK_VECTOR);

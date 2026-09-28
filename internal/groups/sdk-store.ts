@@ -6,6 +6,7 @@ import AsyncLock from 'async-lock';
 import type { SignalProtocolLocalStore } from '../../types/api';
 import { base64ToBytes, bytesToBase64 } from '../../encoding/base64';
 import { asBase64 } from '../../types/utils';
+import { cloneProtocolState } from '../crypto/utils';
 import type { GroupStateStore } from './manager';
 import type { DecryptedGroup } from './types';
 
@@ -93,7 +94,7 @@ export class SignalProtocolGroupStateStore implements GroupStateStore {
     state: DecryptedGroup
   ): Promise<void> {
     await this.update(groupId, (record) => {
-      record.state = structuredClone(state);
+      record.state = cloneProtocolState(state);
     });
   }
 
@@ -102,14 +103,14 @@ export class SignalProtocolGroupStateStore implements GroupStateStore {
     state: DecryptedGroup
   ): Promise<void> {
     await this.update(groupId, (record) => {
-      record.state = structuredClone(state);
+      record.state = cloneProtocolState(state);
       record.senderKeyRotationBarrier = state.revision;
     });
   }
 
   async getGroupState(groupId: string): Promise<DecryptedGroup | null> {
     const record = await this.read(groupId);
-    return record.state ? structuredClone(record.state) : null;
+    return record.state ? cloneProtocolState(record.state) : null;
   }
 
   async getSenderKeyRotationBarrier(

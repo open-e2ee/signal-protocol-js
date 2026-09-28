@@ -46,7 +46,7 @@ import {
   isRoleAccessRequirement,
   isStoredMemberRole,
 } from './access-control';
-import { constantTimeEqual } from '../crypto/utils';
+import { cloneProtocolState, constantTimeEqual } from '../crypto/utils';
 import {
   deserializeAuthCredentialPresentation,
   deserializeGroupPublicParams,
@@ -114,15 +114,15 @@ export interface GroupServerPersistedGroup {
   snapshots: GroupServerPersistedSnapshot[];
 }
 
+/**
+ * The clock and the secure random source of the server host. The adapter that
+ * runs the engine supplies them, so the engine picks no host source itself and
+ * a server bundle reaches no client platform seam.
+ */
 export interface GroupServerEngineRuntime {
   now(): number;
   randomBytes(length: number): Uint8Array;
 }
-
-const defaultRuntime: GroupServerEngineRuntime = {
-  now: () => Date.now(),
-  randomBytes: (length) => crypto.getRandomValues(new Uint8Array(length)),
-};
 
 /**
  * Machine-readable cause carried on some FORBIDDEN rejections.
@@ -312,7 +312,7 @@ function verifyProfileKeyPresentation(
 }
 
 function stripStateProfileKeyPresentations(state: EncryptedGroup): EncryptedGroup {
-  const stripped = structuredClone(state);
+  const stripped = cloneProtocolState(state);
   for (const member of stripped.members) {
     member.presentation = new Uint8Array(0);
   }
@@ -325,7 +325,7 @@ function stripStateProfileKeyPresentations(state: EncryptedGroup): EncryptedGrou
 function stripChangeProfileKeyPresentations(
   change: EncryptedGroupChange
 ): EncryptedGroupChange {
-  const stripped = structuredClone(change);
+  const stripped = cloneProtocolState(change);
   for (const members of [
     stripped.newMembers,
     stripped.modifiedProfileKeys,
@@ -1169,7 +1169,7 @@ function applyEncryptedChange(
   change: EncryptedGroupChange
 ): EncryptedGroup {
   if (state.terminated) rejectBadRequest('Group is terminated');
-  const next = structuredClone(state);
+  const next = cloneProtocolState(state);
   const { newInviteLinkPassword } = change;
   const missing = (description: string): never =>
     rejectBadRequest(`Action targets a missing ${description}`);
@@ -1386,7 +1386,7 @@ export class GroupAuthorizationServerEngine implements GroupServer {
 
   constructor(
     private readonly serverSecretParams: ServerSecretParams,
-    private readonly runtime: GroupServerEngineRuntime = defaultRuntime
+    private readonly runtime: GroupServerEngineRuntime
   ) {}
 
   get publicParams(): ServerPublicParams {
@@ -1423,7 +1423,7 @@ export class GroupAuthorizationServerEngine implements GroupServer {
     );
     this.groups.set(this.key(groupId), {
       state,
-      changes: structuredClone(persisted.changes),
+      changes: cloneProtocolState(persisted.changes),
       snapshots,
     });
   }
@@ -1433,7 +1433,7 @@ export class GroupAuthorizationServerEngine implements GroupServer {
     if (!stored) return null;
     return {
       encryptedState: serializeEncryptedGroup(stored.state),
-      changes: structuredClone(stored.changes),
+      changes: cloneProtocolState(stored.changes),
       snapshots: [...stored.snapshots.entries()]
         .sort(([left], [right]) => left - right)
         .map(([version, snapshot]) => ({
@@ -1454,7 +1454,7 @@ export class GroupAuthorizationServerEngine implements GroupServer {
   ): StoredSnapshot {
     const encryptedState = serializeEncryptedGroup(state);
     return {
-      state: structuredClone(state),
+      state: cloneProtocolState(state),
       baselineSignature: serverSign(
         this.serverSecretParams,
         this.runtime.randomBytes(32),
@@ -1854,7 +1854,7 @@ export class GroupAuthorizationServerEngine implements GroupServer {
       }
       if (!this.isMemberOf(postState.state, requester)) break;
     }
-    return { entries: structuredClone(memberPrefix), hasMore };
+    return { entries: cloneProtocolState(memberPrefix), hasMore };
   }
 
   async submitGroupChange(
@@ -1943,7 +1943,7 @@ export class GroupAuthorizationServerEngine implements GroupServer {
       nextState.version,
       this.createStoredSnapshot(groupId, nextState)
     );
-    stored.changes.push(structuredClone(entry));
-    return structuredClone(entry);
+    stored.changes.push(cloneProtocolState(entry));
+    return cloneProtocolState(entry);
   }
 }

@@ -2,6 +2,7 @@
  * Session type definitions for Signal Protocol Double Ratchet and Triple Ratchet
  */
 
+import { utf8Decode } from '../internal/platform';
 import { ProtocolAddress } from './address';
 import type {
   CompositeIdentityV1,
@@ -1024,7 +1025,7 @@ export namespace SessionRecord {
    *
    */
   export function deserialize(buffer: Uint8Array): SessionRecord {
-    const json = new TextDecoder().decode(buffer);
+    const json = utf8Decode(buffer);
     const parsed = JSON.parse(json) as SessionRecord;
 
     // Validate required fields

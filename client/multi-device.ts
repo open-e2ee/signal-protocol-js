@@ -7,6 +7,7 @@
  * @see https://signal.org/docs/specifications/sesame/
  */
 
+import { utf8Decode } from '../internal/platform';
 import type { SesameMessage, SesameStats, OutgoingMessageBatch } from '../internal/sesame/types';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import type { SignalProtocolClientContext } from './types';
@@ -98,7 +99,7 @@ export async function receive(
   try {
     // Delegate to Sesame manager (handles session convergence)
     const plaintextBytes = await ctx.sesameManager.receive(message);
-    const plaintext = new TextDecoder().decode(plaintextBytes);
+    const plaintext = utf8Decode(plaintextBytes);
 
     ctx.logger.debug('Message received and decrypted', {
       category: 'E2EE',

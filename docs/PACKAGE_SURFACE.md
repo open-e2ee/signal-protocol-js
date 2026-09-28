@@ -83,6 +83,7 @@ Expo storage or the Convex R2 object store.
 - `@open-e2ee/signal-protocol-sdk/device/expo`
 - `@open-e2ee/signal-protocol-sdk/device/lifecycle`
 - `@open-e2ee/signal-protocol-sdk/device/provisioning`
+- `@open-e2ee/signal-protocol-sdk/device/react-native`
 - `@open-e2ee/signal-protocol-sdk/encoding`
 - `@open-e2ee/signal-protocol-sdk/encoding/hex`
 - `@open-e2ee/signal-protocol-sdk/files`
@@ -101,14 +102,17 @@ Expo storage or the Convex R2 object store.
 - `@open-e2ee/signal-protocol-sdk/server-clock`
 - `@open-e2ee/signal-protocol-sdk/local/store`
 - `@open-e2ee/signal-protocol-sdk/local/store/expo`
-- `@open-e2ee/signal-protocol-sdk/local/store/expo/db`
-- `@open-e2ee/signal-protocol-sdk/local/store/expo/schema`
+- `@open-e2ee/signal-protocol-sdk/local/store/key-value`
+- `@open-e2ee/signal-protocol-sdk/local/store/key-value/realm`
 - `@open-e2ee/signal-protocol-sdk/local/store/memory`
 - `@open-e2ee/signal-protocol-sdk/local/store/node`
 - `@open-e2ee/signal-protocol-sdk/local/store/react-native`
 - `@open-e2ee/signal-protocol-sdk/local/store/web`
+- `@open-e2ee/signal-protocol-sdk/local/store/web-sqlite`
 - `@open-e2ee/signal-protocol-sdk/local/vault`
+- `@open-e2ee/signal-protocol-sdk/local/vault/electron-safe-storage`
 - `@open-e2ee/signal-protocol-sdk/local/vault/expo-secure-store`
+- `@open-e2ee/signal-protocol-sdk/local/vault/react-native-keychain`
 - `@open-e2ee/signal-protocol-sdk/types`
 - `@open-e2ee/signal-protocol-sdk/types/address`
 - `@open-e2ee/signal-protocol-sdk/types/messages`
@@ -150,16 +154,30 @@ Expo storage or the Convex R2 object store.
 
 ### Storage implementations
 
-- `ExpoSignalProtocolStore` for Expo / React Native
-- `expoStore()` for Expo / React Native composition
-- `@open-e2ee/signal-protocol-sdk/local/store/expo` also exports the Expo helpers
-  Signal Protocol composes directly: `getKeyStorage`, `getDatabaseKeyManager`,
-  `clearDatabaseKeyCache`, and `createPreKeyMaintenanceStore`
+- `ExpoSignalProtocolStore` / `await expoStore()` for Expo (the SDK owns the
+  SQLCipher database, its key, and its migrations; `resetExpoStore()` deletes
+  the database and opens an empty store; `createPreKeyMaintenanceStore(store)`
+  runs replaced-prekey maintenance on an open store)
+- `ReactNativeSignalProtocolStore` / `await reactNativeStore()` for
+  bare React Native (the SDK owns the SQLCipher database on op-sqlite, its key
+  in the react-native-keychain vault, and its migrations;
+  `resetReactNativeStore()` deletes the database and opens an empty store)
 - `IndexedDbSignalProtocolStore` / `indexedDbStore()` for browsers
-- `ReactNativeSignalProtocolStore` / `reactNativeStore()` for bare React Native
-  (provide your own key-value backend and verify it with the exported
-  backend-conformance kit)
-- `NodeSignalProtocolStore` / `nodeStore()` for Node environments
+- `WebSqliteSignalProtocolStore` / `await webSqliteStore()` for browsers with
+  the origin private file system (the SDK owns the SQLite database in a Wasm
+  worker, its key, and its migrations; the page's Content Security Policy
+  needs `'wasm-unsafe-eval'`)
+- `KeyValueSignalProtocolStore` / `keyValueStore()` for an application that
+  brings its own key-value engine (provide your own key-value backend and
+  verify it with the exported
+  backend-conformance kit, or use `createRealmKeyValueBackend()` from
+  `local/store/key-value/realm`; the value key lives in a secret vault)
+- `NodeSignalProtocolStore` / `await nodeStore({ directory, vault })` for Node
+  and the Electron main process (the SDK owns the SQLCipher database on the
+  `better-sqlite3-multiple-ciphers` peer, its key, and its migrations;
+  `resetNodeStore()` deletes the database and opens an empty store;
+  `createPreKeyMaintenanceStore(store)` runs replaced-prekey maintenance on an
+  open store; `sqliteDatabaseKeySlot(path)` names the vault slot of the key)
 - `InMemorySignalProtocolStore` / `inMemoryStore()` for local development
 - custom implementations via `SignalProtocolLocalStore`
 

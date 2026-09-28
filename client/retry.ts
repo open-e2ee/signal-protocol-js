@@ -11,6 +11,7 @@ import { EncryptionError, EncryptionErrorCode } from '../types';
 import { ContentHint } from '../types/messages';
 import { ProtocolAddress } from '../types/address';
 import { determineRetryReason } from './retry-utils';
+import { rethrowRelayWorkStopped } from './relay-work';
 import type {
   SignalProtocolClientContext,
   IncomingEnvelope,
@@ -651,6 +652,7 @@ export async function handleRetryRequestAndResend(
       },
     });
   } catch (error) {
+    rethrowRelayWorkStopped(error);
     ctx.logger.error('Failed to handle retry request', {
       category: 'E2EE',
       error: error as Error,

@@ -8,6 +8,7 @@
  * DO NOT use in production.
  */
 
+import { utf8Decode } from '../../../internal/platform';
 import type {
   SignalProtocolRelayServer,
   Envelope,
@@ -38,8 +39,8 @@ import {
   deriveIdentityCommitment,
   encodeCompositeIdentityV1,
 } from '../../../keys/identity';
-import { generateUuidV4 } from '../../../internal/crypto/random';
-import { constantTimeEqual } from '../../../internal/crypto/utils';
+import { generateRandomBytes, generateUuidV4 } from '../../../internal/crypto/random';
+import { cloneProtocolState, constantTimeEqual } from '../../../internal/crypto/utils';
 import { PROVISIONING_SESSION_TTL_MS } from '../../../device/constants';
 import {
   generateServerSecretParams,
@@ -87,7 +88,7 @@ export interface InMemorySignalProtocolRelayServerOptions {
  * references with caller-owned objects.
  */
 function cloneRelayValue<T>(value: T): T {
-  return structuredClone(value);
+  return cloneProtocolState(value);
 }
 
 /**
@@ -1242,21 +1243,22 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
 
   private userIdentities = new Map<string, { uuid: string; phoneNumberIdentifier?: string }>();
 
-  private getOrCreateIdentity(userId: string): {
+  private async getOrCreateIdentity(userId: string): Promise<{
     uuid: string;
     phoneNumberIdentifier?: string;
-  } {
-    let identity = this.userIdentities.get(userId);
-    if (!identity) {
-      // No phoneNumberIdentifier. Matches the username-based (non-phone) app pattern
-      identity = { uuid: crypto.randomUUID() };
-      this.userIdentities.set(userId, identity);
-    }
+  }> {
+    const existing = this.userIdentities.get(userId);
+    if (existing) return existing;
+    const uuid = await generateUuidV4();
+    // A concurrent call can create the identity during the await; keep the first.
+    // No phoneNumberIdentifier. Matches the username-based (non-phone) app pattern
+    const identity = this.userIdentities.get(userId) ?? { uuid };
+    this.userIdentities.set(userId, identity);
     return identity;
   }
 
   async issueAuthCredential(userId: string): Promise<Uint8Array> {
-    const identity = this.getOrCreateIdentity(userId);
+    const identity = await this.getOrCreateIdentity(userId);
     const aci: ServiceId = {
       kind: SERVICE_ID_ACI,
       uuid: uuidToBytes(identity.uuid),
@@ -1269,7 +1271,7 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
       : undefined;
 
     const redemptionTime = Math.floor(Date.now() / 1000 / SECONDS_PER_DAY) * SECONDS_PER_DAY;
-    const randomness = crypto.getRandomValues(new Uint8Array(32));
+    const randomness = await generateRandomBytes(32);
 
     const response = issueAuthCredentialZk(
       this.serverSecretParams.credentialKeyPair,
@@ -1286,12 +1288,12 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
     if (accessKey.length !== 16) {
       throw new Error(`Unidentified access key must be 16 bytes, got ${accessKey.length}`);
     }
-    this.getOrCreateIdentity(userId);
+    await this.getOrCreateIdentity(userId);
     this.unidentifiedAccessKeys.set(userId, new Uint8Array(accessKey));
   }
 
   async issueProfileKeyCredential(userId: string, requestBytes: Uint8Array): Promise<Uint8Array> {
-    const { aci } = this.getGroupServiceIds(userId);
+    const { aci } = await this.getGroupServiceIds(userId);
     const request = deserializeProfileKeyCredentialRequest(requestBytes);
     const now = Math.floor(Date.now() / 1000);
     const redemptionTime =
@@ -1301,7 +1303,7 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
       aci,
       request,
       redemptionTime,
-      crypto.getRandomValues(new Uint8Array(32))
+      await generateRandomBytes(32)
     );
     return serializeProfileKeyCredentialResponse(response);
   }
@@ -1312,8 +1314,8 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
   }
 
   /** Service IDs deterministically associated with an in-memory relay account. */
-  getGroupServiceIds(userId: string): { aci: ServiceId; pni?: ServiceId } {
-    const identity = this.getOrCreateIdentity(userId);
+  async getGroupServiceIds(userId: string): Promise<{ aci: ServiceId; pni?: ServiceId }> {
+    const identity = await this.getOrCreateIdentity(userId);
     return {
       aci: { kind: SERVICE_ID_ACI, uuid: uuidToBytes(identity.uuid) },
       pni: identity.phoneNumberIdentifier
@@ -1349,7 +1351,7 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
       expiration
     );
 
-    const randomness = crypto.getRandomValues(new Uint8Array(32));
+    const randomness = await generateRandomBytes(32);
     const endorsementsResponse = issueEndorsements(memberCiphertexts, derivedKeyPair, randomness);
 
     const serialized = serializeEndorsementsResponse(endorsementsResponse);
@@ -1364,7 +1366,7 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
    * [ServiceIdKind (1 byte)] [E_A1 (32 bytes)] [E_A2 (32 bytes)].
    */
   private extractMemberCiphertexts(encryptedState: Uint8Array): Ciphertext[] {
-    const json = new TextDecoder().decode(encryptedState);
+    const json = utf8Decode(encryptedState);
     const parsed = JSON.parse(json) as {
       members: Array<{ userId: { __bytes: string } }>;
     };
@@ -1556,17 +1558,5 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
     for (const envelope of pending) {
       this.failures.deliver(targetKey, envelope);
     }
-  }
-
-  private uint8ArrayToBase64(data: Uint8Array): string {
-    if (typeof Buffer !== 'undefined') {
-      return Buffer.from(data).toString('base64');
-    }
-    let binary = '';
-    const len = data.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(data[i]);
-    }
-    return btoa(binary);
   }
 }

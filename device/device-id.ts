@@ -2,13 +2,15 @@
  * Device ID Helper
  *
  * Provides non-hook access to device ID for use in classes and utilities.
- * Uses the same SecureStore as host lifecycle for consistency.
+ * Reads the local secret vault that the application passes to
+ * DeviceLifecycleManager.
  */
 
-import * as SecureStore from 'expo-secure-store';
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import { DEVICE_ID_KEY, DEFAULT_DEVICE_ID } from './constants';
-import { SIGNAL_PROTOCOL_SECURE_STORE_OPTIONS } from '../local/store/expo/secure-store-options';
+import type { SignalProtocolLocalSecretVault } from '../types/api';
+import { requireSecretVault } from '../local/vault/require';
+import { readVaultText } from './vault-text';
 export {};
 let cachedDeviceId: number | null = null;
 
@@ -16,11 +18,17 @@ let cachedDeviceId: number | null = null;
  * Get the current device ID
  *
  * Callers can run this function from anywhere, including non-React contexts
- * like ContentManager. It uses the same SecureStore as host lifecycle.
+ * like ContentManager. Pass the vault that the application passes to
+ * DeviceLifecycleManager.
  *
+ * @param vault - Local secret vault that holds the device ID
  * @returns Device ID (1-5), or DEFAULT_DEVICE_ID if not yet initialized
  */
-export async function getDeviceId(providedLogger?: Logger): Promise<number> {
+export async function getDeviceId(
+  vault: SignalProtocolLocalSecretVault,
+  providedLogger?: Logger
+): Promise<number> {
+  const secretVault = requireSecretVault(vault, 'getDeviceId');
   const logger = resolveSignalProtocolLogger(providedLogger);
   // Return cached value if available
   if (cachedDeviceId !== null) {
@@ -28,13 +36,13 @@ export async function getDeviceId(providedLogger?: Logger): Promise<number> {
   }
 
   try {
-    const storedId = await SecureStore.getItemAsync(DEVICE_ID_KEY, SIGNAL_PROTOCOL_SECURE_STORE_OPTIONS);
+    const storedId = await readVaultText(secretVault, DEVICE_ID_KEY);
 
     if (storedId) {
       const id = parseInt(storedId, 10);
       if (id >= 1 && id <= 5) {
         cachedDeviceId = id;
-        logger.debug('Retrieved device ID from SecureStore', {
+        logger.debug('Retrieved device ID from the local secret vault', {
           category: 'Device',
           data: { deviceId: id },
         });
@@ -88,7 +96,12 @@ export function clearDeviceIdCache(): void {
  * Preload device ID into cache
  *
  * Call this early in app initialization, so getDeviceIdSync() works correctly.
+ *
+ * @param vault - Local secret vault that holds the device ID
  */
-export async function preloadDeviceId(): Promise<void> {
-  await getDeviceId();
+export async function preloadDeviceId(
+  vault: SignalProtocolLocalSecretVault,
+  providedLogger?: Logger
+): Promise<void> {
+  await getDeviceId(requireSecretVault(vault, 'preloadDeviceId'), providedLogger);
 }

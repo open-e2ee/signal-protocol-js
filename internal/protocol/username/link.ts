@@ -10,6 +10,7 @@
  *
  */
 
+import { utf8Decode } from '../../platform';
 import { hkdf } from '../../crypto/kdf/hkdf';
 import { hmac } from '../../crypto/symmetric/hmac';
 import { aesCbcEncryptBytes, aesCbcDecryptBytes } from '../../crypto/symmetric/aes';
@@ -89,7 +90,7 @@ function decodeUsernameData(data: Uint8Array): string {
       // Length-delimited string field
       const { value: length, bytesRead: lenBytes } = decodeVarint(data, offset);
       offset += lenBytes;
-      username = new TextDecoder().decode(data.slice(offset, offset + length));
+      username = utf8Decode(data.slice(offset, offset + length));
       offset += length;
     } else if (fieldNumber === 2 && wireType === 2) {
       // Skip padding field

@@ -309,7 +309,8 @@ Counts of deleted prekeys by type
 
 > **deleteAllSenderKeysForGroup**(`groupId`): `Promise`\<`number`\>
 
-Delete all sender keys for a group (when the caller deletes the group).
+Delete all sender keys and skipped sender message keys for a group (when the caller deletes
+the group). Returns the number of sender keys deleted.
 
 #### Parameters
 

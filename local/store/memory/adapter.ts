@@ -31,8 +31,6 @@ import type { CompositeIdentityV1, ContactIdentityRecord, IdentityType } from '.
 import {
   acceptContactIdentityRotation as acceptRotation,
   createUnverifiedContactIdentityRecord,
-  encodeCompositeIdentityV1,
-  UNPINNED_DEVICE_IDENTITY_KEY,
   evaluateContactIdentityCandidate,
   verifyContactIdentityRecord,
   validateContactIdentityRecord,
@@ -43,6 +41,8 @@ import { IdentityKeyChange, TrustDirection } from '../../../types/trust';
 import type { UserRecord, DeviceRecord } from '../../../types';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { generateRandomBytes } from '../../../internal/crypto/random';
+import { cloneProtocolState } from '../../../internal/crypto/utils';
+import { withSession } from '../device-record';
 import { StoreFailureController, type StoreFailureOptions } from './failures';
 import {
   assertUnambiguousKyberPreKeyStore,
@@ -66,7 +66,7 @@ export interface InMemorySignalProtocolStoreOptions {
  * accidentally mutating persisted protocol state through an object reference.
  */
 function cloneStored<T>(value: T): T {
-  return structuredClone(value);
+  return cloneProtocolState(value);
 }
 
 /**
@@ -217,7 +217,7 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     const record = this.contactIdentities.get(this.getContactIdentityKey(address, identityType));
     if (!record) return null;
     validateContactIdentityRecord(record);
-    return structuredClone(record);
+    return cloneProtocolState(record);
   }
 
   async acceptContactIdentityRotation(
@@ -256,7 +256,7 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
 
     this.contactIdentities.set(key, cloneStored(replacement));
     for (const sessionKey of sessionKeys) this.sessionRecords.delete(sessionKey);
-    return structuredClone(replacement);
+    return cloneProtocolState(replacement);
   }
 
   async verifyContactIdentity(
@@ -276,7 +276,7 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
       suppliedCommitment
     );
     this.contactIdentities.set(key, cloneStored(verified));
-    return structuredClone(verified);
+    return cloneProtocolState(verified);
   }
 
   async isTrustedIdentity(
@@ -566,12 +566,18 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
    * Returns SessionRecord format for SignalProtocolLocalStore interface compatibility
    */
   async getSessionRecord(address: ProtocolAddress): Promise<SessionRecord | null> {
+    const record = this.readSession(address);
+    return record ? cloneStored(record) : null;
+  }
+
+  /** The stored session under an address. A session that is not current is deleted. */
+  private readSession(address: ProtocolAddress): SessionRecord | null {
     const key = this.getAddressKey(address);
     const record = this.sessionRecords.get(key);
     if (!record) return null;
     try {
       assertCurrentSessionRecord(record);
-      return cloneStored(record);
+      return record;
     } catch {
       this.sessionRecords.delete(key);
       return null;
@@ -660,86 +666,53 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
   // SESAME Multi-Device Session Management
   // ============================================================================
 
+  // A device's session lives only in `sessionRecords`, under its address. The
+  // user record keeps each device without it, and a read joins the two, so a
+  // write of a user record that was read earlier never replaces a newer session.
   async getUserRecord(userId: string): Promise<UserRecord | null> {
-    const record = this.sesameUserRecords.get(userId);
-    return record ? cloneStored(record) : null;
+    const stored = this.sesameUserRecords.get(userId);
+    if (!stored) return null;
+    const record = cloneStored(stored);
+    for (const deviceId of record.devices.keys()) {
+      record.devices.set(deviceId, (await this.getDeviceRecord(userId, deviceId))!);
+    }
+    return record;
   }
 
   async setUserRecord(userId: string, record: UserRecord): Promise<void> {
     this.failures.beforeWrite('setUserRecord');
-    this.sesameUserRecords.set(userId, cloneStored(record));
+    const devices = new Map(
+      Array.from(record.devices, ([deviceId, device]) => [deviceId, { ...device, session: null }])
+    );
+    this.sesameUserRecords.set(userId, cloneStored({ ...record, devices }));
   }
 
   async getDeviceRecord(userId: string, deviceId: number): Promise<DeviceRecord | null> {
-    // Try live session record first for up-to-date state (SPQR epochs, DH ratchet keys)
-    // This mirrors ExpoKeyStorageAdapter.getDeviceRecord which builds from getSessionRecord()
-    const address = { userId, deviceId };
-    const sessionRecord = await this.getSessionRecord(address);
     const stored = this.sesameUserRecords.get(userId)?.devices.get(deviceId);
-
-    if (sessionRecord) {
-      const now = Date.now();
-      return cloneStored({
-        userId,
-        deviceId,
-        // Session state is re-read from the live session record. The identity
-        // pin and its verification flag are trust decisions. They come from
-        // what was persisted, not from whichever session happens to be current.
-        // Re-deriving them would silently unpin a device as soon as its session
-        // is archived.
-        //
-        // Generic SESAME session records are permitted to omit this SDK's
-        // composite profile. The device is then left unpinned, rather than
-        // pinned to a partial key. DeviceRecord identity bytes never mutate the
-        // account-scoped composite trust store.
-        identityKey: stored?.identityKey.length
-          ? stored.identityKey
-          : sessionRecord.currentSession?.remoteIdentity
-            ? encodeCompositeIdentityV1(sessionRecord.currentSession.remoteIdentity)
-            : UNPINNED_DEVICE_IDENTITY_KEY,
-        pendingVerification: stored?.pendingVerification,
-        session: sessionRecord,
-        createdAt: sessionRecord.metadata?.createdAt ?? now,
-        updatedAt: now,
-      });
-    }
-
-    // Fall back to sesameUserRecords for device records without active sessions
-    const userRecord = this.sesameUserRecords.get(userId);
-    if (!userRecord) return null;
-    const record = userRecord.devices.get(deviceId);
-    return record ? cloneStored(record) : null;
+    const session = await this.getSessionRecord({ userId, deviceId });
+    return withSession(userId, deviceId, stored ? cloneStored(stored) : null, session);
   }
 
   async setDeviceRecord(userId: string, deviceId: number, record: DeviceRecord): Promise<void> {
     this.failures.beforeWrite('setDeviceRecord');
-    const address = { userId, deviceId };
-    const storedRecord = cloneStored(record);
-
-    // Store session directly to sessionRecords (preserving exact data including metadata state)
-    // We write directly instead of through storeSessionRecord() to avoid metadata auto-generation
-    if (storedRecord.session) {
-      const key = this.getAddressKey(address);
-      this.sessionRecords.set(key, cloneStored(storedRecord.session));
+    if (record.session) {
+      assertCurrentSessionRecord(record.session);
+      this.sessionRecords.set(this.getAddressKey({ userId, deviceId }), cloneStored(record.session));
     }
 
-    // Also keep sesameUserRecords in sync for getUserRecord()
     let userRecord = this.sesameUserRecords.get(userId);
     if (!userRecord) {
       userRecord = { userId, devices: new Map(), createdAt: Date.now(), updatedAt: Date.now() };
       this.sesameUserRecords.set(userId, userRecord);
     }
-    userRecord.devices.set(deviceId, storedRecord);
+    userRecord.devices.set(deviceId, cloneStored({ ...record, session: null }));
     userRecord.updatedAt = Date.now();
   }
 
   async deleteDeviceRecord(userId: string, deviceId: number): Promise<void> {
     this.failures.beforeWrite('deleteDeviceRecord');
-    // Delete session via canonical path (mirrors ExpoKeyStorageAdapter.deleteDeviceRecord)
-    const address = { userId, deviceId };
-    this.sessionRecords.delete(this.getAddressKey(address));
+    this.sessionRecords.delete(this.getAddressKey({ userId, deviceId }));
 
-    // Also clean up sesameUserRecords
     const userRecord = this.sesameUserRecords.get(userId);
     if (!userRecord) return;
 
@@ -781,10 +754,10 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
         // A record is stale if:
         // 1. It has no session (or session has no currentSession and no archived)
         // 2. It is older than maxLatency
+        const session = this.readSession({ userId, deviceId });
         const hasNoSessions =
-          !deviceRecord.session ||
-          (!deviceRecord.session.currentSession &&
-            Object.keys(deviceRecord.session.archivedSessions).length === 0);
+          !session ||
+          (!session.currentSession && Object.keys(session.archivedSessions).length === 0);
 
         const isOld = now - deviceRecord.createdAt > maxLatency;
 
@@ -814,11 +787,11 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     let deleted = 0;
     const now = Date.now();
 
-    for (const userRecord of this.sesameUserRecords.values()) {
-      for (const deviceRecord of userRecord.devices.values()) {
-        if (!deviceRecord.session) continue;
+    for (const [userId, userRecord] of this.sesameUserRecords.entries()) {
+      for (const [deviceId, deviceRecord] of userRecord.devices.entries()) {
+        const sessionRecord = this.readSession({ userId, deviceId });
+        if (!sessionRecord) continue;
 
-        const sessionRecord = deviceRecord.session;
         const createdAt = sessionRecord.metadata?.createdAt ?? 0;
         const age = now - createdAt;
 
@@ -830,10 +803,7 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
           }
           deleted += Object.keys(sessionRecord.archivedSessions).length;
 
-          // Clear the session from both storage maps
-          deviceRecord.session = null;
-          const key = `${deviceRecord.userId}.${deviceRecord.deviceId}`;
-          this.sessionRecords.delete(key);
+          this.sessionRecords.delete(this.getAddressKey({ userId, deviceId }));
         } else {
           // Check archived sessions for expiration individually
           const expiredKeys: string[] = [];
@@ -977,6 +947,10 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
 
   async deleteAllSenderKeysForGroup(groupId: string): Promise<number> {
     this.failures.beforeWrite('deleteAllSenderKeysForGroup');
+    const skippedPrefix = this.getSkippedKeyPrefix(groupId);
+    for (const key of this.skippedSenderKeys.keys()) {
+      if (key.startsWith(skippedPrefix)) this.skippedSenderKeys.delete(key);
+    }
     const groupMap = this.senderKeys.get(groupId);
     if (!groupMap) return 0;
 
@@ -996,8 +970,9 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
   // Sender Key Records (Current + Previous States)
   // ============================================================================
 
+  /** JSON quotes each name, so a group or user name that contains `:` cannot collide. */
   private getSenderKeyRecordKey(groupId: string, userId: string, deviceId: number): string {
-    return `${groupId}:${userId}:${deviceId}`;
+    return JSON.stringify([groupId, userId, deviceId]);
   }
 
   async storeSenderKeyRecord(
@@ -1058,7 +1033,15 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     senderDeviceId: number,
     chainIndex: number
   ): string {
-    return `${groupId}:${senderId}:${senderDeviceId}:${chainIndex}`;
+    return JSON.stringify([groupId, senderId, senderDeviceId, chainIndex]);
+  }
+
+  /**
+   * The prefix that every skipped key ID under these leading parts starts with. JSON quotes each
+   * name, so a group or sender name that shares a prefix with another name cannot match it.
+   */
+  private getSkippedKeyPrefix(...parts: [string, ...(string | number)[]]): string {
+    return `${JSON.stringify(parts).slice(0, -1)},`;
   }
 
   async storeSkippedSenderKey(
@@ -1101,7 +1084,7 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     senderDeviceId: number
   ): Promise<number> {
     this.failures.beforeWrite('deleteOldestSkippedSenderKeys');
-    const prefix = `${groupId}:${senderId}:${senderDeviceId}:`;
+    const prefix = this.getSkippedKeyPrefix(groupId, senderId, senderDeviceId);
     let count = 0;
 
     for (const key of this.skippedSenderKeys.keys()) {
@@ -1119,15 +1102,15 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     senderDeviceId: number,
     count: number
   ): Promise<number> {
-    const prefix = `${groupId}:${senderId}:${senderDeviceId}:`;
+    const prefix = this.getSkippedKeyPrefix(groupId, senderId, senderDeviceId);
 
     // Collect all keys for this sender with their chain indices
     const keysWithIndices: { key: string; chainIndex: number }[] = [];
 
     for (const key of this.skippedSenderKeys.keys()) {
       if (key.startsWith(prefix)) {
-        // Extract chain index from key (last part after the last colon)
-        const chainIndex = parseInt(key.split(':').pop()!, 10);
+        // Extract chain index from key (the last element of the JSON array)
+        const chainIndex = (JSON.parse(key) as [string, string, number, number])[3];
         keysWithIndices.push({ key, chainIndex });
       }
     }

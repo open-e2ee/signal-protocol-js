@@ -44,6 +44,7 @@
  * ```
  */
 
+import { utf8Decode } from '../internal/platform';
 import AsyncLock from 'async-lock';
 import type { GroupAuthority } from './group-authority';
 import type {
@@ -94,7 +95,11 @@ import {
 // Note: group utilities (isGroupId, extractGroupId, createGroupId) are used by SignalProtocolServiceCipher
 import { isGroupId } from '../internal/groups';
 import { profileKeyExchange } from './profile-key-exchange';
-import { SignalProtocolServiceCipher, sortEnvelopesForDecryption } from './signal-service-cipher';
+import {
+  SignalProtocolServiceCipher,
+  sortEnvelopesForDecryption,
+  type SendSessionCallbacks,
+} from './signal-service-cipher';
 import { establishMultiDeviceSessions } from '../internal/sesame/device-registry';
 import { isRetryableDecryptionError } from './retry-utils';
 import { MESSAGE_RECORD_TTL_MS } from './constants';
@@ -120,6 +125,7 @@ import * as PreKeyOps from './prekeys';
 import * as RetryOps from './retry';
 import * as RelaySubscriptionOps from './relay-subscription';
 import { SignalProtocolClientState, SIGNAL_PROTOCOL_CLIENT_CONSTANTS } from './state';
+import { rethrowRelayWorkStopped, type RelayWork } from './relay-work';
 import {
   deleteMediaAttachment,
   resolveMediaAttachment,
@@ -448,72 +454,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       );
     }
 
-    // Set up auto-session establishment callback
+    // Set up auto-session establishment and stale-session refresh.
     // This enables lazy session creation when sending to users without established sessions
-    if (this.relay) {
-      this.cipher.setSessionEstablisher(async (recipientUserId: string) => {
-        return establishMultiDeviceSessions(this, this.relay!, recipientUserId);
-      });
-
-      // Set up stale session refresh callback
-      // Stale-device recovery archives the old session, fetches a fresh bundle,
-      // and establishes a replacement.
-      // Per SESAME §3.2: session is archived (not deleted) to handle delayed messages
-      this.cipher.setStaleSessionRefresher(
-        async (recipientUserId: string, recipientDeviceId: number): Promise<boolean> => {
-          try {
-            const address = ProtocolAddress.create(recipientUserId, recipientDeviceId);
-
-            // 1. Archive the stale session (preserves for delayed message decryption)
-            await this.archiveSession(address);
-
-            this.logger.debug('Archived stale session for refresh', {
-              category: 'E2EE',
-              data: { recipientUserId, recipientDeviceId },
-            });
-
-            // 2. Fetch fresh prekey bundle
-            const freshBundle = await this.relay!.fetchPreKeyBundle(
-              recipientUserId,
-              recipientDeviceId
-            );
-
-            if (!freshBundle) {
-              this.logger.warn('No prekey bundle available for stale session refresh', {
-                category: 'E2EE',
-                data: { recipientUserId, recipientDeviceId },
-              });
-              return false;
-            }
-
-            // 3. Establish new session with fresh keys
-            await this.establishSession(address, freshBundle);
-
-            this.logger.info('Refreshed stale session with fresh bundle', {
-              category: 'E2EE',
-              data: {
-                recipientUserId,
-                recipientDeviceId,
-                newSignedPreKeyId: freshBundle.ecSignedPreKey.keyId,
-                newRegistrationId: freshBundle.registrationId,
-              },
-            });
-
-            return true;
-          } catch (error) {
-            this.logger.error('Failed to refresh stale session', {
-              category: 'E2EE',
-              data: {
-                recipientUserId,
-                recipientDeviceId,
-                error: (error as Error).message,
-              },
-            });
-            return false;
-          }
-        }
-      );
-    }
+    const sessions = this.sendSessionCallbacks(() => this.ctx);
+    if (sessions) this.cipher.setSessionCallbacks(sessions);
 
     if (config?.sealedSender) {
       this.cipher.setSealedSenderDeliveryMode(config.sealedSender.deliveryMode ?? 'preferred');
@@ -835,13 +779,21 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   }
 
   /**
-   * Get retry callbacks for retry operations
+   * Get retry callbacks for retry operations. Session changes and resends use
+   * the given context, so their hooks run through its relay work. A resend
+   * waits for the recipient's lock only until stop() stops the work.
    */
-  private get retryCallbacks(): RetryOps.RetryCallbacks {
+  private retryCallbacks(
+    work: RelayWork,
+    ctx: SignalProtocolClientContext
+  ): RetryOps.RetryCallbacks {
+    const sessions = this.sendSessionCallbacks(() => ctx);
     return {
-      archiveSession: (address) => this.archiveSession(address),
-      establishSession: (address, bundle) => this.establishSession(address, bundle),
-      send: (recipientId, content, options) => this.send(recipientId, content, options),
+      archiveSession: (address) => SessionOps.archiveSession(ctx, address),
+      establishSession: (address, bundle) =>
+        SessionOps.establishSession(ctx, this.sesameManager, address, bundle),
+      send: (recipientId, content, options) =>
+        this.sendWithSessions(recipientId, content, options, sessions, work.stopSignal),
       forcePreKeyRotation: () => this.regeneratePreKeysWithFreshIds(),
     };
   }
@@ -854,14 +806,102 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   }
 
   /**
-   * Get relay subscription callbacks (delegate back to DefaultSignalProtocolClient methods)
+   * Get relay subscription callbacks (delegate back to DefaultSignalProtocolClient methods).
+   * Receipts and typing indicators use the given context, so their hooks run
+   * through its relay work. Each receipt send is relay work of its own.
    */
-  private get relaySubscriptionCallbacks(): RelaySubscriptionOps.RelaySubscriptionCallbacks {
+  private relaySubscriptionCallbacks(
+    ctx: SignalProtocolClientContext
+  ): RelaySubscriptionOps.RelaySubscriptionCallbacks {
     return {
       forcePreKeyRotation: () => this.regeneratePreKeysWithFreshIds(),
-      handleDeliveryReceipt: (envelope, receipt) => this.handleDeliveryReceipt(envelope, receipt),
-      handleTypingIndicator: (envelope, typing) => this.handleTypingIndicator(envelope, typing),
-      sendDeliveryReceipt: (userId, timestamps) => this.sendDeliveryReceipt(userId, timestamps),
+      handleDeliveryReceipt: (envelope, receipt) =>
+        this.handleDeliveryReceipt(envelope, receipt, ctx),
+      handleTypingIndicator: (envelope, typing) =>
+        this.handleTypingIndicator(envelope, typing, ctx),
+      sendDeliveryReceipt: (userId, timestamps) =>
+        this.state.relayWork.run((work) =>
+          this.sendDeliveryReceipt(userId, timestamps, this.relayWorkContext(work))
+        ),
+    };
+  }
+
+  /** Client context whose hooks call the app through the given relay work. */
+  private relayWorkContext(work: RelayWork): SignalProtocolClientContext {
+    return { ...this.ctx, hooks: work.wrapHooks(this.hooks) };
+  }
+
+  /**
+   * Session callbacks of a send. Their session hooks run through the given
+   * context, so a send in relay work calls the app through that work. There
+   * are none without a relay.
+   */
+  private sendSessionCallbacks(
+    context: () => SignalProtocolClientContext
+  ): SendSessionCallbacks | undefined {
+    const relay = this.relay;
+    if (!relay) return undefined;
+    const establishSession = (address: ProtocolAddress, bundle: PreKeyBundle) =>
+      SessionOps.establishSession(context(), this.sesameManager, address, bundle);
+    return {
+      establishSessions: (recipientUserId) =>
+        establishMultiDeviceSessions(this, relay, recipientUserId, {
+          establishSession,
+          rethrowFatal: rethrowRelayWorkStopped,
+        }),
+      // Stale-device recovery archives the old session, fetches a fresh bundle,
+      // and establishes a replacement.
+      // Per SESAME §3.2: session is archived (not deleted) to handle delayed messages
+      refreshStaleSession: async (recipientUserId, recipientDeviceId) => {
+        try {
+          const address = ProtocolAddress.create(recipientUserId, recipientDeviceId);
+
+          // 1. Archive the stale session (preserves for delayed message decryption)
+          await SessionOps.archiveSession(context(), address);
+
+          this.logger.debug('Archived stale session for refresh', {
+            category: 'E2EE',
+            data: { recipientUserId, recipientDeviceId },
+          });
+
+          // 2. Fetch fresh prekey bundle
+          const freshBundle = await relay.fetchPreKeyBundle(recipientUserId, recipientDeviceId);
+
+          if (!freshBundle) {
+            this.logger.warn('No prekey bundle available for stale session refresh', {
+              category: 'E2EE',
+              data: { recipientUserId, recipientDeviceId },
+            });
+            return false;
+          }
+
+          // 3. Establish new session with fresh keys
+          await establishSession(address, freshBundle);
+
+          this.logger.info('Refreshed stale session with fresh bundle', {
+            category: 'E2EE',
+            data: {
+              recipientUserId,
+              recipientDeviceId,
+              newSignedPreKeyId: freshBundle.ecSignedPreKey.keyId,
+              newRegistrationId: freshBundle.registrationId,
+            },
+          });
+
+          return true;
+        } catch (error) {
+          rethrowRelayWorkStopped(error);
+          this.logger.error('Failed to refresh stale session', {
+            category: 'E2EE',
+            data: {
+              recipientUserId,
+              recipientDeviceId,
+              error: (error as Error).message,
+            },
+          });
+          return false;
+        }
+      },
     };
   }
 
@@ -948,6 +988,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         throw new Error(
           'DefaultSignalProtocolClient.create() requires storage. ' +
             'Expo: import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo"; ' +
+            'React Native: import { reactNativeStore } from "@open-e2ee/signal-protocol-sdk/local/store/react-native"; ' +
             'Web: import { indexedDbStore } from "@open-e2ee/signal-protocol-sdk/local/store/web"; ' +
             'Node: import { nodeStore } from "@open-e2ee/signal-protocol-sdk/local/store/node";'
         );
@@ -1505,7 +1546,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       // Decode ciphertext: base64 → UTF-8 bytes → JSON string
       // Relay stores as base64(UTF-8(JSON)), we need to reverse both encodings
       const ciphertextBytes = base64ToBytes(envelope.ciphertext as Base64);
-      const ciphertext = new TextDecoder().decode(ciphertextBytes) as Ciphertext;
+      const ciphertext = utf8Decode(ciphertextBytes) as Ciphertext;
 
       // Decrypt message using Double Ratchet
       const plaintext = await this.decryptMessage(senderAddress, ciphertext);
@@ -1609,7 +1650,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
             messageType: (envelope.messageType ?? 'ciphertext') as Envelope['messageType'],
           },
           this.relaySubscriptionState,
-          this.relaySubscriptionCallbacks,
+          this.relaySubscriptionCallbacks(context),
           { ...this.relaySubscriptionConfig, acknowledgeFailures: false }
         );
         (processed ? processedMessageIds : failedMessageIds).push(envelope.id);
@@ -1776,6 +1817,20 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     content: DataMessageInput | string | Uint8Array,
     options?: SendOptions
   ): Promise<SendResult> {
+    return this.sendWithSessions(recipientId, content, options, undefined, undefined);
+  }
+
+  /**
+   * Send with the given session callbacks, or with the client's own if none.
+   * The stop signal of relay work ends a wait for the recipient's lock.
+   */
+  private async sendWithSessions(
+    recipientId: string,
+    content: DataMessageInput | string | Uint8Array,
+    options: SendOptions | undefined,
+    sessions: SendSessionCallbacks | undefined,
+    stopSignal: AbortSignal | undefined
+  ): Promise<SendResult> {
     // Normalize all inputs to Uint8Array before calling cipher.encrypt()
     let plaintextBytes: Uint8Array;
     let clientTimestamp: number | undefined;
@@ -1799,10 +1854,16 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       plaintextBytes = content; // already Uint8Array
     }
 
-    const result = await this.cipher.encrypt(recipientId, plaintextBytes, {
-      ...options,
-      ...(clientTimestamp !== undefined && { timestamp: clientTimestamp }),
-    });
+    const result = await this.cipher.encrypt(
+      recipientId,
+      plaintextBytes,
+      {
+        ...options,
+        ...(clientTimestamp !== undefined && { timestamp: clientTimestamp }),
+      },
+      sessions,
+      stopSignal
+    );
     if (profileKey) await profileKeys?.delivered(recipientId, profileKey);
     return clientTimestamp !== undefined ? { ...result, clientTimestamp } : result;
   }
@@ -2038,23 +2099,28 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       data: { userId: this.userId, deviceId: this.deviceId },
     });
 
-    // Create extended context with cipher for relay subscription operations
-    const relayCtx: RelaySubscriptionOps.RelaySubscriptionContext = {
-      ...this.ctx,
-      cipher: this.cipher,
-    };
-
     this.relayUnsubscribe = this.relay.subscribe(
       this.userId,
       this.deviceId,
-      async (envelope) => {
-        await RelaySubscriptionOps.handleRelayMessage(
-          relayCtx,
-          envelope,
-          this.relaySubscriptionState,
-          this.relaySubscriptionCallbacks,
-          this.relaySubscriptionConfig
-        );
+      (envelope) => {
+        this.state.relayWork
+          .run((work) => {
+            const ctx = this.relayWorkContext(work);
+            return RelaySubscriptionOps.handleRelayMessage(
+              { ...ctx, cipher: this.cipher },
+              envelope,
+              this.relaySubscriptionState,
+              this.relaySubscriptionCallbacks(ctx),
+              this.relaySubscriptionConfig
+            );
+          })
+          .catch((error) => {
+            // The relay does not wait for the handler. It delivers the envelope again.
+            this.logger.error('Failed to handle relay envelope', {
+              category: 'E2EE',
+              data: { envelopeId: envelope.id, error: (error as Error).message },
+            });
+          });
       },
       {
         // Batching callbacks for notification coalescing
@@ -2080,12 +2146,14 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     const { receiptAccumulator } = this.relaySubscriptionState;
     for (const [userId, timestamps] of receiptAccumulator.pending) {
       if (timestamps.length > 0) {
-        this.sendDeliveryReceipt(userId, timestamps).catch((_error) => {
-          this.logger.warn('Failed to send delivery receipt', {
-            category: 'E2EE',
-            data: { userId },
+        this.state.relayWork
+          .run((work) => this.sendDeliveryReceipt(userId, timestamps, this.relayWorkContext(work)))
+          .catch((_error) => {
+            this.logger.warn('Failed to send delivery receipt', {
+              category: 'E2EE',
+              data: { userId },
+            });
           });
-        });
       }
     }
 
@@ -2155,18 +2223,23 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * This prevents infinite retry loops where each retry creates a new session
    * with different header keys.
    *
+   * The request runs as relay work, so its hooks run through that work.
+   *
    * @param retryRequest - The retry request from the recipient
    */
-  private async handleRetryRequestAndResend(
+  private handleRetryRequestAndResend(
     retryRequest: import('../internal/sesame/types').RetryRequest
   ): Promise<void> {
-    return RetryOps.handleRetryRequestAndResend(
-      this.ctx as RetryOps.RetryContext,
-      retryRequest,
-      this.retryDedupState,
-      this.retryCallbacks,
-      this.retryConfig
-    );
+    return this.state.relayWork.run((work) => {
+      const ctx = this.relayWorkContext(work);
+      return RetryOps.handleRetryRequestAndResend(
+        ctx as RetryOps.RetryContext,
+        retryRequest,
+        this.retryDedupState,
+        this.retryCallbacks(work, ctx),
+        this.retryConfig
+      );
+    });
   }
 
   /**
@@ -2180,10 +2253,15 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    *
    * @param recipientUserId - The sender's user ID (we are receipting TO them)
    * @param timestamps - Array of message timestamps that have been delivered
+   * @param ctx - Client context, whose hooks run through the relay work of the send
    *
    */
-  private async sendDeliveryReceipt(recipientUserId: string, timestamps: number[]): Promise<void> {
-    return this.sendReceipt(recipientUserId, timestamps, ReceiptType.DELIVERY);
+  private async sendDeliveryReceipt(
+    recipientUserId: string,
+    timestamps: number[],
+    ctx: SignalProtocolClientContext = this.ctx
+  ): Promise<void> {
+    return this.sendReceipt(recipientUserId, timestamps, ReceiptType.DELIVERY, ctx);
   }
 
   /**
@@ -2354,9 +2432,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   private async sendReceipt(
     recipientUserId: string,
     timestamps: number[],
-    type: ReceiptType
+    type: ReceiptType,
+    ctx: SignalProtocolClientContext = this.ctx
   ): Promise<void> {
-    return MessageOps.sendReceipt(this.ctx, recipientUserId, timestamps, type);
+    return MessageOps.sendReceipt(ctx, recipientUserId, timestamps, type);
   }
 
   /**
@@ -2366,9 +2445,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    */
   private async handleDeliveryReceipt(
     envelope: Envelope,
-    receipt: ParsedReceiptContent | null
+    receipt: ParsedReceiptContent | null,
+    ctx: SignalProtocolClientContext = this.ctx
   ): Promise<void> {
-    return MessageOps.handleDeliveryReceipt(this.ctx, envelope, receipt);
+    return MessageOps.handleDeliveryReceipt(ctx, envelope, receipt);
   }
 
   /**
@@ -2378,16 +2458,23 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    */
   private async handleTypingIndicator(
     envelope: Envelope,
-    typing: ParsedTypingContent | null
+    typing: ParsedTypingContent | null,
+    ctx: SignalProtocolClientContext = this.ctx
   ): Promise<void> {
-    return MessageOps.handleTypingIndicator(this.ctx, envelope, typing);
+    return MessageOps.handleTypingIndicator(ctx, envelope, typing);
   }
 
   /**
    * Stop the Signal Protocol client and clean up resources
    *
    * Call this when the user logs out or the app shuts down.
-   * Unsubscribes from relay server and cleans up any pending operations.
+   * Unsubscribes from relay server, waits for the SDK work of the
+   * deliveries, retry requests, and receipt sends in progress, and cleans up
+   * any pending operations.
+   *
+   * It does not wait for app hooks, so a hook can await stop(). When a hook
+   * returns after stop(), the SDK drops the work after the hook and writes
+   * nothing more. The relay delivers the envelope again after the next start.
    *
    * @example
    * ```typescript
@@ -2412,7 +2499,16 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       });
     }
 
-    // 3. Cleanup expired Sesame sessions
+    // 3. Stop the relay work in progress and wait for its SDK work. Work
+    // that waits in an app hook is not awaited. It writes nothing after
+    // the hook, and the relay delivers it again after the next start
+    await this.state.relayWork.settle();
+
+    // 4. Clear internal tracking state via state manager. This cancels the
+    // receipt timers, so no receipt starts after the wait
+    this.state.clearForStop();
+
+    // 5. Cleanup expired Sesame sessions
     try {
       await this.sesameManager.cleanupExpiredSessions();
     } catch (error) {
@@ -2422,7 +2518,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       });
     }
 
-    // 4. Cleanup expired message records (SESAME spec §6.2)
+    // 6. Cleanup expired message records (SESAME spec §6.2)
     try {
       const deleted = await this._storage.deleteExpiredMessageRecords(MESSAGE_RECORD_TTL_MS);
       if (deleted > 0) {
@@ -2438,9 +2534,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         data: { error: (error as Error).message },
       });
     }
-
-    // 5. Clear internal tracking state via state manager
-    this.state.clearForStop();
 
     this.logger.debug('DefaultSignalProtocolClient stopped', {
       category: 'E2EE',

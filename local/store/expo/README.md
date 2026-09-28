@@ -1,66 +1,87 @@
 # Expo Store
 
-`ExpoSignalProtocolStore` implements `SignalProtocolLocalStore` for Expo and React Native with
-an application-owned SQLite/Drizzle database and a database key held through
-the local secret-vault boundary.
+`ExpoSignalProtocolStore` implements `SignalProtocolLocalStore` for Expo and React Native in
+an SDK-owned SQLCipher database. The database key is held through the local
+secret-vault boundary, by default in Expo SecureStore.
 
 ## Why it exists
 
 Signal Protocol state is larger and more transactional than the values
-platform keychains hold. The adapter keeps a small database key in secure storage
-and stores protocol records in the application's encrypted SQLite database.
-The host owns database creation so it can compose these tables into its own
-schema and transaction lifecycle.
+platform keychains hold. The store keeps a small database key in secure storage
+and stores protocol records in an encrypted SQLite database. The SDK owns that
+database: its file, its key, and its migrations.
 
-## Database setup
+## Setup
 
-The package ships the authoritative Drizzle table definitions at
-`@open-e2ee/signal-protocol-sdk/local/store/expo/schema`. The host application
-owns migration generation and execution. Generate migrations from the package
-version that the application uses. Apply those migrations before the store
-makes its first query.
+Install the peers `expo-sqlite` 55.0.17 or later and `expo-secure-store`
+55.0.15 or later. The store keeps its database in `expo-sqlite`, and the
+default vault keeps the database key in `expo-secure-store`. The entry loads
+both, also when the app passes its own vault.
 
-Compose the exported table definitions into the application schema. Configure
-the database bindings once during bootstrap, and apply the database key before
-the first query:
+```sh
+npx expo install expo-sqlite expo-secure-store
+```
+
+Enable SQLCipher in the `expo-sqlite` config plugin (`useSQLCipher`). SQLCipher
+requires a development build and is not available in Expo Go.
+
+Open the store with one call:
 
 <!-- doc-snippet:skip requires-external-context -->
 
 ```ts
-import { configureSignalProtocolExpoDbBindings } from '@open-e2ee/signal-protocol-sdk/local/store/expo/db';
-import { getDatabaseKeyManager } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
-import * as signalSchema from '@open-e2ee/signal-protocol-sdk/local/store/expo/schema';
+import { expoStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
 
-const keyManager = getDatabaseKeyManager();
-await keyManager.initialize();
-const sqlCipherPassword = await keyManager.getPassword();
-
-const { rawDatabase, drizzleDatabase } = await appDatabase.openEncryptedSignalProtocolDatabase({
-  password: sqlCipherPassword,
-  schema: signalSchema,
-});
-
-configureSignalProtocolExpoDbBindings({
-  getDrizzle: async () => drizzleDatabase,
-  getRawDatabase: () => rawDatabase,
-});
+const storage = await expoStore();
 ```
 
-`appDatabase.openEncryptedSignalProtocolDatabase` represents application-owned database
-bootstrap. It must:
+On first use, `expoStore` creates a 32-byte database key, writes it to the
+vault, and then creates the database file. Each open applies the SDK migrations
+before it returns the store. A file that a newer SDK wrote does not open
+(`INVALID_STATE`).
 
-- enable SQLCipher through the `expo-sqlite` native configuration
-- apply the supplied key before schema access
-- create or migrate the exported tables
-- return the matching raw and Drizzle handles
+Options:
 
-Do not copy the exported table definitions into an application-owned schema.
-Copied definitions can omit key ownership constraints when the package schema
-changes.
+- `name`: the database file name in the `expo-sqlite` default directory.
+  Letters, digits, `.`, `_`, and `-` only. Default:
+  `open-e2ee-signal-protocol.db`.
+- `vault`: the `SignalProtocolLocalSecretVault` that holds the database key.
+  Default: `ExpoSecureStoreSignalProtocolSecretVault`.
+- `encryptionAtRest`: pass `false` to store the database without encryption,
+  for example on the web, where `expo-sqlite` has no SQLCipher. The store then
+  does not use the vault, and it logs a warning at each open. A database
+  created with one setting does not open with the other. Default: `true`, and
+  the open fails when the build has no SQLCipher.
+- `logger`: receives the warning of each open without encryption.
 
-SQLCipher requires a development build and is not available in Expo Go.
+A store holds its name until `close()`. In one process, the opens and resets
+of a name run one at a time. An open or a reset of a name that an open store
+holds fails with `INVALID_STATE`, so two parallel first opens write one key
+and the second open fails.
 
-Every table this store exports holds material that must not leave the device.
+Keep application tables in a separate database file. The SDK database holds
+only SDK tables.
+
+## Lost key and reset
+
+When the database file exists and the vault holds no key for it, `expoStore`
+fails with `LOCAL_STORE_KEY_LOST` and changes nothing. A new key cannot read
+the old file. Restore the vault entry, or call `resetExpoStore()`.
+
+A file created with `encryptionAtRest: false` fails an open without that
+option with `SqliteKeyMismatchError` (`KEY_STORAGE_ERROR`), not
+`LOCAL_STORE_KEY_LOST`. Open it with the setting that created it.
+
+`resetExpoStore()` deletes the database file, then writes a new key, then
+returns the open, empty store. It takes the same options as `expoStore`. Close
+the open store of the name first.
+
+`clearAllKeys()` on an open store empties every SDK table and keeps the file
+and its key. `resetExpoStore()` is the full teardown.
+
+## Data protection
+
+Every table in this store holds material that must not leave the device.
 That includes the group `sender_keys` and `skipped_sender_keys` tables. Their
 rows contain the sender chain key, the sender's private signature key, and
 individual message keys. That material is enough to read and to forge a
@@ -68,7 +89,7 @@ sender's group messages. The store writes those rows unencrypted at the row
 level, because SQLCipher encrypts the database file itself. The database key is
 therefore the only thing that protects them.
 
-Do not back these tables up to a server or sync them between devices.
+Do not back up the database file to a server or sync it between devices.
 
 ## Client usage
 
@@ -80,13 +101,12 @@ import { expoStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
 
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage: expoStore(), relay },
+  adapters: { storage: await expoStore(), relay },
 });
 ```
 
-The application must initialize database bindings before creating the client.
-Account reset must remove the protocol tables, database key, device ownership
-sentinel, and related secure-storage values as one lifecycle.
+For replaced-prekey maintenance, pass the open store to
+`createPreKeyMaintenanceStore(store)`.
 
 See the parent [storage guide](../README.md), [adapter guide](../../../ADAPTERS.md),
 the [Expo SQLite SQLCipher guide](https://docs.expo.dev/versions/latest/sdk/sqlite/#sqlcipher),

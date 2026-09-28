@@ -5,7 +5,7 @@
  * Extracted from host lifecycle for testability.
  *
  * Key responsibilities:
- * - Load device ID from SecureStore
+ * - Load device ID from the local secret vault
  * - Verify device exists in backend
  * - Detect stale devices (deleted or deactivated)
  * - Register new devices
@@ -19,11 +19,10 @@
  * @see lib/device/host lifecycle - React wrapper
  */
 
-import * as Device from 'expo-device';
-import { Platform } from 'react-native';
-import RNDeviceInfo from 'react-native-device-info';
 import { DEVICE_ID_KEY, DEVICE_NAME_KEY, LOCAL_IDENTITY_KEY, MAX_DEVICES } from '../constants';
 import { clearDeviceIdCache } from '../device-id';
+import { readVaultText, writeVaultText } from '../vault-text';
+import { requireSecretVault } from '../../local/vault/require';
 import { decryptDeviceName } from '../device-name-crypto';
 import type {
   ActionResult,
@@ -49,10 +48,12 @@ export {};
  * Usage:
  * ```typescript
  * const manager = new DeviceLifecycleManager(userId, {
- *   secureStore,
+ *   vault,
  *   convex,
+ *   api,
  *   keyStorage,
  *   logger,
+ *   ...getDeviceLifecyclePlatform(),
  * });
  *
  * const result = await manager.initialize();
@@ -66,6 +67,7 @@ export class DeviceLifecycleManager {
   private deps: DeviceLifecycleDeps;
 
   constructor(userId: string, deps: DeviceLifecycleDeps) {
+    requireSecretVault(deps.vault, 'DeviceLifecycleManager');
     this.userId = userId;
     this.deps = deps;
   }
@@ -147,7 +149,7 @@ export class DeviceLifecycleManager {
    * Initialize device - load from storage or register new.
    *
    * Flow:
-   * 1. Try to load device ID from SecureStore
+   * 1. Try to load device ID from the local secret vault
    * 2. If found, verify it exists in backend
    * 3. If stale, clean up and re-register
    * 4. If not found, register new device
@@ -156,7 +158,7 @@ export class DeviceLifecycleManager {
    * @returns Initialization result indicating how device was resolved
    */
   async initialize(onProgress?: OnProgress): Promise<InitializationResult> {
-    // Step 1: Try to load from SecureStore
+    // Step 1: Try to load from the local secret vault
     const stored = await this.loadStoredDeviceId();
 
     if (stored) {
@@ -238,14 +240,14 @@ export class DeviceLifecycleManager {
   }
 
   /**
-   * Load device ID from SecureStore.
+   * Load device ID from the local secret vault.
    *
    * @returns Device ID and name, or null if not stored
    */
   async loadStoredDeviceId(): Promise<{ deviceId: number; deviceName: string | null } | null> {
     try {
-      const storedId = await this.deps.secureStore.getItemAsync(DEVICE_ID_KEY);
-      const storedName = await this.deps.secureStore.getItemAsync(DEVICE_NAME_KEY);
+      const storedId = await readVaultText(this.deps.vault, DEVICE_ID_KEY);
+      const storedName = await readVaultText(this.deps.vault, DEVICE_NAME_KEY);
 
       if (storedId) {
         const id = parseInt(storedId, 10);
@@ -259,7 +261,7 @@ export class DeviceLifecycleManager {
       }
       return null;
     } catch (error) {
-      this.deps.logger.error('Failed to load device ID from SecureStore', {
+      this.deps.logger.error('Failed to load device ID from the local secret vault', {
         category: 'Device',
         error: error as Error,
       });
@@ -361,15 +363,11 @@ export class DeviceLifecycleManager {
     // Their reset and persistence behavior is platform-dependent.
     let idfv: string | undefined;
     try {
-      if (this.deps.getDeviceFingerprint) {
-        idfv = await this.deps.getDeviceFingerprint();
-      } else {
-        idfv = await RNDeviceInfo.getUniqueId();
-      }
+      idfv = await this.deps.getDeviceFingerprint?.();
       this.deps.logger.debug('Got device fingerprint for reclaim detection', {
         category: 'Device',
         data: {
-          platform: Platform.OS,
+          platform: this.deps.platform,
           fingerprint: idfv ? idfv.slice(0, 8) + '...' : 'none',
         },
       });
@@ -427,38 +425,29 @@ export class DeviceLifecycleManager {
     this.deps.logger.breadcrumb('Registering device with server', {
       category: 'Device',
       level: 'info',
-      data: { deviceName: name, platform: Platform.OS, hasIdfv: !!idfv },
+      data: { deviceName: name, platform: this.deps.platform, hasIdfv: !!idfv },
     });
 
-    const deviceType = this.getDeviceType();
     const deviceIdToUse = forceDeviceId ?? (isPrimary ? 1 : undefined);
 
-    // Get app metadata for device registry
-    const platform = Platform.OS; // "ios" | "android"
-    const osVersion = Device.osVersion ?? undefined;
-    let appVersion: string | undefined;
-    try {
-      appVersion = RNDeviceInfo.getVersion();
-    } catch {
-      // Non-fatal - app version is optional metadata
-    }
-
+    // App metadata for the device registry; each absent fact is omitted.
+    const { deviceType, platform, appVersion, osVersion } = this.deps;
     const result = await this.deps.convex.mutation<{ deviceId: number; reclaimed: boolean }>(
       this.deps.api.devices.registerDevice,
       {
         // userId derived server-side from JWT auth
         deviceId: deviceIdToUse,
-        deviceType,
-        idfv,
-        platform,
-        appVersion,
-        osVersion,
+        ...(deviceType ? { deviceType } : {}),
+        ...(idfv ? { idfv } : {}),
+        ...(platform ? { platform } : {}),
+        ...(appVersion ? { appVersion } : {}),
+        ...(osVersion ? { osVersion } : {}),
       }
     );
 
-    // Step 5: Save to secure storage
+    // Step 5: Save to the local secret vault
     onProgress?.({ stage: 'saving', message: 'Saving device credentials...' });
-    this.deps.logger.breadcrumb('Saving device ID to SecureStore', {
+    this.deps.logger.breadcrumb('Saving device ID to the local secret vault', {
       category: 'Device',
       level: 'info',
       data: { deviceId: result.deviceId, reclaimed: result.reclaimed },
@@ -510,7 +499,7 @@ export class DeviceLifecycleManager {
     // Step 1: Clean up orphaned keys in backend
     await this.cleanupOrphanedKeys(staleDeviceId);
 
-    // Step 2: Clear local SecureStore
+    // Step 2: Clear local vault state
     await this.clearLocalDevice();
 
     // Step 3: Clear local crypto state (sessions + message records)
@@ -533,8 +522,8 @@ export class DeviceLifecycleManager {
    */
   async clearLocalDevice(): Promise<void> {
     try {
-      await this.deps.secureStore.deleteItemAsync(DEVICE_ID_KEY);
-      await this.deps.secureStore.deleteItemAsync(DEVICE_NAME_KEY);
+      await this.deps.vault.deleteSecret(DEVICE_ID_KEY);
+      await this.deps.vault.deleteSecret(DEVICE_NAME_KEY);
       clearDeviceIdCache();
       this.deps.logger.debug('Cleared local device data', { category: 'Device' });
     } catch (error) {
@@ -565,47 +554,18 @@ export class DeviceLifecycleManager {
    * Generate a human-readable device name.
    */
   private generateDeviceName(): string {
-    // Allow a custom generator for deterministic integrations.
-    if (this.deps.generateDeviceName) {
-      return this.deps.generateDeviceName();
-    }
-
-    const deviceType = Device.deviceType;
-    const modelName = Device.modelName || 'Unknown Device';
-    const osName = Platform.OS === 'ios' ? 'iPhone' : 'Android';
-
-    if (deviceType === Device.DeviceType.PHONE) {
-      return modelName;
-    } else if (deviceType === Device.DeviceType.TABLET) {
-      return `${modelName} (Tablet)`;
-    } else if (deviceType === Device.DeviceType.DESKTOP) {
-      return `${modelName} (Desktop)`;
-    } else {
-      return `${osName} Device`;
-    }
+    return this.deps.generateDeviceName?.() ?? 'Unknown Device';
   }
 
   /**
-   * Get device type for backend registration.
-   */
-  private getDeviceType(): 'mobile' | 'tablet' | 'desktop' {
-    if (Device.deviceType === Device.DeviceType.TABLET) {
-      return 'tablet';
-    } else if (Device.deviceType === Device.DeviceType.DESKTOP) {
-      return 'desktop';
-    }
-    return 'mobile';
-  }
-
-  /**
-   * Save device ID to SecureStore.
+   * Save device ID to the local secret vault.
    */
   private async saveDeviceId(id: number, name: string): Promise<void> {
     try {
-      await this.deps.secureStore.setItemAsync(DEVICE_ID_KEY, id.toString());
-      await this.deps.secureStore.setItemAsync(DEVICE_NAME_KEY, name);
+      await writeVaultText(this.deps.vault, DEVICE_ID_KEY, id.toString());
+      await writeVaultText(this.deps.vault, DEVICE_NAME_KEY, name);
     } catch (error) {
-      this.deps.logger.error('Failed to save device ID to SecureStore', {
+      this.deps.logger.error('Failed to save device ID to the local secret vault', {
         category: 'Device',
         error: error as Error,
         data: { deviceId: id, deviceName: name },
@@ -659,7 +619,7 @@ export class DeviceLifecycleManager {
   /**
    * Create identity keys for every identity type if they are missing.
    * Generates and stores keys if missing (generate at registration).
-   * Saves ACI public key to SecureStore for device verification on subsequent launches.
+   * Saves ACI public key to the local secret vault for device verification on subsequent launches.
    */
   private async ensureIdentityKeys(deviceId: number): Promise<void> {
     if (!this.deps.keyStorage.hasIdentityKey || !this.deps.keyStorage.generateAndStoreIdentityKey) {
@@ -693,14 +653,14 @@ export class DeviceLifecycleManager {
             await this.saveLocalIdentityKey(publicKey);
           }
         } else if (identityType === 'aci') {
-          // Key exists in SQLite but may be missing from SecureStore
-          // (e.g., after reinstall reclaim clears SecureStore but keeps SQLite)
-          const secureStoreKey = await this.getLocalIdentityKey();
-          if (!secureStoreKey && this.deps.keyStorage.getIdentityPublicKey) {
+          // Key exists in the local store but may be missing from the vault
+          // (e.g., after reinstall reclaim clears the vault but keeps the local store)
+          const vaultKey = await this.getLocalIdentityKey();
+          if (!vaultKey && this.deps.keyStorage.getIdentityPublicKey) {
             const publicKey = await this.deps.keyStorage.getIdentityPublicKey();
             if (publicKey) {
               await this.saveLocalIdentityKey(publicKey);
-              this.deps.logger.info('Synced existing identity key to SecureStore', {
+              this.deps.logger.info('Synced existing identity key to the local secret vault', {
                 category: 'Device',
                 data: { keyPrefix: publicKey.slice(0, 8) + '...' },
               });
@@ -723,12 +683,12 @@ export class DeviceLifecycleManager {
   // ==========================================================================
 
   /**
-   * Get local identity public key from SecureStore.
+   * Get local identity public key from the local secret vault.
    * Returns null if not stored (fresh install or cleared).
    */
   async getLocalIdentityKey(): Promise<string | null> {
     try {
-      return await this.deps.secureStore.getItemAsync(LOCAL_IDENTITY_KEY);
+      return await readVaultText(this.deps.vault, LOCAL_IDENTITY_KEY);
     } catch (error) {
       this.deps.logger.warn('Failed to get local identity key', {
         category: 'Device',
@@ -759,12 +719,12 @@ export class DeviceLifecycleManager {
   }
 
   /**
-   * Clear local identity key from SecureStore.
+   * Clear local identity key from the local secret vault.
    * Called during reset or key mismatch handling.
    */
   async clearLocalIdentityKey(): Promise<void> {
     try {
-      await this.deps.secureStore.deleteItemAsync(LOCAL_IDENTITY_KEY);
+      await this.deps.vault.deleteSecret(LOCAL_IDENTITY_KEY);
       this.deps.logger.debug('Cleared local identity key', { category: 'Device' });
     } catch (error) {
       this.deps.logger.warn('Failed to clear local identity key (non-fatal)', {
@@ -775,7 +735,7 @@ export class DeviceLifecycleManager {
   }
 
   /**
-   * Save local identity public key to SecureStore.
+   * Save local identity public key to the local secret vault.
    * Called after SignalProtocolClient generates identity keys.
    * This is CRITICAL for verifying device on subsequent app launches.
    *
@@ -783,7 +743,7 @@ export class DeviceLifecycleManager {
    */
   async saveLocalIdentityKey(publicKey: string): Promise<void> {
     try {
-      await this.deps.secureStore.setItemAsync(LOCAL_IDENTITY_KEY, publicKey);
+      await writeVaultText(this.deps.vault, LOCAL_IDENTITY_KEY, publicKey);
       this.deps.logger.info('Saved local identity key', {
         category: 'Device',
         data: { keyPrefix: publicKey.slice(0, 8) + '...' },
@@ -802,10 +762,7 @@ export class DeviceLifecycleManager {
    */
   private async getDeviceFingerprint(): Promise<string | undefined> {
     try {
-      if (this.deps.getDeviceFingerprint) {
-        return await this.deps.getDeviceFingerprint();
-      }
-      return await RNDeviceInfo.getUniqueId();
+      return await this.deps.getDeviceFingerprint?.();
     } catch (error) {
       this.deps.logger.warn('Failed to get device fingerprint', {
         category: 'Device',
@@ -843,7 +800,7 @@ export class DeviceLifecycleManager {
    *
    * This is the new recommended entry point that implements the full state machine:
    * 1. Get IDFV (device fingerprint)
-   * 2. Get local identity key from SecureStore
+   * 2. Get local identity key from the local secret vault
    * 3. Query server for device by IDFV
    * 4. Get all devices, check hasPrimary
    * 5. Determine state based on IDFV match, key match, device presence
@@ -882,22 +839,22 @@ export class DeviceLifecycleManager {
     if (localIdentityPair) {
       const localIdentityPublicKey = localIdentityPair.dhKey.publicKey;
       if (localIdentityKey !== localIdentityPublicKey) {
-        const hadSecureStoreKey = !!localIdentityKey;
+        const hadVaultKey = !!localIdentityKey;
         localIdentityKey = localIdentityPublicKey;
 
         try {
           await this.saveLocalIdentityKey(localIdentityPublicKey);
           this.deps.logger.info(
-            hadSecureStoreKey
-              ? 'Repaired stale SecureStore identity key from local key pair'
-              : 'Restored missing SecureStore identity key from local key pair',
+            hadVaultKey
+              ? 'Repaired stale vault identity key from local key pair'
+              : 'Restored missing vault identity key from local key pair',
             {
               category: 'Device',
               data: { keyPrefix: localIdentityPublicKey.slice(0, 8) + '...' },
             }
           );
         } catch (error) {
-          this.deps.logger.warn('Failed to sync SecureStore identity key from local key pair', {
+          this.deps.logger.warn('Failed to sync vault identity key from local key pair', {
             category: 'Device',
             error: error as Error,
           });

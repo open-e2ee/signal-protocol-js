@@ -30,15 +30,6 @@ export {
   rotateOwnProfileKey,
 } from './profile-key';
 
-// Application-selectable profile-key persistence
-export {
-  createMemoryStorage,
-  getProfileKeyStorage,
-  resetProfileKeyStorage,
-  setProfileKeyStorage,
-  type ProfileKeyStorage,
-} from './storage';
-
 // SDK-managed contact profile state contracts
 export {
   UnidentifiedAccessMode,

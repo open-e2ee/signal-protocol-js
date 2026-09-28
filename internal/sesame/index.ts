@@ -103,6 +103,7 @@ export {
 export type {
   DevicePreKeyBundle,
   DeviceMessage,
+  DeviceSessionEstablishment,
   MultiDeviceSessionResult,
   MultiDeviceEncryptionResult,
 } from './device-registry';

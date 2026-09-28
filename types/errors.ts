@@ -14,7 +14,8 @@
  *         ├── DuplicatedMessageError    counter + epoch of the replayed message
  *         ├── SealedSenderAuthError     the rejected sealed-sender credential
  *         ├── PQXDHRequiredError        which post-quantum key the peer is missing
- *         └── StorageQuotaExceededError the store that ran out of room
+ *         ├── StorageQuotaExceededError the store that ran out of room
+ *         └── SecureRandomUnavailableError the runtime has no secure random source
  * ```
  *
  * A code or a subclass belongs here only if production code can produce it. An
@@ -255,10 +256,39 @@ export enum EncryptionErrorCode {
    */
   STORAGE_QUOTA_EXCEEDED = 'STORAGE_QUOTA_EXCEEDED',
 
+  /**
+   * An operation that keeps a local secret ran without a
+   * `SignalProtocolLocalSecretVault`.
+   *
+   * The SDK keeps the device ID, the device lifecycle state, and the own
+   * profile key only in the vault that the application passes. It has no
+   * fallback store. Pass a vault, such as
+   * `ExpoSecureStoreSignalProtocolSecretVault`, or the application's own.
+   */
+  SECRET_VAULT_REQUIRED = 'SECRET_VAULT_REQUIRED',
+
+  /**
+   * A local store holds data, but its secret vault holds no key for it.
+   *
+   * The data cannot be decrypted, and the store does not replace the key on
+   * its own, because a replacement key would silently orphan that data. The
+   * application decides: restore the vault entry, or reset the store, which
+   * deletes the data and then creates a new key.
+   */
+  LOCAL_STORE_KEY_LOST = 'LOCAL_STORE_KEY_LOST',
+
   // ===== Initialization Errors =====
 
   /** Signal Protocol initialization failed */
   INITIALIZATION_FAILED = 'INITIALIZATION_FAILED',
+
+  /**
+   * The runtime has no cryptographically secure random source.
+   *
+   * On React Native, the app must install a global `crypto.getRandomValues`
+   * provider: react-native-get-random-values 2.x or react-native-quick-crypto.
+   */
+  SECURE_RANDOM_UNAVAILABLE = 'SECURE_RANDOM_UNAVAILABLE',
 
   // ===== Protocol Strategy Errors =====
 
@@ -338,6 +368,52 @@ export enum EncryptionErrorCode {
 
   /** Required anonymous delivery is unavailable or its authorization was rejected. */
   SEALED_SENDER_REQUIRED = 'SEALED_SENDER_REQUIRED',
+
+  // ===== Runtime Errors =====
+
+  /**
+   * The runtime's `Blob` cannot hold binary data.
+   *
+   * React Native's `Blob` rejects `ArrayBuffer` and typed array parts and has
+   * no `arrayBuffer()` or `text()`, so `encryptFile` and `decryptFile` cannot
+   * work there. Encrypt and decrypt bytes with `streamingEncrypt` and
+   * `streamingDecrypt` from `@open-e2ee/signal-protocol-sdk/files` instead.
+   */
+  BINARY_BLOB_UNAVAILABLE = 'BINARY_BLOB_UNAVAILABLE',
+
+  /**
+   * The SQLite Wasm engine did not load in its web worker.
+   *
+   * The usual cause is a Content Security Policy on the worker script that
+   * does not allow `'wasm-unsafe-eval'` in `script-src`. A dedicated worker
+   * takes its policy from its own response headers, so the header on the
+   * worker script must allow it. Other causes: the runtime has no module
+   * `Worker`, the Wasm file did not download, or the server sent it with a
+   * type other than `application/wasm`.
+   */
+  SQLITE_ENGINE_UNAVAILABLE = 'SQLITE_ENGINE_UNAVAILABLE',
+
+  /**
+   * The browser cannot keep a SQLite database in the origin private file
+   * system (OPFS).
+   *
+   * The runtime has no OPFS synchronous access handles, no Web Locks, or no
+   * `BroadcastChannel`, or it refused the OPFS storage, as a private or
+   * ephemeral browsing context can. The condition holds for the life of the
+   * browsing context. Use the IndexedDB store in this runtime.
+   */
+  OPFS_UNAVAILABLE = 'OPFS_UNAVAILABLE',
+
+  /**
+   * The web SQLite store could not open its database file in the origin
+   * private file system (OPFS) this time.
+   *
+   * The usual cause is another tab or worker of the origin that still holds
+   * the file's access handles, for example a tab that is closing. The database
+   * file is unchanged. Retry the operation later. Do not change to another
+   * store: the data stays in this one.
+   */
+  OPFS_FILE_BUSY = 'OPFS_FILE_BUSY',
 
   // ===== Generic Errors =====
 
@@ -613,6 +689,44 @@ export class StorageQuotaExceededError extends EncryptionError {
     );
     this.name = 'StorageQuotaExceededError';
   }
+}
+
+/**
+ * Error thrown when the runtime has no cryptographically secure random source.
+ *
+ * The SDK never falls back to a weaker source. The message names the fix for
+ * the runtime. On React Native, the app must install a global
+ * `crypto.getRandomValues` provider before the first SDK call:
+ * react-native-get-random-values 2.x or react-native-quick-crypto.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   signal = await createSignalProtocolClient(config);
+ * } catch (error) {
+ *   if (isSecureRandomUnavailableError(error)) {
+ *     reportSetupError(error.message);
+ *   }
+ * }
+ * ```
+ */
+export class SecureRandomUnavailableError extends EncryptionError {
+  constructor(message: string) {
+    super(message, EncryptionErrorCode.SECURE_RANDOM_UNAVAILABLE, {
+      operation: 'generateRandomBytes',
+    });
+    this.name = 'SecureRandomUnavailableError';
+  }
+}
+
+/**
+ * Type guard to check if an error is a SecureRandomUnavailableError.
+ *
+ * @param error - Error to check
+ * @returns true if error is SecureRandomUnavailableError
+ */
+export function isSecureRandomUnavailableError(error: unknown): error is SecureRandomUnavailableError {
+  return error instanceof SecureRandomUnavailableError;
 }
 
 /**

@@ -9,21 +9,13 @@
 
 import type { IdentityType } from '../../keys/types';
 import type { IdentityKeyPair } from '../../keys';
+import type { SignalProtocolLocalSecretVault } from '../../types/api';
 
 // ============================================================================
 // Dependency Interfaces (for Dependency Injection)
 // ============================================================================
 
-/**
- * SecureStore operations required by DeviceLifecycleManager.
- * Matches expo-secure-store API for production use.
- */
 export {};
-export interface DeviceLifecycleSecureStore {
-  getItemAsync(key: string): Promise<string | null>;
-  setItemAsync(key: string, value: string): Promise<void>;
-  deleteItemAsync(key: string): Promise<void>;
-}
 
 /**
  * Convex client operations required by DeviceLifecycleManager.
@@ -95,12 +87,35 @@ export interface DeviceLifecycleLogger {
 }
 
 /**
+ * Facts about the local device that DeviceLifecycleManager sends to the
+ * device registry.
+ *
+ * The shared manager reads no platform API. Get these facts from
+ * `getDeviceLifecyclePlatform()` in `./device/expo` or `./device/react-native`,
+ * or supply them. The manager omits each fact that is absent.
+ */
+export interface DeviceLifecyclePlatform {
+  /** Device name generator (the manager uses 'Unknown Device' when absent) */
+  generateDeviceName?: () => string;
+  /** Device fingerprint getter for reclaim detection (IDFV on iOS, Android ID on Android) */
+  getDeviceFingerprint?: () => Promise<string | undefined>;
+  /** Device type for the device registry */
+  deviceType?: 'mobile' | 'tablet' | 'desktop';
+  /** Platform name, such as 'ios' or 'android' */
+  platform?: string;
+  /** OS version */
+  osVersion?: string;
+  /** App version */
+  appVersion?: string;
+}
+
+/**
  * Dependencies injected into DeviceLifecycleManager.
  * All dependencies are injectable for verifiability and platform composition.
  */
-export interface DeviceLifecycleDeps {
-  /** SecureStore for device ID persistence */
-  secureStore: DeviceLifecycleSecureStore;
+export interface DeviceLifecycleDeps extends DeviceLifecyclePlatform {
+  /** Local secret vault for the device ID, device name, and local identity key */
+  vault: SignalProtocolLocalSecretVault;
   /** Convex client for backend operations */
   convex: DeviceLifecycleConvexClient;
   /** App-owned Convex function references */
@@ -109,10 +124,6 @@ export interface DeviceLifecycleDeps {
   keyStorage: KeyStorageOps;
   /** Logger instance */
   logger: DeviceLifecycleLogger;
-  /** Device name generator (defaults to expo-device based) */
-  generateDeviceName?: () => string;
-  /** Device fingerprint getter (defaults to RNDeviceInfo.getUniqueId()) */
-  getDeviceFingerprint?: () => Promise<string | undefined>;
   /** Identity types to generate keys for (defaults to ['aci']) */
   identityTypes?: readonly IdentityType[];
 }

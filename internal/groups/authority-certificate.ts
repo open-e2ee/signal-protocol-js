@@ -1,3 +1,4 @@
+import { utf8Decode } from '../platform';
 import {
   base64ToBytes,
   bytesToBase64,
@@ -94,9 +95,7 @@ export async function verifyGroupAuthority(
     const signature = bytes(value.signature, 64);
     const signerBytes = bytes(value.signerCertificate, 2048);
     if (signature.length !== 64) fail();
-    const decoded: unknown = JSON.parse(
-      new TextDecoder('utf-8', { fatal: true }).decode(certificate)
-    );
+    const decoded: unknown = JSON.parse(utf8Decode(certificate, { fatal: true }));
     if (
       !Array.isArray(decoded) ||
       decoded.length !== 6 ||

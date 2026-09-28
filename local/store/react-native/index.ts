@@ -1,34 +1,19 @@
 /**
- * React Native Storage Package (Bare Workflow)
+ * React Native SQLite Signal Protocol Store Package
  *
- * Storage for React Native without Expo.
- * Consumers must provide their own persistent key-value backend and construct
- * the store with `await ReactNativeSignalProtocolStore.create({ storage })`.
- * The adapter implements the core store contract. Its durability rests on the
- * injected backend, so verify the backend with the exported
- * backend-conformance kit (`assertBackendConformance`).
+ * Local Signal Protocol state in an SDK-owned SQLCipher database on op-sqlite.
+ * The key of the database lives in a local secret vault, by default the
+ * react-native-keychain vault.
  */
 export {};
-import { ReactNativeSignalProtocolStore } from './adapter';
-import type { ReactNativeKeyValueStorage } from './storage';
 
-export { ReactNativeSignalProtocolStore } from './adapter';
-export type { ReactNativeKeyValueOperation, ReactNativeKeyValueStorage } from './storage';
-export { assertBackendConformance, runBackendConformance } from './backend-conformance';
-export type {
-  BackendConformanceFailure,
-  BackendConformanceOptions,
-  BackendConformanceResult,
-} from './backend-conformance';
-export { createReferenceReactNativeBackend } from './reference-backend';
-export type { ReferenceReactNativeBackendOptions } from './reference-backend';
+export {
+  ReactNativeSignalProtocolStore,
+  reactNativeStore,
+  resetReactNativeStore,
+  type ReactNativeSignalProtocolStoreOptions,
+} from './adapter';
+export { createPreKeyMaintenanceStore } from './maintenance';
 
-export interface ReactNativeStoreFactoryOptions {
-  storage: ReactNativeKeyValueStorage;
-}
-
-export function reactNativeStore(
-  options: ReactNativeStoreFactoryOptions
-): Promise<ReactNativeSignalProtocolStore> {
-  return ReactNativeSignalProtocolStore.create(options);
-}
+// MessageRecord types for SESAME retry request support
+export type { MessageRecord, MessageRecordStore } from '../../../types';

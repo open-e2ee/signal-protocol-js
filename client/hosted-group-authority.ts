@@ -1,3 +1,4 @@
+import { utf8Decode } from '../internal/platform';
 import type { SignalProtocolClientCompositionOptions } from './compose';
 import type { HostedRelayConnection } from './hosted-connection';
 import {
@@ -57,7 +58,7 @@ async function fetchAuthority(connection: HostedRelayConnection) {
     offset += part.length;
   }
   return verifyGroupAuthority(
-    JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer)),
+    JSON.parse(utf8Decode(buffer, { fatal: true })),
     {
       ...connection.certificateTrust,
       relayScopeId: connection.relayScopeId,

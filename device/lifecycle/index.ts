@@ -9,10 +9,12 @@
  * import { DeviceLifecycleManager } from './';
  *
  * const manager = new DeviceLifecycleManager(userId, {
- *   secureStore,
+ *   vault,
  *   convex,
+ *   api,
  *   keyStorage,
  *   logger,
+ *   ...getDeviceLifecyclePlatform(),
  * });
  *
  * const result = await manager.initialize();
@@ -24,7 +26,7 @@ export { getLocalDeviceMetadata, getMissingMetadata } from './utils';
 
 export type {
   // Dependency interfaces
-  DeviceLifecycleSecureStore,
+  DeviceLifecyclePlatform,
   DeviceLifecycleConvexClient,
   DeviceLifecycleApi,
   KeyStorageOps,

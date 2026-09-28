@@ -125,7 +125,9 @@ jobs:
       # and idb optional, so a consumer may have none of them — but a static
       # import of an absent package throws before the module runs, and every
       # other check here either resolves types without loading a module or runs
-      # from inside the repo, where the optional peers are installed.
+      # from inside the repo, where the optional peers are installed. It also
+      # checks that each store and vault guide has an install command for the
+      # optional peers that its entry loads.
       - name: Probe the import surface
         run: node ./scripts/smoke-import-surface.mjs
 
@@ -168,6 +170,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             examples/expo/package-lock.json
+            examples/react-native/package-lock.json
 
       - name: Install from the committed lockfile
         run: npm ci --ignore-scripts
@@ -197,3 +200,12 @@ jobs:
         run: >-
           node scripts/smoke-expo-bundle.mjs
           "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz 55
+
+      # Builds the bare React Native example's Android release bundle with the
+      # packed package and the stock Babel preset, compiles it with the Hermes
+      # compiler that React Native pins, and lists the public entries that the
+      # bundle holds.
+      - name: Bundle the bare React Native example with Hermes
+        run: >-
+          node scripts/smoke-react-native-bundle.mjs
+          "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz

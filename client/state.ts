@@ -9,10 +9,12 @@
  * - Retry deduplication: Prevents duplicate retry request processing
  * - Rate limiting: Prevents retry storms
  * - Prekey rotation debouncing: Rate-limits forced prekey rotations
+ * - Relay work: Deliveries, retry requests, and receipt sends in progress, which stop() settles
  */
 
 import type { RetryDedupState, RetryRateLimitState } from './retry';
 import type { RelaySubscriptionState } from './relay-subscription';
+import { RelayWorkTracker } from './relay-work';
 
 /**
  * Configuration for state management
@@ -80,6 +82,17 @@ export class SignalProtocolClientState {
    * Used for debouncing rotations.
    */
   private lastPreKeyRotationTime = 0;
+
+  // ============================================================================
+  // Relay Work State
+  // ============================================================================
+
+  /**
+   * Relay deliveries, retry requests, and receipt sends in progress. The
+   * relay calls its handlers without waiting for them, so stop() settles
+   * them here before the app can close the store.
+   */
+  readonly relayWork = new RelayWorkTracker();
 
   // ============================================================================
   // Retry Response Counting State

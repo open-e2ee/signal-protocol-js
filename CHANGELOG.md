@@ -1,5 +1,508 @@
 # Changelog
 
+## 8.0.0
+
+8.0.0 is a major release. The entries below give the details. To upgrade from
+7.2.0:
+
+1. **React Native and Expo: install a global random source.** Install
+   `react-native-get-random-values` 2.x or `react-native-quick-crypto`, and
+   load it before the first SDK call.
+2. **Pass a secret vault.** The profile key, the device ID, the
+   device-lifecycle state, and the key-value store's value key live in a
+   `SignalProtocolLocalSecretVault` that the app passes. A call without one
+   throws `SECRET_VAULT_REQUIRED`. Bare React Native apps can use
+   `./local/vault/react-native-keychain`, Expo apps
+   `./local/vault/expo-secure-store`, and Electron apps
+   `./local/vault/electron-safe-storage`.
+3. **Key-value store: change the import and the names.** The store moves from
+   `./local/store/react-native` to `./local/store/key-value`, and its names
+   drop the `ReactNative` prefix. To keep existing data, move its value key
+   into the vault before the first open.
+4. **Bare React Native: `./local/store/react-native` is now the SQLite
+   store.** `reactNativeStore()` opens an SDK-owned SQLCipher database on the
+   optional peer `@op-engineering/op-sqlite` 18.2.5 or later, with the
+   op-sqlite SQLCipher build turned on.
+5. **Expo: await the store.** Replace `expoStore()` with `await expoStore()`.
+   The SDK owns the database, its schema, and its key.
+6. **Node and Electron: open the new SQLCipher store.** `nodeStore({
+   directory, vault })` opens an SDK-owned SQLCipher database on the optional
+   peer `better-sqlite3-multiple-ciphers` 13.0.3 or later. It does not read
+   the files of the 7.2.0 Node store.
+7. **Remove the deleted names.** The `./local/store/expo/db` and
+   `./local/store/expo/schema` entries, the Expo database and key functions,
+   the profile-key storage functions, `createReferenceReactNativeBackend`, and
+   the `drizzle-orm`, `expo-crypto`, and `fs-native-extensions` peers are
+   removed.
+8. **Hosted Relay: copy the connection URL from the console again.** The
+   API path and the developer environment kind changed, and the sandbox and
+   staging hosts moved to new names.
+
+Browser apps can also use the new `./local/store/web-sqlite` store, an
+encrypted SQLite database in the origin private file system. It is optional,
+and the IndexedDB store stays at `./local/store/web`.
+
+- **Removed: the optional `expo-crypto` peer.** The SDK does not load
+  `expo-crypto`, so `package.json` no longer lists it. An app that installed
+  `expo-crypto` only for the SDK can uninstall it.
+- **Added: web SQLite store gates in WebKit.** A macOS job runs the web
+  SQLite store's contract, interruption, and multi-tab gates in WebKit on
+  each change to the web SQLite store, the SQLite core, the storage contract,
+  the key vault, the gate, or a dependency. Linux WebKit (WebKitGTK) has no
+  origin private file system, so the web SQLite store does not run there. In
+  each job that must run these gates, a gate that skips for want of the
+  origin private file system fails. The store stays experimental: its
+  storage-pressure and soak gates do not exist yet.
+- **Fixed: the SQLite stores report full storage as
+  `StorageQuotaExceededError`.** When the database file cannot grow because
+  the disk or the storage quota is full, a write on the Expo, bare React
+  Native, Node, or web SQLite store rejects with `StorageQuotaExceededError`
+  (`STORAGE_QUOTA_EXCEEDED`), with the SQLite error as `originalError`. It
+  rejected with the SQLite error or a `KEY_STORAGE_ERROR`, and the web SQLite
+  store reported a full origin quota as a disk I/O error. The rejected write
+  does not persist, the store stays open, and the write succeeds after space
+  frees.
+- **Changed: each store and vault guide names the optional peers of its
+  entry.** Each guide has an install command for the peers that its entry
+  loads. For example, `./local/store/web` and `./local/store/web-sqlite` need
+  `idb`, and a bundler fails the app build without it.
+- **Fixed: a group delete deletes the skipped sender keys.** The in-memory,
+  key-value, and IndexedDB stores kept them after
+  `deleteAllSenderKeysForGroup`. These keys decrypt skipped group messages.
+  The stores now delete them together with the sender keys of the group. A
+  group whose identifier starts with the identifier of the deleted group
+  keeps its keys.
+- **Fixed: sender keys no longer collide.** Group `a` with sender `b:c` and
+  group `a:b` with sender `c` shared keys. In the in-memory and IndexedDB
+  stores, they shared one sender key record. In IndexedDB, they also shared
+  one skipped key. In database version 7, a sender key record has an array
+  key of group, sender, and device. The key of a skipped key adds the index,
+  and a group index finds the skipped keys of a group. The in-memory store
+  keys both with JSON arrays.
+- **Changed: IndexedDB version 7 deletes stored sender keys.** The upgrade
+  deletes the version 6 sender key records and skipped keys. After the
+  upgrade, each group needs a new sender key distribution before its messages
+  decrypt. A late message for a deleted skipped key does not decrypt.
+- **Fixed: `deleteAllSenderKeysForGroup` on the Expo store deletes the
+  group's skipped message keys.** On a store from `expoStore()`, it deleted
+  the group's sender keys and kept each skipped message key, which still
+  decrypts its message after the group is gone.
+- **Fixed: the Expo store keeps SESAME user records and device identity
+  pins.** On a store from `expoStore()`, `setUserRecord` stored nothing, and
+  `setDeviceRecord` stored only the session. A user or device with no session
+  had no record, and `getDeviceRecord` returned the identity from the contact
+  trust store, not the pin that was set. The store now returns each user and
+  device that was set, with the pin that was set and the device's current
+  session, if any. `setDeviceRecord` and `deleteDeviceRecord` change the
+  record and its session together or not at all. `getAllUserIds` and
+  `getSesameDeviceIds` list the users and devices that were set, as on the
+  other stores.
+- **Fixed: the Expo store keeps a registration ID that is set before the
+  identity key.** On a store from `expoStore()`, `setLocalRegistrationId` did
+  nothing until an identity key was stored.
+- **Fixed: a client on the key-value store can send after it establishes a
+  session.** `./local/store/key-value` (`./local/store/react-native` before
+  the move) lost the session from each SESAME device record, so every send
+  failed with `No active session`. It also returned the device identity pin as
+  a plain object, not its bytes, after a reopen. The store now joins each
+  device with the session under its session key, and it keeps the pin bytes.
+- **Fixed: a client on the IndexedDB store can send after it establishes a
+  session.** `./local/store/web` returned each SESAME device record with no
+  session, so every send failed with `No active session`. `getUserRecord` and
+  `getDeviceRecord` on the IndexedDB store, and `getUserRecord` on the
+  in-memory store, now join each device with the session under its address,
+  and the stored identity pin wins over one derived from the session. On the
+  IndexedDB store, `setDeviceRecord` writes the device and its session in one
+  transaction, and `deleteDeviceRecord` removes the session with the device.
+- **Fixed: the in-memory store returns no session for a device whose session
+  is deleted.** After `deleteSessionRecord`, `getDeviceRecord` and
+  `getUserRecord` on `./local/store/memory` returned the session that
+  `setDeviceRecord` stored earlier. The store now keeps each device without
+  its session and joins the device with the session under its address, as
+  the other stores do. `setDeviceRecord` rejects a session record that is not
+  current, and `setUserRecord` stores no session.
+- **Added: `./local/store/web-sqlite`, a web store on encrypted SQLite.**
+  `webSqliteStore(options?)` opens an SDK-owned SQLite database in the origin
+  private file system. The SQLite3 Multiple Ciphers Wasm engine runs in a
+  dedicated module worker and encrypts the whole file. On first use the store
+  creates the database key in the secret vault, by default IndexedDB in the
+  same origin, then the file. Each open applies the SDK migrations.
+  `resetWebSqliteStore(options?)` deletes the file, creates a new key, and
+  opens an empty store. `createPreKeyMaintenanceStore` takes an open store.
+  The tabs of an origin share the database, and the opens and resets of a
+  name run one at a time across the tabs. A reset fails with `INVALID_STATE`
+  while any tab has the store open. The page's Content Security Policy must
+  allow `'wasm-unsafe-eval'` for the worker; without it, the open fails with
+  `SQLITE_ENGINE_UNAVAILABLE`. A context without OPFS gets
+  `OPFS_UNAVAILABLE`. The key in IndexedDB protects a copy of the database
+  file; it is not an XSS defense.
+- **Breaking: the SDK owns the Expo database.** `expoStore(options?)`
+  opens an SDK-owned SQLCipher database in the `expo-sqlite` default
+  directory. On first use it creates the database key in the secret vault
+  (Expo SecureStore by default), then the file. Each open applies the SDK
+  migrations. `ExpoSignalProtocolStore` has no public constructor, and
+  `close()` closes the store. An open fails with `LOCAL_STORE_KEY_LOST` when
+  the file exists and the vault holds no key for it. It fails with
+  `INVALID_STATE` when a store of the process holds the same name, or when a
+  newer SDK wrote the file. `createPreKeyMaintenanceStore` takes the open
+  store. The options accept `encryptionAtRest: false`, which opens a
+  plaintext database and does not use the vault. An open with the other
+  setting than the one that created the file fails with
+  `SqliteKeyMismatchError` (`KEY_STORAGE_ERROR`), not `LOCAL_STORE_KEY_LOST`.
+  Keep application tables in a separate database file.
+- **Breaking: `expoStore()` is now async.** It returns a promise of the open
+  store. Replace `expoStore()` with `await expoStore()`.
+  `ExpoSignalProtocolStoreFactoryOptions` is now `ExpoSignalProtocolStoreOptions`.
+- **Breaking: the Expo module functions that exposed the database or its key
+  are removed.** The `./local/store/expo` entry no longer exports
+  `getKeyStorage`, `resetKeyStorage`, `getDatabaseKeyManager`,
+  `resetDatabaseKeyManager`, `clearDatabaseKeyCache`, `getPrimaryIdentityKey`,
+  or `getContactIdentity`. The `./local/store/expo/db` entry, with
+  `configureSignalProtocolExpoDbBindings`,
+  `resetSignalProtocolExpoDbBindings`, `getDrizzle`, `getRawDatabase`, and its
+  tables, is removed. The `./local/store/expo/schema` entry is removed. The
+  `drizzle-orm` peer dependency is removed.
+- **Breaking: `ExpoSignalProtocolStore.getDatabaseKey()` is removed.** The
+  database key stays in the secret vault, and the store does not return it.
+- **Changed: `clearAllKeys` on the Expo store empties every table and keeps
+  the database key.** The file stays open with the same key.
+  `resetExpoStore(options?)` is the full teardown: it deletes the database
+  file, creates a new key, and opens an empty store. It is the only way to
+  open a store whose key is lost.
+- **Added: `@open-e2ee/signal-protocol-sdk/local/vault/electron-safe-storage`.**
+  `ElectronSafeStorageSignalProtocolSecretVault` is a
+  `SignalProtocolLocalSecretVault` for the Electron main process. The app
+  passes its own `safeStorage`, so the SDK does not import `electron`. The
+  vault encrypts each secret with `safeStorage` and keeps only the ciphertexts
+  in a file that the app names. It fails closed when async encryption is not
+  available, on the Linux `basic_text` and `unknown` backends, and on Linux
+  when a ciphertext does not start with `v11`. A `v10` ciphertext means that
+  no secret service answered, so `safeStorage` used its fixed fallback key.
+- **Added: the optional peer `better-sqlite3-multiple-ciphers` 13.0.3 or
+  later.** The SQLite store for Node and Electron uses it. An app that does
+  not use that store does not install it.
+- **Breaking: the Node store is an SDK-owned SQLCipher database.**
+  `nodeStore(options)` takes `{ directory, vault }` in place of the optional
+  `{ dataDir }`, and opens an encrypted SQLite database on
+  `better-sqlite3-multiple-ciphers` in `directory`. On first use it creates
+  the database key in `vault`, then the file. The options also accept `name`,
+  `encryptionAtRest: false`, and `logger`, as the Expo store does. It runs in
+  Node and in the Electron main process; in Electron, pass the safeStorage
+  vault. `NodeSignalProtocolStore` has no public constructor, and
+  `NodeSignalProtocolStoreConfig` is now `NodeSignalProtocolStoreOptions`.
+  `close()` closes the store. An open fails with `LOCAL_STORE_KEY_LOST` when
+  the file exists and the vault holds no key for it, and with
+  `INVALID_STATE` when a store of the process holds the same file or a newer
+  SDK wrote it. The store does not read the files of the earlier Node store.
+  Keep application tables in a separate database file.
+- **Breaking: the `fs-native-extensions` peer dependency is removed.**
+- **The Node store has one owner process.** An open store holds the owner
+  lock `<name>.lock` beside the database until `close()`, and the operating
+  system releases it when the process exits. An open or a reset in another
+  process fails at once with `SqliteStoreInUseError` (`KEY_STORAGE_ERROR`),
+  before it reads the vault or touches the file.
+- **Added: `resetNodeStore(options)`, `createPreKeyMaintenanceStore(store)`,
+  and `sqliteDatabaseKeySlot(path)` on `./local/store/node`.**
+  `resetNodeStore` deletes the database file, creates a new key, and opens an
+  empty store. `sqliteDatabaseKeySlot` names the vault slot of the key for a
+  database path, so an app can move the key when it moves the directory.
+- **Changed: the Node store has the semantics of the Expo store.** A user
+  record is the aggregate of the user's sessions, so `setUserRecord` stores
+  nothing. `setDeviceRecord` does not pin the identity key of a device,
+  `setDeviceSession` does not require a registered device, and
+  `setLocalRegistrationId` stores nothing before the identity key.
+  `deleteAllSenderKeysForGroup` keeps the group's skipped sender keys.
+- **The Expo store runs on a shared SQLite core.** The store's schema,
+  queries, and transactions move from the Expo entry to an internal core that
+  runs on any SQLite binding. Every statement and transaction on the
+  database goes through one queue, so concurrent store calls no longer
+  collide in `BEGIN` or `ROLLBACK`. A save that replaces a signed prekey with
+  the same key ID now zeroes the private key that it replaces.
+- **The Expo account wipe empties every SDK table.** `clearAllKeys` and
+  `wipeAllSignalProtocolData` on the Expo store now empty every SDK table, as
+  the web and Node stores do. This adds the metadata, sender keys, skipped
+  sender keys, message records, profile keys, group master keys, group state
+  cache, and auth credential cache, and for `clearAllKeys` the KEM one-time
+  prekeys.
+- **A bare React Native app can bundle the SDK.** The root entry no longer
+  uses `export * as` to export the `safety`, `keys`, `encoding`, `blocking`,
+  and `media` namespaces. `@react-native/babel-preset` has no transform for
+  that syntax, so Metro in a bare React Native app rejected the whole bundle.
+  The namespaces and their members do not change.
+- **Added: `EncryptionErrorCode.SQLITE_ENGINE_UNAVAILABLE`,
+  `EncryptionErrorCode.OPFS_UNAVAILABLE`, and
+  `EncryptionErrorCode.OPFS_FILE_BUSY`.** The web SQLite store fails with
+  these codes when its Wasm engine cannot load in its worker, when the browser context has no OPFS storage for it, or when it
+  cannot open its database file this time, usually because another tab still
+  holds the file. Retry after `OPFS_FILE_BUSY`; the file is unchanged. An
+  exhaustive `switch` over `EncryptionErrorCode` needs the three new cases.
+- **Changed: the package ships the SQLite3 Multiple Ciphers 2.5.1 Wasm
+  engine.** `dist/local/store/sqlite/web/sqlite3mc/` holds `sqlite3.mjs` and
+  `sqlite3.wasm` from the signed release, about 1.5 MB. `sqlite3.wasm` is
+  unmodified. `sqlite3.mjs` carries two recorded patches, so a failed pool
+  install never deletes the database files and a failed attach holds no file
+  handle. Both files are pinned by sha256. Only the worker of
+  `./local/store/web-sqlite` loads them. `THIRD_PARTY_NOTICES.md` lists their
+  licenses.
+- **Added: the bare React Native SQLite store at `./local/store/react-native`.**
+  `reactNativeStore(options?)` opens an SDK-owned SQLCipher database on
+  op-sqlite, with its key in the react-native-keychain vault by default, on
+  the same SQLite core and with the same options, errors, and reset as
+  `expoStore`. `resetReactNativeStore(options?)` deletes the database
+  and opens an empty store, and `createPreKeyMaintenanceStore` takes the open
+  store. `close()` checkpoints the write-ahead log into the database file
+  before it closes the connection. The app turns on the op-sqlite SQLCipher build with
+  `"op-sqlite": { "sqlcipher": true }` in its `package.json`. Without it, an
+  encrypted open fails with `KEY_STORAGE_ERROR` before it creates a file.
+  `@op-engineering/op-sqlite` 18.2.5 or later is an optional peer, and only
+  this entry imports it.
+- **Breaking: the own profile key lives in the application's secret vault.**
+  The SDK no longer writes the profile key to `localStorage`, and it no longer
+  picks a storage by platform. `getOwnProfileKey`, `setOwnProfileKey`,
+  `getOrCreateOwnProfileKey`, `getOwnProfileKeyBase64`, and
+  `rotateOwnProfileKey` take a `SignalProtocolLocalSecretVault` as their first
+  argument. `updateEncryptedProfile` takes a `vault` parameter when it gets no
+  `profileKey`. The vault holds the key as its raw 32 bytes under
+  `signal_profile_key_v1`. To upgrade, pass the vault to each call. On Expo,
+  use `ExpoSecureStoreSignalProtocolSecretVault` from
+  `@open-e2ee/signal-protocol-sdk/local/vault/expo-secure-store`. Remove each
+  use of `setProfileKeyStorage`, `getProfileKeyStorage`,
+  `resetProfileKeyStorage`, `createMemoryStorage`, and `ProfileKeyStorage`.
+  These exports are deleted.
+- **Breaking: the device ID and the device-lifecycle state live in the
+  application's secret vault.** `getDeviceId` and `preloadDeviceId` take the
+  vault as their first argument. `DeviceLifecycleDeps` has a `vault` field in
+  place of `secureStore`, and the `DeviceLifecycleSecureStore` type is
+  deleted. The vault holds each value as UTF-8 text. To upgrade, pass the same
+  vault to `DeviceLifecycleManager`, `getDeviceId`, and `preloadDeviceId`. The
+  SDK does not read the plain SecureStore values that an earlier version
+  wrote, so reset the device when you upgrade.
+- **Breaking: a call without a vault throws `SECRET_VAULT_REQUIRED`.** Each
+  function above, and the `DeviceLifecycleManager` constructor, throws an
+  `EncryptionError` with the new code `EncryptionErrorCode.SECRET_VAULT_REQUIRED`
+  when the vault is absent. The error context names the operation.
+- **Breaking: the shared `./device` entries import no platform package.**
+  `./device`, `./device/device-id`, and `./device/lifecycle` now load without
+  Expo, React Native, or `react-native-device-info`. They take platform
+  metadata as input, and they omit each field that the application does not
+  supply. To upgrade:
+  - Spread `getDeviceLifecyclePlatform()` into the `DeviceLifecycleManager`
+    dependencies. `DeviceLifecycleDeps` extends the new
+    `DeviceLifecyclePlatform` type: `generateDeviceName`,
+    `getDeviceFingerprint`, `deviceType`, `platform`, `osVersion`, and
+    `appVersion`, each optional. Without `generateDeviceName`, the device name
+    is `Unknown Device`. Without `getDeviceFingerprint`, registration sends no
+    `idfv` and does not reclaim a device.
+  - Pass the same facts to `getLocalDeviceMetadata`, which now takes them as
+    its argument.
+  - Pass a `TransferDeviceInfo` to `generateTransferQRCode`,
+    `prepareNewDeviceTransfer`, `createEmptyBackup`, `createDeviceBackup`, and
+    `prepareOldDeviceTransferWithBackup`. Get it from
+    `getTransferDeviceInfo()`, or pass `{}` to send no metadata. The QR code
+    omits `deviceType` when the metadata has no platform, and
+    `TransferQRCode.deviceType` is optional.
+- **Added: `./device/react-native`.** It reads device metadata on bare React
+  Native through `react-native` and `react-native-device-info`, and it reaches
+  no Expo package. It exports `getDeviceMetadata`, `getTransferDeviceInfo`,
+  and `getDeviceLifecyclePlatform`. Its lifecycle facts include a fingerprint
+  from `getUniqueId()`.
+- **Changed: `./device/expo` reads the lifecycle and transfer metadata.** It
+  now imports `expo-device` too, and it adds `getTransferDeviceInfo` and
+  `getDeviceLifecyclePlatform`. Expo has no device fingerprint without another
+  package, so its lifecycle facts have no `getDeviceFingerprint`. Supply one
+  to keep reclaim detection.
+- **Added: a secret vault for bare React Native apps.**
+  `ReactNativeKeychainSignalProtocolSecretVault` from
+  `@open-e2ee/signal-protocol-sdk/local/vault/react-native-keychain` stores
+  vault secrets with `react-native-keychain`, a new optional peer at 10.0.0 or
+  later. The adapter sets fixed options that the app cannot change: iOS
+  `AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY`, Android `AES_GCM_NO_AUTH` storage at
+  the `SECURE_SOFTWARE` level, and no `cloudSync` key. The secret stays on the
+  device. react-native-keychain 10.0.0 turns iCloud sync on for any
+  `cloudSync` value, `false` included, so the adapter never sends that key.
+- **Breaking: React Native and Expo apps must install a global random
+  source.** The SDK reads random bytes on React Native only from the global
+  `crypto.getRandomValues`. It no longer uses `expo-crypto` for random bytes,
+  and the key-value store no longer imports `expo-crypto`. To
+  upgrade, install `react-native-get-random-values` 2.x or
+  `react-native-quick-crypto`, and load it before the first SDK call.
+  Without a global source, the SDK throws `SecureRandomUnavailableError`.
+- Added: `SecureRandomUnavailableError`, with the code
+  `SECURE_RANDOM_UNAVAILABLE` and the guard `isSecureRandomUnavailableError`,
+  exported from `/types`. The SDK throws it when the runtime has no
+  cryptographically secure random source.
+- **Breaking: `getGroupServiceIds` on the in-memory relay is now
+  asynchronous.** It returns a `Promise`. To upgrade, `await` each call.
+- **Breaking: `GroupAuthorizationServerEngine` takes its runtime as a
+  required argument.** The engine no longer picks a host random source, so a
+  server bundle of the engine reaches no client platform seam. To upgrade,
+  pass a `GroupServerEngineRuntime` with `now` and `randomBytes` as the second
+  constructor argument. The in-memory relay's
+  `InMemoryGroupAuthorizationServer` still supplies its own runtime.
+- Fixed: the username discriminator had a small bias toward low values. The
+  SDK now draws it with rejection sampling, so each value in the range has
+  the same probability.
+- **Fixed: on React Native, the hosted Relay socket did not open.** The SDK
+  built the socket URL with the `protocol` setter of `URL`, and the React
+  Native `URL` has no setters. Now the SDK builds the URL itself.
+- **Fixed: on React Native, `isVerifyUrl`, `parseVerifyUrl`, and
+  `parseProvisioningQR` accepted a lookalike custom-scheme link,** such as
+  `signalprotocol://verify-evil`. The React Native `URL` reads no host or path
+  for a custom scheme. The SDK now parses these links, the relay connection
+  URL, Web Push endpoints, object store URLs, and TUS upload locations with
+  its own parser, which gives the same result on every runtime.
+- **Changed: the SDK rejects a URL that is not in a canonical form.** Upgrade
+  step: give each URL as ASCII, without credentials, a fragment, an empty
+  query (`?` with nothing after it), or a `.` or `..` path segment. Write the
+  host in the form that a WHATWG `URL` gives, and do not use an `xn--` label,
+  an IPv4 address in a short or hexadecimal form, or an IPv6 address in a
+  non-compressed form. Do not write a port with a leading zero. Percent-encode
+  a space, a non-ASCII character, and a `'` in a query. This applies to the
+  verification and provisioning links and their `VerifyLinkConfig` and link
+  prefix, the relay connection URL, Web Push endpoints, and object store
+  upload and download URLs. A TUS server must return a `Location` that is an
+  absolute URL, a path that starts with `/`, or a relative path, not a
+  network-path reference that starts with `//`. A query value that is not
+  valid UTF-8 now makes a verification or provisioning link invalid.
+- **Changed: `encryptFile` and `decryptFile` throw an `EncryptionError` with
+  the new code `BINARY_BLOB_UNAVAILABLE` when the runtime's `Blob` cannot hold
+  bytes.** The React Native `Blob` rejects binary parts and has no
+  `arrayBuffer()` or `text()`, so these methods cannot work there. They now
+  throw before they touch the session, so the key message stays unconsumed.
+  Upgrade step: on React Native, use `streamingEncrypt` and `streamingDecrypt`
+  from `@open-e2ee/signal-protocol-sdk/files`.
+- **Fixed: on a React Native runtime without `Buffer`, `TextDecoder`, or
+  `structuredClone`, the stores, the relay clients, and message decoding
+  failed.** These parts now use the SDK's base64, UTF-8, and clone functions.
+  UTF-8 decoding uses the runtime's `TextDecoder` only when it passes a
+  conformance check, and a built-in WHATWG decoder otherwise, so invalid
+  UTF-8 gives the same result on every runtime.
+- Changed: the Expo store models decode base64 strictly. A stored key that is
+  not padded standard base64 with zero trailing bits now fails to load.
+  Before, the models skipped invalid characters. The SDK writes only this
+  form, so the change affects only a row that was changed by hand.
+- Fixed: the Convex relay's `subscribe` threw in a browser that loads the SDK
+  without a bundler `define`, where there is no `process` global. It now
+  falls back to polling there, as it does when `EXPO_PUBLIC_CONVEX_URL` is not
+  set.
+- **Fixed: the Expo store's `getDetailedStats()` and full data wipe now
+  complete.** Before, both read or deleted a table that does not exist, so
+  `getDetailedStats()` failed and the wipe (`wipeAllSignalProtocolData()` on
+  the store from `getKeyStorage()`) rolled back. The `users` count is now the
+  number of distinct users that have a session.
+- Fixed: on the Expo store, a signed prekey that reuses the ID of a replaced
+  signed prekey is now the current signed prekey. Before, the store kept the
+  replaced mark, so `getEcSignedPreKey()` returned `null`.
+- Fixed: `createPreKeyMaintenanceStore().cullReplacedPreKeys()` on the Expo
+  store now culls the four prekey tables one at a time. Before, it opened
+  four transactions at the same time on one connection, and the cull failed
+  with "cannot start a transaction within a transaction".
+- **Breaking: the key-value store moves to `./local/store/key-value`.** In
+  7.2.0, `./local/store/react-native` exported it. Change each import of the
+  key-value store from `@open-e2ee/signal-protocol-sdk/local/store/react-native`
+  to `@open-e2ee/signal-protocol-sdk/local/store/key-value`.
+  `./local/store/react-native` now exports the bare React Native SQLite
+  store.
+- **Breaking: the key-value store names drop the React Native prefix.** The
+  store works over any key-value backend, so its names do not name a
+  platform. Change each name:
+  - `ReactNativeSignalProtocolStore` → `KeyValueSignalProtocolStore`
+  - `reactNativeStore` → `keyValueStore`
+  - `ReactNativeStoreFactoryOptions` → `KeyValueSignalProtocolStoreOptions`,
+    which `create`, `reset`, and `keyValueStore` all take
+  - `ReactNativeKeyValueStorage` → `KeyValueStorage`
+  - `ReactNativeKeyValueOperation` → `KeyValueOperation`
+- **Breaking: the key-value store keeps its value key in a secret vault.**
+  Before, the store wrote its 32-byte value key into the same key-value
+  backend as the data it encrypted, under `@signal:databaseKey`, and logged a
+  warning. Pass a `SignalProtocolLocalSecretVault` backed by the platform
+  keychain or keystore, such as `ReactNativeKeychainSignalProtocolSecretVault`,
+  as `vault` to `create`, `reset`, or `keyValueStore`. Without a vault,
+  each of them throws `SECRET_VAULT_REQUIRED`. To keep
+  existing data, before the first open on this version, read the base64 value
+  of `@signal:databaseKey` from your backend, write its decoded bytes to the
+  vault under `signal_key_value_encryption_key`, and remove
+  `@signal:databaseKey` from the backend. The key-value store guide describes
+  key custody.
+- **Breaking: a lost value key is an error, not a new key.** When the backend
+  holds store data and the vault holds no key, `create` rejects with an
+  `EncryptionError` whose code is the new `LOCAL_STORE_KEY_LOST`, and it
+  changes nothing. Before, a missing key gave a new key that could not read
+  the old data. Catch the code, and then restore the vault entry or call
+  `KeyValueSignalProtocolStore.reset({ storage, vault })`. `reset` deletes
+  every store record, and then makes a new key. If the process stops between
+  the two steps, the next `create` opens an empty store.
+- **Breaking: `createReferenceReactNativeBackend` is no longer exported.** It
+  is now test code of the SDK. To verify your backend, use
+  `assertBackendConformance` or `runBackendConformance`, which stay exported.
+  To get an in-memory backend for your own tests, write one that passes the
+  kit.
+- Added: `./local/store/key-value/realm` with `createRealmKeyValueBackend`, a
+  key-value backend over an open Realm. The SDK does not import `realm` and
+  does not declare it as a dependency or peer. Your application installs
+  `realm` and adds `realmKeyValueSchema` to its schema list. Each store write
+  runs in one `realm.write` transaction. The adapter is tested with the
+  conformance kit on realm 20.2.0 in Node. Realm has no maintainer since
+  2025-09-30. The key-value store guide lists its known build issues.
+- Added: `createTransactionalKeyValueBackend` in `./local/store/key-value`,
+  with the types `TransactionalKeyValueEngine`, `KeyValueTransaction`, and
+  `KeyValueReader`. It makes a key-value backend from an engine's own
+  transaction and a synchronous handle with `get`, `set`, `delete`, and
+  `keysWithPrefix`. The SDK applies each `atomicWrite` batch inside that
+  transaction, so a backend does not copy the batch rules. The Realm backend
+  uses it. To upgrade a backend that you wrote for an engine with
+  transactions, replace its `atomicWrite` code with this function and run the
+  conformance kit again. The key-value store guide has an op-sqlite sketch.
+- **Fixed: `stop()` resolved while a relay delivery or a retry request was in
+  progress.** The decrypt then went on after logout and wrote to the store
+  after the app could have closed it. `stop()` now resolves only after the SDK
+  work of the deliveries, retry requests, and receipt sends in progress
+  finishes. It does not wait for app hooks, so a hook can await `stop()`. This
+  includes the session hooks of a resend for a retry request, when the resend
+  sets up a session with a new or stale device. Another resend to the same
+  user that waits while such a hook runs stops waiting and sends nothing, and
+  its message record stays for the next retry request. When a hook returns
+  after `stop()`, the SDK drops the work after the hook and writes nothing
+  more. The relay delivers the envelope again after the next start, and the
+  hook gets the plaintext again. A delivery that fails is logged and no longer
+  rejects as an unhandled promise.
+- **Breaking: the managed Signal Protocol Relay hosts use the lane tokens.**
+  The SDK pins `https://sandbox.relay.open-e2ee.dev`,
+  `https://stage.relay.open-e2ee.dev`, and
+  `https://stage-sandbox.relay.open-e2ee.dev`.
+  `https://relay.open-e2ee.dev` does not change. A connection URL on
+  `development.relay.open-e2ee.dev`, `staging.relay.open-e2ee.dev`, or
+  `staging-customer-development.relay.open-e2ee.dev` is now invalid. Copy the
+  connection URL from the console again.
+- **Breaking: the Signal Protocol Relay API path is `/signal/v1/*`.** A
+  connection URL is now `https://<host>/signal/v1/connection/<key>`, and the
+  SDK sends each request under `/signal/v1/`. The SDK rejects a connection URL
+  with the old `/v1/connection/` path, and a connection document whose
+  `protocolEndpoint` is not `<origin>/signal/v1`.
+- **Breaking: the developer environment kind is `sandbox`.** The
+  `environment` of a hosted Relay connection is now `'sandbox' |
+  'production'`. The SDK rejects a connection document that names the old
+  kind. The Relay gives a sandbox publishable key the prefix `pk_sandbox_`.
+
+- **A bare React Native example.** `examples/react-native` runs the encrypted
+  exchange in a React Native 0.87.1 app with no Expo module. Alice uses
+  `reactNativeStore()` on the op-sqlite SQLCipher build, with the database key
+  in `react-native-keychain`. On each launch, the app logs the SQLCipher
+  version and the first 16 bytes of the SDK database file, and requires that a
+  wrong key fails the open of an SDK database. The run fails when the build has
+  no SQLCipher or when the file starts with the plaintext SQLite header. CI
+  builds the release APK and runs it twice on an Android emulator, and requires
+  these lines on each run. On every change, CI also builds the example's Metro
+  release bundle with the packed SDK and the stock Babel preset, and compiles
+  it with Hermes.
+
+- **The Expo example checks that SQLCipher encrypts its database.** On each launch,
+  `examples/expo` logs the SQLCipher version and the first 16 bytes of the SDK
+  database file. The run fails when the build has no SQLCipher or when the
+  file starts with the plaintext SQLite header. The Android emulator job
+  requires both lines on each run. The example now depends on
+  `expo-file-system` to read the file.
+
 ## 7.2.0
 
 - **Fixed: a send now reaches every device that the relay lists for the

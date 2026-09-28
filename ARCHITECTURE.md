@@ -73,6 +73,7 @@ import {
 Platform and backend integrations are explicit subpaths such as:
 
 - `@open-e2ee/signal-protocol-sdk/local/store/expo`
+- `@open-e2ee/signal-protocol-sdk/local/store/react-native`
 - `@open-e2ee/signal-protocol-sdk/local/store/memory`
 - `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`

@@ -1,3 +1,4 @@
+import { utf8Decode } from '../internal/platform';
 import type {
   GroupAuthorization,
   GroupChangeLogEntry,
@@ -94,7 +95,7 @@ async function readResponse(response: Response): Promise<unknown> {
     offset += chunk.byteLength;
   }
   try {
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body));
+    return JSON.parse(utf8Decode(body, { fatal: true }));
   } catch {
     invalidResponse();
   }

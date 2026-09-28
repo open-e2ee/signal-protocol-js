@@ -19,6 +19,7 @@
  *
  */
 
+import { utf8Decode } from '../internal/platform';
 import {
   generateECDHKeyPair,
   computeSharedSecret,
@@ -130,9 +131,8 @@ export async function decryptDeviceName(
   }
 
   // Reject invalid UTF-8 after authenticated decryption.
-  const decoder = new TextDecoder('utf-8', { fatal: true });
   try {
-    return decoder.decode(plaintextBytes);
+    return utf8Decode(plaintextBytes, { fatal: true });
   } catch {
     throw new Error('Device name decryption failed: invalid UTF-8');
   }

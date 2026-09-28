@@ -19,6 +19,7 @@ import {
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { ProtocolAddress } from '../types/address';
 import { callHook } from './event-hooks';
+import { rethrowRelayWorkStopped } from './relay-work';
 import type { SafetyNumberConfirmation, SignalProtocolClientContext, SafetyNumber } from './types';
 import type { SessionHealthResult, SessionHealthIssue, SessionHealthStatus } from './types';
 import type { SesameManager } from '../internal/sesame/types';
@@ -79,6 +80,7 @@ export async function establishSession(
     // Call hook: session established
     await callHook(ctx.hooks, 'onSessionEstablished', sessionId, remoteAddress.userId);
   } catch (error) {
+    rethrowRelayWorkStopped(error);
     if (error instanceof EncryptionError) {
       throw error;
     }
@@ -187,6 +189,7 @@ export async function archiveSession(
     // Call hook: session archived
     await callHook(ctx.hooks, 'onSessionArchived', sessionId);
   } catch (error) {
+    rethrowRelayWorkStopped(error);
     throw new EncryptionError(
       `Failed to archive session for ${sessionId}`,
       EncryptionErrorCode.SESSION_CORRUPTED,

@@ -118,6 +118,7 @@ import {
 import type { GroupId } from '../groups/group-id';
 import { createGroupId, extractGroupId } from '../groups/group-id';
 import { constantTimeEqual as bytesEqual } from '../crypto/utils';
+import { generateRandomBytes, generateRandomBytesSync } from '../crypto/random';
 import { bytesToHex } from '../../encoding/hex';
 import type { CredentialPublicKey } from '../protocol/zk/credentials/credentials';
 import type { AuthCredentialWithPni } from '../protocol/zk/groups/auth-credential';
@@ -613,7 +614,7 @@ export class GroupManager {
       this.credentialPublicKey,
       credential,
       secretParams,
-      crypto.getRandomValues(new Uint8Array(32))
+      await generateRandomBytes(32)
     );
 
     return {
@@ -637,7 +638,7 @@ export class GroupManager {
       const requestContext = createProfileKeyCredentialRequest(
         this.aci,
         this.profileKey,
-        crypto.getRandomValues(new Uint8Array(32))
+        await generateRandomBytes(32)
       );
       const responseBytes = await this.issueProfileKeyCredentialFn(
         serializeProfileKeyCredentialRequest(requestContext.request)
@@ -731,8 +732,7 @@ export class GroupManager {
     }
   ): Promise<{ groupId: GroupId; masterKey: Uint8Array }> {
     // Generate random master key
-    const masterKeyBytes = new Uint8Array(GROUP_MASTER_KEY_LEN);
-    crypto.getRandomValues(masterKeyBytes);
+    const masterKeyBytes = await generateRandomBytes(GROUP_MASTER_KEY_LEN);
     const mk = groupMasterKey(masterKeyBytes);
 
     // Derive all group secrets
@@ -2926,7 +2926,7 @@ function encryptChangeFields(
 ): EncryptedGroupChange {
   const presentationFor = (aciBytes: Uint8Array): PresentationContext | undefined =>
     memberPresentationContexts?.get(bytesToHex(aciBytes));
-  const randomness = (): Uint8Array => crypto.getRandomValues(new Uint8Array(32));
+  const randomness = (): Uint8Array => generateRandomBytesSync(32);
 
   return {
     revision: change.revision,

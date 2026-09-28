@@ -15,6 +15,7 @@ import { Statement, PokshoException, PokshoError } from '../zk/proofs/statement'
 import { ScalarArgs, PointArgs } from '../zk/proofs/args';
 import { RistrettoPoint } from '../zk/proofs/sho';
 import { bytesToHex } from '@noble/hashes/utils.js';
+import { generateRandomBytesSync } from '../../crypto/random';
 import { hashUsername, usernameScalars, G1, G2, G3 } from './hash';
 
 /** Proof length: 1 challenge scalar (32) + 3 response scalars (3 x 32) = 128 bytes */
@@ -50,7 +51,7 @@ export function proveUsernameKnowledge(
   discriminator: number,
   randomness?: Uint8Array
 ): Uint8Array {
-  const proofRandomness = randomness ?? crypto.getRandomValues(new Uint8Array(32));
+  const proofRandomness = randomness ?? generateRandomBytesSync(32);
   const hashBytes = hashUsername(nickname, discriminator);
   const { s0, s1, s2 } = usernameScalars(nickname, discriminator);
 

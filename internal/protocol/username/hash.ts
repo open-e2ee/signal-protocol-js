@@ -12,6 +12,7 @@
 
 import { sha512 } from '@noble/hashes/sha2.js';
 import { bytesToScalarWide, RistrettoPoint } from '../zk/proofs/sho';
+import { generateRandomBytesSync } from '../../crypto/random';
 export {};
 const Fn = RistrettoPoint.Fn;
 
@@ -214,12 +215,27 @@ export function formatUsername(nickname: string, discriminator: number): string 
 }
 
 /**
+ * Draw a uniform integer in `[0, range)` from the secure random source.
+ *
+ * A plain `draw % range` favors the low residues whenever `range` does not
+ * divide 2^32. So a draw from the partial block at the top of the 32-bit space
+ * is rejected, and every residue keeps the same count of accepted draws.
+ */
+function uniformBelow(range: number): number {
+  const limit = 2 ** 32 - (2 ** 32 % range);
+  for (;;) {
+    const bytes = generateRandomBytesSync(4);
+    const draw = new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0);
+    if (draw < limit) return draw % range;
+  }
+}
+
+/**
  * Generate 20 discriminator candidates across the configured bucket ranges.
  * Biased toward short discriminators (7 of 20 are 2-3 digits).
  */
 export function generateDiscriminatorCandidates(): number[] {
   const candidates: number[] = [];
-  const buf = new Uint32Array(1);
 
   for (let i = 0; i < DISCRIMINATOR_RANGES.length; i++) {
     const [min, max] = DISCRIMINATOR_RANGES[i];
@@ -231,8 +247,7 @@ export function generateDiscriminatorCandidates(): number[] {
     for (let j = 0; j < count; j++) {
       let value: number;
       do {
-        crypto.getRandomValues(buf);
-        value = min + (buf[0] % range);
+        value = min + uniformBelow(range);
       } while (used.has(value));
       used.add(value);
       candidates.push(value);

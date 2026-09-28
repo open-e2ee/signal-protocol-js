@@ -10,6 +10,7 @@
  * Blob encoding uses JSON format instead of protobuf for simplicity.
  */
 
+import { utf8Decode } from '../platform';
 import {
   type EncryptedGroup,
   type EncryptedMember,
@@ -28,6 +29,7 @@ import {
   EnabledState,
 } from './types';
 
+import { generateRandomBytesSync } from '../crypto/random';
 import { getGroupPublicParams } from '../protocol/zk/groups';
 import { serializeGroupPublicParams } from '../protocol/zk/groups/auth-credential';
 import {
@@ -87,7 +89,7 @@ function encodeAttributeBlob(blob: GroupAttributeBlob): Uint8Array {
  * Decode UTF-8 bytes to JSON and parse as GroupAttributeBlob.
  */
 function decodeAttributeBlob(bytes: Uint8Array): GroupAttributeBlob {
-  const json = new TextDecoder().decode(bytes);
+  const json = utf8Decode(bytes);
   return JSON.parse(json) as GroupAttributeBlob;
 }
 
@@ -100,7 +102,7 @@ function decodeAttributeBlob(bytes: Uint8Array): GroupAttributeBlob {
  */
 export function encryptLabelAsBlob(secretParams: GroupSecretParams, label: string): Uint8Array {
   if (!label) return new Uint8Array(0);
-  const randomness = crypto.getRandomValues(new Uint8Array(32));
+  const randomness = generateRandomBytesSync(32);
   const blob: GroupAttributeBlob = { type: 'title', title: label };
   const plaintext = encodeAttributeBlob(blob);
   const paddingLen = paddedLength(plaintext.length) - plaintext.length;
@@ -321,7 +323,7 @@ export function encryptMember(
   // Generate presentation if credential is provided
   let presentation = new Uint8Array(0);
   if (presentationContext) {
-    const randomness = crypto.getRandomValues(new Uint8Array(32));
+    const randomness = generateRandomBytesSync(32);
     const pres = presentProfileKeyCredential(
       presentationContext.credentialPublicKey,
       presentationContext.credential,
@@ -494,7 +496,7 @@ export function encryptRequestingMember(
   // Generate presentation if credential is provided
   let presentation = new Uint8Array(0);
   if (presentationContext) {
-    const randomness = crypto.getRandomValues(new Uint8Array(32));
+    const randomness = generateRandomBytesSync(32);
     const pres = presentProfileKeyCredential(
       presentationContext.credentialPublicKey,
       presentationContext.credential,
@@ -628,19 +630,19 @@ export function encryptGroupState(
   }
 
   // Encrypt title
-  const titleRandomness = crypto.getRandomValues(new Uint8Array(32));
+  const titleRandomness = generateRandomBytesSync(32);
   const title = group.title
     ? encryptGroupTitle(secretParams, titleRandomness, group.title)
     : new Uint8Array(0);
 
   // Encrypt description
-  const descriptionRandomness = crypto.getRandomValues(new Uint8Array(32));
+  const descriptionRandomness = generateRandomBytesSync(32);
   const description = group.description
     ? encryptGroupDescription(secretParams, descriptionRandomness, group.description)
     : new Uint8Array(0);
 
   // Encrypt disappearing messages timer
-  const timerRandomness = crypto.getRandomValues(new Uint8Array(32));
+  const timerRandomness = generateRandomBytesSync(32);
   const disappearingMessagesTimer = group.disappearingMessagesTimer
     ? encryptDisappearingMessagesTimer(
         secretParams,

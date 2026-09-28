@@ -34,11 +34,10 @@ const signal = await createSignalProtocolClient({
 import { createHostedSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
 
-// Initialize the application-owned Expo/SQLCipher database bindings first.
 const signal = await createHostedSignalProtocolClient({
   adapters: {
     // Expo storage owns this device's private keys and session state.
-    storage: expoStore(),
+    storage: await expoStore(),
   },
   hosted: {
     // The environment-scoped connection URL from the OpenE2EE console.

@@ -15,10 +15,8 @@ without coupling the client to a database or platform.
 
 ### Primary supported adapter
 
-- `ExpoSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/expo`
-- Expo integration helpers from `@open-e2ee/signal-protocol-sdk/local/store/expo`, including
-  `getKeyStorage`, `getDatabaseKeyManager`, `clearDatabaseKeyCache`, and
-  `createPreKeyMaintenanceStore`
+- `expoStore` and `ExpoSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/expo`
+- `resetExpoStore` and `createPreKeyMaintenanceStore` from the same entry
 
 ### Local development
 
@@ -34,19 +32,49 @@ and recovery helpers. It graduated from experimental by completing every
 gate on the checklist below. Deployment still requires the origin-security
 review described in the [web adapter guide](./web/README.md).
 
+- `webSqliteStore` and `WebSqliteSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/web-sqlite`
+- `resetWebSqliteStore` and `createPreKeyMaintenanceStore` from the same entry
+
+This store keeps the same state in an SDK-owned SQLite database in the origin
+private file system. SQLite3 Multiple Ciphers encrypts the whole file in a Wasm
+worker, and the database key lives in a secret vault, by default IndexedDB in
+the same origin. The page's Content Security Policy must allow
+`'wasm-unsafe-eval'`. A context without the origin private file system gets
+`OPFS_UNAVAILABLE`. The [web SQLite store guide](./web-sqlite/README.md) covers
+the policy, the tabs, and the security boundary. This store is experimental:
+one item on its graduation checklist below is open.
+
+A Tauri 2 app uses this store in its webview. See the
+[Tauri section](./web-sqlite/README.md#tauri).
+
 ### Bare React Native
 
-- `ReactNativeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/react-native` (create it with `await ReactNativeSignalProtocolStore.create({ storage })` and provide your own key-value backend)
+- `reactNativeStore` and `ReactNativeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/react-native`
+- `resetReactNativeStore` and `createPreKeyMaintenanceStore` from the same entry
 
-Use this for bare React Native applications that supply their own key-value
-backend. It implements the full core store contract, including SESAME records,
-sender-key state, retry message records, and recovery helpers. It graduated
-from experimental by completing every gate on the checklist below.
+Use this for bare React Native applications. It opens an SDK-owned SQLCipher
+database on op-sqlite, with its key in the react-native-keychain vault, on the
+same SQLite core as the Expo store. It needs the op-sqlite SQLCipher build and
+a native build of the app. The [React Native SQLite guide](./react-native/README.md)
+covers the setup and the iOS build conflicts.
+
+### Own key-value engine
+
+- `KeyValueSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/key-value` (create it with `await KeyValueSignalProtocolStore.create({ storage, vault })` and provide your own key-value backend and secret vault)
+- `createRealmKeyValueBackend` from `@open-e2ee/signal-protocol-sdk/local/store/key-value/realm` (a key-value backend over an open Realm that your application installs)
+
+Use this for applications that supply their own key-value backend, for
+example Realm on bare React Native. It implements the full core store
+contract, including SESAME records, sender-key state, retry message records,
+and recovery helpers. It graduated from experimental by completing every gate
+on the checklist below.
 The supplied backend is the application's responsibility: verify it with the
 exported backend-conformance kit described in the
-[React Native adapter guide](./react-native/README.md).
-The store uses `expo-crypto` for random bytes, so a bare application must
-install Expo modules.
+[key-value store guide](./key-value/README.md).
+The value key lives only in the supplied vault. Data without its key is an
+error, not a reset. The store reads random bytes from the global
+`crypto.getRandomValues`, so a React Native application installs
+`react-native-get-random-values` 2.x or `react-native-quick-crypto`.
 
 #### Graduation checklist
 
@@ -91,13 +119,52 @@ environment an adapter must honor its promises in, not the subject of a test.
       source repository, and `npm run soak:web-store` runs longer sessions
       on demand.
 
-`ReactNativeSignalProtocolStore` (graduated, and the gates keep running):
+`WebSqliteSignalProtocolStore` (experimental, with one item open):
+
+- [x] Storage contract suites pass in real Chromium, Firefox, and WebKit.
+      The suites are the same modules the jest gate runs. They run against
+      the store on the web driver in a real tab, under a Content Security
+      Policy that adds only `'wasm-unsafe-eval'`. Chromium and Firefox run
+      on every change to the source repository. Linux WebKit (WebKitGTK) has
+      no origin private file system, so the web SQLite store does not run
+      there, and the Linux job proves only `OPFS_UNAVAILABLE` in it. A macOS
+      WebKit job runs the suites on each change to the web SQLite store, the
+      SQLite core, the storage contract, the key vault, the gate, or a
+      dependency, not on every change. In each job, a suite that skips for
+      want of the origin private file system fails.
+- [x] Interruption tests. The gate closes a real tab inside an open
+      `BEGIN IMMEDIATE` transaction, the kind of transaction that each store
+      commit runs in, while a second tab waits to open the same file. The
+      second tab reads the file without the uncommitted writes,
+      `PRAGMA integrity_check` returns `ok`, and a new write lands. A crashed
+      worker gives `SQLITE_ENGINE_UNAVAILABLE`, and the next open starts a
+      new worker. Runs in the three engines on the schedule above.
+- [x] Multi-tab tests. Two real tabs share one open file, and each reads
+      the other's writes. A read from the second tab waits while the first
+      tab holds a write transaction, then sees the committed rows. Two tabs
+      that open a new store at the same time write one database key, and
+      that key opens the file. A reset gives `INVALID_STATE` while another
+      tab has the store open. Runs in the three engines on the schedule
+      above.
+- [x] Storage-pressure tests. A real Chromium run clamps the origin quota
+      and fills the file in the origin private file system until a write
+      fails. A single write and an atomic session and trust commit each
+      reject with the typed `StorageQuotaExceededError`
+      (`STORAGE_QUOTA_EXCEEDED`). The rejected writes leave no partial state:
+      no row of the write, no pinned identity, and the one-time prekey stays.
+      The store stays open. After the clamp is removed, the same commit
+      succeeds, new writes land, and `PRAGMA integrity_check` returns `ok`.
+      Runs in Chromium on the schedule above. The quota clamp is a DevTools
+      protocol call, so Firefox and WebKit do not run it.
+- [ ] Soak evidence. No soak gate runs against this store.
+
+`KeyValueSignalProtocolStore` (graduated, and the gates keep running):
 
 - [x] Exported backend-conformance kit. The SDK cannot test an
       application-supplied `storage` backend. Instead it ships the contract
       suite the application runs against its own backend. The kit exports
       `runBackendConformance` and `assertBackendConformance`, which execute
-      thirteen cases against any `ReactNativeKeyValueStorage`:
+      thirteen cases against any `KeyValueStorage`:
 
       - round-trips
       - key listing
@@ -113,15 +180,14 @@ environment an adapter must honor its promises in, not the subject of a test.
       A jest gate proves the kit catches a non-atomic backend, a
       prefix-matching session removal, and an unserialized backend, on every
       change to the source repository.
-- [x] Reference backend passes that kit on Hermes in CI. The SDK ships
-      `createReferenceReactNativeBackend`, which specifies the backend
-      contract in executable form. On each source-repository change, a named
-      gate bundles the kit with esbuild and runs it on the reference backend.
-      That gate uses the sha256-pinned Hermes v0.13.0 CLI,
-      the last standalone Hermes release. It does not cover Hermes V1, which
-      React Native 0.84 and later ship. The
-      runner requires an explicit pass sentinel because Hermes exits 0 on an
-      unhandled async rejection.
+- [x] Reference backend passes that kit on Hermes in CI. The source
+      repository holds an in-memory reference backend, which specifies the
+      backend contract in executable form. It is not part of the package. On
+      each source-repository change, a named gate bundles the kit and runs it
+      on the reference backend. That gate uses the Hermes V1 CLI that React
+      Native 0.86 uses, with only the globals of a bare React Native app. The
+      runner requires an explicit pass line for each case because Hermes
+      exits 0 on an unhandled async rejection.
 - [x] Interruption tests against the reference backend. A simulated process
       kill before commit leaves each atomic security write fully absent
       after reopen. Those writes are a session/trust commit, an identity
@@ -137,26 +203,29 @@ environment an adapter must honor its promises in, not the subject of a test.
 
 ### Node
 
-- `NodeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/node`
+- `nodeStore` and `NodeSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/node`
 
-Use this for non-mobile environments that need a filesystem-backed store. It
-implements the full core store contract, including SESAME records, sender-key
-state, retry message records, and recovery helpers.
+Use this for Node and the Electron main process. `await nodeStore({ directory,
+vault })` opens an SDK-owned SQLCipher database on the
+`better-sqlite3-multiple-ciphers` peer, with its key in the vault that the app
+passes. The [Node guide](./node/README.md) covers the owner lock, a lost key,
+and reset.
 
 ## Composition
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
-import { ExpoSignalProtocolStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
+import { expoStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
 
-// Configure the application-owned Expo/SQLCipher database bindings first.
 const signal = await DefaultSignalProtocolClient.create(userId, {
-  storage: new ExpoSignalProtocolStore(),
+  storage: await expoStore(),
 });
 ```
 
-The [Expo guide](./expo/README.md) shows the required database bootstrap.
+The [Expo guide](./expo/README.md) covers the native build and the database key.
+The [React Native SQLite guide](./react-native/README.md) covers the same for
+bare React Native.
 
 ## Storage Responsibilities
 
@@ -198,7 +267,7 @@ security transition. The shared adapter contract verifies
 failure rollback, compare-and-swap behavior, one-time-prekey replay rejection,
 and exact per-user session deletion.
 
-For React Native, the supplied backend's `atomicWrite` is a security boundary,
+For the key-value store, the supplied backend's `atomicWrite` is a security boundary,
 not a batching optimization. It must commit `check`, `set`, `remove`, and
 `removeSessionsForUser` operations in one crash-durable transaction. The final
 operation must enumerate exact plaintext session metadata inside that same
@@ -214,10 +283,16 @@ The `commitSessionTrust` method commits received content, ratchet state, contact
 The `storeSenderKeyRecord` method commits received content and skipped-key consumption together.
 
 An adapter must reject the complete transaction if any write fails.
+When the database file of a SQLite store cannot grow because the disk or the
+storage quota is full, the write rejects with `StorageQuotaExceededError`
+(`STORAGE_QUOTA_EXCEEDED`). SQLite rolls the write back, and the store stays
+open. Free space, then retry the write.
 `getReceivedContent`, `deleteReceivedContent`, and `deleteExpiredReceivedContent`
 own recovery and cleanup. Generic unencrypted metadata cannot hold this content.
-The Node adapter uses its encrypted security document. Expo uses SQLCipher.
-Web and React Native encrypt each content record with their existing store key.
+Expo, bare React Native, and Node use SQLCipher, and the web SQLite store
+encrypts its whole file with SQLite3 Multiple Ciphers. The IndexedDB web store
+and the key-value store encrypt each content record with their existing store
+key.
 
 The SDK removes content after durable handling and retains separate bounded
 duplicate evidence. Cleanup uses the existing thirty-day retry horizon.
@@ -227,9 +302,12 @@ The host application must use idempotent writes keyed by message ID.
   still requires review of key custody, backups, and host security.
 - `@open-e2ee/signal-protocol-sdk/local/store/expo` is also the package home for Expo-specific
   integration helpers that a real app composes directly.
+- `@open-e2ee/signal-protocol-sdk/local/store/react-native` is the same SQLite
+  store for bare React Native, on op-sqlite and the react-native-keychain vault.
 - An adapter carries the experimental label until every item on its
-  graduation checklist is a named, continuously running CI gate. Both the web
-  and bare React Native adapters completed theirs.
+  graduation checklist is a named, continuously running CI gate. The IndexedDB
+  web adapter and the key-value adapter completed theirs. The web SQLite store
+  has one item open.
 - Storage adapters should expose the real package contract instead of app-specific wrappers.
 
 ## Related Docs
@@ -239,6 +317,8 @@ The host application must use idempotent writes keyed by message ID.
 - [remote/README.md](../../remote/README.md)
 - [Expo adapter](./expo/README.md)
 - [Node adapter](./node/README.md)
-- [Bare React Native adapter](./react-native/README.md)
+- [Web SQLite store](./web-sqlite/README.md)
+- [React Native SQLite store](./react-native/README.md)
+- [Key-value store](./key-value/README.md)
 - [Web adapter](./web/README.md)
 - [In-memory adapter](./memory/README.md)

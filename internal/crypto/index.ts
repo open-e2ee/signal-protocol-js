@@ -21,8 +21,8 @@
  * - @noble/post-quantum - ML-KEM-768 & ML-KEM-1024 (NIST FIPS 203)
  * - @noble/hashes - HMAC-SHA256, HKDF (6 security audits, RFC 2104 compliant)
  * - @noble/ciphers - AES-256-CTR (cure53 audited, Sep 2024)
- * - expo-crypto - Secure random number generation
- * - Web Crypto API - AES-CBC/GCM encryption/decryption
+ * - The runtime's global crypto.getRandomValues (Node webcrypto) - Secure random numbers
+ * - Web Crypto API - AES-CBC/GCM encryption/decryption, with a Noble fallback
  *
  * Signal Protocol Specification Mapping:
  * Core protocol functions use SCREAMING_SNAKE_CASE (matches spec exactly) internally.
@@ -215,7 +215,7 @@ export { sha3_256 } from '@noble/hashes/sha3.js';
 // ============================================================================
 // Random Number Generation
 // ============================================================================
-export { generateRandomBytes, generateUuidV4 } from './random';
+export { generateRandomBytes, generateRandomBytesSync, generateUuidV4 } from './random';
 
 // ============================================================================
 // Encoding/Decoding & Memory Management

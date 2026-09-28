@@ -13,6 +13,7 @@
  * @see https://signal.org/blog/sealed-sender/
  */
 
+import { encryptAes } from '../../crypto/symmetric/aes-provider';
 import { ACCESS_KEY_BYTES } from './types';
 
 /** Generic error message for all delivery token failures */
@@ -25,7 +26,7 @@ const GENERIC_ERROR = 'Sealed sender verification failed';
  * The derived access key proves a sender knows the recipient's profile key
  * without revealing that profile key to the server.
  *
- * Uses AES-256-GCM through Web Crypto to get one counter-mode block:
+ * Uses AES-256-GCM through the SDK AES provider to get one counter-mode block:
  * ```
  * nonce = zeros[12]
  * plaintext = zeros[16]
@@ -59,28 +60,11 @@ export async function deriveAccessKey(profileKey: Uint8Array): Promise<Uint8Arra
   const nonce = new Uint8Array(12); // 12 zero bytes
   const plaintext = new Uint8Array(16); // 16 zero bytes
 
-  // Import profile key for Web Crypto AES-GCM
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    profileKey as Uint8Array<ArrayBuffer>,
-    { name: 'AES-GCM' },
-    false,
-    ['encrypt']
-  );
-
-  // Encrypt: Web Crypto returns ciphertext || authTag (16 + 16 = 32 bytes)
-  const encrypted = await crypto.subtle.encrypt(
-    {
-      name: 'AES-GCM',
-      iv: nonce as Uint8Array<ArrayBuffer>,
-      tagLength: 128, // 128-bit auth tag
-    },
-    cryptoKey,
-    plaintext as Uint8Array<ArrayBuffer>
-  );
+  // Encrypt: AES-GCM returns ciphertext || authTag (16 + 16 = 32 bytes)
+  const encrypted = await encryptAes('AES-GCM', profileKey, nonce, plaintext);
 
   // Take first 16 bytes (ciphertext portion), discard 16-byte auth tag
-  const accessKey = new Uint8Array(encrypted).slice(0, ACCESS_KEY_BYTES);
+  const accessKey = encrypted.slice(0, ACCESS_KEY_BYTES);
 
   // Fail closed if the crypto provider returns an unexpected shape.
   if (accessKey.length !== ACCESS_KEY_BYTES) {

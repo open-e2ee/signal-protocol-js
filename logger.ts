@@ -1,3 +1,5 @@
+import { nodeEnv } from './internal/platform';
+
 declare const __DEV__: boolean | undefined;
 
 /**
@@ -18,7 +20,7 @@ export interface Logger {
 
 function createDefaultLogger(): Logger {
   const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
-  const isTest = typeof process !== 'undefined' && process.env.NODE_ENV === 'test';
+  const isTest = nodeEnv() === 'test';
 
   if (isTest) {
     return {};

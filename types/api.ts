@@ -197,7 +197,12 @@ export interface SignalProtocolClient {
   /**
    * Stop the client and cleanup resources
    *
-   * Call this on logout or app shutdown.
+   * Call this on logout or app shutdown. It resolves after the SDK work of
+   * the relay deliveries, retry requests, and receipt sends in progress
+   * finishes. It does not wait for app hooks, so a hook can await `stop()`.
+   * When a hook returns after `stop()`, the SDK drops the work after the hook
+   * and writes nothing more. The relay delivers the envelope again after the
+   * next start.
    */
   stop(): Promise<void>;
 
@@ -373,6 +378,9 @@ export interface SignalProtocolClient {
    * @param remoteAddress - Remote party's protocol address (userId:deviceId)
    * @param fileBlob - File data to encrypt
    * @param mimeType - Optional MIME type for the file
+   * @throws EncryptionError with `BINARY_BLOB_UNAVAILABLE` when the runtime's
+   * `Blob` cannot hold bytes, as on React Native. Use `streamingEncrypt` from
+   * `@open-e2ee/signal-protocol-sdk/files` there.
    */
   encryptFile(
     remoteAddress: ProtocolAddress,
@@ -386,6 +394,10 @@ export interface SignalProtocolClient {
    * @param remoteAddress - Remote party's protocol address (userId:deviceId)
    * @param encryptedBlob - Encrypted file data
    * @param encryptedKey - Encrypted file key
+   * @throws EncryptionError with `BINARY_BLOB_UNAVAILABLE` when the runtime's
+   * `Blob` cannot hold bytes, as on React Native. The key message stays
+   * unconsumed. Use `streamingDecrypt` from `@open-e2ee/signal-protocol-sdk/files`
+   * there.
    */
   decryptFile(
     remoteAddress: ProtocolAddress,
@@ -1314,7 +1326,8 @@ export interface SenderKeyStore {
   getAllSenderKeysForGroup(groupId: string): Promise<SenderKeyState[]>;
 
   /**
-   * Delete all sender keys for a group (when the caller deletes the group).
+   * Delete all sender keys and skipped sender message keys for a group (when the caller deletes
+   * the group). Returns the number of sender keys deleted.
    */
   deleteAllSenderKeysForGroup(groupId: string): Promise<number>;
 
