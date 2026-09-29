@@ -182,6 +182,9 @@ export class WebSqliteSignalProtocolStore extends SqliteSignalProtocolStore {
  *   Locks.
  * @throws EncryptionError with `OPFS_FILE_BUSY` when the files of the
  *   database stay locked, for example by a tab that is closing. Retry later.
+ * @throws StorageQuotaExceededError with `STORAGE_QUOTA_EXCEEDED` when the
+ *   origin storage quota has no space for the files of the database. The open
+ *   writes no key and no database file. Free space and open again.
  * @throws EncryptionError with `SQLITE_ENGINE_UNAVAILABLE` when the worker or
  *   the Wasm engine does not load, for example under a Content Security
  *   Policy without `'wasm-unsafe-eval'`.

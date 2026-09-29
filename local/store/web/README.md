@@ -66,6 +66,11 @@ and [MDN Content Security Policy guide](https://developer.mozilla.org/docs/Web/H
 
 ## Operational status
 
+In a browser where the origin private file system works, use the
+[web SQLite store](../web-sqlite/README.md). Use this adapter where the origin
+private file system is not available, and `webSqliteStore` fails with
+`OPFS_UNAVAILABLE`.
+
 The adapter covers the core store contract, including atomic security commits,
 SESAME state, sender-key state, and retry records. Every gate on its
 graduation checklist in the parent [storage guide](../README.md) runs

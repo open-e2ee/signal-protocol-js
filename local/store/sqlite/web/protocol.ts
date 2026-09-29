@@ -54,7 +54,8 @@ export type WorkerErrorCode =
   | EncryptionErrorCode.INVALID_STATE
   | EncryptionErrorCode.SQLITE_ENGINE_UNAVAILABLE
   | EncryptionErrorCode.OPFS_UNAVAILABLE
-  | EncryptionErrorCode.OPFS_FILE_BUSY;
+  | EncryptionErrorCode.OPFS_FILE_BUSY
+  | EncryptionErrorCode.STORAGE_QUOTA_EXCEEDED;
 
 /**
  * A failure that crosses the worker boundary. An `sdk` failure becomes an

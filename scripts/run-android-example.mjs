@@ -45,7 +45,9 @@ const gateRoot = join(dirname(fileURLToPath(import.meta.url)), '..', 'hermes-tes
 async function gateLines() {
   const manifest = join(gateRoot, 'flows.mjs');
   if (!existsSync(manifest)) return [exactly('The Hermes gate flows run only in the private repository.')];
-  const { flows } = await import(pathToFileURL(manifest).href);
+  const manifestFlows = (await import(pathToFileURL(manifest).href)).flows;
+  // A flow with `app: false` runs only in the gate, not in the example.
+  const flows = manifestFlows.filter((flow) => flow.app !== false);
   const steps = flows.flatMap((flow) => flow.steps.map((step) => `CASE PASS ${flow.name}: ${step}`));
   if (steps.length === 0) throw new Error('The gate manifest names no flow steps.');
   return [...steps.map(exactly), exactly(`Gate flows: ${steps.length} cases passed in ${flows.length} flows.`)];

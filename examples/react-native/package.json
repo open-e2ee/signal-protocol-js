@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "18.2.5",
-    "@open-e2ee/signal-protocol-sdk": "8.0.0",
+    "@open-e2ee/signal-protocol-sdk": "8.1.0",
     "react": "19.2.3",
     "react-native": "0.87.1",
     "react-native-get-random-values": "2.0.0",

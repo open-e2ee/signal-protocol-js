@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -15,6 +16,9 @@ concurrency:
   group: checks-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# A draft pull request runs only `build`. The other jobs skip on a draft and
+# run when the pull request is marked ready for review. A draft cannot merge,
+# so each change runs every job before it reaches main.
 jobs:
   build:
     name: Build, typecheck, and audit
@@ -23,16 +27,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          # Must match the npm major used by the release-export pipeline, which
-          # regenerates package-lock.json for the transformed manifest; a
-          # different npm major computes a different tree and `npm ci` fails.
-          node-version: 26
-          cache: npm
-
       - name: Install from the committed lockfile
-        run: npm ci --ignore-scripts
+        uses: ./.github/actions/install
 
       - name: Build
         run: npm run build
@@ -46,33 +42,30 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=moderate
 
-  quickstart:
-    name: README quickstart runs as printed
+  examples:
+    name: Documented examples run against the packed package
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 26
-          cache: npm
-
       - name: Install from the committed lockfile
-        run: npm ci --ignore-scripts
+        uses: ./.github/actions/install
 
       - name: Build and pack
+        id: pack
         run: |
           npm run build
           npm pack --pack-destination "$RUNNER_TEMP"
 
-      - name: Extract the local round-trip block from README.md
+      # Each check below runs when an earlier check fails, so one failure
+      # does not hide the result of the others. A failed check fails the job.
+      - name: README quickstart runs as printed
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
         run: |
           awk '/^## Run a local encrypted round trip$/{flag=1} flag && /^```ts$/{code=1; next} code && /^```$/{exit} code{print}' README.md > "$RUNNER_TEMP/quickstart.mjs"
           test -s "$RUNNER_TEMP/quickstart.mjs"
-
-      - name: Run the quickstart against the packed package
-        run: |
           mkdir -p "$RUNNER_TEMP/qs" && cd "$RUNNER_TEMP/qs"
           npm init -y > /dev/null
           npm install --no-audit --no-fund "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz
@@ -81,43 +74,15 @@ jobs:
           timeout 120 node quickstart.mjs | tee output.txt
           grep -q "alice: hello" output.txt
 
-  csp:
-    name: Quickstart runs with code generation disallowed
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 26
-          cache: npm
-
-      - name: Install from the committed lockfile
-        run: npm ci --ignore-scripts
-
-      # Builds, packs, installs into a throwaway consumer, and runs the README
-      # Quick Start under `--disallow-code-generation-from-strings`. That flag
-      # stands in for `script-src 'self'` and for a Chrome MV3 extension: no
-      # dependency may build a codec with `new Function` at runtime. The SDK
-      # failed this until the wire codecs stopped using protobufjs reflection.
-      - name: Run the eval gate
-        run: node ./scripts/smoke-csp.mjs
-
-  import-surface:
-    name: Every export subpath imports without optional peers
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 26
-          cache: npm
-
-      - name: Install from the committed lockfile
-        run: npm ci --ignore-scripts
+      # Packs the built `dist/`, installs it into a throwaway consumer, and
+      # runs the README Quick Start under
+      # `--disallow-code-generation-from-strings`. That flag stands in for
+      # `script-src 'self'` and for a Chrome MV3 extension: no dependency may
+      # build a codec with `new Function` at runtime. The SDK failed this until
+      # the wire codecs stopped using protobufjs reflection.
+      - name: Quickstart runs with code generation disallowed
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
+        run: node ./scripts/smoke-csp.mjs --no-build
 
       # Packs, installs into a consumer outside the repo whose node_modules has
       # every optional peer removed, and imports each entry in the export map.
@@ -128,52 +93,39 @@ jobs:
       # from inside the repo, where the optional peers are installed. It also
       # checks that each store and vault guide has an install command for the
       # optional peers that its entry loads.
-      - name: Probe the import surface
-        run: node ./scripts/smoke-import-surface.mjs
+      - name: Every export subpath imports without optional peers
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
+        run: node ./scripts/smoke-import-surface.mjs --no-build
 
-  doc-snippets:
-    name: Shipped doc snippets run as printed
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 26
-          cache: npm
-
-      - name: Install from the committed lockfile
-        run: npm ci --ignore-scripts
-
-      - name: Build and pack
-        run: |
-          npm run build
-          npm pack --pack-destination "$RUNNER_TEMP"
-
-      - name: Execute every classified doc snippet
+      - name: Shipped doc snippets run as printed
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
         run: >-
           node scripts/run-doc-snippets.mjs
           "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz
 
-  react-native-hosts:
-    name: React Native and Expo hosts install and bundle the package
+  # The hosts checks run as three parallel legs, each from its own packed
+  # package. In one job they ran in series and took about 5 minutes.
+  react-native-hosts-leg:
+    name: React Native and Expo hosts install and bundle the package (${{ matrix.leg }})
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [peer ranges, Expo bundles, bare React Native bundle]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      # The npm download cache serves the example installs in the smoke
+      # scripts below.
+      - name: Install from the committed lockfile
+        uses: ./.github/actions/install
         with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: |
+          npm-cache-dependency-path: |
             package-lock.json
             examples/expo/package-lock.json
             examples/react-native/package-lock.json
-
-      - name: Install from the committed lockfile
-        run: npm ci --ignore-scripts
 
       - name: Build and pack
         run: |
@@ -184,6 +136,7 @@ jobs:
       # line, without --force or --legacy-peer-deps, and requires a refusal
       # below the peer floor.
       - name: Resolve the peer ranges on each supported line
+        if: matrix.leg == 'peer ranges'
         run: >-
           node scripts/smoke-react-native-install.mjs
           "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz
@@ -192,11 +145,13 @@ jobs:
       # checks that the bytecode comes from the Hermes compiler that
       # React Native pins.
       - name: Bundle the Expo example with Hermes on Expo SDK 57
+        if: matrix.leg == 'Expo bundles'
         run: >-
           node scripts/smoke-expo-bundle.mjs
           "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz 57
 
       - name: Bundle the Expo example with Hermes on Expo SDK 55
+        if: matrix.leg == 'Expo bundles'
         run: >-
           node scripts/smoke-expo-bundle.mjs
           "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz 55
@@ -206,6 +161,26 @@ jobs:
       # compiler that React Native pins, and lists the public entries that the
       # bundle holds.
       - name: Bundle the bare React Native example with Hermes
+        if: matrix.leg == 'bare React Native bundle'
         run: >-
           node scripts/smoke-react-native-bundle.mjs
           "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz
+
+  # One verdict for the hosts legs under the name and id the single job had.
+  # It fails unless every leg succeeded, and it skips on a draft by its own
+  # condition: `!cancelled()` alone would run it, and it would fail.
+  react-native-hosts:
+    name: React Native and Expo hosts install and bundle the package
+    needs: react-native-hosts-leg
+    if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every leg
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Leg results: $RESULTS"
+          for result in $RESULTS; do
+            test "$result" = success
+          done

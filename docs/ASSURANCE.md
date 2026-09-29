@@ -14,18 +14,18 @@ Private testing also exists in other open-source projects. [SQLite publishes som
 
 ## Reported engineering results
 
-Engineering CI runs the default automated checks on pull requests and changes to the main branch. Release preparation requires a passing run.
+Engineering CI runs the default automated checks on pull requests that are ready for review and on changes to the main branch. Release preparation requires a passing run.
 
-Most recent full run on 2026-09-28:
+Most recent full run on 2026-09-29:
 
 | | |
 |---|---|
-| Test modules | 466 |
-| Test cases | 8,563 |
-| Passed | 8,559 |
+| Test modules | 470 |
+| Test cases | 8,602 |
+| Passed | 8,598 |
 | Skipped | 4 |
 | Failed | 0 |
-| Wall time | 434 s |
+| Wall time | 149 s |
 
 The total counts test cases. One test case can contain several assertions. Separate commands run the longer performance and endurance checks.
 
@@ -43,13 +43,13 @@ Release tooling generates this table from a completed run. It refuses results fr
 - **React Native hosts:** add the packed package to React Native and Expo projects without an override of peer conflicts. The projects cover React Native 0.83 through 0.87 and the Expo SDK 55 through 57 lines. Build the Expo example's Hermes bundle on Expo SDK 55 and 57.
 - **Errors:** check construction sites for exported error classes and codes. Reject unresolved code forwarding.
 
-The browser storage job also runs 2,000 open, write, read, and close cycles. It checks for upward memory and latency drift.
+The browser storage job also runs 2,000 open, write, read, and close cycles of the IndexedDB store, and a soak of the web SQLite store. Each checks for upward memory and latency drift.
 
 A storage contract check does not prove a full encrypted exchange. The [browser example](../examples/browser/README.md) and [Expo example](../examples/expo/README.md) exercise message encryption, delivery, and decryption.
 
 ## SQLite store checks
 
-Four package entries keep device-local state in a SQLite database: `./local/store/node`, `./local/store/expo`, `./local/store/react-native`, and `./local/store/web-sqlite`. A Tauri app uses `./local/store/web-sqlite`. Each row gives one runtime claim and the check that proves it. Rows that do not name public CI run in the project's engineering CI. A check runs on each pull request and each change to the main branch, unless its row says otherwise.
+Four package entries keep device-local state in a SQLite database: `./local/store/node`, `./local/store/expo`, `./local/store/react-native`, and `./local/store/web-sqlite`. A Tauri app uses `./local/store/web-sqlite`. Each row gives one runtime claim and the check that proves it. Rows that do not name public CI run in the project's engineering CI. A check runs on each change to the main branch and on each pull request that is ready for review, unless its row says otherwise. On a pull request, a job on macOS or Windows runs only when a maintainer requests it. Without that request, a pull request runs the Node store job only on Linux with Node 22, and the default automated checks run its tests on Linux with Node 26.
 
 ### Node and the Electron main process: `./local/store/node`
 
@@ -61,7 +61,7 @@ Four package entries keep device-local state in a SQLite database: `./local/stor
 | The store writes its key to the vault before it creates the file. A file without a key fails as a lost key and does not change. | Node store job: the same six runners | Real files and a vault. |
 | One process at a time owns a store. After the owner process is killed, the next open succeeds and reads the committed data. | Node store job: the same six runners | A child process holds the store. The parent process tries to open it, then kills the child and opens it. |
 | Every part of the store interface survives a close and a new open of the directory. | Node store job: the same six runners | Real files on the prebuilt binding. |
-| In the Electron main process, the store passes the shared storage contract with its key in the real `safeStorage`. The file has no SQLite header, and the vault file keeps only a ciphertext of the key. | Electron store job: Linux, macOS, and Windows | Electron from its npm package, with the GNOME keyring through libsecret on Linux, the Keychain on macOS, and DPAPI on Windows. A pull request runs this job only when it changes the store, the vault, the storage contract, the job, or a dependency. |
+| In the Electron main process, the store passes the shared storage contract with its key in the real `safeStorage`. The file has no SQLite header, and the vault file keeps only a ciphertext of the key. | Electron store job: Linux, macOS, and Windows | Electron from its npm package, with the GNOME keyring through libsecret on Linux, the Keychain on macOS, and DPAPI on Windows. A push to the main branch or a pull request runs this job only when it changes the store, the vault, the storage contract, the job, or a dependency. |
 | On Linux, the vault refuses the `basic_text` backend of `safeStorage`. The store does not open, and no key reaches the disk. | Electron store job: Linux | Electron with `--password-store=basic`. |
 | On Linux, the vault refuses the fixed fallback key that `safeStorage` uses when no secret service answers. The store does not open, and no key reaches the disk. | Electron store job: Linux | Electron with `--password-store=gnome-libsecret` and no unlocked keyring on the D-Bus session. |
 
@@ -98,10 +98,11 @@ The Android emulator job is the only CI job that runs this store on Hermes with 
 | Two tabs share one file, and a tab hands it over only between transactions. A tab that dies in a transaction leaves the file readable without the writes of that transaction. | Browser storage job: Chromium and Firefox on Linux. WebKit store job: WebKit on macOS | Two real tabs of one origin. |
 | Two tabs that open a new store at the same time write one key. A reset fails with `INVALID_STATE` while another tab has the store open. | Browser storage job: Chromium and Firefox on Linux. WebKit store job: WebKit on macOS | Two real tabs of one origin. |
 | Without `'wasm-unsafe-eval'`, the open fails with `SQLITE_ENGINE_UNAVAILABLE` and writes no key. | Browser storage job: Chromium and Firefox on Linux. WebKit store job: WebKit on macOS | A page under a policy without `'wasm-unsafe-eval'`. |
-| When the origin quota is full, a write and an atomic commit reject with `STORAGE_QUOTA_EXCEEDED` and leave no partial state. The store stays open, and after the clamp is removed, the same commit succeeds. | Browser storage job: Chromium on Linux | A DevTools protocol call clamps the origin quota, and the store fills its real file in OPFS. Firefox and WebKit have no such call, so they do not run this check. |
+| When the origin quota is full, a write and an atomic commit reject with `STORAGE_QUOTA_EXCEEDED` and leave no partial state. The store stays open, and after the clamp is removed, the same commit succeeds. A first open under a full quota rejects with `STORAGE_QUOTA_EXCEEDED`, writes no key and no database file, and succeeds after the clamp is removed. A store with two pool files opens, reads, and writes under a quota that has no room for a new pool. | Browser storage job: Chromium on Linux | A DevTools protocol call clamps the origin quota, and the store fills its real file in OPFS. Firefox and WebKit have no such call, so they do not run this check. |
+| Over a long run, the store holds latency, memory, and file size flat. A closed store leaves no worker and no lock of the store. Two tabs that write in turn each read the last write of the other. | Browser storage job: Chromium on Linux | 150 open, write, read, and close cycles, one session of 2,000 churn operations over 250 sessions, and 100 writes that two tabs make in turn. The check compares the medians of the early and late thirds of the run. It reads the page heap, and the heap and Wasm memory of the store's worker, through the DevTools protocol. Firefox and WebKit have no such protocol in the test runner, and no CI job runs this check in them. |
 | A worker without OPFS synchronous access handles fails with `OPFS_UNAVAILABLE` before it loads the engine. | Browser storage job: Chromium, Firefox, and WebKit on Linux | WebKit on Linux (WebKitGTK) has no OPFS synchronous access handles, so there WebKit runs only these checks and the checks that need no OPFS. |
 
-The WebKit store job runs Playwright's WebKit on macOS, where WebKit has OPFS synchronous access handles. It runs only on a change to the web SQLite store, the SQLite core, the storage contract, the key vault, the job, or a dependency. In the browser storage job for Chromium and Firefox and in the WebKit store job, a check that skips for want of OPFS fails.
+The WebKit store job runs Playwright's WebKit on macOS, where WebKit has OPFS synchronous access handles. It runs only on a change to the web SQLite store, the SQLite core, the storage contract, the key vault, the job, or a dependency. On a pull request, it runs only when a maintainer requests it. In the browser storage job for Chromium and Firefox and in the WebKit store job, a check that skips for want of OPFS fails.
 
 The code-generation check in public CI runs the README example with the memory store. It does not load a SQLite store.
 
@@ -139,7 +140,7 @@ This statement describes our process. It is not an independent security assessme
 
 ## Checks you can run
 
-[Public CI](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml) runs on pushes and pull requests. Its logs show these checks:
+[Public CI](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml) runs on pushes and pull requests. On a draft pull request, it runs only the first two checks. Its logs show these checks:
 
 - Install from the committed lockfile, compile the SDK, and check its types.
 - Check dependencies for known advisories at moderate severity or higher.

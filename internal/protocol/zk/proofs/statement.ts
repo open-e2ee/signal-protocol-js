@@ -23,6 +23,7 @@ import {
   scalarToBytes,
   SCALAR_ORDER,
 } from './sho';
+import { encodePoint, multiscalarMultiply } from './point-multiplication';
 import { constantTimeEqual } from '../../../crypto/utils';
 export {};
 const Point = RistrettoPoint;
@@ -134,7 +135,7 @@ export class Statement {
     const sho = new ShoHmacSha256(PROTOCOL_LABEL);
     sho.absorb(this.toBytes()); // D
     for (const point of allPoints) {
-      sho.absorb(point.toBytes()); // A
+      sho.absorb(encodePoint(point)); // A
     }
     sho.ratchet();
 
@@ -205,7 +206,7 @@ export class Statement {
     const sho = new ShoHmacSha256(PROTOCOL_LABEL);
     sho.absorb(this.toBytes()); // D
     for (const point of allPoints) {
-      sho.absorb(point.toBytes()); // A
+      sho.absorb(encodePoint(point)); // A
     }
     sho.ratchet();
 
@@ -320,19 +321,16 @@ export class Statement {
     challenge: bigint | null
   ): RistrettoPoint[] {
     return this.equations.map((eq) => {
-      // Compute sum of scalar * point for each term in RHS
-      let result = Point.ZERO;
-      for (const term of eq.rhs) {
-        result = result.add(allPoints[term.point].multiply(g1[term.scalar]));
-      }
-
-      // Subtract challenge * lhs_point if verifying
+      // One constant-time multiscalar multiplication calculates the sum of
+      // scalar * point for each term in RHS, minus challenge * lhs_point if
+      // verifying.
+      const scalars = eq.rhs.map((term) => g1[term.scalar]);
+      const points = eq.rhs.map((term) => allPoints[term.point]);
       if (challenge !== null) {
-        const negChallenge = Fn.create(SCALAR_ORDER - challenge);
-        result = result.add(allPoints[eq.lhs].multiply(negChallenge));
+        scalars.push(Fn.create(SCALAR_ORDER - challenge));
+        points.push(allPoints[eq.lhs]);
       }
-
-      return result;
+      return multiscalarMultiply(scalars, points);
     });
   }
 }

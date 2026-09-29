@@ -11,6 +11,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request supersedes the run in flight. A push to main
+# never cancels an earlier main run, so every main commit gets a verdict.
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   analyze:
     name: Analyze TypeScript

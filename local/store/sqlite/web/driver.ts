@@ -17,7 +17,11 @@
  */
 
 import { resolveUrl } from '../../../../internal/platform/url';
-import { EncryptionError, EncryptionErrorCode } from '../../../../types/errors';
+import {
+  EncryptionError,
+  EncryptionErrorCode,
+  StorageQuotaExceededError,
+} from '../../../../types/errors';
 import type {
   SqliteConnection,
   SqliteDriver,
@@ -88,6 +92,11 @@ function fromWireError(error: WireError): Error {
         return new EncryptionError(error.message, EncryptionErrorCode.OPFS_UNAVAILABLE, error.context);
       case EncryptionErrorCode.OPFS_FILE_BUSY:
         return new EncryptionError(error.message, EncryptionErrorCode.OPFS_FILE_BUSY, error.context);
+      case EncryptionErrorCode.STORAGE_QUOTA_EXCEEDED:
+        return new StorageQuotaExceededError(
+          error.context?.operation ?? 'attachPool',
+          new Error(error.message)
+        );
     }
   }
   return new Error(error.message);

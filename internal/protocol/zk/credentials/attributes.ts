@@ -13,6 +13,7 @@
  */
 
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
+import { multiscalarMultiply } from '../proofs/point-multiplication';
 import type { ShoSha256 } from '../proofs/sho-sha256';
 export {};
 const Point = RistrettoPoint;
@@ -136,7 +137,7 @@ export class KeyPair {
     this.a2 = a2;
 
     const [G_a1, G_a2] = domain.G_a();
-    const A = G_a1.multiply(a1).add(G_a2.multiply(a2));
+    const A = multiscalarMultiply([a1, a2], [G_a1, G_a2]);
     this.publicKey = new PublicKey(A, domain);
   }
 

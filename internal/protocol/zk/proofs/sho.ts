@@ -21,6 +21,7 @@ const HASH_LEN = 32;
 export interface RistrettoPoint {
   add(other: RistrettoPoint): RistrettoPoint;
   subtract(other: RistrettoPoint): RistrettoPoint;
+  double(): RistrettoPoint;
   multiply(scalar: bigint): RistrettoPoint;
   negate(): RistrettoPoint;
   equals(other: RistrettoPoint): boolean;

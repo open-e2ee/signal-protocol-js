@@ -15,6 +15,7 @@
 
 import { sha256 } from '@noble/hashes/sha2.js';
 import { ristretto255 } from '@noble/curves/ed25519.js';
+import { pow2 } from '@noble/curves/abstract/modular.js';
 import type { RistrettoPoint, RistrettoPointConstructor } from '../proofs/sho';
 export {};
 const Point = ristretto255.Point as unknown as RistrettoPointConstructor;
@@ -124,12 +125,24 @@ const MIDOUBLE_INVSQRT_A_MINUS_D = fmul(fneg(fmul(_2n, SQRT_M1)), INVSQRT_A_MINU
 // ---------------------------------------------------------------------------
 
 /**
- * Compute x^((p-5)/8) mod p.
- * Uses the same optimized chain as noble-curves' ed25519_pow_2_252_3.
+ * Compute x^((p-5)/8) mod p, where (p-5)/8 = 2^252 - 3.
+ *
+ * Uses the addition chain of noble-curves' `ed25519_pow_2_252_3`: 252
+ * squarings and 11 multiplications. A generic exponentiation needs about
+ * twice as many operations.
  */
-function powP58(x: bigint): bigint {
-  // (p-5)/8 = (2^255 - 24) / 8 = 2^252 - 3
-  return Fp.pow(x, (P - 5n) / 8n);
+export function powP58(x: bigint): bigint {
+  const b2 = fmul(fsqr(x), x); // x^(2^2 - 1)
+  const b4 = fmul(pow2(b2, 2n, P), b2); // x^(2^4 - 1)
+  const b5 = fmul(pow2(b4, 1n, P), x); // x^(2^5 - 1)
+  const b10 = fmul(pow2(b5, 5n, P), b5);
+  const b20 = fmul(pow2(b10, 10n, P), b10);
+  const b40 = fmul(pow2(b20, 20n, P), b20);
+  const b80 = fmul(pow2(b40, 40n, P), b40);
+  const b160 = fmul(pow2(b80, 80n, P), b80);
+  const b240 = fmul(pow2(b160, 80n, P), b80);
+  const b250 = fmul(pow2(b240, 10n, P), b10); // x^(2^250 - 1)
+  return fmul(pow2(b250, 2n, P), x); // x^(2^252 - 4 + 1)
 }
 
 /**

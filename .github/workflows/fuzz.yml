@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +17,11 @@ concurrency:
 jobs:
   fuzzing:
     name: Fuzz ${{ matrix.target }}
-    if: github.repository == 'open-e2ee/signal-protocol-js'
+    # A draft pull request skips the job. It runs when the pull request is
+    # marked ready for review.
+    if: >-
+      github.repository == 'open-e2ee/signal-protocol-js'
+      && github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:

@@ -162,11 +162,13 @@ Expo storage or the Convex R2 object store.
   bare React Native (the SDK owns the SQLCipher database on op-sqlite, its key
   in the react-native-keychain vault, and its migrations;
   `resetReactNativeStore()` deletes the database and opens an empty store)
-- `IndexedDbSignalProtocolStore` / `indexedDbStore()` for browsers
 - `WebSqliteSignalProtocolStore` / `await webSqliteStore()` for browsers with
   the origin private file system (the SDK owns the SQLite database in a Wasm
   worker, its key, and its migrations; the page's Content Security Policy
   needs `'wasm-unsafe-eval'`)
+- `IndexedDbSignalProtocolStore` / `indexedDbStore()` for browsers without the
+  origin private file system, where `webSqliteStore()` fails with
+  `OPFS_UNAVAILABLE`
 - `KeyValueSignalProtocolStore` / `keyValueStore()` for an application that
   brings its own key-value engine (provide your own key-value backend and
   verify it with the exported

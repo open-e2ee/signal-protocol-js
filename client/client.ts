@@ -989,7 +989,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
           'DefaultSignalProtocolClient.create() requires storage. ' +
             'Expo: import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo"; ' +
             'React Native: import { reactNativeStore } from "@open-e2ee/signal-protocol-sdk/local/store/react-native"; ' +
-            'Web: import { indexedDbStore } from "@open-e2ee/signal-protocol-sdk/local/store/web"; ' +
+            'Web: import { webSqliteStore } from "@open-e2ee/signal-protocol-sdk/local/store/web-sqlite", ' +
+            'or where OPFS is unavailable, import { indexedDbStore } from "@open-e2ee/signal-protocol-sdk/local/store/web"; ' +
             'Node: import { nodeStore } from "@open-e2ee/signal-protocol-sdk/local/store/node";'
         );
       }
