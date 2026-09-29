@@ -9,6 +9,7 @@
  */
 
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
+import { multiscalarMultiply, withGeneratorTable } from '../proofs/point-multiplication';
 import { profileKeyStructNew } from './profile-key-struct';
 import { concatBytes } from '../../../crypto/utils';
 export {};
@@ -44,9 +45,9 @@ function getCommitmentSystemParams(): {
   G_j3: RistrettoPoint;
 } {
   if (_systemParams) return _systemParams;
-  const G_j1 = Point.fromBytes(SYSTEM_HARDCODED.slice(0, 32));
-  const G_j2 = Point.fromBytes(SYSTEM_HARDCODED.slice(32, 64));
-  const G_j3 = Point.fromBytes(SYSTEM_HARDCODED.slice(64, 96));
+  const G_j1 = withGeneratorTable(Point.fromBytes(SYSTEM_HARDCODED.slice(0, 32)));
+  const G_j2 = withGeneratorTable(Point.fromBytes(SYSTEM_HARDCODED.slice(32, 64)));
+  const G_j3 = withGeneratorTable(Point.fromBytes(SYSTEM_HARDCODED.slice(64, 96)));
   _systemParams = { G_j1, G_j2, G_j3 };
   return _systemParams;
 }
@@ -116,11 +117,11 @@ export function commitmentWithSecretNonceNew(
   const j3 = calcJ3(profileKeyBytes, uidBytes);
 
   // J1 = j3 * G_j1 + M3
-  const J1 = G_j1.multiply(j3).add(pks.M3);
+  const J1 = multiscalarMultiply([j3], [G_j1]).add(pks.M3);
   // J2 = j3 * G_j2 + M4
-  const J2 = G_j2.multiply(j3).add(pks.M4);
+  const J2 = multiscalarMultiply([j3], [G_j2]).add(pks.M4);
   // J3 = j3 * G_j3
-  const J3 = G_j3.multiply(j3);
+  const J3 = multiscalarMultiply([j3], [G_j3]);
 
   return { J1, J2, J3, j3 };
 }

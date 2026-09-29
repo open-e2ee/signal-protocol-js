@@ -24,10 +24,13 @@
  * without OPFS reports `OPFS_UNAVAILABLE` and never downloads the Wasm, also
  * when its CSP refuses the engine.
  *
- * A failure to attach the pool never changes the files. The vendored engine
- * carries patches that keep the pool directory when its install fails and
- * that release every access handle when an attach fails; see
- * `./sqlite3mc/README.md`.
+ * A failure to attach the pool never changes the database file. The vendored
+ * engine carries patches that keep the pool directory when its install fails
+ * and that release every access handle when an attach fails; see
+ * `./sqlite3mc/README.md`. A full origin quota can stop the install of a new
+ * pool before it has all its slot files. The attach then fails with
+ * `STORAGE_QUOTA_EXCEEDED`, and the next attach adds slot files up to the
+ * two that an open needs.
  *
  * The logical connection that the driver returns stays pinned to its file
  * across these physical reopens.
@@ -64,6 +67,21 @@ const KEY_LENGTH = 32;
 const RAW_KEY_PREFIX = new Uint8Array([0x72, 0x61, 0x77, 0x3a]);
 /** The pool keeps its slot files in this subdirectory of its directory. */
 const POOL_SLOT_DIRECTORY = '.opaque';
+/**
+ * The slot files that an open needs: the database file and its rollback
+ * journal. The core keeps the default rollback journal and attaches no other
+ * database, so SQLite opens no super-journal. The engine is built with
+ * `SQLITE_TEMP_STORE=2` and the core never sets `PRAGMA temp_store`, so
+ * temporary files and statement journals stay in memory.
+ *
+ * The engine adds its six slot files only to a pool that has none, so a pool
+ * that a full quota stopped at one slot file has no slot for the journal.
+ * Each attach adds slot files up to this minimum and no further: in Chromium,
+ * each slot file that the pool writes holds about 1 MiB of quota while the
+ * pool is attached, so more slot files under a full quota leave no room for
+ * the writes of the database.
+ */
+const MIN_POOL_CAPACITY = 2;
 /**
  * After a tab dies, the browser can release its lock before its access
  * handles. The next holder waits this long for the handles.
@@ -135,6 +153,27 @@ function opfsUnavailable(cause: string): EncryptionError {
   return new EncryptionError(
     `This browser context cannot keep a SQLite database in the origin private file system: ${cause}`,
     EncryptionErrorCode.OPFS_UNAVAILABLE,
+    { operation: 'attachPool' }
+  );
+}
+
+/**
+ * A write that exhausts the origin's storage quota fails with
+ * QuotaExceededError. Checked by name: engines differ on the constructor.
+ */
+function isQuotaExceededError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'QuotaExceededError'
+  );
+}
+
+function quotaExceeded(cause: string): EncryptionError {
+  return new EncryptionError(
+    `The origin storage quota is full, so the SQLite pool could not prepare its files. ` +
+      `No database file changed. Free space and open again. Cause: ${cause}`,
+    EncryptionErrorCode.STORAGE_QUOTA_EXCEEDED,
     { operation: 'attachPool' }
   );
 }
@@ -351,30 +390,29 @@ async function waitForFreeHandles(slot: Slot): Promise<void> {
 }
 
 /**
- * Attaches the pool of the slot. A failed install or unpause leaves the pool
- * directory as it was and holds no access handle, so the next call tries
- * again.
+ * Attaches the pool of the slot and adds the slot files that an open needs. A
+ * failed attach changes no database file and holds no access handle, so the
+ * next call tries again. A full origin quota fails it with
+ * `STORAGE_QUOTA_EXCEEDED`, and any other failure with `OPFS_FILE_BUSY`.
  */
 async function attachPool(slot: Slot, sqlite3: Sqlite3Static): Promise<void> {
   if (slot.pool !== null && !slot.pool.isPaused()) return;
   await waitForFreeHandles(slot);
-  if (slot.pool === null) {
-    try {
+  try {
+    if (slot.pool === null) {
       slot.pool = await sqlite3.installOpfsSAHPoolVfs({
         name: slot.poolName,
         directory: slot.poolDirectory,
         verbosity: 1,
         forceReinitIfPreviouslyFailed: true,
       });
-    } catch (error) {
-      throw fileBusy(detail(error));
-    }
-  } else {
-    try {
+    } else {
       await slot.pool.unpauseVfs();
-    } catch (error) {
-      throw fileBusy(detail(error));
     }
+    // A failure here leaves the pool attached, and the caller detaches it.
+    await slot.pool.reserveMinimumCapacity(MIN_POOL_CAPACITY);
+  } catch (error) {
+    throw isQuotaExceededError(error) ? quotaExceeded(detail(error)) : fileBusy(detail(error));
   }
   if (!encryptingVfses.has(slot.poolName)) {
     const rc = sqlite3.capi.sqlite3mc_vfs_create(slot.poolName, 0);
@@ -689,6 +727,7 @@ function toWireError(error: unknown): WireError {
       case EncryptionErrorCode.SQLITE_ENGINE_UNAVAILABLE:
       case EncryptionErrorCode.OPFS_UNAVAILABLE:
       case EncryptionErrorCode.OPFS_FILE_BUSY:
+      case EncryptionErrorCode.STORAGE_QUOTA_EXCEEDED:
         return {
           kind: 'sdk',
           code: error.code,

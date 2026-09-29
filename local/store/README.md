@@ -24,28 +24,30 @@ without coupling the client to a database or platform.
 
 ### Web
 
-- `IndexedDbSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/web`
-
-Use this for browser applications. It implements the full core store
-contract, including SESAME records, sender-key state, retry message records,
-and recovery helpers. It graduated from experimental by completing every
-gate on the checklist below. Deployment still requires the origin-security
-review described in the [web adapter guide](./web/README.md).
-
 - `webSqliteStore` and `WebSqliteSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/web-sqlite`
 - `resetWebSqliteStore` and `createPreKeyMaintenanceStore` from the same entry
 
-This store keeps the same state in an SDK-owned SQLite database in the origin
-private file system. SQLite3 Multiple Ciphers encrypts the whole file in a Wasm
-worker, and the database key lives in a secret vault, by default IndexedDB in
-the same origin. The page's Content Security Policy must allow
-`'wasm-unsafe-eval'`. A context without the origin private file system gets
-`OPFS_UNAVAILABLE`. The [web SQLite store guide](./web-sqlite/README.md) covers
-the policy, the tabs, and the security boundary. This store is experimental:
-one item on its graduation checklist below is open.
+Use this for browser applications where the origin private file system
+works. It keeps the full core store state in an SDK-owned SQLite database in
+the origin private file system. SQLite3 Multiple Ciphers encrypts the whole
+file in a Wasm worker, and the database key lives in a secret vault, by
+default IndexedDB in the same origin. The page's Content Security Policy must
+allow `'wasm-unsafe-eval'`. A context without the origin private file system
+gets `OPFS_UNAVAILABLE`. The [web SQLite store guide](./web-sqlite/README.md)
+covers the policy, the tabs, and the security boundary. It graduated from
+experimental by completing every gate on the checklist below.
 
 A Tauri 2 app uses this store in its webview. See the
 [Tauri section](./web-sqlite/README.md#tauri).
+
+- `IndexedDbSignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/web`
+
+Use this where the origin private file system is not available, and
+`webSqliteStore` fails with `OPFS_UNAVAILABLE`. It implements the full core
+store contract, including SESAME records, sender-key state, retry message
+records, and recovery helpers. It graduated from experimental by completing
+every gate on the checklist below. Deployment still requires the
+origin-security review described in the [web adapter guide](./web/README.md).
 
 ### Bare React Native
 
@@ -119,7 +121,7 @@ environment an adapter must honor its promises in, not the subject of a test.
       source repository, and `npm run soak:web-store` runs longer sessions
       on demand.
 
-`WebSqliteSignalProtocolStore` (experimental, with one item open):
+`WebSqliteSignalProtocolStore` (graduated, and the gates keep running):
 
 - [x] Storage contract suites pass in real Chromium, Firefox, and WebKit.
       The suites are the same modules the jest gate runs. They run against
@@ -154,9 +156,27 @@ environment an adapter must honor its promises in, not the subject of a test.
       no row of the write, no pinned identity, and the one-time prekey stays.
       The store stays open. After the clamp is removed, the same commit
       succeeds, new writes land, and `PRAGMA integrity_check` returns `ok`.
+      A first open under a 1 MB and a 4 MB quota rejects with the same typed
+      error, and it writes no database key and no database file. After the
+      clamp is removed, the open succeeds. A store with two pool files opens,
+      reads, and writes under a 3 MB quota that has no room for a new pool.
       Runs in Chromium on the schedule above. The quota clamp is a DevTools
       protocol call, so Firefox and WebKit do not run it.
-- [ ] Soak evidence. No soak gate runs against this store.
+- [x] Soak evidence: a long run holds latency, memory, and file size flat.
+      A soak gate drives the store in real Chromium tabs in three phases:
+      150 open/write/read/close cycles in one tab, one session of 2,000
+      churn operations over 250 sessions, and 100 writes that two tabs make
+      in turn, so that the file moves to the other tab at each write. Each
+      write is read back, and `PRAGMA integrity_check` returns `ok` after
+      each phase and after each open. A closed store leaves no worker in the
+      tab and no lock of the store in the origin. The gate fails if the
+      late-run median of latency, of the page heap, or of the worker heap
+      grows beyond a small tolerance over the early-run median, if the Wasm
+      memory of the worker grows after the first third of the churn, or if
+      the database file grows by more than 10% and 64 KiB over the churn.
+      Runs in Chromium on each change to the main branch and on each pull
+      request that is ready for review. `npm run soak:web-sqlite` also runs
+      it in Firefox and WebKit on demand, without the memory checks.
 
 `KeyValueSignalProtocolStore` (graduated, and the gates keep running):
 
@@ -305,9 +325,9 @@ The host application must use idempotent writes keyed by message ID.
 - `@open-e2ee/signal-protocol-sdk/local/store/react-native` is the same SQLite
   store for bare React Native, on op-sqlite and the react-native-keychain vault.
 - An adapter carries the experimental label until every item on its
-  graduation checklist is a named, continuously running CI gate. The IndexedDB
-  web adapter and the key-value adapter completed theirs. The web SQLite store
-  has one item open.
+  graduation checklist is a named, continuously running CI gate. The web
+  SQLite store, the IndexedDB web adapter, and the key-value adapter completed
+  theirs.
 - Storage adapters should expose the real package contract instead of app-specific wrappers.
 
 ## Related Docs

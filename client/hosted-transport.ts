@@ -876,6 +876,9 @@ export class HostedRelayHttpTransport
     ) {
       throw new Error("Signal Protocol Relay returned an invalid device directory");
     }
+    for (const key of this.destinationGenerations.keys()) {
+      if (key.startsWith(`${userId}\0`)) this.destinationGenerations.delete(key);
+    }
     return value.devices.map((candidate) => {
       if (!record(candidate))
         throw new Error("Signal Protocol Relay returned an invalid device directory");
@@ -906,19 +909,70 @@ export class HostedRelayHttpTransport
     });
   }
 
+  /**
+   * A prekey read addressed by the destination mailbox generation, because
+   * the Relay names each device's prekey object by that generation. The own
+   * device reads the session. Another device reads the directory cache and
+   * fills it on a miss. A recovery moves a device to a new generation, so a
+   * cached generation that the Relay no longer serves is read again from the
+   * directory once.
+   */
+  private async prekeyPost(
+    path: "/prekeys/consume" | "/prekeys/status",
+    userId: string,
+    deviceId: number,
+    identityType: IdentityType,
+  ): Promise<unknown> {
+    const own =
+      userId === this.session.canonicalAccountId &&
+      deviceId === this.session.deviceId;
+    const key = `${userId}\0${String(deviceId)}`;
+    const cached = !own && this.destinationGenerations.has(key);
+    const post = async (): Promise<unknown> => {
+      if (!own && !this.destinationGenerations.has(key))
+        await this.directory(userId);
+      const generation = own
+        ? this.session.mailboxGeneration
+        : this.destinationGenerations.get(key);
+      if (generation === undefined) {
+        throw new HostedRelayHttpError(
+          404,
+          "NOT_FOUND",
+          "Signal Protocol Relay destination device does not exist",
+        );
+      }
+      return this.authenticatedPost(path, {
+        accountAddress: userId,
+        deviceId,
+        identityType,
+        mailboxGeneration: generation,
+        publishableKey: this.connection.publishableKey,
+      });
+    };
+    try {
+      return await post();
+    } catch (error) {
+      if (
+        !cached ||
+        !(error instanceof HostedRelayHttpError) ||
+        error.code !== "NOT_FOUND"
+      ) {
+        throw error;
+      }
+      this.destinationGenerations.delete(key);
+      return post();
+    }
+  }
+
   private async prekeyStatus(
     userId: string,
     deviceId: number,
     identityType: IdentityType = "aci",
   ): Promise<HostedPreKeyStatus> {
     if (identityType !== "aci") unsupported("PNI prekey authority");
-    const value = await this.authenticatedPost("/prekeys/status", {
-      accountAddress: userId,
-      deviceId,
-      identityType,
-      publishableKey: this.connection.publishableKey,
-    });
-    return parseHostedPreKeyStatus(value);
+    return parseHostedPreKeyStatus(
+      await this.prekeyPost("/prekeys/status", userId, deviceId, identityType),
+    );
   }
 
   private async currentIdentity(): Promise<{
@@ -1605,12 +1659,12 @@ export class HostedRelayHttpTransport
     if (identityType !== "aci") unsupported("PNI prekey authority");
     let value: unknown;
     try {
-      value = await this.authenticatedPost("/prekeys/consume", {
-        accountAddress: userId,
+      value = await this.prekeyPost(
+        "/prekeys/consume",
+        userId,
         deviceId,
         identityType,
-        publishableKey: this.connection.publishableKey,
-      });
+      );
     } catch (error) {
       if (error instanceof HostedRelayHttpError && error.code === "NOT_FOUND")
         return null;

@@ -84,6 +84,14 @@ transaction. Each tab reads the writes of the other tabs.
   the files, for example a tab that is closing. The file is unchanged. Retry
   the open later.
 
+## Full storage
+
+When the origin storage quota is full, the open rejects with
+`StorageQuotaExceededError` (`STORAGE_QUOTA_EXCEEDED`). An open that fails
+this way on a new store writes no key and no database file. A write on an open
+store rejects with the same error. SQLite rolls the write back, and the store
+stays open. Free space, then open again or retry the write.
+
 ## Content Security Policy
 
 The engine compiles WebAssembly in its worker. A Content Security Policy

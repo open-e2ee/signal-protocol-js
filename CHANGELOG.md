@@ -1,5 +1,40 @@
 # Changelog
 
+## 8.1.0
+
+- **Changed: the web SQLite store is no longer experimental.** Its last
+  graduation gate, a soak, now runs in Chromium on each change to the main
+  branch and on each pull request that is ready for review. It drives open,
+  write, read, and close cycles, one long session of churn, and writes that
+  two tabs make in turn, and it fails when latency, memory, or the file size
+  grows over the run. The guides now name `webSqliteStore` first for
+  browsers where the origin private file system works, and `indexedDbStore`
+  where it is not available. The error of `DefaultSignalProtocolClient.create()`
+  without storage names both.
+- **Fixed: an open of the web SQLite store under a full origin quota rejects
+  with `StorageQuotaExceededError`.** The open rejected with
+  `OPFS_FILE_BUSY`. After a failed first open, the store could also fail every
+  later open with `SQLITE_CANTOPEN`. Now the open rejects with
+  `StorageQuotaExceededError` (`STORAGE_QUOTA_EXCEEDED`), a new store writes
+  no key and no database file, and the open succeeds after space frees.
+- **Changed: hosted prekey reads send the destination mailbox generation.**
+  The hosted Relay client sends the `mailboxGeneration` field on each prekey
+  bundle fetch and each prekey status read, which includes an identity key
+  read. The Relay keeps the prekeys of a device for each mailbox generation,
+  so a read after a recovery gets the prekeys of the recovered device. The own
+  device sends the generation of its session. For another device, the client
+  reads the device directory first. When the Relay does not find the prekeys
+  at a cached generation, the client reads the directory one more time and
+  tries again. A directory read now also removes the cached generation of each
+  device that the directory no longer lists.
+- **Changed: group zero-knowledge proofs and credential presentations are
+  about twice as fast.** The constant generators of the group credential and
+  encryption systems keep a table of their multiples and their encoding. A
+  proof, a presentation, and a presentation verification calculate each sum
+  of products with one constant-time multiscalar multiplication, which uses
+  these tables. The Lizard decode uses an addition chain for its field
+  exponentiation. The proofs, the credentials, and their bytes do not change.
+
 ## 8.0.0
 
 8.0.0 is a major release. The entries below give the details. To upgrade from

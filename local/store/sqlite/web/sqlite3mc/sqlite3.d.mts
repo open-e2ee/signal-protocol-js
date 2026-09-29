@@ -34,6 +34,7 @@ export interface OpfsSahPoolUtil {
   pauseVfs(): OpfsSahPoolUtil;
   unpauseVfs(): Promise<OpfsSahPoolUtil>;
   isPaused(): boolean;
+  reserveMinimumCapacity(min: number): Promise<number>;
 }
 
 export interface OpfsSahPoolOptions {

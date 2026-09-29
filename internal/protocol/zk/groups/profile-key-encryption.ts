@@ -15,6 +15,7 @@
  */
 
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
+import { withGeneratorTable } from '../proofs/point-multiplication';
 import { type Domain, KeyPair, Ciphertext } from '../credentials/attributes';
 import type { ShoSha256 } from '../proofs/sho-sha256';
 import { decode253Bits } from './lizard';
@@ -42,8 +43,8 @@ let _systemParams: { G_b1: RistrettoPoint; G_b2: RistrettoPoint } | undefined;
 
 function getSystemParams(): { G_b1: RistrettoPoint; G_b2: RistrettoPoint } {
   if (_systemParams) return _systemParams;
-  const G_b1 = Point.fromBytes(SYSTEM_HARDCODED.slice(0, 32));
-  const G_b2 = Point.fromBytes(SYSTEM_HARDCODED.slice(32, 64));
+  const G_b1 = withGeneratorTable(Point.fromBytes(SYSTEM_HARDCODED.slice(0, 32)));
+  const G_b2 = withGeneratorTable(Point.fromBytes(SYSTEM_HARDCODED.slice(32, 64)));
   _systemParams = { G_b1, G_b2 };
   return _systemParams;
 }

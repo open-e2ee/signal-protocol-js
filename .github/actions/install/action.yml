@@ -1,0 +1,81 @@
+name: Install from the committed lockfile
+description: >-
+  Set up Node.js and install node_modules from package-lock.json. A cache
+  entry holds the tree that `npm ci --ignore-scripts` installs, so a job with
+  a cache hit skips the install.
+
+# The cache key names everything that changes the installed tree: the runner
+# OS and architecture, the exact Node version, the lockfile, and this file,
+# which holds the install commands. It also names package.json, because
+# `npm ci` fails when the manifest and the lockfile disagree, and a hit must
+# not skip that check. There are no restore keys. A tree for a different key
+# is never restored, so a lockfile change always installs clean from the
+# registry. `--ignore-scripts` runs no package install script, so no
+# environment value changes the tree.
+#
+# The save runs right after the install. The saved tree is therefore the
+# install output, and never a tree that a later step of the job changed.
+
+inputs:
+  node-version:
+    description: >-
+      The Node.js version. It must match the npm major used by the
+      release-export pipeline, which regenerates package-lock.json for the
+      transformed manifest; a different npm major computes a different tree
+      and `npm ci` fails.
+    default: '26'
+  npm-cache-dependency-path:
+    description: >-
+      The lockfiles that key the npm download cache of actions/setup-node,
+      for a job that installs other projects after this action. Empty turns
+      the npm download cache off.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - id: node
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: ${{ inputs.npm-cache-dependency-path != '' && 'npm' || '' }}
+        cache-dependency-path: ${{ inputs.npm-cache-dependency-path }}
+
+    - id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: node_modules
+        key: node-modules-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.node.outputs.node-version }}-${{ hashFiles('package.json', 'package-lock.json', '.github/actions/install/action.yml') }}
+
+    # The committed lockfile installs with npm 11. Node 22 bundles npm 10.
+    - if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        if [ "$(npm --version | cut -d. -f1)" -lt 11 ]; then
+          npm install --global npm@11
+        fi
+        npm ci --ignore-scripts
+
+    # `--ignore-scripts` skips realm's install script, which downloads the
+    # Node binary that the Realm adapter tests open a real Realm file with.
+    # Run the download here instead, so the cache holds the binary. The
+    # install script itself swallows a failed download with `|| echo`, so
+    # this step calls prebuild-install directly, and a failed download fails
+    # the job. The public export has no realm, so there the step does
+    # nothing. prebuild-install sends no analytics. The variable also keeps
+    # realm's analytics script off if a change makes this step run it.
+    - if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        REALM_DISABLE_ANALYTICS: '1'
+      run: |
+        if [ -d node_modules/realm ]; then
+          cd node_modules/realm
+          ../.bin/prebuild-install --runtime napi
+        fi
+
+    - if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: node_modules
+        key: ${{ steps.restore.outputs.cache-primary-key }}

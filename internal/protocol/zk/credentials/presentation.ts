@@ -18,6 +18,7 @@
 
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
 import { Statement } from '../proofs/statement';
+import { multiscalarMultiply } from '../proofs/point-multiplication';
 import { ScalarArgs, PointArgs } from '../proofs/args';
 import type {
   Attribute,
@@ -382,12 +383,12 @@ export class PresentationProofBuilder {
     // For public attrs (index 0) and revealed attrs, M is identity, so this
     // simplifies to z * G_y[i] as in Chase-Perrin-Zaverucha section 3.2.
     const C_y = sys.G_y.slice(0, this.attrPoints.length).map((G_yn, i) =>
-      G_yn.multiply(z).add(this.attrPoints[i])
+      multiscalarMultiply([z], [G_yn]).add(this.attrPoints[i])
     );
 
-    const C_x0 = sys.G_x0.multiply(z).add(credential.U);
-    const C_V = sys.G_V.multiply(z).add(credential.V);
-    const C_x1 = sys.G_x1.multiply(z).add(credential.U.multiply(credential.t));
+    const C_x0 = multiscalarMultiply([z], [sys.G_x0]).add(credential.U);
+    const C_V = multiscalarMultiply([z], [sys.G_V]).add(credential.V);
+    const C_x1 = multiscalarMultiply([z], [sys.G_x1]).add(credential.U.multiply(credential.t));
 
     const z0 = Fn.neg(Fn.create(z * credential.t));
 
@@ -588,13 +589,21 @@ export class PresentationProofVerifier {
     const priv = keyPair.privateKey;
 
     // Z = C_V - W - x0*C_x0 - x1*C_x1 - sum(y[i]*C_y[i]) - y[0]*M_pub
-    let Z = C_V.subtract(priv.W).subtract(C_x0.multiply(priv.x0)).subtract(C_x1.multiply(priv.x1));
-
-    for (let i = 0; i < C_y.length; i++) {
-      Z = Z.subtract(C_y[i].multiply(priv.y[i]));
-    }
+    //       - sum(y[i]*M[i]) for each revealed attribute i.
+    // One multiscalar multiplication calculates all of the subtracted products.
+    const scalars = [priv.x0, priv.x1, ...C_y.map((_, i) => priv.y[i])];
+    const points = [C_x0, C_x1, ...C_y];
     // Incorporate public attributes so the server can check they match
-    Z = Z.subtract(this.attrPoints[0].multiply(priv.y[0]));
+    scalars.push(priv.y[0]);
+    points.push(this.attrPoints[0]);
+    for (const attr of this.attributes) {
+      if (attr.keyIndex === null) {
+        // Revealed attribute: subtract its contribution from Z
+        scalars.push(priv.y[attr.firstPointIndex]);
+        points.push(this.attrPoints[attr.firstPointIndex]);
+      }
+    }
+    const Z = C_V.subtract(priv.W).subtract(multiscalarMultiply(scalars, points));
 
     const pub = keyPair.publicKey;
     const I = getPublicKeyI(pub, this.attrPoints.length);
@@ -620,9 +629,6 @@ export class PresentationProofVerifier {
           `C_y${secondPointIndex}-E_A${secondPointIndex}`,
           C_y[secondPointIndex].subtract(this.attrPoints[secondPointIndex])
         );
-      } else {
-        // Revealed attribute: subtract its contribution from Z
-        Z = Z.subtract(this.attrPoints[firstPointIndex].multiply(priv.y[firstPointIndex]));
       }
     }
 

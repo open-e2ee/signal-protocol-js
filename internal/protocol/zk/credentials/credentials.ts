@@ -12,6 +12,7 @@
 
 import { ShoSha256 } from '../proofs/sho-sha256';
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
+import { multiscalarMultiply, withGeneratorTable } from '../proofs/point-multiplication';
 export {};
 const Point = RistrettoPoint;
 
@@ -80,6 +81,9 @@ export function getSystemParams(): SystemParams {
     G_y.push(sho.getPoint());
   }
 
+  for (const G of [G_w, G_wprime, G_x0, G_x1, G_V, G_z, ...G_y]) {
+    withGeneratorTable(G);
+  }
   _systemParams = { G_w, G_wprime, G_x0, G_x1, G_V, G_z, G_y };
   return _systemParams;
 }
@@ -153,7 +157,7 @@ export function generatePrivateKey(randomness: Uint8Array): CredentialPrivateKey
   sho.absorbAndRatchet(randomness);
 
   const w = sho.getScalar();
-  const W = sys.G_w.multiply(w);
+  const W = multiscalarMultiply([w], [sys.G_w]);
   const wprime = sho.getScalar();
   const x0 = sho.getScalar();
   const x1 = sho.getScalar();
@@ -236,16 +240,16 @@ export interface CredentialPublicKey {
 export function derivePublicKey(priv: CredentialPrivateKey): CredentialPublicKey {
   const sys = getSystemParams();
 
-  const C_W = priv.W.add(sys.G_wprime.multiply(priv.wprime));
+  const C_W = priv.W.add(multiscalarMultiply([priv.wprime], [sys.G_wprime]));
 
   // Start: G_V - x0*G_x0 - x1*G_x1 - y[0]*G_y[0]
-  let accum = sys.G_V.subtract(sys.G_x0.multiply(priv.x0))
-    .subtract(sys.G_x1.multiply(priv.x1))
-    .subtract(sys.G_y[0].multiply(priv.y[0]));
+  let accum = sys.G_V.subtract(
+    multiscalarMultiply([priv.x0, priv.x1, priv.y[0]], [sys.G_x0, sys.G_x1, sys.G_y[0]])
+  );
 
   const I: RistrettoPoint[] = [];
   for (let n = 1; n < NUM_SUPPORTED_ATTRS; n++) {
-    accum = accum.subtract(sys.G_y[n].multiply(priv.y[n]));
+    accum = accum.subtract(multiscalarMultiply([priv.y[n]], [sys.G_y[n]]));
     I.push(accum);
   }
 
