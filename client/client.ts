@@ -67,11 +67,18 @@ import type {
 } from '../types';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { base64ToBytes, bytesToBase64, constantTimeEqual } from '../internal/crypto';
+import { deriveGroupSecretParams, getGroupPublicParams } from '../internal/protocol/zk/groups';
+import { SERVICE_ID_ACI } from '../internal/protocol/zk/groups/uid-struct';
+import {
+  deserializeSenderCertificate,
+  validateSenderCertificate,
+} from '../internal/protocol/sealed-sender';
 import type { SignalProtocolClientHooks } from './event-hooks';
 import { ProtocolAddress } from '../types/address';
 import {
   getActiveIdentityTypes,
   resolveSignalProtocolStrategy,
+  SEALED_SENDER_CERTIFICATE_MARGIN_MS,
   type ProgressCallback,
   type SignalProtocolClientConfig,
 } from './config';
@@ -102,6 +109,7 @@ import {
 } from './signal-service-cipher';
 import { establishMultiDeviceSessions } from '../internal/sesame/device-registry';
 import { isRetryableDecryptionError } from './retry-utils';
+import { envelopeTypeForContent, unsealMessage } from './sealed-sender';
 import { MESSAGE_RECORD_TTL_MS } from './constants';
 import type { DataMessageInput } from './types';
 
@@ -125,7 +133,8 @@ import * as PreKeyOps from './prekeys';
 import * as RetryOps from './retry';
 import * as RelaySubscriptionOps from './relay-subscription';
 import { SignalProtocolClientState, SIGNAL_PROTOCOL_CLIENT_CONSTANTS } from './state';
-import { rethrowRelayWorkStopped, type RelayWork } from './relay-work';
+import { clientRelayFanOut, rethrowRelayWorkStopped, type RelayWork } from './relay-work';
+import type { BoundedFanOut } from '../utils/bounded-fan-out';
 import {
   deleteMediaAttachment,
   resolveMediaAttachment,
@@ -228,6 +237,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   // Cipher coordination (encrypts/decrypts, routes to appropriate cipher)
   private readonly cipher: SignalProtocolServiceCipher;
 
+  // The relay request bound that every fan-out of this client shares
+  private readonly fanOut: BoundedFanOut;
+
   /**
    * Durable media job facade backed by the configured Signal Protocol local store.
    *
@@ -315,6 +327,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
     // Dependency injection: use the provided relay adapter when configured.
     this.relay = config.relay;
+    // A relay adapter that sends relay requests itself shares its bound.
+    this.fanOut = clientRelayFanOut(config.relay);
 
     // Dependency injection: use the remote object store for encrypted attachments.
     this.remoteObjectStore = config.remoteObjectStore;
@@ -446,7 +460,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       this.relay,
       this.remoteObjectStore,
       this.contentAdapter,
-      this.logger
+      this.logger,
+      this.fanOut
     );
     if (this.groupManager) {
       this.cipher.setGroupSendBarrierChecker((groupId) =>
@@ -477,11 +492,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
             EncryptionErrorCode.INITIALIZATION_FAILED
           );
         }
-        const { base64ToBytes: b64ToBytes } = await import('../internal/crypto');
         return {
           senderCertificateBase64: certBase64,
-          senderIdentityPrivate: b64ToBytes(identityKeyPair.dhKey.privateKey),
-          senderIdentityPublic: b64ToBytes(identityKeyPair.dhKey.publicKey),
+          senderIdentityPrivate: base64ToBytes(identityKeyPair.dhKey.privateKey),
+          senderIdentityPublic: base64ToBytes(identityKeyPair.dhKey.publicKey),
           config: this.config.sealedSender!,
         };
       });
@@ -521,7 +535,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       this.cipher.setGroupSecretParamsProvider(async (groupId: string) => {
         const masterKey = await store.getMasterKey(groupId);
         if (!masterKey) return null;
-        const { deriveGroupSecretParams } = await import('../internal/protocol/zk/groups');
         return deriveGroupSecretParams(masterKey);
       });
     }
@@ -549,9 +562,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         // 2. Get group secret params for endorsement processing
         const masterKey = await groupStore.getMasterKey(groupId);
         if (!masterKey) return false;
-        const { deriveGroupSecretParams, getGroupPublicParams } = await import(
-          '../internal/protocol/zk/groups'
-        );
         const secretParams = deriveGroupSecretParams(masterKey);
 
         // 3. Derive the protocol identifier, not the display identifier's UTF-8 bytes.
@@ -570,8 +580,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         // 6. Build ACI→userId mapping from known members + self.
         //    Endorsements are issued in group-state member order, so we must
         //    build parallel arrays matching that order.
-        const { SERVICE_ID_ACI } = await import('../internal/protocol/zk/groups/uid-struct');
-
         const allUserIds = [...memberUserIds, selfUserId];
         const aciHexToUserId = new Map<string, string>();
         const resolvedAciBytes = groupConfig.resolveAciBytesByUserIds
@@ -667,7 +675,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * @throws if no certificate provider is available
    */
   async fetchSenderCertificate(): Promise<string> {
-    const { SEALED_SENDER_CERTIFICATE_MARGIN_MS } = await import('./config');
     const now = Date.now();
 
     if (this.cachedSenderCertificate && now < this.cachedCertificateExpiry) {
@@ -695,8 +702,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       );
     }
 
-    const { deserializeSenderCertificate, validateSenderCertificate } =
-      await import('../internal/protocol/sealed-sender');
     let certificate: ReturnType<typeof deserializeSenderCertificate>;
     try {
       certificate = deserializeSenderCertificate(base64ToBytes(certBase64 as Base64));
@@ -787,7 +792,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     work: RelayWork,
     ctx: SignalProtocolClientContext
   ): RetryOps.RetryCallbacks {
-    const sessions = this.sendSessionCallbacks(() => ctx);
+    const sessions = this.sendSessionCallbacks(() => ctx, work.stopSignal);
     return {
       archiveSession: (address) => SessionOps.archiveSession(ctx, address),
       establishSession: (address, bundle) =>
@@ -833,21 +838,26 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
   /**
    * Session callbacks of a send. Their session hooks run through the given
-   * context, so a send in relay work calls the app through that work. There
-   * are none without a relay.
+   * context, so a send in relay work calls the app through that work. Session
+   * setup sends its relay requests under the client's relay request bound, and
+   * the stop signal ends it. There are none without a relay.
    */
   private sendSessionCallbacks(
-    context: () => SignalProtocolClientContext
+    context: () => SignalProtocolClientContext,
+    stopSignal?: AbortSignal
   ): SendSessionCallbacks | undefined {
     const relay = this.relay;
     if (!relay) return undefined;
     const establishSession = (address: ProtocolAddress, bundle: PreKeyBundle) =>
       SessionOps.establishSession(context(), this.sesameManager, address, bundle);
     return {
-      establishSessions: (recipientUserId) =>
+      establishSessions: (recipientUserId, listedDevices) =>
         establishMultiDeviceSessions(this, relay, recipientUserId, {
           establishSession,
           rethrowFatal: rethrowRelayWorkStopped,
+          fanOut: this.fanOut,
+          stopSignal,
+          ...(listedDevices && { listedDevices }),
         }),
       // Stale-device recovery archives the old session, fetches a fresh bundle,
       // and establishes a replacement.
@@ -865,7 +875,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
           });
 
           // 2. Fetch fresh prekey bundle
-          const freshBundle = await relay.fetchPreKeyBundle(recipientUserId, recipientDeviceId);
+          const freshBundle = await this.fanOut.request(
+            () => relay.fetchPreKeyBundle(recipientUserId, recipientDeviceId),
+            stopSignal
+          );
 
           if (!freshBundle) {
             this.logger.warn('No prekey bundle available for stale session refresh', {
@@ -1479,7 +1492,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   ): Promise<string> {
     // Handle sealed sender envelopes: unseal to reveal sender before decrypting
     if (envelope.messageType === 'unidentified_sender' && this.config.sealedSender) {
-      const { unsealMessage, envelopeTypeForContent } = await import('./sealed-sender');
       const identityKeyPair = await this._storage.getIdentityKey();
       if (!identityKeyPair) {
         throw new EncryptionError(

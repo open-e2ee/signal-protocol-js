@@ -9,6 +9,7 @@ import type { PreKeyUpload } from '../remote/relay/types';
 import { EncryptionError, EncryptionErrorCode, ONE_TIME_PREKEY_BATCH_SIZE } from '../types';
 import { base64ToBytes } from '../internal/crypto';
 import { generateEcSignedPreKey, generateKyberLastResortPreKey } from '../keys';
+import { createCompositeIdentityV1 } from '../keys/identity';
 import type { IdentityType } from '../keys/types';
 import {
   getActiveIdentityTypes,
@@ -397,7 +398,6 @@ export async function syncIdentityToServer(
 
   // Provision this device against the account identity. A different tuple must
   // go through the relay's explicit compare-and-swap rotation operation.
-  const { createCompositeIdentityV1 } = await import('../keys/identity');
   await ctx.relay!.provisionIdentityKey({
     userId: ctx.userId,
     deviceId: ctx.deviceId,

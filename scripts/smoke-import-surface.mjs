@@ -27,9 +27,9 @@
  * allowlist line. The second half is what stops this list from quietly growing
  * into the thing it was meant to prevent.
  *
- * The same packed modules also check the store and vault guides. A consumer
- * who bundles an entry needs each optional peer that the entry loads, and only
- * the entry's guide tells them which peers those are. See ENTRY_GUIDES.
+ * The same packed modules also check the entry guides. A consumer who bundles
+ * an entry needs each optional peer that the entry loads, and only the entry's
+ * guide tells them which peers those are. See ENTRY_GUIDES.
  *
  * Usage:
  *   node ./scripts/smoke-import-surface.mjs             # build, pack, probe
@@ -38,6 +38,7 @@
 
 import { spawnSync } from 'node:child_process';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -94,7 +95,8 @@ const PLATFORM_BOUND = new Map([
 const KNOWN_DEFECTS = new Map([]);
 
 /**
- * The guide of each store and vault entry.
+ * The guide of each store and vault entry, and of each entry that loads an
+ * optional peer.
  *
  * An app installs an optional peer only when a guide tells it to, and a bundler
  * fails the whole build of an app that imports an entry without the peers that
@@ -105,6 +107,15 @@ const KNOWN_DEFECTS = new Map([]);
  * entry loads is stale.
  */
 const ENTRY_GUIDES = new Map([
+  ['./convex.config', 'remote/relay/convex/component/README.md'],
+  ['./device', 'device/README.md'],
+  ['./device/constants', 'device/README.md'],
+  ['./device/device-id', 'device/README.md'],
+  ['./device/expo', 'device/README.md'],
+  ['./device/lifecycle', 'device/README.md'],
+  ['./device/provisioning', 'device/README.md'],
+  ['./device/react-native', 'device/README.md'],
+  ['./hooks', 'hooks/README.md'],
   ['./local/store', 'local/store/README.md'],
   ['./local/store/expo', 'local/store/expo/README.md'],
   ['./local/store/key-value', 'local/store/key-value/README.md'],
@@ -118,6 +129,9 @@ const ENTRY_GUIDES = new Map([
   ['./local/vault/electron-safe-storage', 'local/vault/README.md'],
   ['./local/vault/expo-secure-store', 'local/vault/README.md'],
   ['./local/vault/react-native-keychain', 'local/vault/README.md'],
+  ['./remote/object-store/convex-r2', 'remote/object-store/convex-r2/README.md'],
+  ['./remote/object-store/convex-r2/server', 'remote/object-store/convex-r2/README.md'],
+  ['./remote/relay/convex', 'remote/relay/convex/README.md'],
 ]);
 const isGuidedEntry = (subpath) => subpath.startsWith('./local/');
 const INSTALL_COMMAND = /^\s*(?:npm install|npx expo install)\s+(.+)$/gm;
@@ -296,14 +310,22 @@ function peersInstalledBy(guide, peers) {
  * else, against the packed package in `packageRoot`.
  */
 function checkEntryGuides(packageRoot, peers) {
+  const entryFileOf = (subpath) => {
+    const target = packageJson.exports[subpath];
+    return join(packageRoot, typeof target === 'string' ? target : target.default);
+  };
   const problems = [];
-  for (const subpath of subpaths.filter(isGuidedEntry)) {
-    if (!ENTRY_GUIDES.has(subpath)) {
+  for (const subpath of subpaths) {
+    if (ENTRY_GUIDES.has(subpath)) continue;
+    if (isGuidedEntry(subpath) || peersLoadedFrom(entryFileOf(subpath), peers).size > 0) {
       problems.push(`${specifierFor(subpath)} has no guide in ENTRY_GUIDES.`);
     }
   }
-  for (const subpath of ENTRY_GUIDES.keys()) {
-    if (!subpaths.includes(subpath)) {
+  /* The public export withholds the Convex relay entries together with their
+   * guides, so there a row names neither. Only a row with its guide still in
+   * the checkout is stale. */
+  for (const [subpath, guidePath] of ENTRY_GUIDES) {
+    if (!subpaths.includes(subpath) && existsSync(join(repoRoot, guidePath))) {
       problems.push(`ENTRY_GUIDES names ${subpath}, which is not in the export map.`);
     }
   }
@@ -311,9 +333,7 @@ function checkEntryGuides(packageRoot, peers) {
   const loadedByGuide = new Map();
   for (const [subpath, guidePath] of ENTRY_GUIDES) {
     if (!subpaths.includes(subpath)) continue;
-    const target = packageJson.exports[subpath];
-    const entryFile = join(packageRoot, typeof target === 'string' ? target : target.default);
-    const loaded = peersLoadedFrom(entryFile, peers);
+    const loaded = peersLoadedFrom(entryFileOf(subpath), peers);
     const installed = peersInstalledBy(readFileSync(join(repoRoot, guidePath), 'utf8'), peers);
     for (const peer of loaded) {
       if (!installed.has(peer)) {
@@ -446,7 +466,7 @@ for (const [subpath, specifier] of specifiers) {
   const guideProblems = checkEntryGuides(join(fixtureNodeModules, ...nameSegments), excluded);
   if (guideProblems.length > 0) {
     problems.push(
-      `${guideProblems.length} store or vault guide problem(s):\n` +
+      `${guideProblems.length} entry guide problem(s):\n` +
         guideProblems.map((problem) => `  - ${problem}`).join('\n') +
         `\n\n  A guide names each optional peer that its entry loads in an install ` +
         `command, and no other.`
@@ -485,13 +505,14 @@ for (const [subpath, specifier] of specifiers) {
 
   const byDesign = results.filter((result) => PLATFORM_BOUND.has(result.subpath)).length;
   const deferred = results.filter((result) => KNOWN_DEFECTS.has(result.subpath)).length;
+  const guided = subpaths.filter((subpath) => ENTRY_GUIDES.has(subpath)).length;
   console.log(
     `Import surface: ${results.length - byDesign - deferred} of ${results.length} export ` +
       `subpaths load with no optional peer dependency installed; ${byDesign} are ` +
       `platform-bound by design; ${deferred} are known defects with findings entries.`
   );
   console.log(
-    `Entry guides: the guides of ${ENTRY_GUIDES.size} store and vault entries name ` +
+    `Entry guides: the guides of ${guided} entries name ` +
       `each optional peer that the entry loads.`
   );
 } finally {

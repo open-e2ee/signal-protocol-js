@@ -77,6 +77,8 @@ import {
   HostedAnonymousDelivery,
   decodeHostedAnonymousEnvelope,
 } from "./hosted-anonymous-delivery";
+import { createAdapterRelayFanOut } from "./relay-work";
+import type { BoundedFanOut } from "../utils/bounded-fan-out";
 import {
   applyPreKeyUploads,
   parseHostedPreKeyStatus,
@@ -91,6 +93,10 @@ import {
   type StoredHostedPendingPreKeyPublication,
   type StoredHostedPreKeyPublication,
 } from "./hosted-prekey-publication";
+import {
+  declareRefusesRemovedDevices,
+  markRelayDeviceRefusal,
+} from "./relay-device-refusal";
 
 const SESSION_METADATA_PREFIX = "hostedRelay.session.v1:";
 const DEVICE_TOKEN_REFRESH_SECONDS = 60;
@@ -324,6 +330,17 @@ async function parseResponse(response: Response): Promise<unknown> {
     });
   }
   return parsed;
+}
+
+/**
+ * The device directory does not list the destination, so no mailbox
+ * generation names it. The Relay refuses such a device as NOT_FOUND.
+ */
+function missingDestination(userId: string, deviceId: number): Error {
+  return markRelayDeviceRefusal(
+    new Error("Signal Protocol Relay destination device does not exist"),
+    { code: "NOT_FOUND", userId, deviceId },
+  );
 }
 
 async function postJson(
@@ -611,8 +628,11 @@ export class HostedRelayHttpTransport
   private readonly groups: HostedGroupServer;
   public readonly groupServer: RelayGroupServer;
   private readonly anonymousDelivery: HostedAnonymousDelivery;
+  // The relay request bound of the client that uses this transport
+  private readonly fanOut: BoundedFanOut;
   private refreshPromise?: Promise<void>;
   private readonly destinationGenerations = new Map<string, number>();
+  private readonly destinationLookups = new Map<string, Promise<unknown>>();
   private readonly ephemeralAcknowledgments = new Set<string>();
   private subscription?: MailboxSubscriptionHandle;
   private subscriptionGeneration = 0;
@@ -627,6 +647,9 @@ export class HostedRelayHttpTransport
     private readonly deviceAuthentication: HostedRelayDeviceAuthentication,
     private session: StoredHostedRelaySession,
   ) {
+    // The Relay refuses a removed device's mailbox on every send path before
+    // its device list shows the removal, so a direct send may post first.
+    declareRefusesRemovedDevices(this);
     this.groups = new HostedGroupServer(connection);
     this.groupServer = {
       server: this.groups,
@@ -634,15 +657,17 @@ export class HostedRelayHttpTransport
       issueProfileKeyCredential: (userId, request, authorityKeyId) => this.issueProfileKeyCredential(userId, request, authorityKeyId),
       setUnidentifiedAccessKey: (userId, accessKey) => this.setUnidentifiedAccessKey(userId, accessKey),
     };
+    this.fanOut = createAdapterRelayFanOut(this);
     this.anonymousDelivery = new HostedAnonymousDelivery(
       connection,
+      this.fanOut,
       async (accountAddress, deviceId) => {
         const key = `${accountAddress}\0${deviceId}`;
         if (!this.destinationGenerations.has(key))
-          await this.directory(accountAddress);
+          await this.lookUpDestinations(accountAddress);
         const generation = this.destinationGenerations.get(key);
         if (generation === undefined)
-          throw new Error("Signal Protocol Relay destination device does not exist");
+          throw missingDestination(accountAddress, deviceId);
         return { accountAddress, deviceId, generation };
       },
     );
@@ -860,6 +885,21 @@ export class HostedRelayHttpTransport
         "Signal Protocol Relay operation crossed the current device authority",
       );
     }
+  }
+
+  /**
+   * One directory lookup for each account at a time. A destination whose
+   * account a lookup already reads waits for that lookup.
+   */
+  private lookUpDestinations(accountAddress: string): Promise<unknown> {
+    let lookup = this.destinationLookups.get(accountAddress);
+    if (lookup === undefined) {
+      lookup = this.fanOut
+        .request(() => this.directory(accountAddress))
+        .finally(() => this.destinationLookups.delete(accountAddress));
+      this.destinationLookups.set(accountAddress, lookup);
+    }
+    return lookup;
   }
 
   private async directory(
@@ -1431,7 +1471,7 @@ export class HostedRelayHttpTransport
       generation = this.destinationGenerations.get(key);
     }
     if (generation === undefined)
-      throw new Error("Signal Protocol Relay destination device does not exist");
+      throw missingDestination(envelope.targetUserId, envelope.targetDeviceId);
     let value: unknown;
     try {
       value = await withOneUncertainRetry(envelope.deliveryClass, () =>
@@ -1452,15 +1492,16 @@ export class HostedRelayHttpTransport
         }),
       );
     } catch (error) {
+      const device = {
+        userId: envelope.targetUserId,
+        deviceId: envelope.targetDeviceId,
+      };
       if (
         error instanceof HostedRelayHttpError &&
         error.code === "STALE_DEVICE"
       ) {
-        throw new HostedRelayHttpError(
-          error.status,
-          error.code,
-          error.message,
-          {
+        throw markRelayDeviceRefusal(
+          new HostedRelayHttpError(error.status, error.code, error.message, {
             data: {
               code: "STALE_DEVICE",
               message: error.message,
@@ -1468,9 +1509,14 @@ export class HostedRelayHttpTransport
               staleDevices: [envelope.targetDeviceId],
             },
             retryable: error.retryable,
-          },
+          }),
+          { code: "STALE_DEVICE", ...device },
         );
       }
+      // Only the Relay's own error body names NOT_FOUND. A 404 without it
+      // fails to parse or carries no code, so it is not a device refusal.
+      if (error instanceof HostedRelayHttpError && error.code === "NOT_FOUND")
+        throw markRelayDeviceRefusal(error, { code: "NOT_FOUND", ...device });
       throw error;
     }
     if (!record(value) || requiredString(value, "messageId") !== messageId) {

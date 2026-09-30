@@ -1,5 +1,158 @@
 # Changelog
 
+## 8.2.0
+
+- **Changed: a group send posts to the member devices at the same time.**
+  Before, a group send posted each sender-key distribution message, each
+  device post, and each copy for the sender's other devices one after the
+  other. Now each phase of a group send posts at the same time, under the
+  client's bound of 4 relay requests, and a phase starts only after the phase
+  before it settles: the sender-key distribution messages, then their
+  confirmation, then the group message and its device posts, then the copies.
+  A failure for one device does not stop the other devices of the phase.
+  After every device of the phase settles, the send rejects with the error of
+  the first failed device in member order. When a distribution message fails,
+  the stored send keeps only the distribution messages that the relay did not
+  accept, so a replay with the same `clientMessageId` posts only those. The
+  sessions for the members are set up at the same time, and the index in the
+  `clientMessageId` of each distribution message follows the member order.
+- **Changed: a group send that distributes a new sender key reads each
+  member's device list once.** Before, such a send read the list of a member
+  up to three times: to prepare the distribution, to set up the sessions, and
+  to send the group message. The device posts of one group send check and
+  refresh the group's endorsements one at a time, so one refresh serves them
+  all.
+- **Changed: a direct send posts to each device of the recipient at the same
+  time.** Before, a direct send posted to one device after the other. A
+  failure for one device stopped the posts to the devices after it. Now the
+  send posts to every device at the same time, and a failure for one device
+  does not stop the other devices. After every device settles, the send
+  rejects with the error of the first failed device in recipient order. The
+  copies for the sender's other devices start only after every device post
+  settles. These copies, and the copies of read state and other account
+  state, also post at the same time. A replay with the same `clientMessageId`
+  posts to every device again. A relay that remembers the result of a device
+  does not store the message again. After the hosted Relay forgets a result
+  (60 s), that device gets a second copy, and the recipient drops it as a
+  duplicate. When two sealed-sender posts of one send fail authorization,
+  the access mode steps down two times, to `DISABLED`, as before.
+- **Changed: one client has at most 4 relay requests in flight.** The device
+  posts and copies of a direct send, the prekey fetches of session setup, and
+  the requests of hosted sealed-sender delivery share this bound. The clients
+  that use one hosted Relay transport share one bound. A request that finds
+  the 4 slots full waits, and the waiting requests start in the order that
+  they came.
+- **Changed: a direct send through the hosted Relay posts before it reads
+  the recipient's device list, when this process read the list less than
+  5 min before.** Before, a direct send to a recipient whose list was more
+  than 60 s old waited for the device-list read before it posted. Now the
+  send posts to the known devices, reads the list, and in the same send posts
+  the same message to each device that the list newly shows. A device linked
+  60 s to 300 s before a send now receives that send. A send after a restart,
+  after 5 min, or after reads that failed, still waits for the read. The
+  stored send records the pending read, so a replay reads the list before it
+  completes. Sender key distribution, and sends through the Convex and memory
+  relays, keep the read before the post.
+- **Changed: a direct send through the hosted Relay that posts before the
+  read drops a removed device.** Before, a send threw the Relay's `NOT_FOUND`
+  when a post named the mailbox of a device that the recipient had removed.
+  Now such a send waits for its device-list read, drops that device from the
+  send and its result, and succeeds. A `NOT_FOUND` for a device that the list
+  still shows, or when the read fails, still fails the send. A send that does
+  not read the list, because the last read is less than 60 s old, still
+  throws.
+- **Fixed: a sealed-sender send through the hosted Relay repairs a device
+  that the Relay refuses as `STALE_DEVICE`.** The identified path fetched a
+  new prekey bundle and sent again, but the sealed path threw. Now both paths
+  repair the device.
+- **Fixed: a device-list time later than the clock counts as old.** When the
+  wall clock went back, a send used the old list until the clock passed that
+  time again. Now the send reads the list.
+- **Fixed: an app entry that awaits SDK work at the top level finishes.**
+  When a bundler splits code, each module that the SDK loaded with `import()`
+  got its own chunk. That chunk imported the app's entry chunk, so it waited
+  for the entry module to finish evaluation. An entry module that awaited a
+  send or a sync at the top level never finished, and the SDK work stopped. In
+  a Vite 8 build, the first send stopped. Now the SDK loads with `import()`
+  only a module that imports nothing, so no SDK chunk imports the entry chunk.
+  The SDK loads the other modules with static imports.
+- **Changed: session setup fetches the prekey bundles of a recipient's
+  devices in parallel.** Before, a send that set up sessions with a
+  recipient fetched one prekey bundle for each device in turn. Now the
+  fetches run at the same time, and one client has at most 4 of these relay
+  requests in flight, also when it sets up sessions with more than one
+  recipient. The client then establishes the sessions one at a time, so
+  every device gets its session and its device record on every store. A
+  device with no bundle, or a device whose fetch fails, does not stop the
+  other devices.
+- **Fixed: an encrypted Expo store on the web fails before it uses the
+  vault.** The web build of `expo-sqlite` has no SQLCipher, and Expo
+  SecureStore has no web implementation. `expoStore()` on the web rejected
+  with `KEY_STORAGE_ERROR` from the default vault, and with a custom vault it
+  wrote a key before it rejected. Now `expoStore()` and `resetExpoStore()`
+  reject with `SqliteEncryptionUnavailableError` (`KEY_STORAGE_ERROR`) when the
+  `expo-sqlite` build has no SQLCipher, before they use the vault or a file.
+  The same refusal applies to a native build without the `useSQLCipher`
+  option. `encryptionAtRest: false` still opens a store without encryption. The
+  guide names `./local/store/web-sqlite` for encrypted browser storage.
+- **Fixed: the Electron vault names the Secret portal key.** On Linux, a
+  Chromium feature can make `safeStorage` use that key. The feature is
+  `SecretPortalKeyProviderUseForEncryption`, and the ciphertext starts with
+  `v12`. The vault refused that key, but its `KEY_STORAGE_ERROR` named the
+  fixed fallback key.
+  Now the error names the Secret portal. Outside a Flatpak or Snap sandbox,
+  the portal gives the same key to each Electron app of the user. The vault
+  still refuses the key, and the vault file does not change.
+- **Fixed: concurrent SESAME writes for one user keep every change.** Each
+  write of a SESAME user record or device record reads the record, changes
+  it, and writes it back. Two concurrent writes for one user could both read
+  before either wrote, and the second write then removed the change of the
+  first: a device that a concurrent `addDevice` added, a session, or a
+  cleared verification flag. Now a per-user lock orders these writes in
+  `DefaultSesameManager`, on every store. The lock orders the writes of one
+  client process only. It does not order two browser tabs or two processes
+  that share one store.
+- **Changed: hosted sealed-sender delivery reads the recipients at the same
+  time.** Before a sealed-sender send through the hosted Relay, the transport
+  reads the device directory of each recipient account that it has not
+  cached. It read one account after the other. Now it reads the accounts at
+  the same time, with one read for each account, also when two sends need
+  the same account. A direct send also delivers to each device of the
+  recipient at the same time. At most four of these requests are in flight
+  for each client. A failure for one device no longer stops the delivery to
+  the other devices. After every device settles, the send rejects with the
+  error of the first failed device in recipient order, and a successful send
+  returns the server timestamp of the last device in that order.
+- **Fixed: SESAME writes and store sweeps keep a newer session.** A SESAME
+  write that carries a session read it before the protocol took the session
+  lock. When a send or a receive committed a newer session between that read
+  and the write, the write put the older session back, and the next send
+  used a message key again. `deleteStaleRecords()` and
+  `cleanupExpiredSessions()` read the records, decided, and wrote without a
+  lock, so they could delete a device that got a session after the read, or
+  write back a session and a verification flag that a SESAME write had
+  changed. Now these writes and each device change of a sweep take the
+  session lock of the device and then the per-user lock, and read the
+  records under them. A PreKeyMessage receive now compares the incoming
+  identity with the identity that the store pins when it writes. An identity
+  pinned while the message decrypts gets `pendingVerification` and an
+  identity change event. It is no longer replaced. The locks order one
+  client process only.
+- **Fixed: key cleanup, session setup, and device removal keep a newer
+  session.** `cleanupExpiredKeys()` read the session and wrote it back
+  without the session lock. `establishSession()` registered the session
+  state that it read after the session was established. When a send
+  committed a newer state between the read and the write, the write put the
+  older state back, and the next send used a message key again. When the
+  device list of a recipient no longer listed a device, or listed a new
+  identity for it, the removal deleted the session under the per-user lock
+  only, so a send that was in progress could put the session of the removed
+  device back. Now the cleanup runs under the session lock. Session setup
+  registers the state of the session that the store holds under the session
+  lock. A device removal takes the session lock of the device and then the
+  per-user lock. Two device-list syncs for one recipient still run one after
+  the other. The locks order one client process only.
+
 ## 8.1.0
 
 - **Changed: the web SQLite store is no longer experimental.** Its last

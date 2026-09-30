@@ -1,18 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { version as sdkVersion } from '@open-e2ee/signal-protocol-sdk/package.json';
 import { runExchange } from './exchange';
 
+// Android can recreate the activity, and React Native then mounts App again in
+// the same JavaScript process. The run state belongs to the process, not to one
+// mount, so a second mount never starts a second exchange on the same stores.
+let active = false;
+let started = false;
+
 export default function App() {
   const [message, setMessage] = useState('hello from Hermes');
   const [lines, setLines] = useState<string[]>([]);
-  const [running, setRunning] = useState(false);
-
-  const active = useRef(false);
+  const [running, setRunning] = useState(active);
 
   async function run() {
-    if (active.current) return;
-    active.current = true;
+    if (active) return;
+    active = true;
     setRunning(true);
     setLines([]);
     const log = (line: string) => {
@@ -35,12 +39,16 @@ export default function App() {
         cause = next as { originalError?: unknown };
       }
     } finally {
-      active.current = false;
+      active = false;
       setRunning(false);
     }
   }
 
-  useEffect(() => { void run(); }, []);
+  useEffect(() => {
+    if (started) return;
+    started = true;
+    void run();
+  }, []);
 
   return (
     <SafeAreaView style={styles.screen}>

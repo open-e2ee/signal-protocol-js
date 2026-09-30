@@ -12,7 +12,8 @@ import type { Envelope, SealedSenderAuth } from '../remote/relay/types';
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import type { Base64, SignalProtocolLocalStore } from '../types';
 import { ProtocolAddress } from '../types/address';
-import { base64ToBytes } from '../internal/crypto';
+import { x25519 } from '@noble/curves/ed25519.js';
+import { base64ToBytes, bytesToBase64 } from '../internal/crypto';
 import type { EndorsementManager } from './endorsement-manager';
 import { UnidentifiedAccessMode, type ContactProfileStateStore } from '../profile/contact-state';
 import {
@@ -20,6 +21,13 @@ import {
   SEALED_SENDER_V2_SERVICE_ID_VERSION,
   SEALED_SENDER_V2_UUID_VERSION,
 } from '../internal/protocol/sealed-sender/types';
+import { deserializeSenderCertificate, sealMultiRecipient } from '../internal/protocol/sealed-sender';
+import { deriveAccessKey } from '../internal/protocol/sealed-sender/delivery-token';
+import { unseal } from '../internal/protocol/sealed-sender/decryption';
+import {
+  deserializeReceivedMessage,
+  serializeSentMessage,
+} from '../internal/protocol/sealed-sender/multi-recipient-message';
 
 export {};
 
@@ -60,15 +68,8 @@ export async function serializeDirectSealedSenderMessage(
   recipientRegistrationId: number | undefined,
   sealedSender: ResolvedSealedSenderContext
 ): Promise<string> {
-  const { sealMultiRecipient, deserializeSenderCertificate } =
-    await import('../internal/protocol/sealed-sender');
-  const { serializeSentMessage } =
-    await import('../internal/protocol/sealed-sender/multi-recipient-message');
-  const { base64ToBytes: b64ToBytes, bytesToBase64: bytesToB64 } =
-    await import('../internal/crypto');
-
   const senderCertificate = deserializeSenderCertificate(
-    b64ToBytes(sealedSender.senderCertificateBase64 as Base64)
+    base64ToBytes(sealedSender.senderCertificateBase64 as Base64)
   );
   const sealed = await sealMultiRecipient({
     senderCertificate,
@@ -82,7 +83,7 @@ export async function serializeDirectSealedSenderMessage(
         identityPublic: sealedSender.recipientIdentityPublic,
       },
     ],
-    signalProtocolMessage: b64ToBytes(ciphertextBase64 as Base64),
+    signalProtocolMessage: base64ToBytes(ciphertextBase64 as Base64),
     contentType:
       messageType === 'sender_key'
         ? SealedSenderContentType.SENDERKEY_MESSAGE
@@ -93,7 +94,7 @@ export async function serializeDirectSealedSenderMessage(
   const recipient = sealed.recipients[0];
   if (!recipient) throw new Error('Sealed sender produced no direct recipient');
 
-  return bytesToB64(
+  return bytesToBase64(
     serializeSentMessage(
       [
         {
@@ -104,13 +105,13 @@ export async function serializeDirectSealedSenderMessage(
               registrationId: recipient.registrationId,
             },
           ],
-          encryptedMessageKey: b64ToBytes(recipient.encryptedMessageKey),
-          authenticationTag: b64ToBytes(recipient.authenticationTag),
+          encryptedMessageKey: base64ToBytes(recipient.encryptedMessageKey),
+          authenticationTag: base64ToBytes(recipient.authenticationTag),
         },
       ],
       [],
-      b64ToBytes(sealed.ephemeralPublic),
-      b64ToBytes(sealed.messageCiphertext)
+      base64ToBytes(sealed.ephemeralPublic),
+      base64ToBytes(sealed.messageCiphertext)
     )
   );
 }
@@ -184,8 +185,6 @@ export async function resolveSealedSenderContext(
     );
   }
 
-  const { deriveAccessKey } = await import('../internal/protocol/sealed-sender/delivery-token');
-  const { bytesToBase64 } = await import('../internal/crypto');
   let auth: SealedSenderAuth;
 
   switch (mode) {
@@ -290,7 +289,6 @@ export async function unsealMessage(
   }
 
   const logger = resolveSignalProtocolLogger(providedLogger);
-  const { base64ToBytes, bytesToBase64 } = await import('../internal/crypto');
 
   // Decode the only supported sealed-sender transport format.
   const sealedBytes = base64ToBytes(sealedCiphertextBase64 as Base64);
@@ -334,12 +332,6 @@ async function unsealReceivedMessage(
   innerCiphertextBase64: string;
   contentType: SealedSenderContentType;
 }> {
-  const { deserializeReceivedMessage } =
-    await import('../internal/protocol/sealed-sender/multi-recipient-message');
-  const { unseal } = await import('../internal/protocol/sealed-sender/decryption');
-  const { bytesToBase64 } = await import('../internal/crypto');
-  const { x25519 } = await import('@noble/curves/ed25519.js');
-
   // 1. Deserialize per-device ReceivedMessage
   const deserialized = deserializeReceivedMessage(sealedBytes);
 

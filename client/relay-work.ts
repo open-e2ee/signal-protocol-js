@@ -20,6 +20,7 @@
 
 import type AsyncLock from 'async-lock';
 
+import { BoundedFanOut } from '../utils/bounded-fan-out';
 import type { SignalProtocolClientHooks } from './event-hooks';
 
 /**
@@ -33,6 +34,47 @@ export class RelayWorkStopped extends Error {
     super('The client stopped during relay work');
     this.name = 'RelayWorkStopped';
   }
+}
+
+/**
+ * The relay request bound of one client. A request or a phase that a stop
+ * signal ended rejects with RelayWorkStopped.
+ */
+export function createRelayFanOut(): BoundedFanOut {
+  return new BoundedFanOut({ stopped: () => new RelayWorkStopped() });
+}
+
+const adapterFanOuts = new WeakMap<object, BoundedFanOut>();
+
+/**
+ * The relay request bound of a relay adapter that sends relay requests
+ * itself, such as the hosted transport. The client that uses the adapter
+ * takes this bound, so the requests of the adapter and of the client share
+ * one bound. The adapter sends each relay request of a sealed-sender send
+ * under this bound, so the client sends a sealed-sender post to it without a
+ * slot.
+ */
+export function createAdapterRelayFanOut(adapter: object): BoundedFanOut {
+  const fanOut = createRelayFanOut();
+  adapterFanOuts.set(adapter, fanOut);
+  return fanOut;
+}
+
+/**
+ * True when the relay adapter sends its sealed-sender requests under the
+ * client's bound. A slot around such a send would wait for a second slot of
+ * the same bound.
+ */
+export function relaySendsSealedUnderItsBound(relay: object): boolean {
+  return adapterFanOuts.has(relay);
+}
+
+/**
+ * The relay request bound of a client: the bound of its relay adapter, or a
+ * new bound when the adapter has none.
+ */
+export function clientRelayFanOut(relay: object | undefined): BoundedFanOut {
+  return (relay === undefined ? undefined : adapterFanOuts.get(relay)) ?? createRelayFanOut();
 }
 
 /** Rethrow a RelayWorkStopped that a catch-all caught. */

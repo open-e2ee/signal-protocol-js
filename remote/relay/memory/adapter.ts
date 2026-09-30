@@ -40,7 +40,16 @@ import {
   encodeCompositeIdentityV1,
 } from '../../../keys/identity';
 import { generateRandomBytes, generateUuidV4 } from '../../../internal/crypto/random';
-import { cloneProtocolState, constantTimeEqual } from '../../../internal/crypto/utils';
+import {
+  base64ToBytes,
+  bytesToBase64,
+  cloneProtocolState,
+  constantTimeEqual,
+} from '../../../internal/crypto/utils';
+import {
+  deserializeSentMessage,
+  serializeReceivedMessage,
+} from '../../../internal/protocol/sealed-sender/multi-recipient-message';
 import { PROVISIONING_SESSION_TTL_MS } from '../../../device/constants';
 import {
   generateServerSecretParams,
@@ -74,6 +83,7 @@ import { Ciphertext } from '../../../internal/protocol/zk/credentials/attributes
 import { ristretto255 } from '@noble/curves/ed25519.js';
 import { MAX_DEVICES } from '../../../device/constants';
 import { SealedSenderAuthError } from '../../../types/errors';
+import { asBase64 } from '../../../types/utils';
 import { RelayFailureController, type RelayFailureOptions } from './failures';
 import { InMemoryGroupAuthorizationServer } from './group-server';
 
@@ -1061,11 +1071,6 @@ export class InMemorySignalProtocolRelayServer implements SignalProtocolRelaySer
       throw new SealedSenderAuthError();
     }
     void auth; // Accept but do not validate in the in-memory relay
-
-    const { base64ToBytes, bytesToBase64 } = await import('../../../internal/crypto');
-    const { asBase64 } = await import('../../../types/utils');
-    const { deserializeSentMessage, serializeReceivedMessage } =
-      await import('../../../internal/protocol/sealed-sender/multi-recipient-message');
 
     const parsed = deserializeSentMessage(base64ToBytes(asBase64(sentMessageBase64)));
 

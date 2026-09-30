@@ -24,6 +24,8 @@ import type { SafetyNumberConfirmation, SignalProtocolClientContext, SafetyNumbe
 import type { SessionHealthResult, SessionHealthIssue, SessionHealthStatus } from './types';
 import type { SesameManager } from '../internal/sesame/types';
 import * as CryptoUtils from '../internal/crypto';
+import { generateCompositeSafetyNumber } from '../safety';
+import { withRetry } from '../utils/retry';
 
 /**
  * Establish a new session with a partner
@@ -44,7 +46,6 @@ export async function establishSession(
   prekeyBundle: PreKeyBundle,
   recipientIdentityType: IdentityType = 'aci'
 ): Promise<void> {
-  const { withRetry } = await import('../utils/retry');
   const sessionId = ProtocolAddress.toString(remoteAddress);
 
   try {
@@ -328,9 +329,6 @@ export async function verify(
   userId: string,
   identityType: IdentityType = 'aci'
 ): Promise<SafetyNumber> {
-  // Import safety module
-  const { generateCompositeSafetyNumber } = await import('../safety');
-
   // Get our identity key
   const myIdentityKey = await ctx.storage.getIdentityKey(identityType);
   if (!myIdentityKey) {
@@ -435,7 +433,6 @@ export async function confirmSafetyNumber(
       EncryptionErrorCode.INITIALIZATION_FAILED
     );
   }
-  const { generateCompositeSafetyNumber } = await import('../safety');
   const recomputed = generateCompositeSafetyNumber(
     createCompositeIdentityV1(myIdentityKey),
     trustRecord.identity,

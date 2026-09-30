@@ -117,6 +117,22 @@ async function openDatabase(file: string, key: Uint8Array | null): Promise<SQLit
   }
 }
 
+/**
+ * Whether this expo-sqlite build has SQLCipher. SQLCipher answers
+ * `PRAGMA cipher_version` on every connection, also on an in-memory database
+ * without a key. The web build of expo-sqlite and a native build without the
+ * `useSQLCipher` config-plugin option return no row.
+ */
+export async function expoSqliteHasCipher(): Promise<boolean> {
+  const database = await openConnection(':memory:');
+  try {
+    const row = await database.getFirstAsync<{ cipher_version?: unknown }>('PRAGMA cipher_version');
+    return typeof row?.cipher_version === 'string' && row.cipher_version !== '';
+  } finally {
+    await database.closeAsync();
+  }
+}
+
 export function createExpoSqliteDriver(): SqliteDriver {
   return {
     name: 'expo-sqlite',

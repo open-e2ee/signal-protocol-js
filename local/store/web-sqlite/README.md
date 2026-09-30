@@ -148,10 +148,12 @@ move to the other after an error that is not `OPFS_UNAVAILABLE`.
 ## Tauri
 
 A Tauri 2 app uses this entry in its webview. The entry runs unchanged in
-WKWebView on macOS and iOS. A manual check ran it with Tauri 2.12 on macOS
-15.7 and in the iOS 18.0 simulator. No CI job runs it in Tauri. It needs no
-Tauri headers (`app.security.headers`) and no capability, because the store
-makes no IPC call.
+WebView2 on Windows, in the Android WebView, and in WKWebView on macOS and iOS.
+A CI job runs it in a Tauri 2.12 app in WebView2 on Windows and in the Android
+WebView on an Android emulator. Manual checks ran it with Tauri 2.12 on
+macOS 15.7 and in the iOS 17.5 and 18.0 simulators. It needs no Tauri headers
+(`app.security.headers`) and no capability, because the store makes no IPC
+call.
 
 Put the policy from [Content Security Policy](#content-security-policy) in
 `app.security.csp` of `tauri.conf.json`. When the app uses Tauri IPC, add the
@@ -183,11 +185,29 @@ IPC sources to `connect-src`:
   where the webview keeps its data. Set these values before the first release,
   and never change them. A change moves the data, and the app then cannot find
   its database or its vault.
-- **Linux.** WebKitGTK 2.54 has no OPFS synchronous access handles. On it,
-  the expected result of the open is a rejection with `OPFS_UNAVAILABLE`. See
+- **Windows of one app.** Each window of the app is its own JavaScript
+  context. The windows of one origin share the database. A reset fails
+  with `INVALID_STATE` while any window holds the store. See [Tabs](#tabs).
+- **Website data.** The database and the vault key are website data of the
+  webview. In WKWebView, `navigator.storage.persist()` returns `false`, so
+  the webview does not promise to keep them. A clear of all website data,
+  for example with `clear_all_browsing_data`, removes the database and the
+  key together. The next open then creates a new, empty store and reports
+  no error. The open fails with `LOCAL_STORE_KEY_LOST` only when the file
+  stays and the key goes. See [Lost key and reset](#lost-key-and-reset).
+- **Loss of all data.** The app must find a loss of all website data itself.
+  For example, write a marker to the store with `setMetadata`. Keep a record
+  in the app data directory, outside the webview data, that the device has a
+  store. When the record exists and the marker does not, treat the device as
+  a new device. Do not clear the website data of the webview that holds the
+  store.
+- **Linux.** WebKitGTK has no OPFS synchronous access handles, so the open
+  rejects with `OPFS_UNAVAILABLE`. A CI job checks this refusal in a Tauri
+  app with WebKitGTK 2.52. See
   [When OPFS is not available](#when-opfs-is-not-available).
-- **Windows and Android.** WebView2 and the Android WebView are not yet
-  tested.
+- **Android.** A CI job runs every check in a debug APK in the Android
+  WebView 133 on an Android API 36 emulator, and every check passes. The
+  origin of the webview is `http://tauri.localhost`.
 - **Key custody.** The default vault keeps the key in IndexedDB in the same
   origin as the database. An app that needs OS keychain custody passes its own
   vault. See [Security boundary](#security-boundary).

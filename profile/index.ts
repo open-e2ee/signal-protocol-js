@@ -27,8 +27,8 @@ export {
   setOwnProfileKey,
   getOrCreateOwnProfileKey,
   getOwnProfileKeyBase64,
-  rotateOwnProfileKey,
-} from './profile-key';
+} from './own-profile-key';
+export { rotateOwnProfileKey } from './profile-key';
 
 // SDK-managed contact profile state contracts
 export {

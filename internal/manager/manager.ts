@@ -56,7 +56,7 @@
  * ```
  */
 
-import AsyncLock from 'async-lock';
+import type AsyncLock from 'async-lock';
 import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import type {
   Ciphertext,
@@ -88,6 +88,7 @@ import type { ProtocolStrategyConfig } from '../../types';
 import { resolveSCKAMode } from '../../types/protocol-config';
 // DEFAULT_DEVICE_ID removed - device IDs must be explicitly provided
 import * as CryptoUtils from '../crypto';
+import { bytesToBase64, generateKyber768KeyPair } from '../crypto';
 import * as SPQR from '../protocol/spqr';
 import type {
   DoubleRatchetConfig,
@@ -102,7 +103,9 @@ import {
   generateEcOneTimePreKeys,
   generateKyberLastResortPreKey,
 } from '../../keys';
+import { PREKEY_ALGORITHM_X25519, verifyPreKeySignature } from '../../keys/prekey-signature';
 import { SessionBuilder, SessionCipher } from '../session';
+import { sessionLockFor, sessionLockKey } from '../session/record-locks';
 
 /**
  * Signal Protocol Manager implementation
@@ -156,12 +159,11 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
    *
    * Prevents race conditions when multiple encrypt/decrypt operations
    * happen concurrently on the same session. Uses per-session locks
-   * so different conversations do not block each other.
+   * so different conversations do not block each other. The storage object
+   * keys the lock, so the SESAME manager and the store sweeps over the same
+   * storage share it.
    */
-  private lock = new AsyncLock({
-    timeout: 5000, // 5 second timeout prevents deadlocks
-    maxPending: 1000, // Max 1000 queued operations per session
-  });
+  private readonly lock: AsyncLock;
 
   /**
    * SessionCipher handles encrypt/decrypt operations.
@@ -183,6 +185,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
     this.logger = logger;
     this.keyStorage = storage;
     this.protocolStrategy = protocolStrategy;
+    this.lock = sessionLockFor(storage);
   }
 
   /**
@@ -213,14 +216,6 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
     prekeyMessage: PreKeyMessage
   ): Promise<SessionState> {
     return this.performX3DHResponder(remoteAddress, prekeyMessage);
-  }
-
-  /**
-   * Get lock key for a specific session
-   * Each session has its own lock to prevent cross-conversation blocking
-   */
-  private getLockKey(sessionId: string): string {
-    return `session:${sessionId}`;
   }
 
   // ============================================================================
@@ -436,7 +431,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
     const sessionId = ProtocolAddress.toString(remoteAddress);
 
     // Take the lock for this session, so session creation is atomic
-    return await this.lock.acquire(this.getLockKey(sessionId), async () => {
+    return await this.lock.acquire(sessionLockKey(remoteAddress), async () => {
       try {
         if (!this.initialized) {
           await this.initialize();
@@ -451,8 +446,6 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
         }
 
         // Step 1: Verify signed prekey signature using identity signing key
-        const { PREKEY_ALGORITHM_X25519, verifyPreKeySignature } =
-          await import('../../keys/prekey-signature');
         const isValid = await verifyPreKeySignature(
           prekeyBundle.identity,
           PREKEY_ALGORITHM_X25519,
@@ -549,7 +542,6 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
             // IMPORTANT: SPQR uses ML-KEM-768, not 1024, and is separate from the
             // Kyber-1024 of PQXDH. Alice needs to send her public key in the first
             // message so Bob can encapsulate to her.
-            const { generateKyber768KeyPair, bytesToBase64 } = await import('../crypto');
             const initialKyberKeyPair = await generateKyber768KeyPair();
             const ourKyberPrivateKey = bytesToBase64(initialKyberKeyPair.privateKey);
             const ourKyberPublicKey = bytesToBase64(initialKyberKeyPair.publicKey);
@@ -1021,7 +1013,6 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
         // IMPORTANT: SPQR uses ML-KEM-768, not 1024, and is separate from the
         // Kyber-1024 of PQXDH. Bob needs to send his public key in his first
         // reply so Alice can encapsulate to him.
-        const { generateKyber768KeyPair, bytesToBase64 } = await import('../crypto');
         const initialKyberKeyPair = await generateKyber768KeyPair();
         const ourKyberPrivateKey = bytesToBase64(initialKyberKeyPair.privateKey);
         const ourKyberPublicKey = bytesToBase64(initialKyberKeyPair.publicKey);
@@ -1324,33 +1315,39 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
    * This method explicitly triggers cleanup of expired message keys.
    * Note: Cleanup also happens automatically during encrypt/decrypt operations.
    *
+   * CONCURRENT SAFETY: The cleanup reads the session and writes it back under
+   * the session lock, so it cannot write back a session that an encrypt or a
+   * decrypt has replaced.
+   *
    * @param remoteAddress - Remote party's protocol address (userId:deviceId)
    */
   async cleanupExpiredKeys(remoteAddress: ProtocolAddress): Promise<void> {
     const sessionId = ProtocolAddress.toString(remoteAddress);
     try {
-      const record = await this.keyStorage.getSessionRecord(remoteAddress);
-      // Work on a candidate copy so an in-memory adapter cannot observe partial
-      // cleanup if validation or durable persistence fails.
-      const candidateRecord = record ? CryptoUtils.cloneProtocolState(record) : null;
-      const session = candidateRecord?.currentSession;
-      if (!session) {
-        // Session does not exist - nothing to clean up
-        return;
-      }
+      await this.lock.acquire(sessionLockKey(remoteAddress), async () => {
+        const record = await this.keyStorage.getSessionRecord(remoteAddress);
+        // Work on a candidate copy so an in-memory adapter cannot observe partial
+        // cleanup if validation or durable persistence fails.
+        const candidateRecord = record ? CryptoUtils.cloneProtocolState(record) : null;
+        const session = candidateRecord?.currentSession;
+        if (!session) {
+          // Session does not exist - nothing to clean up
+          return;
+        }
 
-      // Run cleanup
-      this.cleanupExpiredMessageKeys(session);
+        // Run cleanup
+        this.cleanupExpiredMessageKeys(session);
 
-      // Save the cleaned session, preserving existing record fields
-      await this.keyStorage.storeSessionRecord(remoteAddress, {
-        ...candidateRecord,
-        currentSession: session,
-      });
+        // Save the cleaned session, preserving existing record fields
+        await this.keyStorage.storeSessionRecord(remoteAddress, {
+          ...candidateRecord,
+          currentSession: session,
+        });
 
-      this.logger.breadcrumb('Expired message keys cleaned up', {
-        category: 'E2EE',
-        data: { sessionId, operation: 'cleanup_expired_keys' },
+        this.logger.breadcrumb('Expired message keys cleaned up', {
+          category: 'E2EE',
+          data: { sessionId, operation: 'cleanup_expired_keys' },
+        });
       });
     } catch (error) {
       throw new EncryptionError(

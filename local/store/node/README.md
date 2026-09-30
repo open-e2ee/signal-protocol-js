@@ -61,7 +61,8 @@ only SDK tables.
 
 Use a supported Electron major: the Electron team supports the latest three
 stable majors ([release timelines](https://www.electronjs.org/docs/latest/tutorial/electron-timelines)).
-CI tests Electron 44 on Linux, macOS, and Windows. The binding uses Node-API,
+CI tests the latest major, Electron 44, on Linux, macOS, and Windows, and the
+oldest supported major, Electron 42, on Linux. The binding uses Node-API,
 so its prebuild loads in each supported major without a rebuild.
 
 Open the store in the main process, with the vault over Electron's

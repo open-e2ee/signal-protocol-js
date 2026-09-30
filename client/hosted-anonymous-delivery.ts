@@ -14,7 +14,9 @@ import {
 import type { DeliveryClass, SealedSenderAuth } from "../remote/relay/types";
 import type { Base64 } from "../types";
 import { SealedSenderAuthError } from "../types/errors";
+import { FanOutError, type BoundedFanOut } from "../utils/bounded-fan-out";
 import type { HostedRelayConnection } from "./hosted-connection";
+import { markRelayDeviceRefusal } from "./relay-device-refusal";
 
 const FRAME_VERSION = 1;
 const FRAME_HEADER_BYTES = 9;
@@ -81,6 +83,27 @@ export class HostedAnonymousDeliveryError extends Error {
   }
 }
 
+/**
+ * Mark a NOT_FOUND or STALE_DEVICE answer to one direct post as the Relay's
+ * refusal of the device that the post names. The code comes only from the
+ * Relay's error body, so a 404 without that body is not a device refusal.
+ */
+function markDestinationRefusal(
+  error: unknown,
+  destination: Destination,
+): unknown {
+  if (
+    error instanceof HostedAnonymousDeliveryError &&
+    (error.code === "NOT_FOUND" || error.code === "STALE_DEVICE")
+  )
+    markRelayDeviceRefusal(error, {
+      code: error.code,
+      userId: destination.accountAddress,
+      deviceId: destination.deviceId,
+    });
+  return error;
+}
+
 async function responseObject(response: Response): Promise<JsonRecord> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Anonymous delivery receipt is invalid");
@@ -111,11 +134,28 @@ async function responseObject(response: Response): Promise<JsonRecord> {
 export class HostedAnonymousDelivery {
   public constructor(
     private readonly connection: HostedRelayConnection,
+    private readonly fanOut: BoundedFanOut,
     private readonly resolveDestination: (
       account: string,
       deviceId: number,
     ) => Promise<Destination>,
   ) {}
+
+  /**
+   * Run task for each item at the same time. After every item settles, a
+   * failure rejects with the error of the first failed item in input order,
+   * because callers match its type.
+   */
+  private async each<T, R>(
+    items: readonly T[],
+    task: (item: T) => Promise<R>,
+  ): Promise<R[]> {
+    try {
+      return await this.fanOut.all(items, task);
+    } catch (error) {
+      throw error instanceof FanOutError ? error.errors[0] : error;
+    }
+  }
 
   private async post(path: string, body: JsonRecord): Promise<JsonRecord> {
     let response: Response;
@@ -256,30 +296,31 @@ export class HostedAnonymousDelivery {
     )
       throw new SealedSenderAuthError();
 
-    const destinations: (Destination & { recipientPrefix: string })[] = [];
-    for (const entry of recipients) {
-      for (const device of entry.devices) {
-        destinations.push({
-          ...(await this.resolveDestination(
-            entry.accountAddress,
-            device.deviceId,
-          )),
-          recipientPrefix: bytesToBase64(entry.prefix),
-        });
-      }
-    }
+    // Every destination resolves at the same time. The resolver sends one
+    // lookup for each account.
+    const destinations = await this.each(
+      recipients.flatMap((entry) =>
+        entry.devices.map((device) => ({ entry, deviceId: device.deviceId })),
+      ),
+      async ({ entry, deviceId }) => ({
+        ...(await this.resolveDestination(entry.accountAddress, deviceId)),
+        recipientPrefix: bytesToBase64(entry.prefix),
+      }),
+    );
     if (auth.type === "groupSendToken") {
-      const result = await this.post("/groups/send", {
-        auth: {
-          type: auth.type,
-          groupSendToken: bytesToBase64(auth.groupSendToken),
-        },
-        body: bytesToBase64(parsed.messageCiphertext),
-        destinations,
-        deliveryClass,
-        logicalSendId: clientMessageId,
-        operationEpochMilliseconds: timestamp,
-      });
+      const result = await this.fanOut.request(() =>
+        this.post("/groups/send", {
+          auth: {
+            type: auth.type,
+            groupSendToken: bytesToBase64(auth.groupSendToken),
+          },
+          body: bytesToBase64(parsed.messageCiphertext),
+          destinations,
+          deliveryClass,
+          logicalSendId: clientMessageId,
+          operationEpochMilliseconds: timestamp,
+        }),
+      );
       if (
         result.logicalSendId !== clientMessageId ||
         result.replayable !== true ||
@@ -296,10 +337,12 @@ export class HostedAnonymousDelivery {
         uuids404: [],
       };
     }
-    let serverTimestamp = timestamp;
-    for (const { recipientPrefix, ...destination } of destinations) {
-      const deliver = () =>
-        this.post("/delivery/send", {
+    // Every device is sent at the same time. A failure for one device does
+    // not stop the send to another.
+    const enqueuedAt = await this.each(
+      destinations,
+      async ({ recipientPrefix, ...destination }) => {
+        const body = {
           auth,
           destination,
           deliveryClass,
@@ -308,31 +351,42 @@ export class HostedAnonymousDelivery {
           envelope: bytesToBase64(
             concatBytes(bytes(recipientPrefix), parsed.messageCiphertext),
           ),
-        });
-      let result: JsonRecord;
-      try {
-        result = await deliver();
-      } catch (error) {
-        // A mailbox reset inside the durable acknowledgment hold answers
-        // 503 DELIVERY_UNCERTAIN. The operation identifier makes one repeat
-        // exact; a second uncertain answer reaches the caller.
+        };
+        const deliver = () =>
+          this.fanOut.request(() => this.post("/delivery/send", body));
+        let result: JsonRecord;
+        try {
+          result = await deliver();
+        } catch (error) {
+          // A mailbox reset inside the durable acknowledgment hold answers
+          // 503 DELIVERY_UNCERTAIN. The operation identifier makes one repeat
+          // exact; a second uncertain answer reaches the caller. The repeat
+          // is a new request with its own slot.
+          if (
+            deliveryClass === "ephemeral" ||
+            !(error instanceof HostedAnonymousDeliveryError) ||
+            error.code !== "DELIVERY_UNCERTAIN"
+          )
+            throw markDestinationRefusal(error, destination);
+          result = await deliver().catch((repeatError: unknown) => {
+            throw markDestinationRefusal(repeatError, destination);
+          });
+        }
         if (
-          deliveryClass === "ephemeral" ||
-          !(error instanceof HostedAnonymousDeliveryError) ||
-          error.code !== "DELIVERY_UNCERTAIN"
+          result.messageId !== clientMessageId ||
+          (result.enqueuedAt !== undefined &&
+            (!Number.isSafeInteger(result.enqueuedAt) ||
+              (result.enqueuedAt as number) <= 0))
         )
-          throw error;
-        result = await deliver();
-      }
-      if (
-        result.messageId !== clientMessageId ||
-        (result.enqueuedAt !== undefined &&
-          (!Number.isSafeInteger(result.enqueuedAt) ||
-            (result.enqueuedAt as number) <= 0))
-      )
-        throw new Error("Anonymous delivery receipt is invalid");
-      serverTimestamp = (result.enqueuedAt as number | undefined) ?? timestamp;
-    }
-    return { messageId: clientMessageId, serverTimestamp, uuids404: [] };
+          throw new Error("Anonymous delivery receipt is invalid");
+        return result.enqueuedAt as number | undefined;
+      },
+    );
+    // The last destination in input order gives the server timestamp.
+    return {
+      messageId: clientMessageId,
+      serverTimestamp: enqueuedAt[enqueuedAt.length - 1] ?? timestamp,
+      uuids404: [],
+    };
   }
 }

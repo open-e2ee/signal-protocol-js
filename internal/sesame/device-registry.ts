@@ -55,9 +55,15 @@
 
 import type { DefaultSignalProtocolClient } from '../../client';
 import type { Ciphertext } from '../../keys';
-import type { SignalProtocolRelayServer, DeviceInfo, PreKeyBundle } from '../../remote/relay/types';
+import type {
+  SignalProtocolRelayServer,
+  DeviceInfo,
+  GroupMemberDevice,
+  PreKeyBundle,
+} from '../../remote/relay/types';
 import { ProtocolAddress } from '../../types/address';
 import { defaultSignalProtocolLogger, type Logger } from '../../logger';
+import { firstItemError, type BoundedFanOut } from '../../utils/bounded-fan-out';
 
 /**
  * Device-specific prekey bundle
@@ -164,21 +170,44 @@ export interface DeviceSessionEstablishment {
   establishSession(remoteAddress: ProtocolAddress, bundle: PreKeyBundle): Promise<void>;
   /** Rethrow an error that ends the whole call, not the attempt for one device. */
   rethrowFatal(error: unknown): void;
+  /** The relay request bound of the client. Each relay request takes one slot. */
+  fanOut: BoundedFanOut;
+  /** After it aborts, no relay request starts and the call rejects. */
+  stopSignal?: AbortSignal;
+  /**
+   * The user's receiving devices, read by the caller in this send. When it is
+   * given, the call does not read the list again.
+   */
+  listedDevices?: readonly GroupMemberDevice[];
 }
+
+/** The outcome of session setup for one device. */
+type DeviceSessionOutcome =
+  | { deviceId: number; established: true }
+  | { deviceId: number; established: false; error?: Error };
 
 /**
  * Establish sessions with all active devices for a user
  *
- * Reads the relay's list of receiving devices, then fetches a prekey bundle
- * and establishes a session for each listed device that has no session. A
+ * Reads the relay's list of receiving devices, or takes the list that the
+ * caller read in the same send, then fetches a prekey bundle and establishes
+ * a session for each listed device that has no session. A
  * device that already has a session counts as established. The cipher calls
  * this again when its copy of the device list is no longer fresh, so a newly
  * linked device is found by a later send.
  *
+ * The prekey bundles of the devices are fetched at the same time, each under
+ * one slot of the relay request bound. The sessions are established one at a
+ * time, and never while a slot is held: the first session commit with a user
+ * pins the user's contact identity, and a concurrent commit that read the
+ * store before it fails. A failure for one device does not stop the other
+ * devices. The result lists the devices in the relay's order.
+ *
  * @param signal - DefaultSignalProtocolClient instance
  * @param relay - Signal Protocol relay server interface
  * @param userId - Target user ID
- * @param establishment - Establishes each session and names the errors that end the call
+ * @param establishment - Establishes each session, bounds the relay requests,
+ *   and names the errors that end the call
  * @returns Result containing successful and failed device IDs
  *
  * @example
@@ -186,6 +215,7 @@ export interface DeviceSessionEstablishment {
  * const result = await establishMultiDeviceSessions(signal, relay, 'user_abc123', {
  *   establishSession: (address, bundle) => signal.establishSession(address, bundle),
  *   rethrowFatal: () => {},
+ *   fanOut: new BoundedFanOut({ stopped: () => new Error('Stopped') }),
  * });
  * console.log(`Established ${result.establishedDevices.length}/${result.totalDevices} sessions`);
  * ```
@@ -197,62 +227,88 @@ export async function establishMultiDeviceSessions(
   establishment: DeviceSessionEstablishment
 ): Promise<MultiDeviceSessionResult> {
   const logger = signal.logger;
+  const { fanOut, stopSignal } = establishment;
   try {
     // The relay's receiving devices: registered and enabled, never soft-deleted
-    const devices = await relay.getActiveDevices(userId);
+    const devices =
+      establishment.listedDevices ??
+      (await fanOut.request(() => relay.getActiveDevices(userId), stopSignal));
 
     // Use the current user (signal.userId) as the fetcher for rate limiting
     const fetcherUserId = signal.userId;
-    const establishedDevices: number[] = [];
-    const failedDevices: number[] = [];
-    const failedDeviceErrors: Array<{ deviceId: number; error: Error }> = [];
 
-    // Establish session for each device - check session BEFORE fetching bundle
-    // This avoids unnecessary prekey fetches for devices that already have sessions
-    for (const device of devices) {
+    // One session commit at a time. A commit that fails does not stop the next.
+    let establishing: Promise<void> = Promise.resolve();
+    const establishInTurn = (remoteAddress: ProtocolAddress, bundle: PreKeyBundle) => {
+      const turn = establishing.then(() => establishment.establishSession(remoteAddress, bundle));
+      establishing = turn.catch(() => undefined);
+      return turn;
+    };
+
+    const establishDevice = async ({
+      deviceId,
+    }: {
+      deviceId: number;
+    }): Promise<DeviceSessionOutcome> => {
       try {
-        const remoteAddress = createDeviceAddress(userId, device.deviceId);
+        const remoteAddress = createDeviceAddress(userId, deviceId);
 
         // Check if session already exists BEFORE fetching bundle
         const hasExistingSession = await signal.hasSession(remoteAddress);
         if (hasExistingSession) {
           logger.info('[MultiDevice] Session already exists', {
             address: ProtocolAddress.toString(remoteAddress),
-            deviceId: device.deviceId,
+            deviceId,
           });
-          establishedDevices.push(device.deviceId);
-          continue;
+          return { deviceId, established: true };
         }
 
         // Only fetch bundle for devices WITHOUT existing sessions
-        const bundle = await relay.fetchPreKeyBundle(userId, device.deviceId, fetcherUserId);
+        const bundle = await fanOut.request(
+          () => relay.fetchPreKeyBundle(userId, deviceId, fetcherUserId),
+          stopSignal
+        );
         if (!bundle) {
-          logger.warn('[MultiDevice] No bundle available', {
-            userId,
-            deviceId: device.deviceId,
-          });
-          failedDevices.push(device.deviceId);
-          continue;
+          logger.warn('[MultiDevice] No bundle available', { userId, deviceId });
+          return { deviceId, established: false };
         }
 
-        // Establish new session
-        await establishment.establishSession(remoteAddress, bundle);
-        establishedDevices.push(device.deviceId);
+        await establishInTurn(remoteAddress, bundle);
         logger.info('[MultiDevice] Session established', {
           address: ProtocolAddress.toString(remoteAddress),
-          deviceId: device.deviceId,
+          deviceId,
         });
+        return { deviceId, established: true };
       } catch (error) {
         establishment.rethrowFatal(error);
-        const normalizedError =
-          error instanceof Error ? error : new Error(String(error));
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
         logger.error('[MultiDevice] Failed to establish session', {
           category: 'MultiDevice',
           error: normalizedError,
-          data: { userId, deviceId: device.deviceId },
+          data: { userId, deviceId },
         });
-        failedDevices.push(device.deviceId);
-        failedDeviceErrors.push({ deviceId: device.deviceId, error: normalizedError });
+        return { deviceId, established: false, error: normalizedError };
+      }
+    };
+
+    // A device rejects only with an error that ends the whole call.
+    const outcomes = await fanOut
+      .all(devices, establishDevice, stopSignal)
+      .catch((error: unknown) => {
+        throw firstItemError(error);
+      });
+
+    const establishedDevices: number[] = [];
+    const failedDevices: number[] = [];
+    const failedDeviceErrors: Array<{ deviceId: number; error: Error }> = [];
+    for (const outcome of outcomes) {
+      if (outcome.established) {
+        establishedDevices.push(outcome.deviceId);
+        continue;
+      }
+      failedDevices.push(outcome.deviceId);
+      if (outcome.error) {
+        failedDeviceErrors.push({ deviceId: outcome.deviceId, error: outcome.error });
       }
     }
 

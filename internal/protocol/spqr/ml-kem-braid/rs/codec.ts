@@ -14,7 +14,7 @@
  */
 
 import { LagrangeInterpolator } from './lagrange';
-import { getGF16Sync, isGF16Ready, type GaloisField } from './galois';
+import { getGF16Sync, initGF16, isGF16Ready, type GaloisField } from './galois';
 import {
   BRAID_CHUNK_POINT_COUNT,
   assertBraidChunkIndex,
@@ -752,7 +752,6 @@ export class PolyEncoder implements Encoder {
  * @returns Promise resolving to streaming encoder
  */
 export async function createEncoder(data: Uint8Array): Promise<PolyEncoder> {
-  const { initGF16 } = await import('./galois');
   await initGF16();
   return new PolyEncoder(data);
 }
@@ -1086,7 +1085,6 @@ export class PolyDecoder implements Decoder {
  * @returns Promise resolving to stateful decoder
  */
 export async function createDecoder(messageSize: number): Promise<PolyDecoder> {
-  const { initGF16 } = await import('./galois');
   await initGF16();
   return new PolyDecoder(messageSize);
 }

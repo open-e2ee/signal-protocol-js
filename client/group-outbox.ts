@@ -10,6 +10,7 @@ import type {
 import {
   appendOutgoingGroupDeviceMessages,
   completeOutgoingMessageIntent,
+  confirmOutgoingPreMessages,
   getOutgoingMessageIntent,
   storeOutgoingMessageIntent,
   withOutgoingMessageIntentLock,
@@ -18,16 +19,34 @@ import {
 } from '../local/store/reliability';
 import type { SendOptions, SendResult } from './types';
 
+/** The relay phases of a group send, in their order. */
+export type GroupSendPhase = 'pre-message' | 'device' | 'sync';
+
+/**
+ * The work of one group send.
+ *
+ * The phases of a send run in order, with a barrier between phases: the
+ * pre-messages, then the sender-key confirmation, then the group message and
+ * its device posts, then the sync copies. Inside a phase, the items run at the
+ * same time. Each relay request takes a slot of the client's relay request
+ * bound, and a phase holds no slot.
+ */
 export interface GroupOutboxContext {
   storage: SignalProtocolLocalStore;
   relay?: SignalProtocolRelayServer;
   senderUserId: string;
   senderDeviceId: number;
   deliveryMode: 'preferred' | 'required' | 'disabled';
+  /**
+   * Prepare the sender-key payload. When a sender-key distribution is
+   * pending, the preparation gets the member devices from readMembers, so the
+   * send reads each member's device list once.
+   */
   preparePayload(
     groupId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & { clientMessageId: string; timestamp: number }
+    options: SendOptions & { clientMessageId: string; timestamp: number },
+    readMembers: () => Promise<GroupMemberDevice[]>
   ): Promise<{
     ciphertext: string;
     preMessages: StoredOutgoingDeviceMessage[];
@@ -65,6 +84,24 @@ export interface GroupOutboxContext {
     message: StoredOutgoingDeviceMessage,
     auth: SealedSenderAuth
   ): Promise<{ messageId: string; serverTimestamp: number }>;
+  /**
+   * Run local work for each item at the same time. It rejects after every
+   * item settles, with the error of the first failed item in input order. A
+   * stop does not end it.
+   */
+  prepareEach<T, R>(items: readonly T[], task: (item: T) => Promise<R>): Promise<R[]>;
+  /**
+   * Run one relay phase: a task for each device message at the same time.
+   * Every device is attempted. It rejects after every device settles, with
+   * the error of the first failed device in input order.
+   */
+  sendPhase<R>(
+    messages: readonly StoredOutgoingDeviceMessage[],
+    task: (message: StoredOutgoingDeviceMessage) => Promise<R>,
+    phase: GroupSendPhase
+  ): Promise<R[]>;
+  /** Send one relay request of a device post under a slot of the bound. */
+  postToRelay<T>(send: () => Promise<T>, sealed: boolean): Promise<T>;
 }
 
 async function sendStoredDeviceMessage(
@@ -86,17 +123,21 @@ async function sendStoredDeviceMessage(
     return sendStoredDeviceMessage(context, intent, message, true);
   }
   if (forceIdentified || !message.sealedSenderMessage) {
-    return relay.send({
-      targetUserId: message.recipientUserId,
-      targetDeviceId: message.recipientDeviceId,
-      senderUserId: context.senderUserId,
-      senderDeviceId: context.senderDeviceId,
-      ciphertext: message.ciphertext,
-      messageType: message.messageType,
-      deliveryClass: 'user-visible',
-      timestamp: message.timestamp,
-      clientMessageId: intent.clientMessageId,
-    });
+    return context.postToRelay(
+      () =>
+        relay.send({
+          targetUserId: message.recipientUserId,
+          targetDeviceId: message.recipientDeviceId,
+          senderUserId: context.senderUserId,
+          senderDeviceId: context.senderDeviceId,
+          ciphertext: message.ciphertext,
+          messageType: message.messageType,
+          deliveryClass: 'user-visible',
+          timestamp: message.timestamp,
+          clientMessageId: intent.clientMessageId,
+        }),
+      false
+    );
   }
 
   const auth: SealedSenderAuth | null =
@@ -142,19 +183,40 @@ async function sendStoredGroupIntent(
   let sharedSucceeded = false;
   let skippedUsers: string[] = [];
 
-  for (const message of intent.preMessages ?? []) {
-    await relay.send({
-      targetUserId: message.recipientUserId,
-      targetDeviceId: message.recipientDeviceId,
-      senderUserId: context.senderUserId,
-      senderDeviceId: context.senderDeviceId,
-      ciphertext: message.ciphertext,
-      messageType: message.messageType,
-      deliveryClass: 'background-sync',
-      timestamp: message.timestamp,
-      clientMessageId: message.clientMessageId,
-      recipientRegistrationId: message.recipientRegistrationId,
-    });
+  // Every pre-message is accepted before the confirmation and the group
+  // message. When some fail, the intent keeps only those, so a replay posts
+  // only the pre-messages that the relay did not accept.
+  const preMessages = intent.preMessages ?? [];
+  const accepted: string[] = [];
+  try {
+    await context.sendPhase(
+      preMessages,
+      async (message) => {
+        await context.postToRelay(
+          () =>
+            relay.send({
+              targetUserId: message.recipientUserId,
+              targetDeviceId: message.recipientDeviceId,
+              senderUserId: context.senderUserId,
+              senderDeviceId: context.senderDeviceId,
+              ciphertext: message.ciphertext,
+              messageType: message.messageType,
+              deliveryClass: 'background-sync',
+              timestamp: message.timestamp,
+              clientMessageId: message.clientMessageId,
+              recipientRegistrationId: message.recipientRegistrationId,
+            }),
+          false
+        );
+        if (message.clientMessageId !== undefined) accepted.push(message.clientMessageId);
+      },
+      'pre-message'
+    );
+  } catch (error) {
+    if (accepted.length > 0) {
+      await confirmOutgoingPreMessages(context.storage, intent.clientMessageId, accepted);
+    }
+    throw error;
   }
   if (intent.groupSenderKeyDistributionId) {
     await context.confirmSenderKeyDistributionSent(
@@ -184,14 +246,19 @@ async function sendStoredGroupIntent(
         throw new Error('Required group sealed-sender authorization is unavailable');
       }
     } else {
+      const shared = intent.groupSharedMessage;
       try {
-        const result = await relay.sendMultiRecipientUnidentified(
-          intent.groupSharedMessage.sentMessageBase64,
-          auth,
-          intent.clientTimestamp,
-          'user-visible',
-          intent.groupSharedMessage.recipientUserIds,
-          intent.clientMessageId
+        const result = await context.postToRelay(
+          () =>
+            relay.sendMultiRecipientUnidentified!(
+              shared.sentMessageBase64,
+              auth,
+              intent.clientTimestamp,
+              'user-visible',
+              shared.recipientUserIds,
+              intent.clientMessageId
+            ),
+          true
         );
         messageId = result.messageId;
         timestamp = result.serverTimestamp;
@@ -200,10 +267,8 @@ async function sendStoredGroupIntent(
       } catch (error) {
         if (!(error instanceof SealedSenderAuthError)) throw error;
         if (intent.groupSharedMessage.deliveryMode === 'required') throw error;
-        await Promise.all(
-          intent.groupSharedMessage.recipientUserIds.map((recipientUserId) =>
-            context.reportIdentifiedFallback(recipientUserId)
-          )
+        await context.prepareEach(intent.groupSharedMessage.recipientUserIds, (recipientUserId) =>
+          context.reportIdentifiedFallback(recipientUserId)
         );
       }
     }
@@ -212,64 +277,81 @@ async function sendStoredGroupIntent(
   const sharedUsers = new Set(intent.groupSharedMessage?.recipientUserIds ?? []);
   const usersToRepair = new Set(skippedUsers);
   const forceIdentified = Boolean(intent.groupSharedMessage && !sharedSucceeded);
-  for (const message of intent.deviceMessages) {
-    if (sharedSucceeded && sharedUsers.has(message.recipientUserId)) {
-      if (!usersToRepair.has(message.recipientUserId)) continue;
-    }
-    const result = await sendStoredDeviceMessage(context, intent, message, forceIdentified);
-    if (messageId.startsWith('group-')) {
-      messageId = result.messageId;
-      timestamp = result.serverTimestamp;
-    }
+  const devicePosts = intent.deviceMessages.filter(
+    (message) =>
+      !sharedSucceeded ||
+      !sharedUsers.has(message.recipientUserId) ||
+      usersToRepair.has(message.recipientUserId)
+  );
+  const results = await context.sendPhase(
+    devicePosts,
+    (message) => sendStoredDeviceMessage(context, intent, message, forceIdentified),
+    'device'
+  );
+  if (messageId.startsWith('group-') && results[0]) {
+    messageId = results[0].messageId;
+    timestamp = results[0].serverTimestamp;
   }
 
   if (skippedUsers.length > 0) {
-    const refreshed = (
-      await Promise.all(skippedUsers.map((userId) => relay.getActiveDevices(userId)))
-    ).flat();
+    const refreshed = await context.resolveMemberDevices(intent.recipientId, {
+      clientMessageId: intent.clientMessageId,
+      groupMemberUserIds: skippedUsers,
+    });
     const knownTargets = new Set(
       intent.deviceMessages.map(
         (message) => `${message.recipientUserId}\u0000${String(message.recipientDeviceId)}`
       )
     );
-    const additions: StoredOutgoingDeviceMessage[] = [];
-    for (const member of refreshed) {
-      const target = `${member.userId}\u0000${String(member.deviceId)}`;
-      if (knownTargets.has(target)) continue;
-      additions.push(
-        await context.prepareDeviceMessage(
+    const groupCiphertext = intent.groupCiphertext;
+    const additions = await context.prepareEach(
+      refreshed.filter(
+        (member) => !knownTargets.has(`${member.userId}\u0000${String(member.deviceId)}`)
+      ),
+      (member) =>
+        context.prepareDeviceMessage(
           member,
           intent.recipientId,
-          intent.groupCiphertext,
+          groupCiphertext,
           intent.clientTimestamp
         )
-      );
-    }
+    );
     if (additions.length > 0) {
       intent = await appendOutgoingGroupDeviceMessages(
         context.storage,
         intent.clientMessageId,
         additions
       );
-      for (const message of additions) {
-        await sendStoredDeviceMessage(context, intent, message);
-      }
+      const extended = intent;
+      await context.sendPhase(
+        additions,
+        (message) => sendStoredDeviceMessage(context, extended, message),
+        'device'
+      );
     }
   }
 
-  for (const message of intent.syncMessages) {
-    await relay.send({
-      targetUserId: message.recipientUserId,
-      targetDeviceId: message.recipientDeviceId,
-      senderUserId: context.senderUserId,
-      senderDeviceId: context.senderDeviceId,
-      ciphertext: message.ciphertext,
-      messageType: message.messageType,
-      deliveryClass: 'background-sync',
-      timestamp: message.timestamp,
-      clientMessageId: message.clientMessageId,
-    });
-  }
+  // The sync copies start after every device post settles.
+  await context.sendPhase(
+    intent.syncMessages,
+    (message) =>
+      context.postToRelay(
+        () =>
+          relay.send({
+            targetUserId: message.recipientUserId,
+            targetDeviceId: message.recipientDeviceId,
+            senderUserId: context.senderUserId,
+            senderDeviceId: context.senderDeviceId,
+            ciphertext: message.ciphertext,
+            messageType: message.messageType,
+            deliveryClass: 'background-sync',
+            timestamp: message.timestamp,
+            clientMessageId: message.clientMessageId,
+          }),
+        false
+      ),
+    'sync'
+  );
 
   const result = {
     clientMessageId: intent.clientMessageId,
@@ -308,22 +390,25 @@ export async function sendGroupWithExactOutbox(
     }
 
     const clientTimestamp = options.timestamp ?? Date.now();
-    const preparedPayload = await context.preparePayload(groupId, plaintextBytes, {
-      ...options,
-      timestamp: clientTimestamp,
-    });
+    // One device-list read for each member in this send.
+    let memberRead: Promise<GroupMemberDevice[]> | undefined;
+    const readMembers = () => (memberRead ??= context.resolveMemberDevices(groupId, options));
+    const preparedPayload = await context.preparePayload(
+      groupId,
+      plaintextBytes,
+      { ...options, timestamp: clientTimestamp },
+      readMembers
+    );
     const encryptedMessageBase64 = preparedPayload.ciphertext;
-    const members = context.relay ? await context.resolveMemberDevices(groupId, options) : [];
+    const members = context.relay ? await readMembers() : [];
     const otherMembers = members.filter((member) => member.userId !== context.senderUserId);
     const groupSharedMessage = await context.prepareSharedMessage(
       groupId,
       otherMembers,
       encryptedMessageBase64
     );
-    const deviceMessages = await Promise.all(
-      otherMembers.map((member) =>
-        context.prepareDeviceMessage(member, groupId, encryptedMessageBase64, clientTimestamp)
-      )
+    const deviceMessages = await context.prepareEach(otherMembers, (member) =>
+      context.prepareDeviceMessage(member, groupId, encryptedMessageBase64, clientTimestamp)
     );
     const syncMessages = context.relay
       ? await context.prepareSyncMessages(

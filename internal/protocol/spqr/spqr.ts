@@ -144,6 +144,7 @@ import {
 
 // Validation functions (extracted for modularity)
 import { validateSPQRState, trimSkippedKeys } from './validate';
+import { spqrBraidSend } from './braid';
 
 // SPQR wire format serialization (no circular dependency, pure encode/decode module)
 import {
@@ -816,8 +817,6 @@ export async function performSPQRRatchetStep(spqrState: SPQRState): Promise<SPQR
 
   // Mode dispatch: braid mode uses the ML-KEM Braid state machine
   if (spqrState.mode === 'braid') {
-    // Import braid operations (lazy to avoid circular deps)
-    const { spqrBraidSend } = await import('./braid');
     const result = await spqrBraidSend(spqrState);
 
     return {

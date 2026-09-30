@@ -28,15 +28,24 @@ and lifecycle state in the `SignalProtocolLocalSecretVault` that the
 application passes, and they take platform metadata as an input. They omit each
 metadata field that the application does not supply.
 
-Two platform entries read that metadata:
+Two platform entries read that metadata. Install the peers of the entry that
+you use.
 
-- `@open-e2ee/signal-protocol-sdk/device/expo` reads `react-native`,
-  `expo-constants`, and `expo-device`.
-- `@open-e2ee/signal-protocol-sdk/device/react-native` reads `react-native` and
-  `react-native-device-info`.
+`@open-e2ee/signal-protocol-sdk/device/expo` reads `react-native` 0.83.6 or
+later, `expo-constants` 55.0.7 or later, and `expo-device` 55.0.15 or later.
 
-Install the optional peer dependencies of the platform entry you use. The
-lifecycle core is available from:
+```sh
+npx expo install react-native expo-constants expo-device
+```
+
+`@open-e2ee/signal-protocol-sdk/device/react-native` reads `react-native`
+0.83.6 or later and `react-native-device-info` 15.0.1 or later.
+
+```sh
+npm install react-native react-native-device-info
+```
+
+The lifecycle core is available from:
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts

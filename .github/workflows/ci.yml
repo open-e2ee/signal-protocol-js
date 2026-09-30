@@ -16,19 +16,109 @@ concurrency:
   group: checks-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# A draft pull request runs only `build`. The other jobs skip on a draft and
-# run when the pull request is marked ready for review. A draft cannot merge,
-# so each change runs every job before it reaches main.
+# A draft pull request runs only `changes` and `build`. The other jobs skip on
+# a draft and run when the pull request is marked ready for review. A draft
+# cannot merge, so each change runs every job before it reaches main.
+#
+# A pull request that changes only documentation that no job here reads runs
+# only `changes` and the `react-native-hosts` verdict. See `changes`.
 jobs:
+  # Decides whether the pull request changes only documentation that no job
+  # here reads. `scripts/docs-only-change.mjs` of the base revision holds the
+  # rule, and each doubt resolves to code. A push and a manual run are always
+  # code. An error fails this job: then each job that needs it skips, and each
+  # verdict job fails.
+  changes:
+    name: Changed files are classified (Checks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      # The base revision classifies, so a change to the classifier or to
+      # its allowlist never classifies itself. Only those two files are
+      # checked out.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: |
+            scripts/docs-only-change.mjs
+            scripts/docs-only-paths.json
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: github.event_name == 'pull_request'
+        with:
+          node-version: 26
+
+      # The file list comes from the API, because the checkout holds no
+      # history to diff. A rename carries both of its names. A base without
+      # the classifier cannot classify, so every job runs.
+      - name: Classify the changed files
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != pull_request ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ ! -f scripts/docs-only-change.mjs ]; then
+            echo "::notice title=Docs-only check skipped::The base revision has no scripts/docs-only-change.mjs, so every job runs."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" \
+            --jq '.[] | {filename, previous_filename}' > "$RUNNER_TEMP/changed-files.jsonl"
+          verdict=$(node ./scripts/docs-only-change.mjs "$CHANGED_FILES" < "$RUNNER_TEMP/changed-files.jsonl")
+          case "$verdict" in
+            code=true | code=false) echo "$verdict" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unexpected verdict: $verdict" >&2; exit 1 ;;
+          esac
+
   build:
     name: Build, typecheck, and audit
-    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        id: node
+        uses: ./.github/actions/node
+
+      - name: Restore node_modules
+        id: node-modules
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          path: node_modules
+          key: ${{ steps.node.outputs.node-modules-key }}
 
       - name: Install from the committed lockfile
         uses: ./.github/actions/install
+        with:
+          cache-hit: ${{ steps.node-modules.outputs.cache-hit }}
+
+      - name: Save node_modules
+        if: steps.node-modules.outcome == 'success' && steps.node-modules.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          path: node_modules
+          key: ${{ steps.node-modules.outputs.cache-primary-key }}
 
       - name: Build
         run: npm run build
@@ -44,14 +134,39 @@ jobs:
 
   examples:
     name: Documented examples run against the packed package
-    if: github.event.pull_request.draft != true
-    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event.pull_request.draft != true
+    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        id: node
+        uses: ./.github/actions/node
+
+      - name: Restore node_modules
+        id: node-modules
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          path: node_modules
+          key: ${{ steps.node.outputs.node-modules-key }}
 
       - name: Install from the committed lockfile
         uses: ./.github/actions/install
+        with:
+          cache-hit: ${{ steps.node-modules.outputs.cache-hit }}
+
+      - name: Save node_modules
+        if: steps.node-modules.outcome == 'success' && steps.node-modules.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          path: node_modules
+          key: ${{ steps.node-modules.outputs.cache-primary-key }}
 
       - name: Build and pack
         id: pack
@@ -107,22 +222,55 @@ jobs:
   # package. In one job they ran in series and took about 5 minutes.
   react-native-hosts-leg:
     name: React Native and Expo hosts install and bundle the package (${{ matrix.leg }})
-    if: github.event.pull_request.draft != true
-    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event.pull_request.draft != true
+    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         leg: [peer ranges, Expo bundles, bare React Native bundle]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The npm download cache serves the example installs in the smoke
-      # scripts below.
+      - name: Set up Node.js
+        id: node
+        uses: ./.github/actions/node
+
+      - name: Restore node_modules
+        id: node-modules
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          path: node_modules
+          key: ${{ steps.node.outputs.node-modules-key }}
+
       - name: Install from the committed lockfile
         uses: ./.github/actions/install
         with:
-          npm-cache-dependency-path: |
+          cache-hit: ${{ steps.node-modules.outputs.cache-hit }}
+
+      - name: Save node_modules
+        if: steps.node-modules.outcome == 'success' && steps.node-modules.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          path: node_modules
+          key: ${{ steps.node-modules.outputs.cache-primary-key }}
+
+      # The npm download cache serves the example installs in the smoke
+      # scripts below. The time bound also applies to the save at the end of
+      # the job. When the cache service is slow, the job goes on without the
+      # cache.
+      - name: Restore the npm download cache
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          cache: npm
+          cache-dependency-path: |
             package-lock.json
             examples/expo/package-lock.json
             examples/react-native/package-lock.json
@@ -167,20 +315,27 @@ jobs:
           "$RUNNER_TEMP"/open-e2ee-signal-protocol-sdk-*.tgz
 
   # One verdict for the hosts legs under the name and id the single job had.
-  # It fails unless every leg succeeded, and it skips on a draft by its own
-  # condition: `!cancelled()` alone would run it, and it would fail.
+  # It fails unless `changes` succeeded and every leg succeeded. On a change
+  # to documentation only, it requires the legs to skip. It skips on a draft
+  # by its own condition: `!cancelled()` alone would run it, and it would
+  # fail.
   react-native-hosts:
     name: React Native and Expo hosts install and bundle the package
-    needs: react-native-hosts-leg
+    needs: [changes, react-native-hosts-leg]
     if: ${{ !cancelled() && github.event.pull_request.draft != true }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every leg
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          CHANGES: ${{ needs.changes.result }}
+          CODE: ${{ needs.changes.outputs.code }}
+          LEGS: ${{ needs.react-native-hosts-leg.result }}
         run: |
-          echo "Leg results: $RESULTS"
-          for result in $RESULTS; do
-            test "$result" = success
-          done
+          echo "Classification: $CHANGES, code=$CODE. Leg results: $LEGS"
+          test "$CHANGES" = success
+          case "$CODE" in
+            true) test "$LEGS" = success ;;
+            false) test "$LEGS" = skipped ;;
+            *) exit 1 ;;
+          esac

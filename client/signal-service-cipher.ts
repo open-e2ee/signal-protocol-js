@@ -55,19 +55,30 @@ import * as CryptoUtils from '../internal/crypto';
 import {
   completeOutgoingMessageIntent,
   getOutgoingMessageIntent,
+  reconcileOutgoingDirectDeviceMessages,
   replaceOutgoingDirectDeviceMessage,
   storeOutgoingMessageIntent,
   withOutgoingMessageIntentLock,
   type StoredOutgoingDeviceMessage,
   type StoredOutgoingMessageIntent,
 } from '../local/store/reliability';
+import { FanOutError, firstItemError, type BoundedFanOut } from '../utils/bounded-fan-out';
 import { withRetry } from '../utils/retry';
-import { acquireUntilStopped, RelayWorkStopped, rethrowRelayWorkStopped } from './relay-work';
+import {
+  acquireUntilStopped,
+  createRelayFanOut,
+  RelayWorkStopped,
+  relaySendsSealedUnderItsBound,
+  rethrowRelayWorkStopped,
+} from './relay-work';
+import { refusesRemovedDevices, relayDeviceRefusal } from './relay-device-refusal';
 import { prepareGroupSharedMessage } from './group-sealed-sender';
 import { sendGroupWithExactOutbox } from './group-outbox';
 import {
+  reconstructEnvelope,
   resolveSealedSenderContext as resolveSealedSenderSendContext,
   serializeDirectSealedSenderMessage as serializeDirectSealedSenderTransport,
+  unsealMessage,
   type ResolvedSealedSenderContext,
   type SealedSenderProvider as SealedSenderProviderContract,
 } from './sealed-sender';
@@ -84,6 +95,42 @@ import {
  * first send after it ends.
  */
 export const RECIPIENT_DEVICE_LIST_FRESH_MILLISECONDS = 60_000;
+
+/**
+ * How old a recipient's device list can be for a direct send to post before
+ * it reads the list again. Only a relay that refuses a removed device's
+ * mailbox allows it, so the age bounds how long the client posts first on a
+ * list that no read confirmed, not how long a removed device receives.
+ */
+const RECIPIENT_DEVICE_LIST_MAXIMUM_AGE_MILLISECONDS = 300_000;
+
+/** How one device post of a send runs. */
+interface DevicePostControl {
+  /** The stop signal of the send. No post starts after it aborts. */
+  readonly stopSignal?: AbortSignal;
+  /** Runs just before the relay request, and refuses the post by throwing. */
+  readonly admit?: () => void;
+}
+
+/** A send-first post that waits for the reconcile pass. */
+class DeferredPost extends Error {
+  constructor() {
+    super('The post waits for the device-list read');
+    this.name = 'DeferredPost';
+  }
+}
+
+/** The posts of a send-first pass, by recipient device. */
+interface DirectIntentPosts {
+  readonly accepted: Map<number, { messageId: string; serverTimestamp: number }>;
+  readonly refused: Map<number, { error: unknown }>;
+}
+
+/** The result of a successful device-list read. */
+interface RecipientDeviceList {
+  readonly listed: ReadonlySet<number>;
+  readonly established: readonly number[];
+}
 
 /**
  * Sort envelopes so PreKeyMessages are processed first
@@ -190,7 +237,19 @@ class SealedSenderRecipientRejectedError extends Error {
 }
 
 function isConclusiveDeviceRejection(error: unknown): boolean {
-  return isStaleSessionError(error) || error instanceof SealedSenderRecipientRejectedError;
+  return (
+    isStaleSessionError(error) ||
+    error instanceof SealedSenderRecipientRejectedError ||
+    relayDeviceRefusal(error)?.code === 'STALE_DEVICE'
+  );
+}
+
+/** True when the relay refused this post because of the device that it names. */
+function isRefusalOfDevice(error: unknown, message: StoredOutgoingDeviceMessage): boolean {
+  const refusal = relayDeviceRefusal(error);
+  return (
+    refusal?.userId === message.recipientUserId && refusal.deviceId === message.recipientDeviceId
+  );
 }
 
 /**
@@ -206,9 +265,14 @@ export type SealedSenderProvider = SealedSenderProviderContract;
 
 /**
  * Callback for reconciling a recipient's sessions with the relay's device list
- * Allows SignalProtocolClient to inject its session establishment logic
+ * Allows SignalProtocolClient to inject its session establishment logic. When
+ * the send already read the recipient's devices, it passes them, and the
+ * callback does not read the list again.
  */
-export type SessionEstablisher = (recipientUserId: string) => Promise<{
+export type SessionEstablisher = (
+  recipientUserId: string,
+  listedDevices?: readonly GroupMemberDevice[]
+) => Promise<{
   /** Device IDs the relay lists as receiving for the recipient */
   activeDevices: number[];
   establishedDevices: number[];
@@ -302,7 +366,8 @@ export class SignalProtocolServiceCipher {
     private readonly relay?: SignalProtocolRelayServer,
     private readonly remoteObjectStore?: SignalProtocolRemoteObjectStore,
     private readonly contentAdapter?: SignalProtocolContentAdapter,
-    private readonly logger: Required<Logger> = defaultSignalProtocolLogger
+    private readonly logger: Required<Logger> = defaultSignalProtocolLogger,
+    private readonly fanOut: BoundedFanOut = createRelayFanOut()
   ) {}
 
   private getResolvedContentAdapter(): SignalProtocolContentAdapter {
@@ -343,25 +408,88 @@ export class SignalProtocolServiceCipher {
   }
 
   private async uploadSyncMessages(syncMessages: SesameMessage[]): Promise<void> {
-    if (!this.relay || syncMessages.length === 0) {
+    const relay = this.relay;
+    if (!relay || syncMessages.length === 0) {
       return;
     }
 
-    for (const syncMsg of syncMessages) {
-      await this.relay.send({
-        targetUserId: syncMsg.recipientUserId,
-        targetDeviceId: syncMsg.recipientDeviceId,
-        senderUserId: this.userId,
-        senderDeviceId: this.deviceId,
-        ciphertext:
-          typeof syncMsg.ciphertext === 'string'
-            ? syncMsg.ciphertext
-            : CryptoUtils.bytesToBase64(syncMsg.ciphertext),
-        messageType: getEnvelopeMessageType(syncMsg.ciphertext),
-        deliveryClass: 'background-sync',
-        timestamp: syncMsg.timestamp,
-      });
+    await this.sendPhase(
+      syncMessages,
+      (syncMsg) =>
+        this.fanOut.request(() =>
+          relay.send({
+            targetUserId: syncMsg.recipientUserId,
+            targetDeviceId: syncMsg.recipientDeviceId,
+            senderUserId: this.userId,
+            senderDeviceId: this.deviceId,
+            ciphertext:
+              typeof syncMsg.ciphertext === 'string'
+                ? syncMsg.ciphertext
+                : CryptoUtils.bytesToBase64(syncMsg.ciphertext),
+            messageType: getEnvelopeMessageType(syncMsg.ciphertext),
+            deliveryClass: 'background-sync',
+            timestamp: syncMsg.timestamp,
+          })
+        ),
+      'sync'
+    );
+  }
+
+  /**
+   * Run one relay phase of a send: a task for each device message, at the same
+   * time, under the client's relay request bound. Every device is attempted.
+   * When devices fail, the phase rejects after every device settles, with the
+   * error of the first failed device in input order, so a caller sees the
+   * error type that a send in device order threw. Each other failure is logged.
+   */
+  private async sendPhase<T extends { recipientUserId: string; recipientDeviceId: number }, R>(
+    messages: readonly T[],
+    task: (message: T) => Promise<R>,
+    phase: 'pre-message' | 'device' | 'sync',
+    stopSignal?: AbortSignal
+  ): Promise<R[]> {
+    try {
+      return await this.fanOut.all(messages, task, stopSignal);
+    } catch (error) {
+      if (!(error instanceof FanOutError)) throw error;
+      const failed = error.outcomes.flatMap((outcome, index) =>
+        outcome.ok ? [] : [{ message: messages[index]!, error: outcome.error }]
+      );
+      for (const { message, error: other } of failed.slice(1)) {
+        this.logger.warn('A device post of a send failed', {
+          category: 'E2EE',
+          error: other as Error,
+          data: {
+            phase,
+            recipientUserId: message.recipientUserId,
+            deviceId: message.recipientDeviceId,
+            failedDevices: failed.length,
+          },
+        });
+      }
+      throw failed[0]!.error;
     }
+  }
+
+  /**
+   * Send one relay request of a device post under a slot of the client's
+   * bound. An adapter that bounds its own sealed-sender posts takes a slot of
+   * the same bound, so its sealed post runs without one here.
+   */
+  private postToRelay<T>(
+    send: () => Promise<T>,
+    sealed: boolean,
+    control: DevicePostControl
+  ): Promise<T> {
+    const post = () => {
+      control.admit?.();
+      return send();
+    };
+    if (sealed && relaySendsSealedUnderItsBound(this.relay!)) {
+      if (control.stopSignal?.aborted) return Promise.reject(new RelayWorkStopped());
+      return new Promise<T>((resolve) => resolve(post()));
+    }
+    return this.fanOut.request(post, control.stopSignal);
   }
 
   private async sendSyncPayloadToLocalOtherDevices(
@@ -594,8 +722,6 @@ export class SignalProtocolServiceCipher {
         );
       }
 
-      const { unsealMessage, reconstructEnvelope } = await import('./sealed-sender');
-
       // Get recipient's X25519 identity private key for unsealing
       const identityKeyPair = await this.storage.getIdentityKey();
       if (!identityKeyPair) {
@@ -799,11 +925,11 @@ export class SignalProtocolServiceCipher {
 
           // 2. Detect recipient type (group vs user)
           if (isGroupId(recipientId)) {
-            return this.encryptToGroup(recipientId, content, durableOptions, sessions);
+            return this.encryptToGroup(recipientId, content, durableOptions, sessions, stopSignal);
           }
 
           // 3. Send to user (existing SESAME path)
-          return this.encryptToUser(recipientId, content, durableOptions, sessions);
+          return this.encryptToUser(recipientId, content, durableOptions, sessions, stopSignal);
         },
         stopSignal
       );
@@ -1001,25 +1127,31 @@ export class SignalProtocolServiceCipher {
    * without a relay read. The relay gives no device-set version, so the window
    * is the only bound on how long a linked or removed device goes unseen.
    *
+   * A direct send may post before the read when the relay refuses every post
+   * to a removed device's mailbox, this client read the list in this process,
+   * and that read is younger than
+   * RECIPIENT_DEVICE_LIST_MAXIMUM_AGE_MILLISECONDS. This method then returns
+   * true without a read, and the send reads the list while it posts and
+   * reconciles after the read. Other relays, and a list that this process did
+   * not read or that is too old, await the read. A list time later than the
+   * clock is too old.
+   *
+   * @param sendFirst - The caller can post before the read and reconcile after it
+   * @param readDevices - The recipient's devices that this send read. When
+   *   they are given, a reconcile uses them and does not read the list again
+   * @returns True when the caller must read the list after it posts
    * @throws {EncryptionError} SESSION_NOT_FOUND if sessions cannot be established
    */
   private async ensureSessionsForUser(
     recipientUserId: string,
-    sessions: SendSessionCallbacks | undefined
-  ): Promise<void> {
-    const userRecord = await this.sesameManager.getUserRecord(recipientUserId);
-    const hasActiveSession =
-      !!userRecord &&
-      Array.from(userRecord.devices.values()).some(
-        (device) => device.session?.currentSession != null
-      );
-    const checkedAt = this.recipientDeviceListCheckedAt.get(recipientUserId);
-    if (
-      hasActiveSession &&
-      checkedAt !== undefined &&
-      Date.now() - checkedAt < RECIPIENT_DEVICE_LIST_FRESH_MILLISECONDS
-    ) {
-      return;
+    sessions: SendSessionCallbacks | undefined,
+    sendFirst = false,
+    readDevices?: readonly GroupMemberDevice[]
+  ): Promise<boolean> {
+    const hasActiveSession = await this.hasActiveSession(recipientUserId);
+    const listAge = this.recipientDeviceListAge(recipientUserId);
+    if (hasActiveSession && listAge < RECIPIENT_DEVICE_LIST_FRESH_MILLISECONDS) {
+      return false;
     }
 
     this.logger.debug('Reconciling recipient devices with the relay', {
@@ -1028,7 +1160,7 @@ export class SignalProtocolServiceCipher {
     });
 
     if (!sessions) {
-      if (hasActiveSession) return;
+      if (hasActiveSession) return false;
       throw new EncryptionError(
         `No session with ${recipientUserId} and auto-establishment not configured`,
         EncryptionErrorCode.SESSION_NOT_FOUND,
@@ -1037,7 +1169,7 @@ export class SignalProtocolServiceCipher {
     }
 
     if (!this.relay) {
-      if (hasActiveSession) return;
+      if (hasActiveSession) return false;
       throw new EncryptionError(
         'Cannot auto-establish session: relay server not configured',
         EncryptionErrorCode.INITIALIZATION_FAILED,
@@ -1045,12 +1177,66 @@ export class SignalProtocolServiceCipher {
       );
     }
 
+    if (
+      sendFirst &&
+      hasActiveSession &&
+      listAge < RECIPIENT_DEVICE_LIST_MAXIMUM_AGE_MILLISECONDS &&
+      refusesRemovedDevices(this.relay)
+    ) {
+      return true;
+    }
+
+    await this.readRecipientDeviceList(
+      recipientUserId,
+      sessions,
+      hasActiveSession,
+      undefined,
+      readDevices
+    );
+    return false;
+  }
+
+  private async hasActiveSession(recipientUserId: string): Promise<boolean> {
+    const userRecord = await this.sesameManager.getUserRecord(recipientUserId);
+    return (
+      !!userRecord &&
+      Array.from(userRecord.devices.values()).some(
+        (device) => device.session?.currentSession != null
+      )
+    );
+  }
+
+  /** The age of this process's last successful read. A read in the future has no age. */
+  private recipientDeviceListAge(recipientUserId: string): number {
+    const checkedAt = this.recipientDeviceListCheckedAt.get(recipientUserId);
+    const age = checkedAt === undefined ? Number.POSITIVE_INFINITY : Date.now() - checkedAt;
+    return age >= 0 ? age : Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * Read the recipient's device list, create the missing sessions, and remove
+   * each local device that the list does not show.
+   *
+   * @param onList - Called with the listed devices as soon as the list arrives,
+   *   before the unlisted records are removed
+   * @param readDevices - The devices that this send read. When they are
+   *   given, the list is not read again
+   * @returns The listed and established devices, or undefined when the read
+   *   failed and the known devices still receive
+   */
+  private async readRecipientDeviceList(
+    recipientUserId: string,
+    sessions: SendSessionCallbacks,
+    hasActiveSession: boolean,
+    onList?: (listed: ReadonlySet<number>) => void,
+    readDevices?: readonly GroupMemberDevice[]
+  ): Promise<RecipientDeviceList | undefined> {
     let result: Awaited<ReturnType<SessionEstablisher>>;
     try {
       // Use retry logic for transient network failures
       result = await withRetry(
         async () => {
-          const attempt = await sessions.establishSessions(recipientUserId);
+          const attempt = await sessions.establishSessions(recipientUserId, readDevices);
           if (attempt.establishedDevices.length === 0 && attempt.failedDeviceErrors.length > 0) {
             throw attempt.failedDeviceErrors[0]!.error;
           }
@@ -1072,7 +1258,7 @@ export class SignalProtocolServiceCipher {
           error: error as Error,
           data: { recipientUserId },
         });
-        return;
+        return undefined;
       }
 
       // Re-throw EncryptionErrors, wrap others
@@ -1098,6 +1284,7 @@ export class SignalProtocolServiceCipher {
     }
 
     const listedDevices = new Set(result.activeDevices);
+    onList?.(listedDevices);
     const removedDevices: number[] = [];
     const reconciledRecord = await this.sesameManager.getUserRecord(recipientUserId);
     for (const deviceId of Array.from(reconciledRecord?.devices.keys() ?? [])) {
@@ -1127,6 +1314,7 @@ export class SignalProtocolServiceCipher {
         removedDevices,
       },
     });
+    return { listed: listedDevices, established: result.establishedDevices };
   }
 
   /**
@@ -1136,18 +1324,32 @@ export class SignalProtocolServiceCipher {
     recipientUserId: string,
     plaintextBytes: Uint8Array,
     options: SendOptions & { clientMessageId: string },
-    sessions: SendSessionCallbacks | undefined
+    sessions: SendSessionCallbacks | undefined,
+    stopSignal?: AbortSignal
   ): Promise<SendResult> {
-    return this.encryptToUserWithOutbox(recipientUserId, plaintextBytes, options, sessions);
+    return this.encryptToUserWithOutbox(
+      recipientUserId,
+      plaintextBytes,
+      options,
+      sessions,
+      stopSignal
+    );
   }
   private async encryptToUserWithOutbox(
     recipientUserId: string,
     plaintextBytes: Uint8Array,
     options: SendOptions & { clientMessageId: string },
-    sessions: SendSessionCallbacks | undefined
+    sessions: SendSessionCallbacks | undefined,
+    stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
     return withOutgoingMessageIntentLock(this.storage, options.clientMessageId, () =>
-      this.encryptToUserWithOutboxLocked(recipientUserId, plaintextBytes, options, sessions)
+      this.encryptToUserWithOutboxLocked(
+        recipientUserId,
+        plaintextBytes,
+        options,
+        sessions,
+        stopSignal
+      )
     );
   }
 
@@ -1155,7 +1357,8 @@ export class SignalProtocolServiceCipher {
     recipientUserId: string,
     plaintextBytes: Uint8Array,
     options: SendOptions & { clientMessageId: string },
-    sessions: SendSessionCallbacks | undefined
+    sessions: SendSessionCallbacks | undefined,
+    stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
     const plaintextDigest = CryptoUtils.bytesToBase64(await CryptoUtils.sha256(plaintextBytes));
     const existing = await getOutgoingMessageIntent(this.storage, options.clientMessageId);
@@ -1170,10 +1373,15 @@ export class SignalProtocolServiceCipher {
         throw new Error('A clientMessageId cannot identify two different logical sends');
       }
       if (existing.result) return existing.result;
-      return this.sendStoredDirectIntent(existing, plaintextBytes, sessions);
+      return this.sendStoredDirectIntent(
+        await this.reconcilePendingDirectIntent(existing, plaintextBytes, sessions),
+        plaintextBytes,
+        sessions,
+        stopSignal
+      );
     }
 
-    await this.ensureSessionsForUser(recipientUserId, sessions);
+    const sendFirst = await this.ensureSessionsForUser(recipientUserId, sessions, true);
     const sealedSender = this.relay ? await this.resolveSealedSenderContext(recipientUserId) : null;
     const directSealedSender =
       sealedSender && this.relay?.sendMultiRecipientUnidentified ? sealedSender : null;
@@ -1219,11 +1427,14 @@ export class SignalProtocolServiceCipher {
       },
     });
 
-    const deviceMessages = await Promise.all(
-      batch.deviceMessages.map((message) =>
+    // Local work: a stop does not end it, so the intent keeps the ciphertext.
+    const deviceMessages = await this.fanOut
+      .all(batch.deviceMessages, (message) =>
         this.prepareStoredDirectDeviceMessage(message, directSealedSender)
       )
-    );
+      .catch((error: unknown) => {
+        throw firstItemError(error);
+      });
 
     const syncMessages: StoredOutgoingDeviceMessage[] = batch.syncMessages.map((msg, index) => ({
       recipientUserId: msg.recipientUserId,
@@ -1249,19 +1460,163 @@ export class SignalProtocolServiceCipher {
       ...(options.contentHint !== undefined && {
         contentHint: options.contentHint,
       }),
+      ...(sendFirst && { reconcilePending: true as const }),
       deviceMessages,
       syncMessages,
     };
     await storeOutgoingMessageIntent(this.storage, intent);
-    return this.sendStoredDirectIntent(intent, plaintextBytes, sessions);
+    if (sendFirst && sessions) {
+      return this.sendDirectIntentBeforeDeviceListRead(
+        intent,
+        plaintextBytes,
+        sessions,
+        stopSignal
+      );
+    }
+    return this.sendStoredDirectIntent(intent, plaintextBytes, sessions, stopSignal);
+  }
+
+  /**
+   * Post a direct intent to its known devices while the recipient's device
+   * list is read, then reconcile the intent with the list and post the rest.
+   *
+   * The known devices are posted at the same time. A post that the relay
+   * refuses because of its device waits for the read, and the read decides it:
+   * an unlisted device leaves the intent without a repair, a listed device
+   * with STALE_DEVICE is repaired, and a listed device with NOT_FOUND fails
+   * the send. A post that has not started when the list arrives waits for the
+   * reconcile pass, which starts after the read removes the unlisted device
+   * records, so no message goes to a device after the read that shows its
+   * removal.
+   */
+  private async sendDirectIntentBeforeDeviceListRead(
+    intent: StoredOutgoingMessageIntent,
+    plaintextBytes: Uint8Array,
+    sessions: SendSessionCallbacks,
+    stopSignal: AbortSignal | undefined
+  ): Promise<SendResult> {
+    const arrived: { listed?: ReadonlySet<number> } = {};
+    const read = this.readRecipientDeviceList(intent.recipientId, sessions, true, (listed) => {
+      arrived.listed = listed;
+    });
+    // Every path below awaits the read. This handler only covers the posts.
+    read.catch(() => undefined);
+
+    const posts: DirectIntentPosts = { accepted: new Map(), refused: new Map() };
+    const control: DevicePostControl = {
+      ...(stopSignal && { stopSignal }),
+      admit: () => {
+        if (arrived.listed) throw new DeferredPost();
+      },
+    };
+    try {
+      await this.sendPhase(
+        intent.deviceMessages,
+        async (message) => {
+          try {
+            posts.accepted.set(
+              message.recipientDeviceId,
+              await this.sendStoredDirectDeviceMessage(intent, message, control)
+            );
+          } catch (error) {
+            if (error instanceof DeferredPost) return;
+            if (!isRefusalOfDevice(error, message)) throw error;
+            posts.refused.set(message.recipientDeviceId, { error });
+          }
+        },
+        'device',
+        stopSignal
+      );
+    } catch (error) {
+      // The read commits sessions. It ends before the send fails.
+      await read.catch(() => undefined);
+      throw error;
+    }
+
+    const list = await read;
+    const reconciled = list
+      ? await this.reconcileDirectIntent(intent, list, plaintextBytes)
+      : intent;
+    return this.sendStoredDirectIntent(reconciled, plaintextBytes, sessions, stopSignal, posts);
+  }
+
+  /** A replay whose first attempt posted before its read reads and reconciles first. */
+  private async reconcilePendingDirectIntent(
+    intent: StoredOutgoingMessageIntent,
+    plaintextBytes: Uint8Array,
+    sessions: SendSessionCallbacks | undefined
+  ): Promise<StoredOutgoingMessageIntent> {
+    if (!intent.reconcilePending || !sessions || !this.relay) return intent;
+    const list = await this.readRecipientDeviceList(
+      intent.recipientId,
+      sessions,
+      await this.hasActiveSession(intent.recipientId)
+    );
+    return list ? this.reconcileDirectIntent(intent, list, plaintextBytes) : intent;
+  }
+
+  /**
+   * Apply a device-list read to a direct intent: remove each device that the
+   * list does not show, and encrypt the message for each established device
+   * that the intent does not address. A new transmission keeps the intent's
+   * timestamp, so each device receives the same message.
+   */
+  private async reconcileDirectIntent(
+    intent: StoredOutgoingMessageIntent,
+    list: RecipientDeviceList,
+    plaintextBytes: Uint8Array
+  ): Promise<StoredOutgoingMessageIntent> {
+    const removed = intent.deviceMessages
+      .map((message) => message.recipientDeviceId)
+      .filter((deviceId) => !list.listed.has(deviceId));
+    const addressed = new Set(intent.deviceMessages.map((message) => message.recipientDeviceId));
+    const added: StoredOutgoingDeviceMessage[] = [];
+    let sealedSender: ResolvedSealedSenderContext | null | undefined;
+    for (const deviceId of list.established) {
+      if (addressed.has(deviceId)) continue;
+      let message: SesameMessage;
+      try {
+        message = await this.sesameManager.sendMessage(intent.recipientId, deviceId, plaintextBytes, {
+          clientTimestamp: intent.clientTimestamp,
+          includeSyncMessages: false,
+        });
+      } catch (error) {
+        this.logger.warn('Could not encrypt a direct message for a newly listed device', {
+          category: 'E2EE',
+          error: error as Error,
+          data: { recipientUserId: intent.recipientId, deviceId },
+        });
+        continue;
+      }
+      if (sealedSender === undefined) {
+        sealedSender = await this.resolveStoredDirectSealedSender(intent);
+      }
+      added.push(await this.prepareStoredDirectDeviceMessage(message, sealedSender));
+    }
+    if (removed.length === 0 && added.length === 0) return intent;
+    return reconcileOutgoingDirectDeviceMessages(
+      this.storage,
+      intent.clientMessageId,
+      removed,
+      added
+    );
+  }
+
+  /** The sealed-sender context of a new transmission for a stored direct intent. */
+  private async resolveStoredDirectSealedSender(
+    intent: StoredOutgoingMessageIntent
+  ): Promise<ResolvedSealedSenderContext | null> {
+    if (intent.transportMode === 'identified') return null;
+    const sealedSender = await this.resolveSealedSenderContext(intent.recipientId);
+    if (!sealedSender || sealedSender.auth.type !== 'accessKey') {
+      throw new Error('Cannot build a sealed-sender transmission for a stored direct intent');
+    }
+    return sealedSender;
   }
 
   private async prepareStoredDirectDeviceMessage(
     message: import('../internal/sesame/types').SesameMessage,
-    sealedSender: Exclude<
-      Awaited<ReturnType<typeof SignalProtocolServiceCipher.prototype.resolveSealedSenderContext>>,
-      null
-    > | null
+    sealedSender: ResolvedSealedSenderContext | null
   ): Promise<StoredOutgoingDeviceMessage> {
     const messageType = getEnvelopeMessageType(message.ciphertext);
     const session =
@@ -1293,6 +1648,13 @@ export class SignalProtocolServiceCipher {
     return storedMessage;
   }
 
+  /**
+   * Refresh the session of a rejected device and replace its transmission.
+   * The device posts of a send run at the same time, so the repairs for one
+   * recipient take turns: the first session commit with a user pins the
+   * user's contact identity, and a concurrent commit that read the store
+   * before it fails.
+   */
   private async repairRejectedDirectDeviceMessage(
     intent: StoredOutgoingMessageIntent,
     rejected: StoredOutgoingDeviceMessage,
@@ -1300,6 +1662,17 @@ export class SignalProtocolServiceCipher {
     sessions: SendSessionCallbacks | undefined
   ): Promise<StoredOutgoingDeviceMessage> {
     if (!sessions) throw new Error('Stale-session refresh is not configured');
+    return this.lock.acquire(`direct-repair:${rejected.recipientUserId}`, () =>
+      this.repairRejectedDirectDeviceMessageInTurn(intent, rejected, plaintextBytes, sessions)
+    );
+  }
+
+  private async repairRejectedDirectDeviceMessageInTurn(
+    intent: StoredOutgoingMessageIntent,
+    rejected: StoredOutgoingDeviceMessage,
+    plaintextBytes: Uint8Array,
+    sessions: SendSessionCallbacks
+  ): Promise<StoredOutgoingDeviceMessage> {
     const refreshed = await sessions.refreshStaleSession(
       rejected.recipientUserId,
       rejected.recipientDeviceId
@@ -1318,17 +1691,10 @@ export class SignalProtocolServiceCipher {
       plaintextBytes,
       { clientTimestamp: intent.clientTimestamp, includeSyncMessages: false }
     );
-    let sealedSender: Exclude<
-      Awaited<ReturnType<typeof SignalProtocolServiceCipher.prototype.resolveSealedSenderContext>>,
-      null
-    > | null = null;
-    if (intent.transportMode !== 'identified') {
-      sealedSender = await this.resolveSealedSenderContext(rejected.recipientUserId);
-      if (!sealedSender || sealedSender.auth.type !== 'accessKey') {
-        throw new Error('Cannot rebuild a sealed-sender transmission after session refresh');
-      }
-    }
-    const replacement = await this.prepareStoredDirectDeviceMessage(freshMessage, sealedSender);
+    const replacement = await this.prepareStoredDirectDeviceMessage(
+      freshMessage,
+      await this.resolveStoredDirectSealedSender(intent)
+    );
     await replaceOutgoingDirectDeviceMessage(
       this.storage,
       intent.clientMessageId,
@@ -1340,7 +1706,8 @@ export class SignalProtocolServiceCipher {
 
   private async sendStoredDirectDeviceMessage(
     intent: StoredOutgoingMessageIntent,
-    message: StoredOutgoingDeviceMessage
+    message: StoredOutgoingDeviceMessage,
+    control: DevicePostControl
   ): Promise<{ messageId: string; serverTimestamp: number }> {
     if (
       intent.transportMode !== 'identified' &&
@@ -1356,7 +1723,9 @@ export class SignalProtocolServiceCipher {
           message.recipientRegistrationId,
           null,
           intent.contentHint,
-          intent.clientMessageId
+          intent.clientMessageId,
+          undefined,
+          control
         )
       : this.sendToDevice(
           message,
@@ -1371,14 +1740,51 @@ export class SignalProtocolServiceCipher {
             auth: intent.sealedSenderAuth!,
             deliveryMode:
               intent.transportMode === 'sealed_sender_required' ? 'required' : 'preferred',
-          }
+          },
+          control
         );
   }
 
+  /** Post one device message, and repair its session once if the device rejects it. */
+  private async postStoredDirectDeviceMessage(
+    intent: StoredOutgoingMessageIntent,
+    message: StoredOutgoingDeviceMessage,
+    plaintextBytes: Uint8Array,
+    sessions: SendSessionCallbacks | undefined,
+    control: DevicePostControl,
+    refusal?: { error: unknown }
+  ): Promise<{ messageId: string; serverTimestamp: number }> {
+    let rejection: unknown;
+    if (refusal) {
+      rejection = refusal.error;
+    } else {
+      try {
+        return await this.sendStoredDirectDeviceMessage(intent, message, control);
+      } catch (error) {
+        rejection = error;
+      }
+    }
+    if (!isConclusiveDeviceRejection(rejection)) throw rejection;
+    const replacement = await this.repairRejectedDirectDeviceMessage(
+      intent,
+      message,
+      plaintextBytes,
+      sessions
+    );
+    return this.sendStoredDirectDeviceMessage(intent, replacement, control);
+  }
+
+  /**
+   * Post each device message of a direct intent, then the sync messages, and
+   * complete the intent. A device that a send-first pass already posted keeps
+   * its result or its refusal.
+   */
   private async sendStoredDirectIntent(
     intent: StoredOutgoingMessageIntent,
     plaintextBytes: Uint8Array,
-    sessions: SendSessionCallbacks | undefined
+    sessions: SendSessionCallbacks | undefined,
+    stopSignal: AbortSignal | undefined,
+    posts?: DirectIntentPosts
   ): Promise<SendResult> {
     if (intent.kind !== 'direct') throw new Error('Expected a direct outbox intent');
     if (!this.relay) {
@@ -1392,42 +1798,55 @@ export class SignalProtocolServiceCipher {
       return result;
     }
 
+    const relay = this.relay;
     let messageId = `local-${intent.clientTimestamp}`;
     let timestamp = intent.clientTimestamp;
+    const control: DevicePostControl = { ...(stopSignal && { stopSignal }) };
 
-    for (const msg of intent.deviceMessages) {
-      let result: { messageId: string; serverTimestamp: number };
-      try {
-        result = await this.sendStoredDirectDeviceMessage(intent, msg);
-      } catch (error) {
-        if (!isConclusiveDeviceRejection(error)) throw error;
-        const replacement = await this.repairRejectedDirectDeviceMessage(
+    const results = await this.sendPhase(
+      intent.deviceMessages,
+      async (msg) =>
+        posts?.accepted.get(msg.recipientDeviceId) ??
+        this.postStoredDirectDeviceMessage(
           intent,
           msg,
           plaintextBytes,
-          sessions
-        );
-        result = await this.sendStoredDirectDeviceMessage(intent, replacement);
-      }
+          sessions,
+          control,
+          posts?.refused.get(msg.recipientDeviceId)
+        ),
+      'device',
+      stopSignal
+    );
+    for (const result of results) {
       if (messageId.startsWith('local-')) {
         messageId = result.messageId;
         timestamp = result.serverTimestamp;
       }
     }
 
-    for (const msg of intent.syncMessages) {
-      await this.relay.send({
-        targetUserId: msg.recipientUserId,
-        targetDeviceId: msg.recipientDeviceId,
-        senderUserId: this.userId,
-        senderDeviceId: this.deviceId,
-        ciphertext: msg.ciphertext,
-        messageType: msg.messageType,
-        deliveryClass: 'background-sync',
-        timestamp: msg.timestamp,
-        clientMessageId: msg.clientMessageId,
-      });
-    }
+    // The sync copies start only after every device post settled.
+    await this.sendPhase(
+      intent.syncMessages,
+      (msg) =>
+        this.fanOut.request(
+          () =>
+            relay.send({
+              targetUserId: msg.recipientUserId,
+              targetDeviceId: msg.recipientDeviceId,
+              senderUserId: this.userId,
+              senderDeviceId: this.deviceId,
+              ciphertext: msg.ciphertext,
+              messageType: msg.messageType,
+              deliveryClass: 'background-sync',
+              timestamp: msg.timestamp,
+              clientMessageId: msg.clientMessageId,
+            }),
+          stopSignal
+        ),
+      'sync',
+      stopSignal
+    );
 
     const result = {
       clientMessageId: intent.clientMessageId,
@@ -1443,8 +1862,10 @@ export class SignalProtocolServiceCipher {
     actualGroupId: string,
     plaintextBytes: Uint8Array,
     options: SendOptions & { clientMessageId: string },
-    sessions: SendSessionCallbacks | undefined
+    sessions: SendSessionCallbacks | undefined,
+    stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
+    const control: DevicePostControl = { ...(stopSignal && { stopSignal }) };
     return sendGroupWithExactOutbox(
       {
         storage: this.storage,
@@ -1452,12 +1873,14 @@ export class SignalProtocolServiceCipher {
         senderUserId: this.userId,
         senderDeviceId: this.deviceId,
         deliveryMode: this.sealedSenderDeliveryMode,
-        preparePayload: async (groupId, bytes, sendOptions) => {
+        preparePayload: async (groupId, bytes, sendOptions, readMembers) => {
           const prepared = await this.prepareGroupSenderKeyPayload(
             groupId,
             bytes,
             sendOptions,
-            sessions
+            sessions,
+            readMembers,
+            stopSignal
           );
           return {
             ciphertext: CryptoUtils.bytesToBase64(prepared.ciphertext),
@@ -1475,7 +1898,7 @@ export class SignalProtocolServiceCipher {
             senderKeyId
           ),
         resolveMemberDevices: (groupId, sendOptions) =>
-          this.resolveGroupMemberDevices(groupId, sendOptions),
+          this.resolveGroupMemberDevices(groupId, sendOptions, stopSignal),
         prepareSharedMessage: async (groupId, members, ciphertext) => {
           if (
             members.length === 0 ||
@@ -1540,8 +1963,15 @@ export class SignalProtocolServiceCipher {
               sentMessageBase64: message.sealedSenderMessage!,
               auth,
               deliveryMode: message.sealedSenderDeliveryMode ?? 'preferred',
-            }
+            },
+            control
           ),
+        prepareEach: (items, task) =>
+          this.fanOut.all(items, task).catch((error: unknown) => {
+            throw firstItemError(error);
+          }),
+        sendPhase: (messages, task, phase) => this.sendPhase(messages, task, phase, stopSignal),
+        postToRelay: (send, sealed) => this.postToRelay(send, sealed, control),
       },
       actualGroupId,
       plaintextBytes,
@@ -1589,17 +2019,22 @@ export class SignalProtocolServiceCipher {
   ): Promise<Extract<SealedSenderAuth, { type: 'groupSendToken' }> | null> {
     const manager = this.endorsementManagerResolver ? await this.endorsementManagerResolver() : this.endorsementManager;
     if (!manager || recipientUserIds.length === 0) return null;
-    const { needsRefresh, reason } = await manager.shouldRefreshEndorsements(
-      groupId,
-      recipientUserIds
-    );
-    if (needsRefresh && this.endorsementRefresher) {
-      await this.endorsementRefresher(groupId, recipientUserIds);
-      this.logger.debug('Refreshed endorsements before durable group send', {
-        category: 'E2EE',
-        data: { groupId, reason },
-      });
-    }
+    // The device posts of a send run at the same time. The lock makes them
+    // check and refresh the group's endorsements one at a time, so one
+    // refresh serves them all. The lock is taken before a slot.
+    await this.lock.acquire(`group-send-endorsements:${groupId}`, async () => {
+      const { needsRefresh, reason } = await manager.shouldRefreshEndorsements(
+        groupId,
+        recipientUserIds
+      );
+      if (needsRefresh && this.endorsementRefresher) {
+        await this.endorsementRefresher(groupId, recipientUserIds);
+        this.logger.debug('Refreshed endorsements before durable group send', {
+          category: 'E2EE',
+          data: { groupId, reason },
+        });
+      }
+    });
     const groupSecretParams = this.groupSecretParamsProvider
       ? await this.groupSecretParamsProvider(groupId)
       : null;
@@ -1727,9 +2162,13 @@ export class SignalProtocolServiceCipher {
       sentMessageBase64: string;
       auth: SealedSenderAuth;
       deliveryMode: 'preferred' | 'required';
-    }
+    },
+    control: DevicePostControl = {}
   ): Promise<{ messageId: string; serverTimestamp: number }> {
     const effectiveClientMessageId = msg.clientMessageId ?? clientMessageId;
+    // A fallback continues a post that started, so only the first request is
+    // admitted.
+    let identifiedControl = control;
 
     if (preparedSealedSender && !this.relay!.sendMultiRecipientUnidentified) {
       if (preparedSealedSender.deliveryMode === 'required') {
@@ -1763,14 +2202,20 @@ export class SignalProtocolServiceCipher {
           : undefined);
       if (!prepared) throw new Error('Missing sealed-sender delivery state');
 
+      identifiedControl = { ...(control.stopSignal && { stopSignal: control.stopSignal }) };
       try {
-        const result = await this.relay!.sendMultiRecipientUnidentified!(
-          prepared.sentMessageBase64,
-          prepared.auth,
-          msg.timestamp,
-          'user-visible',
-          [msg.recipientUserId],
-          effectiveClientMessageId
+        const result = await this.postToRelay(
+          () =>
+            this.relay!.sendMultiRecipientUnidentified!(
+              prepared.sentMessageBase64,
+              prepared.auth,
+              msg.timestamp,
+              'user-visible',
+              [msg.recipientUserId],
+              effectiveClientMessageId
+            ),
+          true,
+          control
         );
         if (result.uuids404.length > 0) {
           throw new SealedSenderRecipientRejectedError();
@@ -1785,35 +2230,44 @@ export class SignalProtocolServiceCipher {
           }
           // Restrict the cached mode after authorization fails.
           try {
-            if (this.contactProfileStateStore) {
-              const currentMode = await this.contactProfileStateStore.getUnidentifiedAccessMode(
-                msg.recipientUserId
-              );
-              let newMode: UnidentifiedAccessModeType;
-              switch (currentMode) {
-                case UnidentifiedAccessMode.UNRESTRICTED:
-                  newMode = UnidentifiedAccessMode.UNKNOWN;
-                  break;
-                case UnidentifiedAccessMode.ENABLED:
-                case UnidentifiedAccessMode.UNKNOWN:
-                default:
-                  newMode = UnidentifiedAccessMode.DISABLED;
-                  break;
-              }
-              await this.contactProfileStateStore.updateUnidentifiedAccessMode(
-                msg.recipientUserId,
-                newMode
-              );
+            const contactProfileStateStore = this.contactProfileStateStore;
+            if (contactProfileStateStore) {
+              // The device posts of a send run at the same time. The lock
+              // orders their steps, so two failures step down twice, as posts
+              // in device order do.
+              await this.lock.acquire(
+                `unidentified-access-mode:${msg.recipientUserId}`,
+                async () => {
+                  const currentMode = await contactProfileStateStore.getUnidentifiedAccessMode(
+                    msg.recipientUserId
+                  );
+                  let newMode: UnidentifiedAccessModeType;
+                  switch (currentMode) {
+                    case UnidentifiedAccessMode.UNRESTRICTED:
+                      newMode = UnidentifiedAccessMode.UNKNOWN;
+                      break;
+                    case UnidentifiedAccessMode.ENABLED:
+                    case UnidentifiedAccessMode.UNKNOWN:
+                    default:
+                      newMode = UnidentifiedAccessMode.DISABLED;
+                      break;
+                  }
+                  await contactProfileStateStore.updateUnidentifiedAccessMode(
+                    msg.recipientUserId,
+                    newMode
+                  );
 
-              this.logger.info(
-                'Sealed sender auth failed, transitioned mode and falling back to identified delivery',
-                {
-                  category: 'E2EE',
-                  data: {
-                    recipientUserId: msg.recipientUserId,
-                    previousMode: currentMode,
-                    newMode,
-                  },
+                  this.logger.info(
+                    'Sealed sender auth failed, transitioned mode and falling back to identified delivery',
+                    {
+                      category: 'E2EE',
+                      data: {
+                        recipientUserId: msg.recipientUserId,
+                        previousMode: currentMode,
+                        newMode,
+                      },
+                    }
+                  );
                 }
               );
             } else {
@@ -1844,19 +2298,24 @@ export class SignalProtocolServiceCipher {
     }
 
     // Identified sender path: standard relay send
-    return this.relay!.send({
-      targetUserId: msg.recipientUserId,
-      targetDeviceId: msg.recipientDeviceId,
-      senderUserId: this.userId,
-      senderDeviceId: this.deviceId,
-      ciphertext: ciphertextBase64,
-      messageType,
-      deliveryClass: 'user-visible',
-      timestamp: msg.timestamp,
-      clientMessageId: effectiveClientMessageId,
-      recipientRegistrationId,
-      contentHint,
-    });
+    return this.postToRelay(
+      () =>
+        this.relay!.send({
+          targetUserId: msg.recipientUserId,
+          targetDeviceId: msg.recipientDeviceId,
+          senderUserId: this.userId,
+          senderDeviceId: this.deviceId,
+          ciphertext: ciphertextBase64,
+          messageType,
+          deliveryClass: 'user-visible',
+          timestamp: msg.timestamp,
+          clientMessageId: effectiveClientMessageId,
+          recipientRegistrationId,
+          contentHint,
+        }),
+      false,
+      identifiedControl
+    );
   }
 
   /**
@@ -1870,7 +2329,8 @@ export class SignalProtocolServiceCipher {
    */
   private async resolveGroupMemberDevices(
     groupId: string,
-    options?: SendOptions
+    options: SendOptions | undefined,
+    stopSignal: AbortSignal | undefined
   ): Promise<GroupMemberDevice[]> {
     if (!options?.groupMemberUserIds?.length) {
       throw new EncryptionError(
@@ -1881,9 +2341,15 @@ export class SignalProtocolServiceCipher {
         { groupId }
       );
     }
-    const deviceResults = await Promise.all(
-      options.groupMemberUserIds.map((userId) => this.relay!.getActiveDevices(userId))
-    );
+    const deviceResults = await this.fanOut
+      .all(
+        options.groupMemberUserIds,
+        (userId) => this.fanOut.request(() => this.relay!.getActiveDevices(userId), stopSignal),
+        stopSignal
+      )
+      .catch((error: unknown) => {
+        throw firstItemError(error);
+      });
     return deviceResults.flat();
   }
 
@@ -1891,7 +2357,9 @@ export class SignalProtocolServiceCipher {
     actualGroupId: string,
     plaintextBytes: Uint8Array,
     options: SendOptions & { clientMessageId: string; timestamp: number },
-    sessions: SendSessionCallbacks | undefined
+    sessions: SendSessionCallbacks | undefined,
+    readMembers: () => Promise<GroupMemberDevice[]>,
+    stopSignal: AbortSignal | undefined
   ): Promise<{
     ciphertext: Uint8Array;
     preMessages: StoredOutgoingDeviceMessage[];
@@ -1949,33 +2417,54 @@ export class SignalProtocolServiceCipher {
 
     const preMessages: StoredOutgoingDeviceMessage[] = [];
     if (this.relay) {
-      const members = await this.resolveGroupMemberDevices(actualGroupId, options);
+      const members = await readMembers();
       const otherMembers = members.filter((member) => member.userId !== this.userId);
       const recipientUserIds = [...new Set(otherMembers.map((member) => member.userId))];
-      for (const recipientUserId of recipientUserIds) {
-        await this.ensureSessionsForUser(recipientUserId, sessions);
-        const skdmBytes = this.contentAdapter
-          ? this.contentAdapter.serializeSenderKeyDistributionBytes(
-              actualGroupId,
-              distributionMessage
-            )
-          : new TextEncoder().encode(
-              JSON.stringify({
-                senderKeyDistributionMessage: JSON.stringify({
-                  groupId: actualGroupId,
-                  ...distributionMessage,
-                }),
-              })
+      const skdmBytes = this.contentAdapter
+        ? this.contentAdapter.serializeSenderKeyDistributionBytes(
+            actualGroupId,
+            distributionMessage
+          )
+        : new TextEncoder().encode(
+            JSON.stringify({
+              senderKeyDistributionMessage: JSON.stringify({
+                groupId: actualGroupId,
+                ...distributionMessage,
+              }),
+            })
+          );
+      // The recipients are prepared at the same time. The session work of one
+      // recipient stays in turn, and its session setup reuses the devices that
+      // this send read.
+      const prepared = await this.fanOut
+        .all(
+          recipientUserIds,
+          async (recipientUserId) => {
+            await this.ensureSessionsForUser(
+              recipientUserId,
+              sessions,
+              false,
+              otherMembers.filter((member) => member.userId === recipientUserId)
             );
-        const batch = await this.sesameManager.send(recipientUserId, skdmBytes, {
-          clientTimestamp: options.timestamp,
-          includeSyncMessages: false,
+            const batch = await this.sesameManager.send(recipientUserId, skdmBytes, {
+              clientTimestamp: options.timestamp,
+              includeSyncMessages: false,
+            });
+            const stored: StoredOutgoingDeviceMessage[] = [];
+            for (const message of batch.deviceMessages) {
+              stored.push(await this.prepareStoredDirectDeviceMessage(message, null));
+            }
+            return stored;
+          },
+          stopSignal
+        )
+        .catch((error: unknown) => {
+          throw firstItemError(error);
         });
-        for (const message of batch.deviceMessages) {
-          const stored = await this.prepareStoredDirectDeviceMessage(message, null);
-          stored.clientMessageId = `${options.clientMessageId}:sender-key-distribution:${preMessages.length}`;
-          preMessages.push(stored);
-        }
+      // The index of each pre-message follows the recipient order.
+      for (const stored of prepared.flat()) {
+        stored.clientMessageId = `${options.clientMessageId}:sender-key-distribution:${preMessages.length}`;
+        preMessages.push(stored);
       }
     }
 
@@ -2001,11 +2490,18 @@ export class SignalProtocolServiceCipher {
     groupId: string,
     plaintextBytes: Uint8Array,
     options: SendOptions & { clientMessageId: string },
-    sessions: SendSessionCallbacks | undefined
+    sessions: SendSessionCallbacks | undefined,
+    stopSignal?: AbortSignal
   ): Promise<SendResult> {
     const actualGroupId = extractGroupId(groupId);
     await this.groupSendBarrierChecker?.(actualGroupId);
-    return this.encryptToGroupWithOutbox(actualGroupId, plaintextBytes, options, sessions);
+    return this.encryptToGroupWithOutbox(
+      actualGroupId,
+      plaintextBytes,
+      options,
+      sessions,
+      stopSignal
+    );
   }
   /**
    * Encrypt binary attachment with two-layer encryption

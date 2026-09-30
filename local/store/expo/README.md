@@ -47,11 +47,11 @@ Options:
   `open-e2ee-signal-protocol.db`.
 - `vault`: the `SignalProtocolLocalSecretVault` that holds the database key.
   Default: `ExpoSecureStoreSignalProtocolSecretVault`.
-- `encryptionAtRest`: pass `false` to store the database without encryption,
-  for example on the web, where `expo-sqlite` has no SQLCipher. The store then
-  does not use the vault, and it logs a warning at each open. A database
-  created with one setting does not open with the other. Default: `true`, and
-  the open fails when the build has no SQLCipher.
+- `encryptionAtRest`: pass `false` to store the database without encryption.
+  The store then does not use the vault, and it logs a warning at each open. A
+  database created with one setting does not open with the other. Default:
+  `true`, and the open fails when the build has no SQLCipher (see
+  [Web](#web)).
 - `logger`: receives the warning of each open without encryption.
 
 A store holds its name until `close()`. In one process, the opens and resets
@@ -61,6 +61,19 @@ and the second open fails.
 
 Keep application tables in a separate database file. The SDK database holds
 only SDK tables.
+
+## Web
+
+The web build of `expo-sqlite` has no SQLCipher, and Expo SecureStore has no
+web implementation. On the web, `expoStore()` and `resetExpoStore()` therefore
+fail with `SqliteEncryptionUnavailableError` (`KEY_STORAGE_ERROR`). They fail
+before they use the vault or a database file, also when the app passes its own
+vault. A native build without the `useSQLCipher` option fails in the same way.
+
+For an encrypted store in a browser, use
+[`./local/store/web-sqlite`](../web-sqlite/README.md). `encryptionAtRest: false`
+opens this store on the web without encryption. Use it only when the app
+accepts protocol state in plaintext in the browser storage of the origin.
 
 ## Lost key and reset
 
