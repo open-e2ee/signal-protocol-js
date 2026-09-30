@@ -7,7 +7,8 @@
  * The first run must create Alice in the example's storage and complete the
  * exchange on Hermes. The script then stops the process and launches the app
  * again. The second run must resume the stored Alice identity and complete
- * another exchange.
+ * another exchange. Each launch must start the exchange exactly once, also
+ * when Android recreates the activity and React Native mounts the app again.
  *
  * The Expo app opens `expoStore()`, and the bare React Native app opens
  * `reactNativeStore()`, each with the default encryption. Each run must also
@@ -167,6 +168,11 @@ async function launchAndWait(run) {
   const { log } = stream;
   appendFileSync(logPath, `===== ${run.name} =====\n${log}\n`);
   reportGlobals(run, log);
+
+  const starts = log.match(/Signal Protocol SDK .* Hermes: /g)?.length ?? 0;
+  if (starts > 1) {
+    throw new Error(`The ${run.name} started the exchange ${starts} times in one process.\n${log}`);
+  }
 
   const missing = run.required.filter((pattern) => !pattern.test(log));
   if (missing.length > 0) {

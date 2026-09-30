@@ -10,6 +10,16 @@ The core SDK is framework-neutral. React hooks live on a separate package
 subpath. Non-React consumers therefore do not load React, and UI code can
 subscribe to SDK state without duplicating effect cleanup.
 
+## Setup
+
+Install the peers `react` 19.0.0 or later and `react-native` 0.83.6 or later.
+The entry loads both, also in a web app: the relay lifecycle and key rotation
+hooks read `AppState` from `react-native`.
+
+```sh
+npm install react react-native
+```
+
 ## Usage
 
 ```tsx
@@ -59,8 +69,7 @@ for example while an Android foreground service runs. Outside React, call
 `bindRelayLifecycle(signal, AppState)` from
 `@open-e2ee/signal-protocol-sdk/client`.
 
-Install a compatible React version when importing this subpath. Do not call
-these hooks outside React components or custom hooks. Event callbacks from
+Do not call these hooks outside React components or custom hooks. Event callbacks from
 `SignalProtocolClient.registerHook()` are a separate, framework-neutral API.
 
 See the [client guide](../client/README.md) and

@@ -56,6 +56,7 @@ import {
 import type { MessageRecordStore } from '../../local/store';
 import { validateSesameConfig } from './validation';
 import type { SessionState, SessionRecord } from '../../types/session';
+import { SessionRecord as SessionRecordNS } from '../../types/session';
 import { ProtocolAddress } from '../../types/address';
 import { base64ToBytes, bytesToBase64 } from '../crypto/utils';
 import { type Base64 } from '../../types/utils';
@@ -66,6 +67,11 @@ import {
   parseSignalProtocolMessageEnvelope,
   decodeSignalProtocolMessage,
 } from '../encoding/proto';
+import {
+  withDeviceListSyncLock,
+  withDeviceRecordLocks,
+  withUserRecordLock,
+} from '../session/record-locks';
 import { SessionResolver } from '../session/session-resolver';
 import type { Ciphertext } from '../../keys';
 import { EncryptionError } from '../../types/errors';
@@ -129,10 +135,10 @@ function isPreKeyMessage(ciphertext: string): boolean {
 interface PreKeyMessageResult {
   /** Decrypted plaintext */
   plaintext: Uint8Array;
-  /** DeviceRecord to persist (not yet stored) */
-  pendingDeviceRecord: DeviceRecord;
-  /** UserRecord to persist if new sender (not yet stored) */
-  pendingUserRecord?: UserRecord;
+  /** The sender's DeviceRecord before decrypt, or null for a new sender */
+  previousDeviceRecord: DeviceRecord | null;
+  /** The canonical composite identity key that the PreKeyMessage carried */
+  incomingIdentityKey: Uint8Array;
 }
 
 /**
@@ -157,6 +163,17 @@ export interface ProtocolManager {
  * Manages multi-device sessions following the Signal Protocol SESAME specification.
  *
  * Supports event callbacks for observability via the SesameEvents interface.
+ *
+ * Every write of a user record or a device record reads the record, changes
+ * it, and writes it back. A per-user lock orders these writes, so two
+ * concurrent writes for one user keep both changes. A write that carries a
+ * session also takes the session lock of the device first, so it reads the
+ * session that the protocol committed last. A write that does not change the
+ * session writes a null session, which keeps the stored one. The locks order
+ * the writes of one client process only. They do not order two browser tabs,
+ * two workers, or two processes that share one store. The session lock comes
+ * before the user lock, so the manager never holds the user lock across a
+ * protocol call.
  */
 export class DefaultSesameManager implements SesameManager {
   private storage: SesameStorage;
@@ -258,6 +275,29 @@ export class DefaultSesameManager implements SesameManager {
   }
 
   /**
+   * Run a read-modify-write of one user's records under the per-user lock.
+   * The lock is not reentrant, and the session lock comes first, so the
+   * operation must not take the user lock again or call the protocol. It
+   * must not write a session.
+   */
+  private withUserLock<T>(userId: UserID, operation: () => Promise<T>): Promise<T> {
+    return withUserRecordLock(this.storage, userId, operation);
+  }
+
+  /**
+   * Run a read-modify-write of one device record and its session under the
+   * session lock of the device and then the per-user lock. The operation must
+   * not take either lock again or call a protocol encrypt or decrypt.
+   */
+  private withDeviceLocks<T>(
+    userId: UserID,
+    deviceId: DeviceID,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    return withDeviceRecordLocks(this.storage, userId, deviceId, operation);
+  }
+
+  /**
    * Initialize SESAME manager with local device information
    */
   async initialize(localUserId: UserID, localDeviceId: DeviceID): Promise<void> {
@@ -284,6 +324,14 @@ export class DefaultSesameManager implements SesameManager {
     deviceId: DeviceID,
     identityKey: Uint8Array,
     _prekeyBundle?: unknown
+  ): Promise<void> {
+    await this.withUserLock(userId, () => this.addDeviceLocked(userId, deviceId, identityKey));
+  }
+
+  private async addDeviceLocked(
+    userId: UserID,
+    deviceId: DeviceID,
+    identityKey: Uint8Array
   ): Promise<void> {
     // Validate device ID range (Signal Protocol limits to 1-5 devices per user)
     if (deviceId < MIN_DEVICE_ID || deviceId > MAX_DEVICE_ID) {
@@ -343,9 +391,14 @@ export class DefaultSesameManager implements SesameManager {
   }
 
   /**
-   * Remove a device from a user
+   * Remove a device from a user. The removal deletes the device's session, so
+   * it waits for a session write that is in progress for the device.
    */
   async removeDevice(userId: UserID, deviceId: DeviceID): Promise<void> {
+    await this.withDeviceLocks(userId, deviceId, () => this.removeDeviceLocked(userId, deviceId));
+  }
+
+  private async removeDeviceLocked(userId: UserID, deviceId: DeviceID): Promise<void> {
     this.logger.debug('SESAME: Removing device', {
       category: 'E2EE',
       data: {
@@ -382,19 +435,21 @@ export class DefaultSesameManager implements SesameManager {
    * This unblocks messaging to the device.
    */
   async clearPendingVerification(userId: UserID, deviceId: DeviceID): Promise<void> {
-    const record = await this.storage.getDeviceRecord(userId, deviceId);
-    if (record && record.pendingVerification) {
-      record.pendingVerification = false;
-      await this.storage.setDeviceRecord(userId, deviceId, record);
-      this.logger.info('SESAME: Cleared pending verification', {
-        category: 'E2EE',
-        data: {
-          operation: 'sesame-clear-verification',
-          userId,
-          deviceId,
-        },
-      });
-    }
+    await this.withUserLock(userId, async () => {
+      const record = await this.storage.getDeviceRecord(userId, deviceId);
+      if (record && record.pendingVerification) {
+        record.pendingVerification = false;
+        await this.storage.setDeviceRecord(userId, deviceId, { ...record, session: null });
+        this.logger.info('SESAME: Cleared pending verification', {
+          category: 'E2EE',
+          data: {
+            operation: 'sesame-clear-verification',
+            userId,
+            deviceId,
+          },
+        });
+      }
+    });
   }
 
   /**
@@ -438,6 +493,16 @@ export class DefaultSesameManager implements SesameManager {
     deviceId: DeviceID,
     sessionRecord: SessionRecord
   ): Promise<void> {
+    await this.withDeviceLocks(userId, deviceId, () =>
+      this.setSessionLocked(userId, deviceId, sessionRecord)
+    );
+  }
+
+  private async setSessionLocked(
+    userId: UserID,
+    deviceId: DeviceID,
+    sessionRecord: SessionRecord
+  ): Promise<void> {
     const deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
     if (!deviceRecord) {
       throw new SesameDeviceNotFoundError(`Device not found: ${userId}/${deviceId}`);
@@ -472,7 +537,9 @@ export class DefaultSesameManager implements SesameManager {
    * Register a newly established Double Ratchet session with SESAME.
    *
    * Creates a SessionRecord with SESAME metadata and sets it as the device's session.
-   * Any existing session is archived in SessionRecord.archivedSessions.
+   * Any existing session is archived in SessionRecord.archivedSessions. When
+   * the store holds a state of the same session (the same baseKey), the stored
+   * state is registered, because it can be newer than `sessionState`.
    *
    * This bridges the Double Ratchet layer with the SESAME multi-device layer,
    * so sessions established via SignalProtocolClient.establishSession() are
@@ -492,32 +559,41 @@ export class DefaultSesameManager implements SesameManager {
     const address = ProtocolAddress.create(userId, deviceId);
     const sessionId = ProtocolAddress.toString(address);
 
-    // Create the device record if it is missing
-    let deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
-    if (!deviceRecord) {
-      // Auto-create device record if it does not exist. Pin the peer identity the
-      // session was actually negotiated against. A placeholder here would later
-      // compare unequal to that same identity and forge an identity-change event.
-      await this.addDevice(
-        userId,
-        deviceId,
-        sessionState.remoteIdentity
-          ? encodeCompositeIdentityV1(sessionState.remoteIdentity)
-          : UNPINNED_DEVICE_IDENTITY_KEY
+    await this.withDeviceLocks(userId, deviceId, async () => {
+      // Create the device record if it is missing
+      let deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
+      if (!deviceRecord) {
+        // Auto-create device record if it does not exist. Pin the peer identity the
+        // session was actually negotiated against. A placeholder here would later
+        // compare unequal to that same identity and forge an identity-change event.
+        await this.addDeviceLocked(
+          userId,
+          deviceId,
+          sessionState.remoteIdentity
+            ? encodeCompositeIdentityV1(sessionState.remoteIdentity)
+            : UNPINNED_DEVICE_IDENTITY_KEY
+        );
+        deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
+      }
+
+      // The caller read the session state before this lock. A send or a receive
+      // can have committed a newer state of the same session since then, so
+      // register the state of that session that the store holds now.
+      const storedState = deviceRecord?.session
+        ? SessionRecordNS.findSession(deviceRecord.session, sessionState.baseKey)
+        : null;
+
+      // Create or update session record using SessionResolver
+      const sessionRecord = SessionResolver.insertSession(
+        deviceRecord?.session ?? null,
+        storedState ?? sessionState,
+        isInitiator,
+        this.config.maxInactiveSessions
       );
-      deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
-    }
 
-    // Create or update session record using SessionResolver
-    const sessionRecord = SessionResolver.insertSession(
-      deviceRecord?.session ?? null,
-      sessionState,
-      isInitiator,
-      this.config.maxInactiveSessions
-    );
-
-    // Set the session record
-    await this.setSession(userId, deviceId, sessionRecord);
+      // Set the session record
+      await this.setSessionLocked(userId, deviceId, sessionRecord);
+    });
 
     this.logger.debug('SESAME: Session registered', {
       category: 'E2EE',
@@ -619,13 +695,15 @@ export class DefaultSesameManager implements SesameManager {
 
       // Update session lastSentAt timestamp via SessionRecord
       // Placed AFTER Phase 3 validation so metadata is not persisted if validation fails
-      const deviceRecord = await this.getDeviceRecord(recipientUserId, recipientDeviceId);
-      if (deviceRecord?.session) {
-        const updatedSession = updateSessionRecordAfterSend(deviceRecord.session);
-        deviceRecord.session = updatedSession;
-        deviceRecord.updatedAt = Date.now();
-        await this.storage.setDeviceRecord(recipientUserId, recipientDeviceId, deviceRecord);
-      }
+      await this.withDeviceLocks(recipientUserId, recipientDeviceId, async () => {
+        const deviceRecord = await this.getDeviceRecord(recipientUserId, recipientDeviceId);
+        if (deviceRecord?.session) {
+          const updatedSession = updateSessionRecordAfterSend(deviceRecord.session);
+          deviceRecord.session = updatedSession;
+          deviceRecord.updatedAt = Date.now();
+          await this.storage.setDeviceRecord(recipientUserId, recipientDeviceId, deviceRecord);
+        }
+      });
 
       // Convert Ciphertext to Uint8Array for SesameMessage
       const ciphertextBytes = this.serializeCiphertext(ciphertext);
@@ -900,17 +978,19 @@ export class DefaultSesameManager implements SesameManager {
     const includeSyncMessages = options?.includeSyncMessages ?? true;
     // M15: Check if UserRecord is marked stale and clear it for this attempt.
     // Per SESAME spec §3.3: stale records trigger a fresh device list fetch.
-    const userRecord = await this.getUserRecord(recipientUserId);
+    const userRecord = await this.withUserLock(recipientUserId, async () => {
+      const record = await this.getUserRecord(recipientUserId);
+      if (record?.stale) {
+        // Clear stale flag since we are about to use this record
+        // (caller should have refreshed the device list before retrying)
+        record.stale = false;
+        record.updatedAt = Date.now();
+        await this.storage.setUserRecord(recipientUserId, record);
+      }
+      return record;
+    });
     if (!userRecord) {
       throw new SesameError(`No user record found for ${recipientUserId}`, 'USER_NOT_FOUND');
-    }
-
-    if (userRecord.stale) {
-      // Clear stale flag since we are about to use this record
-      // (caller should have refreshed the device list before retrying)
-      userRecord.stale = false;
-      userRecord.updatedAt = Date.now();
-      await this.storage.setUserRecord(recipientUserId, userRecord);
     }
 
     if (userRecord.devices.size === 0) {
@@ -1095,21 +1175,7 @@ export class DefaultSesameManager implements SesameManager {
 
         // TRANSACTIONAL: Only persist after successful decrypt
         // This prevents session state corruption if decryption fails
-        if (result.pendingUserRecord) {
-          await this.storage.setUserRecord(message.senderUserId, result.pendingUserRecord);
-        }
-        // Update session index for the newly established session
-        this.removeDeviceFromSessionIndex(message.senderUserId, message.senderDeviceId);
-        this.indexSessionRecord(
-          message.senderUserId,
-          message.senderDeviceId,
-          result.pendingDeviceRecord.session
-        );
-        await this.storage.setDeviceRecord(
-          message.senderUserId,
-          message.senderDeviceId,
-          result.pendingDeviceRecord
-        );
+        await this.persistPreKeyResult(senderAddress, result);
 
         this.logger.debug('SESAME: Session established from PreKeyMessage (persisted)', {
           category: 'E2EE',
@@ -1158,16 +1224,6 @@ export class DefaultSesameManager implements SesameManager {
 
     // 5. Handle successful decryption
     if (decryptedPlaintext && successfulCandidate && sessionRecord) {
-      // CRITICAL: Sync session from protocol layer to get updated state (Nr, chain keys, etc.)
-      // The protocol.decrypt() call above mutates and saves the session to KeyStorage.
-      // We MUST read it back to avoid overwriting with stale data from sessionRecord.
-      // The protocol layer also handles archived session promotion internally.
-      const sessionFromProtocol = await this.protocol!.getSession(senderAddress);
-
-      // Use the protocol's updated session (includes updated Nr, chain keys, and any promotion)
-      // Fall back to original sessionRecord only if sync fails (should not happen)
-      const updatedSession = sessionFromProtocol || sessionRecord;
-
       // If we decrypted on an archived session, emit convergence event for observability
       // Note: The actual promotion is already handled by the protocol layer (cipher.ts)
       if (!successfulCandidate.isActive && successfulCandidate.baseKey) {
@@ -1194,12 +1250,11 @@ export class DefaultSesameManager implements SesameManager {
         });
       }
 
-      // Update session metadata and persist
-      await this.persistSessionAfterReceive(
-        message.senderUserId,
-        message.senderDeviceId,
-        updatedSession
-      );
+      // Update session metadata and persist. The protocol.decrypt() call
+      // above saved the updated session (Nr, chain keys, and any archived
+      // session promotion) to KeyStorage, so the persist reads it back from
+      // the protocol rather than writing the stale sessionRecord.
+      await this.persistSessionAfterReceive(senderAddress, sessionRecord);
 
       return decryptedPlaintext;
     }
@@ -1224,21 +1279,7 @@ export class DefaultSesameManager implements SesameManager {
 
       // TRANSACTIONAL: Only persist after successful decrypt
       // This prevents session state corruption if decryption fails
-      if (result.pendingUserRecord) {
-        await this.storage.setUserRecord(message.senderUserId, result.pendingUserRecord);
-      }
-      // Update session index for the newly established session
-      this.removeDeviceFromSessionIndex(message.senderUserId, message.senderDeviceId);
-      this.indexSessionRecord(
-        message.senderUserId,
-        message.senderDeviceId,
-        result.pendingDeviceRecord.session
-      );
-      await this.storage.setDeviceRecord(
-        message.senderUserId,
-        message.senderDeviceId,
-        result.pendingDeviceRecord
-      );
+      await this.persistPreKeyResult(senderAddress, result);
 
       this.logger.debug('SESAME: Session established from PreKeyMessage fallback (persisted)', {
         category: 'E2EE',
@@ -1565,10 +1606,12 @@ export class DefaultSesameManager implements SesameManager {
    * Handle PreKeyMessage decryption when no existing sessions are found.
    *
    * This method handles the first message from a new sender by:
-   * 1. Attempting to decrypt using protocol.decrypt() (handles session establishment)
-   * 2. Creating DeviceRecord if sender is unknown
-   * 3. Detecting identity key changes for existing senders (device reinstall scenario)
-   * 4. Persisting the new session
+   * 1. Reading the sender's DeviceRecord before decrypt
+   * 2. Attempting to decrypt using protocol.decrypt() (handles session establishment)
+   * 3. Reading the sender's identity key from the PreKeyMessage
+   *
+   * persistPreKeyResult() then creates or updates the DeviceRecord, detects an
+   * identity key change (device reinstall scenario), and persists the session.
    *
    * @param message - The incoming SESAME message
    * @param senderAddress - Protocol address of the sender
@@ -1595,7 +1638,7 @@ export class DefaultSesameManager implements SesameManager {
     // session. Some storage adapters synthesize DeviceRecord from live
     // protocol state. Looking this up only after decrypt would make a
     // brand-new session appear pre-existing and archive it into itself.
-    let deviceRecord = await this.getDeviceRecord(
+    const previousDeviceRecord = await this.getDeviceRecord(
       message.senderUserId,
       message.senderDeviceId
     );
@@ -1603,12 +1646,6 @@ export class DefaultSesameManager implements SesameManager {
     // Note: this.protocol is guaranteed non-null because receive() checks it before calling this method
     const plaintextString = await this.protocol!.decrypt(senderAddress, ciphertext, receiveId);
     const decryptedPlaintext = new TextEncoder().encode(plaintextString);
-
-    // CRITICAL: Sync session from KeyStorage to SESAME layer
-    // The protocol.decrypt() call above establishes the session in KeyStorage (protocol layer).
-    // SESAME needs this session in DeviceRecord.session (SESAME layer) for subsequent messages.
-    // Without this sync, the responder path fails to find the session on later messages.
-    const sessionFromProtocol = await this.protocol!.getSession(senderAddress);
 
     // Parse PreKeyMessage to get sender's identity key (binary protobuf format)
     // This is needed for both new senders AND existing senders (to detect identity key changes)
@@ -1636,134 +1673,8 @@ export class DefaultSesameManager implements SesameManager {
       throw new DecryptionFailedError(message.sessionId, 0);
     }
 
-    // Track if we need to create/update UserRecord (for new senders only)
-    let pendingUserRecord: UserRecord | undefined;
-
-    if (!deviceRecord) {
-      // First message from new sender - create DeviceRecord with synced session
-      deviceRecord = {
-        userId: message.senderUserId,
-        deviceId: message.senderDeviceId,
-        identityKey: incomingIdentityKey,
-        session: sessionFromProtocol ? updateSessionRecordAfterReceive(sessionFromProtocol) : null, // Sync session from protocol layer with metadata
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-
-      // Prepare UserRecord (will be persisted by caller after successful decrypt)
-      let userRecord = await this.storage.getUserRecord(message.senderUserId);
-      if (!userRecord) {
-        userRecord = {
-          userId: message.senderUserId,
-          devices: new Map(),
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-      }
-      userRecord.devices.set(message.senderDeviceId, deviceRecord);
-      userRecord.updatedAt = Date.now();
-      pendingUserRecord = userRecord;
-
-      // TRANSACTIONAL: DO NOT persist here - caller will persist after successful decrypt
-      // This prevents session state corruption if subsequent processing fails
-
-      this.logger.debug('SESAME: Prepared DeviceRecord for new sender (pending persist)', {
-        category: 'E2EE',
-        data: { userId: message.senderUserId, deviceId: message.senderDeviceId },
-      });
-    } else {
-      // Existing device record - compare the pinned identity against the one
-      // this PreKeyMessage was authenticated with. Both sides are canonical
-      // composite tuples, so a difference is a real identity change and not an
-      // encoding artifact. A record that carries no pinned identity yet is
-      // first contact, because session bookkeeping created it before any
-      // identity was observed. TOFU-pin it silently rather than reporting a
-      // change.
-      const comparison = compareDeviceIdentityKeys(deviceRecord.identityKey, incomingIdentityKey);
-
-      if (comparison === 'unpinned') {
-        deviceRecord.identityKey = incomingIdentityKey;
-
-        this.logger.debug('SESAME: Pinned identity key on first contact (TOFU)', {
-          category: 'E2EE',
-          data: {
-            userId: message.senderUserId,
-            deviceId: message.senderDeviceId,
-          },
-        });
-      }
-
-      if (comparison === 'changed') {
-        // CRITICAL: Identity key changed - this is either a device reinstall
-        // or a potential security issue (man-in-the-middle attack)
-        this.logger.warn('SESAME: Identity key changed detected in PreKeyMessage', {
-          category: 'SECURITY',
-          data: {
-            userId: message.senderUserId,
-            deviceId: message.senderDeviceId,
-            event: 'identity_key_changed',
-          },
-        });
-
-        // Update the identity key to the new one
-        deviceRecord.identityKey = incomingIdentityKey;
-        deviceRecord.pendingVerification = true;
-
-        // Emit identity key changed event (safety number changed)
-        this.events.onIdentityKeyChanged?.(message.senderUserId, incomingIdentityKey);
-
-        // Also emit security event
-        this.events.onSecurityEvent?.(senderAddress, 'identity_key_changed');
-
-        this.logger.info(
-          'SESAME: Session archived and identity key updated after device reinstall',
-          {
-            category: 'E2EE',
-            data: {
-              userId: message.senderUserId,
-              deviceId: message.senderDeviceId,
-            },
-          }
-        );
-      }
-
-      // Sync the new session from protocol layer to DeviceRecord.
-      // This is needed whether identity changed or not. The PreKeyMessage
-      // established a new session that needs to be synced to SESAME layer.
-      if (sessionFromProtocol) {
-        // If there was an old session, archive it before setting the new one
-        // This preserves session history for convergence per SESAME spec
-        if (deviceRecord.session?.currentSession) {
-          const archivedRecord = SessionResolver.archiveCurrentSession(
-            deviceRecord.session,
-            this.config.maxInactiveSessions
-          );
-          // Merge archived sessions: preserve ALL sessions from both sources
-          // Use explicit merge to avoid collision-related data loss from spread operator
-          const mergedArchived: Record<string, SessionState> = {};
-
-          // First, add all from archived record (preserves existing session history)
-          for (const [key, session] of Object.entries(archivedRecord.archivedSessions)) {
-            if (session) mergedArchived[key] = session;
-          }
-
-          // Then add from protocol (only if not already present - do not overwrite history)
-          for (const [key, session] of Object.entries(sessionFromProtocol.archivedSessions || {})) {
-            if (session && !(key in mergedArchived)) {
-              mergedArchived[key] = session;
-            }
-          }
-
-          sessionFromProtocol.archivedSessions = mergedArchived;
-        }
-        deviceRecord.session = updateSessionRecordAfterReceive(sessionFromProtocol);
-      }
-      deviceRecord.updatedAt = Date.now();
-
-      // TRANSACTIONAL: DO NOT persist here - caller will persist after successful decrypt
-      // This prevents session state corruption if subsequent processing fails
-    }
-
+    // TRANSACTIONAL: DO NOT persist here - caller will persist after successful decrypt
+    // This prevents session state corruption if subsequent processing fails
     this.logger.debug('SESAME: Session prepared from PreKeyMessage (pending persist)', {
       category: 'E2EE',
       data: {
@@ -1773,40 +1684,191 @@ export class DefaultSesameManager implements SesameManager {
       },
     });
 
-    // Return result with pending records - caller MUST persist after confirming success
     return {
       plaintext: decryptedPlaintext,
-      pendingDeviceRecord: deviceRecord,
-      pendingUserRecord,
+      previousDeviceRecord,
+      incomingIdentityKey,
     };
+  }
+
+  /**
+   * Persist the DeviceRecord for a decrypted PreKeyMessage.
+   *
+   * The session lock of the sender device comes first, so the session read
+   * from the protocol is the one that it committed last. The records are
+   * then read again under the user lock, and the identity decision compares
+   * the incoming identity with the identity that the store pins now. An
+   * identity pinned while the message decrypted is therefore compared, not
+   * replaced. The receive path owns the identity key, the session, and the
+   * update time. Every other field, and every other device of the user, keeps
+   * the value that the store holds now, so a concurrent write for this user
+   * is not lost.
+   */
+  private async persistPreKeyResult(
+    senderAddress: ProtocolAddress,
+    result: PreKeyMessageResult
+  ): Promise<void> {
+    const { userId, deviceId } = senderAddress;
+    const incomingIdentityKey = result.incomingIdentityKey;
+    const newSender = result.previousDeviceRecord === null;
+
+    const comparison = await this.withDeviceLocks(userId, deviceId, async () => {
+      const sessionFromProtocol = await this.protocol!.getSession(senderAddress);
+      const session = sessionFromProtocol
+        ? updateSessionRecordAfterReceive(
+            this.mergePreKeySession(result.previousDeviceRecord?.session ?? null, sessionFromProtocol)
+          )
+        : null;
+
+      const now = Date.now();
+      const userRecord = newSender
+        ? ((await this.storage.getUserRecord(userId)) ?? {
+            userId,
+            devices: new Map(),
+            createdAt: now,
+            updatedAt: now,
+          })
+        : null;
+      const current = userRecord
+        ? (userRecord.devices.get(deviceId) ?? null)
+        : await this.storage.getDeviceRecord(userId, deviceId);
+
+      // Both sides are canonical composite tuples, so a difference is a real
+      // identity change and not an encoding artifact. A record that carries
+      // no pinned identity yet is first contact, because session bookkeeping
+      // created it before any identity was observed. TOFU-pin it silently
+      // rather than reporting a change.
+      const comparison = current
+        ? compareDeviceIdentityKeys(current.identityKey, incomingIdentityKey)
+        : null;
+      const deviceRecord: DeviceRecord = current
+        ? {
+            ...current,
+            identityKey: comparison === 'same' ? current.identityKey : incomingIdentityKey,
+            session,
+            updatedAt: now,
+            ...(comparison === 'changed' ? { pendingVerification: true } : {}),
+          }
+        : {
+            userId,
+            deviceId,
+            identityKey: incomingIdentityKey,
+            session,
+            createdAt: now,
+            updatedAt: now,
+          };
+
+      if (userRecord) {
+        userRecord.devices.set(deviceId, deviceRecord);
+        userRecord.updatedAt = now;
+        await this.storage.setUserRecord(userId, userRecord);
+      }
+
+      // Update session index for the newly established session
+      this.removeDeviceFromSessionIndex(userId, deviceId);
+      this.indexSessionRecord(userId, deviceId, deviceRecord.session);
+      await this.storage.setDeviceRecord(userId, deviceId, deviceRecord);
+
+      // A store joins a device that has no pin with the identity of its
+      // session, and the decrypt committed that session. A device that had no
+      // pin before the decrypt is a first-contact pin.
+      return comparison === 'same' && result.previousDeviceRecord?.identityKey.length === 0
+        ? 'unpinned'
+        : comparison;
+    });
+
+    if (comparison === 'unpinned') {
+      this.logger.debug('SESAME: Pinned identity key on first contact (TOFU)', {
+        category: 'E2EE',
+        data: { userId, deviceId },
+      });
+    }
+
+    if (comparison === 'changed') {
+      // CRITICAL: Identity key changed - this is either a device reinstall
+      // or a potential security issue (man-in-the-middle attack)
+      this.logger.warn('SESAME: Identity key changed detected in PreKeyMessage', {
+        category: 'SECURITY',
+        data: { userId, deviceId, event: 'identity_key_changed' },
+      });
+
+      // Emit identity key changed event (safety number changed)
+      this.events.onIdentityKeyChanged?.(userId, incomingIdentityKey);
+
+      // Also emit security event
+      this.events.onSecurityEvent?.(senderAddress, 'identity_key_changed');
+
+      this.logger.info('SESAME: Session archived and identity key updated after device reinstall', {
+        category: 'E2EE',
+        data: { userId, deviceId },
+      });
+    }
+  }
+
+  /**
+   * The session record to store for a session that a PreKeyMessage
+   * established. The previous current session is archived, and the archived
+   * sessions of both records are kept, so SESAME keeps the session history
+   * for convergence.
+   */
+  private mergePreKeySession(
+    previous: SessionRecord | null,
+    fromProtocol: SessionRecord
+  ): SessionRecord {
+    if (!previous?.currentSession) return fromProtocol;
+
+    const archivedRecord = SessionResolver.archiveCurrentSession(
+      previous,
+      this.config.maxInactiveSessions
+    );
+    // Merge archived sessions: preserve ALL sessions from both sources
+    // Use explicit merge to avoid collision-related data loss from spread operator
+    const mergedArchived: Record<string, SessionState> = {};
+
+    // First, add all from archived record (preserves existing session history)
+    for (const [key, session] of Object.entries(archivedRecord.archivedSessions)) {
+      if (session) mergedArchived[key] = session;
+    }
+
+    // Then add from protocol (only if not already present - do not overwrite history)
+    for (const [key, session] of Object.entries(fromProtocol.archivedSessions || {})) {
+      if (session && !(key in mergedArchived)) {
+        mergedArchived[key] = session;
+      }
+    }
+
+    return { ...fromProtocol, archivedSessions: mergedArchived };
   }
 
   /**
    * Update session metadata after receiving a message and persist to storage.
    *
-   * This is a helper method that reduces duplication between the PreKeyMessage
-   * handling path and the normal receive path.
+   * The session is read from the protocol under the session lock of the
+   * sender device, so a session that the protocol committed after the
+   * decrypt is not written back older.
    *
-   * @param userId - Sender's user ID
-   * @param deviceId - Sender's device ID
-   * @param session - The session record to update
+   * @param senderAddress - Sender's protocol address
+   * @param fallback - The session record to update if the protocol has none
    */
   private async persistSessionAfterReceive(
-    userId: UserID,
-    deviceId: DeviceID,
-    session: SessionRecord
+    senderAddress: ProtocolAddress,
+    fallback: SessionRecord
   ): Promise<void> {
-    const updatedSession = updateSessionRecordAfterReceive(session);
-    const deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
-    if (deviceRecord) {
-      // Update session index for the new session state
-      this.removeDeviceFromSessionIndex(userId, deviceId);
-      this.indexSessionRecord(userId, deviceId, updatedSession);
+    const { userId, deviceId } = senderAddress;
+    await this.withDeviceLocks(userId, deviceId, async () => {
+      const session = (await this.protocol!.getSession(senderAddress)) ?? fallback;
+      const updatedSession = updateSessionRecordAfterReceive(session);
+      const deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
+      if (deviceRecord) {
+        // Update session index for the new session state
+        this.removeDeviceFromSessionIndex(userId, deviceId);
+        this.indexSessionRecord(userId, deviceId, updatedSession);
 
-      deviceRecord.session = updatedSession;
-      deviceRecord.updatedAt = Date.now();
-      await this.storage.setDeviceRecord(userId, deviceId, deviceRecord);
-    }
+        deviceRecord.session = updatedSession;
+        deviceRecord.updatedAt = Date.now();
+        await this.storage.setDeviceRecord(userId, deviceId, deviceRecord);
+      }
+    });
   }
 
   /**
@@ -1817,20 +1879,22 @@ export class DefaultSesameManager implements SesameManager {
    * @param userId - The user whose record should be marked stale
    */
   private async markUserRecordStale(userId: UserID): Promise<void> {
-    const userRecord = await this.storage.getUserRecord(userId);
-    if (userRecord) {
-      userRecord.stale = true;
-      userRecord.updatedAt = Date.now();
-      await this.storage.setUserRecord(userId, userRecord);
+    await this.withUserLock(userId, async () => {
+      const userRecord = await this.storage.getUserRecord(userId);
+      if (userRecord) {
+        userRecord.stale = true;
+        userRecord.updatedAt = Date.now();
+        await this.storage.setUserRecord(userId, userRecord);
 
-      this.logger.info('SESAME: UserRecord marked stale', {
-        category: 'E2EE',
-        data: {
-          operation: 'sesame-mark-stale',
-          userId,
-        },
-      });
-    }
+        this.logger.info('SESAME: UserRecord marked stale', {
+          category: 'E2EE',
+          data: {
+            operation: 'sesame-mark-stale',
+            userId,
+          },
+        });
+      }
+    });
   }
 
   /**
@@ -1840,6 +1904,12 @@ export class DefaultSesameManager implements SesameManager {
    * to allow a new session to be established on the next send attempt.
    */
   private async archiveSessionForDevice(userId: UserID, deviceId: DeviceID): Promise<void> {
+    await this.withDeviceLocks(userId, deviceId, () =>
+      this.archiveSessionForDeviceLocked(userId, deviceId)
+    );
+  }
+
+  private async archiveSessionForDeviceLocked(userId: UserID, deviceId: DeviceID): Promise<void> {
     const deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
     if (!deviceRecord?.session?.currentSession) {
       // No active session to archive
@@ -2065,8 +2135,16 @@ export class DefaultSesameManager implements SesameManager {
    * Synchronize device list from server response
    *
    * SESAME Phase 3 in message sending requires validating the device list is current.
+   * Two syncs of one user run one after the other, so the stored devices and
+   * version come from one list.
    */
   async syncDeviceList(deviceListResponse: DeviceListResponse): Promise<void> {
+    await withDeviceListSyncLock(this.storage, deviceListResponse.userId, () =>
+      this.syncDeviceListLocked(deviceListResponse)
+    );
+  }
+
+  private async syncDeviceListLocked(deviceListResponse: DeviceListResponse): Promise<void> {
     const { userId, deviceIds, version } = deviceListResponse;
 
     this.logger.debug('SESAME: Syncing device list', {
@@ -2083,98 +2161,140 @@ export class DefaultSesameManager implements SesameManager {
     // available. A device the server listed without an identity key stays
     // unpinned rather than being pinned to placeholder bytes.
     const { identityKeys } = deviceListResponse;
-    const devices = deviceIds.map((deviceId: DeviceID) => ({
-      deviceId,
-      identityKey: canonicalizeDeviceIdentityKey(
-        identityKeys?.get(deviceId) ?? UNPINNED_DEVICE_IDENTITY_KEY,
-        `Device list identity key for ${userId}:${deviceId}`
-      ),
-      isActive: true,
-    }));
+    const devices = new Map(
+      deviceIds.map((deviceId: DeviceID) => [
+        deviceId,
+        canonicalizeDeviceIdentityKey(
+          identityKeys?.get(deviceId) ?? UNPINNED_DEVICE_IDENTITY_KEY,
+          `Device list identity key for ${userId}:${deviceId}`
+        ),
+      ])
+    );
 
-    // Get current user record
-    const userRecord = await this.storage.getUserRecord(userId);
+    // Add and pin devices under the user lock. A device that the list removes
+    // or re-keys loses its session, and a session write needs the session lock
+    // first, so collect those devices and replace each one after this lock.
+    const replacedDeviceIds = await this.withUserLock(userId, async () => {
+      // Get current user record
+      const userRecord = await this.storage.getUserRecord(userId);
 
-    if (!userRecord) {
-      // New user - create record with all devices
-      for (const device of devices) {
-        if (device.isActive) {
-          await this.addDevice(userId, device.deviceId, device.identityKey);
+      if (!userRecord) {
+        // New user - create record with all devices
+        for (const [deviceId, identityKey] of devices) {
+          await this.addDeviceLocked(userId, deviceId, identityKey);
         }
-      }
-      return;
-    }
-
-    // Track which devices exist on server
-    const serverDeviceIds = new Set(devices.map((d) => d.deviceId));
-
-    // Remove devices that no longer exist on server
-    for (const [deviceId] of userRecord.devices.entries()) {
-      if (!serverDeviceIds.has(deviceId)) {
-        await this.removeDevice(userId, deviceId);
-      }
-    }
-
-    // Add or update devices from server
-    for (const device of devices) {
-      if (!device.isActive) {
-        await this.removeDevice(userId, device.deviceId);
-        continue;
+        return null;
       }
 
-      const existingDevice = await this.getDeviceRecord(userId, device.deviceId);
+      // Devices that no longer exist on server
+      const replaced = Array.from(userRecord.devices.keys()).filter(
+        (deviceId) => !devices.has(deviceId)
+      );
 
-      if (!existingDevice) {
-        await this.addDevice(userId, device.deviceId, device.identityKey);
-      } else if (device.identityKey.length > 0) {
-        // Only a device list that actually carries an identity key can tell us
-        // the identity changed. A response that omits it carries no
-        // information about identity, and must not be read as a change.
-        // Reading it as a change would drop every live session and raise a
-        // security event on each sync.
-        const comparison = compareDeviceIdentityKeys(
-          existingDevice.identityKey,
-          device.identityKey
-        );
+      // Add or update devices from server
+      for (const [deviceId, identityKey] of devices) {
+        const existingDevice = await this.getDeviceRecord(userId, deviceId);
 
-        if (comparison === 'unpinned') {
-          // Device was tracked before its identity was known - TOFU-pin it.
-          existingDevice.identityKey = device.identityKey;
-          await this.storage.setDeviceRecord(userId, device.deviceId, existingDevice);
-        }
+        if (!existingDevice) {
+          await this.addDeviceLocked(userId, deviceId, identityKey);
+        } else if (identityKey.length > 0) {
+          // Only a device list that actually carries an identity key can tell us
+          // the identity changed. A response that omits it carries no
+          // information about identity, and must not be read as a change.
+          // Reading it as a change would drop every live session and raise a
+          // security event on each sync.
+          const comparison = compareDeviceIdentityKeys(existingDevice.identityKey, identityKey);
 
-        if (comparison === 'changed') {
-          // Identity key changed - security event
-          // Remove old device and add new one (clears sessions)
-          await this.removeDevice(userId, device.deviceId);
-          await this.addDevice(userId, device.deviceId, device.identityKey);
-
-          // Mark device as pending verification to block messaging until user verifies
-          const newRecord = await this.getDeviceRecord(userId, device.deviceId);
-          if (newRecord) {
-            newRecord.pendingVerification = true;
-            await this.storage.setDeviceRecord(userId, device.deviceId, newRecord);
+          if (comparison === 'unpinned') {
+            // Device was tracked before its identity was known - TOFU-pin it.
+            existingDevice.identityKey = identityKey;
+            await this.storage.setDeviceRecord(userId, deviceId, {
+              ...existingDevice,
+              session: null,
+            });
           }
 
-          // Emit identity key changed event (SECURITY)
-          this.events.onIdentityKeyChanged?.(userId, device.identityKey);
-
-          // Also emit security event with description
-          const address = ProtocolAddress.create(userId, device.deviceId);
-          this.events.onSecurityEvent?.(address, 'identity_key_changed');
+          if (comparison === 'changed') {
+            replaced.push(deviceId);
+          }
         }
+      }
+
+      return replaced;
+    });
+
+    if (replacedDeviceIds === null) return;
+
+    for (const deviceId of replacedDeviceIds) {
+      const identityKey = devices.get(deviceId);
+      const rekeyed = await this.withDeviceLocks(userId, deviceId, () =>
+        this.replaceListedDeviceLocked(userId, deviceId, identityKey)
+      );
+      if (rekeyed && identityKey) {
+        // Emit identity key changed event (SECURITY)
+        this.events.onIdentityKeyChanged?.(userId, identityKey);
+
+        // Also emit security event with description
+        const address = ProtocolAddress.create(userId, deviceId);
+        this.events.onSecurityEvent?.(address, 'identity_key_changed');
       }
     }
 
     // Update user record version if provided (Phase 3 version tracking)
     if (version !== undefined) {
-      const updatedUserRecord = await this.storage.getUserRecord(userId);
-      if (updatedUserRecord) {
-        updatedUserRecord.deviceListVersion = version;
-        updatedUserRecord.updatedAt = Date.now();
-        await this.storage.setUserRecord(userId, updatedUserRecord);
-      }
+      await this.withUserLock(userId, async () => {
+        const updatedUserRecord = await this.storage.getUserRecord(userId);
+        if (updatedUserRecord) {
+          updatedUserRecord.deviceListVersion = version;
+          updatedUserRecord.updatedAt = Date.now();
+          await this.storage.setUserRecord(userId, updatedUserRecord);
+        }
+      });
     }
+  }
+
+  /**
+   * Remove a device that the device list no longer lists, or replace a
+   * device whose listed identity key changed. Another write can have changed
+   * the device since the list was compared under the user lock, so the
+   * decision is made again here.
+   *
+   * @param identityKey - The listed identity key, or undefined when the list
+   * does not list the device
+   * @returns true when the device was replaced for a changed identity key
+   */
+  private async replaceListedDeviceLocked(
+    userId: UserID,
+    deviceId: DeviceID,
+    identityKey: Uint8Array | undefined
+  ): Promise<boolean> {
+    const existingDevice = await this.getDeviceRecord(userId, deviceId);
+    if (!existingDevice) return false;
+
+    if (identityKey === undefined) {
+      await this.removeDeviceLocked(userId, deviceId);
+      return false;
+    }
+
+    if (compareDeviceIdentityKeys(existingDevice.identityKey, identityKey) !== 'changed') {
+      return false;
+    }
+
+    // Identity key changed - security event
+    // Remove old device and add new one (clears sessions)
+    await this.removeDeviceLocked(userId, deviceId);
+    await this.addDeviceLocked(userId, deviceId, identityKey);
+
+    // Mark device as pending verification to block messaging until user verifies
+    const newRecord = await this.getDeviceRecord(userId, deviceId);
+    if (newRecord) {
+      newRecord.pendingVerification = true;
+      await this.storage.setDeviceRecord(userId, deviceId, {
+        ...newRecord,
+        session: null,
+      });
+    }
+    return true;
   }
 
   /**

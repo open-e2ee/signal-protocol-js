@@ -16,8 +16,9 @@ import {
   resetSqliteStore,
   type SqliteStoreOpenOptions,
 } from '../sqlite/open-store';
+import { SqliteEncryptionUnavailableError } from '../sqlite/errors';
 import { SqliteSignalProtocolStore } from '../sqlite/store';
-import { createExpoSqliteDriver } from './driver';
+import { createExpoSqliteDriver, expoSqliteHasCipher } from './driver';
 
 /** The database file name when the options name none. */
 const DEFAULT_DATABASE_NAME = 'open-e2ee-signal-protocol.db';
@@ -44,6 +45,17 @@ function storeOptions(options: ExpoSignalProtocolStoreOptions): SqliteStoreOpenO
     name: options.name ?? DEFAULT_DATABASE_NAME,
     vault: options.vault ?? new ExpoSecureStoreSignalProtocolSecretVault(),
   };
+}
+
+/**
+ * Refuse an encrypted store when the expo-sqlite build has no SQLCipher, as
+ * on the web. The refusal comes before the vault and the file: on the web,
+ * Expo SecureStore has no implementation, and a key written to another vault
+ * would protect nothing.
+ */
+async function requireCipher(options: ExpoSignalProtocolStoreOptions): Promise<void> {
+  if (options.encryptionAtRest === false) return;
+  if (!(await expoSqliteHasCipher())) throw new SqliteEncryptionUnavailableError('expo-sqlite');
 }
 
 /** The database of each open store, for the helpers of this entry. */
@@ -78,12 +90,14 @@ export class ExpoSignalProtocolStore extends SqliteSignalProtocolStore {
 
   /** @internal Use {@link expoStore}. */
   static async open(options: ExpoSignalProtocolStoreOptions): Promise<ExpoSignalProtocolStore> {
+    await requireCipher(options);
     const database = await openSqliteStore(storeOptions(options));
     return new ExpoSignalProtocolStore(database, options.logger);
   }
 
   /** @internal Use {@link resetExpoStore}. */
   static async reset(options: ExpoSignalProtocolStoreOptions): Promise<ExpoSignalProtocolStore> {
+    await requireCipher(options);
     const database = await resetSqliteStore(storeOptions(options));
     return new ExpoSignalProtocolStore(database, options.logger);
   }
@@ -104,10 +118,13 @@ export class ExpoSignalProtocolStore extends SqliteSignalProtocolStore {
  * @throws EncryptionError with `LOCAL_STORE_KEY_LOST` when the database file
  *   exists and the vault holds no key for it. Restore the vault entry, or call
  *   {@link resetExpoStore}.
+ * @throws SqliteEncryptionUnavailableError (`KEY_STORAGE_ERROR`) when the
+ *   expo-sqlite build has no SQLCipher, as on the web. The open then does not
+ *   use the vault and creates no file.
  * @throws EncryptionError with `KEY_STORAGE_ERROR` when the vault fails or
  *   holds a key of the wrong size, when the key does not open the file, when
- *   the file was created with the other `encryptionAtRest` setting, when the
- *   binding has no cipher, or when another connection holds the file.
+ *   the file was created with the other `encryptionAtRest` setting, or when
+ *   another connection holds the file.
  * @throws EncryptionError with `INVALID_STATE` when the name is not valid,
  *   when a store of this process holds the name, or when a newer SDK wrote
  *   the file.
@@ -122,6 +139,9 @@ export function expoStore(
  * Delete the database file, then create a new key, and return the open, empty
  * store. This is the only way to open a store whose key is lost.
  *
+ * @throws SqliteEncryptionUnavailableError (`KEY_STORAGE_ERROR`) when the
+ *   expo-sqlite build has no SQLCipher, as on the web. The reset then deletes
+ *   nothing and does not use the vault.
  * @throws EncryptionError with `INVALID_STATE` when the name is not valid, or
  *   when a store of this process holds the name. Close that store first.
  */

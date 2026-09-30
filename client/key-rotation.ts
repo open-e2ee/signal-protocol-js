@@ -15,7 +15,9 @@
 import { EncryptionError, EncryptionErrorCode, type PreKeyRotationResult } from '../types';
 import { callHook } from './event-hooks';
 import type { SignalProtocolClientContext } from './types';
+import { generateEcSignedPreKey, generateKyberLastResortPreKey } from '../keys';
 import type { IdentityType } from '../keys/types';
+import { withRetry } from '../utils/retry';
 import {
   KEY_REFRESH_INTERVAL_MS_DEFAULT,
   MAX_UNACKNOWLEDGED_SESSION_AGE_MS,
@@ -88,9 +90,6 @@ async function rotateEcSignedPreKeyLocalOnly(
   errors: string[],
   identityType: IdentityType = 'aci'
 ): Promise<boolean> {
-  const { withRetry } = await import('../utils/retry');
-  const { generateEcSignedPreKey } = await import('../keys');
-
   try {
     const identityKey = await ctx.storage.getIdentityKey(identityType);
     if (!identityKey) {
@@ -138,9 +137,6 @@ async function rotateKyberPreKeyLocalOnly(
   errors: string[],
   identityType: IdentityType = 'aci'
 ): Promise<boolean> {
-  const { withRetry } = await import('../utils/retry');
-  const { generateKyberLastResortPreKey } = await import('../keys');
-
   try {
     const identityKey = await ctx.storage.getIdentityKey(identityType);
     if (!identityKey) {

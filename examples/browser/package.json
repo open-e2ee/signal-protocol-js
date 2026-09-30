@@ -9,7 +9,7 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
-    "@open-e2ee/signal-protocol-sdk": "8.1.0"
+    "@open-e2ee/signal-protocol-sdk": "8.2.0"
   },
   "devDependencies": {
     "typescript": "7.0.2",

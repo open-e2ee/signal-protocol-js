@@ -42,6 +42,7 @@ import type { UserRecord, DeviceRecord } from '../../../types';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { generateRandomBytes } from '../../../internal/crypto/random';
 import { cloneProtocolState } from '../../../internal/crypto/utils';
+import { withDeviceRecordLocks } from '../../../internal/session/record-locks';
 import { withSession } from '../device-record';
 import { StoreFailureController, type StoreFailureOptions } from './failures';
 import {
@@ -747,39 +748,40 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     let deleted = 0;
     const now = Date.now();
 
-    for (const [userId, userRecord] of this.sesameUserRecords.entries()) {
-      const devicesToDelete: number[] = [];
-
-      for (const [deviceId, deviceRecord] of userRecord.devices.entries()) {
-        // A record is stale if:
-        // 1. It has no session (or session has no currentSession and no archived)
-        // 2. It is older than maxLatency
-        const session = this.readSession({ userId, deviceId });
-        const hasNoSessions =
-          !session ||
-          (!session.currentSession && Object.keys(session.archivedSessions).length === 0);
-
-        const isOld = now - deviceRecord.createdAt > maxLatency;
-
-        if (hasNoSessions && isOld) {
-          devicesToDelete.push(deviceId);
-        }
-      }
-
-      for (const deviceId of devicesToDelete) {
+    // The scan takes no lock. Each device is decided again under the locks of
+    // its records, so a write that lands after the scan is kept.
+    for (const { userId, deviceId } of this.sweepDevices()) {
+      if (!this.isStaleDevice(userId, deviceId, now, maxLatency)) continue;
+      const removed = await withDeviceRecordLocks(this, userId, deviceId, async () => {
+        if (!this.isStaleDevice(userId, deviceId, now, maxLatency)) return false;
+        const userRecord = this.sesameUserRecords.get(userId)!;
         userRecord.devices.delete(deviceId);
-        deleted++;
-      }
+        userRecord.updatedAt = Date.now();
 
-      userRecord.updatedAt = Date.now();
-
-      // Clean up empty user records
-      if (userRecord.devices.size === 0) {
-        this.sesameUserRecords.delete(userId);
-      }
+        // Clean up empty user records
+        if (userRecord.devices.size === 0) {
+          this.sesameUserRecords.delete(userId);
+        }
+        return true;
+      });
+      if (removed) deleted++;
     }
 
     return deleted;
+  }
+
+  /**
+   * A record is stale if:
+   * 1. It has no session (or session has no currentSession and no archived)
+   * 2. It is older than maxLatency
+   */
+  private isStaleDevice(userId: string, deviceId: number, now: number, maxLatency: number): boolean {
+    const deviceRecord = this.sesameUserRecords.get(userId)?.devices.get(deviceId);
+    if (!deviceRecord) return false;
+    const session = this.readSession({ userId, deviceId });
+    const hasNoSessions =
+      !session || (!session.currentSession && Object.keys(session.archivedSessions).length === 0);
+    return hasNoSessions && now - deviceRecord.createdAt > maxLatency;
   }
 
   async cleanupExpiredSessions(maxRecv: number): Promise<number> {
@@ -787,51 +789,67 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     let deleted = 0;
     const now = Date.now();
 
-    for (const [userId, userRecord] of this.sesameUserRecords.entries()) {
-      for (const [deviceId, deviceRecord] of userRecord.devices.entries()) {
-        const sessionRecord = this.readSession({ userId, deviceId });
-        if (!sessionRecord) continue;
-
-        const createdAt = sessionRecord.metadata?.createdAt ?? 0;
-        const age = now - createdAt;
-
-        // Check if session is expired
-        if (age > maxRecv) {
-          // Count all sessions being deleted: 1 for current + all archived
-          if (sessionRecord.currentSession) {
-            deleted++;
-          }
-          deleted += Object.keys(sessionRecord.archivedSessions).length;
-
-          this.sessionRecords.delete(this.getAddressKey({ userId, deviceId }));
-        } else {
-          // Check archived sessions for expiration individually
-          const expiredKeys: string[] = [];
-          for (const [baseKey, sessionState] of Object.entries(sessionRecord.archivedSessions)) {
-            // Check if this individual session is expired based on its lastUsedAt
-            const sessionLastUsed = sessionState?.lastUsedAt ?? createdAt;
-            const sessionAge = now - sessionLastUsed;
-            if (sessionAge > maxRecv) {
-              expiredKeys.push(baseKey);
-              deleted++;
-            }
-          }
-
-          // Remove expired archived sessions
-          for (const key of expiredKeys) {
-            delete sessionRecord.archivedSessions[
-              key as keyof typeof sessionRecord.archivedSessions
-            ];
-          }
-        }
-
-        deviceRecord.updatedAt = Date.now();
-      }
-
-      userRecord.updatedAt = Date.now();
+    // The scan takes no lock. Each session is decided again under the locks
+    // of its device, so a session that is written after the scan is kept.
+    for (const { userId, deviceId } of this.sweepDevices()) {
+      if (!this.readSession({ userId, deviceId })) continue;
+      deleted += await withDeviceRecordLocks(this, userId, deviceId, async () =>
+        this.expireSessions(userId, deviceId, now, maxRecv)
+      );
     }
 
     return deleted;
+  }
+
+  /** Delete the expired sessions of one device and return how many it deleted. */
+  private expireSessions(userId: string, deviceId: number, now: number, maxRecv: number): number {
+    const userRecord = this.sesameUserRecords.get(userId);
+    const deviceRecord = userRecord?.devices.get(deviceId);
+    const sessionRecord = this.readSession({ userId, deviceId });
+    if (!userRecord || !deviceRecord || !sessionRecord) return 0;
+    let deleted = 0;
+
+    const createdAt = sessionRecord.metadata?.createdAt ?? 0;
+    const age = now - createdAt;
+
+    // Check if session is expired
+    if (age > maxRecv) {
+      // Count all sessions being deleted: 1 for current + all archived
+      if (sessionRecord.currentSession) {
+        deleted++;
+      }
+      deleted += Object.keys(sessionRecord.archivedSessions).length;
+
+      this.sessionRecords.delete(this.getAddressKey({ userId, deviceId }));
+    } else {
+      // Check archived sessions for expiration individually
+      const expiredKeys: string[] = [];
+      for (const [baseKey, sessionState] of Object.entries(sessionRecord.archivedSessions)) {
+        // Check if this individual session is expired based on its lastUsedAt
+        const sessionLastUsed = sessionState?.lastUsedAt ?? createdAt;
+        const sessionAge = now - sessionLastUsed;
+        if (sessionAge > maxRecv) {
+          expiredKeys.push(baseKey);
+          deleted++;
+        }
+      }
+
+      // Remove expired archived sessions
+      for (const key of expiredKeys) {
+        delete sessionRecord.archivedSessions[key as keyof typeof sessionRecord.archivedSessions];
+      }
+    }
+
+    deviceRecord.updatedAt = Date.now();
+    userRecord.updatedAt = Date.now();
+    return deleted;
+  }
+
+  /** Every device that a SESAME user record names, at the time of the call. */
+  private sweepDevices(): { userId: string; deviceId: number }[] {
+    return Array.from(this.sesameUserRecords.entries()).flatMap(([userId, userRecord]) =>
+      Array.from(userRecord.devices.keys(), (deviceId) => ({ userId, deviceId }))
+    );
   }
 
   async getAllUserIds(): Promise<string[]> {

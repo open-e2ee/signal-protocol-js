@@ -21,16 +21,18 @@ permissions:
 jobs:
   publish:
     name: Publish to npm with provenance
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     environment: npm-publish
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      # The release jobs use no npm cache. A hit saved no measurable time
+      # there, and a release does not wait on the cache service.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # Package compression must match the example lockfile integrity.
           node-version: 26.8.2
-          cache: npm
           registry-url: https://registry.npmjs.org
 
       - name: Install from the committed lockfile
@@ -125,16 +127,16 @@ jobs:
     name: Attach SBOM to the release
     needs: publish
     if: ${{ github.event_name == 'release' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 26.8.2
-          cache: npm
 
       - name: Install from the committed lockfile
         run: npm ci --ignore-scripts

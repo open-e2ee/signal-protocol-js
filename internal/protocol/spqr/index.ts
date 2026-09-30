@@ -28,7 +28,8 @@
  * @see https://signal.org/docs/specifications/mlkembraid/ - ML-KEM Braid spec
  */
 
-import type { SCKAMode, SPQRState } from './spqr';
+import { initializeSPQRState, type SCKAMode, type SPQRState } from './spqr';
+import { initializeSPQRBraid } from './braid';
 
 // Core SPQR functions
 export {};
@@ -296,7 +297,6 @@ export async function initializeSPQR(options: SPQRInitOptions): Promise<SPQRStat
 
   if (mode === 'braid') {
     // Use the specification-defined ML-KEM Braid state machine.
-    const { initializeSPQRBraid } = await import('./braid');
     const braidState = await initializeSPQRBraid(options);
     // Set info strings and limits for braid mode too
     return {
@@ -308,7 +308,6 @@ export async function initializeSPQR(options: SPQRInitOptions): Promise<SPQRStat
   }
 
   // Explicit direct SCKA mode.
-  const { initializeSPQRState } = await import('./spqr');
   const state = await initializeSPQRState(
     initialRootKey,
     direction,

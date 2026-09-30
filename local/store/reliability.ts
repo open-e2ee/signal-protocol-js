@@ -1,5 +1,6 @@
 import type { SignalProtocolLocalStore } from '../../types';
 import type { ContentHint } from '../../types/messages';
+import { createKeyedLocks, withKeyedLock } from '../../utils/keyed-lock';
 
 const OUTBOX_PREFIX = 'reliability:exact-ciphertext-outbox:v2';
 const INCOMING_PREFIX = 'reliability:processed-envelopes:v2';
@@ -46,6 +47,11 @@ export interface StoredOutgoingMessageIntent {
   groupCiphertext?: string;
   groupSenderKeyDistributionId?: string;
   groupSharedMessage?: StoredGroupSharedMessage;
+  /**
+   * A direct send posted before it read the recipient's device list, and has
+   * not yet applied the list to this intent.
+   */
+  reconcilePending?: true;
   result?: {
     clientMessageId: string;
     messageId: string;
@@ -62,8 +68,8 @@ type ReliabilityMetadataStore = Pick<
 type LedgerKind = 'outbox' | 'incoming';
 
 const mutationTails = new WeakMap<object, Promise<void>>();
-const outgoingIntentLocks = new WeakMap<object, Map<string, Promise<void>>>();
-const incomingEnvelopeLocks = new WeakMap<object, Map<string, Promise<void>>>();
+const outgoingIntentLocks = createKeyedLocks();
+const incomingEnvelopeLocks = createKeyedLocks();
 
 function prefix(kind: LedgerKind): string {
   return kind === 'outbox' ? OUTBOX_PREFIX : INCOMING_PREFIX;
@@ -109,34 +115,6 @@ async function serializeMutation<T>(
     )
   );
   return current;
-}
-
-async function withKeyedLock<T>(
-  collections: WeakMap<object, Map<string, Promise<void>>>,
-  store: ReliabilityMetadataStore,
-  recordId: string,
-  operation: () => Promise<T>
-): Promise<T> {
-  const key = store as object;
-  let locks = collections.get(key);
-  if (!locks) {
-    locks = new Map();
-    collections.set(key, locks);
-  }
-  const previous = locks.get(recordId) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  locks.set(recordId, current);
-  await previous.catch(() => undefined);
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (locks.get(recordId) === current) locks.delete(recordId);
-    if (locks.size === 0) collections.delete(key);
-  }
 }
 
 export async function withOutgoingMessageIntentLock<T>(
@@ -207,6 +185,7 @@ function sameIntent(a: StoredOutgoingMessageIntent, b: StoredOutgoingMessageInte
     a.contentHint === b.contentHint;
   if (!sameLogicalIntent || a.result) return sameLogicalIntent;
   return (
+    a.reconcilePending === b.reconcilePending &&
     JSON.stringify(a.sealedSenderAuth) === JSON.stringify(b.sealedSenderAuth) &&
     JSON.stringify(a.preMessages) === JSON.stringify(b.preMessages) &&
     JSON.stringify(a.deviceMessages) === JSON.stringify(b.deviceMessages) &&
@@ -248,6 +227,83 @@ export async function appendOutgoingGroupDeviceMessages(
       }
       existing.deviceMessages.push(cloneReliabilityValue(message));
     }
+
+    await store.setMetadata(key, JSON.stringify(existing));
+    return cloneReliabilityValue(existing);
+  });
+}
+
+/**
+ * Remove the pre-messages that the relay accepted from a group intent, so a
+ * replay posts only the pre-messages that the relay did not accept.
+ */
+export async function confirmOutgoingPreMessages(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string,
+  acceptedClientMessageIds: readonly string[]
+): Promise<StoredOutgoingMessageIntent> {
+  return serializeMutation(store, async () => {
+    const key = recordKey('outbox', clientMessageId);
+    const existing = parseJson<StoredOutgoingMessageIntent | null>(
+      await store.getMetadata(key),
+      null
+    );
+    if (!existing || existing.kind !== 'group' || existing.result) {
+      throw new Error('Cannot confirm pre-messages of a missing or completed group outbox intent');
+    }
+
+    const accepted = new Set(acceptedClientMessageIds);
+    const remaining = (existing.preMessages ?? []).filter(
+      (message) => message.clientMessageId === undefined || !accepted.has(message.clientMessageId)
+    );
+    if (remaining.length > 0) existing.preMessages = remaining;
+    else delete existing.preMessages;
+
+    await store.setMetadata(key, JSON.stringify(existing));
+    return cloneReliabilityValue(existing);
+  });
+}
+
+/**
+ * Apply the recipient's device list to a direct intent in one write: remove
+ * the messages of the devices that the list no longer shows, append a message
+ * for each newly listed device, and clear the pending reconcile.
+ */
+export async function reconcileOutgoingDirectDeviceMessages(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string,
+  removedDeviceIds: readonly number[],
+  messages: StoredOutgoingDeviceMessage[]
+): Promise<StoredOutgoingMessageIntent> {
+  return serializeMutation(store, async () => {
+    const key = recordKey('outbox', clientMessageId);
+    const existing = parseJson<StoredOutgoingMessageIntent | null>(
+      await store.getMetadata(key),
+      null
+    );
+    if (!existing || existing.kind !== 'direct' || existing.result) {
+      throw new Error('Cannot reconcile a missing or completed direct outbox intent');
+    }
+
+    existing.deviceMessages = existing.deviceMessages.filter(
+      (candidate) => !removedDeviceIds.includes(candidate.recipientDeviceId)
+    );
+    for (const message of messages) {
+      if (message.recipientUserId !== existing.recipientId) {
+        throw new Error('A direct outbox intent cannot address another recipient');
+      }
+      const prior = existing.deviceMessages.find(
+        (candidate) => candidate.recipientDeviceId === message.recipientDeviceId
+      );
+      if (prior) {
+        if (JSON.stringify(prior) !== JSON.stringify(message)) {
+          throw new Error('Cannot replace a persisted direct transmission');
+        }
+        continue;
+      }
+      existing.deviceMessages.push(cloneReliabilityValue(message));
+    }
+    delete existing.reconcilePending;
 
     await store.setMetadata(key, JSON.stringify(existing));
     return cloneReliabilityValue(existing);
@@ -343,6 +399,7 @@ export async function completeOutgoingMessageIntent(
       throw new Error('Cannot replace an outgoing message intent with a different Relay result');
     }
     existing.result = cloneReliabilityValue(result);
+    delete existing.reconcilePending;
     delete existing.preMessages;
     existing.deviceMessages = [];
     existing.syncMessages = [];

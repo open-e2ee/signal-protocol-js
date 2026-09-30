@@ -11,6 +11,16 @@ operates inside the application backend. This adapter maps that generated API
 to `SignalProtocolRemoteObjectStore` without moving storage policy, provider keys, or
 component ownership into the SDK.
 
+## Setup
+
+Install the peer `convex` 1.42.1 or later. The server helper loads it to
+define its functions. The client adapter loads no peer. The application
+installs and mounts the `@convex-dev/r2` component in its own backend.
+
+```sh
+npm install convex
+```
+
 ## Client usage
 
 <!-- doc-snippet:skip requires-external-context -->

@@ -34,6 +34,7 @@ import { resolveSignalProtocolLogger, type Logger } from '../../../logger';
 import type { SqliteExecutor } from './driver';
 import { SqliteKeyStorage, type SqliteKeyStorageOptions } from './key-storage';
 import { setReceivedContent } from './key-storage/metadata';
+import { withDeviceRecordLocks } from '../../../internal/session/record-locks';
 import { withSession } from '../device-record';
 import {
   countSkippedSenderKeys,
@@ -436,26 +437,23 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
 
     const userIds = await this.getAllUserIds();
 
+    // The scan takes no lock. Each device is decided again under the locks of
+    // its records, so a write that lands after the scan is kept.
     for (const userId of userIds) {
       const deviceIds = await this.getSesameDeviceIds(userId);
 
       for (const deviceId of deviceIds) {
         try {
           const deviceRecord = await this.getDeviceRecord(userId, deviceId);
-          if (!deviceRecord) continue;
+          if (!deviceRecord || !isStaleDeviceRecord(deviceRecord, now, maxLatency)) continue;
 
-          // Device is stale if:
-          // 1. No active session AND no archived sessions
-          // 2. Age > maxLatency
-          const hasNoSessions =
-            !deviceRecord.session?.currentSession &&
-            Object.keys(deviceRecord.session?.archivedSessions ?? {}).length === 0;
-          const deviceAge = now - deviceRecord.createdAt;
-
-          if (hasNoSessions && deviceAge > maxLatency) {
+          const deleted = await withDeviceRecordLocks(this, userId, deviceId, async () => {
+            const current = await this.getDeviceRecord(userId, deviceId);
+            if (!current || !isStaleDeviceRecord(current, now, maxLatency)) return false;
             await this.deleteDeviceRecord(userId, deviceId);
-            deletedCount++;
-          }
+            return true;
+          });
+          if (deleted) deletedCount++;
         } catch {
           // Continue processing other devices on error
           continue;
@@ -482,6 +480,8 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
 
     const userIds = await this.getAllUserIds();
 
+    // The scan takes no lock. Each session is decided again under the locks
+    // of its device, so a session that is written after the scan is kept.
     for (const userId of userIds) {
       const deviceIds = await this.getSesameDeviceIds(userId);
 
@@ -489,16 +489,16 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
         try {
           const address = { userId, deviceId };
           const sessionRecord = await this.getSessionRecord(address);
-          if (!sessionRecord) continue;
+          if (!sessionRecord || !isExpiredSession(sessionRecord, now, maxRecv)) continue;
 
-          const createdAt = sessionRecord.metadata?.createdAt ?? now;
-          const sessionAge = now - createdAt;
-
-          if (sessionAge > maxRecv) {
+          const deleted = await withDeviceRecordLocks(this, userId, deviceId, async () => {
+            const current = await this.getSessionRecord(address);
+            if (!current || !isExpiredSession(current, now, maxRecv)) return false;
             // Delete the expired session
             await this.deleteSessionRecord(address);
-            deletedCount++;
-          }
+            return true;
+          });
+          if (deleted) deletedCount++;
         } catch {
           // Continue processing other devices on error
           continue;
@@ -796,4 +796,22 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
   }> {
     return await this.storage.getDetailedStats();
   }
+}
+
+/**
+ * Device is stale if:
+ * 1. No active session AND no archived sessions
+ * 2. Age > maxLatency
+ */
+function isStaleDeviceRecord(record: DeviceRecord, now: number, maxLatency: number): boolean {
+  const hasNoSessions =
+    !record.session?.currentSession &&
+    Object.keys(record.session?.archivedSessions ?? {}).length === 0;
+  return hasNoSessions && now - record.createdAt > maxLatency;
+}
+
+/** A session is expired when its age exceeds maxRecv. */
+function isExpiredSession(record: SessionRecord, now: number, maxRecv: number): boolean {
+  const createdAt = record.metadata?.createdAt ?? now;
+  return now - createdAt > maxRecv;
 }

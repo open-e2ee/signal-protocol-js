@@ -10,6 +10,12 @@ const STORED_HEX = /^(?:[0-9a-f]{2})+$/;
 const STORED_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 /** The ASCII prefix of a Linux ciphertext under a key from the secret service. */
 const SECRET_SERVICE_PREFIX = [0x76, 0x31, 0x31];
+/** The ASCII prefix of a Linux ciphertext under the key of the Secret portal. */
+const SECRET_PORTAL_PREFIX = [0x76, 0x31, 0x32];
+
+function hasPrefix(ciphertext: Uint8Array, prefix: readonly number[]): boolean {
+  return prefix.every((byte, index) => ciphertext[index] === byte);
+}
 
 /**
  * The part of Electron's `safeStorage` that the vault uses. The app passes
@@ -193,11 +199,22 @@ export class ElectronSafeStorageSignalProtocolSecretVault
    * On Linux, safeStorage uses its fixed fallback key when no secret service
    * answers, and the backend does not show it. The ciphertext prefix names the
    * key: `v11` is a key from the secret service, and `v10` is the fallback key.
-   * Any other prefix is a key that the vault does not know, so it fails closed.
+   * `v12` is the key of the Secret portal, which safeStorage uses only with the
+   * `SecretPortalKeyProviderUseForEncryption` feature. Outside a Flatpak or
+   * Snap sandbox, Chromium asks the portal for that key as the app
+   * `org.chromium.Chromium`, so every such Electron app of the user gets the
+   * same key. Any other prefix is a key that the vault does not know. The vault
+   * fails closed on each key other than `v11`.
    */
   #assertSecretServiceKey(ciphertext: Uint8Array, operation: string): void {
     if (process.platform !== 'linux') return;
-    if (SECRET_SERVICE_PREFIX.every((byte, index) => ciphertext[index] === byte)) return;
+    if (hasPrefix(ciphertext, SECRET_SERVICE_PREFIX)) return;
+    if (hasPrefix(ciphertext, SECRET_PORTAL_PREFIX)) {
+      throw keyStorageError(
+        'Electron safeStorage encrypted with the key of the Secret portal. Outside a Flatpak or Snap sandbox, the portal gives that key to Electron as the Chromium app, so other Electron apps of the user get the same key. Run the app without the SecretPortalKeyProviderUseForEncryption feature.',
+        operation
+      );
+    }
     throw keyStorageError(
       'Electron safeStorage did not encrypt with a key from a secret service. When no secret service answers, safeStorage uses its fixed fallback key. Run the app with a secret service such as gnome-keyring or kwallet.',
       operation

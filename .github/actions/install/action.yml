@@ -1,54 +1,31 @@
 name: Install from the committed lockfile
 description: >-
-  Set up Node.js and install node_modules from package-lock.json. A cache
-  entry holds the tree that `npm ci --ignore-scripts` installs, so a job with
-  a cache hit skips the install.
+  Install node_modules from package-lock.json with `npm ci --ignore-scripts`,
+  less the mobile native binaries. A job with a cache hit skips the install.
 
-# The cache key names everything that changes the installed tree: the runner
-# OS and architecture, the exact Node version, the lockfile, and this file,
-# which holds the install commands. It also names package.json, because
-# `npm ci` fails when the manifest and the lockfile disagree, and a hit must
-# not skip that check. There are no restore keys. A tree for a different key
-# is never restored, so a lockfile change always installs clean from the
-# registry. `--ignore-scripts` runs no package install script, so no
-# environment value changes the tree.
-#
-# The save runs right after the install. The saved tree is therefore the
-# install output, and never a tree that a later step of the job changed.
+# A composite step cannot take `timeout-minutes`. So the cache restore and save
+# of node_modules are workflow steps around this action, each with
+# `timeout-minutes: 2` and `continue-on-error: true`, so each step waits at
+# most 2 minutes for a slow cache service. .github/actions/node names the
+# cache key. The save runs right after this action, and only after a restore
+# that did not fail. The saved tree is therefore the install output, and never
+# a tree that a later step of the job changed. After every restore other than
+# a hit, the job installs. A restore that stops part of the way sets no
+# `cache-hit`, and `npm ci` deletes node_modules first, so no partial file
+# from the restore stays.
 
 inputs:
-  node-version:
+  cache-hit:
     description: >-
-      The Node.js version. It must match the npm major used by the
-      release-export pipeline, which regenerates package-lock.json for the
-      transformed manifest; a different npm major computes a different tree
-      and `npm ci` fails.
-    default: '26'
-  npm-cache-dependency-path:
-    description: >-
-      The lockfiles that key the npm download cache of actions/setup-node,
-      for a job that installs other projects after this action. Empty turns
-      the npm download cache off.
-    default: ''
+      The `cache-hit` output of the node_modules restore. The value 'true'
+      skips the install.
+    default: 'false'
 
 runs:
   using: composite
   steps:
-    - id: node
-      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-      with:
-        node-version: ${{ inputs.node-version }}
-        cache: ${{ inputs.npm-cache-dependency-path != '' && 'npm' || '' }}
-        cache-dependency-path: ${{ inputs.npm-cache-dependency-path }}
-
-    - id: restore
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-      with:
-        path: node_modules
-        key: node-modules-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.node.outputs.node-version }}-${{ hashFiles('package.json', 'package-lock.json', '.github/actions/install/action.yml') }}
-
     # The committed lockfile installs with npm 11. Node 22 bundles npm 10.
-    - if: steps.restore.outputs.cache-hit != 'true'
+    - if: inputs.cache-hit != 'true'
       shell: bash
       run: |
         if [ "$(npm --version | cut -d. -f1)" -lt 11 ]; then
@@ -64,7 +41,7 @@ runs:
     # the job. The public export has no realm, so there the step does
     # nothing. prebuild-install sends no analytics. The variable also keeps
     # realm's analytics script off if a change makes this step run it.
-    - if: steps.restore.outputs.cache-hit != 'true'
+    - if: inputs.cache-hit != 'true'
       shell: bash
       env:
         REALM_DISABLE_ANALYTICS: '1'
@@ -74,8 +51,17 @@ runs:
           ../.bin/prebuild-install --runtime napi
         fi
 
-    - if: steps.restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-      with:
-        path: node_modules
-        key: ${{ steps.restore.outputs.cache-primary-key }}
+    # realm and op-sqlite ship their Android and Apple native binaries in the
+    # npm package, about 970 MB of the 1.8 GB tree. No job that uses this
+    # action builds a native mobile app, and the React Native bundles read only
+    # JavaScript, so this step deletes the binaries before the save. A hit then
+    # restores about half the bytes. The job that installs on a miss deletes
+    # them too, so a hit and a miss give the same tree.
+    - if: inputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        rm -rf \
+          node_modules/realm/prebuilds/android \
+          node_modules/realm/prebuilds/apple \
+          node_modules/@op-engineering/op-sqlite/android \
+          node_modules/@op-engineering/op-sqlite/ios

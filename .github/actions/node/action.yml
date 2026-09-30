@@ -1,0 +1,42 @@
+name: Set up Node.js
+description: >-
+  Set up Node.js and name the cache entry that holds the node_modules tree of
+  the committed lockfile. The job restores that entry, runs
+  .github/actions/install, and saves the entry after a miss.
+
+# The cache key names everything that changes the installed tree: the runner
+# OS and architecture, the exact Node version, the lockfile, and
+# .github/actions/install, which holds the install commands. It also names
+# package.json, because `npm ci` fails when the manifest and the lockfile
+# disagree, and a hit must not skip that check. There are no restore keys. A
+# tree for a different key is never restored, so a lockfile change always
+# installs clean from the registry. `--ignore-scripts` runs no package install
+# script, so no environment value changes the tree.
+
+inputs:
+  node-version:
+    description: >-
+      The Node.js version. It must match the npm major used by the
+      release-export pipeline, which regenerates package-lock.json for the
+      transformed manifest; a different npm major computes a different tree
+      and `npm ci` fails.
+    default: '26'
+
+outputs:
+  node-modules-key:
+    description: The cache key of the node_modules tree.
+    value: ${{ steps.key.outputs.key }}
+
+runs:
+  using: composite
+  steps:
+    - id: node
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - id: key
+      shell: bash
+      env:
+        KEY: node-modules-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.node.outputs.node-version }}-${{ hashFiles('package.json', 'package-lock.json', '.github/actions/install/action.yml') }}
+      run: echo "key=$KEY" >> "$GITHUB_OUTPUT"

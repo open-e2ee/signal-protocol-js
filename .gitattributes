@@ -1,0 +1,3 @@
+# The vendored SQLite engine is pinned by SHA-256 in pins.json. Git must not
+# convert its line endings on checkout, or the build rejects the files.
+local/store/sqlite/web/sqlite3mc/** -text

@@ -140,6 +140,7 @@ import {
   validateSessionStateIntegrity,
   getMaxSkipForSession,
 } from './validation';
+import { sessionLockKey } from './record-locks';
 import { SessionResolver } from './session-resolver';
 import type { DoubleRatchetState } from '../protocol/double-ratchet';
 import {
@@ -311,14 +312,6 @@ export class SessionCipher {
   }
 
   /**
-   * Get lock key for a specific session
-   * Each session has its own lock to prevent cross-conversation blocking
-   */
-  private getLockKey(address: ProtocolAddress): string {
-    return `session:${ProtocolAddress.toString(address)}`;
-  }
-
-  /**
    * Create a SessionRecord wrapper for storage
    */
   private wrapSession(session: SessionState): SessionRecord {
@@ -377,7 +370,7 @@ export class SessionCipher {
    * @see https://signal.org/docs/specifications/doubleratchet/#encrypting-messages
    */
   async encrypt(remoteAddress: ProtocolAddress, plaintext: string): Promise<Ciphertext> {
-    return await this.lock.acquire(this.getLockKey(remoteAddress), async () => {
+    return await this.lock.acquire(sessionLockKey(remoteAddress), async () => {
       try {
         const record = await this.keyStorage.getSessionRecord(remoteAddress);
         if (record && record.version !== CURRENT_SESSION_RECORD_VERSION) {
@@ -773,7 +766,7 @@ export class SessionCipher {
     ciphertext: Ciphertext,
     receiveId?: string
   ): Promise<string> {
-    return await this.lock.acquire(this.getLockKey(remoteAddress), async () => {
+    return await this.lock.acquire(sessionLockKey(remoteAddress), async () => {
       try {
         // Parse message FIRST (before loading session)
         // Detect format and parse: protobuf binary (base64) or JSON

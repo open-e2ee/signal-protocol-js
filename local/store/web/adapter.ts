@@ -52,6 +52,7 @@ import { ProtocolAddress } from '../../../types/address';
 import { IdentityKeyChange, StorageQuotaExceededError, TrustDirection } from '../../../types';
 import { assertCurrentSessionRecord, type SessionRecord } from '../../../types/session';
 import type { UserRecord, DeviceRecord } from '../../../types';
+import { withDeviceRecordLocks } from '../../../internal/session/record-locks';
 import { withSession } from '../device-record';
 import { decodeUserRecord, encodeUserRecord } from './device-record';
 import type { Base64 } from '../../../types/utils';
@@ -1463,35 +1464,21 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     const now = Date.now();
     let deletedCount = 0;
 
-    // Get all user IDs
-    const userIds = await this.getAllUserIds();
-
-    for (const userId of userIds) {
+    // The scan takes no lock. Each device is decided again under the locks of
+    // its records, so a write that lands after the scan is kept.
+    for (const userId of await this.getAllUserIds()) {
       const userRecord = await this.getUserRecord(userId);
       if (!userRecord) continue;
 
-      // Check each device
-      const devicesToDelete: number[] = [];
-
       for (const [deviceId, deviceRecord] of userRecord.devices) {
-        // Delete devices that:
-        // 1. Have no session OR (no current session AND no archived sessions)
-        // 2. AND have not been updated within maxLatency
-        const hasNoSessions =
-          !deviceRecord.session ||
-          (!deviceRecord.session.currentSession &&
-            Object.keys(deviceRecord.session.archivedSessions).length === 0);
-        const isStale = now - deviceRecord.updatedAt > maxLatency;
-
-        if (hasNoSessions && isStale) {
-          devicesToDelete.push(deviceId);
-        }
-      }
-
-      // Delete stale devices
-      for (const deviceId of devicesToDelete) {
-        await this.deleteDeviceRecord(userId, deviceId);
-        deletedCount++;
+        if (!isStaleDeviceRecord(deviceRecord, now, maxLatency)) continue;
+        const deleted = await withDeviceRecordLocks(this, userId, deviceId, async () => {
+          const current = await this.getDeviceRecord(userId, deviceId);
+          if (!current || !isStaleDeviceRecord(current, now, maxLatency)) return false;
+          await this.deleteDeviceRecord(userId, deviceId);
+          return true;
+        });
+        if (deleted) deletedCount++;
       }
     }
 
@@ -1504,52 +1491,24 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     const now = Date.now();
     let deletedCount = 0;
 
-    // Get all user IDs
-    const userIds = await this.getAllUserIds();
-
-    for (const userId of userIds) {
+    // The scan takes no lock. Each session is decided again under the locks
+    // of its device, so a session that is written after the scan is kept.
+    for (const userId of await this.getAllUserIds()) {
       const userRecord = await this.getUserRecord(userId);
       if (!userRecord) continue;
 
-      // Check each device
       for (const [deviceId, deviceRecord] of userRecord.devices) {
         if (!deviceRecord.session) continue;
-
-        let modified = false;
-
-        // Check current session - use metadata.createdAt if available, otherwise session.createdAt
-        if (deviceRecord.session.currentSession) {
-          const createdAt =
-            deviceRecord.session.metadata?.createdAt ??
-            deviceRecord.session.currentSession.createdAt;
-          if (now - createdAt > maxRecv) {
-            deviceRecord.session.currentSession = null;
-            modified = true;
-            deletedCount++;
+        deletedCount += await withDeviceRecordLocks(this, userId, deviceId, async () => {
+          const current = await this.getDeviceRecord(userId, deviceId);
+          if (!current) return 0;
+          const deleted = expireDeviceSessions(current, now, maxRecv);
+          if (deleted > 0) {
+            current.updatedAt = Date.now();
+            await this.setDeviceRecord(userId, deviceId, current);
           }
-        }
-
-        // Filter archived sessions based on createdAt
-        const originalCount = Object.keys(deviceRecord.session.archivedSessions).length;
-        const archivedKeys = Object.keys(deviceRecord.session.archivedSessions) as Base64[];
-        for (const baseKey of archivedKeys) {
-          const session = deviceRecord.session.archivedSessions[baseKey];
-          if (session && now - session.createdAt > maxRecv) {
-            delete deviceRecord.session.archivedSessions[baseKey];
-          }
-        }
-        const removed = originalCount - Object.keys(deviceRecord.session.archivedSessions).length;
-        deletedCount += removed;
-
-        if (removed > 0) {
-          modified = true;
-        }
-
-        // Save if modified
-        if (modified) {
-          deviceRecord.updatedAt = Date.now();
-          await this.setDeviceRecord(userId, deviceId, deviceRecord);
-        }
+          return deleted;
+        });
       }
     }
 
@@ -2101,4 +2060,44 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
   private getMessageRecordStorageKey(sessionId: string, timestamp: number): string {
     return `${sessionId}:${timestamp}`;
   }
+}
+
+/**
+ * A device record is stale when it has no current session and no archived
+ * session, and it has not been updated within `maxLatency`.
+ */
+function isStaleDeviceRecord(record: DeviceRecord, now: number, maxLatency: number): boolean {
+  const hasNoSessions =
+    !record.session ||
+    (!record.session.currentSession && Object.keys(record.session.archivedSessions).length === 0);
+  return hasNoSessions && now - record.updatedAt > maxLatency;
+}
+
+/**
+ * Delete the sessions of `record` that are older than `maxRecv`, and return
+ * how many it deleted. The age of the current session comes from the session
+ * metadata when it has a creation time.
+ */
+function expireDeviceSessions(record: DeviceRecord, now: number, maxRecv: number): number {
+  const session = record.session;
+  if (!session) return 0;
+  let deleted = 0;
+
+  if (session.currentSession) {
+    const createdAt = session.metadata?.createdAt ?? session.currentSession.createdAt;
+    if (now - createdAt > maxRecv) {
+      session.currentSession = null;
+      deleted++;
+    }
+  }
+
+  for (const baseKey of Object.keys(session.archivedSessions) as Base64[]) {
+    const archived = session.archivedSessions[baseKey];
+    if (archived && now - archived.createdAt > maxRecv) {
+      delete session.archivedSessions[baseKey];
+      deleted++;
+    }
+  }
+
+  return deleted;
 }

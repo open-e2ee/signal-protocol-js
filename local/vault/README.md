@@ -108,6 +108,24 @@ The protection is that of the OS key store
   refuses that key: on Linux, it accepts only a ciphertext that starts with
   `v11`, the prefix of a key from a secret service.
 
+On Linux, the vault gives these results for the backends of
+`getSelectedStorageBackend()`:
+
+| Backend | Secret store | Result |
+|---|---|---|
+| `gnome_libsecret` | GNOME Keyring | The vault works. |
+| `kwallet5` | KWallet 5, and KWallet 6 through its `kwalletd5` name | The vault works. |
+| `kwallet6` | KWallet 6 | The vault works. |
+| `basic_text` | None | The vault refuses the backend. |
+| `gnome_libsecret`, `kwallet5`, or `kwallet6` with no secret service | None: the fixed fallback key, `v10` | The vault refuses the key. |
+| `gnome_libsecret`, `kwallet5`, or `kwallet6`, with the Chromium feature `SecretPortalKeyProviderUseForEncryption` and a Secret portal | The key of the Secret portal, `v12` | The vault refuses the key. |
+
+The Secret portal of xdg-desktop-portal gives a key to each app. Outside a
+Flatpak or Snap sandbox, Electron asks for the key as the Chromium app. Each
+Electron app of the user then gets the same key. Electron uses the portal key
+only with the `SecretPortalKeyProviderUseForEncryption` feature, which is off
+by default. Without that feature, a running portal does not change the key.
+
 The vault fails with an `EncryptionError` that has the code
 `KEY_STORAGE_ERROR`:
 
@@ -116,8 +134,9 @@ The vault fails with an `EncryptionError` that has the code
 - on Linux, when the backend is `basic_text`, which encrypts with a fixed
   password, or `unknown`;
 - on Linux, when a ciphertext does not start with `v11`, for example when no
-  secret service answered and `safeStorage` used its fixed key. The vault
-  file does not change;
+  secret service answered and `safeStorage` used its fixed key, or when
+  `safeStorage` used the key of the Secret portal. The vault file does not
+  change;
 - when `safeStorage` cannot encrypt or decrypt, for example when the OS key
   is gone or the macOS signature of the app is not valid. The Electron error
   is the `originalError`. It can say that `safeStorage` is temporarily

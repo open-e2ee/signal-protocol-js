@@ -14,6 +14,7 @@ import { base64ToBytes, bytesToBase64, type ResolvedSPQRInfoStrings } from '../.
 import type { ResolvedSPQRLimits } from '../../../types/protocol-config';
 import { asBase64 } from '../../../types/utils';
 import { assertBraidChunkIndex } from './ml-kem-braid/chunk-domain';
+import { serializeBraidAgentState, deserializeBraidAgentState } from './braid-serialize';
 
 // Type-only imports to avoid circular dependency
 import type { SPQRState, EpochChains, SkippedSPQRKey } from './spqr';
@@ -389,8 +390,6 @@ export async function serializeSPQRState(state: SPQRState): Promise<string> {
 
   // Serialize braid-specific state if present
   if (state.mode === 'braid' && state.braidState) {
-    // Import braid serialization dynamically to avoid circular dependency
-    const { serializeBraidAgentState } = await import('./braid-serialize');
     json.braidState = serializeBraidAgentState(state.braidState);
 
     // Serialize pending chunks
@@ -502,8 +501,6 @@ export async function deserializeSPQRState(jsonStr: string): Promise<SPQRState> 
 
   // Restore braid-specific state if present
   if (json.mode === 'braid' && json.braidState) {
-    // Import braid deserialization dynamically to avoid circular dependency
-    const { deserializeBraidAgentState } = await import('./braid-serialize');
     state.braidState = deserializeBraidAgentState(json.braidState);
 
     // Restore pending chunks

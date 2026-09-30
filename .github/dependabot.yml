@@ -13,10 +13,18 @@ updates:
     open-pull-requests-limit: 5
     allow:
       - dependency-type: production
+  # One pull request holds every action bump. An action with sub-actions,
+  # such as github/codeql-action/init and github/codeql-action/analyze, must
+  # move all its pins to one commit, and CodeQL fails on a pull request that
+  # moves only some of them.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - '*'
   - package-ecosystem: npm
     directory: /fuzz/tooling
     schedule:

@@ -10,7 +10,7 @@
 
 import type { ConvexReactClient } from 'convex/react';
 import type { FunctionReference } from 'convex/server';
-import { getOrCreateOwnProfileKey } from './profile-key';
+import { getOrCreateOwnProfileKey } from './own-profile-key';
 import type { SignalProtocolLocalSecretVault } from '../types/api';
 import { requireSecretVault } from '../local/vault/require';
 import { computeProfileKeyVersion } from '../internal/protocol/zk/groups/profile-key-version';

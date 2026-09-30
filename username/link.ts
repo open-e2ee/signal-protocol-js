@@ -16,6 +16,7 @@ import {
   bytesToServiceId,
   serviceIdToBytes,
 } from '../internal/protocol/sealed-sender/multi-recipient-message';
+import { decryptUsernameFromLink, encryptUsernameForLink } from '../internal/protocol/username/link';
 import { asBase64 } from '../types/utils';
 
 export interface UsernameLink {
@@ -49,7 +50,6 @@ export async function createUsernameLink(
   username: string,
   previousEntropy?: Uint8Array
 ): Promise<UsernameLink> {
-  const { encryptUsernameForLink } = await loadUsernameLinkCrypto();
   return encryptUsernameForLink(username, previousEntropy);
 }
 
@@ -57,7 +57,6 @@ export async function createUsernameLink(
  * Decrypt a username from a previously fetched username link payload.
  */
 export async function decryptUsernameLink(link: UsernameLink): Promise<string> {
-  const { decryptUsernameFromLink } = await loadUsernameLinkCrypto();
   return decryptUsernameFromLink(link.entropy, link.encryptedUsername);
 }
 
@@ -127,10 +126,4 @@ function validateUsernameLinkEntropy(entropy: Uint8Array): void {
   if (entropy.length !== USERNAME_LINK_ENTROPY_SIZE) {
     throw new Error(`Username link entropy must be exactly ${USERNAME_LINK_ENTROPY_SIZE} bytes`);
   }
-}
-
-async function loadUsernameLinkCrypto(): Promise<
-  typeof import('../internal/protocol/username/link')
-> {
-  return import('../internal/protocol/username/link');
 }

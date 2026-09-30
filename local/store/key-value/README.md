@@ -132,9 +132,11 @@ Realm file. If you already use a Realm, add `realmKeyValueSchema` to its schema
 list, or open a separate Realm file for the store.
 
 The adapter is tested with the conformance kit on realm 20.2.0 in Node,
-including a reopen of the same Realm file. The SDK does not test it on a
-device. Run the conformance kit on your target devices with your Realm build
-before you ship.
+including a reopen of the same Realm file. Manual checks ran the kit in
+React Native apps in the iOS 26.2 simulator and in an Android emulator. All
+13 cases passed in each. The SDK does not test the adapter
+on a physical device. Run the conformance kit on your target devices with
+your Realm build before you ship.
 
 ### Realm maintenance status
 
