@@ -5,7 +5,9 @@
  * the state from before the batch, before any write. Operations apply in
  * order, and each one sees the writes before it. `removeSessionsForUser`
  * scans a key prefix and reads the store's own session envelope for its
- * `userId`. A backend that copies these rules can get one of them wrong, and
+ * `userId`. `pruneSkippedSenderKeys` scans its exact sender prefix and evicts
+ * the lowest numeric chain indexes inside that transaction.
+ * A backend that copies these rules can get one of them wrong, and
  * a wrong copy can roll ratchet state back. So each backend the SDK ships
  * opens its engine's transaction and hands this function a handle over it.
  *
@@ -90,6 +92,12 @@ export function applyKeyValueBatch(
       transaction.delete(operation.key);
     } else if (operation.type === 'removeSessionsForUser') {
       removeSessionsForUser(transaction, operation.keyPrefix, operation.userId);
+    } else if (operation.type === 'pruneSkippedSenderKeys') {
+      const keys = [...transaction.keysWithPrefix(operation.keyPrefix)].sort(
+        (a, b) => Number(a.slice(a.lastIndexOf(':') + 1)) - Number(b.slice(b.lastIndexOf(':') + 1))
+      );
+      const count = Math.max(0, keys.length - operation.maxCount);
+      for (const key of keys.slice(0, count)) transaction.delete(key);
     }
   }
 }

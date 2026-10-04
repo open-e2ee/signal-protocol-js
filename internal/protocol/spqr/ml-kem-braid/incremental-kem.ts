@@ -31,9 +31,6 @@ import {
  */
 export {};
 export class IncrementalMLKEM768 implements IncrementalKEM {
-  /** Stored hek for Encaps2 verification */
-  private currentHek: Uint8Array | null = null;
-
   /**
    * Generate key pair with separated components
    *
@@ -93,9 +90,6 @@ export class IncrementalMLKEM768 implements IncrementalKEM {
       throw IncrementalKEMError.invalidSize('randomness', randomness.length, 32);
     }
 
-    // Store hek for Encaps2
-    this.currentHek = hek;
-
     const result = IncrementalEncaps1(ek_seed, hek, randomness);
 
     return {
@@ -137,17 +131,10 @@ export class IncrementalMLKEM768 implements IncrementalKEM {
       );
     }
 
-    // Get hek for verification (use stored or compute)
-    const hek = this.currentHek ?? computeHek(ek_seed, ek_vector);
-
-    const ct2 = IncrementalEncaps2(encaps_secret, ek_seed, ek_vector, hek);
-
-    // Clear cached hek reference after use (defense-in-depth).
-    // Note: we only null the reference, not zero the bytes, because the caller
-    // may hold the same Uint8Array reference (e.g., reusing hek across rounds).
-    this.currentHek = null;
-
-    return ct2;
+    // The Braid state machine verifies this key against its authenticated header.
+    // Derive the primitive's commitment from this call without retaining session state.
+    const hek = computeHek(ek_seed, ek_vector);
+    return IncrementalEncaps2(encaps_secret, ek_seed, ek_vector, hek);
   }
 
   /**

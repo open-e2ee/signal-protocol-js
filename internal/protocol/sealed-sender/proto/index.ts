@@ -32,16 +32,8 @@ import { SealedSenderContentType } from '../types';
  * barrel. The relay component bundles this codec, and a bundler parses every
  * module the barrel reaches, whether or not a server runs it. */
 import { bytesToBase64, base64ToBytes } from '../../../crypto/utils';
-import {
-  ProtoReader,
-  concatFields,
-  encodeBytesField,
-  encodeEnumField,
-  encodeFixed64Field,
-  encodeMessageField,
-  encodeStringField,
-  encodeUint32Field,
-} from '../../../encoding/proto/primitives';
+import { ProtoReader, concatFields, encodeBytesField, encodeEnumField, encodeMessageField, encodeUint32Field } from '../../../encoding/proto/primitives';
+
 
 // ============================================================================
 // Type Definitions (matching proto messages)
@@ -171,25 +163,6 @@ function emptyBytes(): Uint8Array {
   return new Uint8Array(0);
 }
 
-// ============================================================================
-// Server Certificate Encoding
-// ============================================================================
-
-/**
- * Encode server certificate inner Certificate data to protobuf bytes.
- *
- * These are the bytes the trust root signs.
- */
-export function encodeServerCertificateData(data: ServerCertificateData): Uint8Array {
-  const parts = [
-    encodeUint32Field(SERVER_CERTIFICATE_DATA.id, data.id),
-    encodeBytesField(SERVER_CERTIFICATE_DATA.key, data.key),
-  ];
-  parts.push(encodeFixed64Field(SERVER_CERTIFICATE_DATA.notBefore, BigInt(data.notBefore)));
-  parts.push(encodeFixed64Field(SERVER_CERTIFICATE_DATA.notAfter, BigInt(data.notAfter)));
-  return concatFields(...parts);
-}
-
 /**
  * Decode server certificate inner Certificate data from protobuf bytes.
  */
@@ -225,16 +198,6 @@ export function decodeServerCertificateData(bytes: Uint8Array): ServerCertificat
 }
 
 /**
- * Encode server certificate outer wrapper to protobuf bytes.
- */
-export function encodeServerCertificate(cert: ServerCertificateProto): Uint8Array {
-  return concatFields(
-    encodeBytesField(SERVER_CERTIFICATE.certificate, cert.certificate),
-    encodeBytesField(SERVER_CERTIFICATE.signature, cert.signature)
-  );
-}
-
-/**
  * Decode server certificate outer wrapper from protobuf bytes.
  *
  * `certificate` comes back exactly as it arrived. It is the byte string that
@@ -261,35 +224,6 @@ export function decodeServerCertificate(bytes: Uint8Array): ServerCertificatePro
   }
 
   return { certificate, signature };
-}
-
-// ============================================================================
-// Sender Certificate Encoding
-// ============================================================================
-
-/**
- * Encode sender certificate inner Certificate data to protobuf bytes.
- * Field numbers are part of the sealed-sender wire format.
- *
- * These are the bytes the issuing server signs. Fields are written in field
- * number order. `senderE164` is written only when the sender has one, which is
- * the one field a certificate may legitimately omit.
- */
-export function encodeSenderCertificateData(data: SenderCertificateData): Uint8Array {
-  const parts: Uint8Array[] = [];
-
-  if (data.senderE164) {
-    parts.push(encodeStringField(SENDER_CERTIFICATE_DATA.senderE164, data.senderE164));
-  }
-
-  parts.push(encodeUint32Field(SENDER_CERTIFICATE_DATA.senderDevice, data.senderDevice));
-  parts.push(encodeFixed64Field(SENDER_CERTIFICATE_DATA.expires, BigInt(data.expires)));
-  parts.push(encodeBytesField(SENDER_CERTIFICATE_DATA.identityKey, data.identityKey));
-  parts.push(encodeBytesField(SENDER_CERTIFICATE_DATA.signerCertificate, data.signerCertificate));
-  parts.push(encodeStringField(SENDER_CERTIFICATE_DATA.senderUuid, data.senderUuid));
-  parts.push(encodeBytesField(SENDER_CERTIFICATE_DATA.relayScopeId, data.relayScopeId));
-
-  return concatFields(...parts);
 }
 
 /**

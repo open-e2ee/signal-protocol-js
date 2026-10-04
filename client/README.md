@@ -33,6 +33,15 @@ await signal.encryptMessage(bob, 'hello');
 
 ### With relay
 
+Create a Relay project in the OpenE2EE console and configure its identity
+provider. Copy the environment connection URL into your application. Supply
+`getIdentityAssertion` from your authentication integration. It returns a
+short-lived signed assertion for the signed-in user.
+
+The hosted factory registers the device and publishes its public prekeys.
+The published SDK contains client code and transport contracts. Relay server
+implementations run separately.
+
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createHostedSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';

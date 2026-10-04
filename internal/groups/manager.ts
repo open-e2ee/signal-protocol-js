@@ -37,62 +37,11 @@ import {
 } from '../protocol/zk/groups';
 import { isNilUuid } from '../protocol/zk/groups/uid-struct';
 
-import {
-  type DecryptedGroup,
-  type DecryptedMember,
-  type DecryptedAddMember,
-  type DecryptedProfileKeyUpdate,
-  type DecryptedPendingMemberPromotion,
-  type DecryptedPniAciMemberPromotion,
-  type DecryptedGroupChange,
-  type DecryptedPendingMember,
-  type DecryptedAddPendingMember,
-  type DecryptedPendingMemberRemoval,
-  type DecryptedRequestingMember,
-  type DecryptedAddRequestingMember,
-  type DecryptedBannedMember,
-  type DecryptedAddBannedMember,
-  type DecryptedDeleteBannedMember,
-  type DecryptedApproveMember,
-  type DecryptedModifyMemberRole,
-  type DecryptedModifyMemberLabel,
-  type EncryptedGroupChange,
-  type EncryptedChangeAddMember,
-  type EncryptedChangeProfileKeyUpdate,
-  type EncryptedChangePendingMemberPromotion,
-  type EncryptedChangePniAciMemberPromotion,
-  type EncryptedChangePendingMember,
-  type EncryptedChangePendingMemberRemoval,
-  type EncryptedChangeRequestingMember,
-  type EncryptedChangeBannedMember,
-  type EncryptedChangeBannedMemberRemoval,
-  type EncryptedChangeApproveMember,
-  type EncryptedChangeModifyMemberRole,
-  type EncryptedChangeModifyMemberLabel,
-  type AccessControl,
-  MemberRole,
-  AccessRequired,
-  EnabledState,
-  defaultAccessControl,
-  emptyGroupChange,
-} from './types';
+import { type DecryptedGroup, type DecryptedMember, type DecryptedAddMember, type DecryptedProfileKeyUpdate, type DecryptedPendingMemberPromotion, type DecryptedPniAciMemberPromotion, type DecryptedGroupChange, type DecryptedPendingMember, type DecryptedAddPendingMember, type DecryptedPendingMemberRemoval, type DecryptedAddRequestingMember, type DecryptedAddBannedMember, type DecryptedDeleteBannedMember, type DecryptedApproveMember, type DecryptedModifyMemberRole, type DecryptedModifyMemberLabel, type EncryptedGroupChange, type EncryptedChangeAddMember, type EncryptedChangeProfileKeyUpdate, type EncryptedChangePendingMemberPromotion, type EncryptedChangePniAciMemberPromotion, type EncryptedChangePendingMember, type EncryptedChangePendingMemberRemoval, type EncryptedChangeRequestingMember, type EncryptedChangeBannedMember, type EncryptedChangeBannedMemberRemoval, type EncryptedChangeApproveMember, type EncryptedChangeModifyMemberRole, type EncryptedChangeModifyMemberLabel, type AccessControl, MemberRole, AccessRequired, EnabledState, defaultAccessControl, emptyGroupChange } from './types';
 
-import {
-  encryptGroupState,
-  decryptGroupState,
-  decryptGroupJoinInfo,
-  encryptMember,
-  decryptMember,
-  encryptRequestingMember,
-  encryptLabelAsBlob,
-  decryptLabelFromBlob,
-  encryptGroupTitle,
-  decryptGroupTitle,
-  encryptGroupDescription,
-  decryptGroupDescription,
-  encryptDisappearingMessagesTimer,
-  decryptDisappearingMessagesTimer,
-} from './encrypted-state';
+
+import { encryptGroupState, decryptGroupState, decryptGroupJoinInfo, encryptMember, encryptLabelAsBlob, decryptLabelFromBlob, encryptGroupTitle, decryptGroupTitle, encryptGroupDescription, decryptGroupDescription, encryptDisappearingMessagesTimer, decryptDisappearingMessagesTimer } from './encrypted-state';
+
 import {
   applyGroupChange,
   validateChangeAccessControl,
@@ -1297,6 +1246,11 @@ export class GroupManager {
     ) {
       throw new Error(
         `GROUP_SEND_BLOCKED_BY_ELIGIBILITY: Sender is banned from group ${rawGroupId}`
+      );
+    }
+    if (!canPerformAction(state, aciServiceId, GroupAction.SEND_MESSAGE)) {
+      throw new Error(
+        `GROUP_SEND_BLOCKED_BY_ELIGIBILITY: Sender cannot send messages under the permissions of group ${rawGroupId}`
       );
     }
   }

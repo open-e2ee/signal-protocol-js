@@ -28,6 +28,12 @@ export type KeyValueOperation =
   | { readonly type: 'remove'; readonly key: string }
   /** Compare-and-swap guard evaluated before any write in the batch. */
   | { readonly type: 'check'; readonly key: string; readonly expectedValue: string | null }
+  /** Keep at most maxCount skipped sender keys under the prefix, evicting lowest numeric suffixes first. */
+  | {
+      readonly type: 'pruneSkippedSenderKeys';
+      readonly keyPrefix: string;
+      readonly maxCount: number;
+    }
   /**
    * Enumerate and remove session envelopes whose plaintext routing metadata
    * has the exact userId, inside the same durable transaction.

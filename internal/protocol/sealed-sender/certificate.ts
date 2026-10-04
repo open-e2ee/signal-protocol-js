@@ -1,8 +1,8 @@
 /**
  * Certificate Handling for Sealed Sender
  *
- * Handles creation, serialization, deserialization, and validation of sender
- * and server certificates using protobuf-based signing data.
+ * Sender and server certificates use protobuf-based signing data.
+ * Clients serialize, deserialize, and validate these certificates.
  *
  * Trust chain:
  *   trust_root signs → ServerCertificate.certificateBytes
@@ -19,133 +19,16 @@ import type {
 } from './types';
 import { REVOKED_CERTIFICATE_IDS } from './types';
 import type { Base64 } from '../../../types';
-import type { PrivateKey, PublicKey, Signature } from '../../../keys';
-import { verify, sign, bytesToBase64, base64ToBytes, constantTimeEqual } from '../../crypto';
-import {
-  encodeServerCertificateData,
-  decodeServerCertificateData,
-  encodeServerCertificate,
-  decodeServerCertificate,
-  encodeSenderCertificateData,
-  decodeSenderCertificateData,
-  encodeSenderCertificate,
-  decodeSenderCertificate,
-} from './proto';
+import type { PublicKey, Signature } from '../../../keys';
+
+import { verify, bytesToBase64, base64ToBytes, constantTimeEqual } from '../../crypto';
+
+import { decodeServerCertificateData, decodeServerCertificate, decodeSenderCertificateData, encodeSenderCertificate, decodeSenderCertificate } from './proto';
+
 
 /** Generic error message for all certificate validation failures */
 export {};
 const GENERIC_ERROR = 'Sealed sender verification failed';
-
-// ============================================================================
-// Certificate Creation
-// ============================================================================
-
-/**
- * Create a server certificate with protobuf-encoded inner Certificate.
- *
- * 1. Protobuf-encode inner Certificate {id, key}
- * 2. Sign with trust root → signature
- * 3. Return full ServerCertificate
- *
- */
-export async function createServerCertificate(
-  id: number,
-  publicKey: Base64,
-  trustRootPrivateKey: PrivateKey,
-  validity: { notBefore: number; notAfter: number }
-): Promise<ServerCertificate> {
-  if (
-    !Number.isSafeInteger(validity.notBefore) ||
-    !Number.isSafeInteger(validity.notAfter) ||
-    validity.notBefore <= 0 ||
-    validity.notAfter < validity.notBefore
-  ) {
-    throw new Error(GENERIC_ERROR);
-  }
-
-  // Encode inner Certificate protobuf
-  const certificateBytesRaw = encodeServerCertificateData({
-    id,
-    key: base64ToBytes(publicKey),
-    notBefore: validity.notBefore,
-    notAfter: validity.notAfter,
-  });
-
-  // Sign with trust root
-  const signatureBase64 = await sign(trustRootPrivateKey, certificateBytesRaw);
-
-  return {
-    id,
-    publicKey,
-    notBefore: validity.notBefore,
-    notAfter: validity.notAfter,
-    certificateBytes: bytesToBase64(certificateBytesRaw),
-    signature: signatureBase64,
-  };
-}
-
-/**
- * Create a sender certificate with protobuf-encoded inner Certificate.
- *
- * 1. Serialize signer → outer ServerCertificate protobuf bytes
- * 2. Build inner Certificate protobuf with all fields + signer bytes
- * 3. Sign certificateBytes with signerPrivateKey → signature
- * 4. Return full SenderCertificate
- *
- */
-export async function createSenderCertificate(
-  fields: {
-    senderUuid: string;
-    senderDeviceId: number;
-    senderIdentityKey: Base64;
-    expires: number;
-    senderE164?: string;
-    relayScopeId: Base64;
-  },
-  signer: ServerCertificate,
-  signerPrivateKey: PrivateKey
-): Promise<SenderCertificate> {
-  if (
-    base64ToBytes(fields.relayScopeId).length !== 16 ||
-    !Number.isSafeInteger(fields.expires) ||
-    fields.expires <= 0 ||
-    fields.expires > signer.notAfter
-  ) {
-    throw new Error(GENERIC_ERROR);
-  }
-
-  // Serialize the signer as outer ServerCertificate protobuf
-  const signerBytes = encodeServerCertificate({
-    certificate: base64ToBytes(signer.certificateBytes),
-    signature: base64ToBytes(signer.signature),
-  });
-
-  // Encode inner Certificate protobuf with correct field numbers
-  const certificateBytesRaw = encodeSenderCertificateData({
-    senderUuid: fields.senderUuid,
-    senderDevice: fields.senderDeviceId,
-    senderE164: fields.senderE164,
-    expires: fields.expires,
-    identityKey: base64ToBytes(fields.senderIdentityKey),
-    signerCertificate: signerBytes,
-    relayScopeId: base64ToBytes(fields.relayScopeId),
-  });
-
-  // Sign with signer's private key
-  const signatureBase64 = await sign(signerPrivateKey, certificateBytesRaw);
-
-  return {
-    senderUuid: fields.senderUuid,
-    senderDeviceId: fields.senderDeviceId,
-    senderIdentityKey: fields.senderIdentityKey,
-    expires: fields.expires,
-    senderE164: fields.senderE164,
-    relayScopeId: fields.relayScopeId,
-    signer,
-    certificateBytes: bytesToBase64(certificateBytesRaw),
-    signature: signatureBase64,
-  };
-}
 
 // ============================================================================
 // Serialization

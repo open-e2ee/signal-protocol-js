@@ -41,3 +41,9 @@
 ### senderKeyId
 
 > **senderKeyId**: `string`
+
+***
+
+### senderKeyVersion
+
+> **senderKeyVersion**: `string`

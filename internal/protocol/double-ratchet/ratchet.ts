@@ -163,20 +163,6 @@ export interface DoubleRatchetConfig {
   maxMessageKeysStored: number;
   /** Maximum age of stored message keys (ms) */
   maxMessageKeyAge: number;
-  /**
-   * Kyber/ML-KEM refresh interval for Triple Ratchet (SPQR)
-   *
-   * The SPQR announcement describes refreshing post-quantum keys approximately
-   * every 50 messages (or within 1 week if chat is inactive).
-   *
-   * Trade-offs:
-   * - Lower interval = better PCS recovery but more bandwidth (~2KB per refresh)
-   * - Higher interval = less bandwidth but longer exposure window
-   * - The published profile uses 50 messages as the balance point (~40 bytes overhead per message)
-   *
-   * @see https://signal.org/blog/spqr/ - "approximately every 50 messages"
-   */
-  kyberRefreshInterval: number;
 }
 
 /**
@@ -187,15 +173,11 @@ export interface DoubleRatchetConfig {
  * | maxSkippedMessages | 25000 | Bounded forward progress |
  * | maxMessageKeysStored | 2000 | Bounded out-of-order storage |
  * | maxMessageKeyAge | 7 days | Bounded retained key lifetime |
- * | kyberRefreshInterval | 50 | SPQR publication guidance |
- *
- * @see https://signal.org/blog/spqr/
  */
 export const DEFAULT_RATCHET_CONFIG: DoubleRatchetConfig = {
   maxSkippedMessages: 25000,
   maxMessageKeysStored: 2000,
   maxMessageKeyAge: 7 * 24 * 60 * 60 * 1000,
-  kyberRefreshInterval: 50,
 };
 
 // ============================================================================

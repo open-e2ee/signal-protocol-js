@@ -77,61 +77,14 @@ export {
   decryptProfileKeyCiphertext,
 } from './client-zk-group-cipher';
 
-export {
-  type ServerSecretParams,
-  type ServerPublicParams,
-  generateServerSecretParams,
-  getServerPublicParams,
-  serverSign,
-  serverVerifySignature,
-  SIGNATURE_LEN,
-} from './server-params';
+export { type ServerPublicParams, serverVerifySignature, SIGNATURE_LEN } from './server-params';
 
-export {
-  type AuthCredentialWithPniResponse,
-  type AuthCredentialWithPni,
-  type AuthCredentialPresentation,
-  issueAuthCredential,
-  receiveAuthCredential,
-  presentAuthCredential,
-  verifyAuthCredentialPresentation,
-} from './auth-credential';
 
-export {
-  type ProfileKeyCredentialRequest,
-  type ProfileKeyCredentialRequestContext,
-  type ExpiringProfileKeyCredentialResponse,
-  type ExpiringProfileKeyCredential,
-  type ProfileKeyCredentialPresentation,
-  createProfileKeyCredentialRequest,
-  serializeProfileKeyCredentialRequest,
-  deserializeProfileKeyCredentialRequest,
-  issueProfileKeyCredential,
-  receiveProfileKeyCredential,
-  presentProfileKeyCredential,
-  verifyProfileKeyCredentialPresentation,
-  serializeProfileKeyCredentialResponse,
-  deserializeProfileKeyCredentialResponse,
-  serializeProfileKeyCredentialPresentation,
-  deserializeProfileKeyCredentialPresentation,
-} from './profile-key-credential';
+export { type AuthCredentialWithPniResponse, type AuthCredentialWithPni, type AuthCredentialPresentation, receiveAuthCredential, presentAuthCredential } from './auth-credential';
 
-export {
-  type GroupSendDerivedKeyPair,
-  type GroupSendEndorsementsResponse,
-  type ReceivedEndorsement,
-  type GroupSendToken,
-  type GroupSendFullToken,
-  deriveForExpiration,
-  defaultExpiration,
-  issueEndorsements,
-  receiveEndorsements,
-  combineEndorsements,
-  removeEndorsement,
-  createFullToken,
-  verifyFullToken,
-  serializeEndorsementsResponse,
-  deserializeEndorsementsResponse,
-  serializeFullToken,
-  deserializeFullToken,
-} from './group-send-endorsement';
+
+export { type ProfileKeyCredentialRequest, type ProfileKeyCredentialRequestContext, type ExpiringProfileKeyCredentialResponse, type ExpiringProfileKeyCredential, type ProfileKeyCredentialPresentation, createProfileKeyCredentialRequest, serializeProfileKeyCredentialRequest, receiveProfileKeyCredential, presentProfileKeyCredential, deserializeProfileKeyCredentialResponse, serializeProfileKeyCredentialPresentation } from './profile-key-credential';
+
+
+export { type GroupSendEndorsementsResponse, type ReceivedEndorsement, type GroupSendToken, type GroupSendFullToken, receiveEndorsements, combineEndorsements, removeEndorsement, createFullToken, deserializeEndorsementsResponse, serializeFullToken } from './group-send-endorsement';
+

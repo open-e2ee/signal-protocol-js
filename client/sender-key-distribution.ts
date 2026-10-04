@@ -1,6 +1,7 @@
 import { base64ToBytes, bytesToBase64 } from '../internal/crypto';
 import type { SenderKeyDistributionMessage } from '../internal/protocol/sender-keys';
 import type { Base64 } from '../types';
+import { SENDER_KEY_FORMAT } from '../versions';
 
 export interface ParsedSenderKeyDistribution {
   groupId: string;
@@ -45,6 +46,7 @@ export function parseSenderKeyDistribution(
   }
   const item = parsed as Record<string, unknown>;
   if (
+    item.senderKeyVersion !== SENDER_KEY_FORMAT ||
     typeof item.groupId !== 'string' ||
     item.groupId.length === 0 ||
     typeof item.senderKeyId !== 'string' ||
@@ -62,6 +64,7 @@ export function parseSenderKeyDistribution(
   return {
     groupId: item.groupId,
     distribution: {
+      senderKeyVersion: SENDER_KEY_FORMAT,
       senderKeyId: item.senderKeyId,
       chainId: item.chainId,
       chainIndex: item.chainIndex,

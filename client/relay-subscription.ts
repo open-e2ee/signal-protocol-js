@@ -22,6 +22,7 @@ import {
 import { receivedContentId, pruneReceivedContent } from '../local/store/received-content';
 import { isImplicitContentType } from './constants';
 import type { SignalProtocolServiceCipher } from './signal-service-cipher';
+import { rethrowRelayWorkStopped } from './relay-work';
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -33,6 +34,8 @@ import type { SignalProtocolServiceCipher } from './signal-service-cipher';
 export {};
 export interface RelaySubscriptionContext extends SignalProtocolClientContext {
   cipher: SignalProtocolServiceCipher;
+  /** Ends lock waits when the tracked receive work stops. */
+  stopSignal?: AbortSignal;
 }
 
 /** Accumulates delivery receipt timestamps per sender for batching */
@@ -198,8 +201,11 @@ async function handleRelayMessageLocked(
   try {
     // Delegate decryption to SignalProtocolServiceCipher
     // Pass sealed sender config for unidentified_sender envelope handling
-    decryptedEnvelope = await ctx.cipher.decrypt(envelope, ctx.config.sealedSender, receiveId);
+    decryptedEnvelope = await ctx.cipher.decrypt(
+      envelope, ctx.config.sealedSender, receiveId, ctx.stopSignal
+    );
   } catch (error) {
+    rethrowRelayWorkStopped(error);
     // ERROR: Handle decryption failure
     await handleDecryptionError(ctx, envelope, error as Error, state, callbacks, config);
     return false;

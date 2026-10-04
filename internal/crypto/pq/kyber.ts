@@ -10,7 +10,7 @@
  *
  * Rationale:
  * - PQXDH: Session establishment happens once - maximum security preferred
- * - SPQR: Continuous ratchet every ~50 messages - bandwidth efficiency critical
+ * - SPQR: Braid spreads each key exchange across messages - bandwidth efficiency critical
  *   (ML-KEM-768: 2,272 bytes/ratchet vs ML-KEM-1024: 3,136 bytes)
  *
  * Libraries:

@@ -1129,7 +1129,6 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
         maxSkippedMessages: config.maxSkippedMessages,
         maxMessageKeysStored: config.maxMessageKeysStored,
         maxMessageKeyAge: config.maxMessageKeyAge,
-        kyberRefreshInterval: config.kyberRefreshInterval,
       },
       this.logger
     );

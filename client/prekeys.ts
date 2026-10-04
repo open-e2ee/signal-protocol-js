@@ -7,7 +7,7 @@
 
 import type { PreKeyUpload } from '../remote/relay/types';
 import { EncryptionError, EncryptionErrorCode, ONE_TIME_PREKEY_BATCH_SIZE } from '../types';
-import { base64ToBytes } from '../internal/crypto';
+
 import { generateEcSignedPreKey, generateKyberLastResortPreKey } from '../keys';
 import { createCompositeIdentityV1 } from '../keys/identity';
 import type { IdentityType } from '../keys/types';

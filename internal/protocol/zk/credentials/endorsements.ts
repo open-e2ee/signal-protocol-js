@@ -25,10 +25,11 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
 import { Statement } from '../proofs/statement';
-import { ScalarArgs, PointArgs } from '../proofs/args';
-import { RANDOMNESS_LEN } from './credentials';
+import { PointArgs } from '../proofs/args';
+
+
 import { VerificationFailure } from './issuance';
-import { constantTimeEqual } from '../../../crypto/utils';
+
 export {};
 const Point = RistrettoPoint;
 const Fn = Point.Fn;
@@ -46,73 +47,11 @@ const TOKEN_LEN = 16;
 const SMALL_SCALAR_BYTES = 16;
 
 // ---------------------------------------------------------------------------
-// ServerRootKeyPair
-// ---------------------------------------------------------------------------
-
-/**
- * A server's root secret key for issuing and verifying endorsements.
- *
- * Endorsements are not issued directly with this key. Instead, the server
- * derives a {@link ServerDerivedKeyPair} for domain separation, rotation,
- * and additional authenticated info.
- */
-export class ServerRootKeyPair {
-  readonly sk: bigint;
-  readonly public: ServerRootPublicKey;
-
-  private constructor(sk: bigint) {
-    this.sk = sk;
-    this.public = new ServerRootPublicKey(Point.BASE.multiply(sk));
-  }
-
-  /**
-   * Derives a root key by hashing `randomness`.
-   */
-  static generate(randomness: Uint8Array): ServerRootKeyPair {
-    if (randomness.length < RANDOMNESS_LEN) {
-      throw new Error(`ServerRootKeyPair.generate: need ${RANDOMNESS_LEN} bytes of randomness`);
-    }
-    const sho = new ShoHmacSha256(
-      enc.encode('Signal_ZKCredential_Endorsements_ServerRootKeyPair_generate_20240207')
-    );
-    sho.absorbAndRatchet(randomness);
-    return new ServerRootKeyPair(sho.getScalar());
-  }
-
-  /**
-   * Construct from an existing secret scalar.
-   */
-  static fromRaw(sk: bigint): ServerRootKeyPair {
-    return new ServerRootKeyPair(sk);
-  }
-
-  /**
-   * Returns the corresponding public key.
-   */
-  publicKey(): ServerRootPublicKey {
-    return this.public;
-  }
-
-  /**
-   * Derives a specific key for issuing endorsements.
-   *
-   * The `tagInfoSho` should have already absorbed domain separation and
-   * any "public attributes" specific to the endorsements it issues.
-   */
-  deriveKey(tagInfoSho: ShoHmacSha256): ServerDerivedKeyPair {
-    const t = tagInfoSho.getScalar();
-    const skPrime = Fn.inv(Fn.create(this.sk + t));
-    const publicKey = this.public.deriveKeyFromTagScalar(t);
-    return new ServerDerivedKeyPair(skPrime, publicKey);
-  }
-}
-
-// ---------------------------------------------------------------------------
 // ServerRootPublicKey
 // ---------------------------------------------------------------------------
 
 /**
- * The public counterpart of {@link ServerRootKeyPair}.
+ * The server's public root key for endorsements.
  *
  * Verify issuance with a {@link ServerDerivedPublicKey}.
  */
@@ -133,8 +72,7 @@ export class ServerRootPublicKey {
   /**
    * Derives a specific public key for endorsement verification.
    *
-   * The `tagInfoSho` must match what the server used in
-   * {@link ServerRootKeyPair.deriveKey}.
+   * The `tagInfoSho` must match the server's input for key derivation.
    */
   deriveKey(tagInfoSho: ShoHmacSha256): ServerDerivedPublicKey {
     const t = tagInfoSho.getScalar();
@@ -149,44 +87,11 @@ export class ServerRootPublicKey {
 }
 
 // ---------------------------------------------------------------------------
-// ServerDerivedKeyPair
-// ---------------------------------------------------------------------------
-
-/**
- * A specific secret key pair for issuing and verifying endorsements.
- *
- * Derived from a {@link ServerRootKeyPair} via
- * {@link ServerRootKeyPair.deriveKey}.
- */
-export class ServerDerivedKeyPair {
-  readonly skPrime: bigint;
-  readonly public: ServerDerivedPublicKey;
-
-  constructor(skPrime: bigint, pub: ServerDerivedPublicKey) {
-    this.skPrime = skPrime;
-    this.public = pub;
-  }
-
-  /**
-   * Verifies that a token is valid for `point` according to this key.
-   *
-   * Throws {@link VerificationFailure} on mismatch.
-   */
-  verify(point: RistrettoPoint, token: Uint8Array): void {
-    const P = point.multiply(this.skPrime);
-    const expected = tokenRaw(P);
-    if (!constantTimeEqual(token, expected)) {
-      throw new VerificationFailure();
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
 // ServerDerivedPublicKey
 // ---------------------------------------------------------------------------
 
 /**
- * The public counterpart of {@link ServerDerivedKeyPair}.
+ * The server's public key for one endorsement context.
  *
  * Derived from a {@link ServerRootPublicKey}.
  */
@@ -253,47 +158,6 @@ export class EndorsementResponse {
   }
 
   /**
-   * Issues an endorsement for every point in `hiddenAttributePoints`,
-   * along with a batch proof of validity.
-   *
-   * The order of the points matters. The endorsements eventually received
-   * by the client will be in the same order.
-   */
-  static issue(
-    hiddenAttributePoints: RistrettoPoint[],
-    privateKey: ServerDerivedKeyPair,
-    randomness: Uint8Array
-  ): EndorsementResponse {
-    if (randomness.length < RANDOMNESS_LEN) {
-      throw new Error(`EndorsementResponse.issue: need ${RANDOMNESS_LEN} bytes of randomness`);
-    }
-
-    const E = hiddenAttributePoints;
-    // R_i = sk_prime * E_i
-    const RPoints = E.map((Ei) => Ei.multiply(privateKey.skPrime));
-    const RCompressed = RPoints.map((r) => r.toBytes());
-
-    const weightsForProof = generateWeightsForProof(privateKey.public, E, RCompressed);
-
-    // weighted_sum(E) = E[0] + sum(weights[i] * E[i+1])
-    const sumE = weightedSum(E, weightsForProof);
-    // weighted_sum(R) = sk_prime * weighted_sum(E)
-    const sumR = sumE.multiply(privateKey.skPrime);
-
-    const statement = proofStatement();
-    const pointArgs = new PointArgs();
-    pointArgs.add('weighted_sum(E)', sumE);
-    pointArgs.add('weighted_sum(R)', sumR);
-    pointArgs.add('PK_prime', privateKey.public.PK_prime);
-    const scalarArgs = new ScalarArgs();
-    scalarArgs.add('sk_prime', privateKey.skPrime);
-
-    const proof = statement.prove(scalarArgs, pointArgs, new Uint8Array(0), randomness);
-
-    return new EndorsementResponse(RCompressed, proof);
-  }
-
-  /**
    * Validates and retrieves the endorsements stored in this response.
    *
    * `hiddenAttributePoints` should be the same points seen by the issuing
@@ -348,22 +212,6 @@ export class EndorsementResponse {
       decompressed: endorsements,
       compressed: compressedEndorsements,
     };
-  }
-
-  /**
-   * Serialize to bytes: [count(u32 LE)] [R_0..R_n (32 each)] [proof]
-   */
-  toBytes(): Uint8Array {
-    const count = this.R.length;
-    const proofLen = this.proof.length;
-    const buf = new Uint8Array(4 + count * 32 + proofLen);
-    const view = new DataView(buf.buffer);
-    view.setUint32(0, count, true);
-    for (let i = 0; i < count; i++) {
-      buf.set(this.R[i], 4 + i * 32);
-    }
-    buf.set(this.proof, 4 + count * 32);
-    return buf;
   }
 
   /**

@@ -6,9 +6,9 @@ This document states our testing methods, reported results, public checks, and r
 
 ## What is public
 
-The public repository contains the SDK source, documentation, examples, and build checks. An export tool copies approved files from the engineering repository. It excludes private engineering material and its development dependencies.
+The public repository contains SDK client source, documentation, and build checks. An export tool copies approved files from the engineering repository. It excludes private engineering material and its development dependencies.
 
-You can inspect the implementation and run the examples. You cannot reproduce the private results from this repository alone.
+You can inspect the client implementation and run the public checks. Relay server implementations and the internal runtime examples remain private. You cannot reproduce the private results from this repository alone.
 
 Private testing also exists in other open-source projects. [SQLite publishes some checks and keeps TH3 private](https://www.sqlite.org/testing.html). [Convex documents a private testing framework](https://github.com/get-convex/convex-backend#readme). Those projects do not review or endorse this SDK.
 
@@ -16,16 +16,16 @@ Private testing also exists in other open-source projects. [SQLite publishes som
 
 Engineering CI runs the default automated checks on pull requests that are ready for review and on changes to the main branch. Release preparation requires a passing run.
 
-Most recent full run on 2026-09-30:
+Most recent full run on 2026-10-04:
 
 | | |
 |---|---|
-| Test modules | 480 |
-| Test cases | 8,820 |
-| Passed | 8,816 |
+| Test modules | 491 |
+| Test cases | 9,111 |
+| Passed | 9,107 |
 | Skipped | 4 |
 | Failed | 0 |
-| Wall time | 185 s |
+| Wall time | 232 s |
 
 The total counts test cases. One test case can contain several assertions. Separate commands run the longer performance and endurance checks.
 
@@ -47,7 +47,7 @@ The browser storage job also runs 2,000 open, write, read, and close cycles of t
 
 In Chromium, the browser storage job also builds an app with the Vite version of the browser example and the packed package. The entry module of the app completes an exchange in each direction with a top-level await. The job fails when the exchange does not finish in 30 seconds, or when a chunk of the build imports the entry chunk. A default automated check also fails when the SDK loads a module with a dynamic import and that module imports another module. Other bundlers are not checked.
 
-A storage contract check does not prove a full encrypted exchange. The [browser example](../examples/browser/README.md) and [Expo example](../examples/expo/README.md) exercise message encryption, delivery, and decryption.
+A storage contract check does not prove a full encrypted exchange. Internal browser and Expo examples exercise message encryption, delivery, and decryption.
 
 ## SQLite store checks
 
@@ -79,7 +79,7 @@ No CI job signs the app with a Developer ID. On 2026-09-29, a manual check on ma
 |---|---|---|
 | The store passes the shared storage contract. | Default automated checks: Linux, Node 26 | The storage contract on the `expo-sqlite` JavaScript layer over `node:sqlite`. This check runs no native module and no SQLCipher. |
 | A release build of the Expo example stores its state with SQLCipher on Android and keeps it across a process restart. | Android emulator job | A release APK on Hermes V1, run twice on an Android API 36 x86_64 emulator. Each run must log a SQLCipher version and a database header that is not the SQLite header. The second run must resume the stored identity and complete an exchange. This job runs on a change to the main branch that can reach the React Native runtime, and on demand. It does not run on a pull request. |
-| The Expo example, which imports this entry, bundles with the Hermes compiler that React Native pins. | Public CI (`Checks`) | The Android bundle of the Expo example with the packed package, on Expo SDK 55 and Expo SDK 57. |
+| The Expo example, which imports this entry, bundles with the Hermes compiler that React Native pins. | Engineering CI | The Android bundle of the Expo example with the packed package, on Expo SDK 55 and Expo SDK 57. |
 | In an Expo web build, an encrypted open and a reset fail with `SqliteEncryptionUnavailableError` (`KEY_STORAGE_ERROR`) before they use the vault. With `encryptionAtRest: false`, the store opens and keeps its data across a page load. | Browser storage job: Chromium on Linux | An `expo export --platform web` of an Expo SDK 57 app that installs the packed package, loaded in Chromium. The page reads no `PRAGMA cipher_version` row, and Expo SecureStore reports that it is not available. The check does not open a store with `./local/store/web-sqlite` in the Expo web build. |
 
 The Hermes flow job does not load a SQLite store. Its flows use the memory and key-value stores. The Android emulator job is the only CI job that runs the Expo store on Hermes.
@@ -94,7 +94,7 @@ The Hermes flow job does not load a SQLite store. Its flows use the memory and k
 | Without `encryptionAtRest: false`, the store refuses an op-sqlite build without SQLCipher and creates no file. A plaintext file opened with encryption fails as a key mismatch and does not change. | Default automated checks: Linux, Node 26 | The same test doubles. The double answers as an op-sqlite build without SQLCipher. |
 | Two parallel first opens of one name write one key, and the second open fails with `INVALID_STATE`. An open or a reset of a name that an open store holds fails with `INVALID_STATE`. | Default automated checks: Linux, Node 26 | The same test doubles. |
 | A release build of the bare React Native example stores its state with SQLCipher on Android, with the default keychain vault, and keeps it across a process restart. A key that does not open the file fails with `KEY_STORAGE_ERROR`. | Android emulator job | A release APK on Hermes V1 with the native op-sqlite SQLCipher build, run twice on an Android API 36 x86_64 emulator. Each run must log a SQLCipher version, a database header that is not the SQLite header, and a wrong-key open that fails with `SqliteKeyMismatchError`. The second run must resume the stored identity and complete an exchange. This job runs on a change to the main branch that can reach the React Native runtime, and on demand. It does not run on a pull request. |
-| The bare React Native example, which imports this entry, bundles with the Hermes compiler that React Native pins. | Public CI (`Checks`) | The Android release bundle of the bare React Native example with the packed package. |
+| The bare React Native example, which imports this entry, bundles with the Hermes compiler that React Native pins. | Engineering CI | The Android release bundle of the bare React Native example with the packed package. |
 
 The Android emulator job is the only CI job that runs this store on Hermes with the native op-sqlite module. No CI job runs it on iOS. On 2026-09-28, a manual check of a development build of the SDK before 8.0.0 ran the bare React Native example in the iOS 26.2 simulator with Xcode 26.3. Each of four launches logged a SQLCipher version, a database header that is not the SQLite header, and the wrong-key failure. Each launch after the first resumed the stored identity.
 
@@ -121,7 +121,7 @@ The simulator does not enforce Data Protection. These results do not show the pr
 
 The WebKit store job runs Playwright's WebKit on macOS, where WebKit has OPFS synchronous access handles. Playwright's WebKit is not Safari, so the same job then runs the same checks in the Safari of the macOS runner through `safaridriver`, and records the Safari version. A WebDriver runner runs the Playwright checks unchanged. It counts the workers of a page from inside the page, and it reports the uncaught errors of a page only after the page loads. Each browser context is a Safari WebDriver session, so the check for an ephemeral context that refuses OPFS access handles skips when that session has them. It runs only on a change to the web SQLite store, the SQLite core, the storage contract, the key vault, the job, or a dependency. On a pull request, it runs only when a maintainer requests it. In the browser storage job for Chromium and Firefox and in the WebKit store job, a check that skips for want of OPFS fails.
 
-The code-generation check in public CI runs the README example with the memory store. It does not load a SQLite store.
+The internal code-generation check runs an encrypted exchange with the memory store. It does not load a SQLite store.
 
 ### Tauri
 
@@ -187,13 +187,11 @@ This statement describes our process. It is not an independent security assessme
 
 - Install from the committed lockfile, compile the SDK, and check its types.
 - Check dependencies for known advisories at moderate severity or higher.
-- Extract the README example and run it against the packed package.
-- Run the example with string-based code generation disabled.
 - Run complete documentation programs and check their expected output.
 - Check SDK imports and types in snippets that require application context.
 - Check exported import paths in a separate consumer without optional peer dependencies. Verify the declared platform exceptions.
 
-The examples include installation commands and expected output. The browser example shows ciphertext and decrypted messages in the page and console.
+Hosted client snippets need a configured Relay project and identity provider. Public snippet checks validate their imports and types without calling a live Relay.
 
 A passing build establishes that the checked code builds and the exercised behavior passes. It does not establish the absence of vulnerabilities.
 

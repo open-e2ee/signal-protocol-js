@@ -35,9 +35,11 @@ import { defaultSignalProtocolLogger, type Logger } from '../logger';
 import { SenderKeyManager } from '../internal/protocol/sender-keys';
 import { isGroupId, extractGroupId } from '../internal/groups';
 import type { EndorsementManager } from './endorsement-manager';
+import type { GroupReceiveAuthorizer } from './group-receive-authorization';
+import { GroupSenderKeyOperations } from './group-sender-key-operations';
 import type { PreparedAttachmentUpload, SendOptions, SendResult } from './types';
 import { ContentHint } from '../types/messages';
-import { SealedSenderContentType } from '../internal/protocol/sealed-sender/types';
+
 import {
   type BlockedRecipientsSyncInput,
   createDefaultSignalProtocolContentAdapter,
@@ -342,6 +344,7 @@ export type GroupSendBarrierChecker = (groupId: string) => Promise<void>;
  */
 export class SignalProtocolServiceCipher {
   private readonly lock = new AsyncLock();
+  private readonly groupSenderKeys: GroupSenderKeyOperations;
   private sessionCallbacks?: SendSessionCallbacks;
   private readonly recipientDeviceListCheckedAt = new Map<string, number>();
   private sealedSenderProvider?: SealedSenderProvider;
@@ -352,7 +355,7 @@ export class SignalProtocolServiceCipher {
   private endorsementManagerResolver?: () => Promise<EndorsementManager | undefined>;
   private endorsementRefresher?: EndorsementRefresher;
   private groupSendBarrierChecker?: GroupSendBarrierChecker;
-  private groupReceiveAuthorizer?: (groupId: string, senderId: string) => Promise<void>;
+  private groupReceiveAuthorizer?: GroupReceiveAuthorizer;
   private groupSecretParamsProvider?: (
     groupId: string
   ) => Promise<import('../internal/protocol/zk/groups/group-params').GroupSecretParams | null>;
@@ -368,7 +371,9 @@ export class SignalProtocolServiceCipher {
     private readonly contentAdapter?: SignalProtocolContentAdapter,
     private readonly logger: Required<Logger> = defaultSignalProtocolLogger,
     private readonly fanOut: BoundedFanOut = createRelayFanOut()
-  ) {}
+  ) {
+    this.groupSenderKeys = new GroupSenderKeyOperations(storage, userId, deviceId);
+  }
 
   private getResolvedContentAdapter(): SignalProtocolContentAdapter {
     return this.contentAdapter ?? createDefaultSignalProtocolContentAdapter();
@@ -690,7 +695,7 @@ export class SignalProtocolServiceCipher {
   // ============================================================================
 
   /** Bind received group content to verified local membership. */
-  setGroupReceiveAuthorizer(authorize: (groupId: string, senderId: string) => Promise<void>): void {
+  setGroupReceiveAuthorizer(authorize: GroupReceiveAuthorizer): void {
     this.groupReceiveAuthorizer = authorize;
   }
 
@@ -710,7 +715,8 @@ export class SignalProtocolServiceCipher {
   async decrypt(
     envelope: Envelope,
     sealedSenderConfig?: import('./config').SealedSenderConfig,
-    receiveId?: string
+    receiveId?: string,
+    stopSignal?: AbortSignal
   ): Promise<DecryptedEnvelope> {
     // Handle sealed sender (unidentified_sender) envelopes by unsealing first
     if (envelope.messageType === 'unidentified_sender') {
@@ -753,7 +759,7 @@ export class SignalProtocolServiceCipher {
       const innerEnvelope = reconstructEnvelope(envelope, unsealed);
 
       // Recursively decrypt the inner message (now a standard ciphertext)
-      return this.decrypt(innerEnvelope, undefined, receiveId);
+      return this.decrypt(innerEnvelope, undefined, receiveId, stopSignal);
     }
 
     // Validate message type before processing
@@ -776,7 +782,7 @@ export class SignalProtocolServiceCipher {
 
     const lockKey = `decrypt:${envelope.senderUserId}:${envelope.senderDeviceId}`;
 
-    return this.lock.acquire(lockKey, async () => {
+    return acquireUntilStopped(this.lock, lockKey, async () => {
       this.logger.debug('Handling incoming envelope', {
         category: 'E2EE',
         data: {
@@ -798,7 +804,7 @@ export class SignalProtocolServiceCipher {
       // framed SenderKeyMessage". It does not say which group, and cannot.
       // That is the point of not putting a group on the envelope.
       if (envelope.messageType === 'sender_key') {
-        const group = await this.decryptGroup(envelope, receiveId, received ?? undefined);
+        const group = await this.decryptGroup(envelope, receiveId, received ?? undefined, stopSignal);
         plaintext = group.plaintext;
         resolvedGroupId = group.groupId;
       } else {
@@ -822,13 +828,15 @@ export class SignalProtocolServiceCipher {
         if (!this.groupReceiveAuthorizer) {
           throw new Error('Configure verified group membership before receiving sender keys');
         }
-        await this.groupReceiveAuthorizer(distribution.groupId, envelope.senderUserId);
-        await this.senderKeyManager.processSenderKeyDistribution(
-          distribution.groupId,
-          envelope.senderUserId,
-          envelope.senderDeviceId,
-          distribution.distribution
-        );
+        await this.groupSenderKeys.run(distribution.groupId, async (rawGroupId) => {
+          await this.groupReceiveAuthorizer!(rawGroupId, envelope.senderUserId, 'distribution');
+          await this.senderKeyManager.processSenderKeyDistribution(
+            rawGroupId,
+            envelope.senderUserId,
+            envelope.senderDeviceId,
+            distribution.distribution
+          );
+        }, stopSignal);
       }
 
       // For DMs, compute canonical conversation ID: dm:${sorted(user1, user2)}
@@ -879,7 +887,7 @@ export class SignalProtocolServiceCipher {
       };
 
       return decryptedEnvelope;
-    });
+    }, stopSignal);
   }
 
   /**
@@ -911,28 +919,28 @@ export class SignalProtocolServiceCipher {
   ): Promise<SendResult> {
     const clientMessageId = options?.clientMessageId ?? (await CryptoUtils.generateUuidV4());
     const durableOptions = { ...options, clientMessageId };
-    const lockKey = `encrypt:${recipientId}`;
+    const encrypt = async () => {
+      if (durableOptions.isBinary) {
+        return this.encryptBinaryAttachment(
+          recipientId,
+          content,
+          durableOptions,
+          sessions,
+          stopSignal
+        );
+      }
+      if (isGroupId(recipientId)) {
+        return this.encryptToGroup(recipientId, content, durableOptions, sessions, stopSignal);
+      }
+      return this.encryptToUser(recipientId, content, durableOptions, sessions, stopSignal);
+    };
 
     try {
-      return await acquireUntilStopped(
-        this.lock,
-        lockKey,
-        async () => {
-          // 1. Route binary file data (Uint8Array with isBinary flag) to blob encryption
-          if (durableOptions.isBinary) {
-            return this.encryptBinaryAttachment(recipientId, content, durableOptions, sessions);
-          }
-
-          // 2. Detect recipient type (group vs user)
-          if (isGroupId(recipientId)) {
-            return this.encryptToGroup(recipientId, content, durableOptions, sessions, stopSignal);
-          }
-
-          // 3. Send to user (existing SESAME path)
-          return this.encryptToUser(recipientId, content, durableOptions, sessions, stopSignal);
-        },
-        stopSignal
-      );
+      // This lock keeps the sends to one recipient in order, also across an
+      // attachment upload. A group send takes the group's Sender Key lock
+      // only in encryptToGroup, so a receive does not wait for an upload.
+      const orderKey = isGroupId(recipientId) ? extractGroupId(recipientId) : recipientId;
+      return await acquireUntilStopped(this.lock, `encrypt:${orderKey}`, encrypt, stopSignal);
     } catch (error) {
       throw attachClientMessageId(error, clientMessageId);
     }
@@ -1028,7 +1036,8 @@ export class SignalProtocolServiceCipher {
   private async decryptGroup(
     envelope: Envelope,
     receiveId?: string,
-    received?: ReceivedContent
+    received?: ReceivedContent,
+    stopSignal?: AbortSignal
   ): Promise<{
     plaintext: string;
     groupId: string;
@@ -1060,55 +1069,57 @@ export class SignalProtocolServiceCipher {
       );
     }
 
-    await this.groupReceiveAuthorizer?.(groupId, envelope.senderUserId);
-    if (received) return { plaintext: received.plaintext, groupId };
-    try {
-      const plaintext = await this.senderKeyManager.decryptGroupMessage(
-        groupId,
-        envelope.senderUserId,
-        envelope.senderDeviceId,
-        framedBytes,
-        receiveId
-      );
-
-      this.logger.debug('Decrypted group message', {
-        category: 'E2EE',
-        data: {
-          groupId,
-          senderId: envelope.senderUserId,
-        },
-      });
-
-      return { plaintext, groupId };
-    } catch (error) {
-      const err = error as Error;
-      if (err.message?.includes('SENDER_KEY_NOT_FOUND')) {
-        throw new EncryptionError(
-          `No sender key from ${envelope.senderUserId} for group ${groupId} - request key distribution`,
-          EncryptionErrorCode.SESSION_NOT_FOUND,
-          { originalError: err }
+    return this.groupSenderKeys.run(groupId, async (rawGroupId) => {
+      await this.groupReceiveAuthorizer?.(rawGroupId, envelope.senderUserId, 'message');
+      if (received) return { plaintext: received.plaintext, groupId: rawGroupId };
+      try {
+        const plaintext = await this.senderKeyManager.decryptGroupMessage(
+          rawGroupId,
+          envelope.senderUserId,
+          envelope.senderDeviceId,
+          framedBytes,
+          receiveId
         );
-      }
-      if (err.message?.includes('INVALID_SIGNATURE')) {
+
+        this.logger.debug('Decrypted group message', {
+          category: 'E2EE',
+          data: {
+            groupId: rawGroupId,
+            senderId: envelope.senderUserId,
+          },
+        });
+
+        return { plaintext, groupId: rawGroupId };
+      } catch (error) {
+        const err = error as Error;
+        if (err.message?.includes('SENDER_KEY_NOT_FOUND')) {
+          throw new EncryptionError(
+            `No sender key from ${envelope.senderUserId} for group ${rawGroupId} - request key distribution`,
+            EncryptionErrorCode.SESSION_NOT_FOUND,
+            { originalError: err }
+          );
+        }
+        if (err.message?.includes('INVALID_SIGNATURE')) {
+          throw new EncryptionError(
+            `Invalid signature on group message from ${envelope.senderUserId}`,
+            EncryptionErrorCode.DECRYPTION_FAILED,
+            { originalError: err }
+          );
+        }
+        if (err.message?.includes('MESSAGE_TOO_OLD')) {
+          throw new EncryptionError(
+            'Cannot decrypt old group message (forward secrecy)',
+            EncryptionErrorCode.DECRYPTION_FAILED,
+            { originalError: err }
+          );
+        }
         throw new EncryptionError(
-          `Invalid signature on group message from ${envelope.senderUserId}`,
+          `Failed to decrypt group message from ${envelope.senderUserId}`,
           EncryptionErrorCode.DECRYPTION_FAILED,
           { originalError: err }
         );
       }
-      if (err.message?.includes('MESSAGE_TOO_OLD')) {
-        throw new EncryptionError(
-          'Cannot decrypt old group message (forward secrecy)',
-          EncryptionErrorCode.DECRYPTION_FAILED,
-          { originalError: err }
-        );
-      }
-      throw new EncryptionError(
-        `Failed to decrypt group message from ${envelope.senderUserId}`,
-        EncryptionErrorCode.DECRYPTION_FAILED,
-        { originalError: err }
-      );
-    }
+    }, stopSignal);
   }
 
   // ============================================================================
@@ -2493,13 +2504,19 @@ export class SignalProtocolServiceCipher {
     sessions: SendSessionCallbacks | undefined,
     stopSignal?: AbortSignal
   ): Promise<SendResult> {
-    const actualGroupId = extractGroupId(groupId);
-    await this.groupSendBarrierChecker?.(actualGroupId);
-    return this.encryptToGroupWithOutbox(
-      actualGroupId,
-      plaintextBytes,
-      options,
-      sessions,
+    // The group operation owns preparation, persistence, posting, and key confirmation.
+    return this.groupSenderKeys.run(
+      groupId,
+      async (actualGroupId) => {
+        await this.groupSendBarrierChecker?.(actualGroupId);
+        return this.encryptToGroupWithOutbox(
+          actualGroupId,
+          plaintextBytes,
+          options,
+          sessions,
+          stopSignal
+        );
+      },
       stopSignal
     );
   }
@@ -2524,7 +2541,8 @@ export class SignalProtocolServiceCipher {
     recipientId: string,
     data: Uint8Array,
     options: SendOptions & { clientMessageId: string },
-    sessions: SendSessionCallbacks | undefined
+    sessions: SendSessionCallbacks | undefined,
+    stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
     if (!this.relay) {
       throw new EncryptionError(
@@ -2542,7 +2560,13 @@ export class SignalProtocolServiceCipher {
     const attachmentBytes = new TextEncoder().encode(attachmentPayload);
     let result: SendResult;
     if (isGroupId(recipientId)) {
-      result = await this.encryptToGroup(recipientId, attachmentBytes, options, sessions);
+      result = await this.encryptToGroup(
+        recipientId,
+        attachmentBytes,
+        options,
+        sessions,
+        stopSignal
+      );
     } else {
       result = await this.encryptToUser(recipientId, attachmentBytes, options, sessions);
     }

@@ -273,9 +273,9 @@ export function decodeSenderKeyDistributionMessage(
 /**
  * SenderKeyMessage wire format version.
  * Encodes `(CURRENT_VERSION << 4) | CURRENT_VERSION`, where
- * CURRENT_VERSION is 3.
+ * CURRENT_VERSION is 4.
  */
-export const SENDERKEY_MESSAGE_CURRENT_VERSION = 3;
+export const SENDERKEY_MESSAGE_CURRENT_VERSION = 4;
 
 /** Ed25519 signature length in bytes */
 const SIGNATURE_LEN = 64;
@@ -321,6 +321,9 @@ export function parseSenderKeyMessage(bytes: Uint8Array): {
     );
   }
   const version = bytes[0] >> 4;
+  if (bytes[0] !== ((SENDERKEY_MESSAGE_CURRENT_VERSION << 4) | SENDERKEY_MESSAGE_CURRENT_VERSION)) {
+    throw new Error('Unsupported SenderKeyMessage version');
+  }
   return {
     version,
     protobufBytes: bytes.slice(1, bytes.length - SIGNATURE_LEN),

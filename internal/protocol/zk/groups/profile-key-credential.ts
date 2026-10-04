@@ -30,25 +30,23 @@ import {
   type BlindingPublicKey,
   VerificationFailure,
 } from '../credentials/issuance';
-import {
-  PresentationProofBuilder,
-  PresentationProofVerifier,
-  type PresentationProof,
-} from '../credentials/presentation';
-import type {
-  Credential,
-  CredentialKeyPair,
-  CredentialPublicKey,
-} from '../credentials/credentials';
+import { PresentationProofBuilder, type PresentationProof } from '../credentials/presentation';
+
+import type { Credential, CredentialPublicKey } from '../credentials/credentials';
+
 import type { PublicAttribute } from '../credentials/attributes';
 import { type UidStruct, type ServiceId, uidStructFromServiceId } from './uid-struct';
 import { type ProfileKeyStruct, profileKeyStructNew } from './profile-key-struct';
-import { type UidEncCiphertext, UidEncryptionDomain } from './uid-encryption';
-import { type ProfileKeyEncCiphertext, ProfileKeyEncryptionDomain } from './profile-key-encryption';
-import type { GroupSecretParams, GroupPublicParams } from './group-params';
+import { type UidEncCiphertext } from './uid-encryption';
+
+import { type ProfileKeyEncCiphertext } from './profile-key-encryption';
+
+import type { GroupSecretParams } from './group-params';
+
 import { SECONDS_PER_DAY } from './group-params';
-import { scalarToBytes, bytesToScalarCanonical } from '../proofs/sho';
-import { Ciphertext } from '../credentials/attributes';
+import { bytesToScalarCanonical } from '../proofs/sho';
+
+
 export {};
 const enc = new TextEncoder();
 
@@ -209,49 +207,6 @@ export interface ProfileKeyCredentialPresentation {
 }
 
 // ---------------------------------------------------------------------------
-// Issuance (server side)
-// ---------------------------------------------------------------------------
-
-/**
- * Issue an ExpiringProfileKeyCredential for an authenticated ACI, blinded
- * ProfileKey request, and redemption time.
- *
- * Called by the server. Produces an issuance proof that the client can verify
- * to extract the credential.
- *
- * The issuer sees the authenticated ACI and redemption time. It never receives
- * the raw profile key or the client's blinding secret.
- *
- * CRITICAL: Use different randomness for each issuance. Reusing randomness
- * effectively reveals the server's private key.
- *
- * @param credentialKeyPair - The server's profile key credential signing key pair
- * @param aci - The user's ACI ServiceId
- * @param request - Client-created blinded profile-key request
- * @param redemptionTime - Day-aligned epoch timestamp (seconds)
- * @param randomness - At least 32 bytes of cryptographically secure randomness
- * @returns The issuance response to send to the client
- */
-export function issueProfileKeyCredential(
-  credentialKeyPair: CredentialKeyPair,
-  aci: ServiceId,
-  request: ProfileKeyCredentialRequest,
-  redemptionTime: number,
-  randomness: Uint8Array
-): ExpiringProfileKeyCredentialResponse {
-  const aciUid = uidStructFromServiceId(aci);
-
-  const builder = new IssuanceProofBuilder(CREDENTIAL_LABEL);
-  builder.addAttribute(aciUid);
-  builder.addPublicAttribute(redemptionTimePublicAttribute(redemptionTime));
-  const issuanceProof = builder
-    .addBlindedAttribute(request.blindedProfileKey)
-    .issue(credentialKeyPair, request.blindingPublicKey, randomness);
-
-  return { issuanceProof, redemptionTime };
-}
-
-// ---------------------------------------------------------------------------
 // Receive (client side)
 // ---------------------------------------------------------------------------
 
@@ -364,50 +319,6 @@ export function presentProfileKeyCredential(
 }
 
 // ---------------------------------------------------------------------------
-// Verification (server side)
-// ---------------------------------------------------------------------------
-
-/**
- * Verify a ProfileKeyCredentialPresentation against the server's key pair and
- * the group's public parameters.
- *
- * Called by the server. Checks that:
- *  1. The presentation proof is valid (ZK verification)
- *  2. The credential has not expired (redemptionTime >= currentTime)
- *
- * @param credentialKeyPair - The server's profile key credential signing key pair
- * @param groupPublicParams - The group's public parameters
- * @param presentation - The client's presentation proof
- * @param currentTime - Current time in epoch seconds for expiry check
- * @returns true if the presentation is valid
- * @throws {VerificationFailure} If the presentation proof is invalid or expired
- */
-export function verifyProfileKeyCredentialPresentation(
-  credentialKeyPair: CredentialKeyPair,
-  groupPublicParams: GroupPublicParams,
-  presentation: ProfileKeyCredentialPresentation,
-  currentTime: number
-): boolean {
-  const { proof, uidEncCiphertext, profileKeyEncCiphertext, redemptionTime } = presentation;
-
-  // Reject when the current time reaches or exceeds credential expiration.
-  if (currentTime >= redemptionTime) {
-    throw new VerificationFailure();
-  }
-
-  const verifier = new PresentationProofVerifier(CREDENTIAL_LABEL);
-  // ACI checked against UID encryption public key
-  verifier.addAttribute(uidEncCiphertext, groupPublicParams.uidEncPublicKey);
-  // ProfileKey checked against PROFILE KEY encryption public key (different!)
-  verifier.addAttribute(profileKeyEncCiphertext, groupPublicParams.profileKeyEncPublicKey);
-  verifier.addPublicAttribute(redemptionTimePublicAttribute(redemptionTime));
-
-  verifier.verify(credentialKeyPair, proof);
-
-  return true;
-}
-
-// ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
 
@@ -430,61 +341,6 @@ export function serializeProfileKeyCredentialRequest(
   const bytes = new Uint8Array(PROFILE_KEY_CREDENTIAL_REQUEST_LENGTH);
   points.forEach((point, index) => bytes.set(point.toBytes(), index * 32));
   return bytes;
-}
-
-/** Deserialize and validate the fixed-width blinded request. */
-export function deserializeProfileKeyCredentialRequest(
-  bytes: Uint8Array
-): ProfileKeyCredentialRequest {
-  if (bytes.length !== PROFILE_KEY_CREDENTIAL_REQUEST_LENGTH) {
-    throw new Error('deserializeProfileKeyCredentialRequest: invalid length');
-  }
-  const point = (index: number): RistrettoPoint =>
-    Point.fromBytes(bytes.subarray(index * 32, (index + 1) * 32));
-  return {
-    blindingPublicKey: { Y: point(0) },
-    blindedProfileKey: {
-      blindedPoints: [
-        { D1: point(1), D2: point(2) },
-        { D1: point(3), D2: point(4) },
-      ],
-    },
-  };
-}
-
-/**
- * Serialize an ExpiringProfileKeyCredentialResponse to bytes.
- *
- * Format:
- *   [redemptionTime: 8 bytes BE u64]
- *   [credential.t: 32 bytes scalar LE]
- *   [credential.U: 32 bytes point]
- *   [credential.S1: 32 bytes point]
- *   [credential.S2: 32 bytes point]
- *   [pokshoProof: remaining bytes]
- */
-export function serializeProfileKeyCredentialResponse(
-  response: ExpiringProfileKeyCredentialResponse
-): Uint8Array {
-  const { issuanceProof, redemptionTime } = response;
-  const tBytes = scalarToBytes(issuanceProof.credential.t);
-  const uBytes = issuanceProof.credential.U.toBytes();
-  const s1Bytes = issuanceProof.credential.S1.toBytes();
-  const s2Bytes = issuanceProof.credential.S2.toBytes();
-  const proofBytes = issuanceProof.pokshoProof;
-  if (proofBytes.length !== 352) {
-    throw new Error('serializeProfileKeyCredentialResponse: invalid proof length');
-  }
-
-  const buf = new Uint8Array(8 + 32 + 32 + 32 + 32 + proofBytes.length);
-  const view = new DataView(buf.buffer);
-  view.setBigUint64(0, BigInt(redemptionTime), false);
-  buf.set(tBytes, 8);
-  buf.set(uBytes, 40);
-  buf.set(s1Bytes, 72);
-  buf.set(s2Bytes, 104);
-  buf.set(proofBytes, 136);
-  return buf;
 }
 
 /**
@@ -569,70 +425,4 @@ export function serializeProfileKeyCredentialPresentation(
   buf.set(profileKeyEncCiphertext.E_A2.toBytes(), offset);
 
   return buf;
-}
-
-/**
- * Deserialize a ProfileKeyCredentialPresentation from bytes.
- */
-export function deserializeProfileKeyCredentialPresentation(
-  bytes: Uint8Array
-): ProfileKeyCredentialPresentation {
-  // Minimum: 8 (time) + 96 (C_x0,C_x1,C_V) + 4 (cyCount) + 4 (proofLen) + 128 (4 ciphertext points)
-  const MIN_LEN = 240;
-  if (bytes.length < MIN_LEN) {
-    throw new Error('deserializeProfileKeyCredentialPresentation: too short');
-  }
-
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let offset = 0;
-
-  const redemptionTime = Number(view.getBigUint64(offset, false));
-  offset += 8;
-  const C_x0 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-  const C_x1 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-  const C_V = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-
-  const cyCount = view.getUint32(offset, true);
-  offset += 4;
-  // Bounds: cyCount * 32 + proofLen(4) + proof + ciphertexts(128) must fit in remaining bytes
-  if (cyCount > 16 || offset + cyCount * 32 + 4 + 128 > bytes.length) {
-    throw new Error('deserializeProfileKeyCredentialPresentation: cyCount out of bounds');
-  }
-  const C_y: RistrettoPoint[] = [];
-  for (let i = 0; i < cyCount; i++) {
-    C_y.push(Point.fromBytes(bytes.subarray(offset, offset + 32)));
-    offset += 32;
-  }
-
-  const proofLen = view.getUint32(offset, true);
-  offset += 4;
-  if (offset + proofLen + 128 > bytes.length) {
-    throw new Error('deserializeProfileKeyCredentialPresentation: proofLen out of bounds');
-  }
-  const pokshoProof = bytes.slice(offset, offset + proofLen);
-  offset += proofLen;
-
-  const aciE_A1 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-  const aciE_A2 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-  const pkE_A1 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-  const pkE_A2 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-
-  // Reject trailing bytes
-  if (offset !== bytes.length) {
-    throw new Error('deserializeProfileKeyCredentialPresentation: trailing bytes');
-  }
-
-  return {
-    proof: { C_x0, C_x1, C_V, C_y, pokshoProof },
-    uidEncCiphertext: new Ciphertext(aciE_A1, aciE_A2, UidEncryptionDomain),
-    profileKeyEncCiphertext: new Ciphertext(pkE_A1, pkE_A2, ProfileKeyEncryptionDomain),
-    redemptionTime,
-  };
 }

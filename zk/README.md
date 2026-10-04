@@ -1,8 +1,7 @@
 # Zero-Knowledge Credentials and Groups
 
-The `zk` subpaths expose credential issuance, presentation, verification, and
-group cryptographic primitives used by privacy-preserving application
-features.
+The `zk` subpaths expose client credential requests, response verification,
+presentation creation, and group cryptographic primitives.
 
 ## Why it exists
 
@@ -28,10 +27,10 @@ const profileKeyVersion = computeProfileKeyVersion(
 );
 ```
 
-Credential issuers and verifiers must use one agreed parameter set, validate
-expiration, and bind presentations to the intended application context. These
-low-level APIs do not supply authentication, persistence, replay prevention, or
-product authorization policy.
+Clients use trusted public parameters to verify credential responses and create
+presentations. Credential issuance and server-side presentation checks belong
+to the relay. The published package excludes server secret-key generation,
+credential issuance, and server signing implementations.
 
 See the [groups guide](../groups/README.md), [protocol policy](../docs/PROTOCOL_POLICY.md),
 and [API reference](../docs/api/README.md).

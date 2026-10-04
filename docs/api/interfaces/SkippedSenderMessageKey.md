@@ -15,7 +15,7 @@ Contains pre-derived IV and cipher key in base64 format.
 
 > **cipherKey**: `string`
 
-AES-256-GCM cipher key (base64)
+AES-256-CBC cipher key (base64)
 
 ***
 

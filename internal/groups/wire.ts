@@ -138,12 +138,6 @@ export function serializeEncryptedGroupCreationSubmission(
   return serializeGroupWire(group);
 }
 
-export function deserializeEncryptedGroupCreationSubmission(
-  bytes: Uint8Array
-): EncryptedGroupCreationSubmission {
-  return deserializeGroupWire<EncryptedGroupCreationSubmission>(bytes);
-}
-
 /**
  * Remove server-derived creation fields from an encrypted candidate state.
  *
@@ -970,10 +964,6 @@ export function assertValidEncryptedGroupCreationSubmissionWire(
   group: EncryptedGroupCreationSubmission
 ): void {
   assertValidEncryptedGroupWireForm(group, 'creation-submission');
-}
-
-export function serializeEncryptedGroupJoinInfo(info: EncryptedGroupJoinInfo): Uint8Array {
-  return serializeGroupWire(info);
 }
 
 export function deserializeEncryptedGroupJoinInfo(bytes: Uint8Array): EncryptedGroupJoinInfo {

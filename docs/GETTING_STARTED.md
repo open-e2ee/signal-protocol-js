@@ -2,8 +2,10 @@
 
 > Navigation: [README](../README.md) | [ARCHITECTURE](../ARCHITECTURE.md) | **Getting Started**
 
-This guide is for app developers who understand end-to-end encryption but do
-not want to learn protocol internals before sending a message.
+Use the OpenE2EE Signal Protocol SDK with the OpenE2EE Signal Protocol Relay
+for authenticated delivery. The SDK owns device-local encryption and protocol
+state. The Relay holds public key material, encrypted envelopes, and routing
+metadata. The relay never needs message plaintext or device private keys.
 
 ## Install
 
@@ -11,313 +13,36 @@ not want to learn protocol internals before sending a message.
 npm install @open-e2ee/signal-protocol-sdk
 ```
 
-In this monorepo, consumers use the package as a workspace package. App consumers
-should also install any runtime dependencies their chosen adapters need, such as
-Expo packages.
+Install the runtime dependencies that your device-local store requires.
+The [adapter guide](../ADAPTERS.md) lists the supported stores.
 
 ## What You Need
 
-Every client needs:
+- A Relay project and environment connection URL from the OpenE2EE console.
+- An identity provider configured for that environment.
+- A `getIdentityAssertion` callback that returns a short-lived signed assertion
+  for the signed-in user.
+- Device-local storage for private keys, sessions, and delivery state.
+- Application storage for decrypted messages and attachment bytes.
 
-- a stable `userId` from your app,
-- local `storage` for that user's encrypted protocol state,
-- usually a `relay` for server sync and encrypted message delivery,
-- an encrypted remote object store when sending attachments,
-- device registration or provisioning with that relay for each active device.
-
-The default security policy requires the package's post-quantum Signal Protocol
-configuration. You do not need to configure protocol options for the normal
-path.
-
-This guide uses the current stable API names. The target message-first DX groups
-local persistence under `deviceStorage.{protocol,messages,files}` and calls the
-remote encrypted byte adapter `remoteObjectStore`. Current `signal.media.*`
-examples are transition-only lower-level APIs. The target public API sends
-message attachments through `signal.messages.send({ attachments })` and advanced
-helpers, if needed, under a message-scoped API.
+The callback belongs to your authentication integration. The examples below
+require that setup. The SDK does not supply an identity provider or a relay
+server implementation.
 
 ## Setup Sequence
 
-For a production app, wire startup in this order:
+1. Configure a Relay project and identity provider in the OpenE2EE console.
+2. Open the device-local store for the signed-in user.
+3. Create the client with `createHostedSignalProtocolClient()`.
+4. Register a receive handler that persists decrypted messages.
+5. Start the relay subscription.
 
-1. Choose protocol storage for this device.
-2. Create or configure the relay adapter.
-3. Register or provision this device with the relay during app bootstrap.
-4. Create the client with `createSignalProtocolClient()`.
-5. Call `syncToServer()` so peers can discover this device's public prekeys.
-6. Register receive hooks and start relay subscription delivery.
+The hosted factory authenticates and registers the current device, then publishes
+its public prekeys. Linked devices use the provisioning flow in the
+[device guide](../device/README.md). The default policy requires post-quantum
+session establishment and Braid ratcheting.
 
-## Mental Model
-
-```mermaid
-flowchart LR
-  subgraph ThisDevice["This device"]
-    App["Your app"]
-    Client["Signal Protocol client"]
-    ProtocolStorage["Protocol storage"]
-    MessageState["App message state"]
-    LocalFiles["Local files/cache"]
-    App --> Client
-    Client <--> ProtocolStorage
-    App <--> MessageState
-    App <--> LocalFiles
-  end
-
-  Relay["Relay server"]
-  ObjectStorage["Remote object storage"]
-
-  subgraph RecipientPhone["Recipient phone"]
-    PhoneClient["Signal Protocol client"]
-    PhoneStorage["Device storage"]
-    PhoneClient <--> PhoneStorage
-  end
-
-  subgraph RecipientLaptop["Recipient laptop"]
-    LaptopClient["Signal Protocol client"]
-    LaptopStorage["Device storage"]
-    LaptopClient <--> LaptopStorage
-  end
-
-  subgraph LinkedDevice["Your linked device"]
-    LinkedClient["Signal Protocol client"]
-    LinkedStorage["Device storage"]
-    LinkedClient <--> LinkedStorage
-  end
-
-  Client <--> Relay
-  Client --> ObjectStorage
-  Relay <--> PhoneClient
-  Relay <--> LaptopClient
-  Relay <--> LinkedClient
-```
-
-- Each device owns its own app runtime, Signal Protocol client, protocol storage, message
-  state, and local file/cache storage.
-- The current `adapters.storage` API maps to the protocol facet of the target
-  `deviceStorage` model.
-- Your app owns decrypted message rows and local files after the Signal Protocol client
-  decrypts or stages them.
-- The relay connects devices, stores public keys, and carries encrypted
-  envelopes.
-- The remote object store carries encrypted attachment/media bytes only.
-
-You can operate these server-side interfaces through a shipped or custom
-adapter. You can instead use [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay) for
-managed encrypted delivery, private encrypted attachment storage, push wakes,
-and lifecycle controls. The SDK does not require the managed service. The
-[Relay pricing page](https://open-e2ee.dev/relay/pricing) defines its exact
-meters and limits.
-
-## Target Message-First API Preview
-
-This is the target DX the package moves toward. It appears here so app
-developers can understand the intended mental model. The current stable API
-still uses `storage`, `remoteObjectStore`, hooks, and transition-only media helpers.
-
-<!-- doc-snippet:planned target-message-api unshipped="@open-e2ee/signal-protocol-sdk/device/storage/memory" -->
-```ts
-// Real protocol and cryptography; simulated in-memory infrastructure.
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { createInMemoryDeviceStorage } from "@open-e2ee/signal-protocol-sdk/device/storage/memory";
-import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
-
-const relay = inMemoryRelay();
-
-const alice = await createSignalProtocolClient({
-  identity: { userId: "alice", deviceId: 1 },
-  adapters: {
-    deviceStorage: createInMemoryDeviceStorage(),
-    relay,
-  },
-});
-
-const bob = await createSignalProtocolClient({
-  identity: { userId: "bob", deviceId: 1 },
-  adapters: {
-    deviceStorage: createInMemoryDeviceStorage(),
-    relay,
-  },
-});
-
-const delivered = new Promise<void>((resolve) => {
-  bob.messages.subscribe(
-    { conversationId: "dm:alice_bob" },
-    async (message) => {
-      console.log("bob decrypted:", message.text);
-      resolve();
-    },
-  );
-});
-
-const plaintext = "hello from Alice";
-console.log("alice plaintext input:", plaintext);
-
-const sent = await alice.messages.send({
-  conversationId: "dm:alice_bob",
-  to: "bob",
-  text: plaintext,
-});
-
-console.log("relay-visible encrypted envelope:", {
-  envelopeId: sent.envelopeId,
-  ciphertextLength: sent.ciphertextLength,
-});
-
-await delivered;
-```
-
-The production shape uses the same message API with platform adapters:
-
-<!-- doc-snippet:planned target-message-api-platform-adapters unshipped="@open-e2ee/signal-protocol-sdk/device/storage/expo" -->
-```ts
-import { createHostedSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { createExpoDeviceStorage } from "@open-e2ee/signal-protocol-sdk/device/storage/expo";
-
-const signal = await createHostedSignalProtocolClient({
-  adapters: {
-    deviceStorage: createExpoDeviceStorage({ database, files }),
-  },
-  hosted: {
-    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
-    getIdentityAssertion,
-  },
-});
-```
-
-Attachments use the same message API. On Expo, pass the picker URI. The Signal
-Protocol client copies or persists the bytes through `deviceStorage.files`
-before upload, so retry can continue after restart:
-
-<!-- doc-snippet:skip requires-external-context -->
-```ts
-await signal.messages.send({
-  conversationId: "dm:alice_bob",
-  to: "bob",
-  text: "photo from Expo",
-  attachments: [
-    {
-      source: pickedPhoto.uri,
-      contentType: pickedPhoto.contentType,
-      fileName: pickedPhoto.fileName,
-      size: pickedPhoto.fileSize,
-    },
-  ],
-});
-```
-
-On the web, pass the browser file object:
-
-<!-- doc-snippet:skip requires-external-context -->
-```ts
-await signal.messages.send({
-  conversationId,
-  to: "bob",
-  text: "photo from the browser",
-  attachments: [
-    {
-      source: file,
-      contentType: file.type,
-      fileName: file.name,
-      size: file.size,
-    },
-  ],
-});
-```
-
-Once this API lands, this guide should teach the target path first and move the
-current `signal.media.*` examples into lower-level transition or migration docs.
-
-## Current Stable Local Clients
-
-Use the in-memory adapters for local examples and development. The demo sends
-while Bob is offline, inspects the relay-visible ciphertext, and then starts
-Bob's subscription to show the decrypted plaintext entering the app.
-
-<!-- doc-snippet:run getting-started-stable-local-clients expect="bob decrypted: alice: hello" -->
-```ts
-// Real protocol and cryptography; simulated in-memory infrastructure.
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
-import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
-
-const relay = inMemoryRelay();
-
-// The relay knows which devices exist, but it does not get plaintext.
-await relay.registerDevice("alice", {
-  encryptedDeviceName: new ArrayBuffer(0),
-});
-await relay.registerDevice("bob", { encryptedDeviceName: new ArrayBuffer(0) });
-
-// Each client represents one device. Its protocol storage is local to that device.
-const alice = await createSignalProtocolClient({
-  identity: { userId: "alice" },
-  adapters: { storage: inMemoryStore(), relay },
-});
-
-const bob = await createSignalProtocolClient({
-  identity: { userId: "bob" },
-  adapters: { storage: inMemoryStore(), relay },
-});
-
-await alice.syncToServer();
-await bob.syncToServer();
-
-// Send while Bob is offline so we can inspect what the relay stores.
-const sent = await alice.send("bob", "hello");
-console.log("alice sent:", sent.messageId);
-
-// The relay-visible envelope contains metadata plus ciphertext, not plaintext.
-const [queuedEnvelope] = relay.getPendingMessages("bob", 1);
-const ciphertextLength =
-  typeof queuedEnvelope.ciphertext === "string"
-    ? queuedEnvelope.ciphertext.length
-    : queuedEnvelope.ciphertext.byteLength;
-const ciphertextPreview =
-  typeof queuedEnvelope.ciphertext === "string"
-    ? `${queuedEnvelope.ciphertext.slice(0, 32)}...`
-    : `${queuedEnvelope.ciphertext.byteLength} encrypted bytes`;
-
-console.log("relay sees encrypted envelope:", {
-  messageType: queuedEnvelope.messageType,
-  ciphertextLength,
-  ciphertextPreview,
-});
-
-const decrypted = new Promise<void>((resolve) => {
-  // Plaintext enters your app only after Bob's Signal Protocol client decrypts it.
-  bob.registerHook("onMessageDecrypted", async (message) => {
-    console.log("bob decrypted:", `${message.senderId}: ${message.content}`);
-    resolve();
-  });
-});
-
-// Starting the subscription delivers Bob's queued encrypted envelope.
-bob.startRelaySubscription();
-await decrypted;
-```
-
-Example output:
-
-```text
-alice sent: msg-1
-relay sees encrypted envelope: {
-  messageType: 'prekey_bundle',
-  ciphertextLength: 3464,
-  ciphertextPreview: '<base64 ciphertext preview>...'
-}
-bob decrypted: alice: hello
-```
-
-The in-memory relay lets the example inspect what a server can see. The relay sees
-metadata plus encrypted envelope bytes. It does not receive Bob's decrypted
-message content. The first message often uses `prekey_bundle` to establish a
-session, and later messages use `ciphertext`.
-
-## Production Client
-
-Use the protocol storage adapter for your runtime and connect to the OpenE2EE
-Signal Protocol Relay. For an Expo app, that is Expo local storage and the
-hosted client:
+## Expo Client
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
@@ -325,22 +50,24 @@ import { createHostedSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
 
 const signal = await createHostedSignalProtocolClient({
-  adapters: {
-    // Expo storage owns this device's private keys and session state.
-    storage: await expoStore(),
-  },
+  adapters: { storage: await expoStore() },
   hosted: {
-    // The environment-scoped connection URL from the OpenE2EE console.
     relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
-    // Returns a short-lived signed assertion for the signed-in user.
     getIdentityAssertion,
   },
 });
 ```
 
-Production bootstrapping must register or provision the current device with the
-relay before user-level sends can discover it. Device registration and
-provisioning belong to the application bootstrap.
+Complete the [Expo database setup](../local/store/expo/README.md) before creating
+the client. Use a Sandbox connection URL during development. Keep each
+account's device-local state separate.
+
+## Custom Transport
+
+Advanced integrations can use `createSignalProtocolClient()` with an
+application-owned `SignalProtocolRelayServer` client transport. That transport
+connects to an authenticated backend. The [interface guide](./INTERFACES.md)
+defines the contract. The published SDK contains no relay server implementation.
 
 ## Receive Messages
 
@@ -392,21 +119,17 @@ await signal.send("bob", {
 Add a remote object store when your app sends encrypted attachments. The
 `remoteObjectStore` adapter brokers encrypted byte objects rather than
 plaintext files.
-The final public DX should not expose both `signal.media.*` and message
-attachment helpers. The planned replacement is message-scoped attachment
-handling.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import { media } from "@open-e2ee/signal-protocol-sdk";
+import { createHostedSignalProtocolClient, media } from "@open-e2ee/signal-protocol-sdk";
 import { convexR2ObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2";
 import { api } from "../convex/_generated/api";
 
-const signal = await createSignalProtocolClient({
-  identity: { userId },
+const signal = await createHostedSignalProtocolClient({
+  hosted: { relayUrl, getIdentityAssertion },
   adapters: {
     storage,
-    relay,
     remoteObjectStore: convexR2ObjectStore({
       convex,
       api: api.signalObjectStore,
@@ -528,8 +251,7 @@ through a partial-byte store. Native background download code should implement t
 
 For background-safe uploads, use the durable client operation. The current API
 persists bounded recovery metadata through the existing Signal Protocol storage
-adapter. The target message-first API moves that responsibility behind
-`deviceStorage.messages`. The operation tries the upload when it is due and
+adapter. The operation tries the upload when it is due and
 returns either a completed pointer or a pending job id for later recovery:
 
 <!-- doc-snippet:skip requires-external-context -->
@@ -722,6 +444,6 @@ Leave it unset unless your product has a specific compatibility decision. See
 
 - [Client Composition](./CLIENT_COMPOSITION.md): app setup and adapter shape.
 - [Protocol Policy](./PROTOCOL_POLICY.md): security policy choices.
-- [Adapters](../ADAPTERS.md): implementing current custom storage, relay, or blob
-  stores before the target `deviceStorage` and `remoteObjectStore` API lands.
+- [Adapters](../ADAPTERS.md): device-local storage, client transports, and remote
+  object stores.
 - [API Reference](./api/README.md): generated TypeScript API docs.

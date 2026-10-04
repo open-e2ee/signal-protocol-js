@@ -11,7 +11,15 @@ backend stores opaque encrypted group state and sequences changes, while each
 member device owns group secrets, decrypted state, authorization credentials,
 and sender-key rotation.
 
-## Usage
+## Client usage
+
+The OpenE2EE Signal Protocol Relay supplies group authorization and encrypted
+state storage. The SDK contains the group client, local cryptography, and public
+transport types. Server authorization engines and credential issuers are outside
+the published package.
+
+The following advanced example composes an application-owned group transport.
+Its credential callbacks request credentials from the authenticated service.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts

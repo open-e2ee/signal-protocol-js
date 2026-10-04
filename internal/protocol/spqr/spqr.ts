@@ -18,7 +18,7 @@
  * | SPQR     | ML-KEM-768     | 3 (192-bit)| Continuous ratchet   |
  *
  * **Rationale for ML-KEM-768 in SPQR:**
- * - Continuous ratchet sends key material every ~50 messages
+ * - Braid spreads each key exchange across multiple messages
  * - ML-KEM-768: 1,088 bytes/ratchet vs ML-KEM-1024: 1,568 bytes
  * - Hybrid mode (EC + PQ) provides defense-in-depth anyway
  * - NIST recommends Level 3 for general-purpose use

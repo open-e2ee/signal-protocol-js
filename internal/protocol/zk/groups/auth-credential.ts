@@ -22,16 +22,10 @@ import {
   type IssuanceProof,
   VerificationFailure,
 } from '../credentials/issuance';
-import {
-  PresentationProofBuilder,
-  PresentationProofVerifier,
-  type PresentationProof,
-} from '../credentials/presentation';
-import type {
-  Credential,
-  CredentialKeyPair,
-  CredentialPublicKey,
-} from '../credentials/credentials';
+import { PresentationProofBuilder, type PresentationProof } from '../credentials/presentation';
+
+import type { Credential, CredentialPublicKey } from '../credentials/credentials';
+
 import type { PublicAttribute } from '../credentials/attributes';
 import {
   type UidStruct,
@@ -39,12 +33,14 @@ import {
   isNilUuid,
   uidStructFromServiceId,
 } from './uid-struct';
-import { type UidEncCiphertext, UidEncryptionDomain } from './uid-encryption';
-import { ProfileKeyEncryptionDomain } from './profile-key-encryption';
+import { type UidEncCiphertext } from './uid-encryption';
+
+
 import type { GroupSecretParams, GroupPublicParams } from './group-params';
 import { SECONDS_PER_DAY } from './group-params';
-import { scalarToBytes, bytesToScalarCanonical } from '../proofs/sho';
-import { PublicKey, Ciphertext } from '../credentials/attributes';
+import { bytesToScalarCanonical } from '../proofs/sho';
+
+
 export {};
 const enc = new TextEncoder();
 
@@ -140,52 +136,6 @@ export interface AuthCredentialPresentation {
   readonly pniCiphertext?: UidEncCiphertext;
   /** Day-aligned epoch timestamp matching the credential. */
   readonly redemptionTime: number;
-}
-
-// ---------------------------------------------------------------------------
-// Issuance (server side)
-// ---------------------------------------------------------------------------
-
-/**
- * Issue an AuthCredentialWithPni for the given ACI, PNI, and redemption time.
- *
- * Called by the server. Produces an issuance proof that the client can verify
- * to extract the credential.
- *
- * The builder accumulates attributes in the same order used by the client
- * during verification: ACI (hidden), PNI (hidden), redemptionTime (public).
- *
- * CRITICAL: Use different randomness for each issuance. Reusing randomness
- * effectively reveals the server's private key.
- *
- * @param credentialKeyPair - The server's credential signing key pair
- * @param aci - The user's ACI ServiceId
- * @param pni - The user's PNI ServiceId
- * @param redemptionTime - Day-aligned epoch timestamp (seconds)
- * @param randomness - At least 32 bytes of cryptographically secure randomness
- * @returns The issuance response to send to the client
- */
-export function issueAuthCredential(
-  credentialKeyPair: CredentialKeyPair,
-  aci: ServiceId,
-  pni: ServiceId | undefined,
-  redemptionTime: number,
-  randomness: Uint8Array
-): AuthCredentialWithPniResponse {
-  if (isNilUuid(aci.uuid) || (pni !== undefined && isNilUuid(pni.uuid))) {
-    throw new Error('Auth credential identifiers must not use the nil UUID');
-  }
-  const aciUid = uidStructFromServiceId(aci);
-  const pniUid = pni === undefined ? undefined : uidStructFromServiceId(pni);
-
-  const builder = new IssuanceProofBuilder(CREDENTIAL_LABEL);
-  builder.addAttribute(aciUid);
-  if (pniUid !== undefined) builder.addAttribute(pniUid);
-  builder.addPublicAttribute(redemptionTimePublicAttribute(redemptionTime));
-
-  const issuanceProof = builder.issue(credentialKeyPair, randomness);
-
-  return { issuanceProof, pniPresent: pniUid !== undefined, redemptionTime };
 }
 
 // ---------------------------------------------------------------------------
@@ -295,96 +245,10 @@ export function presentAuthCredential(
 }
 
 // ---------------------------------------------------------------------------
-// Verification (server side)
-// ---------------------------------------------------------------------------
-
-/**
- * Verify an AuthCredentialPresentation against the server's key pair and
- * the group's public parameters.
- *
- * Called by the server. Checks that the presentation proof is valid. A valid
- * proof means the client holds a credential that was issued by this server
- * over a valid (ACI, PNI, redemptionTime) tuple. It also means the ACI/PNI
- * ciphertexts in the presentation are consistent with those in the
- * credential.
- *
- * Applies an asymmetric redemption window:
- * `[redemptionTime - 1 day, redemptionTime + 2 days]` (inclusive).
- *
- * @param credentialKeyPair - The server's credential signing key pair
- * @param groupPublicParams - The group's public parameters
- * @param presentation - The client's presentation proof
- * @param currentTime - Current epoch seconds for redemption time validation
- * @returns true if the presentation is valid
- * @throws {VerificationFailure} If the presentation proof is invalid or expired
- */
-export function verifyAuthCredentialPresentation(
-  credentialKeyPair: CredentialKeyPair,
-  groupPublicParams: GroupPublicParams,
-  presentation: AuthCredentialPresentation,
-  currentTime: number
-): boolean {
-  const { proof, aciCiphertext, pniCiphertext, redemptionTime } = presentation;
-
-  // Accept [redemptionTime - 1 day, redemptionTime + 2 days].
-  const acceptableStart = redemptionTime - SECONDS_PER_DAY;
-  const acceptableEnd = redemptionTime + 2 * SECONDS_PER_DAY;
-  if (currentTime < acceptableStart || currentTime > acceptableEnd) {
-    throw new VerificationFailure();
-  }
-
-  const verifier = new PresentationProofVerifier(CREDENTIAL_LABEL);
-  verifier.addAttribute(aciCiphertext, groupPublicParams.uidEncPublicKey);
-  if (pniCiphertext !== undefined) {
-    verifier.addAttribute(pniCiphertext, groupPublicParams.uidEncPublicKey);
-  }
-  verifier.addPublicAttribute(redemptionTimePublicAttribute(redemptionTime));
-
-  verifier.verify(credentialKeyPair, proof);
-
-  return true;
-}
-
-// ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
 
 const Point = RistrettoPoint;
-
-/**
- * Serialize an AuthCredentialWithPniResponse to bytes.
- *
- * Format:
- *   [redemptionTime: 8 bytes BE u64]
- *   [credential.t: 32 bytes scalar LE]
- *   [credential.U: 32 bytes point]
- *   [credential.V: 32 bytes point]
- *   [pokshoProof: remaining bytes]
- */
-export function serializeAuthCredentialResponse(
-  response: AuthCredentialWithPniResponse
-): Uint8Array {
-  const { issuanceProof, pniPresent, redemptionTime } = response;
-  const tBytes = scalarToBytes(issuanceProof.credential.t);
-  const uBytes = issuanceProof.credential.U.toBytes();
-  const vBytes = issuanceProof.credential.V.toBytes();
-  const proofBytes = issuanceProof.pokshoProof;
-  const expectedProofLength = pniPresent ? 320 : 256;
-  if (proofBytes.length !== expectedProofLength) {
-    throw new Error(
-      `serializeAuthCredentialResponse: expected ${expectedProofLength}-byte proof`
-    );
-  }
-
-  const buf = new Uint8Array(8 + 32 + 32 + 32 + proofBytes.length);
-  const view = new DataView(buf.buffer);
-  view.setBigUint64(0, BigInt(redemptionTime), false);
-  buf.set(tBytes, 8);
-  buf.set(uBytes, 40);
-  buf.set(vBytes, 72);
-  buf.set(proofBytes, 104);
-  return buf;
-}
 
 /**
  * Deserialize an AuthCredentialWithPniResponse from bytes.
@@ -484,86 +348,6 @@ export function serializeAuthCredentialPresentation(
 }
 
 /**
- * Deserialize an AuthCredentialPresentation from bytes.
- */
-export function deserializeAuthCredentialPresentation(
-  bytes: Uint8Array
-): AuthCredentialPresentation {
-  // Minimum tail is the two-point ACI ciphertext. PNI adds two more points.
-  const MIN_LEN = 176;
-  if (bytes.length < MIN_LEN) {
-    throw new Error('deserializeAuthCredentialPresentation: too short');
-  }
-
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let offset = 0;
-
-  const redemptionTime = Number(view.getBigUint64(offset, false));
-  offset += 8;
-  const C_x0 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-  const C_x1 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-  const C_V = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-
-  const cyCount = view.getUint32(offset, true);
-  offset += 4;
-  if (cyCount > 16 || offset + cyCount * 32 + 4 + 64 > bytes.length) {
-    throw new Error('deserializeAuthCredentialPresentation: cyCount out of bounds');
-  }
-  const C_y: RistrettoPoint[] = [];
-  for (let i = 0; i < cyCount; i++) {
-    C_y.push(Point.fromBytes(bytes.subarray(offset, offset + 32)));
-    offset += 32;
-  }
-
-  const proofLen = view.getUint32(offset, true);
-  offset += 4;
-  const ciphertextTailLength = bytes.length - (offset + proofLen);
-  if (ciphertextTailLength > 128) {
-    throw new Error('deserializeAuthCredentialPresentation: trailing bytes');
-  }
-  if (ciphertextTailLength !== 64 && ciphertextTailLength !== 128) {
-    throw new Error('deserializeAuthCredentialPresentation: invalid ciphertext tail');
-  }
-  const pniPresent = ciphertextTailLength === 128;
-  const expectedCyCount = pniPresent ? 5 : 3;
-  if (cyCount !== expectedCyCount) {
-    throw new Error('deserializeAuthCredentialPresentation: attribute count mismatch');
-  }
-  if (offset + proofLen + ciphertextTailLength !== bytes.length) {
-    throw new Error('deserializeAuthCredentialPresentation: proofLen out of bounds');
-  }
-  const pokshoProof = bytes.slice(offset, offset + proofLen);
-  offset += proofLen;
-
-  const aciE_A1 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-  const aciE_A2 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-  offset += 32;
-  let pniCiphertext: UidEncCiphertext | undefined;
-  if (pniPresent) {
-    const pniE_A1 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-    offset += 32;
-    const pniE_A2 = Point.fromBytes(bytes.subarray(offset, offset + 32));
-    offset += 32;
-    pniCiphertext = new Ciphertext(pniE_A1, pniE_A2, UidEncryptionDomain);
-  }
-
-  if (offset !== bytes.length) {
-    throw new Error('deserializeAuthCredentialPresentation: trailing bytes');
-  }
-
-  return {
-    proof: { C_x0, C_x1, C_V, C_y, pokshoProof },
-    aciCiphertext: new Ciphertext(aciE_A1, aciE_A2, UidEncryptionDomain),
-    pniCiphertext,
-    redemptionTime,
-  };
-}
-
-/**
  * Serialize GroupPublicParams to bytes.
  *
  * Format: [groupId: 32] [uidEncPubKey.A: 32] [profileKeyEncPubKey.A: 32]
@@ -574,22 +358,4 @@ export function serializeGroupPublicParams(params: GroupPublicParams): Uint8Arra
   buf.set(params.uidEncPublicKey.A.toBytes(), 32);
   buf.set(params.profileKeyEncPublicKey.A.toBytes(), 64);
   return buf;
-}
-
-/**
- * Deserialize GroupPublicParams from bytes.
- */
-export function deserializeGroupPublicParams(bytes: Uint8Array): GroupPublicParams {
-  if (bytes.length < 96) {
-    throw new Error('deserializeGroupPublicParams: too short');
-  }
-  const groupId = bytes.slice(0, 32);
-  const uidEncA = Point.fromBytes(bytes.subarray(32, 64));
-  const profileKeyEncA = Point.fromBytes(bytes.subarray(64, 96));
-
-  return {
-    groupId,
-    uidEncPublicKey: new PublicKey(uidEncA, UidEncryptionDomain),
-    profileKeyEncPublicKey: new PublicKey(profileKeyEncA, ProfileKeyEncryptionDomain),
-  };
 }

@@ -10,18 +10,15 @@
  *
  * @example Basic usage
  * ```typescript
- * import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
- * import { inMemoryStore } from '@open-e2ee/signal-protocol-sdk/local/store/memory';
- * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
+ * import { createHostedSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
  *
- * const relay = inMemoryRelay();
- * const signal = await createSignalProtocolClient({
- *   identity: { userId: 'alice' },
- *   adapters: { storage: inMemoryStore(), relay },
+ * // Supply a device-local store and the configured identity-provider callback.
+ * const signal = await createHostedSignalProtocolClient({
+ *   adapters: { storage },
+ *   hosted: { relayUrl, getIdentityAssertion },
  * });
  *
- * await signal.syncToServer();
- * await signal.send('bob', 'Hello!');
+ * await signal.send(recipientUserId, 'Hello!');
  * ```
  *
  * @example With product security policy
@@ -73,7 +70,7 @@ import {
   deserializeSenderCertificate,
   validateSenderCertificate,
 } from '../internal/protocol/sealed-sender';
-import type { SignalProtocolClientHooks } from './event-hooks';
+import { deferHooks, type SignalProtocolClientHooks } from './event-hooks';
 import { ProtocolAddress } from '../types/address';
 import {
   getActiveIdentityTypes,
@@ -101,6 +98,8 @@ import {
 } from './content-adapter';
 // Note: group utilities (isGroupId, extractGroupId, createGroupId) are used by SignalProtocolServiceCipher
 import { isGroupId } from '../internal/groups';
+import { GroupSenderKeyOperations } from './group-sender-key-operations';
+import { createGroupReceiveAuthorizer, type GroupReceiveAuthorizer } from './group-receive-authorization';
 import { profileKeyExchange } from './profile-key-exchange';
 import {
   SignalProtocolServiceCipher,
@@ -225,6 +224,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
   // Group messaging support (Sender Keys)
   private readonly senderKeyManager: SenderKeyManager;
+  private readonly groupSenderKeys: GroupSenderKeyOperations;
 
   // Group state management
   private groupManager?: GroupManager;
@@ -233,6 +233,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     endorsementManager?: GroupAuthority['endorsementManager'];
   };
   private groupStore?: GroupStateStore;
+  private groupReceiveAuthorizer?: GroupReceiveAuthorizer;
 
   // Cipher coordination (encrypts/decrypts, routes to appropriate cipher)
   private readonly cipher: SignalProtocolServiceCipher;
@@ -377,6 +378,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
     // Initialize Sender Key manager for group messaging
     this.senderKeyManager = new SenderKeyManager(this._storage, config?.senderKeys, this.logger);
+    this.groupSenderKeys = new GroupSenderKeyOperations(this._storage, userId, deviceId);
 
     // Initialize the group manager if configured
     if (config?.groups) {
@@ -434,8 +436,15 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
           profileKeyCredentialPublicKey: trustRoot.profileKeyCredentialPublicKey,
           profileKey: groupConfig.profileKey,
           onSenderKeyRotation: async (groupId) => {
-            // Forward to existing sender key rotation
-            await this.rotateGroupSenderKey(groupId as string);
+            await this.groupSenderKeys.run(groupId, (rawGroupId) =>
+              GroupOps.rotateGroupSenderKey(
+                this.ctx,
+                this.senderKeyManager,
+                rawGroupId,
+                this.config.onGroupSenderKeyRotated,
+                { distributionPending: true }
+              )
+            );
           },
           onEndorsementsInvalidated: endorsementManager
             ? async (groupId) => {
@@ -514,24 +523,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     // Set up group secret params provider. Derives params from master key in store
     if (this.groupStore) {
       const store = this.groupStore;
-      const resolveAcis = config.groups?.resolveAciBytesByUserIds;
-      const localAci = config.aci?.uuid;
-      this.cipher.setGroupReceiveAuthorizer(async (groupId, senderId) => {
-        if (!resolveAcis || !localAci) {
-          throw new Error('Group reception requires authenticated account ACI resolution');
-        }
-        const state = await store.getGroupState(groupId);
-        const senderAci = (await resolveAcis([senderId])).get(senderId);
-        if (
-          !state || !senderAci ||
-          !state.members.some((member) => constantTimeEqual(member.aciBytes, senderAci)) ||
-          !state.members.some((member) => constantTimeEqual(member.aciBytes, localAci))
-        ) {
-          throw new Error(
-            'Group sender and recipient must be members of the verified local group'
-          );
-        }
-      });
+      this.groupReceiveAuthorizer = createGroupReceiveAuthorizer(
+        store,
+        config.aci?.uuid,
+        config.groups?.resolveAciBytesByUserIds
+      );
+      this.cipher.setGroupReceiveAuthorizer(this.groupReceiveAuthorizer);
       this.cipher.setGroupSecretParamsProvider(async (groupId: string) => {
         const masterKey = await store.getMasterKey(groupId);
         if (!masterKey) return null;
@@ -792,13 +789,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     work: RelayWork,
     ctx: SignalProtocolClientContext
   ): RetryOps.RetryCallbacks {
-    const sessions = this.sendSessionCallbacks(() => ctx, work.stopSignal);
     return {
       archiveSession: (address) => SessionOps.archiveSession(ctx, address),
       establishSession: (address, bundle) =>
         SessionOps.establishSession(ctx, this.sesameManager, address, bundle),
       send: (recipientId, content, options) =>
-        this.sendWithSessions(recipientId, content, options, sessions, work.stopSignal),
+        this.sendWithContext(recipientId, content, options, ctx, work.stopSignal),
       forcePreKeyRotation: () => this.regeneratePreKeysWithFreshIds(),
     };
   }
@@ -919,6 +915,27 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   }
 
   /**
+   * Run a task with hooks that the task queues and this method calls after
+   * the task settles. A task that holds a group's Sender Key lock uses it, so
+   * a hook can call a client method that takes the same lock.
+   */
+  private async withDeferredHooks<T>(
+    context: SignalProtocolClientContext,
+    task: (context: SignalProtocolClientContext) => Promise<T>
+  ): Promise<T> {
+    const deferred = deferHooks(context.hooks);
+    let result: T;
+    try {
+      result = await task({ ...context, hooks: deferred.hooks });
+    } catch (error) {
+      await deferred.flush().catch(() => undefined);
+      throw error;
+    }
+    await deferred.flush();
+    return result;
+  }
+
+  /**
    * Get relay subscription config
    */
   private get relaySubscriptionConfig(): RelaySubscriptionOps.RelaySubscriptionConfig {
@@ -944,7 +961,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * @example
    * ```typescript
    * import { DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
-   * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
    *
    * // Local-only primary device.
    * const signal = await DefaultSignalProtocolClient.create('user-123', {
@@ -957,8 +973,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    *   storage: provisionedLinkedDeviceStorage
    * });
    *
-   * // With relay sync.
-   * const relay = inMemoryRelay();
+   * // With an application-owned authenticated relay transport.
+   * const relay = appRelayTransport;
    * const signal = await DefaultSignalProtocolClient.create('user-123', {
    *   storage,
    *   relay,
@@ -1830,18 +1846,18 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     content: DataMessageInput | string | Uint8Array,
     options?: SendOptions
   ): Promise<SendResult> {
-    return this.sendWithSessions(recipientId, content, options, undefined, undefined);
+    return this.sendWithContext(recipientId, content, options, this.ctx, undefined);
   }
 
   /**
-   * Send with the given session callbacks, or with the client's own if none.
+   * Send with session callbacks whose hooks run through the given context.
    * The stop signal of relay work ends a wait for the recipient's lock.
    */
-  private async sendWithSessions(
+  private async sendWithContext(
     recipientId: string,
     content: DataMessageInput | string | Uint8Array,
     options: SendOptions | undefined,
-    sessions: SendSessionCallbacks | undefined,
+    context: SignalProtocolClientContext,
     stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
     // Normalize all inputs to Uint8Array before calling cipher.encrypt()
@@ -1867,16 +1883,21 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       plaintextBytes = content; // already Uint8Array
     }
 
-    const result = await this.cipher.encrypt(
-      recipientId,
-      plaintextBytes,
-      {
-        ...options,
-        ...(clientTimestamp !== undefined && { timestamp: clientTimestamp }),
-      },
-      sessions,
-      stopSignal
-    );
+    const encrypt = (sendContext: SignalProtocolClientContext) =>
+      this.cipher.encrypt(
+        recipientId,
+        plaintextBytes,
+        {
+          ...options,
+          ...(clientTimestamp !== undefined && { timestamp: clientTimestamp }),
+        },
+        this.sendSessionCallbacks(() => sendContext, stopSignal),
+        stopSignal
+      );
+    // A group send sets up sessions while it holds the group's Sender Key lock.
+    const result = await (isGroupId(recipientId)
+      ? this.withDeferredHooks(context, encrypt)
+      : encrypt(context));
     if (profileKey) await profileKeys?.delivered(recipientId, profileKey);
     return clientTimestamp !== undefined ? { ...result, clientTimestamp } : result;
   }
@@ -2120,7 +2141,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
           .run((work) => {
             const ctx = this.relayWorkContext(work);
             return RelaySubscriptionOps.handleRelayMessage(
-              { ...ctx, cipher: this.cipher },
+              { ...ctx, cipher: this.cipher, stopSignal: work.stopSignal },
               envelope,
               this.relaySubscriptionState,
               this.relaySubscriptionCallbacks(ctx),
@@ -2669,7 +2690,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     senderKeyId: string;
     distributionMessage: SenderKeyDistributionMessage;
   }> {
-    return GroupOps.createGroupSenderKey(this.ctx, this.senderKeyManager, groupId);
+    return this.groupSenderKeys.run(groupId, (rawGroupId) =>
+      GroupOps.createGroupSenderKey(this.ctx, this.senderKeyManager, rawGroupId)
+    );
   }
 
   /**
@@ -2701,14 +2724,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     senderDeviceId: number,
     message: SenderKeyDistributionMessage
   ): Promise<void> {
-    return GroupOps.processSenderKeyDistribution(
-      this.ctx,
-      this.senderKeyManager,
-      groupId,
-      senderId,
-      senderDeviceId,
-      message
-    );
+    return this.groupSenderKeys.run(groupId, async (rawGroupId) => {
+      await this.groupReceiveAuthorizer?.(rawGroupId, senderId, 'distribution');
+      return GroupOps.processSenderKeyDistribution(
+        this.ctx, this.senderKeyManager, rawGroupId, senderId, senderDeviceId, message
+      );
+    });
   }
 
   /**
@@ -2734,14 +2755,16 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * ```
    */
   async encryptGroupMessage(groupId: string, plaintext: string): Promise<Uint8Array> {
-    return GroupOps.encryptGroupMessage(
-      this.ctx,
-      this.senderKeyManager,
-      groupId,
-      plaintext,
-      this.groupManager
-        ? (candidateGroupId) => this.groupManager!.assertGroupSendAllowed(candidateGroupId)
-        : undefined
+    return this.groupSenderKeys.run(groupId, (rawGroupId) =>
+      GroupOps.encryptGroupMessage(
+        this.ctx,
+        this.senderKeyManager,
+        rawGroupId,
+        plaintext,
+        this.groupManager
+          ? (candidateGroupId) => this.groupManager!.assertGroupSendAllowed(candidateGroupId)
+          : undefined
+      )
     );
   }
 
@@ -2774,14 +2797,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     senderDeviceId: number,
     framedMessage: Uint8Array
   ): Promise<string> {
-    return GroupOps.decryptGroupMessage(
-      this.ctx,
-      this.senderKeyManager,
-      groupId,
-      senderId,
-      senderDeviceId,
-      framedMessage
-    );
+    return this.groupSenderKeys.run(groupId, async (rawGroupId) => {
+      await this.groupReceiveAuthorizer?.(rawGroupId, senderId, 'message');
+      return GroupOps.decryptGroupMessage(
+        this.ctx, this.senderKeyManager, rawGroupId, senderId, senderDeviceId, framedMessage
+      );
+    });
   }
 
   /**
@@ -2844,11 +2865,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     senderKeyId: string;
     distributionMessage: SenderKeyDistributionMessage;
   }> {
-    return GroupOps.rotateGroupSenderKey(
-      this.ctx,
-      this.senderKeyManager,
-      groupId,
-      this.config.onGroupSenderKeyRotated
+    return this.groupSenderKeys.run(groupId, (rawGroupId) =>
+      GroupOps.rotateGroupSenderKey(
+        this.ctx, this.senderKeyManager, rawGroupId, this.config.onGroupSenderKeyRotated
+      )
     );
   }
 
@@ -2858,7 +2878,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * @param groupId - Group identifier
    */
   async deleteGroupSenderKey(groupId: string): Promise<void> {
-    return GroupOps.deleteGroupSenderKey(this.ctx, this.senderKeyManager, groupId);
+    return this.groupSenderKeys.run(groupId, (rawGroupId) =>
+      GroupOps.deleteGroupSenderKey(this.ctx, this.senderKeyManager, rawGroupId)
+    );
   }
 
   /**
@@ -2868,7 +2890,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * @returns True if sender key exists for this device
    */
   async hasGroupSenderKey(groupId: string): Promise<boolean> {
-    return GroupOps.hasGroupSenderKey(this.ctx, groupId);
+    return this.groupSenderKeys.run(groupId, (rawGroupId) =>
+      GroupOps.hasGroupSenderKey(this.ctx, rawGroupId)
+    );
   }
 
   /**
@@ -2882,7 +2906,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   async getGroupSenderKeyDistribution(
     groupId: string
   ): Promise<SenderKeyDistributionMessage | null> {
-    return GroupOps.getGroupSenderKeyDistribution(this.ctx, groupId);
+    return this.groupSenderKeys.run(groupId, (rawGroupId) =>
+      GroupOps.getGroupSenderKeyDistribution(this.ctx, rawGroupId)
+    );
   }
 
   /**
@@ -2906,25 +2932,30 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * ```
    */
   async distributeSenderKeyToUser(groupId: string, recipientUserId: string): Promise<void> {
-    // Do not distribute to self
-    if (recipientUserId === this.userId) {
-      return;
-    }
+    if (recipientUserId === this.userId) return;
+    return this.withDeferredHooks(this.ctx, (context) =>
+      this.groupSenderKeys.run(groupId, async (rawGroupId) => {
+        const distribution = await this.getOrCreateSenderKeyDistribution(rawGroupId);
+        await this.sendSenderKeyDistribution(rawGroupId, recipientUserId, distribution, context);
+      })
+    );
+  }
 
-    // Get or create sender key
-    let distribution = await this.getGroupSenderKeyDistribution(groupId);
-    if (!distribution) {
-      const result = await this.createGroupSenderKey(groupId);
-      distribution = result.distributionMessage;
-    }
+  /** Called only while this client holds the group's Sender Key operation. */
+  private async getOrCreateSenderKeyDistribution(groupId: string): Promise<SenderKeyDistributionMessage> {
+    const distribution = await GroupOps.getGroupSenderKeyDistribution(this.ctx, groupId);
+    if (distribution) return distribution;
+    return (await GroupOps.createGroupSenderKey(this.ctx, this.senderKeyManager, groupId)).distributionMessage;
+  }
 
-    // Create the distribution payload using ProtoContentData format
-    // senderKeyDistributionMessage is a string field containing JSON-encoded SKDM data
+  private async sendSenderKeyDistribution(
+    groupId: string,
+    recipientUserId: string,
+    distribution: SenderKeyDistributionMessage,
+    context: SignalProtocolClientContext
+  ): Promise<void> {
     const payload = this.contentAdapter.serializeSenderKeyDistributionText(groupId, distribution);
-
-    // Send via pairwise encryption (SESAME handles multi-device)
-    await this.send(recipientUserId, payload);
-
+    await this.sendWithContext(recipientUserId, payload, undefined, context, undefined);
     this.logger.debug('Distributed sender key to user', {
       category: 'E2EE',
       data: { groupId, recipientUserId, generation: distribution.generation },
@@ -2948,38 +2979,36 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * ```
    */
   async distributeGroupSenderKey(groupId: string, memberUserIds: string[]): Promise<void> {
-    // Filter out self
     const recipients = memberUserIds.filter((id) => id !== this.userId);
-
-    if (recipients.length === 0) {
-      this.logger.debug('No recipients for sender key distribution', {
-        category: 'E2EE',
-        data: { groupId },
-      });
-      return;
-    }
-
-    // Distribute to each member
-    const results = await Promise.allSettled(
-      recipients.map((userId) => this.distributeSenderKeyToUser(groupId, userId))
-    );
-
-    // Count successes and failures
-    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
-    const failed = results.filter((r) => r.status === 'rejected').length;
-
-    this.logger.debug('Distributed sender key to group', {
-      category: 'E2EE',
-      data: { groupId, succeeded, failed, total: recipients.length },
-    });
-
-    // If all failed, throw an error
-    if (failed === recipients.length) {
-      throw new EncryptionError(
-        `Failed to distribute sender key to any group members`,
-        EncryptionErrorCode.ENCRYPTION_FAILED
+    if (recipients.length === 0) return;
+    return this.withDeferredHooks(this.ctx, (context) =>
+      this.groupSenderKeys.run(groupId, async (rawGroupId) => {
+      const distribution = await this.getOrCreateSenderKeyDistribution(rawGroupId);
+      // Distribute to each member
+      const results = await Promise.allSettled(
+        recipients.map((userId) =>
+          this.sendSenderKeyDistribution(rawGroupId, userId, distribution, context)
+        )
       );
-    }
+
+      // Count successes and failures
+      const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+      const failed = results.filter((r) => r.status === 'rejected').length;
+
+      this.logger.debug('Distributed sender key to group', {
+        category: 'E2EE',
+        data: { groupId: rawGroupId, succeeded, failed, total: recipients.length },
+      });
+
+      // If all failed, throw an error
+      if (failed === recipients.length) {
+        throw new EncryptionError(
+          `Failed to distribute sender key to any group members`,
+          EncryptionErrorCode.ENCRYPTION_FAILED
+        );
+      }
+    })
+    );
   }
 
   // ============================================================================
@@ -3089,7 +3118,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     generation: number;
     skippedKeysCount: number;
   }> {
-    return this.senderKeyManager.getStats(groupId, senderId, senderDeviceId);
+    return this.groupSenderKeys.run(groupId, (rawGroupId) =>
+      this.senderKeyManager.getStats(rawGroupId, senderId, senderDeviceId)
+    );
   }
 
   /**

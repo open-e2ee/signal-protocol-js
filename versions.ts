@@ -47,20 +47,20 @@ export const MESSAGE_FORMAT = 'v2';
 export const SESSION_FORMAT = 'v4';
 
 /** Wire format for SenderKeyState */
-export const SENDER_KEY_FORMAT = 'v1';
+export const SENDER_KEY_FORMAT = 'v2';
 
 /**
  * Sender Key Message version byte
  *
  * Format: ((message_version & 0xF) << 4) | senderkey_message_version
- * Current: (3 << 4) | 3 = 0x33
+ * Current: (4 << 4) | 4 = 0x44
  *
  * This byte prefixes signed message data for:
  * - Version detection and future migration
  * - Consistent version detection across message codecs
  *
  */
-export const SENDER_KEY_MESSAGE_VERSION = 0x33;
+export const SENDER_KEY_MESSAGE_VERSION = 0x44;
 
 // =============================================================================
 // Version Utilities

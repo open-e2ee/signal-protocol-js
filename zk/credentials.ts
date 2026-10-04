@@ -1,8 +1,8 @@
 /**
  * Public zkcredential API.
  *
- * This is the supported import surface for credential serialization and key
- * helpers used by server wrappers and advanced integrations.
+ * Client integrations use this module for credential response verification,
+ * presentation creation, and public-key serialization.
  */
 
 export {};

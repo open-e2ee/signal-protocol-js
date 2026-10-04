@@ -578,7 +578,7 @@ Protocol address
 
 ### deleteSkippedSenderKey()
 
-> **deleteSkippedSenderKey**(`groupId`, `senderId`, `senderDeviceId`, `chainIndex`): `Promise`\<`void`\>
+> **deleteSkippedSenderKey**(`groupId`, `senderId`, `senderDeviceId`, `senderKeyId`, `chainIndex`): `Promise`\<`void`\>
 
 Delete skipped message key after use.
 
@@ -603,6 +603,12 @@ Sender user identifier
 `number`
 
 Sender device identifier
+
+##### senderKeyId
+
+`string`
+
+Distribution identifier for this sender-key generation
 
 ##### chainIndex
 
@@ -1314,7 +1320,7 @@ Array of session records for all of this user's devices
 
 ### getSkippedSenderKey()
 
-> **getSkippedSenderKey**(`groupId`, `senderId`, `senderDeviceId`, `chainIndex`): `Promise`\<[`SkippedSenderMessageKey`](SkippedSenderMessageKey.md) \| `null`\>
+> **getSkippedSenderKey**(`groupId`, `senderId`, `senderDeviceId`, `senderKeyId`, `chainIndex`): `Promise`\<[`SkippedSenderMessageKey`](SkippedSenderMessageKey.md) \| `null`\>
 
 Retrieve skipped message key for out-of-order decryption.
 
@@ -1337,6 +1343,12 @@ Sender user identifier
 `number`
 
 Sender device identifier
+
+##### senderKeyId
+
+`string`
+
+Distribution identifier for this sender-key generation
 
 ##### chainIndex
 
@@ -2069,7 +2081,9 @@ The first element is the current state. The remaining entries are previous state
 retained during the rotation window for decrypting in-flight messages.
 
 Per Sender Keys spec Section 5.1: "Implementations MUST store sender key
-state persistently." This method persists the full record atomically.
+state persistently." This method persists the full record atomically with
+every receive effect. A rejection preserves the prior record, skipped keys,
+and received content. The same guarantee applies without a content receipt.
 
 #### Parameters
 
@@ -2146,7 +2160,7 @@ SessionRecord containing current and archived sessions
 
 ### storeSkippedSenderKey()
 
-> **storeSkippedSenderKey**(`groupId`, `senderId`, `senderDeviceId`, `chainIndex`, `messageKey`): `Promise`\<`void`\>
+> **storeSkippedSenderKey**(`groupId`, `senderId`, `senderDeviceId`, `senderKeyId`, `chainIndex`, `messageKey`): `Promise`\<`void`\>
 
 Store skipped message key for out-of-order decryption.
 
@@ -2172,6 +2186,12 @@ Sender user identifier
 `number`
 
 Sender device identifier
+
+##### senderKeyId
+
+`string`
+
+Distribution identifier for this sender-key generation
 
 ##### chainIndex
 

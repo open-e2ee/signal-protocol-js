@@ -287,20 +287,40 @@ security transition. The shared adapter contract verifies
 failure rollback, compare-and-swap behavior, one-time-prekey replay rejection,
 and exact per-user session deletion.
 
-For the key-value store, the supplied backend's `atomicWrite` is a security boundary,
-not a batching optimization. It must commit `check`, `set`, `remove`, and
-`removeSessionsForUser` operations in one crash-durable transaction. The final
-operation must enumerate exact plaintext session metadata inside that same
-transaction. An adapter that matches a prefix or enumerates before the
+For the key-value store, the supplied backend's `atomicWrite` is a security boundary.
+It must commit `check`, `set`, `remove`, `removeSessionsForUser`, and
+`pruneSkippedSenderKeys` operations in one crash-durable transaction.
+The `removeSessionsForUser` operation must enumerate exact plaintext session
+metadata inside that transaction. An adapter that matches a prefix or enumerates before the
 transaction can leave a concurrently-created session trusted under a rotated
 identity.
+
+The `pruneSkippedSenderKeys` operation enumerates keys under its exact `keyPrefix`
+inside the transaction. It removes the lowest numeric chain indexes until
+`maxCount` keys remain. The chain index is the last colon-separated key component.
+The operation observes earlier writes in the same batch. Equal indexes belong
+to distinct generations and remain separate entries.
+
+For eviction ties, the store may remove either generation.
+Use `createTransactionalKeyValueBackend` to apply
+these operations through the shared interpreter, and verify custom backends
+with `assertBackendConformance`.
 
 ## Design Notes
 
 Received content uses the same encryption and transaction boundary as protocol state.
 
 The `commitSessionTrust` method commits received content, ratchet state, contact trust, and consumed prekeys together.
-The `storeSenderKeyRecord` method commits received content and skipped-key consumption together.
+The `storeSenderKeyRecord` method commits the full sender-key record and every
+`SenderKeyReceiveCommit` effect together. These effects include skipped-key
+additions, capacity eviction, skipped-key consumption, and optional received
+content. The manager stages additions until authentication and decryption
+succeed.
+
+The store applies additions in order, with capacity eviction before
+each addition. A rejected commit preserves the prior record, skipped keys,
+and received content. This applies to current and archived generations and
+to receives without a durable ID. A retry uses that preserved state.
 
 An adapter must reject the complete transaction if any write fails.
 When the database file of a SQLite store cannot grow because the disk or the

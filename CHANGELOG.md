@@ -1,5 +1,110 @@
 # Changelog
 
+## 9.0.0
+
+9.0.0 is a major release. The entries below give the details. To upgrade from
+8.2.0:
+
+1. **Reset group Sender Key state.** Sender Keys now use format `v2`. Discard
+   queued group sends, reset sender-key state on every device, and
+   redistribute keys with upgraded peers.
+2. **Update custom local stores.** A receive commit applies
+   `SenderKeyReceiveCommit.skippedKeys` atomically with the record. Skipped
+   keys carry `senderKeyId`. Key-value backends implement
+   `pruneSkippedSenderKeys` inside `atomicWrite`.
+3. **Use only client exports.** The public package no longer exports relay
+   implementations, the group server engine, or credential and certificate
+   issuers.
+4. **Check group IDs on receive.** With a group store, a managed-format group
+   ID needs verified local state. `onGroupSenderKeyRotated` receives the raw
+   group ID.
+
+- **Fixed: overlapping Braid sessions complete their key exchanges independently.**
+  The incremental KEM no longer caches a commitment shared across sessions.
+  It no longer rejects a valid encapsulation key from an interleaved session.
+  Interleaved sessions now use their own key material, including after state restore.
+  The wire format and persisted state format remain unchanged.
+- **Corrected: SPQR recovery and key-derivation documentation.** Braid recovery
+  depends on delivered chunks and peer replies, with no fixed message-count bound.
+  The notes now describe the production message-key expansion and supported limits.
+- **Fixed: managed announcement groups enforce the sender's role.** Both
+  encryption paths require an administrator. All group message receive paths
+  apply the same rule before consuming a message key. Member key distributions
+  and ad-hoc Sender Keys remain available.
+- **Fixed: group receives fail closed for a managed group ID without a master key.**
+  With a group store, a raw group ID in the managed format (the 32-byte group
+  identifier in lowercase hex) requires verified local state on every receive
+  path. Ad-hoc Sender Keys remain available for IDs in other formats. The public
+  group receive methods accept ad-hoc Sender Keys without a group store.
+- **Fixed: membership changes rotate the active sender key.** The callback
+  used a prefixed group identifier for a separate record. Sends continued
+  using the old record, which let removed members decrypt new messages. The
+  callback now uses the send path's raw identifier and persists pending key
+  distribution. The next send distributes the new key before its ciphertext.
+  Restart and outbox write failure preserve that pending distribution.
+- **Fixed: public Sender Key operations use one record for raw and prefixed group IDs.**
+- **Changed: `onGroupSenderKeyRotated` receives the raw group ID.** Automatic
+  and manual rotation pass the ID without the `open-e2ee:group:` prefix.
+- **Changed: Sender Key getters wait for an active operation on the group.**
+  `hasGroupSenderKey`, `getGroupSenderKeyDistribution`, and
+  `getGroupSenderKeyStats` return state after an active send, rotation, or
+  receive for that group completes.
+- **Fixed: concurrent sends cannot overwrite completed group key rotation.**
+  Group operations share a lock through preparation, persistence, and relay
+  posting. Pending distributions stay paired with their ciphertext. An older
+  outbox retry preserves a later key's pending distribution.
+- **Fixed: client stop releases group receive lock waits held behind a group send.**
+- **Fixed: a group attachment upload no longer blocks receives for that group.**
+  The group lock covers the Sender Key work only. A separate ordering lock
+  keeps sends to the group in order across the upload.
+- **Fixed: hooks of a group send run after the group lock.** A hook such as
+  `onSessionEstablished` that called `hasGroupSenderKey` for the same group
+  deadlocked the send. The client now calls these hooks after the group
+  operation finishes.
+- **Corrected: group implementation ownership.** Signal publishes its group
+  server in `storage-service`. The internal SDK contains the enforcing engine
+  used by the OpenE2EE Signal Protocol Relay.
+- **Fixed: Sender Keys archive rollback.** Distribution processing and local
+  rotation update the cache after storage succeeds. A failed write preserves
+  delayed messages through later receives, retries, and manager restarts.
+- **Fixed: Sender Keys cache isolation.** Group, sender, and device tuples now
+  retain separate archived states when identifiers contain delimiters.
+  This preserves delayed messages and record ownership across creation,
+  rotation, deletion, and manager restarts. Cache lookups no longer use
+  another tuple's archived key.
+- **Fixed: atomic group receives.** Skipped-key additions and eviction now commit with state and
+  optional received content. Current and archived generations use this boundary,
+  including receives without a durable ID. Custom local stores must apply
+  `SenderKeyReceiveCommit.skippedKeys` atomically with the record. Custom
+  key-value backends must implement `pruneSkippedSenderKeys` inside `atomicWrite`.
+- **Fixed: skipped Sender Keys remain separate across rotations.** Each stored
+  key now includes its distribution identifier. A delayed message uses the
+  correct generation even when two generations share the same chain index.
+  Atomic receive commits consume only that generation's key. Custom local
+  stores must add `senderKeyId` to skipped-key lookup, storage, and deletion.
+  `SenderKeyReceiveCommit.consumedSkippedKey` now carries the identifier and index.
+- **Changed: Sender Keys use HKDF-Extract before HKDF-Expand.** This corrects
+  message-key derivation to match the reference algorithm. Sender-key state
+  and distribution messages now require `senderKeyVersion: 'v2'`. Signed
+  frames require version byte `0x44`. Old state, distributions, and frames
+  fail closed. Before upgrading, discard queued group sends and reset group
+  sender-key state on every device. Then redistribute keys with upgraded peers.
+
+  SQLite discards skipped keys from its old schema because they lack generation
+  identifiers. This pre-launch break provides no legacy derivation or reader.
+- **Breaking: public exports contain only client code.** Relay implementations
+  and the group server engine stay private. The public package also excludes
+  credential issuers, certificate issuers, and the group administration CLI.
+  The private repository retains these implementations and entry points.
+  Client transports, storage adapters, group encryption, credential receipt,
+  and presentation remain public. Public guides use OpenE2EE Signal Protocol Relay.
+- **Changed: public exports check a declaration inventory.** Each mixed module
+  classifies its client and server declarations. An unclassified declaration or
+  class member fails the export. TypeDoc generates API documentation from the
+  projected client source. Build and package checks verify that the public
+  artifact excludes server code. Release checks also verify SDK imports in
+  source examples, declarations, and generated documentation against public exports.
+
 ## 8.2.0
 
 - **Changed: a group send posts to the member devices at the same time.**

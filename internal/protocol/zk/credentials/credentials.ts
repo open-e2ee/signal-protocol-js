@@ -1,18 +1,20 @@
 /**
- * ZK Credential system -- credential issuance and key management
+ * ZK credential parameters and representations
  *
  *
  * Provides:
  *  - SystemParams: deterministic system-wide generator points
- *  - CredentialPrivateKey / CredentialPublicKey / CredentialKeyPair
+ *  - CredentialPublicKey: the issuer's public credential key
  *  - Credential: the issued (t, U, V) triple
  *
  * @see https://signal.org/docs/
  */
 
 import { ShoSha256 } from '../proofs/sho-sha256';
-import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
-import { multiscalarMultiply, withGeneratorTable } from '../proofs/point-multiplication';
+import { RistrettoPoint } from '../proofs/sho';
+
+import { withGeneratorTable } from '../proofs/point-multiplication';
+
 export {};
 const Point = RistrettoPoint;
 
@@ -25,9 +27,6 @@ export const NUM_SUPPORTED_ATTRS = 7;
 
 /** Length in bytes of randomness required for key generation. */
 export const RANDOMNESS_LEN = 32;
-
-// Scalar field helper -- mod-L arithmetic on bigints.
-const Fn = RistrettoPoint.Fn;
 
 // ---------------------------------------------------------------------------
 // SystemParams
@@ -123,88 +122,6 @@ export interface Credential {
 }
 
 // ---------------------------------------------------------------------------
-// CredentialPrivateKey
-// ---------------------------------------------------------------------------
-
-export interface CredentialPrivateKey {
-  w: bigint;
-  wprime: bigint;
-  W: RistrettoPoint;
-  x0: bigint;
-  x1: bigint;
-  y: bigint[]; // length NUM_SUPPORTED_ATTRS (7)
-}
-
-/**
- * Derive a credential private key deterministically from randomness.
- *
- * Uses ShoHmacSha256 keyed with a fixed label, absorbing the provided
- * randomness, then deriving each scalar via `sho.getScalar()`.
- */
-export function generatePrivateKey(randomness: Uint8Array): CredentialPrivateKey {
-  if (randomness.length < RANDOMNESS_LEN) {
-    throw new Error(
-      `CredentialPrivateKey.generate: need at least ${RANDOMNESS_LEN} bytes of randomness, got ${randomness.length}`
-    );
-  }
-
-  const sys = getSystemParams();
-
-  const label = new TextEncoder().encode(
-    'Signal_ZKCredential_CredentialPrivateKey_generate_20230410'
-  );
-  const sho = new ShoHmacSha256(label);
-  sho.absorbAndRatchet(randomness);
-
-  const w = sho.getScalar();
-  const W = multiscalarMultiply([w], [sys.G_w]);
-  const wprime = sho.getScalar();
-  const x0 = sho.getScalar();
-  const x1 = sho.getScalar();
-
-  const y: bigint[] = [];
-  for (let i = 0; i < NUM_SUPPORTED_ATTRS; i++) {
-    y.push(sho.getScalar());
-  }
-
-  return { w, wprime, W, x0, x1, y };
-}
-
-/**
- * Issue a credential over a vector of attribute points M.
- *
- * Computes:
- *   t = sho.getScalar()
- *   U = sho.getPoint()
- *   V = W + (x0 + x1*t)*U + sum(y[i]*M[i])
- *
- * The caller must supply a ShoHmacSha256 that has already absorbed any
- * context binding data (e.g. the public key, attribute commitments).
- */
-export function credentialCore(
-  key: CredentialPrivateKey,
-  M: RistrettoPoint[],
-  sho: ShoHmacSha256
-): Credential {
-  if (M.length > NUM_SUPPORTED_ATTRS) {
-    throw new Error(`credentialCore: too many attributes (${M.length} > ${NUM_SUPPORTED_ATTRS})`);
-  }
-
-  const t = sho.getScalar();
-  const U = sho.getPoint();
-
-  // V = W + (x0 + x1*t) * U + sum(y[i] * M[i])
-  const x0_plus_x1t = Fn.create(key.x0 + Fn.create(key.x1 * t));
-  let V = key.W.add(U.multiply(x0_plus_x1t));
-
-  for (let i = 0; i < M.length; i++) {
-    V = V.add(M[i].multiply(key.y[i]));
-  }
-
-  return { t, U, V };
-}
-
-// ---------------------------------------------------------------------------
 // CredentialPublicKey
 // ---------------------------------------------------------------------------
 
@@ -223,40 +140,6 @@ export interface CredentialPublicKey {
 }
 
 /**
- * Derive the public key from a private key.
- *
- * C_W = W + wprime * G_wprime
- *
- * I is computed iteratively for attributes 1 through NUM_SUPPORTED_ATTRS - 1:
- *   accum = G_V - x0*G_x0 - x1*G_x1 - y[0]*G_y[0]
- *   for n = 1 .. NUM_SUPPORTED_ATTRS-1:
- *     accum -= y[n]*G_y[n]
- *     I.push(accum)
- *
- * I has length NUM_SUPPORTED_ATTRS - 1 = 6.
- * I[0] includes subtraction through y[1] (numAttrs=2).
- * getI(numAttrs) returns I[numAttrs - 2].
- */
-export function derivePublicKey(priv: CredentialPrivateKey): CredentialPublicKey {
-  const sys = getSystemParams();
-
-  const C_W = priv.W.add(multiscalarMultiply([priv.wprime], [sys.G_wprime]));
-
-  // Start: G_V - x0*G_x0 - x1*G_x1 - y[0]*G_y[0]
-  let accum = sys.G_V.subtract(
-    multiscalarMultiply([priv.x0, priv.x1, priv.y[0]], [sys.G_x0, sys.G_x1, sys.G_y[0]])
-  );
-
-  const I: RistrettoPoint[] = [];
-  for (let n = 1; n < NUM_SUPPORTED_ATTRS; n++) {
-    accum = accum.subtract(multiscalarMultiply([priv.y[n]], [sys.G_y[n]]));
-    I.push(accum);
-  }
-
-  return { C_W, I };
-}
-
-/**
  * Retrieve the public key image for a credential with `numAttrs` attributes.
  * numAttrs must be in [2, NUM_SUPPORTED_ATTRS].
  */
@@ -267,24 +150,6 @@ export function getPublicKeyI(pub: CredentialPublicKey, numAttrs: number): Ristr
     );
   }
   return pub.I[numAttrs - 2];
-}
-
-// ---------------------------------------------------------------------------
-// CredentialKeyPair
-// ---------------------------------------------------------------------------
-
-export interface CredentialKeyPair {
-  privateKey: CredentialPrivateKey;
-  publicKey: CredentialPublicKey;
-}
-
-/**
- * Generate a full credential key pair from randomness.
- */
-export function generateKeyPair(randomness: Uint8Array): CredentialKeyPair {
-  const privateKey = generatePrivateKey(randomness);
-  const publicKey = derivePublicKey(privateKey);
-  return { privateKey, publicKey };
 }
 
 // ---------------------------------------------------------------------------

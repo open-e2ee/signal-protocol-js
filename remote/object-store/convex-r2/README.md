@@ -13,13 +13,9 @@ component ownership into the SDK.
 
 ## Setup
 
-Install the peer `convex` 1.42.1 or later. The server helper loads it to
-define its functions. The client adapter loads no peer. The application
-installs and mounts the `@convex-dev/r2` component in its own backend.
-
-```sh
-npm install convex
-```
+The application supplies a Convex client and generated function references.
+The adapter loads no Convex runtime dependency. The application installs and
+mounts the `@convex-dev/r2` component in its own backend.
 
 ## Client usage
 
@@ -46,52 +42,24 @@ const client = await createSignalProtocolClient({
 `completeUpload`, and `deleteObject` with the function kinds and values defined
 by `ConvexR2ObjectStoreApi`.
 
-## Optional server helper
+## Broker contract
 
-The server-only subpath supplies validators and broker mechanics while keeping
-authorization and persistence in application callbacks:
+The application supplies the four Convex functions. Their types follow
+`ConvexR2ObjectStoreApi`:
 
-<!-- doc-snippet:skip requires-external-context -->
-```ts
-import { R2 } from "@convex-dev/r2";
-import {
-  defineConvexR2ObjectStore,
-  type ConvexR2ObjectCallbacks,
-} from "@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2/server";
-import { components, internal } from "./_generated/api";
+- `createUpload` is a mutation that reserves an upload for the authenticated caller.
+- `createDownload` is an action that returns a short-lived download operation.
+- `completeUpload` is an action that validates provider metadata before completion.
+- `deleteObject` is a mutation that authorizes and records deletion.
 
-const objects =
-  internal.signalObjectStoreModel satisfies ConvexR2ObjectCallbacks;
+The broker owns the `requestId -> objectId -> providerKey` mapping. It scopes
+retry identifiers to the authenticated caller and returns stable object IDs for
+retries. It checks the reserved ciphertext size and content type before marking
+an upload complete. Provider credentials and keys stay on the backend.
 
-export const {
-  createUpload,
-  createDownload,
-  completeUpload,
-  deleteObject,
-} = defineConvexR2ObjectStore({
-  r2: new R2(components.r2),
-  limits: {
-    maxContentLength: 50 * 1024 * 1024,
-    allowedContentTypes: ["application/octet-stream"],
-    downloadExpiresInSeconds: 15 * 60,
-  },
-  objects,
-});
-```
-
-The callbacks must authenticate and authorize each operation and persist the
-`requestId -> objectId -> providerKey` mapping. The helper derives expiry from
-the actual signed operation and synchronizes provider metadata in an action. It
-also checks the reserved content type and byte length before completion.
-
-Deletion is asynchronous at the provider boundary. The public mutation
-atomically records the application removal and asks the R2 component to schedule
-its retried deletion action. Applications that need confirmed physical removal
-must track that completion separately.
-
-The server helper uses structural types and does not import
-`@convex-dev/r2` at runtime. Consumers that use only S3 do not load that
-component.
+The published SDK supplies the client adapter and its types. The application
+supplies the broker implementation. If the application must confirm physical
+removal, it tracks provider deletion.
 
 See the [object-store guide](../README.md) and
 [remote guide](../../README.md).

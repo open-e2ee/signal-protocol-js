@@ -6,19 +6,19 @@
 
 # Interface: SignalProtocolRelayServer
 
-Server-side relay for encrypted envelope push delivery.
+Client transport contract for encrypted envelope delivery.
 
 Responsibilities:
 - Envelope delivery (push to devices via real-time subscription)
 - Device registry (multi-device support, max 5 devices per user)
 - Prekey management (X3DH/PQXDH key exchange)
 
-The OpenE2EE Signal Protocol Relay and the in-memory relay implement it.
+The hosted client configures this transport for the OpenE2EE Signal Protocol Relay.
 
 ## Example
 
 ```typescript
-const relay: SignalProtocolRelayServer = inMemoryRelay();
+const relay: SignalProtocolRelayServer = appRelayTransport;
 
 // Subscribe to incoming envelopes
 const unsubscribe = relay.subscribe(userId, deviceId, (envelope) => {

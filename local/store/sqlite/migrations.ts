@@ -183,6 +183,24 @@ export const SQLITE_STORE_MIGRATIONS: readonly SqliteMigration[] = [
       )`,
     ],
   },
+  {
+    version: 2,
+    statements: [
+      // Old skipped keys have no generation identity and cannot be reused.
+      'DROP TABLE skipped_sender_keys',
+      `CREATE TABLE skipped_sender_keys (
+        group_id text NOT NULL,
+        sender_id text NOT NULL,
+        sender_device_id integer NOT NULL,
+        sender_key_id text NOT NULL,
+        chain_index integer NOT NULL,
+        cipher_key text NOT NULL,
+        iv text NOT NULL,
+        created_at integer NOT NULL,
+        PRIMARY KEY (group_id, sender_id, sender_device_id, sender_key_id, chain_index)
+      )`,
+    ],
+  },
 ];
 
 /**

@@ -5,27 +5,18 @@
  * It follows modern TypeScript/JavaScript SDK patterns with factory-based initialization,
  * namespaced utilities, and clean exports.
  *
- * ## Primary API: createSignalProtocolClient()
+ * ## Hosted client: createHostedSignalProtocolClient()
  *
  * ```typescript
- * import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
- * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
- * import { inMemoryStore } from '@open-e2ee/signal-protocol-sdk/local/store/memory';
+ * import { createHostedSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
  *
- * const relay = inMemoryRelay();
- * const alice = await createSignalProtocolClient({
- *   identity: { userId: 'alice' },
- *   adapters: { storage: inMemoryStore(), relay },
+ * // Supply a device-local store and the configured identity-provider callback.
+ * const signal = await createHostedSignalProtocolClient({
+ *   adapters: { storage },
+ *   hosted: { relayUrl, getIdentityAssertion },
  * });
  *
- * const bob = await createSignalProtocolClient({
- *   identity: { userId: 'bob' },
- *   adapters: { storage: inMemoryStore(), relay },
- * });
- *
- * await alice.syncToServer();
- * await bob.syncToServer();
- * await alice.send('bob', 'Hello!');
+ * await signal.send(recipientUserId, 'Hello!');
  * ```
  *
  * ## Namespaced Utilities
@@ -461,10 +452,25 @@ export type { GroupId, GroupTrustRoot } from "./internal/groups";
  *
  * @example
  * ```typescript
- * import type { SignalProtocolRelayServer, SignalProtocolRemoteObjectStore } from '@open-e2ee/signal-protocol-sdk';
- * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
+ * import {
+ *   createSignalProtocolClient,
+ *   type SignalProtocolLocalStore,
+ *   type SignalProtocolRelayServer,
+ *   type SignalProtocolRemoteObjectStore,
+ * } from '@open-e2ee/signal-protocol-sdk';
  *
- * const relay: SignalProtocolRelayServer = inMemoryRelay();
+ * // Supply the application's authenticated adapters.
+ * function createClient(
+ *   userId: string,
+ *   storage: SignalProtocolLocalStore,
+ *   relay: SignalProtocolRelayServer,
+ *   remoteObjectStore: SignalProtocolRemoteObjectStore,
+ * ) {
+ *   return createSignalProtocolClient({
+ *     identity: { userId },
+ *     adapters: { storage, relay, remoteObjectStore },
+ *   });
+ * }
  * ```
  */
 export type {
@@ -605,12 +611,8 @@ export type { VersionNegotiationState } from "./internal/protocol/version";
 export type { ServiceId } from "./internal/protocol/zk/groups/uid-struct";
 export type { CredentialPublicKey } from "./internal/protocol/zk/credentials/credentials";
 export { VerificationFailure } from "./internal/protocol/zk/credentials/issuance";
-export {
-  ServerDerivedKeyPair,
-  ServerDerivedPublicKey,
-  ServerRootKeyPair,
-  ServerRootPublicKey,
-} from "./internal/protocol/zk/credentials/endorsements";
+export { ServerDerivedPublicKey, ServerRootPublicKey } from "./internal/protocol/zk/credentials/endorsements";
+
 
 // Event hooks (callbacks for DefaultSignalProtocolClient) - from client/
 export type {

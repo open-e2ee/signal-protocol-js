@@ -283,9 +283,9 @@ export interface SessionState {
   hasReceivedMessage?: boolean;
 
   // Post-Quantum Sparse Refresh (SPQR / Triple Ratchet)
-  // Per the SPQR specification: ML-KEM keys refreshed ~every 50 messages (or within 1 week)
+  // Braid recovery depends on delivered chunks and peer replies, with no fixed
+  // message count.
   // @see https://signal.org/blog/spqr/
-  // @see DEFAULT_RATCHET_CONFIG.kyberRefreshInterval
   kyberKeys?: {
     publicKey: Base64; // Remote party's Kyber public key, for refresh operations
     lastRefreshNs: number; // Value of Ns when Kyber was last refreshed

@@ -17,22 +17,8 @@ export {
   deriveDefaultGeneratorPoints,
 } from './attributes';
 
-export {
-  NUM_SUPPORTED_ATTRS,
-  RANDOMNESS_LEN,
-  type SystemParams,
-  getSystemParams,
-  systemParamsToBytes,
-  type Credential,
-  type CredentialPrivateKey,
-  type CredentialPublicKey,
-  type CredentialKeyPair,
-  generateKeyPair,
-  generatePrivateKey,
-  derivePublicKey,
-  getPublicKeyI,
-  credentialCore,
-} from './credentials';
+export { NUM_SUPPORTED_ATTRS, RANDOMNESS_LEN, type SystemParams, getSystemParams, systemParamsToBytes, type Credential, type CredentialPublicKey, getPublicKeyI } from './credentials';
+
 
 export {
   VerificationFailure,
@@ -46,19 +32,8 @@ export {
   BlindedIssuanceProofBuilder,
 } from './issuance';
 
-export {
-  type PresentationProof,
-  PresentationProofBuilder,
-  PresentationProofVerifier,
-} from './presentation';
+export { type PresentationProof, PresentationProofBuilder } from './presentation';
 
-export {
-  ServerRootKeyPair,
-  ServerRootPublicKey,
-  ServerDerivedKeyPair,
-  ServerDerivedPublicKey,
-  ClientDecryptionKey,
-  EndorsementResponse,
-  Endorsement,
-  type ReceivedEndorsements,
-} from './endorsements';
+
+export { ServerRootPublicKey, ServerDerivedPublicKey, ClientDecryptionKey, EndorsementResponse, Endorsement, type ReceivedEndorsements } from './endorsements';
+

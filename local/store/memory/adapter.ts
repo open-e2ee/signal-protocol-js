@@ -1003,6 +1003,51 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     this.failures.beforeWrite('storeSenderKeyRecord');
     if (states.length === 0) return;
 
+    const record = cloneStored(states);
+    const current = cloneStored(states[0]);
+    const content = receive?.content ? cloneStored(receive.content) : undefined;
+    const changesSkippedKeys =
+      (receive?.skippedKeys?.keys.length ?? 0) > 0 || receive?.consumedSkippedKey;
+    const skippedKeys = changesSkippedKeys
+      ? new Map(this.skippedSenderKeys)
+      : this.skippedSenderKeys;
+    const prefix = this.getSkippedKeyPrefix(groupId, userId, deviceId);
+    for (const skipped of receive?.skippedKeys?.keys ?? []) {
+      const existing = [...skippedKeys.keys()]
+        .filter((key) => key.startsWith(prefix))
+        .sort((a, b) => JSON.parse(a)[4] - JSON.parse(b)[4]);
+      const count = existing.length - Math.max(0, receive!.skippedKeys!.maxSkippedKeys - 1);
+      if (count > 0) {
+        this.failures.beforeWrite('deleteOldestSkippedSenderKeys');
+        for (const key of existing.slice(0, count)) skippedKeys.delete(key);
+      }
+      this.failures.beforeWrite('storeSkippedSenderKey');
+      skippedKeys.set(
+        this.getSkippedKeyId(
+          groupId,
+          userId,
+          deviceId,
+          skipped.senderKeyId,
+          skipped.chainIndex
+        ),
+        cloneStored(skipped.messageKey)
+      );
+    }
+    if (receive?.consumedSkippedKey) {
+      this.failures.beforeWrite('deleteSkippedSenderKey');
+      skippedKeys.delete(
+        this.getSkippedKeyId(
+          groupId,
+          userId,
+          deviceId,
+          receive.consumedSkippedKey.senderKeyId,
+          receive.consumedSkippedKey.chainIndex
+        )
+      );
+    }
+    if (content) this.failures.beforeWrite('storeReceivedContent');
+
+    // Publish only after every staged operation succeeds. There is no await in this commit.
     // Store current state without a second injected write boundary.
     if (!this.senderKeys.has(groupId)) {
       this.senderKeys.set(groupId, new Map());
@@ -1011,19 +1056,13 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     if (!groupMap.has(userId)) {
       groupMap.set(userId, new Map());
     }
-    groupMap.get(userId)!.set(deviceId, cloneStored(states[0]));
+    groupMap.get(userId)!.set(deviceId, current);
 
     // Store the full record
     const key = this.getSenderKeyRecordKey(groupId, userId, deviceId);
-    this.senderKeyRecords.set(key, cloneStored(states));
-    if (receive) {
-      this.receivedContent.set(receive.content.id, cloneStored(receive.content));
-      if (receive.consumedChainIndex !== undefined) {
-        this.skippedSenderKeys.delete(
-          this.getSkippedKeyId(groupId, userId, deviceId, receive.consumedChainIndex)
-        );
-      }
-    }
+    this.senderKeyRecords.set(key, record);
+    this.skippedSenderKeys = skippedKeys;
+    if (content) this.receivedContent.set(content.id, content);
   }
 
   async getSenderKeyRecord(
@@ -1049,9 +1088,10 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): string {
-    return JSON.stringify([groupId, senderId, senderDeviceId, chainIndex]);
+    return JSON.stringify([groupId, senderId, senderDeviceId, senderKeyId, chainIndex]);
   }
 
   /**
@@ -1066,11 +1106,12 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number,
     messageKey: SkippedSenderMessageKey
   ): Promise<void> {
     this.failures.beforeWrite('storeSkippedSenderKey');
-    const key = this.getSkippedKeyId(groupId, senderId, senderDeviceId, chainIndex);
+    const key = this.getSkippedKeyId(groupId, senderId, senderDeviceId, senderKeyId, chainIndex);
     this.skippedSenderKeys.set(key, cloneStored(messageKey));
   }
 
@@ -1078,9 +1119,10 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): Promise<SkippedSenderMessageKey | null> {
-    const key = this.getSkippedKeyId(groupId, senderId, senderDeviceId, chainIndex);
+    const key = this.getSkippedKeyId(groupId, senderId, senderDeviceId, senderKeyId, chainIndex);
     const messageKey = this.skippedSenderKeys.get(key);
     return messageKey ? cloneStored(messageKey) : null;
   }
@@ -1089,10 +1131,11 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): Promise<void> {
     this.failures.beforeWrite('deleteSkippedSenderKey');
-    const key = this.getSkippedKeyId(groupId, senderId, senderDeviceId, chainIndex);
+    const key = this.getSkippedKeyId(groupId, senderId, senderDeviceId, senderKeyId, chainIndex);
     this.skippedSenderKeys.delete(key);
   }
 
@@ -1101,7 +1144,6 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     senderId: string,
     senderDeviceId: number
   ): Promise<number> {
-    this.failures.beforeWrite('deleteOldestSkippedSenderKeys');
     const prefix = this.getSkippedKeyPrefix(groupId, senderId, senderDeviceId);
     let count = 0;
 
@@ -1120,6 +1162,7 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     senderDeviceId: number,
     count: number
   ): Promise<number> {
+    this.failures.beforeWrite('deleteOldestSkippedSenderKeys');
     const prefix = this.getSkippedKeyPrefix(groupId, senderId, senderDeviceId);
 
     // Collect all keys for this sender with their chain indices
@@ -1128,7 +1171,7 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     for (const key of this.skippedSenderKeys.keys()) {
       if (key.startsWith(prefix)) {
         // Extract chain index from key (the last element of the JSON array)
-        const chainIndex = (JSON.parse(key) as [string, string, number, number])[3];
+        const chainIndex = (JSON.parse(key) as [string, string, number, string, number])[4];
         keysWithIndices.push({ key, chainIndex });
       }
     }

@@ -377,3 +377,37 @@ export async function callHook<T extends HookName>(
     console.error(`Hook ${hookName} failed:`, error);
   }
 }
+
+/**
+ * Hooks that queue each call. A task that holds a lock calls the app through
+ * these hooks, and flush() makes the queued calls after the task releases the
+ * lock. So a hook can call a client method that takes the same lock.
+ *
+ * @internal
+ */
+export function deferHooks(hooks: SignalProtocolClientHooks | undefined): {
+  hooks: SignalProtocolClientHooks;
+  flush(): Promise<void>;
+} {
+  const queued: Array<[HookName, unknown[]]> = [];
+  const deferred: Record<string, (...args: unknown[]) => void> = {};
+  for (const [name, hook] of Object.entries(hooks ?? {})) {
+    if (typeof hook !== 'function') continue;
+    deferred[name] = (...args) => {
+      queued.push([name as HookName, args]);
+    };
+  }
+  const call = callHook as (
+    hooks: SignalProtocolClientHooks | undefined,
+    hookName: HookName,
+    ...args: unknown[]
+  ) => Promise<void>;
+  return {
+    hooks: deferred as SignalProtocolClientHooks,
+    async flush() {
+      for (let next = queued.shift(); next; next = queued.shift()) {
+        await call(hooks, next[0], ...next[1]);
+      }
+    },
+  };
+}

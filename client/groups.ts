@@ -11,8 +11,10 @@ import type {
   SenderKeyManager,
   SenderKeyDistributionMessage,
 } from '../internal/protocol/sender-keys';
+import { assertSenderKeyVersion } from '../internal/protocol/sender-keys/manager';
 import type { GroupManager, GroupMemberInput } from '../internal/groups';
-import type { DecryptedGroup, AccessControl, MemberRole } from '../internal/groups';
+import type { DecryptedGroup, AccessControl } from '../internal/groups';
+
 import type { GroupId } from '../internal/groups/group-id';
 
 /**
@@ -238,10 +240,11 @@ export async function rotateGroupSenderKey(
   ctx: SignalProtocolClientContext,
   senderKeyManager: SenderKeyManager,
   groupId: string,
-  onRotated?: (groupId: string, generation: number) => void
+  onRotated?: (groupId: string, generation: number) => void,
+  options?: { distributionPending?: boolean }
 ): Promise<{ senderKeyId: string; distributionMessage: SenderKeyDistributionMessage }> {
   try {
-    const result = await senderKeyManager.rotateSenderKey(groupId, ctx.userId, ctx.deviceId);
+    const result = await senderKeyManager.rotateSenderKey(groupId, ctx.userId, ctx.deviceId, options);
 
     ctx.logger.debug('Rotated group sender key', {
       category: 'E2EE',
@@ -330,9 +333,11 @@ export async function getGroupSenderKeyDistribution(
   if (!senderKey) {
     return null;
   }
+  assertSenderKeyVersion(senderKey);
 
   // Create distribution message from stored state
   return {
+    senderKeyVersion: senderKey.senderKeyVersion,
     senderKeyId: senderKey.senderKeyId,
     chainId: senderKey.chainId,
     generation: senderKey.generation,

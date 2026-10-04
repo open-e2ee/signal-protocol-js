@@ -337,7 +337,8 @@ the client rotates sender keys after membership changes.
 
 `string`
 
-The group whose sender key changed
+The raw ID of the group whose sender key changed, without
+  the `open-e2ee:group:` prefix
 
 ##### newGeneration
 

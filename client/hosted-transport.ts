@@ -21,7 +21,7 @@ import type {
 } from "../remote/relay/types";
 import AsyncLock from "async-lock";
 import type { GroupAuthorization } from "../internal/groups/manager";
-import type { RetryRequest } from "../internal/sesame/types";
+
 import type { CompositeIdentityV1, IdentityType } from "../keys/types";
 import {
   createCompositeIdentityV1,
