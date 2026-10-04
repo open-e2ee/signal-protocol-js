@@ -41,7 +41,7 @@ compatibility shim when a boundary is wrong.
 | Public feature surfaces | [blocking/](./blocking/), [groups/](./groups/), [media/](./media/), [profile/](./profile/), [sealed-sender/](./sealed-sender/), [username/](./username/), [zk/](./zk/) | App-facing helpers that compose protocol, media, or account-state behavior without joining the inward dependency hierarchy |
 | Public utility surfaces | [encoding/](./encoding/), [files/](./files/), [hooks/](./hooks/), [utils/](./utils/), `logger.ts`, `server-clock.ts`, `versions.ts`                                    | Stable helpers, React hooks, logging, clock estimation, version metadata, and file/encoding utilities                      |
 | Local adapters          | [local/](./local/)                                                                                                                                                     | Local protocol stores and secret vault integrations                                                                        |
-| Remote adapters         | [remote/](./remote/)                                                                                                                                                   | Relay and object-store ports plus in-memory, R2, and S3 adapters                                                           |
+| Remote adapters         | [remote/](./remote/)                                                                                                                                                   | Relay and object-store ports plus hosted, R2, and S3 client adapters                                                           |
 | Device features         | [device/](./device/)                                                                                                                                                   | Device IDs, provisioning, linked-device lifecycle and transfer                                                             |
 
 ## Documentation Ownership
@@ -75,9 +75,7 @@ Platform and backend integrations are explicit subpaths such as:
 - `@open-e2ee/signal-protocol-sdk/local/store/expo`
 - `@open-e2ee/signal-protocol-sdk/local/store/react-native`
 - `@open-e2ee/signal-protocol-sdk/local/store/memory`
-- `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`
-- `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2/server`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store/s3`
 - `@open-e2ee/signal-protocol-sdk/client/compose`
 - `@open-e2ee/signal-protocol-sdk/device`
@@ -128,10 +126,10 @@ policy fields `protocol.postQuantum` and `protocol.braid`.
 
 The provider-neutral object-store port separates a retry/idempotency
 `requestId`, the canonical `objectId` carried in encrypted pointers, and the
-private provider key. The Convex R2 client entry calls app-owned public broker
-functions. Its server-only sibling can register generic broker mechanics, but
-the consuming app still owns the R2 component, authentication, authorization,
-object records, credentials, and bucket.
+private provider key. The Convex R2 client entry calls application-owned broker functions.
+The application owns the R2 component, authentication, authorization, object
+records, credentials, and bucket. The published package contains client adapters
+and contracts. Relay and object-store server implementations run separately.
 
 `types/protocol-config.ts` owns protocol-domain configuration and constants shared by client, session, protocol, and adapters:
 

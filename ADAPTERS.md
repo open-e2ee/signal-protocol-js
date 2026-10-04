@@ -18,8 +18,10 @@ The relay interface handles server-owned Signal Protocol state:
 Use:
 
 - the OpenE2EE Signal Protocol Relay through `createHostedSignalProtocolClient()` from the package root
-- `InMemorySignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
-- or a custom implementation
+- a custom client transport that implements `SignalProtocolRelayServer`
+
+The published package contains client code and transport contracts. It does not
+include a relay server implementation.
 
 ### Storage: `SignalProtocolLocalStore`
 
@@ -74,8 +76,6 @@ Optional encrypted file upload/download support for two-layer attachment encrypt
 Use:
 
 - `ConvexR2ObjectStore` from `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`
-- `defineConvexR2ObjectStore` from the server-only
-  `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2/server` entry point
 - `S3ObjectStore` from `@open-e2ee/signal-protocol-sdk/remote/object-store/s3`
 - or a custom implementation
 
@@ -85,9 +85,8 @@ credentials remain on the backend.
 
 Upload requests carry a retry/idempotency `requestId`. The backend returns the
 canonical `objectId` used in encrypted attachment pointers. Provider keys stay
-private to the backend. The Convex server helper can supply generic validators,
-R2 calls, expiry parsing, and metadata verification, while app-owned internal
-functions retain authentication, authorization, and persistence.
+private to the backend. The application supplies the object-store broker and
+owns its authentication, authorization, persistence, and provider integration.
 
 ### Local secret vault: `SignalProtocolLocalSecretVault`
 
@@ -153,27 +152,11 @@ const signal = await createHostedSignalProtocolClient({
 See the [Expo storage guide](./local/store/expo/README.md) for the required
 database and SQLCipher bootstrap.
 
-### Local development with a shared relay
+### Sandbox development
 
-<!-- doc-snippet:run adapters-shared-relay expect="" -->
-```ts
-// Real protocol and cryptography; simulated in-memory infrastructure.
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
-import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
-
-const relay = inMemoryRelay();
-
-const alice = await createSignalProtocolClient({
-  identity: { userId: "alice" },
-  adapters: { storage: inMemoryStore(), relay },
-});
-
-const bob = await createSignalProtocolClient({
-  identity: { userId: "bob" },
-  adapters: { storage: inMemoryStore(), relay },
-});
-```
+Use a Sandbox connection URL from the OpenE2EE console with the hosted client.
+The same authentication and device-local storage contracts apply in Sandbox.
+See the [client guide](./client/README.md#with-relay).
 
 ## Security Expectations
 
@@ -231,10 +214,9 @@ const signal = await createSignalProtocolClient({
 
 ## Verifiable adapter design
 
-In-memory relay and storage adapters provide deterministic behavior for
-development environments. Production adapters remain dependency-injected so
-applications can evaluate storage, delivery, and failure behavior without
-reaching into client internals.
+The in-memory local store supports temporary device state during development.
+Use the Signal Protocol Relay Sandbox for authenticated delivery. Applications
+can supply custom adapters through the public client contracts.
 
 ## Related Docs
 

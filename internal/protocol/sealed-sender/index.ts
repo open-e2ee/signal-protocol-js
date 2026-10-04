@@ -63,14 +63,8 @@ export { deriveAccessKey } from './delivery-token';
 // Certificate Handling
 // ============================================================================
 
-export {
-  createServerCertificate,
-  createSenderCertificate,
-  serializeSenderCertificate,
-  deserializeSenderCertificate,
-  validateSenderCertificate,
-  validateServerCertificate,
-} from './certificate';
+export { serializeSenderCertificate, deserializeSenderCertificate, validateSenderCertificate, validateServerCertificate } from './certificate';
+
 
 // ============================================================================
 // Encryption (Seal)
@@ -99,23 +93,5 @@ export {
 // Protocol Buffer serialization
 // ============================================================================
 
-export {
-  // Type definitions
-  type ServerCertificateData,
-  type ServerCertificateProto,
-  type SenderCertificateData,
-  type SenderCertificateProto,
-  MessageType as SealedSenderMessageType,
-  // Encoding/decoding functions
-  encodeServerCertificateData,
-  decodeServerCertificateData,
-  encodeServerCertificate,
-  decodeServerCertificate,
-  encodeSenderCertificateData,
-  decodeSenderCertificateData,
-  encodeSenderCertificate,
-  decodeSenderCertificate,
-  // Utility functions
-  protoToBase64,
-  base64ToProto,
-} from './proto';
+export { type ServerCertificateData, type ServerCertificateProto, type SenderCertificateData, type SenderCertificateProto, MessageType as SealedSenderMessageType, decodeServerCertificateData, decodeServerCertificate, decodeSenderCertificateData, encodeSenderCertificate, decodeSenderCertificate, protoToBase64, base64ToProto } from './proto';
+

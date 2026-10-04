@@ -203,7 +203,6 @@ export async function storeSkippedMessageKeys(
         maxSkippedMessages: config.maxSkippedMessages,
         maxMessageKeysStored: config.maxMessageKeysStored,
         maxMessageKeyAge: config.maxMessageKeyAge,
-        kyberRefreshInterval: config.kyberRefreshInterval,
       },
       logger
     );
@@ -244,7 +243,6 @@ export function cleanupExpiredMessageKeys(
       maxSkippedMessages: config.maxSkippedMessages,
       maxMessageKeysStored: config.maxMessageKeysStored,
       maxMessageKeyAge: config.maxMessageKeyAge,
-      kyberRefreshInterval: config.kyberRefreshInterval,
     },
     logger
   );

@@ -7,7 +7,8 @@
  */
 
 import type { RistrettoPoint } from './sho';
-import { ScalarArgs, PointArgs } from './args';
+import { PointArgs } from './args';
+
 import { Statement } from './statement';
 
 /**
@@ -20,28 +21,11 @@ import { Statement } from './statement';
  * @returns Signature bytes (64 bytes: 32 challenge + 32 response)
  */
 export {};
-export function schnorrSign(
-  privateKey: bigint,
-  publicKey: RistrettoPoint,
-  message: Uint8Array,
-  randomness: Uint8Array
-): Uint8Array {
-  const st = new Statement();
-  st.add('public_key', [['private_key', 'G']]);
-
-  const scalarArgs = new ScalarArgs();
-  scalarArgs.add('private_key', privateKey);
-
-  const pointArgs = new PointArgs();
-  pointArgs.add('public_key', publicKey);
-
-  return st.prove(scalarArgs, pointArgs, message, randomness);
-}
 
 /**
  * Verify a Schnorr signature.
  *
- * @param signature Signature bytes from schnorrSign
+ * @param signature Schnorr signature bytes
  * @param publicKey The signer's public key
  * @param message The signed message
  * @throws PokshoException on verification failure

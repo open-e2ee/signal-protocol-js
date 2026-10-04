@@ -19,7 +19,7 @@
 
 import { utf8Decode } from '../../platform';
 import * as crypto from '../../crypto';
-import type { SignalProtocolLocalStore } from '../../../types/api';
+import type { SenderKeyReceiveCommit, SignalProtocolLocalStore } from '../../../types/api';
 import type { Signature, PublicKey, PrivateKey } from '../../../keys';
 import { SENDER_KEY_FORMAT, SENDER_KEY_MESSAGE_VERSION } from '../../../versions';
 import { defaultSignalProtocolLogger, type Logger } from '../../../logger';
@@ -64,7 +64,7 @@ export interface SenderKeyState {
   /**
    * Sender key wire format version for protocol evolution.
    *
-   * Format 'v1' (current): Ed25519 signatures, AES-256-CBC encryption
+   * Format 'v2': Ed25519 signatures, AES-256-CBC, and HKDF-Extract then Expand
    * Future versions may support format changes or algorithm upgrades.
    */
   senderKeyVersion: string;
@@ -102,6 +102,7 @@ export interface SenderKeyState {
 }
 
 export interface SenderKeyDistributionMessage {
+  senderKeyVersion: string;
   senderKeyId: string;
   chainId: number;
   generation: number;
@@ -194,6 +195,15 @@ function resolveMaxSenderKeyAge(configured: number | undefined, logger: Required
   return configured;
 }
 
+/** Reject sender-key state or a distribution in an unsupported format. */
+export function assertSenderKeyVersion(state: { senderKeyVersion: string }): void {
+  if (state.senderKeyVersion !== SENDER_KEY_FORMAT) {
+    throw new Error(
+      'Unsupported sender-key format. Reset group sender-key state and redistribute keys.'
+    );
+  }
+}
+
 export class SenderKeyManager {
   /** Resolved configuration values */
   private readonly hkdfInfoString: string;
@@ -211,7 +221,7 @@ export class SenderKeyManager {
    * getSenderKeyRecord (when available). On cache miss, previous states
    * are loaded from storage.
    *
-   * Key format: `${groupId}:${userId}:${deviceId}`
+   * Key format: JSON tuple [groupId, userId, deviceId].
    * Value: Array of previous states (most recent first), capped at MAX_SENDER_KEY_STATES - 1
    *        (the current state is in storage, previous states are here)
    */
@@ -231,11 +241,9 @@ export class SenderKeyManager {
     this.maxSenderKeyAge = resolveMaxSenderKeyAge(config?.maxSenderKeyAge, this.logger);
   }
 
-  /**
-   * Get the storage key for the previousStates map.
-   */
+  /** Encode each cache address component separately, including delimiters in names. */
   private stateKey(groupId: string, userId: string, deviceId: number): string {
-    return `${groupId}:${userId}:${deviceId}`;
+    return JSON.stringify([groupId, userId, deviceId]);
   }
 
   /**
@@ -369,6 +377,7 @@ export class SenderKeyManager {
 
     // Create distribution message (to send to other members)
     const distributionMessage: SenderKeyDistributionMessage = {
+      senderKeyVersion: SENDER_KEY_FORMAT,
       senderKeyId,
       chainId,
       generation: 1,
@@ -405,10 +414,12 @@ export class SenderKeyManager {
     senderDeviceId: number,
     message: SenderKeyDistributionMessage
   ): Promise<void> {
+    assertSenderKeyVersion(message);
     // Validate against existing state (Specification Section 3.4)
     const existing = await this.storage.getSenderKey(groupId, senderId, senderDeviceId);
 
     if (existing !== null) {
+      assertSenderKeyVersion(existing);
       // Reject if generation is lower (stale distribution)
       if (message.generation < existing.generation) {
         this.logger.debug('Rejected stale distribution (lower generation)', {
@@ -470,30 +481,18 @@ export class SenderKeyManager {
       createdAt: Date.now(), // Received keys track when we got them (not checked for expiration)
     };
 
-    // M11: Save existing state to previousStates before overwriting.
-    // This allows decryption of in-flight messages encrypted with the
-    // previous key during the rotation window.
+    // Build the candidate archive without changing the committed cache.
     const key = this.stateKey(groupId, senderId, senderDeviceId);
-    let prev: SenderKeyState[];
-    if (existing !== null) {
-      prev = await this.loadPreviousStates(groupId, senderId, senderDeviceId);
+    const prev =
+      existing !== null
+        ? [existing, ...(await this.loadPreviousStates(groupId, senderId, senderDeviceId))].slice(
+            0,
+            MAX_SENDER_KEY_STATES - 1
+          )
+        : [];
 
-      // Add current state to front of previous states (most recent first)
-      prev.unshift(existing);
-
-      // Cap at MAX_SENDER_KEY_STATES - 1 (the new state goes to storage)
-      while (prev.length >= MAX_SENDER_KEY_STATES) {
-        prev.pop();
-      }
-
-      this.previousStates.set(key, prev);
-    } else {
-      prev = [];
-      this.previousStates.set(key, prev);
-    }
-
-    // Store sender key record (current + previous states) for this member
     await this.persistSenderKeyRecord(groupId, senderId, senderDeviceId, state, prev);
+    this.previousStates.set(key, prev);
 
     this.logger.debug('Stored sender key', {
       category: 'E2EE',
@@ -522,6 +521,8 @@ export class SenderKeyManager {
     if (!state) {
       throw new Error('SENDER_KEY_NOT_FOUND: No sender key for this group');
     }
+
+    assertSenderKeyVersion(state);
 
     // Received keys have no private signature key, so time-based expiration
     // applies only to locally created encryption keys.
@@ -579,7 +580,7 @@ export class SenderKeyManager {
     // Derive message key from chain key (Signal Protocol KDF_CK pattern)
     // Two-step derivation:
     // 1. Seed = HMAC-SHA256(Chain Key, 0x01)
-    // 2. Derived = HKDF-Expand(Seed, "WhisperGroup", 48 bytes) → IV[0:16] + CipherKey[16:48]
+    // 2. Derived = HKDF(Seed, zero salt, "WhisperGroup", 48 bytes) → IV[0:16] + CipherKey[16:48]
     const { cipherKey, iv } = await this.deriveMessageKey(state.chainKey);
 
     let ciphertextBase64: string;
@@ -709,6 +710,8 @@ export class SenderKeyManager {
       throw new Error(`SENDER_KEY_NOT_FOUND: No sender key for ${senderId}.${senderDeviceId}`);
     }
 
+    assertSenderKeyVersion(state);
+
     // M11: If current state does not match, try previous states (rotation window)
     // This allows decryption of in-flight messages encrypted with a previous key.
     if (state.senderKeyId !== message.senderKeyId) {
@@ -745,6 +748,11 @@ export class SenderKeyManager {
       throw new Error('INVALID_SIGNATURE: Message signature verification failed');
     }
 
+    const skippedKeys: NonNullable<SenderKeyReceiveCommit['skippedKeys']> = {
+      maxSkippedKeys: this.maxSkippedKeys,
+      keys: [],
+    };
+
     // Handle out-of-order messages (chain index gaps)
     if (message.chainIndex > state.chainIndex) {
       // DoS protection: Limit chain advancement to prevent CPU exhaustion
@@ -757,16 +765,20 @@ export class SenderKeyManager {
         );
       }
 
-      // Advance chain key to match message, storing skipped keys for out-of-order delivery
+      // Stage skipped keys until successful decryption and the receive commit
       // (the reference implementation uses capacity-only limits, no time-based expiration)
       for (let i = state.chainIndex; i < message.chainIndex; i++) {
-        // Derive and store the skipped message key
+        // Derive the skipped message key
         const { cipherKey, iv } = await this.deriveMessageKey(state.chainKey);
 
         try {
-          await this.storeSkippedKeyWithLimit(groupId, senderId, senderDeviceId, i, {
-            cipherKey: crypto.bytesToBase64(cipherKey),
-            iv: crypto.bytesToBase64(iv),
+          skippedKeys.keys.push({
+            senderKeyId: state.senderKeyId,
+            chainIndex: i,
+            messageKey: {
+              cipherKey: crypto.bytesToBase64(cipherKey),
+              iv: crypto.bytesToBase64(iv),
+            },
           });
         } finally {
           crypto.secureZeroBytes(cipherKey);
@@ -791,7 +803,7 @@ export class SenderKeyManager {
     // Derive message key from chain key (Signal Protocol KDF_CK pattern)
     // Two-step derivation:
     // 1. Seed = HMAC-SHA256(Chain Key, 0x01)
-    // 2. Derived = HKDF-Expand(Seed, "WhisperGroup", 48 bytes) → IV[0:16] + CipherKey[16:48]
+    // 2. Derived = HKDF(Seed, zero salt, "WhisperGroup", 48 bytes) → IV[0:16] + CipherKey[16:48]
     const { cipherKey, iv } = await this.deriveMessageKey(state.chainKey);
 
     let plaintextBytes: Uint8Array;
@@ -816,9 +828,12 @@ export class SenderKeyManager {
       senderId,
       senderDeviceId,
       [state, ...previous],
-      receiveId
-        ? { content: { id: receiveId, plaintext, receivedAt: Date.now(), groupId } }
-        : undefined
+      {
+        skippedKeys,
+        content: receiveId
+          ? { id: receiveId, plaintext, receivedAt: Date.now(), groupId }
+          : undefined,
+      }
     );
 
     this.logger.debug('Decrypted message with sender key', {
@@ -850,6 +865,7 @@ export class SenderKeyManager {
       groupId,
       senderId,
       senderDeviceId,
+      message.senderKeyId,
       message.chainIndex
     );
 
@@ -880,22 +896,17 @@ export class SenderKeyManager {
     }
     const plaintext = this.encodeLosslessPlaintext(plaintextBytes);
 
-    // Delete used skipped key (one-time use)
-    if (receiveId) {
-      const states = await this.storage.getSenderKeyRecord(groupId, senderId, senderDeviceId);
-      if (!states?.length) throw new Error('Missing sender-key record during receive');
-      await this.storage.storeSenderKeyRecord(groupId, senderId, senderDeviceId, states, {
-        content: { id: receiveId, plaintext, receivedAt: Date.now(), groupId },
-        consumedChainIndex: message.chainIndex,
-      });
-    } else {
-      await this.storage.deleteSkippedSenderKey(
-        groupId,
-        senderId,
-        senderDeviceId,
-        message.chainIndex
-      );
-    }
+    const states = await this.storage.getSenderKeyRecord(groupId, senderId, senderDeviceId);
+    if (!states?.length) throw new Error('Missing sender-key record during receive');
+    await this.storage.storeSenderKeyRecord(groupId, senderId, senderDeviceId, states, {
+      content: receiveId
+        ? { id: receiveId, plaintext, receivedAt: Date.now(), groupId }
+        : undefined,
+      consumedSkippedKey: {
+        senderKeyId: message.senderKeyId,
+        chainIndex: message.chainIndex,
+      },
+    });
 
     this.logger.debug('Decrypted out-of-order message with skipped key', {
       category: 'E2EE',
@@ -947,6 +958,7 @@ export class SenderKeyManager {
     }
 
     const prevState = prevStates[matchIdx];
+    assertSenderKeyVersion(prevState);
 
     // Verify signature with previous state's public key
     const messageToVerify = this.serializeForSigning(
@@ -965,6 +977,11 @@ export class SenderKeyManager {
       throw new Error('INVALID_SIGNATURE: Message signature verification failed');
     }
 
+    const skippedKeys: NonNullable<SenderKeyReceiveCommit['skippedKeys']> = {
+      maxSkippedKeys: this.maxSkippedKeys,
+      keys: [],
+    };
+
     // Handle chain advancement for out-of-order messages
     if (message.chainIndex > prevState.chainIndex) {
       const chainGap = message.chainIndex - prevState.chainIndex;
@@ -976,14 +993,18 @@ export class SenderKeyManager {
         );
       }
 
-      // Advance chain to target, storing skipped keys
+      // Stage skipped keys until successful decryption and the receive commit
       for (let i = prevState.chainIndex; i < message.chainIndex; i++) {
         const { cipherKey, iv } = await this.deriveMessageKey(prevState.chainKey);
 
         try {
-          await this.storeSkippedKeyWithLimit(groupId, senderId, senderDeviceId, i, {
-            cipherKey: crypto.bytesToBase64(cipherKey),
-            iv: crypto.bytesToBase64(iv),
+          skippedKeys.keys.push({
+            senderKeyId: prevState.senderKeyId,
+            chainIndex: i,
+            messageKey: {
+              cipherKey: crypto.bytesToBase64(cipherKey),
+              iv: crypto.bytesToBase64(iv),
+            },
           });
         } finally {
           crypto.secureZeroBytes(cipherKey);
@@ -1021,19 +1042,21 @@ export class SenderKeyManager {
 
     // Persist updated previous states to storage
     const currentState = await this.storage.getSenderKey(groupId, senderId, senderDeviceId);
-    if (currentState) {
-      const key = this.stateKey(groupId, senderId, senderDeviceId);
-      await this.storage.storeSenderKeyRecord(
-        groupId,
-        senderId,
-        senderDeviceId,
-        [currentState, ...prevStates],
-        receiveId
-          ? { content: { id: receiveId, plaintext, receivedAt: Date.now(), groupId } }
-          : undefined
-      );
-      this.previousStates.set(key, prevStates);
-    }
+    if (!currentState) throw new Error('Missing sender-key record during receive');
+    const key = this.stateKey(groupId, senderId, senderDeviceId);
+    await this.storage.storeSenderKeyRecord(
+      groupId,
+      senderId,
+      senderDeviceId,
+      [currentState, ...prevStates],
+      {
+        skippedKeys,
+        content: receiveId
+          ? { id: receiveId, plaintext, receivedAt: Date.now(), groupId }
+          : undefined,
+      }
+    );
+    this.previousStates.set(key, prevStates);
 
     this.logger.debug('Decrypted message with previous sender key state', {
       category: 'E2EE',
@@ -1047,42 +1070,6 @@ export class SenderKeyManager {
     });
 
     return plaintext;
-  }
-
-  /**
-   * Store skipped key with enforcement of maxSkippedKeys limit.
-   *
-   * If the limit is reached, deletes oldest keys to make room.
-   * The reference implementation uses capacity-only limits (no time-based expiration).
-   */
-  private async storeSkippedKeyWithLimit(
-    groupId: string,
-    senderId: string,
-    senderDeviceId: number,
-    chainIndex: number,
-    messageKey: { cipherKey: string; iv: string }
-  ): Promise<void> {
-    // Check current count
-    const currentCount = await this.storage.countSkippedSenderKeys(
-      groupId,
-      senderId,
-      senderDeviceId
-    );
-
-    // If at limit, delete oldest to make room
-    if (currentCount >= this.maxSkippedKeys) {
-      const toDelete = currentCount - this.maxSkippedKeys + 1;
-      await this.storage.deleteOldestSkippedSenderKeys(groupId, senderId, senderDeviceId, toDelete);
-    }
-
-    // Store the new skipped key
-    await this.storage.storeSkippedSenderKey(
-      groupId,
-      senderId,
-      senderDeviceId,
-      chainIndex,
-      messageKey
-    );
   }
 
   /**
@@ -1104,6 +1091,7 @@ export class SenderKeyManager {
   }> {
     // Get old sender key state
     const oldState = await this.storage.getSenderKey(groupId, userId, deviceId);
+    if (oldState) assertSenderKeyVersion(oldState);
 
     const senderKeyId = await crypto.generateUuidV4();
     const chainId = this.generateChainId(senderKeyId);
@@ -1126,26 +1114,21 @@ export class SenderKeyManager {
       ...(options?.distributionPending && { distributionPending: true }),
     };
 
-    // M11: Save old state to previousStates for in-flight message decryption
+    // Build the candidate archive without changing the committed cache.
     const key = this.stateKey(groupId, userId, deviceId);
-    let prev: SenderKeyState[];
-    if (oldState) {
-      prev = await this.loadPreviousStates(groupId, userId, deviceId);
-      prev.unshift(oldState);
-      while (prev.length >= MAX_SENDER_KEY_STATES) {
-        prev.pop();
-      }
-      this.previousStates.set(key, prev);
-    } else {
-      prev = [];
-      this.previousStates.set(key, prev);
-    }
+    const prev = oldState
+      ? [oldState, ...(await this.loadPreviousStates(groupId, userId, deviceId))].slice(
+          0,
+          MAX_SENDER_KEY_STATES - 1
+        )
+      : [];
 
-    // Store new sender key record (current + previous states)
     await this.persistSenderKeyRecord(groupId, userId, deviceId, newState, prev);
+    this.previousStates.set(key, prev);
 
     // Create distribution message
     const distributionMessage: SenderKeyDistributionMessage = {
+      senderKeyVersion: SENDER_KEY_FORMAT,
       senderKeyId,
       chainId,
       generation: newState.generation,
@@ -1174,7 +1157,9 @@ export class SenderKeyManager {
   ): Promise<SenderKeyDistributionMessage | null> {
     const state = await this.storage.getSenderKey(groupId, userId, deviceId);
     if (!state?.distributionPending) return null;
+    assertSenderKeyVersion(state);
     return {
+      senderKeyVersion: SENDER_KEY_FORMAT,
       senderKeyId: state.senderKeyId,
       chainId: state.chainId,
       generation: state.generation,
@@ -1267,7 +1252,7 @@ export class SenderKeyManager {
    *
    * Two-step derivation:
    * 1. Seed = HMAC-SHA256(Chain Key, 0x01)
-   * 2. Derived = HKDF-Expand(Seed, info, 48 bytes)
+   * 2. Derived = HKDF(Seed, zero salt, info, 48 bytes)
    *    - IV: bytes 0-15 (16 bytes for AES-CBC)
    *    - Cipher Key: bytes 16-47 (32 bytes)
    *
@@ -1288,9 +1273,9 @@ export class SenderKeyManager {
       // Step 1: Derive seed using HMAC (Signal Protocol KDF_CK pattern)
       seed = crypto.hmac(chainKey, MESSAGE_KEY_CONSTANT);
 
-      // Step 2: Expand seed using HKDF with configurable info string
+      // Step 2: Extract and expand the seed with the configured info string
       const info = crypto.stringToBytes(this.hkdfInfoString);
-      derived = await crypto.hkdfExpand(seed, info, 48);
+      derived = await crypto.hkdf(seed, new Uint8Array(32), info, 48);
 
       // Step 3: Split into IV (16 bytes for AES-CBC) and cipher key (32 bytes)
       return {
@@ -1364,7 +1349,7 @@ export class SenderKeyManager {
     senderKeyId?: string,
     chainId?: number
   ): Uint8Array {
-    // Version byte | 3 = 0x33)
+    // Current sender-key profile version
     const versionByte = new Uint8Array([SENDER_KEY_MESSAGE_VERSION]);
 
     // Canonical signing format: version_byte || protobuf_encode(SenderKeyMessage)

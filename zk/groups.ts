@@ -1,8 +1,8 @@
 /**
  * Public zkgroup API.
  *
- * Server-side wrappers and advanced app integrations should use this module
- * rather than importing Signal Protocol internals directly.
+ * Client integrations use this module for group encryption, credential requests,
+ * response verification, and presentation creation.
  */
 
 export {};
@@ -20,9 +20,5 @@ export {
 
 export { computeProfileKeyVersion } from '../internal/protocol/zk/groups/profile-key-version';
 
-export {
-  serializeAuthCredentialResponse,
-  deserializeAuthCredentialResponse,
-  deserializeAuthCredentialPresentation,
-  deserializeGroupPublicParams,
-} from '../internal/protocol/zk/groups/auth-credential';
+export { deserializeAuthCredentialResponse } from '../internal/protocol/zk/groups/auth-credential';
+

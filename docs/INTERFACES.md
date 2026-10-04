@@ -88,13 +88,14 @@ delivery, provisioning, key rotation, and encrypted group coordination.
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
 import type { SignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
-import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
 
-// Development uses the in-memory relay. Production connects to the OpenE2EE
-// Signal Protocol Relay through `createHostedSignalProtocolClient()`, or to an
-// application backend that implements this interface.
-const relay: SignalProtocolRelayServer = inMemoryRelay();
+// An application-owned client transport to an authenticated backend.
+const relay: SignalProtocolRelayServer = appRelayTransport;
 ```
+
+The hosted factory configures the OpenE2EE Signal Protocol Relay transport.
+Custom transports remain an advanced integration point. The published package
+contains the client contract, without a relay server implementation.
 
 The application backend must:
 
@@ -202,8 +203,7 @@ update, unless the specific API says so.
 - Implement the public interface when infrastructure requirements differ.
 - Import provider and platform adapters from explicit package subpaths so
   unrelated dependencies stay out of client bundles.
-- Keep authentication and product authorization in the application backend,
-  even when an SDK helper supplies generic broker mechanics.
+- Keep authentication and product authorization in the application backend.
 
 See [client composition](./CLIENT_COMPOSITION.md) for the complete client
 configuration shape and [documentation standards](./DOCUMENTATION_STANDARDS.md)

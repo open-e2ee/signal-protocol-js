@@ -11,8 +11,6 @@ Add encrypted messaging to Expo, React Native, browser, and Node applications. T
 
 The default policy requires post-quantum session establishment and ratcheting. The protocol implementation is open source under the MIT License or the Apache License 2.0, at your option.
 
-[**Run an encrypted exchange in your browser**](https://open-e2ee.dev/playground) · [Edit on StackBlitz](https://stackblitz.com/fork/github/open-e2ee/signal-protocol-js/tree/v8.2.0/examples/browser) · [Run on Expo / Hermes](./examples/expo/README.md)
-
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-2f6f5e)](./LICENSE)
 [![npm version](https://img.shields.io/npm/v/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
 [![npm provenance](https://img.shields.io/badge/npm-provenance-2f6f5e)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk#provenance)
@@ -28,22 +26,20 @@ https://github.com/user-attachments/assets/d8002bc3-c037-41b6-8f48-4008f2d49e6c
 
 The [visual demo](https://open-e2ee.dev/#demo) shows the envelope, ratchets, relay mailbox, and decrypted result. On desktop, type a message and inspect each step. On mobile, a recorded protocol run replays at reading pace. Displayed timings exclude network time.
 
-The [console example](https://open-e2ee.dev/playground) executes in your browser on desktop or mobile. It creates Alice and Bob, sends your message, and decrypts a reply. The page and developer console show the actual output. [Read the complete source](./examples/browser/src/exchange.ts) or [run it locally](./examples/browser/README.md).
-
-Both examples use real protocol code and cryptography. An in-memory relay holds their envelopes. They need no account or backend project.
+The demonstrations use real protocol code and cryptography. Application integration requires device-local storage and authenticated delivery.
 
 ## What the SDK handles
 
 - **Session establishment and ratcheting.** PQXDH establishes sessions. The ML-KEM Braid ratchet adds post-quantum key updates. Required post-quantum operations fail closed.
 - **Chat features.** Multi-device messaging, groups, sealed sender, encrypted attachments, and safety-number verification use the same package.
 - **Device-local state.** Storage adapters keep identities, sessions, and message state on the device.
-- **Delivery through an adapter.** Operate your own relay or use [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay).
+- **Hosted delivery.** Connect to [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay) with the hosted client factory. Advanced integrations can supply a custom transport.
 
 The relay never needs message plaintext or device private keys.
 
 OpenE2EE implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
-Version `8.2.x`. Public APIs and persisted formats follow semantic versioning.
+Version `9.0.x`. Public APIs and persisted formats follow semantic versioning.
 
 ## Install
 
@@ -51,54 +47,46 @@ Version `8.2.x`. Public APIs and persisted formats follow semantic versioning.
 npm install @open-e2ee/signal-protocol-sdk
 ```
 
-Use a current Node LTS release for local development. Each runtime example lists its build requirements.
+Use a current Node LTS release for local development. The storage guides list platform requirements.
 
-## Run a local encrypted round trip
+## Connect to the Signal Protocol Relay
 
-Save this as `quickstart.mjs`, then run `node quickstart.mjs`. It uses development-only in-memory adapters so that you can prove the message flow without a backend project.
+Create a Relay project in the [OpenE2EE console](https://console.open-e2ee.dev).
+Configure its identity provider and copy the environment's connection URL.
+Your application supplies a device-local store and `getIdentityAssertion`, which
+returns a short-lived signed assertion for the signed-in user.
 
-<!-- doc-snippet:run readme-quick-start expect="alice: hello" -->
+This example needs that application setup. It is not an offline script.
+
+<!-- doc-snippet:skip requires-external-context -->
 ```ts
-// Real protocol and cryptography; simulated in-memory infrastructure.
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
-import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
+import { createHostedSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 
-const relay = inMemoryRelay();
-await relay.registerDevice("alice", { encryptedDeviceName: new ArrayBuffer(0) });
-await relay.registerDevice("bob", { encryptedDeviceName: new ArrayBuffer(0) });
-
-const alice = await createSignalProtocolClient({
-  identity: { userId: "alice" },
-  adapters: { storage: inMemoryStore(), relay },
+const signal = await createHostedSignalProtocolClient({
+  adapters: { storage },
+  hosted: {
+    relayUrl,
+    getIdentityAssertion,
+  },
 });
-const bob = await createSignalProtocolClient({
-  identity: { userId: "bob" },
-  adapters: { storage: inMemoryStore(), relay },
-});
-
-const delivered = new Promise((resolve) => {
-  bob.registerHook("onMessageDecrypted", async (message) => {
-    console.log(`${message.senderId}: ${message.content}`);
-    bob.stopRelaySubscription();
-    resolve(undefined);
-  });
-});
-
-await alice.send("bob", "hello");
-bob.startRelaySubscription();
-await delivered;
 ```
 
-Expected output:
+Register a handler before you start incoming delivery. Persist each message
+before the handler resolves, and use its ID to make repeated writes idempotent.
 
-```text
-alice: hello
+<!-- doc-snippet:skip requires-external-context -->
+```ts
+signal.registerHook("onMessageDecrypted", async (message) => {
+  await appMessages.accept(message);
+});
+signal.startRelaySubscription();
+await signal.send(recipientUserId, "hello");
 ```
 
-The client factory creates or loads each device identity. When given a relay, it also publishes the public prekey bundle. `send()` fetches Bob's bundle and starts the required post-quantum session. It then gives ciphertext plus routing metadata to the relay. Bob's subscription retrieves and decrypts the envelope on his device.
-
-The in-memory store loses identities, sessions, and ratchet state on restart. The in-memory relay has no authentication, authorization, or durable storage. Do not ship either adapter. Continue with the [documentation quickstart](https://docs.open-e2ee.dev/start/quickstart), which explains key custody, relay metadata, prekey replenishment, additional devices, and recovery policy.
+The hosted factory authenticates and registers the device, then publishes its
+public prekeys. `send()` establishes the recipient sessions and sends encrypted
+envelopes. The receive handler gets plaintext after device-local decryption.
+See [client composition](./docs/CLIENT_COMPOSITION.md) for platform setup.
 
 ## Use your app’s storage and relay
 
@@ -106,14 +94,14 @@ Choose the device-local store for your runtime. Then supply a relay that authent
 
 | Runtime | Storage path | Deployment boundary |
 |---|---|---|
-| Expo | [`expoStore`](./local/store/expo/README.md) | Enable SQLCipher in the expo-sqlite config plugin. The SDK owns the database file, its key, and its migrations. Requires a native development or release build. [Run the Hermes example](./examples/expo/README.md); Expo Go does not include SQLCipher. |
+| Expo | [`expoStore`](./local/store/expo/README.md) | Enable SQLCipher in the expo-sqlite config plugin. The SDK owns the database file, its key, and its migrations. Requires a native development or release build. Expo Go does not include SQLCipher. |
 | Browser | [`webSqliteStore`](./local/store/web-sqlite/README.md) | Needs the origin private file system and a CSP that allows `'wasm-unsafe-eval'`. The SDK owns the database file, its key, and its migrations. The key sits in IndexedDB in the same origin, so same-origin JavaScript can read it. Without the origin private file system, the open fails with `OPFS_UNAVAILABLE`. |
 | Browser without the origin private file system | [`indexedDbStore`](./local/store/web/README.md) | Use a secure context and a restrictive CSP. Same-origin JavaScript can access stored records and their key. [Browser setup](https://docs.open-e2ee.dev/start/browser). |
 | Bare React Native | [`reactNativeStore`](./local/store/react-native/README.md) | Enable SQLCipher with `"op-sqlite": { "sqlcipher": true }` in the app's `package.json`, and install `react-native-keychain`. The SDK owns the database file, its key, and its migrations. Requires a native build; with SQLCipher on, op-sqlite conflicts on iOS with `expo-sqlite`, `expo-updates`, and `use_frameworks!`. |
 | Own key-value engine | [`keyValueStore`](./local/store/key-value/README.md) | Provide an atomic, durable key-value backend and a keychain-backed secret vault, and run the exported backend conformance kit. A Realm backend is included. |
 | Node and Electron | [`nodeStore`](./local/store/node/README.md) | Install `better-sqlite3-multiple-ciphers` and pass a private directory on a local file system and a secret vault. In Electron, open it in the main process with the safeStorage vault. The SDK owns the database file, its key, and its migrations. |
 
-React Native support starts at React Native 0.83.6 and Expo SDK 55. The peer ranges have no upper bound. CI checks these versions:
+React Native support starts at React Native 0.83.6 and Expo SDK 55. The peer ranges have no upper bound. Internal CI checks these versions:
 
 | CI check | Versions |
 |---|---|
@@ -129,7 +117,7 @@ The [adapter guide](./ADAPTERS.md) defines every storage, relay, vault, and obje
 
 ## Security and assurance
 
-The SDK is open source. Our engineering tests remain private. We publish the [testing methodology and dated results](./docs/ASSURANCE.md), including what readers can and cannot verify from this repository. Public CI rebuilds the package, checks types and dependencies, and runs the documented examples.
+The SDK is open source. Our engineering tests remain private. We publish the [testing methodology and dated results](./docs/ASSURANCE.md), including what readers can and cannot verify from this repository. Public CI rebuilds the client package, checks types and dependencies, and validates the public import surface.
 
 > Reviewed continuously by adversarial AI agents; not audited by any independent firm.
 

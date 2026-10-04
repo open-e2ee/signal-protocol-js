@@ -88,10 +88,23 @@ export interface ReceivedContent {
   groupId?: string;
 }
 
-/** Commit received content with sender-key advancement or skipped-key consumption. */
+/** Effects committed atomically with the sender-key record after successful decryption. */
 export interface SenderKeyReceiveCommit {
-  content: ReceivedContent;
-  consumedChainIndex?: number;
+  content?: ReceivedContent;
+  consumedSkippedKey?: { senderKeyId: string; chainIndex: number };
+  /**
+   * Add keys in order. Before each addition, evict the lowest chain indexes for
+   * this group/member/device until fewer than maxSkippedKeys remain. Eviction,
+   * additions, consumption, content, and the record must all roll back on failure.
+   */
+  skippedKeys?: {
+    maxSkippedKeys: number;
+    keys: Array<{
+      senderKeyId: string;
+      chainIndex: number;
+      messageKey: SkippedSenderMessageKey;
+    }>;
+  };
 }
 
 /**
@@ -1342,7 +1355,9 @@ export interface SenderKeyStore {
    * retained during the rotation window for decrypting in-flight messages.
    *
    * Per Sender Keys spec Section 5.1: "Implementations MUST store sender key
-   * state persistently." This method persists the full record atomically.
+   * state persistently." This method persists the full record atomically with
+   * every receive effect. A rejection preserves the prior record, skipped keys,
+   * and received content. The same guarantee applies without a content receipt.
    *
    * @param groupId - Group identifier
    * @param userId - User identifier
@@ -1386,6 +1401,7 @@ export interface SenderKeyStore {
    * @param groupId - Group identifier
    * @param senderId - Sender user identifier
    * @param senderDeviceId - Sender device identifier
+   * @param senderKeyId - Distribution identifier for this sender-key generation
    * @param chainIndex - The message index this key is for
    * @param messageKey - Derived IV and cipher key (base64 encoded)
    */
@@ -1393,6 +1409,7 @@ export interface SenderKeyStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number,
     messageKey: SkippedSenderMessageKey
   ): Promise<void>;
@@ -1403,6 +1420,7 @@ export interface SenderKeyStore {
    * @param groupId - Group identifier
    * @param senderId - Sender user identifier
    * @param senderDeviceId - Sender device identifier
+   * @param senderKeyId - Distribution identifier for this sender-key generation
    * @param chainIndex - The message index to look up
    * @returns Message key or null if not found/expired
    */
@@ -1410,6 +1428,7 @@ export interface SenderKeyStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): Promise<SkippedSenderMessageKey | null>;
 
@@ -1421,12 +1440,14 @@ export interface SenderKeyStore {
    * @param groupId - Group identifier
    * @param senderId - Sender user identifier
    * @param senderDeviceId - Sender device identifier
+   * @param senderKeyId - Distribution identifier for this sender-key generation
    * @param chainIndex - The message index to delete
    */
   deleteSkippedSenderKey(
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): Promise<void>;
 
@@ -1468,7 +1489,7 @@ export interface SenderKeyStore {
  * Contains pre-derived IV and cipher key in base64 format.
  */
 export interface SkippedSenderMessageKey {
-  /** AES-256-GCM cipher key (base64) */
+  /** AES-256-CBC cipher key (base64) */
   cipherKey: string;
   /** Initialization vector (base64) */
   iv: string;

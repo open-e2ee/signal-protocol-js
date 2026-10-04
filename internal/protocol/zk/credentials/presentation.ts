@@ -20,23 +20,12 @@ import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
 import { Statement } from '../proofs/statement';
 import { multiscalarMultiply } from '../proofs/point-multiplication';
 import { ScalarArgs, PointArgs } from '../proofs/args';
-import type {
-  Attribute,
-  PublicAttribute,
-  RevealedAttribute,
-  PublicKey,
-  KeyPair,
-} from './attributes';
-import {
-  NUM_SUPPORTED_ATTRS,
-  RANDOMNESS_LEN,
-  getSystemParams,
-  getPublicKeyI,
-  type Credential,
-  type CredentialKeyPair,
-  type CredentialPublicKey,
-} from './credentials';
-import { VerificationFailure, G_Y_NAMES } from './issuance';
+import type { Attribute, RevealedAttribute, KeyPair } from './attributes';
+
+import { NUM_SUPPORTED_ATTRS, RANDOMNESS_LEN, getSystemParams, getPublicKeyI, type Credential, type CredentialPublicKey } from './credentials';
+
+import { G_Y_NAMES } from './issuance';
+
 export {};
 const Point = RistrettoPoint;
 const Fn = Point.Fn;
@@ -263,7 +252,6 @@ function addAttributeCore(
  * proof is verified, the verifying server provides its own copy of the
  * public attributes, so a tampered copy cannot pass.
  *
- * @see PresentationProofVerifier
  */
 export class PresentationProofBuilder {
   private encryptionKeys: AnyKeyInfo[] = [];
@@ -274,8 +262,8 @@ export class PresentationProofBuilder {
 
   /**
    * @param _label A mandatory public attribute that should uniquely identify
-   *   the credential. Ignored on the builder side (kept for symmetry with
-   *   PresentationProofVerifier).
+   *   the credential. The builder ignores it. The verifier includes it when
+   *   it reconstructs the public attributes.
    * @param message Optional authenticated message bound to the proof but
    *   not part of the original credential.
    */
@@ -453,197 +441,5 @@ export class PresentationProofBuilder {
     );
 
     return { C_x0, C_x1, C_V, C_y, pokshoProof };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// PresentationProofVerifier
-// ---------------------------------------------------------------------------
-
-/**
- * Used to verify presentation proofs.
- *
- * By providing the same attributes in the same order, a proof can be
- * generated and verified with parallel invocations. The size of the proof
- * scales linearly with the number of attributes.
- *
- * Public attributes are not included in the presentation proof. The
- * verifying server provides its own copy, so a tampered copy cannot
- * pass (Chase-Perrin-Zaverucha section 3.2).
- *
- * @see PresentationProofBuilder
- */
-export class PresentationProofVerifier {
-  private encryptionKeys: AnyKeyInfo[] = [];
-  private attributes: AttributeRef[] = [];
-  /** Index 0 always holds the public attributes (initially identity). */
-  private attrPoints: RistrettoPoint[];
-  private publicAttrs: ShoHmacSha256;
-  private authenticatedMessage: Uint8Array;
-
-  /**
-   * @param label A mandatory public attribute that should uniquely identify
-   *   the credential.
-   * @param message Optional authenticated message bound to the proof.
-   */
-  constructor(label: Uint8Array, message: Uint8Array = new Uint8Array(0)) {
-    this.attrPoints = [Point.ZERO];
-    this.publicAttrs = new ShoHmacSha256(label);
-    this.authenticatedMessage = message;
-  }
-
-  /**
-   * Add a public attribute to check against the credential.
-   *
-   * Order-sensitive.
-   */
-  addPublicAttribute(attr: PublicAttribute): this {
-    attr.hashInto(this.publicAttrs);
-    this.publicAttrs.ratchet();
-    return this;
-  }
-
-  /**
-   * Add an encrypted attribute to check, along with the public key it was
-   * encrypted with.
-   *
-   * Order-sensitive.
-   */
-  addAttribute(attr: Attribute, publicKey: PublicKey): this {
-    const domain = publicKey.domain;
-    addAttributeCore(
-      attr.asPoints(),
-      {
-        id: domain.ID,
-        G_a: domain.G_a.bind(domain),
-        A: publicKey.A,
-        a1: null,
-        a2: null,
-      },
-      this.encryptionKeys,
-      this.attributes,
-      this.attrPoints
-    );
-    return this;
-  }
-
-  /**
-   * Add an encrypted attribute to check, omitting the key it was encrypted
-   * with. Still checks correct encryption, but cannot enforce which key
-   * performed it.
-   *
-   * Order-sensitive.
-   */
-  addAttributeWithoutVerifiedKey(attr: Attribute, keyId: string): this {
-    addAttributeCore(
-      attr.asPoints(),
-      {
-        id: keyId,
-        G_a: null,
-        A: null,
-        a1: null,
-        a2: null,
-      },
-      this.encryptionKeys,
-      this.attributes,
-      this.attrPoints
-    );
-    return this;
-  }
-
-  /**
-   * Add an attribute to check against the credential, unencrypted.
-   *
-   * Should only be used when the attribute is blinded from the issuing
-   * server but visible to the verifying server.
-   *
-   * Order-sensitive.
-   */
-  addRevealedAttribute(attr: RevealedAttribute): this {
-    addAttributeCore([attr.asPoint()], null, this.encryptionKeys, this.attributes, this.attrPoints);
-    return this;
-  }
-
-  /**
-   * Finalize public attributes by hashing them into a Ristretto point
-   * and storing in attrPoints[0].
-   */
-  private finalizePublicAttrs(): void {
-    this.attrPoints[0] = this.publicAttrs.getPoint();
-  }
-
-  /**
-   * Verify the given proof over the accrued attributes using `keyPair`.
-   *
-   * @throws VerificationFailure if the proof is invalid.
-   */
-  verify(keyPair: CredentialKeyPair, proof: PresentationProof): void {
-    this.finalizePublicAttrs();
-
-    const { C_x0, C_x1, C_V, C_y, pokshoProof } = proof;
-
-    if (C_y.length !== this.attrPoints.length) {
-      throw new VerificationFailure();
-    }
-
-    const priv = keyPair.privateKey;
-
-    // Z = C_V - W - x0*C_x0 - x1*C_x1 - sum(y[i]*C_y[i]) - y[0]*M_pub
-    //       - sum(y[i]*M[i]) for each revealed attribute i.
-    // One multiscalar multiplication calculates all of the subtracted products.
-    const scalars = [priv.x0, priv.x1, ...C_y.map((_, i) => priv.y[i])];
-    const points = [C_x0, C_x1, ...C_y];
-    // Incorporate public attributes so the server can check they match
-    scalars.push(priv.y[0]);
-    points.push(this.attrPoints[0]);
-    for (const attr of this.attributes) {
-      if (attr.keyIndex === null) {
-        // Revealed attribute: subtract its contribution from Z
-        scalars.push(priv.y[attr.firstPointIndex]);
-        points.push(this.attrPoints[attr.firstPointIndex]);
-      }
-    }
-    const Z = C_V.subtract(priv.W).subtract(multiscalarMultiply(scalars, points));
-
-    const pub = keyPair.publicKey;
-    const I = getPublicKeyI(pub, this.attrPoints.length);
-
-    const pointArgs = prepareNonAttributePointArgs(
-      this.encryptionKeys,
-      this.attrPoints.length,
-      I,
-      C_x0,
-      C_x1,
-      C_y
-    );
-
-    for (const attr of this.attributes) {
-      const { firstPointIndex, secondPointIndex, keyIndex } = attr;
-      pointArgs.add(`C_y${firstPointIndex}`, C_y[firstPointIndex]);
-
-      if (keyIndex !== null) {
-        // For the verifier, attrPoints[i] stores E_A (the ciphertext points)
-        pointArgs.add(`E_A${firstPointIndex}`, this.attrPoints[firstPointIndex]);
-        pointArgs.add(`-E_A${firstPointIndex}`, this.attrPoints[firstPointIndex].negate());
-        pointArgs.add(
-          `C_y${secondPointIndex}-E_A${secondPointIndex}`,
-          C_y[secondPointIndex].subtract(this.attrPoints[secondPointIndex])
-        );
-      }
-    }
-
-    pointArgs.add('Z', Z);
-
-    const statement = getPokshoStatement(
-      this.encryptionKeys,
-      this.attributes,
-      this.attrPoints.length
-    );
-
-    try {
-      statement.verifyProof(pokshoProof, pointArgs, this.authenticatedMessage);
-    } catch {
-      throw new VerificationFailure();
-    }
   }
 }

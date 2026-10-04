@@ -6,7 +6,7 @@
 
 # Class: ServerRootPublicKey
 
-The public counterpart of [ServerRootKeyPair](ServerRootKeyPair.md).
+The server's public root key for endorsements.
 
 Verify issuance with a [ServerDerivedPublicKey](ServerDerivedPublicKey.md).
 
@@ -40,8 +40,7 @@ Verify issuance with a [ServerDerivedPublicKey](ServerDerivedPublicKey.md).
 
 Derives a specific public key for endorsement verification.
 
-The `tagInfoSho` must match what the server used in
-[ServerRootKeyPair.deriveKey](ServerRootKeyPair.md#derivekey).
+The `tagInfoSho` must match the server's input for key derivation.
 
 #### Parameters
 

@@ -2,9 +2,9 @@
 
 > Infrastructure | Implements `SignalProtocolRelayServer` and `SignalProtocolRemoteObjectStore` | [Architecture](../ARCHITECTURE.md)
 
-The backend layer is responsible for server-owned protocol state: public
-prekeys, device registration, encrypted-envelope delivery, and provisioning
-support.
+The remote modules contain client adapters and transport contracts for public
+prekeys, device registration, encrypted envelopes, and encrypted objects.
+The published package excludes relay and object-store server implementations.
 
 ## Why it exists
 
@@ -18,8 +18,7 @@ replaceable and prevent them from owning private keys or plaintext.
 ### Relay
 
 - the OpenE2EE Signal Protocol Relay through `createHostedSignalProtocolClient()` from the package root
-- `InMemorySignalProtocolRelayServer` from `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
-- custom implementations via `SignalProtocolRelayServer`
+- custom client transports via `SignalProtocolRelayServer`
 
 ### Remote object store
 
@@ -116,57 +115,10 @@ The adapter accepts the generated module directly. The functions
 time-sensitive credentials or await provider metadata. The functions
 `createUpload` and `deleteObject` are mutations.
 
-The optional server entry point removes repetitive broker plumbing without
-taking ownership away from the application:
-
-<!-- doc-snippet:skip requires-external-context -->
-```ts
-// convex/signalObjectStore.ts
-import { R2 } from "@convex-dev/r2";
-import {
-  defineConvexR2ObjectStore,
-  type ConvexR2ObjectCallbacks,
-} from "@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2/server";
-import { components, internal } from "./_generated/api";
-
-const objects =
-  internal.signalObjectStoreModel satisfies ConvexR2ObjectCallbacks;
-
-export const {
-  createUpload,
-  createDownload,
-  completeUpload,
-  deleteObject,
-} = defineConvexR2ObjectStore({
-  r2: new R2(components.r2),
-  limits: {
-    maxContentLength: 50 * 1024 * 1024,
-    allowedContentTypes: ["application/octet-stream"],
-    downloadExpiresInSeconds: 15 * 60,
-  },
-  objects,
-});
-```
-
-The application defines the referenced internal functions in
-`convex/signalObjectStoreModel.ts`:
-
-- `reserve` authenticates the caller and idempotently persists
-  `requestId -> objectId -> providerKey`.
-- `resolve` authorizes `download` or `complete` and returns the provider key
-  plus the reserved content type and length.
-- `complete` re-authorizes the caller and idempotently marks an upload complete
-  after the helper verifies synchronized R2 metadata. The action needs this
-  second authorization because its query and mutation are separate
-  transactions.
-- `remove` authorizes deletion and records the logical removal. It returns the
-  stable provider key, so the caller can schedule component deletion
-  transactionally.
-
-The helper supplies public validators and extracts expiry from the actual
-Signature Version 4 URLs. It verifies uploaded size and content type, and it
-calls the R2 component with the correct Convex contexts. It has no runtime
-import of `@convex-dev/r2`. S3-only consumers do not load the component.
+The application supplies these broker functions. Each function authenticates
+and authorizes its caller. The broker owns idempotent reservations, object
+metadata, provider keys, and completion checks. See the
+[Convex R2 client contract](./object-store/convex-r2/README.md).
 
 ### Amazon S3 and S3-compatible storage
 
@@ -193,29 +145,11 @@ const remoteObjectStore = s3ObjectStore({
 Every remote object store should receive only ciphertext plus the metadata
 needed to authorize and construct short-lived operations.
 
-## Local development
+## Sandbox development
 
-Use `InMemorySignalProtocolRelayServer` when multiple clients need a shared in-memory relay:
-
-<!-- doc-snippet:run remote-shared-memory-relay expect="" -->
-```ts
-// Real protocol and cryptography; simulated in-memory infrastructure.
-import { DefaultSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { InMemorySignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
-import { InMemorySignalProtocolStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
-
-const relay = new InMemorySignalProtocolRelayServer();
-
-const alice = await DefaultSignalProtocolClient.create("alice", {
-  storage: new InMemorySignalProtocolStore(),
-  relay,
-});
-
-const bob = await DefaultSignalProtocolClient.create("bob", {
-  storage: new InMemorySignalProtocolStore(),
-  relay,
-});
-```
+Use a Sandbox connection URL from the OpenE2EE console with
+`createHostedSignalProtocolClient()`. Supply the same identity-assertion callback
+and device-local store that your application uses for production.
 
 ## Related Docs
 

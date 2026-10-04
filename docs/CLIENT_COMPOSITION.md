@@ -2,9 +2,10 @@
 
 > Navigation: [README](../README.md) | [ARCHITECTURE](../ARCHITECTURE.md) | [Getting Started](./GETTING_STARTED.md) | **Client Composition**
 
-Use `createSignalProtocolClient()` when app setup owns identity, local device storage,
-relay transport, remote encrypted object storage, logging, and protocol policy
-in one place.
+Use `createHostedSignalProtocolClient()` to connect to the OpenE2EE Signal
+Protocol Relay. Supply device-local storage, the environment connection URL,
+and an identity-assertion callback. Advanced integrations can compose an
+application-owned transport with `createSignalProtocolClient()`.
 
 This guide documents the current stable composition API. It groups local
 persistence under device storage, and an explicit object-store adapter supplies
@@ -28,6 +29,11 @@ const signal = await createSignalProtocolClient({
 ```
 
 ## Expo client on the Signal Protocol Relay
+
+Configure the Relay project and its identity provider in the OpenE2EE console.
+Copy the environment connection URL into your application configuration.
+`getIdentityAssertion` returns a short-lived signed assertion for the signed-in
+user. The hosted factory uses it for device registration and authentication.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts

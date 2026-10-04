@@ -21,20 +21,13 @@
  * @see https://eprint.iacr.org/2019/1416.pdf -- Signal Private Group System
  */
 
-import {
-  ServerRootKeyPair,
-  ServerRootPublicKey,
-  ServerDerivedKeyPair,
-  ServerDerivedPublicKey,
-  ClientDecryptionKey,
-  EndorsementResponse,
-  Endorsement,
-} from '../credentials/endorsements';
+import { ServerRootPublicKey, ServerDerivedPublicKey, ClientDecryptionKey, EndorsementResponse, Endorsement } from '../credentials/endorsements';
+
 import { VerificationFailure } from '../credentials/issuance';
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
 import type { ServiceId } from './uid-struct';
 import { seedM1, calcM1 } from './uid-struct';
-import type { UidEncCiphertext } from './uid-encryption';
+
 import { type GroupSecretParams, SECONDS_PER_DAY } from './group-params';
 export {};
 const enc = new TextEncoder();
@@ -48,25 +41,6 @@ const SECONDS_PER_HOUR = 60 * 60;
 
 /** Domain separation label for GroupSendEndorsement key derivation. */
 const ENDORSEMENT_LABEL = '20240215_Signal_GroupSendEndorsement';
-
-// ---------------------------------------------------------------------------
-// GroupSendDerivedKeyPair
-// ---------------------------------------------------------------------------
-
-/**
- * A key pair used to sign endorsements for a particular expiration.
- *
- * Derived daily from a {@link ServerRootKeyPair} by absorbing the
- * day-aligned expiration timestamp. Intended to be cheaply cached --
- * regeneration is not expensive, but these are reused frequently
- * enough that caching is worthwhile.
- */
-export interface GroupSendDerivedKeyPair {
-  /** The derived server key pair for endorsement issuance/verification. */
-  readonly keyPair: ServerDerivedKeyPair;
-  /** Day-aligned expiration timestamp in epoch seconds. */
-  readonly expiration: number;
-}
 
 /**
  * Create the tag info SHO that encapsulates the public attributes of an
@@ -82,52 +56,6 @@ function tagInfo(expiration: number): ShoHmacSha256 {
   view.setBigUint64(0, BigInt(expiration), false); // big-endian u64
   sho.absorbAndRatchet(buf);
   return sho;
-}
-
-/**
- * Derive the appropriate key pair for the given expiration.
- *
- * @param rootKeyPair - The server's root key pair
- * @param expiration - Day-aligned epoch seconds timestamp
- * @returns The derived key pair bound to the expiration
- * @throws Error if expiration is not day-aligned
- */
-export function deriveForExpiration(
-  rootKeyPair: ServerRootKeyPair,
-  expiration: number
-): GroupSendDerivedKeyPair {
-  if (expiration % SECONDS_PER_DAY !== 0) {
-    throw new Error(
-      `deriveForExpiration: expiration must be day-aligned (multiple of ${SECONDS_PER_DAY}), got ${expiration}`
-    );
-  }
-  const keyPair = rootKeyPair.deriveKey(tagInfo(expiration));
-  return { keyPair, expiration };
-}
-
-// ---------------------------------------------------------------------------
-// Default expiration
-// ---------------------------------------------------------------------------
-
-/**
- * Compute the default expiration for endorsements issued at `currentTime`.
- *
- * Returns the end of the next UTC day. If that is less than 25 hours away, it
- * returns the end of the following day.
- *
- * Endorsements therefore stay valid for at least 25 hours,
- * providing a comfortable buffer for clock skew and timezone issues.
- *
- * @param currentTime - Current time in epoch seconds
- * @returns Day-aligned expiration timestamp in epoch seconds
- */
-export function defaultExpiration(currentTime: number): number {
-  const startOfDay = currentTime - (currentTime % SECONDS_PER_DAY);
-  let expiration = startOfDay + 2 * SECONDS_PER_DAY;
-  if (expiration - currentTime < SECONDS_PER_DAY + SECONDS_PER_HOUR) {
-    expiration += SECONDS_PER_DAY;
-  }
-  return expiration;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,49 +106,6 @@ function sortPointsByKeys(points: Array<[number, RistrettoPoint]>, sortKeys: Uin
     }
     return 0;
   });
-}
-
-// ---------------------------------------------------------------------------
-// Issue endorsements (server-side)
-// ---------------------------------------------------------------------------
-
-/**
- * Issue endorsements for all group members.
- *
- * Takes an array of UID encryption ciphertexts, one per member. Sorts them
- * deterministically, extracts the E_A1 points, and issues endorsements over
- * those points using the derived key pair.
- *
- * @param memberCiphertexts - Encrypted UIDs of group members
- * @param derivedKeyPair - Key pair derived for the target expiration
- * @param randomness - 32 bytes of randomness for the batch proof
- * @returns Response containing endorsements and expiration
- */
-export function issueEndorsements(
-  memberCiphertexts: UidEncCiphertext[],
-  derivedKeyPair: GroupSendDerivedKeyPair,
-  randomness: Uint8Array
-): GroupSendEndorsementsResponse {
-  // Extract E_A1 (first point of each ciphertext) with original indices
-  const indexedPoints: Array<[number, RistrettoPoint]> = memberCiphertexts.map((ct, i) => [
-    i,
-    ct.E_A1,
-  ]);
-
-  // Compute sort keys before sorting
-  const sortKeys = indexedPoints.map(([_i, point]) => point.add(point).toBytes());
-  sortPointsByKeys(indexedPoints, sortKeys);
-
-  // Extract just the sorted points for issuance
-  const sortedPoints = indexedPoints.map(([_i, point]) => point);
-
-  // Issue endorsements over the sorted points
-  const response = EndorsementResponse.issue(sortedPoints, derivedKeyPair.keyPair, randomness);
-
-  return {
-    response,
-    expiration: derivedKeyPair.expiration,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -454,82 +339,6 @@ export function createFullToken(token: GroupSendToken, expiration: number): Grou
 }
 
 /**
- * Verify that a full token is valid for sending to the given ServiceIds
- * at the current time.
- *
- * The chat server calls this to authorize a group send. Verification:
- *  1. Checks that the token has not expired
- *  2. Asserts the expiration matches the derived key pair
- *  3. Sums the M1 points of all recipient ServiceIds
- *  4. Verifies the token against the summed point using the derived key
- *
- * @param fullToken - The full token to verify
- * @param serviceIds - ServiceIds the sender claims to be sending to
- * @param now - Current time in epoch seconds
- * @param derivedKeyPair - Key pair derived for the token's expiration
- * @returns true if the token is valid
- * @throws VerificationFailure if verification fails
- */
-export function verifyFullToken(
-  fullToken: GroupSendFullToken,
-  serviceIds: ServiceId[],
-  now: number,
-  derivedKeyPair: GroupSendDerivedKeyPair
-): boolean {
-  if (now > fullToken.expiration) {
-    throw new VerificationFailure();
-  }
-  if (fullToken.expiration !== derivedKeyPair.expiration) {
-    throw new Error(
-      'verifyFullToken: wrong key pair used for this token ' +
-        `(token expiration: ${fullToken.expiration}, ` +
-        `key pair expiration: ${derivedKeyPair.expiration})`
-    );
-  }
-
-  // Sum M1 points for all recipient ServiceIds
-  const uidShoSeed = seedM1();
-  let userIdSum: RistrettoPoint | null = null;
-  for (const serviceId of serviceIds) {
-    const m1 = calcM1(uidShoSeed.clone(), serviceId);
-    if (userIdSum === null) {
-      userIdSum = m1;
-    } else {
-      userIdSum = userIdSum.add(m1);
-    }
-  }
-
-  if (userIdSum === null) {
-    throw new Error('verifyFullToken: serviceIds must not be empty');
-  }
-
-  // ServerDerivedKeyPair.verify throws VerificationFailure on mismatch
-  derivedKeyPair.keyPair.verify(userIdSum, fullToken.token.token);
-  return true;
-}
-
-// ---------------------------------------------------------------------------
-// Serialization helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Serialize a {@link GroupSendEndorsementsResponse} to bytes.
- *
- * Format: [expiration (8 bytes BE)] [endorsement response bytes]
- *
- * @param response - The response to serialize
- * @returns The serialized bytes
- */
-export function serializeEndorsementsResponse(response: GroupSendEndorsementsResponse): Uint8Array {
-  const responseBytes = response.response.toBytes();
-  const result = new Uint8Array(8 + responseBytes.length);
-  const view = new DataView(result.buffer);
-  view.setBigUint64(0, BigInt(response.expiration), false);
-  result.set(responseBytes, 8);
-  return result;
-}
-
-/**
  * Deserialize a {@link GroupSendEndorsementsResponse} from bytes.
  *
  * @param bytes - The serialized bytes
@@ -561,21 +370,4 @@ export function serializeFullToken(fullToken: GroupSendFullToken): Uint8Array {
   view.setBigUint64(0, BigInt(fullToken.expiration), false);
   result.set(fullToken.token.token, 8);
   return result;
-}
-
-/**
- * Deserialize a {@link GroupSendFullToken} from bytes.
- *
- * @param bytes - The serialized bytes (24 bytes)
- * @returns The deserialized full token
- * @throws Error if the bytes are malformed
- */
-export function deserializeFullToken(bytes: Uint8Array): GroupSendFullToken {
-  if (bytes.length < 24) {
-    throw new Error('deserializeFullToken: expected at least 24 bytes, got ' + bytes.length);
-  }
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const expiration = Number(view.getBigUint64(0, false));
-  const token = bytes.slice(8, 24);
-  return { token: { token }, expiration };
 }

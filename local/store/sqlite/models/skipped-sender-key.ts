@@ -5,7 +5,6 @@
  */
 
 import type { SqliteExecutor } from '../driver';
-import { placeholders } from '../schema';
 
 export type SkippedSenderMessageKey = { iv: string; cipherKey: string };
 
@@ -16,20 +15,22 @@ export async function storeSkippedSenderKey(
   groupId: string,
   senderId: string,
   senderDeviceId: number,
+  senderKeyId: string,
   chainIndex: number,
   messageKey: SkippedSenderMessageKey
 ): Promise<void> {
   await db.run(
     `INSERT INTO skipped_sender_keys
-       (group_id, sender_id, sender_device_id, chain_index, cipher_key, iv, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (group_id, sender_id, sender_device_id, chain_index) DO UPDATE SET
+       (group_id, sender_id, sender_device_id, sender_key_id, chain_index, cipher_key, iv, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (group_id, sender_id, sender_device_id, sender_key_id, chain_index) DO UPDATE SET
        cipher_key = excluded.cipher_key,
        iv = excluded.iv`,
     [
       groupId,
       senderId,
       senderDeviceId,
+      senderKeyId,
       chainIndex,
       messageKey.cipherKey,
       messageKey.iv,
@@ -43,12 +44,13 @@ export async function getSkippedSenderKey(
   groupId: string,
   senderId: string,
   senderDeviceId: number,
+  senderKeyId: string,
   chainIndex: number
 ): Promise<SkippedSenderMessageKey | null> {
   const row = await db.first<{ iv: string; cipherKey: string }>(
     `SELECT iv, cipher_key AS cipherKey FROM skipped_sender_keys
-     WHERE ${SENDER_WHERE} AND chain_index = ? LIMIT 1`,
-    [groupId, senderId, senderDeviceId, chainIndex]
+     WHERE ${SENDER_WHERE} AND sender_key_id = ? AND chain_index = ? LIMIT 1`,
+    [groupId, senderId, senderDeviceId, senderKeyId, chainIndex]
   );
   return row ? { iv: row.iv, cipherKey: row.cipherKey } : null;
 }
@@ -58,14 +60,13 @@ export async function deleteSkippedSenderKey(
   groupId: string,
   senderId: string,
   senderDeviceId: number,
+  senderKeyId: string,
   chainIndex: number
 ): Promise<void> {
-  await db.run(`DELETE FROM skipped_sender_keys WHERE ${SENDER_WHERE} AND chain_index = ?`, [
-    groupId,
-    senderId,
-    senderDeviceId,
-    chainIndex,
-  ]);
+  await db.run(
+    `DELETE FROM skipped_sender_keys WHERE ${SENDER_WHERE} AND sender_key_id = ? AND chain_index = ?`,
+    [groupId, senderId, senderDeviceId, senderKeyId, chainIndex]
+  );
 }
 
 export async function countSkippedSenderKeys(
@@ -99,18 +100,23 @@ export async function deleteOldestSkippedSenderKeys(
   if (count <= 0) return 0;
 
   return await db.transaction(async (tx) => {
-    const oldest = await tx.all<{ chainIndex: number }>(
-      `SELECT chain_index AS chainIndex FROM skipped_sender_keys
+    const oldest = await tx.all<{ senderKeyId: string; chainIndex: number }>(
+      `SELECT sender_key_id AS senderKeyId, chain_index AS chainIndex FROM skipped_sender_keys
        WHERE ${SENDER_WHERE} ORDER BY chain_index ASC LIMIT ?`,
       [groupId, senderId, senderDeviceId, count]
     );
     if (oldest.length === 0) return 0;
 
-    await tx.run(
-      `DELETE FROM skipped_sender_keys
-       WHERE ${SENDER_WHERE} AND chain_index IN (${placeholders(oldest.length)})`,
-      [groupId, senderId, senderDeviceId, ...oldest.map((row) => row.chainIndex)]
-    );
+    for (const key of oldest) {
+      await deleteSkippedSenderKey(
+        tx,
+        groupId,
+        senderId,
+        senderDeviceId,
+        key.senderKeyId,
+        key.chainIndex
+      );
+    }
     return oldest.length;
   });
 }

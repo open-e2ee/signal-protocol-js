@@ -14,18 +14,11 @@
 
 import { ShoHmacSha256, RistrettoPoint } from '../proofs/sho';
 import { Statement } from '../proofs/statement';
-import { ScalarArgs, PointArgs } from '../proofs/args';
+import { PointArgs } from '../proofs/args';
+
 import type { Attribute, PublicAttribute, RevealedAttribute } from './attributes';
-import {
-  NUM_SUPPORTED_ATTRS,
-  RANDOMNESS_LEN,
-  getSystemParams,
-  credentialCore,
-  getPublicKeyI,
-  type Credential,
-  type CredentialKeyPair,
-  type CredentialPublicKey,
-} from './credentials';
+import { NUM_SUPPORTED_ATTRS, getSystemParams, getPublicKeyI, type Credential, type CredentialPublicKey } from './credentials';
+
 export {};
 const Point = RistrettoPoint;
 
@@ -122,15 +115,7 @@ const M_NAMES = ['M0', 'M1', 'M2', 'M3', 'M4', 'M5', 'M6'] as const;
 // --- IssuanceProofBuilder ---
 
 /**
- * Builder for issuing and verifying credential issuance proofs.
- *
- * Usage (server, issuing):
- * ```ts
- *   const builder = new IssuanceProofBuilder(label);
- *   builder.addPublicAttribute(attr);
- *   builder.addAttribute(attr);
- *   const proof = builder.issue(keyPair, randomness);
- * ```
+ * Builder for credential issuance proofs.
  *
  * Usage (client, verifying):
  * ```ts
@@ -200,19 +185,6 @@ export class IssuanceProofBuilder {
     return st;
   }
 
-  prepareScalarArgs(keyPair: CredentialKeyPair, totalAttrCount: number): ScalarArgs {
-    const priv = keyPair.privateKey;
-    const args = new ScalarArgs();
-    args.add('w', priv.w);
-    args.add('wprime', priv.wprime);
-    args.add('x0', priv.x0);
-    args.add('x1', priv.x1);
-    for (let i = 0; i < totalAttrCount; i++) {
-      args.add(Y_NAMES[i], priv.y[i]);
-    }
-    return args;
-  }
-
   preparePointArgs(
     publicKey: CredentialPublicKey,
     totalAttrCount: number,
@@ -243,35 +215,6 @@ export class IssuanceProofBuilder {
     }
 
     return args;
-  }
-
-  /**
-   * Issue a credential over the accumulated attributes.
-   *
-   * CRITICAL: Use different randomness each time. Reusing randomness
-   * effectively reveals the server's private key.
-   */
-  issue(keyPair: CredentialKeyPair, randomness: Uint8Array): IssuanceProof {
-    this.finalizePublicAttrs();
-
-    const sho = new ShoHmacSha256(
-      new TextEncoder().encode('Signal_ZKCredential_Issuance_20230410')
-    );
-    sho.absorbAndRatchet(randomness);
-
-    const credential = credentialCore(keyPair.privateKey, this.attrPoints, sho);
-    const scalarArgs = this.prepareScalarArgs(keyPair, this.attrPoints.length);
-    const pointArgs = this.preparePointArgs(keyPair.publicKey, this.attrPoints.length, credential);
-
-    const proofRandomness = sho.squeezeAndRatchet(RANDOMNESS_LEN);
-    const pokshoProof = this.getPokshoStatement().prove(
-      scalarArgs,
-      pointArgs,
-      this.authenticatedMessage,
-      proofRandomness
-    );
-
-    return { credential, pokshoProof };
   }
 
   /**
@@ -391,12 +334,6 @@ export class BlindedIssuanceProofBuilder {
     return st;
   }
 
-  private prepareScalarArgs(keyPair: CredentialKeyPair, rprime: bigint): ScalarArgs {
-    const args = this.inner.prepareScalarArgs(keyPair, this.totalCount);
-    args.add('rprime', rprime);
-    return args;
-  }
-
   private preparePointArgs(
     publicKey: CredentialPublicKey,
     blindingKey: BlindingPublicKey,
@@ -417,62 +354,6 @@ export class BlindedIssuanceProofBuilder {
     args.add('Y', blindingKey.Y);
 
     return args;
-  }
-
-  /**
-   * Issue a blinded credential.
-   *
-   * CRITICAL: Use different randomness each time.
-   */
-  issue(
-    keyPair: CredentialKeyPair,
-    blindingKey: BlindingPublicKey,
-    randomness: Uint8Array
-  ): BlindedIssuanceProof {
-    this.inner.finalizePublicAttrs();
-
-    const sho = new ShoHmacSha256(
-      new TextEncoder().encode('Signal_ZKCredential_BlindIssuance_20230410')
-    );
-    sho.absorbAndRatchet(randomness);
-
-    const rprime = sho.getScalar();
-
-    // S1 = rprime * G + sum(yi * D1_i)
-    let S1 = Point.BASE.multiply(rprime);
-    const nPlain = this.inner.attrPoints.length;
-    for (let i = 0; i < this.blindedAttrPoints.length; i++) {
-      S1 = S1.add(this.blindedAttrPoints[i].D1.multiply(keyPair.privateKey.y[nPlain + i]));
-    }
-
-    // Base credential over unblinded attrs
-    const baseCredential = credentialCore(keyPair.privateKey, this.inner.attrPoints, sho);
-
-    // S2 = rprime * Y + V + sum(yi * D2_i)
-    let S2 = blindingKey.Y.multiply(rprime).add(baseCredential.V);
-    for (let i = 0; i < this.blindedAttrPoints.length; i++) {
-      S2 = S2.add(this.blindedAttrPoints[i].D2.multiply(keyPair.privateKey.y[nPlain + i]));
-    }
-
-    const credential: BlindedCredential = {
-      t: baseCredential.t,
-      U: baseCredential.U,
-      S1,
-      S2,
-    };
-
-    const scalarArgs = this.prepareScalarArgs(keyPair, rprime);
-    const pointArgs = this.preparePointArgs(keyPair.publicKey, blindingKey, credential);
-
-    const proofRandomness = sho.squeezeAndRatchet(RANDOMNESS_LEN);
-    const pokshoProof = this.getPokshoStatement().prove(
-      scalarArgs,
-      pointArgs,
-      this.inner.authenticatedMessage,
-      proofRandomness
-    );
-
-    return { credential, pokshoProof };
   }
 
   /**

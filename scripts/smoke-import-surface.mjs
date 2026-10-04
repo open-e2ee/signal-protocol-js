@@ -130,7 +130,7 @@ const ENTRY_GUIDES = new Map([
   ['./local/vault/expo-secure-store', 'local/vault/README.md'],
   ['./local/vault/react-native-keychain', 'local/vault/README.md'],
   ['./remote/object-store/convex-r2', 'remote/object-store/convex-r2/README.md'],
-  ['./remote/object-store/convex-r2/server', 'remote/object-store/convex-r2/README.md'],
+  ['./remote/object-store/convex-r2/server', 'remote/object-store/convex-r2/server.md'],
   ['./remote/relay/convex', 'remote/relay/convex/README.md'],
 ]);
 const isGuidedEntry = (subpath) => subpath.startsWith('./local/');

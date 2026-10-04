@@ -14,16 +14,8 @@
  */
 
 import { defaultSignalProtocolLogger, type Logger } from '../../../logger';
-import {
-  generateECDHKeyPair,
-  computeSharedSecret,
-  concatBytes,
-  base64ToBytes,
-  stringToBytes,
-  hkdf,
-  secureZeroBytes,
-  validateX25519PublicKey,
-} from '../../crypto';
+import { generateECDHKeyPair, computeSharedSecret, concatBytes, stringToBytes, hkdf, secureZeroBytes, validateX25519PublicKey } from '../../crypto';
+
 import { PREKEY_ALGORITHM_X25519, verifyPreKeySignature } from '../../../keys/prekey-signature';
 import type {
   IdentityKeyPair,

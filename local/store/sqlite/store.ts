@@ -566,9 +566,37 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
     await this.db.transaction(async (tx) => {
       await createSenderKey({ groupId, senderId: userId, deviceId, states }).save(tx);
       if (receive) {
-        await setReceivedContent(tx, receive.content);
-        if (receive.consumedChainIndex !== undefined)
-          await deleteSkippedSenderKey(tx, groupId, userId, deviceId, receive.consumedChainIndex);
+        if (receive.skippedKeys) {
+          for (const skipped of receive.skippedKeys.keys) {
+            const count = await countSkippedSenderKeys(tx, groupId, userId, deviceId);
+            await deleteOldestSkippedSenderKeys(
+              tx,
+              groupId,
+              userId,
+              deviceId,
+              count - Math.max(0, receive.skippedKeys.maxSkippedKeys - 1)
+            );
+            await storeSkippedSenderKey(
+              tx,
+              groupId,
+              userId,
+              deviceId,
+              skipped.senderKeyId,
+              skipped.chainIndex,
+              skipped.messageKey
+            );
+          }
+        }
+        if (receive.content) await setReceivedContent(tx, receive.content);
+        if (receive.consumedSkippedKey !== undefined)
+          await deleteSkippedSenderKey(
+            tx,
+            groupId,
+            userId,
+            deviceId,
+            receive.consumedSkippedKey.senderKeyId,
+            receive.consumedSkippedKey.chainIndex
+          );
       }
     });
   }
@@ -641,28 +669,53 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number,
     messageKey: { iv: string; cipherKey: string }
   ): Promise<void> {
-    await storeSkippedSenderKey(this.db, groupId, senderId, senderDeviceId, chainIndex, messageKey);
+    await storeSkippedSenderKey(
+      this.db,
+      groupId,
+      senderId,
+      senderDeviceId,
+      senderKeyId,
+      chainIndex,
+      messageKey
+    );
   }
 
   async getSkippedSenderKey(
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): Promise<{ iv: string; cipherKey: string } | null> {
-    return await getSkippedSenderKey(this.db, groupId, senderId, senderDeviceId, chainIndex);
+    return await getSkippedSenderKey(
+      this.db,
+      groupId,
+      senderId,
+      senderDeviceId,
+      senderKeyId,
+      chainIndex
+    );
   }
 
   async deleteSkippedSenderKey(
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): Promise<void> {
-    await deleteSkippedSenderKey(this.db, groupId, senderId, senderDeviceId, chainIndex);
+    await deleteSkippedSenderKey(
+      this.db,
+      groupId,
+      senderId,
+      senderDeviceId,
+      senderKeyId,
+      chainIndex
+    );
   }
 
   async countSkippedSenderKeys(

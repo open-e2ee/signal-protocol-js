@@ -405,6 +405,7 @@ export interface IncrementalKEM {
 
   /**
    * Phase 2: Complete encapsulation using ek_vector
+   * The caller verifies ek_seed and ek_vector against the authenticated header first.
    * @param encaps_secret - Internal state from Encaps1
    * @param ek_seed - 32-byte encapsulation key seed
    * @param ek_vector - 1152-byte encapsulation key vector

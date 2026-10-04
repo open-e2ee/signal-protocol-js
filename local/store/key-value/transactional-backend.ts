@@ -2,7 +2,7 @@
  * A key-value backend over an engine's own transaction.
  *
  * The rules of `atomicWrite` (checks first against the pre-batch state,
- * writes in order, and the session scan) have one owner: the store's batch
+ * writes in order, the session scan, and skipped-key pruning) have one owner: the store's batch
  * function. An application that writes a backend for its storage engine does
  * not copy them. It supplies the engine's transaction and a handle over it,
  * and {@link createTransactionalKeyValueBackend} runs every write as one batch

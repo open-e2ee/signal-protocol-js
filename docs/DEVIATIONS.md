@@ -85,7 +85,7 @@ model and what is out of scope.
 | **Sesame** | Sesame rev. 2 | **Deviation** on session expiry (§4.2 applies only to unacknowledged sessions), on deleted devices (hard-removed rather than marked stale), and on device-list currency (the sender reads the relay's list at most once per 60 s instead of the server rejecting a stale send). **Extensions:** QR provisioning, device transfer, encrypted device names, identity-change gating, a 5-device cap | Product requirements the specification does not address | Hard deletion **drops the MAXLATENCY window, so in-flight messages from a just-removed device become permanently undecryptable**. A device linked or removed less than 60 s ago can miss a send or still receive one. Device transfer clones ratchet state, which weakens the forward-secrecy bound |
 | **Sealed sender** | `libsignal` `sealed_sender.rs` | **Faithful** on the multi-recipient transport labels, KEM, AES-256-GCM-SIV, binary format, and `0x3FFF` registration-ID mask. **Extension:** sender and server certificates require signed Relay scope and issuer validity under operator-owned Ed25519 roots | Binds anonymous delivery to one Relay deployment and supports explicit issuer rotation and revocation | The transport follows `libsignal`; certificates are not interchangeable with Signal Messenger or another deployment |
 | **Delivery token** | `libsignal` `profile_key.rs` | **Faithful.** `deriveAccessKey` follows `libsignal`'s `ProfileKey::derive_access_key`, and reproduces `libsignal`'s published known-answer values | — | Not an SDK invention, despite what the module name suggests |
-| **Sender keys** | `libsignal` `sender_keys.rs` | **Deviation.** Protobuf field numbers and `0x33` framing match, and the `0x01`/`0x02` seeds match, but message-key derivation **omits HKDF-Extract**, signatures are Ed25519 not XEdDSA, and `distributionUuid` carries a UTF-8 string rather than 16 UUID bytes | The Ed25519 choice follows the identity profile; the missing Extract appears unintentional | Group message keys differ from `libsignal`'s for the same chain key. Confirmed numerically, not merely by inspection |
+| **Sender keys** | `libsignal` `sender_keys.rs` | **Deviation.** Protobuf fields, chain seeds, and HKDF-Extract/Expand match. The SDK uses frame version `0x44`, Ed25519 signatures, and UTF-8 distribution identifiers. | The identity profile selects Ed25519. The frame version marks the correction of the former missing Extract. | Message-key derivation matches the reference. Former SDK state and messages require a reset. Frames still differ from Signal Messenger. |
 | **Groups** | Signal Private Group System | **Independent design.** Real zkgroup primitives underneath; profile-key credential issuance blinds the ACI-bound profile-key attribute, the server validates every change against zero-knowledge presentations and signs the accepted result, and clients verify those signatures | Ships a validating group server with an enforcement contract (S1–S14) specified in-tree | Not wire-compatible with the Signal Private Group System; credentials are not interchangeable. The issuer sees the authenticated ACI and redemption window, but not the raw profile key |
 | **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation is structured as four labeled derivations rather than one seeded derivation | Server keys are the deploying operator's own trust root (each deployment generates its own seed), not Signal Messenger's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal Messenger's |
 | **Registration IDs** | `libsignal` `sealed_sender.rs` | **Faithful.** Generated in `[1, 16383]`, strictly inside the 14 bits the wire format reserves | — | — |
@@ -873,13 +873,16 @@ Signal Messenger trust root.
 These parts match:
 
 - protobuf field numbers and types, against [`wire.proto`][wp] exactly
-- the `[version byte] ‖ protobuf ‖ [64-byte signature]` framing with version
-  `0x33`
+- the `[version byte] ‖ protobuf ‖ [64-byte signature]` framing
 - the `0x01`/`0x02` chain seeds and the `WhisperGroup` info string
 - AES-256-CBC with the derived IV
 - the capacity constants
 
-Three things do not:
+The following details differ:
+
+**The signed frame version is `0x44`**. The format break in §7.2 separates
+corrected message-key derivation from the former SDK derivation. Libsignal uses
+`0x33`.
 
 **`distributionUuid` carries a UTF-8 string, not 16 UUID bytes**. The SDK writes
 the 36-character textual form of a random UUIDv4
@@ -899,31 +902,27 @@ requires an opaque identifier.
 **Signatures are Ed25519, not XEdDSA**, per §1.2. `libsignal` also serializes the
 signing key as 33 bytes where the SDK uses 32.
 
-### 7.2 Message-key derivation omits HKDF-Extract
+### 7.2 Message-key derivation matches the reference
 
-This one is worth stating precisely because the field numbers and labels above
-make the format look compatible.
+Reviewed: 2026-10-02.
 
-`libsignal` derives sender message keys with
-`Hkdf::<Sha256>::new(None, &seed).expand(b"WhisperGroup", 48)`
-([`sender_keys.rs:36-38`][sk]). `Hkdf::new` runs HKDF-**Extract** first, as
-`PRK = HMAC-SHA256(salt = zeros[32], seed)`. Only then does it expand.
+The SDK derives Sender Keys message material with HKDF-SHA256 Extract and
+Expand. Its input is `HMAC-SHA256(chain_key, 0x01)`, its salt is 32 zero bytes,
+and its info string is `WhisperGroup`. The 48-byte output contains a 16-byte
+IV followed by a 32-byte cipher key. This matches
+[`SenderMessageKey::new` in libsignal][sk].
 
-The SDK calls `hkdfExpand(seed, info, 48)` directly
-(`internal/protocol/sender-keys/manager.ts:1062-1066`), where `hkdfExpand`
-(`internal/crypto/kdf/hkdf.ts:86-116`) is pure RFC 5869 Expand using the seed
-itself as the PRK. The SDK never runs the extract step.
+The former implementation omitted Extract. The correction changes derived keys
+and requires a format break. State and encrypted distribution messages now
+require `senderKeyVersion: 'v2'`. Signed group frames require byte `0x44`.
+The SDK rejects old state, unversioned distributions, and old frames.
+Applications must reset group sender-key state and discard queued group sends
+before they redistribute keys with upgraded peers.
 
-The derived IV and cipher key therefore differ from `libsignal`'s for the same
-chain key. A numeric check confirms it, rather than inspection alone. For a chain
-key of 32 repeated `0x42` bytes, the SDK derives IV
-`2a56b9eb80b3c1ffebd97221b2175960` where `libsignal` derives
-`890d51ea73e564722351dc0d5a09142c`.
-
-This appears unintentional. It is not a weakness, because dropping Extract from a
-uniformly random HMAC output is cryptographically sound. The repository's own
-sender-keys note still claims equivalence with `libsignal` at this step, and that
-claim is incorrect. This entry flags it for correction.
+For a chain key of 32 repeated `0x42` bytes, the current IV is
+`890d51ea73e564722351dc0d5a09142c`. The former IV was
+`2a56b9eb80b3c1ffebd97221b2175960`. An independent Node/OpenSSL oracle checks
+ciphertext against the current derivation.
 
 ### 7.3 Groups are an independent design
 

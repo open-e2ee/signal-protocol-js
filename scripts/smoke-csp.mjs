@@ -1,25 +1,9 @@
-/*
- * Runs the README quick start against the packed package with runtime code
- * generation disabled, the way a strict Content-Security-Policy denies it in a
- * browser and the way `--disallow-code-generation-from-strings` denies it in
- * Node.
- *
- * This is the acceptance gate for removing protobufjs from the wire path.
- * protobufjs builds its codecs with `new Function`, so today the quick start
- * dies inside the first `send`: the `EvalError` surfaces as a `SesameError`
- * with code `ALL_DEVICES_FAILED`, and this script exits non-zero. It turns
- * green when every wire codec is a hand-written static encoder.
- *
- * Usage:
- *   node ./scripts/smoke-csp.mjs             # build, pack, run the quick start
- *   node ./scripts/smoke-csp.mjs --no-build  # reuse an existing dist/
- *
- * The quick start is extracted from README.md exactly as `.github/workflows/
- * ci.yml` extracts it, so this gate and the published snippet can never drift.
+/* Checks packed client cryptography with runtime code generation disabled.
+ * The internal checkout also runs its development-relay round trip.
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,7 +11,8 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
 const packageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
 const packageNameSegments = packageJson.name.split('/');
-const QUICKSTART_EXPECTED_OUTPUT = 'alice: hello';
+const privateRoundTrip = join(scriptDir, 'fixtures', 'local-round-trip.mjs');
+const QUICKSTART_EXPECTED_OUTPUT = existsSync(privateRoundTrip) ? 'alice: hello' : 'client crypto: ok';
 const QUICKSTART_TIMEOUT_MS = 120_000;
 
 function run(command, args, options = {}) {
@@ -44,29 +29,23 @@ function run(command, args, options = {}) {
   return result.stdout;
 }
 
-/**
- * The first `ts` fence under `## Run a local encrypted round trip`. The published block is plain
- * ESM with type annotations nowhere in it, which is why CI can rename it to
- * `.mjs` and run it unmodified; this script holds it to the same bargain.
- */
-function readQuickStart() {
-  const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
-  const section = readme.indexOf('\n## Run a local encrypted round trip\n');
-  if (section === -1) {
-    throw new Error(
-      'README.md has no `## Run a local encrypted round trip` section'
-    );
-  }
-  const fence = /```ts\r?\n([\s\S]*?)```/.exec(readme.slice(section));
-  if (!fence || fence[1].trim() === '') {
-    throw new Error(
-      'README.md `## Run a local encrypted round trip` section has no non-empty ts block'
-    );
-  }
-  return fence[1];
-}
+const quickStart = existsSync(privateRoundTrip)
+  ? readFileSync(privateRoundTrip, 'utf8')
+  : `
+import assert from 'node:assert/strict';
+import { keys, createDefaultSignalProtocolContentAdapter } from '@open-e2ee/signal-protocol-sdk';
+import { deriveGroupSecretParams, encryptBlob, decryptBlob } from '@open-e2ee/signal-protocol-sdk/zk/groups';
+const identity = await keys.generateIdentityKeyPair();
+assert.equal(Buffer.from(identity.dhKey.publicKey, 'base64').length, 32);
+const group = deriveGroupSecretParams(crypto.getRandomValues(new Uint8Array(32)));
+const plaintext = new TextEncoder().encode('client crypto');
+const ciphertext = encryptBlob(group, crypto.getRandomValues(new Uint8Array(32)), plaintext);
+assert.deepEqual(decryptBlob(group, ciphertext), plaintext);
+const content = createDefaultSignalProtocolContentAdapter();
+assert.ok(content.serializeDataMessage({ body: 'client crypto', timestamp: 1 }).length > 0);
+console.log('client crypto: ok');
+`;
 
-const quickStart = readQuickStart();
 const fixtureRoot = mkdtempSync(join(repoRoot, '.signal-csp-smoke-'));
 const fixtureDir = join(fixtureRoot, 'consumer');
 const fixtureNodeModules = join(fixtureDir, 'node_modules', ...packageNameSegments.slice(0, -1));
@@ -105,9 +84,9 @@ try {
   const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
 
   // CI treats the delivered line as the contract; so does this gate.
-  if (result.stdout.includes(QUICKSTART_EXPECTED_OUTPUT)) {
+  if (result.status === 0 && result.stdout.includes(QUICKSTART_EXPECTED_OUTPUT)) {
     process.stdout.write(`${output}\n`);
-    process.stdout.write('smoke-csp:ok quickstart round trip completed without code generation\n');
+    process.stdout.write('smoke-csp:ok packed client operations completed without code generation\n');
   } else {
     const cause =
       result.signal !== null

@@ -1284,9 +1284,10 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): string {
-    return `${this.getSkippedSenderKeyPrefix(groupId, senderId, senderDeviceId)}${chainIndex}`;
+    return `${this.getSkippedSenderKeyPrefix(groupId, senderId, senderDeviceId)}${escapeKeyComponent(senderKeyId)}:${chainIndex}`;
   }
 
   private getMessageRecordStorageKey(sessionId: string, timestamp: number): string {
@@ -1688,19 +1689,44 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
       });
     }
     if (receive) {
-      operations.push({
-        type: 'set',
-        key: `@signal:received-content:${receive.content.id}`,
-        value: await this.encrypt(JSON.stringify(receive.content)),
-      });
-      if (receive.consumedChainIndex !== undefined)
+      if (receive.skippedKeys) {
+        for (const skipped of receive.skippedKeys.keys) {
+          operations.push(
+            {
+              type: 'pruneSkippedSenderKeys',
+              keyPrefix: this.getSkippedSenderKeyPrefix(groupId, userId, deviceId),
+              maxCount: Math.max(0, receive.skippedKeys.maxSkippedKeys - 1),
+            },
+            {
+              type: 'set',
+              key: this.getSkippedSenderKeyStorageKey(
+                groupId,
+                userId,
+                deviceId,
+                skipped.senderKeyId,
+                skipped.chainIndex
+              ),
+              value: await this.encrypt(JSON.stringify(skipped.messageKey)),
+            }
+          );
+        }
+      }
+      if (receive.content) {
+        operations.push({
+          type: 'set',
+          key: `@signal:received-content:${receive.content.id}`,
+          value: await this.encrypt(JSON.stringify(receive.content)),
+        });
+      }
+      if (receive.consumedSkippedKey !== undefined)
         operations.push({
           type: 'remove',
           key: this.getSkippedSenderKeyStorageKey(
             groupId,
             userId,
             deviceId,
-            receive.consumedChainIndex
+            receive.consumedSkippedKey.senderKeyId,
+            receive.consumedSkippedKey.chainIndex
           ),
         });
     }
@@ -1732,12 +1758,19 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number,
     messageKey: SkippedSenderMessageKey
   ): Promise<void> {
     this.ensureInitialized();
     await this.storageBackend.setItem(
-      this.getSkippedSenderKeyStorageKey(groupId, senderId, senderDeviceId, chainIndex),
+      this.getSkippedSenderKeyStorageKey(
+        groupId,
+        senderId,
+        senderDeviceId,
+        senderKeyId,
+        chainIndex
+      ),
       await this.encrypt(JSON.stringify(messageKey))
     );
   }
@@ -1746,11 +1779,12 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): Promise<SkippedSenderMessageKey | null> {
     this.ensureInitialized();
     const encrypted = await this.storageBackend.getItem(
-      this.getSkippedSenderKeyStorageKey(groupId, senderId, senderDeviceId, chainIndex)
+      this.getSkippedSenderKeyStorageKey(groupId, senderId, senderDeviceId, senderKeyId, chainIndex)
     );
     if (!encrypted) {
       return null;
@@ -1764,11 +1798,12 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): Promise<void> {
     this.ensureInitialized();
     await this.storageBackend.removeItem(
-      this.getSkippedSenderKeyStorageKey(groupId, senderId, senderDeviceId, chainIndex)
+      this.getSkippedSenderKeyStorageKey(groupId, senderId, senderDeviceId, senderKeyId, chainIndex)
     );
   }
 

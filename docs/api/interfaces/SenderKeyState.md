@@ -91,7 +91,7 @@ millisecond, and hide the second one.
 
 Sender key wire format version for protocol evolution.
 
-Format 'v1' (current): Ed25519 signatures, AES-256-CBC encryption
+Format 'v2': Ed25519 signatures, AES-256-CBC, and HKDF-Extract then Expand
 Future versions may support format changes or algorithm upgrades.
 
 ***

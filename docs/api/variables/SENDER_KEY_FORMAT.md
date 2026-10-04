@@ -6,6 +6,6 @@
 
 # Variable: SENDER\_KEY\_FORMAT
 
-> `const` **SENDER\_KEY\_FORMAT**: `"v1"` = `'v1'`
+> `const` **SENDER\_KEY\_FORMAT**: `"v2"` = `'v2'`
 
 Wire format for SenderKeyState

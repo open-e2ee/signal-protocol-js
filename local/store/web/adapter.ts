@@ -84,7 +84,7 @@ type SenderKeyRecordId = [groupId: string, userId: string, deviceId: number];
 type SkippedSenderKeySender = [groupId: string, senderId: string, senderDeviceId: number];
 
 /** The IndexedDB key of one skipped sender key. */
-type SkippedSenderKeyId = [...SkippedSenderKeySender, chainIndex: number];
+type SkippedSenderKeyId = [...SkippedSenderKeySender, senderKeyId: string, chainIndex: number];
 
 /**
  * IndexedDB schema for Signal Protocol storage
@@ -1661,54 +1661,104 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     }
 
     const encrypted = await this.encrypt(JSON.stringify(states));
-    const content = receive ? await this.encrypt(JSON.stringify(receive.content)) : undefined;
+    const content = receive?.content
+      ? await this.encrypt(JSON.stringify(receive.content))
+      : undefined;
+    // Finish encryption before opening the IDB transaction, which must not await crypto.
+    const skippedKeys = await Promise.all(
+      (receive?.skippedKeys?.keys ?? []).map(async (skipped) => ({
+        key: this.getSkippedSenderKeyStorageKey(
+          groupId,
+          userId,
+          deviceId,
+          skipped.senderKeyId,
+          skipped.chainIndex
+        ),
+        groupId,
+        senderKey: this.getSkippedSenderKeyPrefix(groupId, userId, deviceId),
+        chainIndex: skipped.chainIndex,
+        data: await this.encrypt(JSON.stringify(skipped.messageKey)),
+        createdAt: Date.now(),
+      }))
+    );
     const tx = this.db!.transaction(
       ['senderKeyRecords', 'skippedSenderKeys', 'metadata'],
       'readwrite'
     );
+    // Observe aborts immediately, including while the skipped-key read is pending.
+    const completed = tx.done;
+    void completed.catch(() => undefined);
     const writes: Promise<unknown>[] = [];
     try {
+      const skippedStore = tx.objectStore('skippedSenderKeys');
+      // Read this sender's skipped keys once and plan every eviction in
+      // memory. Then enter all writes in one synchronous batch: a page that
+      // dies commits a transaction idle at an await, so an await between two
+      // writes could land only some of them.
+      const resident =
+        skippedKeys.length > 0
+          ? (
+              await skippedStore
+                .index('by-sender')
+                .getAll(this.getSkippedSenderKeyPrefix(groupId, userId, deviceId))
+            ).map(({ key, chainIndex }) => ({ key, chainIndex }))
+          : [];
+      const sameKey = (a: SkippedSenderKeyId, b: SkippedSenderKeyId) =>
+        a.every((part, index) => part === b[index]);
+      const skippedWrites: Array<
+        { put: (typeof skippedKeys)[number] } | { delete: SkippedSenderKeyId }
+      > = [];
+      for (const skipped of skippedKeys) {
+        resident.sort((a, b) => a.chainIndex - b.chainIndex);
+        const count = resident.length - Math.max(0, receive!.skippedKeys!.maxSkippedKeys - 1);
+        for (const old of resident.splice(0, Math.max(0, count))) {
+          skippedWrites.push({ delete: old.key });
+        }
+        const replaced = resident.findIndex((entry) => sameKey(entry.key, skipped.key));
+        if (replaced !== -1) resident.splice(replaced, 1);
+        resident.push({ key: skipped.key, chainIndex: skipped.chainIndex });
+        skippedWrites.push({ put: skipped });
+      }
+      if (receive?.consumedSkippedKey !== undefined) {
+        skippedWrites.push({
+          delete: this.getSkippedSenderKeyStorageKey(
+            groupId,
+            userId,
+            deviceId,
+            receive.consumedSkippedKey.senderKeyId,
+            receive.consumedSkippedKey.chainIndex
+          ),
+        });
+      }
+
       writes.push(
         tx.objectStore('senderKeyRecords').put({
           key: [groupId, userId, deviceId],
           groupId,
           userId,
           deviceId,
-          // Indexed so `resolveGroupForSenderKeyId` is a lookup rather than a
-          // decrypt-everything scan. Previous states are included: a message
-          // encrypted just before a rotation is still in flight when the rotation
-          // lands and names the superseded key.
+          // Include archived IDs so delayed messages still resolve to this group.
           senderKeyIds: states.map((state) => state.senderKeyId).filter(Boolean),
           data: encrypted,
           updatedAt: Date.now(),
         })
       );
-      if (receive && content) {
+      for (const write of skippedWrites) {
         writes.push(
-          tx.objectStore('metadata').put(content, receivedContentKey(receive.content.id))
+          'put' in write ? skippedStore.put(write.put) : skippedStore.delete(write.delete)
         );
-        if (receive.consumedChainIndex !== undefined)
-          writes.push(
-            tx
-              .objectStore('skippedSenderKeys')
-              .delete(
-                this.getSkippedSenderKeyStorageKey(
-                  groupId,
-                  userId,
-                  deviceId,
-                  receive.consumedChainIndex
-                )
-              )
-          );
       }
-      await Promise.all([...writes, tx.done]);
+      if (receive?.content && content) {
+        writes.push(tx.objectStore('metadata').put(content, receivedContentKey(receive.content.id)));
+      }
+      await Promise.all([...writes, completed]);
     } catch (error) {
       try {
         tx.abort();
       } catch {
         /* The failed transaction can already be inactive. */
       }
-      await Promise.allSettled([...writes, tx.done]);
+      await Promise.allSettled([...writes, completed]);
       throw error;
     }
   }
@@ -1765,13 +1815,20 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number,
     messageKey: SkippedSenderMessageKey
   ): Promise<void> {
     this.ensureInitialized();
     const encrypted = await this.encrypt(JSON.stringify(messageKey));
     await this.db!.put('skippedSenderKeys', {
-      key: this.getSkippedSenderKeyStorageKey(groupId, senderId, senderDeviceId, chainIndex),
+      key: this.getSkippedSenderKeyStorageKey(
+        groupId,
+        senderId,
+        senderDeviceId,
+        senderKeyId,
+        chainIndex
+      ),
       groupId,
       senderKey: this.getSkippedSenderKeyPrefix(groupId, senderId, senderDeviceId),
       chainIndex,
@@ -1784,12 +1841,13 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): Promise<SkippedSenderMessageKey | null> {
     this.ensureInitialized();
     const stored = await this.db!.get(
       'skippedSenderKeys',
-      this.getSkippedSenderKeyStorageKey(groupId, senderId, senderDeviceId, chainIndex)
+      this.getSkippedSenderKeyStorageKey(groupId, senderId, senderDeviceId, senderKeyId, chainIndex)
     );
     if (!stored) {
       return null;
@@ -1803,12 +1861,13 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): Promise<void> {
     this.ensureInitialized();
     await this.db!.delete(
       'skippedSenderKeys',
-      this.getSkippedSenderKeyStorageKey(groupId, senderId, senderDeviceId, chainIndex)
+      this.getSkippedSenderKeyStorageKey(groupId, senderId, senderDeviceId, senderKeyId, chainIndex)
     );
   }
 
@@ -2052,9 +2111,10 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     groupId: string,
     senderId: string,
     senderDeviceId: number,
+    senderKeyId: string,
     chainIndex: number
   ): SkippedSenderKeyId {
-    return [groupId, senderId, senderDeviceId, chainIndex];
+    return [groupId, senderId, senderDeviceId, senderKeyId, chainIndex];
   }
 
   private getMessageRecordStorageKey(sessionId: string, timestamp: number): string {

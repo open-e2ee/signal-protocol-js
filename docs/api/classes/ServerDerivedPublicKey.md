@@ -6,7 +6,7 @@
 
 # Class: ServerDerivedPublicKey
 
-The public counterpart of [ServerDerivedKeyPair](ServerDerivedKeyPair.md).
+The server's public key for one endorsement context.
 
 Derived from a [ServerRootPublicKey](ServerRootPublicKey.md).
 

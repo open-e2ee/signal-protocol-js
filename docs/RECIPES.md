@@ -8,90 +8,11 @@
 Working shapes for the tasks applications do most often. Each example
 uses public exports only.
 
-## Two local clients
+## Hosted Client Setup
 
-This local demo sends while Bob is offline so you can see the relay's encrypted
-envelope and Bob's decrypted plaintext in the same workflow.
-
-<!-- doc-snippet:run recipes-two-local-clients expect="bob decrypted: alice: hello" -->
-```ts
-// Real protocol and cryptography; simulated in-memory infrastructure.
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
-import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
-
-const relay = inMemoryRelay();
-
-// The relay knows which devices exist, but it does not get plaintext.
-await relay.registerDevice("alice", {
-  encryptedDeviceName: new ArrayBuffer(0),
-});
-await relay.registerDevice("bob", { encryptedDeviceName: new ArrayBuffer(0) });
-
-// Each client represents one device. Its storage is local to that device.
-const alice = await createSignalProtocolClient({
-  identity: { userId: "alice" },
-  adapters: { storage: inMemoryStore(), relay },
-});
-
-const bob = await createSignalProtocolClient({
-  identity: { userId: "bob" },
-  adapters: { storage: inMemoryStore(), relay },
-});
-
-await alice.syncToServer();
-await bob.syncToServer();
-
-// Send while Bob is offline so we can inspect what the relay stores.
-const sent = await alice.send("bob", "hello");
-console.log("alice sent:", sent.messageId);
-
-// The relay-visible envelope contains metadata plus ciphertext, not plaintext.
-const [queuedEnvelope] = relay.getPendingMessages("bob", 1);
-const ciphertextLength =
-  typeof queuedEnvelope.ciphertext === "string"
-    ? queuedEnvelope.ciphertext.length
-    : queuedEnvelope.ciphertext.byteLength;
-const ciphertextPreview =
-  typeof queuedEnvelope.ciphertext === "string"
-    ? `${queuedEnvelope.ciphertext.slice(0, 32)}...`
-    : `${queuedEnvelope.ciphertext.byteLength} encrypted bytes`;
-
-console.log("relay sees encrypted envelope:", {
-  messageType: queuedEnvelope.messageType,
-  ciphertextLength,
-  ciphertextPreview,
-});
-
-const decrypted = new Promise<void>((resolve) => {
-  // Plaintext enters your app only after Bob's Signal Protocol client decrypts it.
-  bob.registerHook("onMessageDecrypted", async (message) => {
-    console.log("bob decrypted:", `${message.senderId}: ${message.content}`);
-    resolve();
-  });
-});
-
-// Starting the subscription delivers Bob's queued encrypted envelope.
-bob.startRelaySubscription();
-await decrypted;
-```
-
-Example output:
-
-```text
-alice sent: msg-1
-relay sees encrypted envelope: {
-  messageType: 'prekey_bundle',
-  ciphertextLength: 3464,
-  ciphertextPreview: '<base64 ciphertext preview>...'
-}
-bob decrypted: alice: hello
-```
-
-The first message usually uses a `prekey_bundle` envelope because it establishes
-the session. Later messages on the same session use `ciphertext`. In both cases
-the relay sees encrypted envelope bytes. Bob receives decrypted content only
-through the `onMessageDecrypted` hook.
+The recipes require a configured Relay project, an identity-assertion callback,
+and device-local storage. Use the Relay Sandbox for development. The
+[getting-started guide](./GETTING_STARTED.md) describes these inputs.
 
 ## Production composition with Expo on the Signal Protocol Relay
 
@@ -114,35 +35,8 @@ const signal = await createHostedSignalProtocolClient({
 });
 ```
 
-Production bootstrapping must register or provision the current device with the
-relay before other clients rely on user-level send discovery. In Signal Protocol
-that belongs in the device lifecycle and authentication bootstrap. Expo apps
-must also complete the [database bootstrap](../local/store/expo/README.md)
-before creating the client.
-
-## Local development
-
-<!-- doc-snippet:run recipes-local-development expect="" -->
-```ts
-// Real protocol and cryptography; simulated in-memory infrastructure.
-import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import { inMemoryRelay } from "@open-e2ee/signal-protocol-sdk/remote/relay/memory";
-import { inMemoryStore } from "@open-e2ee/signal-protocol-sdk/local/store/memory";
-
-const relay = inMemoryRelay();
-
-const alice = await createSignalProtocolClient({
-  // `identity` is the app account/device being represented.
-  identity: { userId: "alice" },
-  // `adapters` are the concrete storage/relay implementation for this run.
-  adapters: { storage: inMemoryStore(), relay },
-});
-
-const bob = await createSignalProtocolClient({
-  identity: { userId: "bob" },
-  adapters: { storage: inMemoryStore(), relay },
-});
-```
+The hosted factory authenticates and registers the current device. Expo apps
+must complete the [database setup](../local/store/expo/README.md) first.
 
 ## App message flow
 

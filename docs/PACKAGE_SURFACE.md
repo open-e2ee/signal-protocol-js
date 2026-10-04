@@ -11,7 +11,8 @@ It also defines the vocabulary the rest of the documentation assumes.
 
 ## Core model
 
-- `createSignalProtocolClient()` is the recommended app-facing entry point.
+- `createHostedSignalProtocolClient()` connects to the OpenE2EE Signal Protocol Relay.
+- `createSignalProtocolClient()` composes an application-owned client transport.
 - `DefaultSignalProtocolClient` is the class the factory returns. `SignalProtocolClient` is its interface.
 - Every client requires `storage`, which owns local encryption state for one
   user/device.
@@ -33,12 +34,12 @@ package. They do not imply that one client spans multiple protocols.
 
 For a production app, the normal startup shape is:
 
-1. Choose device-local storage for the current user/device.
-2. Choose a relay for device discovery, public prekeys, and encrypted delivery.
-3. Register or provision the current device with the relay during app bootstrap.
-4. Create the Signal Protocol client with `createSignalProtocolClient()`.
-5. Call `syncToServer()` so other devices can start encrypted sessions.
-6. Register receive hooks and start relay subscription delivery.
+1. Configure a Relay project and identity provider in the OpenE2EE console.
+2. Open device-local storage for the signed-in user.
+3. Create the client with `createHostedSignalProtocolClient()`.
+4. Register receive hooks and start relay subscription delivery.
+
+The hosted factory registers the device and publishes its public prekeys.
 
 ## Root package
 
@@ -48,6 +49,7 @@ Use the root package for core portable APIs:
 ```ts
 import {
   SignalProtocolClient,
+  createHostedSignalProtocolClient,
   createSignalProtocolClient,
   ProtocolAddress,
   BraidPolicy,
@@ -61,14 +63,16 @@ import {
 The root package intentionally does not re-export platform-bound adapters like
 Expo storage or the Convex R2 object store.
 
+The published package contains client APIs and transport contracts. Relay
+servers, group authorization engines, credential issuers, and server signing
+implementations are outside the published SDK.
+
 ## Integration subpaths
 
 - `@open-e2ee/signal-protocol-sdk/remote/relay`
-- `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
 - `@open-e2ee/signal-protocol-sdk/remote/relay/types`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`
-- `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2/server`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store/s3`
 - `@open-e2ee/signal-protocol-sdk/client`
 - `@open-e2ee/signal-protocol-sdk/client/config`
@@ -88,7 +92,6 @@ Expo storage or the Convex R2 object store.
 - `@open-e2ee/signal-protocol-sdk/encoding/hex`
 - `@open-e2ee/signal-protocol-sdk/files`
 - `@open-e2ee/signal-protocol-sdk/groups`
-- `@open-e2ee/signal-protocol-sdk/groups/server`
 - `@open-e2ee/signal-protocol-sdk/hooks`
 - `@open-e2ee/signal-protocol-sdk/keys`
 - `@open-e2ee/signal-protocol-sdk/keys/generation`
@@ -125,7 +128,6 @@ Expo storage or the Convex R2 object store.
 
 ### Development adapters
 
-- `@open-e2ee/signal-protocol-sdk/remote/relay/memory`
 - `@open-e2ee/signal-protocol-sdk/local/store/memory`
 
 `internal/**` is implementation-only and not part of the supported external API.
@@ -149,7 +151,6 @@ Expo storage or the Convex R2 object store.
 
 - `createHostedSignalProtocolClient()` from the package root for the OpenE2EE
   Signal Protocol Relay
-- `InMemorySignalProtocolRelayServer` / `inMemoryRelay()` for local development
 - custom implementations via `SignalProtocolRelayServer`
 
 ### Storage implementations
@@ -188,9 +189,6 @@ Expo storage or the Convex R2 object store.
 - `ConvexR2ObjectStore` via
   `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`
 - `convexR2ObjectStore()` for Cloudflare R2 composition
-- `defineConvexR2ObjectStore()` via the server-only
-  `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2/server` entry
-  point
 - `S3ObjectStore` via `@open-e2ee/signal-protocol-sdk/remote/object-store/s3`
 - `s3ObjectStore()` for brokered Amazon S3 or S3-compatible storage
 - custom implementations via `SignalProtocolRemoteObjectStore`
@@ -199,7 +197,7 @@ Expo storage or the Convex R2 object store.
 functions that wrap `@convex-dev/r2`. It is not the Convex component itself.
 The application continues to own component installation, mounting,
 configuration, authentication, authorization, persistence, credentials, and
-the R2 bucket. The optional server helper owns only generic broker mechanics.
+the R2 bucket and broker implementation.
 Both concrete adapters keep provider credentials in the application backend.
 
 The remote object store is a normal integration point for encrypted

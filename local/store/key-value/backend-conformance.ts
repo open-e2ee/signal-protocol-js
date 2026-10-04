@@ -172,6 +172,41 @@ const CASES: ConformanceCase[] = [
     },
   },
   {
+    name: 'pruneSkippedSenderKeys uses numeric indexes, exact prefixes, and earlier batch writes',
+    async run(backend) {
+      const prefix = '@signal:skipped-sender-key:group:alice:1:';
+      await backend.atomicWrite([
+        { type: 'set', key: prefix + 'old:2', value: 'old key' },
+        { type: 'set', key: prefix + 'old:10', value: 'newer key' },
+        { type: 'set', key: prefix + 'new:2', value: 'other generation' },
+        {
+          type: 'set',
+          key: '@signal:skipped-sender-key:group:alice:10:old:0',
+          value: 'other device',
+        },
+        { type: 'pruneSkippedSenderKeys', keyPrefix: prefix, maxCount: 1 },
+      ]);
+      assertEqual(await backend.getItem(prefix + 'old:2'), null, 'lower index removed');
+      assertEqual(
+        await backend.getItem(prefix + 'new:2'), null, 'equal index in other generation removed'
+      );
+      assertEqual(
+        await backend.getItem(prefix + 'old:10'), 'newer key', 'numeric rather than string order'
+      );
+      assertEqual(
+        await backend.getItem('@signal:skipped-sender-key:group:alice:10:old:0'),
+        'other device',
+        'exact device prefix'
+      );
+      await backend.atomicWrite([
+        { type: 'pruneSkippedSenderKeys', keyPrefix: prefix, maxCount: 0 },
+      ]);
+      assertEqual(
+        await backend.getItem(prefix + 'old:10'), null, 'zero capacity removes all matching keys'
+      );
+    },
+  },
+  {
     name: 'atomicWrite applies operations in order',
     async run(backend) {
       await backend.atomicWrite([

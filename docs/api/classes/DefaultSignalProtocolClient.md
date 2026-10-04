@@ -2709,7 +2709,6 @@ Fully initialized DefaultSignalProtocolClient instance
 
 ```typescript
 import { DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
-import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
 
 // Local-only primary device.
 const signal = await DefaultSignalProtocolClient.create('user-123', {
@@ -2722,8 +2721,8 @@ const signal = await DefaultSignalProtocolClient.create('user-123', {
   storage: provisionedLinkedDeviceStorage
 });
 
-// With relay sync.
-const relay = inMemoryRelay();
+// With an application-owned authenticated relay transport.
+const relay = appRelayTransport;
 const signal = await DefaultSignalProtocolClient.create('user-123', {
   storage,
   relay,

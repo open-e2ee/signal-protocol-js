@@ -200,10 +200,9 @@ export interface DoubleRatchetConfig {
  *   createSignalProtocolClient,
  *   SignalProtocolClient,
  * } from '@open-e2ee/signal-protocol-sdk';
- * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
  *
- * // Development relay. Production uses `createHostedSignalProtocolClient()`.
- * const relay = inMemoryRelay();
+ * // Advanced integration with an application-owned client transport.
+ * const relay = appRelayTransport;
  *
  * // Preferred app-facing composition.
  * const signal = await createSignalProtocolClient({
@@ -296,10 +295,9 @@ export interface SignalProtocolClientConfig {
    * @example
    * ```typescript
    * import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
-   * import { inMemoryRelay } from '@open-e2ee/signal-protocol-sdk/remote/relay/memory';
    *
-   * // Development relay. Production uses `createHostedSignalProtocolClient()`.
-   * const relay = inMemoryRelay();
+   * // Advanced integration with an application-owned client transport.
+   * const relay = appRelayTransport;
    *
    * const signal = await createSignalProtocolClient({
    *   identity: { userId },
@@ -745,7 +743,8 @@ export interface SignalProtocolClientConfig {
    * Useful for logging, analytics, or triggering UI updates when
    * the client rotates sender keys after membership changes.
    *
-   * @param groupId - The group whose sender key changed
+   * @param groupId - The raw ID of the group whose sender key changed, without
+   *   the `open-e2ee:group:` prefix
    * @param newGeneration - The new generation number of the sender key
    *
    * @example
@@ -768,16 +767,10 @@ export interface SignalProtocolClientConfig {
    * that hides the sender's identity from the server. The recipient can
    * still verify the sender via the embedded certificate.
    *
-   * Requires:
-   * - A relay deployment secret (`OE_GROUPS_SERVER_SECRET`), from which the
-   *   relay derives the certificate signing keys. There is no separate signing-key
-   *   variable.
-   * - The deployment's Ed25519 sender-certificate root public key pinned in
-   *   `trustRoots` at build time. Print it with `npx oe-groups trust-root`,
-   *   which reports it as `sealed sender trust root` alongside the matching
-   *   `sealed sender relay scope`. Pin both values. Never fetch either from a
-   *   relay at runtime. A relay that can choose its own validation policy can
-   *   mint certificates for any sender.
+   * Custom transports require the deployment's Ed25519 certificate root public
+   * key in `trustRoots` and its matching `relayScopeId`. Get these values through
+   * trusted application configuration. A custom relay must not choose its own
+   * validation policy at runtime.
    *
    * With `trustRoots` empty, inbound sealed-sender validation stays disabled
    * and sends fall back to identified delivery, which deanonymizes the sender
