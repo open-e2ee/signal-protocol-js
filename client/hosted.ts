@@ -74,6 +74,7 @@ export type {
   HostedRelayWakePresence,
 } from './hosted-presence';
 export type { HostedRelayProfileKeys } from './hosted-profile-keys';
+export { hostedRelaySandboxIdentity } from './hosted-sandbox-identity';
 export type {
   HostedRelayPushPlatform,
   HostedRelayPushProfile,
@@ -107,6 +108,10 @@ export type IdentityAssertionProviderRole = 'source' | 'target';
 export interface IdentityAssertionRequest {
   readonly purpose: IdentityAssertionPurpose;
   readonly assurance?: IdentityAssertionAssurance;
+  /** The environment kind of the Relay connection in `relayUrl`. */
+  readonly environment: 'sandbox' | 'production';
+  /** The publishable key in `relayUrl`. It identifies one Relay environment. */
+  readonly publishableKey: string;
   readonly migration?: {
     readonly action: HostedRelayIdentityMigrationAction;
     readonly providerRole: IdentityAssertionProviderRole;
@@ -958,6 +963,8 @@ export async function advanceHostedRelayIdentityMigration(
     return assertIdentityAssertion(
       await options.getIdentityAssertion({
         purpose: 'refresh',
+        environment: connection.environment,
+        publishableKey,
         migration: { action: options.action, providerRole },
       }),
     );
@@ -1107,12 +1114,17 @@ export async function linkHostedRelayDevice(
  * The Relay verifies the assertion and device proof, then returns the canonical
  * account, registered device, scope, and authenticated transport used by the client.
  *
+ * In a Sandbox environment, {@link hostedRelaySandboxIdentity} supplies the
+ * assertion. In production, `getIdentityAssertion` gets the assertion from
+ * your identity provider.
+ *
  * @example
  * ```ts
+ * const storage = inMemoryStore();
  * const client = await createHostedSignalProtocolClient({
- *   adapters,
+ *   adapters: { storage },
  *   hosted: {
- *     getIdentityAssertion,
+ *     getIdentityAssertion: hostedRelaySandboxIdentity(storage),
  *     relayUrl: process.env.OPEN_E2EE_RELAY_URL!,
  *   },
  * });
@@ -1178,6 +1190,8 @@ export async function createHostedSignalProtocolClient(
   const assertion = await hosted.getIdentityAssertion({
     purpose: assertionPurpose,
     assurance: hosted.assurance,
+    environment: connection.environment,
+    publishableKey,
   });
   assertIdentityAssertion(assertion);
 

@@ -51,7 +51,9 @@
     "code_of_conduct.md",
     "NEWS.md"
   ],
-  "rules": [],
+  "rules": [
+    "Use Node 22.12 or newer. The package declares engines.node >= 22.12.0 and is ESM-only."
+  ],
   "previousVersions": [],
   "disallow": false
 }

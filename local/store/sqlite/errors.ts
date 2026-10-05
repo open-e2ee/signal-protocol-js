@@ -57,9 +57,9 @@ export function toStorageQuotaError(error: unknown): unknown {
  * A call on a store or a transaction scope that has ended. No statement ran.
  */
 export class SqliteStoreClosedError extends EncryptionError {
+  override readonly name = 'SqliteStoreClosedError';
   constructor(message: string) {
     super(message, EncryptionErrorCode.INVALID_STATE, { operation: 'sqlite' });
-    this.name = 'SqliteStoreClosedError';
   }
 }
 
@@ -71,6 +71,7 @@ export class SqliteStoreClosedError extends EncryptionError {
  * this way, with no original error.
  */
 export class SqliteKeyMismatchError extends EncryptionError {
+  override readonly name = 'SqliteKeyMismatchError';
   constructor(driver: string, originalError?: unknown) {
     super(
       `The ${driver} database exists but cannot be read with this key and encryption setting. ` +
@@ -78,7 +79,6 @@ export class SqliteKeyMismatchError extends EncryptionError {
       EncryptionErrorCode.KEY_STORAGE_ERROR,
       { operation: 'open', originalError: originalError as Error | undefined }
     );
-    this.name = 'SqliteKeyMismatchError';
   }
 }
 
@@ -88,6 +88,7 @@ export class SqliteKeyMismatchError extends EncryptionError {
  * after the open because its driver did not apply the key.
  */
 export class SqliteEncryptionUnavailableError extends EncryptionError {
+  override readonly name = 'SqliteEncryptionUnavailableError';
   constructor(driver: string) {
     super(
       `The ${driver} database would not be encrypted, so the store did not ` +
@@ -96,7 +97,6 @@ export class SqliteEncryptionUnavailableError extends EncryptionError {
       EncryptionErrorCode.KEY_STORAGE_ERROR,
       { operation: 'open' }
     );
-    this.name = 'SqliteEncryptionUnavailableError';
   }
 }
 
@@ -105,25 +105,25 @@ export class SqliteEncryptionUnavailableError extends EncryptionError {
  * No key or setting from an earlier open applies, so the file is corrupt.
  */
 export class SqliteStoreCorruptError extends EncryptionError {
+  override readonly name = 'SqliteStoreCorruptError';
   constructor(driver: string, originalError: unknown) {
     super(
       `The ${driver} database file is corrupt. It did not exist before this open.`,
       EncryptionErrorCode.KEY_STORAGE_ERROR,
       { operation: 'open', originalError: originalError as Error }
     );
-    this.name = 'SqliteStoreCorruptError';
   }
 }
 
 /** Another connection or process holds the database file. */
 export class SqliteStoreInUseError extends EncryptionError {
+  override readonly name = 'SqliteStoreInUseError';
   constructor(driver: string, originalError: unknown) {
     super(
       `The ${driver} database is open in another connection or process.`,
       EncryptionErrorCode.KEY_STORAGE_ERROR,
       { operation: 'open', originalError: originalError as Error }
     );
-    this.name = 'SqliteStoreInUseError';
   }
 }
 
@@ -132,6 +132,7 @@ export class SqliteStoreInUseError extends EncryptionError {
  * migration step that this SDK knows, so this SDK does not open it.
  */
 export class SqliteSchemaTooNewError extends EncryptionError {
+  override readonly name = 'SqliteSchemaTooNewError';
   constructor(fileVersion: number, knownVersion: number) {
     super(
       `The database schema is at version ${fileVersion}, but this SDK knows versions up to ` +
@@ -139,6 +140,5 @@ export class SqliteSchemaTooNewError extends EncryptionError {
       EncryptionErrorCode.INVALID_STATE,
       { operation: 'open' }
     );
-    this.name = 'SqliteSchemaTooNewError';
   }
 }

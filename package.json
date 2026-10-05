@@ -1,6 +1,6 @@
 {
   "name": "@open-e2ee/signal-protocol-sdk",
-  "version": "9.0.0",
+  "version": "9.1.0",
   "description": "Pure TypeScript Signal Protocol SDK for encrypted chat in Expo, React Native, browsers, and Node. Post-quantum by default.",
   "keywords": [
     "open-e2ee",
@@ -423,7 +423,7 @@
     "xcode": {
       "uuid": "11.1.1"
     },
-    "brace-expansion": "^5.0.9",
+    "brace-expansion": "^5.0.12",
     "image-size": "file:./vendor/image-size-disabled"
   },
   "devDependencies": {

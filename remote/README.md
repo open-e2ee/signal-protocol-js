@@ -147,9 +147,11 @@ needed to authorize and construct short-lived operations.
 
 ## Sandbox development
 
-Use a Sandbox connection URL from the OpenE2EE console with
-`createHostedSignalProtocolClient()`. Supply the same identity-assertion callback
-and device-local store that your application uses for production.
+`oe new` writes a Sandbox connection URL to `.env.local`. Pass it to
+`createHostedSignalProtocolClient()` with the device-local store that your
+application uses for production. A Sandbox environment uses device-owned
+identity, so pass `hostedRelaySandboxIdentity(storage)` as
+`hosted.getIdentityAssertion`.
 
 ## Related Docs
 

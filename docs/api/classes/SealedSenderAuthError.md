@@ -77,6 +77,16 @@ try {
 
 [`EncryptionError`](EncryptionError.md).[`context`](EncryptionError.md#context)
 
+***
+
+### name
+
+> `readonly` **name**: `"SealedSenderAuthError"` = `'SealedSenderAuthError'`
+
+#### Overrides
+
+`EncryptionError.name`
+
 ## Accessors
 
 ### address

@@ -36,9 +36,9 @@ export {
   type UnidentifiedAccessModeType,
   type ContactProfileStateStore,
   type MutableContactProfileStateStore,
-  verifyUnidentifiedAccessMode,
   storeReceivedProfileKey,
 } from './contact-state';
+export { verifyUnidentifiedAccessMode } from './unidentified-access';
 
 // Profile cipher (padded field encryption/decryption)
 export {

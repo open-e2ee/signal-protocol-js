@@ -33,10 +33,12 @@ await signal.encryptMessage(bob, 'hello');
 
 ### With relay
 
-Create a Relay project in the OpenE2EE console and configure its identity
-provider. Copy the environment connection URL into your application. Supply
-`getIdentityAssertion` from your authentication integration. It returns a
-short-lived signed assertion for the signed-in user.
+Run `oe new` in the application directory. It creates the Relay project and
+its Sandbox environment, and it writes the connection URL to `.env.local`. In
+a Sandbox environment, `hostedRelaySandboxIdentity(storage)` supplies
+`getIdentityAssertion` from a key in the device-local store. In production,
+supply `getIdentityAssertion` from your authentication integration. It returns
+a short-lived signed assertion for the signed-in user.
 
 The hosted factory registers the device and publishes its public prekeys.
 The published SDK contains client code and transport contracts. Relay server

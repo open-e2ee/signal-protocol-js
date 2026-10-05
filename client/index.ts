@@ -31,6 +31,7 @@ export {
   advanceHostedRelayIdentityMigration,
   createHostedSignalProtocolClient,
   hostedRelayPresence,
+  hostedRelaySandboxIdentity,
   hostedRelayWakePresence,
   linkHostedRelayDevice,
   pullHostedRelayAfterWake,

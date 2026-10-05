@@ -1,5 +1,28 @@
 # Changelog
 
+## 9.1.0
+
+- **Added: `hostedRelaySandboxIdentity` creates the identity assertion callback
+  for a Sandbox environment.** Pass `hostedRelaySandboxIdentity(storage)` as
+  `hosted.getIdentityAssertion`. The callback signs a device-owned assertion
+  with an Ed25519 key that it keeps in the device-local store, one key for each
+  publishable key. The Relay binds the Sandbox account to that key, so a device
+  that loses its store loses the account. The callback supports only device
+  registration in a Sandbox environment. It rejects a production connection,
+  recovery, provider migration, and recent or step-up assurance.
+- **Added: `IdentityAssertionRequest` carries `environment` and
+  `publishableKey`.** The SDK reads both from `relayUrl`, so a callback can use
+  them without a second configuration value.
+- **Fixed: the published declarations compile with `skipLibCheck: false`.**
+  The root declarations no longer name the internal profile key exchange or
+  import Convex types. `verifyUnidentifiedAccessMode` moved to its own module
+  in the `./profile` entry, which keeps its Convex peer. A packaging check now
+  compiles each export subpath with `skipLibCheck: false`.
+- **Fixed: a type guard no longer narrows `EncryptionError` to `never`.** Each
+  `EncryptionError` and SQLite store error subclass declares its `name` as a
+  literal type. Before, a subclass with no other members had the same shape as
+  its base class, so the false branch of its guard removed the base class too.
+
 ## 9.0.0
 
 9.0.0 is a major release. The entries below give the details. To upgrade from

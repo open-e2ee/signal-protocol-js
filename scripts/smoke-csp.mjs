@@ -33,7 +33,8 @@ const quickStart = existsSync(privateRoundTrip)
   ? readFileSync(privateRoundTrip, 'utf8')
   : `
 import assert from 'node:assert/strict';
-import { keys, createDefaultSignalProtocolContentAdapter } from '@open-e2ee/signal-protocol-sdk';
+import { keys, createDefaultSignalProtocolContentAdapter, hostedRelaySandboxIdentity } from '@open-e2ee/signal-protocol-sdk';
+import { inMemoryStore } from '@open-e2ee/signal-protocol-sdk/local/store/memory';
 import { deriveGroupSecretParams, encryptBlob, decryptBlob } from '@open-e2ee/signal-protocol-sdk/zk/groups';
 const identity = await keys.generateIdentityKeyPair();
 assert.equal(Buffer.from(identity.dhKey.publicKey, 'base64').length, 32);
@@ -43,6 +44,12 @@ const ciphertext = encryptBlob(group, crypto.getRandomValues(new Uint8Array(32))
 assert.deepEqual(decryptBlob(group, ciphertext), plaintext);
 const content = createDefaultSignalProtocolContentAdapter();
 assert.ok(content.serializeDataMessage({ body: 'client crypto', timestamp: 1 }).length > 0);
+const assertion = await hostedRelaySandboxIdentity(inMemoryStore())({
+  environment: 'sandbox',
+  publishableKey: 'csp-smoke-key',
+  purpose: 'register',
+});
+assert.equal(assertion.split('.').length, 3);
 console.log('client crypto: ok');
 `;
 

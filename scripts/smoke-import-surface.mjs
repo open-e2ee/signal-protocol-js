@@ -27,6 +27,14 @@
  * allowlist line. The second half is what stops this list from quietly growing
  * into the thing it was meant to prevent.
  *
+ * The same fixture also compiles each entry's declarations the way a strict
+ * consumer does: `skipLibCheck` off, so TypeScript checks every published
+ * `.d.ts` file that the entry reaches. A declaration that names a stripped
+ * internal type, or that imports an optional peer's types, fails there and
+ * nowhere else, because the repository's own build sets `skipLibCheck` and has
+ * every peer installed. TYPE_BOUND names the entries whose declarations need a
+ * peer, and it is checked in both directions like the runtime allowlist.
+ *
  * The same packed modules also check the entry guides. A consumer who bundles
  * an entry needs each optional peer that the entry loads, and only the entry's
  * guide tells them which peers those are. See ENTRY_GUIDES.
@@ -81,6 +89,36 @@ const PLATFORM_BOUND = new Map([
   ['./device/expo', 'react-native, expo-constants, expo-device — reads the local platform'],
   ['./device/react-native', 'react-native, react-native-device-info — reads the local platform'],
 ]);
+
+/**
+ * Entry points whose declarations need the types of an optional peer.
+ *
+ * A consumer who imports one of these has installed the peer, because the
+ * entry's API takes or returns that peer's objects. Any other entry must
+ * type-check with no optional peer installed and `skipLibCheck` off.
+ */
+const TYPE_BOUND = new Map([
+  ['./convex.config', 'convex — Convex component definition'],
+  ['./profile', 'convex — the profile service operations take a Convex client and API'],
+  ['./remote/object-store/convex-r2', 'convex — Convex R2 client half'],
+  ['./remote/object-store/convex-r2/server', 'convex — Convex R2 server half'],
+  ['./remote/relay/convex', 'convex — Convex-backed relay adapter'],
+]);
+
+/** The compiler options of a strict consumer that checks every declaration file. */
+const CONSUMER_TSCONFIG = {
+  compilerOptions: {
+    lib: ['es2022'],
+    module: 'nodenext',
+    moduleResolution: 'nodenext',
+    noEmit: true,
+    skipLibCheck: false,
+    strict: true,
+    target: 'es2022',
+    types: ['node'],
+  },
+  files: ['types-probe.ts'],
+};
 
 /**
  * Entry points that are platform-bound by accident, and have an owner.
@@ -451,6 +489,29 @@ for (const [subpath, specifier] of specifiers) {
     );
   }
 
+  /*
+   * One compile per entry, so that a failure names the entry that reaches the
+   * broken declaration file.
+   */
+  writeFileSync(join(fixtureDir, 'tsconfig.json'), JSON.stringify(CONSUMER_TSCONFIG, null, 2) + '\n');
+  const tscPath = join(fixtureNodeModules, 'typescript', 'bin', 'tsc');
+  const typeResults = subpaths.map((subpath) => {
+    writeFileSync(
+      join(fixtureDir, 'types-probe.ts'),
+      `import type * as entry from '${specifierFor(subpath)}';\nexport type { entry };\n`
+    );
+    const compile = spawnSync(process.execPath, [tscPath, '-p', 'tsconfig.json'], {
+      cwd: fixtureDir,
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    const diagnostics = [compile.stdout, compile.stderr]
+      .join('\n')
+      .split('\n')
+      .filter((line) => line.trim() !== '');
+    return { subpath, ok: compile.status === 0, diagnostics };
+  });
+
   const failures = [];
   const stale = [];
   for (const result of results) {
@@ -462,7 +523,39 @@ for (const [subpath, specifier] of specifiers) {
     }
   }
 
+  const typeFailures = typeResults.filter(
+    (result) => !result.ok && !TYPE_BOUND.has(result.subpath)
+  );
+  const staleTypeBound = typeResults
+    .filter((result) => result.ok && TYPE_BOUND.has(result.subpath))
+    .map((result) => result.subpath);
+
   const problems = [];
+  if (typeFailures.length > 0) {
+    problems.push(
+      `${typeFailures.length} export subpath(s) do not type-check with skipLibCheck off and ` +
+        `no optional peer dependency installed:\n` +
+        typeFailures
+          .map(
+            (f) =>
+              `  - ${specifierFor(f.subpath)}\n` +
+              f.diagnostics.slice(0, 8).map((line) => `      ${line}`).join('\n')
+          )
+          .join('\n') +
+        `\n\n  A published declaration file must not name a stripped @internal type, and an ` +
+        `entry that is not peer-bound must not reach a declaration that imports an optional ` +
+        `peer. If the entry's API genuinely takes the peer's types, add it to TYPE_BOUND in ` +
+        `this script with the peer and why.`
+    );
+  }
+  if (staleTypeBound.length > 0) {
+    problems.push(
+      `${staleTypeBound.length} entry point(s) are in TYPE_BOUND but type-check without ` +
+        `their peer:\n` +
+        staleTypeBound.map((subpath) => `  - ${specifierFor(subpath)}`).join('\n') +
+        `\n\n  Remove them; the exemption is no longer true.`
+    );
+  }
   const guideProblems = checkEntryGuides(join(fixtureNodeModules, ...nameSegments), excluded);
   if (guideProblems.length > 0) {
     problems.push(
@@ -506,10 +599,16 @@ for (const [subpath, specifier] of specifiers) {
   const byDesign = results.filter((result) => PLATFORM_BOUND.has(result.subpath)).length;
   const deferred = results.filter((result) => KNOWN_DEFECTS.has(result.subpath)).length;
   const guided = subpaths.filter((subpath) => ENTRY_GUIDES.has(subpath)).length;
+  const typeBound = typeResults.filter((result) => TYPE_BOUND.has(result.subpath)).length;
   console.log(
     `Import surface: ${results.length - byDesign - deferred} of ${results.length} export ` +
       `subpaths load with no optional peer dependency installed; ${byDesign} are ` +
       `platform-bound by design; ${deferred} are known defects with findings entries.`
+  );
+  console.log(
+    `Declarations: ${typeResults.length - typeBound} of ${typeResults.length} export ` +
+      `subpaths type-check with skipLibCheck off and no optional peer dependency ` +
+      `installed; ${typeBound} need a peer's types by design.`
   );
   console.log(
     `Entry guides: the guides of ${guided} entries name ` +

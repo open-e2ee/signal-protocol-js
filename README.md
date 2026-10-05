@@ -37,9 +37,9 @@ The demonstrations use real protocol code and cryptography. Application integrat
 
 The relay never needs message plaintext or device private keys.
 
-OpenE2EE implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
+The OpenE2EE Signal Protocol SDK implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
-Version `9.0.x`. Public APIs and persisted formats follow semantic versioning.
+Version `9.1.x`. Public APIs and persisted formats follow semantic versioning.
 
 ## Install
 
@@ -47,29 +47,44 @@ Version `9.0.x`. Public APIs and persisted formats follow semantic versioning.
 npm install @open-e2ee/signal-protocol-sdk
 ```
 
-Use a current Node LTS release for local development. The storage guides list platform requirements.
+Local development needs Node 22.12 or later. The storage guides list platform requirements.
 
 ## Connect to the Signal Protocol Relay
 
-Create a Relay project in the [OpenE2EE console](https://console.open-e2ee.dev).
-Configure its identity provider and copy the environment's connection URL.
-Your application supplies a device-local store and `getIdentityAssertion`, which
-returns a short-lived signed assertion for the signed-in user.
+Follow the [Sandbox quickstart](https://docs.open-e2ee.dev/relay#sandbox-quickstart).
+In the application directory, `oe new` creates the Relay project and its Sandbox
+environment. It writes the connection URL to `.env.local` as
+`OPEN_E2EE_RELAY_URL`. In a Next.js, Expo, or Vite application, the name has
+the public prefix of the framework, for example `EXPO_PUBLIC_OPEN_E2EE_RELAY_URL`.
+The URL is public configuration. It is not a credential.
 
-This example needs that application setup. It is not an offline script.
+A Sandbox environment uses device-owned identity. `hostedRelaySandboxIdentity`
+signs the identity assertion with a key that it keeps in the device-local store.
+Use the same store for the client.
+
+This example needs that Sandbox environment. It is not an offline script.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import { createHostedSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
+import {
+  createHostedSignalProtocolClient,
+  hostedRelaySandboxIdentity,
+} from "@open-e2ee/signal-protocol-sdk";
 
 const signal = await createHostedSignalProtocolClient({
   adapters: { storage },
   hosted: {
-    relayUrl,
-    getIdentityAssertion,
+    relayUrl: process.env.OPEN_E2EE_RELAY_URL!,
+    getIdentityAssertion: hostedRelaySandboxIdentity(storage),
   },
 });
 ```
+
+`hostedRelaySandboxIdentity` works only in a Sandbox environment. In production,
+your identity provider signs the assertion: pass a `getIdentityAssertion`
+callback that returns a short-lived assertion for the signed-in user. The
+[identity guide](https://docs.open-e2ee.dev/relay/identity) describes the
+production setup.
 
 Register a handler before you start incoming delivery. Persist each message
 before the handler resolves, and use its ID to make repeated writes idempotent.

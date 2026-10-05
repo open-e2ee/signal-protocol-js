@@ -30,10 +30,12 @@ const signal = await createSignalProtocolClient({
 
 ## Expo client on the Signal Protocol Relay
 
-Configure the Relay project and its identity provider in the OpenE2EE console.
-Copy the environment connection URL into your application configuration.
-`getIdentityAssertion` returns a short-lived signed assertion for the signed-in
-user. The hosted factory uses it for device registration and authentication.
+`oe new` creates the Relay project and its Sandbox environment, and it writes
+the environment connection URL to your application configuration.
+`getIdentityAssertion` returns a short-lived signed assertion. The hosted
+factory uses it for device registration and authentication. In a Sandbox
+environment, `hostedRelaySandboxIdentity(storage)` supplies it. In production,
+it returns an assertion for the signed-in user from your identity provider.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts

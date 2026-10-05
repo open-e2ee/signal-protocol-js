@@ -11,7 +11,8 @@ uses public exports only.
 ## Hosted Client Setup
 
 The recipes require a configured Relay project, an identity-assertion callback,
-and device-local storage. Use the Relay Sandbox for development. The
+and device-local storage. Use a Sandbox environment for development, where
+`hostedRelaySandboxIdentity(storage)` supplies the callback. The
 [getting-started guide](./GETTING_STARTED.md) describes these inputs.
 
 ## Production composition with Expo on the Signal Protocol Relay
