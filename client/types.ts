@@ -68,7 +68,11 @@ export interface SignalProtocolClientContext {
   /** App-provided content adapter */
   readonly contentAdapter: SignalProtocolContentAdapter;
 
-  /** The profile key exchange of a hosted client, or `undefined` */
+  /**
+   * The profile key exchange of a hosted client, or `undefined`
+   *
+   * @internal
+   */
   readonly profileKeys?: ProfileKeyExchange;
 }
 

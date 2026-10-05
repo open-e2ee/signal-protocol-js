@@ -4,13 +4,10 @@
  * The host app provides persistence. The Signal Protocol SDK owns the protocol semantics.
  */
 
-import type { ConvexReactClient } from 'convex/react';
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
-import { base64ToBytes, constantTimeEqual, hmac } from '../internal/crypto';
-import { deriveAccessKey } from '../internal/protocol/sealed-sender/delivery-token';
+import { base64ToBytes } from '../internal/crypto';
 import { asBase64 } from '../types/utils';
 import { PROFILE_KEY_SIZE } from './crypto';
-import type { ProfileKeyApi } from './profile-key';
 
 export const UnidentifiedAccessMode = {
   UNKNOWN: 0,
@@ -34,49 +31,6 @@ export interface MutableContactProfileStateStore extends ContactProfileStateStor
     profileKeyBase64: string
   ): Promise<{ stored: boolean; previousProfileKeyBase64: string | null }>;
   deleteContactProfileKey(userId: string): Promise<void>;
-}
-
-export async function verifyUnidentifiedAccessMode(
-  userId: string,
-  targetUuid: string,
-  convex: ConvexReactClient,
-  api: ProfileKeyApi,
-  store: ContactProfileStateStore
-): Promise<UnidentifiedAccessModeType> {
-  const serverResult = await convex.query(api.accounts.getUnidentifiedAccessChecksum, {
-    targetUuid,
-  });
-
-  if (!serverResult) {
-    await store.updateUnidentifiedAccessMode(userId, UnidentifiedAccessMode.DISABLED);
-    return UnidentifiedAccessMode.DISABLED;
-  }
-
-  // Server unrestricted mode is authoritative and does not require a checksum.
-  if (serverResult.unrestricted) {
-    await store.updateUnidentifiedAccessMode(userId, UnidentifiedAccessMode.UNRESTRICTED);
-    return UnidentifiedAccessMode.UNRESTRICTED;
-  }
-
-  if (!serverResult.checksum) {
-    await store.updateUnidentifiedAccessMode(userId, UnidentifiedAccessMode.DISABLED);
-    return UnidentifiedAccessMode.DISABLED;
-  }
-
-  const profileKey = await store.getContactProfileKey(userId);
-  if (!profileKey) {
-    await store.updateUnidentifiedAccessMode(userId, UnidentifiedAccessMode.DISABLED);
-    return UnidentifiedAccessMode.DISABLED;
-  }
-
-  const accessKey = await deriveAccessKey(profileKey);
-  const localChecksumBytes = hmac(accessKey, new Uint8Array(32));
-  const serverChecksumBytes = base64ToBytes(asBase64(serverResult.checksum));
-  const match = constantTimeEqual(localChecksumBytes, serverChecksumBytes);
-
-  const mode = match ? UnidentifiedAccessMode.ENABLED : UnidentifiedAccessMode.DISABLED;
-  await store.updateUnidentifiedAccessMode(userId, mode);
-  return mode;
 }
 
 export async function storeReceivedProfileKey(

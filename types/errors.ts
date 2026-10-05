@@ -435,6 +435,8 @@ export enum EncryptionErrorCode {
  * ```
  */
 export class UntrustedIdentityError extends EncryptionError {
+  override readonly name = 'UntrustedIdentityError';
+
   public readonly untrustedAddress: ProtocolAddress;
   public readonly identity: CompositeIdentityV1;
 
@@ -444,7 +446,6 @@ export class UntrustedIdentityError extends EncryptionError {
       EncryptionErrorCode.UNTRUSTED_IDENTITY,
       { address, identity }
     );
-    this.name = 'UntrustedIdentityError';
     this.untrustedAddress = address;
     this.identity = identity;
   }
@@ -466,6 +467,8 @@ export class UntrustedIdentityError extends EncryptionError {
  * ```
  */
 export class DuplicatedMessageError extends EncryptionError {
+  override readonly name = 'DuplicatedMessageError';
+
   public readonly duplicatedAddress: ProtocolAddress;
   /** The duplicate message counter (if known) - matches the reference implementation's proto field name */
   public readonly counter?: number;
@@ -493,7 +496,6 @@ export class DuplicatedMessageError extends EncryptionError {
         epoch: metadata?.epoch,
       }
     );
-    this.name = 'DuplicatedMessageError';
     this.duplicatedAddress = address;
     this.counter = metadata?.counter;
     this.epoch = metadata?.epoch;
@@ -539,12 +541,12 @@ export function isDuplicatedMessageError(error: unknown): error is DuplicatedMes
  * ```
  */
 export class SealedSenderAuthError extends EncryptionError {
+  override readonly name = 'SealedSenderAuthError';
   constructor(cause?: Error) {
     super('Sealed sender authentication failed', EncryptionErrorCode.SEALED_SENDER_AUTH_FAILED, {
       operation: 'sendMultiRecipientUnidentified',
       originalError: cause,
     });
-    this.name = 'SealedSenderAuthError';
   }
 }
 
@@ -620,6 +622,8 @@ export interface PQXDHRequiredErrorOptions {
  * ```
  */
 export class PQXDHRequiredError extends EncryptionError {
+  override readonly name = 'PQXDHRequiredError';
+
   public readonly remoteAddress: string;
   public readonly reason: 'no_kyber_prekey' | 'pqxdh_failed';
   /** Whether the caller can retry the operation */
@@ -648,7 +652,6 @@ export class PQXDHRequiredError extends EncryptionError {
         : EncryptionErrorCode.PQXDH_FAILED,
       { operation: 'keyAgreement', originalError: opts.originalError }
     );
-    this.name = 'PQXDHRequiredError';
     this.remoteAddress = remoteAddress;
     this.reason = reason;
 
@@ -681,13 +684,13 @@ export class PQXDHRequiredError extends EncryptionError {
  * ```
  */
 export class StorageQuotaExceededError extends EncryptionError {
+  override readonly name = 'StorageQuotaExceededError';
   constructor(operation: string, originalError?: Error) {
     super(
       `Storage quota exceeded during ${operation}`,
       EncryptionErrorCode.STORAGE_QUOTA_EXCEEDED,
       { operation, originalError }
     );
-    this.name = 'StorageQuotaExceededError';
   }
 }
 
@@ -711,11 +714,11 @@ export class StorageQuotaExceededError extends EncryptionError {
  * ```
  */
 export class SecureRandomUnavailableError extends EncryptionError {
+  override readonly name = 'SecureRandomUnavailableError';
   constructor(message: string) {
     super(message, EncryptionErrorCode.SECURE_RANDOM_UNAVAILABLE, {
       operation: 'generateRandomBytes',
     });
-    this.name = 'SecureRandomUnavailableError';
   }
 }
 

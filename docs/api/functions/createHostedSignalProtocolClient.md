@@ -13,6 +13,10 @@ Create a Signal Protocol Relay client without accepting a caller-supplied accoun
 The Relay verifies the assertion and device proof, then returns the canonical
 account, registered device, scope, and authenticated transport used by the client.
 
+In a Sandbox environment, [hostedRelaySandboxIdentity](hostedRelaySandboxIdentity.md) supplies the
+assertion. In production, `getIdentityAssertion` gets the assertion from
+your identity provider.
+
 ## Parameters
 
 ### options
@@ -26,10 +30,11 @@ account, registered device, scope, and authenticated transport used by the clien
 ## Example
 
 ```ts
+const storage = inMemoryStore();
 const client = await createHostedSignalProtocolClient({
-  adapters,
+  adapters: { storage },
   hosted: {
-    getIdentityAssertion,
+    getIdentityAssertion: hostedRelaySandboxIdentity(storage),
     relayUrl: process.env.OPEN_E2EE_RELAY_URL!,
   },
 });

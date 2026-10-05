@@ -18,22 +18,33 @@ The [adapter guide](../ADAPTERS.md) lists the supported stores.
 
 ## What You Need
 
-- A Relay project and environment connection URL from the OpenE2EE console.
-- An identity provider configured for that environment.
-- A `getIdentityAssertion` callback that returns a short-lived signed assertion
-  for the signed-in user.
+- A Relay project and its environment connection URL. In the application
+  directory, `oe new` creates the project and its Sandbox environment, and it
+  writes the connection URL to `.env.local` as `OPEN_E2EE_RELAY_URL`. In a
+  Next.js, Expo, or Vite application, the name has the public prefix of the
+  framework, for example `EXPO_PUBLIC_OPEN_E2EE_RELAY_URL`.
+- A `getIdentityAssertion` callback that returns a short-lived signed assertion.
 - Device-local storage for private keys, sessions, and delivery state.
 - Application storage for decrypted messages and attachment bytes.
 
-The callback belongs to your authentication integration. The examples below
-require that setup. The SDK does not supply an identity provider or a relay
-server implementation.
+A Sandbox environment uses device-owned identity. `hostedRelaySandboxIdentity`
+creates its `getIdentityAssertion` callback. The callback signs each assertion
+with a key that it keeps in the device-local store, so the device gets the same
+account each time it registers. A device that loses its store loses that
+Sandbox account. The helper works only in a Sandbox environment.
+
+In production, the callback belongs to your authentication integration. It
+returns a short-lived assertion for the signed-in user from your identity
+provider. The SDK does not supply an identity provider or a relay server
+implementation.
 
 ## Setup Sequence
 
-1. Configure a Relay project and identity provider in the OpenE2EE console.
-2. Open the device-local store for the signed-in user.
-3. Create the client with `createHostedSignalProtocolClient()`.
+1. Run `oe new` to create the Relay project and its Sandbox environment.
+2. Open the device-local store for the device.
+3. Create the client with `createHostedSignalProtocolClient()`. In a Sandbox
+   environment, pass `hostedRelaySandboxIdentity(storage)` as
+   `hosted.getIdentityAssertion`.
 4. Register a receive handler that persists decrypted messages.
 5. Start the relay subscription.
 
@@ -46,14 +57,19 @@ session establishment and Braid ratcheting.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import { createHostedSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
+import {
+  createHostedSignalProtocolClient,
+  hostedRelaySandboxIdentity,
+} from "@open-e2ee/signal-protocol-sdk";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
 
+const storage = await expoStore();
 const signal = await createHostedSignalProtocolClient({
-  adapters: { storage: await expoStore() },
+  adapters: { storage },
   hosted: {
     relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
-    getIdentityAssertion,
+    // Sandbox only. In production, use your identity provider's callback.
+    getIdentityAssertion: hostedRelaySandboxIdentity(storage),
   },
 });
 ```

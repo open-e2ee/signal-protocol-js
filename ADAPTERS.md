@@ -154,8 +154,10 @@ database and SQLCipher bootstrap.
 
 ### Sandbox development
 
-Use a Sandbox connection URL from the OpenE2EE console with the hosted client.
-The same authentication and device-local storage contracts apply in Sandbox.
+`oe new` writes a Sandbox connection URL to `.env.local`. Use it with the
+hosted client. The device-local storage contracts are the same in Sandbox. A
+Sandbox environment uses device-owned identity:
+`hostedRelaySandboxIdentity(storage)` supplies `hosted.getIdentityAssertion`.
 See the [client guide](./client/README.md#with-relay).
 
 ## Security Expectations

@@ -16,6 +16,14 @@ Additional context for a purpose-aware assertion request.
 
 ***
 
+### environment
+
+> `readonly` **environment**: `"sandbox"` \| `"production"`
+
+The environment kind of the Relay connection in `relayUrl`.
+
+***
+
 ### migration?
 
 > `readonly` `optional` **migration?**: `object`
@@ -27,6 +35,14 @@ Additional context for a purpose-aware assertion request.
 #### providerRole
 
 > `readonly` **providerRole**: [`IdentityAssertionProviderRole`](../type-aliases/IdentityAssertionProviderRole.md)
+
+***
+
+### publishableKey
+
+> `readonly` **publishableKey**: `string`
+
+The publishable key in `relayUrl`. It identifies one Relay environment.
 
 ***
 

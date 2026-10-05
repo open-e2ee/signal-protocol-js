@@ -73,6 +73,16 @@ throw new UntrustedIdentityError(address, identityKey);
 
 ***
 
+### name
+
+> `readonly` **name**: `"UntrustedIdentityError"` = `'UntrustedIdentityError'`
+
+#### Overrides
+
+`EncryptionError.name`
+
+***
+
 ### untrustedAddress
 
 > `readonly` **untrustedAddress**: [`ProtocolAddress`](../interfaces/ProtocolAddress.md)
