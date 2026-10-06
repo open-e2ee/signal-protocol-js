@@ -2,12 +2,13 @@
  * Relay work: the deliveries, retry requests, and receipt sends that the
  * relay starts and that stop() must settle.
  *
- * The relay calls its handlers without waiting for them. Each call runs as
- * one RelayWork item. At any time an item runs SDK work, or waits in an app
- * hook. stop() stops every item and waits only for the items that run SDK
- * work. It does not wait for time in app hooks, because a hook can itself
- * await stop(), and without async context the SDK cannot tell that call from
- * a call outside the hook.
+ * A relay can wait for a handler, as the hosted transport does for each
+ * envelope, or call it without waiting, as the memory and Convex adapters do.
+ * In both cases each call runs as one RelayWork item. At any time an item
+ * runs SDK work, or waits in an app hook. stop() stops every item and waits
+ * only for the items that run SDK work. It does not wait for time in app
+ * hooks, because a hook can itself await stop(), and without async context
+ * the SDK cannot tell that call from a call outside the hook.
  *
  * A stopped item may not enter an app hook, and an item that leaves an app
  * hook after stop() starts throws RelayWorkStopped. So no SDK step after the
@@ -189,11 +190,22 @@ export class RelayWorkTracker {
   private readonly items = new Set<RelayWork>();
   private readonly waiters = new Set<() => void>();
   private stopping = 0;
+  private stopper = new AbortController();
 
   /**
-   * Run a task as a relay work item. While stop() settles, the item starts
-   * stopped. A RelayWorkStopped from the task resolves the returned promise.
-   * Other errors reject it.
+   * Aborts when the next stop() starts to settle. Work that keeps this signal
+   * after it ends, such as a retry timer, sees that stop. Each stop gets a
+   * new signal for the work that starts after it.
+   */
+  get stopSignal(): AbortSignal {
+    return this.stopper.signal;
+  }
+
+  /**
+   * Run a task as a relay work item. The task starts at once, before run()
+   * returns. While stop() settles, the item starts stopped. A
+   * RelayWorkStopped from the task resolves the returned promise. Other
+   * errors reject it.
    */
   async run(task: (work: RelayWork) => Promise<void>): Promise<void> {
     const work = new RelayWork(() => this.notify());
@@ -210,12 +222,24 @@ export class RelayWorkTracker {
   }
 
   /**
+   * Stop every item except the given items, and do not wait. A stopped item
+   * that leaves an app hook throws RelayWorkStopped, so it writes nothing
+   * more. Items that start later are not stopped. settle() stops them.
+   */
+  stopAllExcept(keep: ReadonlySet<RelayWork>): void {
+    for (const work of this.items) {
+      if (!keep.has(work)) work.stop();
+    }
+  }
+
+  /**
    * Stop every item and wait until each item settles or waits in an app hook.
    * Items that start during the wait start stopped, and the wait includes them.
    * Never rejects.
    */
   async settle(): Promise<void> {
     this.stopping++;
+    this.stopper.abort();
     try {
       for (const work of this.items) work.stop();
       while (![...this.items].every((work) => work.inApp)) {
@@ -223,6 +247,7 @@ export class RelayWorkTracker {
       }
     } finally {
       this.stopping--;
+      if (this.stopping === 0) this.stopper = new AbortController();
     }
   }
 

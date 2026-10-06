@@ -16,6 +16,7 @@ import type { Base64 } from "../types";
 import { SealedSenderAuthError } from "../types/errors";
 import { FanOutError, type BoundedFanOut } from "../utils/bounded-fan-out";
 import type { HostedRelayConnection } from "./hosted-connection";
+import { aggregateRelayAcceptance } from "./relay-acceptance";
 import { markRelayDeviceRefusal } from "./relay-device-refusal";
 import { withRelayRequestDeadline } from "./relay-request-deadline";
 
@@ -406,22 +407,12 @@ export class HostedAnonymousDelivery {
         };
       },
     );
-    // The send is a duplicate only when every destination already stored it,
-    // and the earliest destination expiry bounds the whole send. A field is
-    // present only when every destination reported it.
-    const duplicates = receipts.map((receipt) => receipt.duplicate);
-    const expiries = receipts.map((receipt) => receipt.expiresAt);
     return {
       messageId: clientMessageId,
       // The last destination in input order gives the server timestamp.
       serverTimestamp: receipts[receipts.length - 1]?.enqueuedAt ?? timestamp,
       uuids404: [],
-      ...(duplicates.every((duplicate) => duplicate !== undefined)
-        ? { duplicate: duplicates.every(Boolean) }
-        : {}),
-      ...(expiries.every((expiry) => expiry !== undefined)
-        ? { expiresAt: Math.min(...(expiries as number[])) }
-        : {}),
+      ...aggregateRelayAcceptance(receipts),
     };
   }
 }

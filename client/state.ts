@@ -13,7 +13,7 @@
  */
 
 import type { RetryDedupState, RetryRateLimitState } from './retry';
-import type { RelaySubscriptionState } from './relay-subscription';
+import type { ReceiptAccumulator, RelaySubscriptionState } from './relay-subscription';
 import { RelayWorkTracker } from './relay-work';
 
 /**
@@ -124,10 +124,15 @@ export class SignalProtocolClientState {
   // Receipt Batching State
   // ============================================================================
 
-  /** Pending delivery receipt timestamps per sender */
-  private readonly receiptAccumulatorPending = new Map<string, number[]>();
-  /** Flush timers per sender for batched delivery receipts */
-  private readonly receiptAccumulatorTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * Pending delivery receipt timestamps per sender, with the first arrival
+   * time, their flush timers, and whether stop() holds the batches
+   */
+  private readonly receiptAccumulator: ReceiptAccumulator = {
+    pending: new Map(),
+    timers: new Map(),
+    held: false,
+  };
 
   constructor(config: Partial<SignalProtocolClientStateConfig> = {}) {
     this.config = { ...DEFAULT_STATE_CONFIG, ...config };
@@ -165,10 +170,7 @@ export class SignalProtocolClientState {
     return {
       lastPreKeyRotationTime: this.lastPreKeyRotationTime,
       retryRateLimitCounts: this.retryRateLimitCounts,
-      receiptAccumulator: {
-        pending: this.receiptAccumulatorPending,
-        timers: this.receiptAccumulatorTimers,
-      },
+      receiptAccumulator: this.receiptAccumulator,
     };
   }
 
@@ -221,12 +223,12 @@ export class SignalProtocolClientState {
     this.retryResponseCounts.clear();
     this.retryRateLimitCounts.clear();
 
-    // Flush pending receipt timers
-    for (const timer of this.receiptAccumulatorTimers.values()) {
+    // Drop the pending receipt batches and their timers
+    for (const timer of this.receiptAccumulator.timers.values()) {
       clearTimeout(timer);
     }
-    this.receiptAccumulatorTimers.clear();
-    this.receiptAccumulatorPending.clear();
+    this.receiptAccumulator.timers.clear();
+    this.receiptAccumulator.pending.clear();
   }
 
   // ============================================================================

@@ -386,8 +386,9 @@ export async function sendRetryRequestInternal(
  * 2. Verifies the requester is the intended recipient
  * 3. Checks retry limits and TTL
  * 4. Creates new session if orphaned, or uses existing different session
- * 5. Re-encrypts and sends the original message
- * 6. Deletes the old MessageRecord
+ * 5. Re-encrypts and sends the original message, which replaces the old
+ *    MessageRecord with the record of the new encryption. Only a delivery
+ *    receipt from the device or the TTL deletes that record.
  *
  * @param ctx - Retry context with dependencies
  * @param retryRequest - The retry request from the recipient
@@ -641,8 +642,9 @@ export async function handleRetryRequestAndResend(
     // Track retry response count
     dedupState.retryResponseCounts.set(dedupKey, responseCount + 1);
 
-    // 7. Delete old MessageRecord after successful resend (using timestamp as primary identifier)
-    await ctx.storage.deleteMessageRecord(sessionId, record.timestamp);
+    // 7. The resend replaced the MessageRecord at the same timestamp with the
+    // record of the new encryption. A delivery receipt from the device or the
+    // TTL deletes it, so a failed resend can be requested again.
 
     ctx.logger.info('Message resent successfully after retry request', {
       category: 'E2EE',

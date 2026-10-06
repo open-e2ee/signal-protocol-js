@@ -538,18 +538,27 @@ async function sendReceiptToDevice(
     await sendPrepared();
   } catch (error) {
     rethrowRelayWorkStopped(error);
+    // A stopped client sends nothing more, so it makes no retry.
+    if (ctx.stopSignal?.aborted) return;
     ctx.logger.warn(`Receipt send failed, scheduling retry`, {
       category: 'E2EE',
       data: { recipientUserId, deviceId },
     });
-    // Make one in-process retry after five seconds.
-    setTimeout(async () => {
+    // Make one in-process retry after five seconds. Every receipt send
+    // carries the stop signal of the client, so stop() clears the retry
+    // timer of a receipt send that started before stop() stops its relay
+    // work.
+    const stopSignal = ctx.stopSignal;
+    const cancel = () => clearTimeout(retry);
+    const retry = setTimeout(async () => {
+      stopSignal?.removeEventListener('abort', cancel);
       try {
         await sendPrepared();
       } catch {
         // Give up after one retry
       }
     }, 5_000);
+    stopSignal?.addEventListener('abort', cancel, { once: true });
   }
 }
 

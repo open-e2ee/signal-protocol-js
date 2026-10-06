@@ -2148,6 +2148,8 @@ database without any knowledge of cryptography.
 
 Callers can run this manually after registering hooks via registerHook().
 Called automatically by create() when relay + hook configured.
+A call while stop() runs is refused and logged; start again after stop()
+resolves.
 
 #### Returns
 
@@ -2175,6 +2177,8 @@ by resending the original message with a new session.
 
 Automatically started if relay.subscribeRetryRequests is available.
 Call this manually if you need to restart the subscription.
+A call while stop() runs is refused and logged; start again after stop()
+resolves.
 
 #### Returns
 
@@ -2189,13 +2193,35 @@ Call this manually if you need to restart the subscription.
 Stop the Signal Protocol client and clean up resources
 
 Call this when the user logs out or the app shuts down.
-Unsubscribes from relay server, waits for the SDK work of the
-deliveries, retry requests, and receipt sends in progress, and cleans up
-any pending operations.
+It starts the send of each batched delivery receipt, once each, and
+unsubscribes from the relay server. Then it waits for delivery receipt
+sends, with their app hooks, until one receipt deadline 5 s after stop()
+starts. It waits for each receipt send that is in progress when stop()
+starts, except a send that an earlier stop() stopped, and for the sends
+that it starts. A delivery that finishes during the wait batches its
+receipt. At the end of each wait, stop() sends the batches that wait and
+waits for those sends until the same deadline. It does this again while
+the deadline is not past. stop() holds the receipt batches from its
+first flush until it clears its tracking state. During the hold,
+stopRelaySubscription() does not send them, and stop() drops a receipt
+batched after its last flush. At the deadline it stops each receipt
+send that is left: a send that waits in an app hook stops, and that
+receipt is not sent. A send that is in its relay call at the deadline
+is waited for, and that receipt can still be sent. It also
+waits for the SDK work of the deliveries and retry requests in progress.
+Then it cleans up any pending operations.
 
-It does not wait for app hooks, so a hook can await stop(). When a hook
-returns after stop(), the SDK drops the work after the hook and writes
-nothing more. The relay delivers the envelope again after the next start.
+Apart from the receipt wait, it does not wait for app hooks, so a hook
+can await stop(). A hook of a delivery receipt send that awaits stop()
+holds stop() until the receipt deadline. stop() does not wait for read
+and viewed receipt sends. When a hook returns after stop(), the SDK drops
+the work after the hook and writes nothing more. The relay delivers the
+envelope again after the next start.
+
+A call to startRelaySubscription() or startRetryRequestSubscription()
+while stop() runs is refused and logged; start again after stop()
+resolves. A stop() call that overlaps a running stop() waits for it and
+settles as it settles.
 
 #### Returns
 

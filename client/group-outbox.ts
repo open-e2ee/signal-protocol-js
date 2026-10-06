@@ -18,6 +18,7 @@ import {
   type StoredOutgoingMessageIntent,
 } from '../local/store/reliability';
 import type { SendOptions, SendResult } from './types';
+import { aggregateRelayAcceptance, type RelayPostAcceptance } from './relay-acceptance';
 
 /** The relay phases of a group send, in their order. */
 export type GroupSendPhase = 'pre-message' | 'device' | 'sync';
@@ -83,7 +84,7 @@ export interface GroupOutboxContext {
     intent: StoredOutgoingMessageIntent,
     message: StoredOutgoingDeviceMessage,
     auth: SealedSenderAuth
-  ): Promise<{ messageId: string; serverTimestamp: number }>;
+  ): Promise<RelayPostAcceptance>;
   /**
    * Run local work for each item at the same time. It rejects after every
    * item settles, with the error of the first failed item in input order. A
@@ -109,7 +110,7 @@ async function sendStoredDeviceMessage(
   intent: StoredOutgoingMessageIntent,
   message: StoredOutgoingDeviceMessage,
   forceIdentified = false
-): Promise<{ messageId: string; serverTimestamp: number }> {
+): Promise<RelayPostAcceptance> {
   const relay = context.relay;
   if (!relay) throw new Error('Relay is required for a stored group transmission');
   if (message.sealedSenderMessage && !relay.sendMultiRecipientUnidentified) {
@@ -182,6 +183,8 @@ async function sendStoredGroupIntent(
   let timestamp = intent.clientTimestamp;
   let sharedSucceeded = false;
   let skippedUsers: string[] = [];
+  // The relay's answer to each post of the group message, for the send's acceptance.
+  const acceptances: RelayPostAcceptance[] = [];
 
   // Every pre-message is accepted before the confirmation and the group
   // message. When some fail, the intent keeps only those, so a replay posts
@@ -264,6 +267,7 @@ async function sendStoredGroupIntent(
         timestamp = result.serverTimestamp;
         skippedUsers = result.uuids404;
         sharedSucceeded = true;
+        acceptances.push(result);
       } catch (error) {
         if (!(error instanceof SealedSenderAuthError)) throw error;
         if (intent.groupSharedMessage.deliveryMode === 'required') throw error;
@@ -288,6 +292,7 @@ async function sendStoredGroupIntent(
     (message) => sendStoredDeviceMessage(context, intent, message, forceIdentified),
     'device'
   );
+  acceptances.push(...results);
   if (messageId.startsWith('group-') && results[0]) {
     messageId = results[0].messageId;
     timestamp = results[0].serverTimestamp;
@@ -323,10 +328,12 @@ async function sendStoredGroupIntent(
         additions
       );
       const extended = intent;
-      await context.sendPhase(
-        additions,
-        (message) => sendStoredDeviceMessage(context, extended, message),
-        'device'
+      acceptances.push(
+        ...(await context.sendPhase(
+          additions,
+          (message) => sendStoredDeviceMessage(context, extended, message),
+          'device'
+        ))
       );
     }
   }
@@ -358,6 +365,7 @@ async function sendStoredGroupIntent(
     messageId,
     timestamp,
     recipientDeviceCount: intent.groupRecipientDeviceCount ?? intent.deviceMessages.length,
+    ...aggregateRelayAcceptance(acceptances),
     groupId: intent.recipientId,
   };
   await completeOutgoingMessageIntent(context.storage, intent.clientMessageId, result);

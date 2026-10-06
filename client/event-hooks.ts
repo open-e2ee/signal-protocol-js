@@ -68,7 +68,7 @@ export interface DecryptedEnvelope {
   isGroup: boolean;
   /**
    * Whether the message arrived through sealed sender, so the relay did not
-   * see its sender. The `'auto'` value of `deliveryReceipts` reads it.
+   * see its sender.
    */
   arrivedSealed: boolean;
   /** Message type hint (if available from envelope) - apps define their own type unions */
