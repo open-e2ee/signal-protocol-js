@@ -1,6 +1,7 @@
 import { utf8Decode } from '../internal/platform';
 import type { SignalProtocolClientCompositionOptions } from './compose';
 import type { HostedRelayConnection } from './hosted-connection';
+import { withRelayRequestDeadline } from './relay-request-deadline';
 import {
   EndorsementManager,
   type EndorsementCacheStore,
@@ -17,46 +18,50 @@ export type HostedGroupOptions = Pick<GroupOptions, 'profileKey' | 'store'> & {
 };
 
 async function fetchAuthority(connection: HostedRelayConnection) {
-  const response = await fetch(
-    `${connection.protocolEndpoint}/groups/authority`,
-    {
-      method: 'POST',
-      credentials: 'omit',
-      redirect: 'error',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify({ publishableKey: connection.publishableKey }),
-    }
-  );
-  if (!response.ok || !response.body) {
-    await response.body?.cancel();
-    throw new Error('Managed group authority is unavailable');
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  try {
-    for (;;) {
-      const part = await reader.read();
-      if (part.done) break;
-      length += part.value.length;
-      if (length > 8192) {
-        await reader.cancel();
-        throw new Error('Managed group authority exceeds its size limit');
+  const buffer = await withRelayRequestDeadline(async (signal) => {
+    const response = await fetch(
+      `${connection.protocolEndpoint}/groups/authority`,
+      {
+        method: 'POST',
+        credentials: 'omit',
+        redirect: 'error',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify({ publishableKey: connection.publishableKey }),
+        signal,
       }
-      chunks.push(part.value);
+    );
+    if (!response.ok || !response.body) {
+      await response.body?.cancel();
+      throw new Error('Managed group authority is unavailable');
     }
-  } finally {
-    reader.releaseLock();
-  }
-  const buffer = new Uint8Array(length);
-  let offset = 0;
-  for (const part of chunks) {
-    buffer.set(part, offset);
-    offset += part.length;
-  }
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    try {
+      for (;;) {
+        const part = await reader.read();
+        if (part.done) break;
+        length += part.value.length;
+        if (length > 8192) {
+          await reader.cancel();
+          throw new Error('Managed group authority exceeds its size limit');
+        }
+        chunks.push(part.value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const body = new Uint8Array(length);
+    let offset = 0;
+    for (const part of chunks) {
+      body.set(part, offset);
+      offset += part.length;
+    }
+    return body;
+  });
   return verifyGroupAuthority(
     JSON.parse(utf8Decode(buffer, { fatal: true })),
     {

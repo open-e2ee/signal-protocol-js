@@ -265,7 +265,12 @@ async function handleDecryptionSuccess(
 
     // Batch delivery receipts before sending
     // Multi-device: sendDeliveryReceipt fans out to all sender's devices
-    if (decryptedEnvelope.timestamp && ctx.relay) {
+    const receipts = ctx.config.deliveryReceipts ?? 'always';
+    if (
+      decryptedEnvelope.timestamp &&
+      ctx.relay &&
+      (receipts === 'always' || (receipts === 'auto' && decryptedEnvelope.arrivedSealed))
+    ) {
       if (inspectedContent.shouldSendDeliveryReceipt) {
         accumulateDeliveryReceipt(
           state.receiptAccumulator,

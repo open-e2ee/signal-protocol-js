@@ -78,6 +78,7 @@ import {
   decodeHostedAnonymousEnvelope,
 } from "./hosted-anonymous-delivery";
 import { createAdapterRelayFanOut } from "./relay-work";
+import { withRelayRequestDeadline } from "./relay-request-deadline";
 import type { BoundedFanOut } from "../utils/bounded-fan-out";
 import {
   applyPreKeyUploads,
@@ -354,19 +355,22 @@ async function postJson(
     "content-type": "application/json",
   });
   if (token !== undefined) headers.set("authorization", `Bearer ${token}`);
-  let response: Response;
-  try {
-    response = await fetch(`${identifiedEndpoint(connection)}${path}`, {
-      body: JSON.stringify(body),
-      headers,
-      method: "POST",
-      credentials: "omit",
-      redirect: "error",
-    });
-  } catch (cause) {
-    throw new Error("Signal Protocol Relay request could not be completed", { cause });
-  }
-  return parseResponse(response);
+  return withRelayRequestDeadline(async (signal) => {
+    let response: Response;
+    try {
+      response = await fetch(`${identifiedEndpoint(connection)}${path}`, {
+        body: JSON.stringify(body),
+        headers,
+        method: "POST",
+        credentials: "omit",
+        redirect: "error",
+        signal,
+      });
+    } catch (cause) {
+      throw new Error("Signal Protocol Relay request could not be completed", { cause });
+    }
+    return parseResponse(response);
+  });
 }
 
 function assertionIdentifier(assertion: string): string {
@@ -1473,9 +1477,11 @@ export class HostedRelayHttpTransport
     if (generation === undefined)
       throw missingDestination(envelope.targetUserId, envelope.targetDeviceId);
     let value: unknown;
+    let attempts = 0;
     try {
-      value = await withOneUncertainRetry(envelope.deliveryClass, () =>
-        this.authenticatedPost("/delivery/send", {
+      value = await withOneUncertainRetry(envelope.deliveryClass, () => {
+        attempts++;
+        return this.authenticatedPost("/delivery/send", {
           deliveryClass: envelope.deliveryClass,
           destination: {
             accountAddress: envelope.targetUserId,
@@ -1489,8 +1495,8 @@ export class HostedRelayHttpTransport
           ...(envelope.recipientRegistrationId === undefined
             ? {}
             : { recipientRegistrationId: envelope.recipientRegistrationId }),
-        }),
-      );
+        });
+      });
     } catch (error) {
       const device = {
         userId: envelope.targetUserId,
@@ -1519,15 +1525,31 @@ export class HostedRelayHttpTransport
         throw markRelayDeviceRefusal(error, { code: "NOT_FOUND", ...device });
       throw error;
     }
-    if (!record(value) || requiredString(value, "messageId") !== messageId) {
+    if (
+      !record(value) ||
+      requiredString(value, "messageId") !== messageId ||
+      (value.duplicate !== undefined && typeof value.duplicate !== "boolean") ||
+      (value.expiresAt !== undefined &&
+        (!Number.isSafeInteger(value.expiresAt) ||
+          (value.expiresAt as number) <= 0))
+    ) {
       throw new Error("Signal Protocol Relay returned an invalid delivery receipt");
     }
+    // An ephemeral receipt carries neither field, so each one is optional.
+    // After an uncertain answer, the first request can have stored the copy
+    // that the repeat finds, so the repeat's duplicate tells nothing.
     return {
       messageId,
       serverTimestamp:
         typeof value.enqueuedAt === "number"
           ? value.enqueuedAt
           : envelope.timestamp,
+      ...(typeof value.duplicate === "boolean" && attempts === 1
+        ? { duplicate: value.duplicate }
+        : {}),
+      ...(typeof value.expiresAt === "number"
+        ? { expiresAt: value.expiresAt }
+        : {}),
     };
   }
 

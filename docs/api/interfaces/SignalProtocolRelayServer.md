@@ -959,7 +959,7 @@ selected identity namespace.
 
 ### send()
 
-> **send**(`envelope`): `Promise`\<\{ `messageId`: `string`; `serverTimestamp`: `number`; \}\>
+> **send**(`envelope`): `Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; \}\>
 
 Send encrypted envelope to a device.
 Server pushes to recipient via their subscription.
@@ -974,15 +974,16 @@ Encrypted envelope with targeting info
 
 #### Returns
 
-`Promise`\<\{ `messageId`: `string`; `serverTimestamp`: `number`; \}\>
+`Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; \}\>
 
-Message ID and server timestamp (for delivery receipt matching)
+Message ID and server timestamp (for delivery receipt matching).
+A relay that reports them also returns `duplicate` and `expiresAt`.
 
 ***
 
 ### sendMultiRecipientUnidentified()?
 
-> `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `deliveryClass`, `recipientUserIds?`, `clientMessageId?`): `Promise`\<\{ `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
+> `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `deliveryClass`, `recipientUserIds?`, `clientMessageId?`): `Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
 
 Send a multi-recipient sealed sender message.
 
@@ -1028,7 +1029,7 @@ Original user IDs in same order as binary recipients
 
 #### Returns
 
-`Promise`\<\{ `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
+`Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
 
 Message ID, server timestamp, and list of unknown recipient UUIDs
 

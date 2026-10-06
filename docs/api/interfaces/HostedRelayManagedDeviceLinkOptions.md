@@ -39,6 +39,43 @@ notification batching, and privacy preference policy.
 
 ***
 
+### deliveryReceipts?
+
+> `optional` **deliveryReceipts?**: `"auto"` \| `"always"` \| `"off"`
+
+When the client sends an end-to-end encrypted delivery receipt for a
+received message that asks for one.
+
+- `'always'` sends a receipt for each such message.
+- `'auto'` sends a receipt only for a message that arrived through sealed
+  sender. It is for a relay that reports the delivery of an identified
+  message to its sender itself. The hosted Relay does not do that yet, so
+  with `'auto'` the sender of an identified message gets no receipt.
+- `'off'` sends no receipt, so no sender can see that a message reached
+  this device.
+
+A receipt is a message to each device of the sender. The relay cannot read
+it, but it sees when the receipt is sent, and it sees the sender of a
+receipt that is not sealed. Read receipts are not affected.
+
+The sender keeps a copy of each message that it sends, plaintext included,
+to send it again on a retry request. A delivery receipt deletes that copy.
+A message that gets no receipt keeps its copy on the sender device until
+the copy is 14 days old. Only client creation and `stop()` delete such old
+copies.
+
+#### Default
+
+```ts
+'always'
+```
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`deliveryReceipts`](SignalProtocolClientConfig.md#deliveryreceipts)
+
+***
+
 ### enableDebugLogging?
 
 > `optional` **enableDebugLogging?**: `boolean`

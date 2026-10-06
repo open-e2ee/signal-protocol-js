@@ -9,6 +9,7 @@ import type {
 import { base64ToBytes, bytesToBase64 } from '../internal/crypto';
 import type { Base64 } from '../types';
 import type { HostedRelayConnection } from './hosted-connection';
+import { withRelayRequestDeadline } from './relay-request-deadline';
 import {
   isGroupErrorDetail,
   type GroupErrorDetail,
@@ -143,29 +144,32 @@ export class HostedGroupServer implements GroupServer {
   ): Promise<unknown> {
     if (!authorization.authorityKeyId || !/^[A-Za-z0-9_-]{1,128}$/.test(authorization.authorityKeyId))
       throw new Error('Managed group requests require a verified authority selection');
-    const response = await fetch(
-      `${this.connection.protocolEndpoint}/anonymous/groups/${operation}`,
-      {
-        method: 'POST',
-        credentials: 'omit',
-        redirect: 'error',
-        headers: {
-          accept: 'application/json',
-          'content-type': 'application/json',
+    return withRelayRequestDeadline(async (signal) => {
+      const response = await fetch(
+        `${this.connection.protocolEndpoint}/anonymous/groups/${operation}`,
+        {
+          method: 'POST',
+          credentials: 'omit',
+          redirect: 'error',
+          headers: {
+            accept: 'application/json',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            publishableKey: this.connection.publishableKey,
+            authorityKeyId: authorization.authorityKeyId,
+            groupId: bytesToBase64(groupId),
+            presentation: bytesToBase64(authorization.presentation),
+            groupPublicParams: bytesToBase64(authorization.groupPublicParams),
+            ...fields,
+          }),
+          signal,
         },
-        body: JSON.stringify({
-          publishableKey: this.connection.publishableKey,
-          authorityKeyId: authorization.authorityKeyId,
-          groupId: bytesToBase64(groupId),
-          presentation: bytesToBase64(authorization.presentation),
-          groupPublicParams: bytesToBase64(authorization.groupPublicParams),
-          ...fields,
-        }),
-      },
-    );
-    const value = await readResponse(response);
-    if (!response.ok) throw new HostedGroupError(response.status, value);
-    return value;
+      );
+      const value = await readResponse(response);
+      if (!response.ok) throw new HostedGroupError(response.status, value);
+      return value;
+    });
   }
 
   async refreshGroupSendEndorsements(groupId: Uint8Array, authorization: GroupAuthorization): Promise<{ endorsements: Uint8Array; expiration: number }> {

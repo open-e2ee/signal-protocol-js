@@ -17,6 +17,7 @@ import { SealedSenderAuthError } from "../types/errors";
 import { FanOutError, type BoundedFanOut } from "../utils/bounded-fan-out";
 import type { HostedRelayConnection } from "./hosted-connection";
 import { markRelayDeviceRefusal } from "./relay-device-refusal";
+import { withRelayRequestDeadline } from "./relay-request-deadline";
 
 const FRAME_VERSION = 1;
 const FRAME_HEADER_BYTES = 9;
@@ -157,54 +158,57 @@ export class HostedAnonymousDelivery {
     }
   }
 
-  private async post(path: string, body: JsonRecord): Promise<JsonRecord> {
-    let response: Response;
-    try {
-      response = await fetch(
-        `${this.connection.protocolEndpoint.replace(/\/$/u, "")}/anonymous${path}`,
-        {
-          method: "POST",
-          credentials: "omit",
-          redirect: "error",
-          headers: {
-            accept: "application/json",
-            "content-type": "application/json",
+  private post(path: string, body: JsonRecord): Promise<JsonRecord> {
+    return withRelayRequestDeadline(async (signal) => {
+      let response: Response;
+      try {
+        response = await fetch(
+          `${this.connection.protocolEndpoint.replace(/\/$/u, "")}/anonymous${path}`,
+          {
+            method: "POST",
+            credentials: "omit",
+            redirect: "error",
+            headers: {
+              accept: "application/json",
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              ...body,
+              publishableKey: this.connection.publishableKey,
+            }),
+            signal,
           },
-          body: JSON.stringify({
-            ...body,
-            publishableKey: this.connection.publishableKey,
-          }),
-        },
-      );
-    } catch (cause) {
-      throw new Error("Signal Protocol Relay request could not be completed", {
-        cause,
-      });
-    }
-    const value = await responseObject(response);
-    if (!response.ok) {
-      const code = record(value.error) ? value.error.code : undefined;
-      const authenticationCode =
-        path === "/delivery/send"
-          ? "ANONYMOUS_AUTH_REJECTED"
-          : "GROUP_CREDENTIAL_REJECTED";
-      if (response.status === 401 && code === authenticationCode)
-        throw new SealedSenderAuthError();
-      const safeCodes = [
-        "NOT_FOUND",
-        "STALE_DEVICE",
-        "RETRY_CONFLICT",
-        "OPERATION_EXPIRED",
-        "DELIVERY_UNCERTAIN",
-      ];
-      throw new HostedAnonymousDeliveryError(
-        response.status,
-        typeof code === "string" && safeCodes.includes(code)
-          ? code
-          : "DELIVERY_FAILED",
-      );
-    }
-    return value;
+        );
+      } catch (cause) {
+        throw new Error("Signal Protocol Relay request could not be completed", {
+          cause,
+        });
+      }
+      const value = await responseObject(response);
+      if (!response.ok) {
+        const code = record(value.error) ? value.error.code : undefined;
+        const authenticationCode =
+          path === "/delivery/send"
+            ? "ANONYMOUS_AUTH_REJECTED"
+            : "GROUP_CREDENTIAL_REJECTED";
+        if (response.status === 401 && code === authenticationCode)
+          throw new SealedSenderAuthError();
+        const safeCodes = [
+          "NOT_FOUND",
+          "STALE_DEVICE",
+          "RETRY_CONFLICT",
+          "OPERATION_EXPIRED",
+          "DELIVERY_UNCERTAIN",
+        ];
+        throw new HostedAnonymousDeliveryError(
+          response.status,
+          typeof code === "string" && safeCodes.includes(code)
+            ? code
+            : "DELIVERY_FAILED",
+        );
+      }
+      return value;
+    });
   }
 
   public async send(
@@ -218,6 +222,8 @@ export class HostedAnonymousDelivery {
     messageId: string;
     serverTimestamp: number;
     uuids404: string[];
+    duplicate?: boolean;
+    expiresAt?: number;
   }> {
     const header = timestampHeader(timestamp);
     if (
@@ -330,16 +336,19 @@ export class HostedAnonymousDelivery {
         (result.acceptedDestinations as number) > destinations.length
       )
         throw new Error("Anonymous group receipt is invalid");
-      // Fan-out acceptance has no recipient enqueue time. Keep the original message time.
+      // Fan-out acceptance has no recipient enqueue time. Keep the original
+      // message time. A duplicate fan-out is one that the Relay had already
+      // accepted; it does not tell that each destination stored a copy.
       return {
         messageId: clientMessageId,
         serverTimestamp: timestamp,
         uuids404: [],
+        duplicate: result.duplicate as boolean,
       };
     }
     // Every device is sent at the same time. A failure for one device does
     // not stop the send to another.
-    const enqueuedAt = await this.each(
+    const receipts = await this.each(
       destinations,
       async ({ recipientPrefix, ...destination }) => {
         const body = {
@@ -355,6 +364,7 @@ export class HostedAnonymousDelivery {
         const deliver = () =>
           this.fanOut.request(() => this.post("/delivery/send", body));
         let result: JsonRecord;
+        let repeated = false;
         try {
           result = await deliver();
         } catch (error) {
@@ -368,6 +378,7 @@ export class HostedAnonymousDelivery {
             error.code !== "DELIVERY_UNCERTAIN"
           )
             throw markDestinationRefusal(error, destination);
+          repeated = true;
           result = await deliver().catch((repeatError: unknown) => {
             throw markDestinationRefusal(repeatError, destination);
           });
@@ -376,17 +387,41 @@ export class HostedAnonymousDelivery {
           result.messageId !== clientMessageId ||
           (result.enqueuedAt !== undefined &&
             (!Number.isSafeInteger(result.enqueuedAt) ||
-              (result.enqueuedAt as number) <= 0))
+              (result.enqueuedAt as number) <= 0)) ||
+          (result.duplicate !== undefined &&
+            typeof result.duplicate !== "boolean") ||
+          (result.expiresAt !== undefined &&
+            (!Number.isSafeInteger(result.expiresAt) ||
+              (result.expiresAt as number) <= 0))
         )
           throw new Error("Anonymous delivery receipt is invalid");
-        return result.enqueuedAt as number | undefined;
+        return {
+          enqueuedAt: result.enqueuedAt as number | undefined,
+          // The uncertain first request can have stored the copy that the
+          // repeat finds, so the repeat's duplicate tells nothing.
+          duplicate: repeated
+            ? undefined
+            : (result.duplicate as boolean | undefined),
+          expiresAt: result.expiresAt as number | undefined,
+        };
       },
     );
-    // The last destination in input order gives the server timestamp.
+    // The send is a duplicate only when every destination already stored it,
+    // and the earliest destination expiry bounds the whole send. A field is
+    // present only when every destination reported it.
+    const duplicates = receipts.map((receipt) => receipt.duplicate);
+    const expiries = receipts.map((receipt) => receipt.expiresAt);
     return {
       messageId: clientMessageId,
-      serverTimestamp: enqueuedAt[enqueuedAt.length - 1] ?? timestamp,
+      // The last destination in input order gives the server timestamp.
+      serverTimestamp: receipts[receipts.length - 1]?.enqueuedAt ?? timestamp,
       uuids404: [],
+      ...(duplicates.every((duplicate) => duplicate !== undefined)
+        ? { duplicate: duplicates.every(Boolean) }
+        : {}),
+      ...(expiries.every((expiry) => expiry !== undefined)
+        ? { expiresAt: Math.min(...(expiries as number[])) }
+        : {}),
     };
   }
 }

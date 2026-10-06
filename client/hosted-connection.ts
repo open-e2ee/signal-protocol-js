@@ -7,6 +7,7 @@ import {
 } from '../internal/crypto';
 import type { Base64 } from '../types';
 import { MANAGED_RELAY_PROFILES } from './hosted-trust';
+import { withRelayRequestDeadline } from './relay-request-deadline';
 
 export interface HostedRelayCertificateTrust {
   readonly revokedIssuerKeyIds: readonly number[];
@@ -212,14 +213,29 @@ export async function resolveHostedRelayConnection(
   ) {
     return cloneConnection(cached.connection);
   }
-  let response: Response;
-  try {
-    response = await fetch(input.relayUrl, {
-      credentials: 'omit',
-      headers: { accept: 'application/json' },
-      method: 'GET',
-    });
-  } catch {
+  // A Relay that cannot be reached, or that does not answer before the
+  // deadline, gives no document. A stale cached connection then still applies.
+  const document = await withRelayRequestDeadline(async (signal) => {
+    let response: Response;
+    try {
+      response = await fetch(input.relayUrl, {
+        credentials: 'omit',
+        headers: { accept: 'application/json' },
+        method: 'GET',
+        signal,
+      });
+    } catch {
+      return undefined;
+    }
+    if (!response.ok) throw await connectionError(response);
+    try {
+      return { value: await boundedJson(response) };
+    } catch {
+      if (signal.aborted) return undefined;
+      throw new Error('Signal Protocol Relay returned an invalid connection');
+    }
+  });
+  if (document === undefined) {
     if (
       cached !== undefined &&
       Date.now() - cached.resolvedAt <= CONNECTION_STALE_MILLISECONDS
@@ -228,13 +244,7 @@ export async function resolveHostedRelayConnection(
     }
     throw new Error('Signal Protocol Relay connection could not be resolved');
   }
-  if (!response.ok) throw await connectionError(response);
-  let valueFromRelay: unknown;
-  try {
-    valueFromRelay = await boundedJson(response);
-  } catch {
-    throw new Error('Signal Protocol Relay returned an invalid connection');
-  }
+  const valueFromRelay = document.value;
   const expectedOrigin = MANAGED_RELAY_PROFILES[input.profile].origin;
   const relayScopeId = record(valueFromRelay)
     ? parseRelayScopeId(valueFromRelay.relayScopeId)
