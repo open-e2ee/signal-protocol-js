@@ -319,6 +319,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * @param config - Configuration for the client
    */
   private constructor(userId: string, deviceId: number, config: SignalProtocolClientConfig) {
+    if (
+      config.deliveryReceipts !== undefined &&
+      !['auto', 'always', 'off'].includes(config.deliveryReceipts)
+    ) {
+      throw new Error("deliveryReceipts must be 'auto', 'always', or 'off'");
+    }
     this._userId = userId;
     this.deviceId = deviceId;
     this.config = config;

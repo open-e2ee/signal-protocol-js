@@ -17,7 +17,24 @@ import {
 
 const MAILBOX_PROTOCOL = "open-e2ee-relay.v1";
 const AUTH_PROTOCOL_PREFIX = "open-e2ee-relay.auth.";
+/**
+ * The recovery pull waits a random time from half to one and a half of this
+ * value. The mean pull rate stays at one per 2 s, the 1 s floor keeps a
+ * failing pull from looping fast, and clients that lose their sockets together
+ * do not pull together.
+ */
 const RECOVERY_MILLISECONDS = 2_000;
+/**
+ * The reconnect ceiling starts at 1 s and doubles to 30 s. Each wait is a
+ * random time from zero up to the ceiling (full jitter), the first one too, so
+ * clients that lose their sockets together, for example in a Relay deploy, do
+ * not reconnect together. The ceiling starts again at 1 s when the Relay
+ * answers a ping, 30 s after the socket opens. A socket that closes sooner,
+ * for example on a frame that the client refuses on each connect, keeps the
+ * ceiling growing, so a loop of short connections backs off to 30 s.
+ */
+const FIRST_RECONNECT_MILLISECONDS = 1_000;
+const MAXIMUM_RECONNECT_MILLISECONDS = 30_000;
 /** The Relay answers each `ping` text frame with `pong` without waking the mailbox. */
 const PING_MILLISECONDS = 30_000;
 /**
@@ -114,7 +131,7 @@ export function subscribeHostedMailbox(
   let active = true;
   let socket: WebSocket | undefined;
   let connectionGeneration = 0;
-  let reconnectDelay = 1_000;
+  let reconnectDelay = FIRST_RECONNECT_MILLISECONDS;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
   let renewalTimer: ReturnType<typeof setTimeout> | undefined;
@@ -178,7 +195,7 @@ export function subscribeHostedMailbox(
     recoveryTimer = setTimeout(() => {
       recoveryTimer = undefined;
       requestPull();
-    }, RECOVERY_MILLISECONDS);
+    }, RECOVERY_MILLISECONDS * (0.5 + Math.random()));
   };
 
   const receiveBatch = async (messages: readonly Envelope[]) => {
@@ -276,8 +293,8 @@ export function subscribeHostedMailbox(
     options.onConnectionState("reconnecting", reason);
     // One recovery pull per reconnect attempt, paced by the reconnect backoff.
     recoverLater();
-    const delay = reconnectDelay;
-    reconnectDelay = Math.min(30_000, reconnectDelay * 2);
+    const delay = Math.floor(Math.random() * reconnectDelay);
+    reconnectDelay = Math.min(MAXIMUM_RECONNECT_MILLISECONDS, reconnectDelay * 2);
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined;
       void connect();
@@ -321,7 +338,6 @@ export function subscribeHostedMailbox(
         // The Relay replays retained messages over the socket on connect.
         clearTimeout(recoveryTimer);
         recoveryTimer = undefined;
-        reconnectDelay = 1_000;
         options.onConnectionState("connected");
         options.onPresence?.({ type: "open" });
         const schedulePing = () => {
@@ -365,10 +381,17 @@ export function subscribeHostedMailbox(
             throw new Error("Invalid mailbox frame.");
           if (event.data === "pong") {
             unansweredPings = 0;
+            // The socket stayed open and the Relay answers it.
+            reconnectDelay = FIRST_RECONNECT_MILLISECONDS;
             return;
           }
           const frame: unknown = JSON.parse(event.data);
-          if (typeof frame !== "object" || frame === null || !("type" in frame))
+          if (
+            typeof frame !== "object" ||
+            frame === null ||
+            !("type" in frame) ||
+            typeof frame.type !== "string"
+          )
             throw new Error("Invalid mailbox frame.");
           if (isPresenceAnswerType(frame.type))
             answerPresence(frame as Record<string, unknown>);
@@ -377,15 +400,20 @@ export function subscribeHostedMailbox(
               frame as Record<string, unknown>,
             );
             options.onPresence?.({ type: "update", update });
-          } else if (frame.type === "durable-message" && "message" in frame)
+          } else if (frame.type === "durable-message") {
+            if (!("message" in frame))
+              throw new Error("Invalid mailbox frame.");
             queueDurable(candidate, frame.message);
-          else if (frame.type === "ephemeral-message" && "message" in frame) {
+          } else if (frame.type === "ephemeral-message") {
+            if (!("message" in frame))
+              throw new Error("Invalid mailbox frame.");
             if (ephemeral.length >= MAXIMUM_PENDING_FRAMES)
               throw new Error("Mailbox frame queue is full.");
             ephemeral.push({ socket: candidate, message: frame.message });
             void drain();
-          } else if (frame.type !== "acknowledged")
-            throw new Error("Invalid mailbox frame.");
+          }
+          // A newer Relay can send a frame type that this client does not
+          // know. The client ignores it and keeps the socket.
         } catch {
           retryConnection("frame");
         }

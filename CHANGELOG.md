@@ -1,5 +1,69 @@
 # Changelog
 
+## 9.2.0
+
+- **Fixed: a hosted Relay request that never answers now ends after 30 s.**
+  Before, a device post on a dropped connection had no deadline. It kept its
+  send open with no end, so later sends to the same recipient waited, and four
+  such posts held every relay request slot of the client. Now each hosted
+  Relay request aborts after 30 s, response body included, and rejects with
+  "Signal Protocol Relay request could not be completed". Send the same
+  operation again: the Relay drops a repeat of an operation that it accepted.
+  The same deadline applies to the connection lookup, the managed group
+  authority, and each managed group request. A connection lookup that times
+  out uses a cached connection up to one hour old, as it does when the Relay
+  cannot be reached. Every hosted Relay request that the deadline ends rejects
+  with the same error, whose `cause` is "Signal Protocol Relay request timed
+  out". This is also true on a platform whose fetch drops the abort reason.
+- **Changed: the hosted mailbox socket waits a random time before it
+  reconnects.** The ceiling of the wait starts at 1 s, doubles after each
+  failed attempt up to 30 s, and starts again at 1 s when the Relay answers a
+  ping, 30 s after a socket opens. A socket that closes sooner keeps the
+  ceiling growing, so a loop of short connections waits up to 30 s. Each
+  wait, the first one too, is a random time from zero up to the ceiling. The
+  HTTP recovery pull while the socket is down now waits a random time from 1 s
+  to 3 s, not exactly 2 s. Before, every client that lost its socket at the
+  same moment, for example in a Relay deploy, reconnected and pulled at the
+  same moment.
+- **Added: a hosted Relay send result carries `duplicate` and `expiresAt`.**
+  `SignalProtocolRelayServer.send()` and `sendMultiRecipientUnidentified()`
+  return them when the Relay reports them. `duplicate` is true when the Relay
+  had already stored the message, so the call stored no new copy. `expiresAt`
+  is the time at which the Relay drops a stored copy that the device has not
+  acknowledged. A send to several devices reports `duplicate` true only when
+  every device reports it, and the earliest `expiresAt`. A group send token
+  reports `duplicate` true when the Relay had already accepted a send with the
+  same ID. That does not tell that each device stored a copy. `duplicate` is
+  absent when the call sent the request again after an uncertain answer,
+  because the first request can have stored the copy that the repeat found.
+  Both are absent for an ephemeral message and from a relay that does not
+  report them. A receipt whose `duplicate` or `expiresAt` has the wrong type is
+  refused. The SDK does not read the `persisted` field of a receipt. The values
+  are true only from a Relay that stores each message before it answers. Until
+  then, the hosted Relay can report an `expiresAt` for a message that it
+  delivered and did not store, and `duplicate` false for a repeat that it
+  delivered. `client.send()` does not return these fields.
+- **Added: `deliveryReceipts` selects the messages that get a delivery
+  receipt.** `'always'`, the default, keeps the current behavior. `'auto'`
+  sends a receipt only for a message that arrived through sealed sender, and
+  `'off'` sends none. The hosted Relay does not yet report the delivery of an
+  identified message itself, so with `'auto'` the sender of an identified
+  message gets no receipt. The sender keeps a copy of each message that it
+  sends, plaintext included, to send it again on a retry request. A delivery
+  receipt deletes that copy. With `'off'`, or with `'auto'` for an identified
+  message, the copy stays until it is 14 days old, and only client creation
+  and `stop()` delete such old copies. Read receipts are not affected. Any
+  other value makes client creation throw.
+- **Breaking: `DecryptedEnvelope` has a required `arrivedSealed` field.** It is
+  true when the message arrived through sealed sender. Code that builds a
+  `DecryptedEnvelope`, for example a test double of `onMessageDecrypted`, must
+  set it.
+- **Fixed: the hosted mailbox socket ignores a frame of an unknown type.**
+  Before, the client closed the socket and reconnected with reason `frame`, so
+  a Relay that added a frame type made every older client reconnect. A frame
+  that is not JSON, has no string `type`, or is a known type with a missing
+  field still closes the socket.
+
 ## 9.1.0
 
 - **Added: `hostedRelaySandboxIdentity` creates the identity assertion callback

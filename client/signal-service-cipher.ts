@@ -759,7 +759,8 @@ export class SignalProtocolServiceCipher {
       const innerEnvelope = reconstructEnvelope(envelope, unsealed);
 
       // Recursively decrypt the inner message (now a standard ciphertext)
-      return this.decrypt(innerEnvelope, undefined, receiveId, stopSignal);
+      const decrypted = await this.decrypt(innerEnvelope, undefined, receiveId, stopSignal);
+      return { ...decrypted, arrivedSealed: true };
     }
 
     // Validate message type before processing
@@ -883,6 +884,7 @@ export class SignalProtocolServiceCipher {
         serverTimestamp: envelope.serverTimestamp,
         receivedAt,
         isGroup: resolvedGroupId !== null,
+        arrivedSealed: false,
         messageType: envelope.messageType as DecryptedEnvelope['messageType'],
       };
 

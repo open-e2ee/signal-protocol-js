@@ -8,6 +8,15 @@
 
 ## Properties
 
+### arrivedSealed
+
+> **arrivedSealed**: `boolean`
+
+Whether the message arrived through sealed sender, so the relay did not
+see its sender. The `'auto'` value of `deliveryReceipts` reads it.
+
+***
+
 ### content
 
 > **content**: `string`

@@ -66,6 +66,11 @@ export interface DecryptedEnvelope {
   receivedAt: number;
   /** Whether this is a group message */
   isGroup: boolean;
+  /**
+   * Whether the message arrived through sealed sender, so the relay did not
+   * see its sender. The `'auto'` value of `deliveryReceipts` reads it.
+   */
+  arrivedSealed: boolean;
   /** Message type hint (if available from envelope) - apps define their own type unions */
   messageType?: string;
 }

@@ -280,9 +280,27 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
    * Server pushes to recipient via their subscription.
    *
    * @param envelope - Encrypted envelope with targeting info
-   * @returns Message ID and server timestamp (for delivery receipt matching)
+   * @returns Message ID and server timestamp (for delivery receipt matching).
+   * A relay that reports them also returns `duplicate` and `expiresAt`.
    */
-  send(envelope: Envelope): Promise<{ messageId: string; serverTimestamp: number }>;
+  send(envelope: Envelope): Promise<{
+    messageId: string;
+    serverTimestamp: number;
+    /**
+     * True when the relay had already stored this message, so this call
+     * stored no new copy. Absent when the relay does not report it, as for an
+     * ephemeral message. Also absent when the call sent the request again
+     * after an uncertain answer, because the first request can have stored
+     * the copy that the repeat found.
+     */
+    duplicate?: boolean;
+    /**
+     * Time in milliseconds since the epoch at which the relay drops the stored
+     * copy that the device has not acknowledged. Absent when the relay does
+     * not report it, as for an ephemeral message.
+     */
+    expiresAt?: number;
+  }>;
 
   /**
    * Subscribe to incoming envelopes for this device.
@@ -686,6 +704,23 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
     messageId: string;
     serverTimestamp: number;
     uuids404: string[];
+    /**
+     * For an access-key send, true when the relay had already stored the
+     * message for every destination. Absent when the relay does not report it
+     * for each one, or when a destination needed a repeat after an uncertain
+     * answer.
+     *
+     * For a group-token send, true when the relay had already accepted a
+     * fan-out of this send. That does not tell that each destination stored a
+     * copy: the relay can have refused a destination or still hold it.
+     */
+    duplicate?: boolean;
+    /**
+     * The earliest time, in milliseconds since the epoch, at which the relay
+     * drops a stored copy that a device has not acknowledged. Absent when the
+     * relay does not report it for each destination.
+     */
+    expiresAt?: number;
   }>;
 
   // ════════════════════════════════════════════════════════════
