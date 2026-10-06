@@ -771,22 +771,23 @@ that has none, and removes each local device record that the relay does not
 list. The time of the last read is kept in memory only, so a restarted client
 reads the list on its first send to each recipient.
 
-On the hosted Relay, a direct send posts first and reads second when the
-last successful read for that recipient in this process is at least 60 s and
-less than 300 s old (`RECIPIENT_DEVICE_LIST_MAXIMUM_AGE_MILLISECONDS`). The
-send posts to the known devices, and then reads the list. It encrypts the same
-message for each newly listed device and posts it in the same send. It drops
-a device that the Relay refused and the list no longer shows. The stored intent
-records that its read is pending, so a replay after a crash reads the list
-before it completes. A sender key distribution, and a send through the Convex
-or memory relay, reads first as above.
+On the Signal Protocol Relay, a direct send posts first and reads second
+when the last successful read for that recipient in this process is at least
+60 s and less than 300 s old
+(`RECIPIENT_DEVICE_LIST_MAXIMUM_AGE_MILLISECONDS`). The send posts to the known
+devices, and then reads the list. It encrypts the same message for each newly
+listed device and posts it in the same send. It drops a device that the Relay
+refused and the list no longer shows. The stored intent records that its read
+is pending, so a replay after a crash reads the list before it completes. A
+sender key distribution, and a send through the Convex or memory relay, reads
+first as above.
 
-**Consequence on the hosted Relay.** A device linked less than 60 s before a
-send can miss that send. A device linked 60 s to 300 s before a send receives
-it when the read in that send succeeds. A removed device receives no message,
-because the Relay refuses the device's mailbox before the list shows the
-removal. The 300 s maximum limits only how long a client posts first on a list
-that no read confirmed.
+**Consequence on the Signal Protocol Relay.** A device linked less than 60 s
+before a send can miss that send. A device linked 60 s to 300 s before a send
+receives it when the read in that send succeeds. A removed device receives no
+message, because the Relay refuses the device's mailbox before the list shows
+the removal. The 300 s maximum limits only how long a client posts first on a
+list that no read confirmed.
 
 **Consequence on the Convex and memory relays.** A device linked less than
 60 s before a send can miss that send, and a device removed less than 60 s

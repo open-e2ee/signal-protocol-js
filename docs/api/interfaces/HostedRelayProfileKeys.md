@@ -14,7 +14,12 @@ The profile keys that a hosted client carries in its 1:1 messages.
 
 > `readonly` **contacts**: `MutableContactProfileStateStore`
 
-Keeps the profile key that each contact sent.
+Keeps the profile key that each contact sent. The client sends a sealed
+message only to a contact whose profile key this store holds, and sends
+an identified message to each other contact. The client also records
+here when the Relay refuses a sealed message to a contact. It then sends
+identified messages to that contact until the contact's profile key
+changes.
 
 ## Methods
 

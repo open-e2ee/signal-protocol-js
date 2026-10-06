@@ -1,22 +1,22 @@
 /**
- * The deadline of one hosted Relay HTTP request.
+ * The deadline of one HTTP request to the OpenE2EE Signal Protocol Relay.
  *
  * A device post holds a slot of the client's relay request bound, and its
  * send holds the send lock of the recipient, until the post settles. A fetch
  * has no deadline of its own in a browser, so a request that never answers,
- * as on a dropped connection, would hold both with no end. Each hosted Relay
- * request therefore aborts at this deadline, response body included. The
- * Relay drops a repeat of an operation that it accepted, so the caller can
- * send the same operation again.
+ * as on a dropped connection, would hold both with no end. Each Relay request
+ * therefore aborts at this deadline, response body included. The Relay drops a
+ * repeat of an operation that it accepted, so the caller can send the same
+ * operation again.
  */
 
-/** The time that one hosted Relay request, response body included, can take. */
+/** The time that one Relay request, response body included, can take. */
 export const RELAY_REQUEST_DEADLINE_MILLISECONDS = 30_000;
 
 /**
- * Run one hosted Relay request with a signal that aborts at the deadline. The
- * request must pass the signal to fetch and read the response body before it
- * returns, so the deadline covers the whole exchange.
+ * Run one Relay request with a signal that aborts at the deadline. The request
+ * must pass the signal to fetch and read the response body before it returns,
+ * so the deadline covers the whole exchange.
  *
  * A request that fails after the deadline rejects with "Signal Protocol Relay
  * request could not be completed", whose cause is a "Signal Protocol Relay

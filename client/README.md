@@ -193,10 +193,10 @@ device of the sender. The `deliveryReceipts` option selects the messages:
 | `'off'`              | None                                                       |
 
 `'auto'` is for a relay that reports the delivery of an identified message to
-its sender itself. The hosted Relay does not do that yet, so with `'auto'` the
-sender of an identified message gets no receipt. `DecryptedEnvelope.arrivedSealed`
-tells whether a message arrived through sealed sender. Read receipts are not
-affected.
+its sender itself. The Signal Protocol Relay does not do that yet, so with
+`'auto'` the sender of an identified message gets no receipt.
+`DecryptedEnvelope.arrivedSealed` tells whether a message arrived through
+sealed sender. Read receipts are not affected.
 
 The sender keeps a copy of each message that it sends, plaintext included, so
 that it can send the message again when the recipient asks for a retry. A

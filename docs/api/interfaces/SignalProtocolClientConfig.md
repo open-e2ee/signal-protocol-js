@@ -76,8 +76,9 @@ received message that asks for one.
 - `'always'` sends a receipt for each such message.
 - `'auto'` sends a receipt only for a message that arrived through sealed
   sender. It is for a relay that reports the delivery of an identified
-  message to its sender itself. The hosted Relay does not do that yet, so
-  with `'auto'` the sender of an identified message gets no receipt.
+  message to its sender itself. The OpenE2EE Signal Protocol Relay does not
+  do that yet, so with `'auto'` the sender of an identified message gets
+  no receipt.
 - `'off'` sends no receipt, so no sender can see that a message reached
   this device.
 

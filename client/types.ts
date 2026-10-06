@@ -272,9 +272,8 @@ export interface SendResult {
  * A direct send attempts every device of the recipient, also when a device
  * before it fails, and the error is that of the first failed device. A
  * replay sends to every device again. The Relay keeps one copy for a device
- * while it remembers the result of that device. After the hosted Relay forgets
- * the result (60 s), the device gets a second copy and drops it as a
- * duplicate.
+ * while it remembers the result of that device. After the Relay forgets the
+ * result (60 s), the device gets a second copy and drops it as a duplicate.
  */
 export interface OutgoingMessageError extends Error {
   readonly clientMessageId: string;

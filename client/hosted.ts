@@ -41,6 +41,7 @@ import { bindHostedRelayPresenceRuntime } from './hosted-presence';
 import {
   assertHostedRelayProfileKeys,
   bindHostedRelayProfileKeys,
+  hostedSealedSenderContacts,
   type HostedRelayProfileKeys,
 } from './hosted-profile-keys';
 import { resolveSignalProtocolLogger } from '../logger';
@@ -304,6 +305,15 @@ export interface HostedSignalProtocolClientOptions extends Omit<
      * Carries this account's profile key in each end-to-end encrypted 1:1
      * message and keeps the key that each contact sends. The SDK then
      * registers and grants the presence keys, so the app sends no key itself.
+     *
+     * The profile keys also control sealed sender. A hosted client sends a
+     * sealed 1:1 message only when this option is set, and only to a contact
+     * whose profile key `contacts` holds. Each other 1:1 message is
+     * identified, so the Relay sees its sender. Until the client holds the
+     * profile key of a contact, its messages to that contact are identified
+     * and carry this account's profile key. The SDK also registers the access
+     * key that it derives from this account's profile key, so a contact that
+     * holds the profile key can send sealed messages to this account.
      */
     readonly profileKeys?: HostedRelayProfileKeys;
   };
@@ -902,6 +912,9 @@ async function createClientFromHostedResult(
       trustRoots: certificateTrust.trustRoots.map(
         (root) => new Uint8Array(root),
       ),
+      ...(profileKeys === undefined
+        ? {}
+        : { contactStateStore: hostedSealedSenderContacts(profileKeys.contacts) }),
     },
   });
   const client = await DefaultSignalProtocolClient.create(

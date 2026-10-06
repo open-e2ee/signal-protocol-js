@@ -8,11 +8,19 @@
  *
  * The profile key goes only in encrypted content. The presence key goes only
  * in the `presence-key`, `presence-read`, and `presence-watch` frames.
+ *
+ * The same profile key also controls sealed sender. The client registers the
+ * access key that it derives from this account's profile key, so a contact
+ * that holds the profile key can send sealed messages to this account. The
+ * client sends a sealed message only to a contact whose profile key it holds.
  */
 import { base64ToBytes, bytesToBase64 } from "../internal/crypto";
+import { deriveAccessKey } from "../internal/protocol/sealed-sender/delivery-token";
 import type { Logger } from "../logger";
 import {
+  UnidentifiedAccessMode,
   storeReceivedProfileKey,
+  type ContactProfileStateStore,
   type MutableContactProfileStateStore,
 } from "../profile/contact-state";
 import { asBase64 } from "../types/utils";
@@ -23,6 +31,7 @@ import {
   hostedRelayPresence,
   type HostedRelayPresenceRuntime,
 } from "./hosted-presence";
+import { HostedRelayHttpError } from "./hosted-transport";
 import {
   PROFILE_KEY_UPDATE_FLAG,
   bindProfileKeyExchange,
@@ -37,8 +46,22 @@ export interface HostedRelayProfileKeys {
    * account must return the same key.
    */
   getOwnProfileKey(): Promise<Uint8Array | null>;
-  /** Keeps the profile key that each contact sent. */
+  /**
+   * Keeps the profile key that each contact sent. The client sends a sealed
+   * message only to a contact whose profile key this store holds, and sends
+   * an identified message to each other contact. The client also records
+   * here when the Relay refuses a sealed message to a contact. It then sends
+   * identified messages to that contact until the contact's profile key
+   * changes.
+   */
   readonly contacts: MutableContactProfileStateStore;
+}
+
+/** @internal The Relay operations that the profile key exchange uses. */
+export interface HostedRelayProfileKeyRuntime extends HostedRelayPresenceRuntime {
+  readonly accountId: string;
+  /** Registers the key that a contact must show to send a sealed message. */
+  setUnidentifiedAccessKey(userId: string, accessKey: Uint8Array): Promise<void>;
 }
 
 const DELIVERED_METADATA_PREFIX = "hostedRelay.profileKeyDelivered.v1:";
@@ -48,6 +71,8 @@ interface OwnProfileKey {
   /** Standard base64, the `DataMessage.profileKey` encoding. */
   readonly profileKey: string;
   readonly presenceKey: string;
+  /** Standard base64 of the derived unidentified access key. */
+  readonly accessKey: string;
 }
 
 /** @internal Throws unless the option has the members that the SDK calls. */
@@ -55,15 +80,41 @@ export function assertHostedRelayProfileKeys(keys: HostedRelayProfileKeys): void
   if (
     typeof keys?.getOwnProfileKey !== "function" ||
     typeof keys.contacts?.storeContactProfileKey !== "function" ||
+    typeof keys.contacts.getContactProfileKey !== "function" ||
+    typeof keys.contacts.getUnidentifiedAccessMode !== "function" ||
     typeof keys.contacts.updateUnidentifiedAccessMode !== "function"
   )
     throw new Error("Signal Protocol Relay profile keys are invalid");
 }
 
+/**
+ * @internal The contact store that the sealed-sender cipher reads for a
+ * hosted client. The Relay admits a sealed message only with the
+ * access key that the recipient registered, and it has no unrestricted
+ * access. A contact is therefore enabled unless the Relay refused a sealed
+ * message to it. The cipher then sends sealed only to a contact whose profile
+ * key the store holds, and never sends a sealed message that the Relay must
+ * refuse.
+ */
+export function hostedSealedSenderContacts(
+  contacts: ContactProfileStateStore,
+): ContactProfileStateStore {
+  return {
+    getContactProfileKey: (userId) => contacts.getContactProfileKey(userId),
+    getUnidentifiedAccessMode: async (userId) =>
+      (await contacts.getUnidentifiedAccessMode(userId)) ===
+      UnidentifiedAccessMode.DISABLED
+        ? UnidentifiedAccessMode.DISABLED
+        : UnidentifiedAccessMode.ENABLED,
+    updateUnidentifiedAccessMode: (userId, mode) =>
+      contacts.updateUnidentifiedAccessMode(userId, mode),
+  };
+}
+
 /** @internal Bind the presence key exchange of a hosted client. */
 export function bindHostedRelayProfileKeys(
   client: DefaultSignalProtocolClient,
-  runtime: HostedRelayPresenceRuntime,
+  runtime: HostedRelayProfileKeyRuntime,
   keys: HostedRelayProfileKeys,
   logger: Required<Logger>,
 ): void {
@@ -74,6 +125,11 @@ export function bindHostedRelayProfileKeys(
   /** A presence key that the Relay refused. The client does not send it again. */
   let refused: string | undefined;
   let registering: Promise<void> | undefined;
+  /** The access key that the Relay holds from this client. */
+  let accessRegistered: string | undefined;
+  /** An access key that the Relay refused. The client does not send it again. */
+  let accessRefused: string | undefined;
+  let accessRegistering: Promise<void> | undefined;
   const offers = new Map<string, Promise<void>>();
 
   const warn = (message: string, error: unknown): void =>
@@ -87,17 +143,47 @@ export function bindHostedRelayProfileKeys(
     const bytes = await keys.getOwnProfileKey();
     if (bytes === null) return undefined;
     const presenceKey = await derivePresenceKey(bytes);
-    return { bytes, profileKey: bytesToBase64(bytes), presenceKey };
+    const accessKey = bytesToBase64(await deriveAccessKey(bytes));
+    return { bytes, profileKey: bytesToBase64(bytes), presenceKey, accessKey };
   };
 
   const deliveredMetadataKey = (recipient: string): string =>
     `${DELIVERED_METADATA_PREFIX}${runtime.presenceScope}:${recipient}`;
 
   /**
+   * Registers the access key once for each client and again after each
+   * profile key change. A later send or connect retries a retryable failure
+   * and a failure that has no Relay answer.
+   */
+  const registerAccess = (key: OwnProfileKey): void => {
+    if (
+      accessRegistering !== undefined ||
+      key.accessKey === accessRegistered ||
+      key.accessKey === accessRefused
+    )
+      return;
+    accessRegistering = runtime
+      .setUnidentifiedAccessKey(runtime.accountId, base64ToBytes(asBase64(key.accessKey)))
+      .then(
+        () => {
+          accessRegistered = key.accessKey;
+        },
+        (error: unknown) => {
+          if (error instanceof HostedRelayHttpError && !error.retryable)
+            accessRefused = key.accessKey;
+          warn("Signal Protocol Relay access key registration failed", error);
+        },
+      )
+      .finally(() => {
+        accessRegistering = undefined;
+      });
+  };
+
+  /**
    * Registers the presence key once for each client and again after each
    * profile key change. A later send or connect retries a retryable failure.
    */
-  const register = (key: OwnProfileKey): void => {
+  const registerPresence = (key: OwnProfileKey): void => {
     if (
       registering !== undefined ||
       key.presenceKey === registered ||
@@ -120,6 +206,11 @@ export function bindHostedRelayProfileKeys(
       .finally(() => {
         registering = undefined;
       });
+  };
+
+  const register = (key: OwnProfileKey): void => {
+    registerAccess(key);
+    registerPresence(key);
   };
 
   runtime.subscribeRelayConnectionState((state) => {

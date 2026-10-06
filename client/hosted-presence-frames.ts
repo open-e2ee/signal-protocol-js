@@ -1,5 +1,5 @@
 /**
- * The presence wire contract of the hosted Relay, version 1.
+ * The presence wire contract of the OpenE2EE Signal Protocol Relay, version 1.
  *
  * A device with a mailbox socket sends each presence request as one text frame
  * on that socket. The frame carries `type`, `version`, and an `id` that the

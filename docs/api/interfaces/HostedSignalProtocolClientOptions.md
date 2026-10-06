@@ -45,8 +45,9 @@ received message that asks for one.
 - `'always'` sends a receipt for each such message.
 - `'auto'` sends a receipt only for a message that arrived through sealed
   sender. It is for a relay that reports the delivery of an identified
-  message to its sender itself. The hosted Relay does not do that yet, so
-  with `'auto'` the sender of an identified message gets no receipt.
+  message to its sender itself. The OpenE2EE Signal Protocol Relay does not
+  do that yet, so with `'auto'` the sender of an identified message gets
+  no receipt.
 - `'off'` sends no receipt, so no sender can see that a message reached
   this device.
 
@@ -179,6 +180,15 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
 Carries this account's profile key in each end-to-end encrypted 1:1
 message and keeps the key that each contact sends. The SDK then
 registers and grants the presence keys, so the app sends no key itself.
+
+The profile keys also control sealed sender. A hosted client sends a
+sealed 1:1 message only when this option is set, and only to a contact
+whose profile key `contacts` holds. Each other 1:1 message is
+identified, so the Relay sees its sender. Until the client holds the
+profile key of a contact, its messages to that contact are identified
+and carry this account's profile key. The SDK also registers the access
+key that it derives from this account's profile key, so a contact that
+holds the profile key can send sealed messages to this account.
 
 #### relayUrl
 

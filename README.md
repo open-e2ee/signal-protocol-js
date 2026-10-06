@@ -33,13 +33,13 @@ The demonstrations use real protocol code and cryptography. Application integrat
 - **Session establishment and ratcheting.** PQXDH establishes sessions. The ML-KEM Braid ratchet adds post-quantum key updates. Required post-quantum operations fail closed.
 - **Chat features.** Multi-device messaging, groups, sealed sender, encrypted attachments, and safety-number verification use the same package.
 - **Device-local state.** Storage adapters keep identities, sessions, and message state on the device.
-- **Hosted delivery.** Connect to [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay) with the hosted client factory. Advanced integrations can supply a custom transport.
+- **Hosted delivery.** Connect to [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay) with the hosted client factory. Advanced integrations can supply a custom transport. A hosted client sends a sealed 1:1 message only with `hosted.profileKeys`, and only to a contact whose profile key it holds.
 
 The relay never needs message plaintext or device private keys.
 
 The OpenE2EE Signal Protocol SDK implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
-Version `9.2.x`. Public APIs and persisted formats follow semantic versioning.
+Version `9.3.x`. Public APIs and persisted formats follow semantic versioning.
 
 ## Install
 
