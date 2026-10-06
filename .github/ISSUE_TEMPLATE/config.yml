@@ -8,4 +8,4 @@ contact_links:
     about: Quickstarts, concepts, and integration guides.
   - name: OpenE2EE Signal Protocol Relay
     url: https://open-e2ee.dev/relay
-    about: The hosted relay built for this SDK.
+    about: The relay that OpenE2EE operates for this SDK.

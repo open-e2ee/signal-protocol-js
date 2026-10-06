@@ -130,6 +130,12 @@ await signal.send("bob", {
 });
 ```
 
+A hosted client sends a sealed 1:1 message only when you pass
+`hosted.profileKeys`, and only to a contact whose profile key `contacts` holds.
+Each other 1:1 message is identified, so the Relay sees its sender. Until the
+client holds the profile key of a contact, its messages to that contact are
+identified and carry the profile key of this account.
+
 ## Attachments
 
 Add a remote object store when your app sends encrypted attachments. The

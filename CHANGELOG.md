@@ -1,5 +1,23 @@
 # Changelog
 
+## 9.3.0
+
+- **Fixed: a hosted client with `hosted.profileKeys` now sends sealed 1:1
+  messages.** Before, the hosted factory gave the sealed sender cipher no
+  contact store, so each 1:1 message was identified and the Relay saw its
+  sender. Now a hosted client sends a sealed 1:1 message only when
+  `hosted.profileKeys` is set, and only to a contact whose profile key
+  `contacts` holds. Each other 1:1 message is identified. Until the client
+  holds the profile key of a contact, its messages to that contact are
+  identified and carry this account's profile key. The client also registers
+  with the Relay the access key that it derives from this account's profile
+  key, so a contact that holds that profile key can send sealed messages to
+  this account. When the Relay refuses the access key of a contact, the
+  client sends that message identified and records the refusal in
+  `contacts`. Messages to that contact stay identified until its profile key
+  changes. A hosted client without `hosted.profileKeys` sends identified
+  messages only.
+
 ## 9.2.0
 
 - **Fixed: a hosted Relay request that never answers now ends after 30 s.**

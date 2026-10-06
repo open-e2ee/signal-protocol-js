@@ -49,8 +49,8 @@ Whether device can receive messages (user-controlled)
 > `optional` **lastSeenAt?**: `number` \| `null`
 
 When the device's mailbox last saw it, in Unix milliseconds, or `null`
-before its first connection. The hosted relay reports it only in the
-caller's own account listing.
+before its first connection. The OpenE2EE Signal Protocol Relay reports it
+only in the caller's own account listing.
 
 ***
 
