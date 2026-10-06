@@ -19,11 +19,29 @@ const MAILBOX_PROTOCOL = "open-e2ee-relay.v1";
 const AUTH_PROTOCOL_PREFIX = "open-e2ee-relay.auth.";
 /**
  * The recovery pull waits a random time from half to one and a half of this
- * value. The mean pull rate stays at one per 2 s, the 1 s floor keeps a
- * failing pull from looping fast, and clients that lose their sockets together
- * do not pull together.
+ * value after the call that asks for it, so clients that lose their sockets
+ * together do not pull together. A pending pull is replaced only by a pull
+ * that starts sooner, so many calls can bring the pull near the 1 s floor.
+ * The floor is the bound: the recovery timers fire at least 1 s apart, so a
+ * failing pull does not loop fast.
  */
 const RECOVERY_MILLISECONDS = 2_000;
+/**
+ * The recovery pull after failed work starts at `RECOVERY_MILLISECONDS` and
+ * doubles each time it schedules a pull for failed work, from a socket batch,
+ * a recovery page, or a socket open, up to this value. A recovery page that
+ * leaves no failed message, and a new socket, start it again at
+ * `RECOVERY_MILLISECONDS`. The same random factor applies.
+ */
+const MAXIMUM_RECOVERY_MILLISECONDS = 64_000;
+/**
+ * A recovery page that is not full shows a failed message gone when the page
+ * does not hold it. The message must also have first failed longer than this
+ * before the pull of the page started. Then the message expired or was
+ * acknowledged elsewhere. A newer failed message can still wait in the
+ * Relay's 1.5 s hot delivery window, which a pull page does not show.
+ */
+const FAILED_MESSAGE_GONE_MILLISECONDS = 5_000;
 /**
  * The reconnect ceiling starts at 1 s and doubles to 30 s. Each wait is a
  * random time from zero up to the ceiling (full jitter), the first one too, so
@@ -136,6 +154,17 @@ export function subscribeHostedMailbox(
   let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
   let renewalTimer: ReturnType<typeof setTimeout> | undefined;
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The `Date.now()` time at which the pending recovery pull starts. */
+  let recoveryDue = 0;
+  let failedWorkRecoveryDelay = RECOVERY_MILLISECONDS;
+  /**
+   * The id of each message whose work failed, with the `Date.now()` time of
+   * its first failure. An id leaves when its work succeeds or when a recovery
+   * page shows that the message is gone.
+   */
+  const failedMessages = new Map<string, number>();
+  /** The acknowledgments that `handle.acknowledge` received. */
+  let acknowledgmentCount = 0;
   let pingTimer: ReturnType<typeof setTimeout> | undefined;
   let unansweredPings = 0;
   let acknowledgmentTimer: ReturnType<typeof setTimeout> | undefined;
@@ -190,25 +219,91 @@ export function subscribeHostedMailbox(
     }
   };
 
-  const recoverLater = () => {
-    if (!active || recoveryTimer !== undefined) return;
+  /**
+   * Schedules one recovery pull. A pending pull that starts sooner stays, and
+   * a pending pull that starts later is replaced, so a longer wait for failed
+   * work does not delay the pull of a reconnect attempt or of a full page.
+   * Returns false when the pending pull stays or the subscription stopped.
+   */
+  const recoverLater = (delay = RECOVERY_MILLISECONDS) => {
+    if (!active) return false;
+    const wait = delay * (0.5 + Math.random());
+    const due = Date.now() + wait;
+    if (recoveryTimer !== undefined) {
+      if (due >= recoveryDue) return false;
+      clearTimeout(recoveryTimer);
+    }
+    recoveryDue = due;
     recoveryTimer = setTimeout(() => {
       recoveryTimer = undefined;
       requestPull();
-    }, RECOVERY_MILLISECONDS * (0.5 + Math.random()));
+    }, wait);
+    return true;
   };
 
+  /** Schedules the recovery pull for failed work, and doubles its next wait. */
+  const recoverFailedWork = () => {
+    if (recoverLater(failedWorkRecoveryDelay))
+      failedWorkRecoveryDelay = Math.min(
+        MAXIMUM_RECOVERY_MILLISECONDS,
+        failedWorkRecoveryDelay * 2,
+      );
+  };
+
+  /**
+   * Receives each message in mailbox order. A message whose work fails stays
+   * in the mailbox, and the next recovery pull or socket replay gives it
+   * again. The batch continues with the next message at once, whatever its
+   * sender, so the order is not kept across a failed message. Resolves with
+   * `failed` true when the work of a message failed, and with the number of
+   * acknowledgments made during the batch. A message that resolves without an
+   * acknowledgment, as an unhandled duplicate or a failed retry-request send
+   * does, is not counted.
+   */
   const receiveBatch = async (messages: readonly Envelope[]) => {
-    if (!active || messages.length === 0) return;
+    if (!active || messages.length === 0)
+      return { failed: false, acknowledged: 0 };
+    let failed = false;
+    const acknowledgmentsBefore = acknowledgmentCount;
     options.onBatchStart?.();
     try {
       for (const message of messages) {
         if (!active) break;
-        await options.receive(message);
+        try {
+          await options.receive(message);
+          if (message.id !== undefined) failedMessages.delete(message.id);
+        } catch {
+          failed = true;
+          if (message.id !== undefined && !failedMessages.has(message.id))
+            failedMessages.set(message.id, Date.now());
+        }
       }
     } finally {
       options.onBatchEnd?.();
     }
+    return {
+      failed,
+      acknowledged: acknowledgmentCount - acknowledgmentsBefore,
+    };
+  };
+
+  /**
+   * Forgets each failed message that a recovery page shows to be gone. A page
+   * that is not full holds every retained message, except a message in the
+   * Relay's hot delivery window. Such a page shows a failed message gone when
+   * the page does not hold it. The message must also have first failed more
+   * than `FAILED_MESSAGE_GONE_MILLISECONDS` before `pulledAt`. `pulledAt` is
+   * the `Date.now()` time at which the pull of the page started. Then the
+   * message expired or was acknowledged elsewhere. A slow batch does not make
+   * a failure older than its page.
+   */
+  const forgetGoneFailures = (page: readonly Envelope[], pulledAt: number) => {
+    if (page.length >= MAXIMUM_PENDING_FRAMES) return;
+    const held = new Set(page.map((message) => message.id));
+    const gone = pulledAt - FAILED_MESSAGE_GONE_MILLISECONDS;
+    for (const [messageId, failedAt] of failedMessages)
+      if (failedAt < gone && !held.has(messageId))
+        failedMessages.delete(messageId);
   };
 
   const drain = async () => {
@@ -235,21 +330,34 @@ export function subscribeHostedMailbox(
           continue;
         }
         if (durable.length > 0) {
-          await receiveBatch(durable.splice(0));
+          const { failed } = await receiveBatch(durable.splice(0));
+          if (failed) recoverFailedWork();
           // One frame acknowledges the whole burst once nothing is queued.
           if (durable.length === 0) flushAcknowledgments();
           continue;
         }
         pullRequested = false;
         flushAcknowledgments();
+        const pulledAt = Date.now();
         const messages = await options.pull();
-        await receiveBatch(messages);
+        const { failed, acknowledged } = await receiveBatch(messages);
         flushAcknowledgments();
-        // A full page can leave more retained work behind it.
-        if (messages.length >= MAXIMUM_PENDING_FRAMES) recoverLater();
+        // A failed message can be missing from the page while it waits in the
+        // Relay's hot delivery window, so a pull follows while one remains.
+        forgetGoneFailures(messages, pulledAt);
+        if (failed || failedMessages.size > 0) recoverFailedWork();
+        else failedWorkRecoveryDelay = RECOVERY_MILLISECONDS;
+        // A full page can leave more retained work behind it. A full recovery
+        // page whose batch acknowledged a message pulls the next page after a
+        // random wait from 1 s to 3 s. A full page that acknowledged nothing
+        // pulls again only while a failed message remains, after the
+        // failed-work wait.
+        if (messages.length >= MAXIMUM_PENDING_FRAMES && acknowledged > 0)
+          recoverLater();
       }
     } catch {
-      // Failed durable work stays in the mailbox. Ephemeral work can be lost.
+      // A pull, an ephemeral message, or a batch callback failed. Retained
+      // durable work stays in the mailbox. Ephemeral work can be lost.
       recoverLater();
     } finally {
       draining = false;
@@ -335,9 +443,18 @@ export function subscribeHostedMailbox(
           return;
         }
         clearTimeout(handshakeTimer);
-        // The Relay replays retained messages over the socket on connect.
+        // The Relay replays retained messages over the socket on connect,
+        // oldest first, so the replay replaces the pending recovery pull and
+        // the failed-work wait starts again. The replay can miss a failed
+        // message, because the Relay stores a message from its hot delivery
+        // window without a second frame. So a failed-work pull follows while
+        // a failed message remains. This pull is scheduled before the replay
+        // arrives, so it can find an empty page when the replay handles the
+        // last failed message.
         clearTimeout(recoveryTimer);
         recoveryTimer = undefined;
+        failedWorkRecoveryDelay = RECOVERY_MILLISECONDS;
+        if (failedMessages.size > 0) recoverFailedWork();
         options.onConnectionState("connected");
         options.onPresence?.({ type: "open" });
         const schedulePing = () => {
@@ -443,6 +560,9 @@ export function subscribeHostedMailbox(
   void connect();
   return {
     acknowledge: (messageId) => {
+      // The transport acknowledges over HTTP when this returns false, so the
+      // count includes that acknowledgment too.
+      acknowledgmentCount++;
       if (liveSocket() === undefined) return false;
       acknowledgments.push(messageId);
       if (acknowledgments.length >= MAXIMUM_ACKNOWLEDGMENT_IDS)

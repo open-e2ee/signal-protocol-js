@@ -308,7 +308,14 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
    *
    * @param userId - Current user ID
    * @param deviceId - This device's ID (1-5)
-   * @param onEnvelope - Callback for each incoming envelope
+   * @param onEnvelope - Callback for each incoming envelope. A relay that waits
+   * for the returned promise acknowledges or accepts the envelope itself only
+   * when it resolves. A rejected promise that did not acknowledge a durable
+   * envelope with `markDelivered` leaves it in the mailbox, and the hosted
+   * transport gives it to this callback again on the next recovery pull or
+   * socket replay. The hosted transport continues with the next envelope at
+   * once and does not keep the order across a rejected envelope. It holds
+   * back no envelope, durable or ephemeral.
    * @param options - Optional batching callbacks for notification coalescing
    * @param options.onBatchStart - Called when first message in a batch arrives
    * @param options.onBatchEnd - Called when batch is complete (idle detected)
@@ -317,7 +324,7 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
   subscribe(
     userId: string,
     deviceId: number,
-    onEnvelope: (envelope: Envelope) => void,
+    onEnvelope: (envelope: Envelope) => void | Promise<void>,
     options?: {
       onBatchStart?: () => void;
       onBatchEnd?: () => void;

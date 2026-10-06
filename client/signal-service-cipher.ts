@@ -74,6 +74,7 @@ import {
   rethrowRelayWorkStopped,
 } from './relay-work';
 import { refusesRemovedDevices, relayDeviceRefusal } from './relay-device-refusal';
+import { aggregateRelayAcceptance, type RelayPostAcceptance } from './relay-acceptance';
 import { prepareGroupSharedMessage } from './group-sealed-sender';
 import { sendGroupWithExactOutbox } from './group-outbox';
 import {
@@ -124,7 +125,7 @@ class DeferredPost extends Error {
 
 /** The posts of a send-first pass, by recipient device. */
 interface DirectIntentPosts {
-  readonly accepted: Map<number, { messageId: string; serverTimestamp: number }>;
+  readonly accepted: Map<number, RelayPostAcceptance>;
   readonly refused: Map<number, { error: unknown }>;
 }
 
@@ -1721,7 +1722,7 @@ export class SignalProtocolServiceCipher {
     intent: StoredOutgoingMessageIntent,
     message: StoredOutgoingDeviceMessage,
     control: DevicePostControl
-  ): Promise<{ messageId: string; serverTimestamp: number }> {
+  ): Promise<RelayPostAcceptance> {
     if (
       intent.transportMode !== 'identified' &&
       (!message.sealedSenderMessage || !intent.sealedSenderAuth)
@@ -1766,7 +1767,7 @@ export class SignalProtocolServiceCipher {
     sessions: SendSessionCallbacks | undefined,
     control: DevicePostControl,
     refusal?: { error: unknown }
-  ): Promise<{ messageId: string; serverTimestamp: number }> {
+  ): Promise<RelayPostAcceptance> {
     let rejection: unknown;
     if (refusal) {
       rejection = refusal.error;
@@ -1866,6 +1867,7 @@ export class SignalProtocolServiceCipher {
       messageId,
       timestamp,
       recipientDeviceCount: intent.deviceMessages.length,
+      ...aggregateRelayAcceptance(results),
     };
     await completeOutgoingMessageIntent(this.storage, intent.clientMessageId, result);
     return result;
@@ -2177,7 +2179,7 @@ export class SignalProtocolServiceCipher {
       deliveryMode: 'preferred' | 'required';
     },
     control: DevicePostControl = {}
-  ): Promise<{ messageId: string; serverTimestamp: number }> {
+  ): Promise<RelayPostAcceptance> {
     const effectiveClientMessageId = msg.clientMessageId ?? clientMessageId;
     // A fallback continues a post that started, so only the first request is
     // admitted.

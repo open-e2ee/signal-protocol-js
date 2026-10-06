@@ -40,12 +40,31 @@ export interface RelaySubscriptionContext extends SignalProtocolClientContext {
 
 /** Accumulates delivery receipt timestamps per sender for batching */
 export interface ReceiptAccumulator {
-  pending: Map<string, number[]>; // senderUserId → timestamps
+  /** senderUserId → the waiting timestamps, and when the first of them arrived */
+  pending: Map<string, { timestamps: number[]; firstArrivalAt: number }>;
   timers: Map<string, ReturnType<typeof setTimeout>>; // senderUserId → flush timer
+  /**
+   * True from the first receipt flush of stop() to the end of the step that
+   * clears its tracking state. The hold also ends when stop() throws in
+   * those steps. A batch then sets no timer and does not flush at
+   * RECEIPT_BATCH_MAX, and stopRelaySubscription() does not flush it. stop()
+   * sends the batches that wait at each of its flushes and drops a batch
+   * made during the hold after its last flush.
+   */
+  held: boolean;
 }
 
+/** A batch flushes this long after its last arrival. */
 export const RECEIPT_BATCH_DELAY_MS = 3_000;
+/** A batch flushes no later than this long after its first arrival. */
+export const RECEIPT_BATCH_MAX_AGE_MS = 30_000;
+/** A batch flushes when it holds this many timestamps. */
 export const RECEIPT_BATCH_MAX = 100;
+/**
+ * stop() waits this long, from its start, for the delivery receipt sends in
+ * progress and for the receipt sends that it starts.
+ */
+export const STOP_RECEIPT_FLUSH_MS = 5_000;
 
 /**
  * Mutable state for relay subscription (passed by client, mutated in place)
@@ -265,12 +284,10 @@ async function handleDecryptionSuccess(
 
     // Batch delivery receipts before sending
     // Multi-device: sendDeliveryReceipt fans out to all sender's devices
-    const receipts = ctx.config.deliveryReceipts ?? 'always';
-    if (
-      decryptedEnvelope.timestamp &&
-      ctx.relay &&
-      (receipts === 'always' || (receipts === 'auto' && decryptedEnvelope.arrivedSealed))
-    ) {
+    // 'auto' is the default, and it sends as 'always' does, for a sealed,
+    // identified, or unknown arrival.
+    const receipts = ctx.config.deliveryReceipts ?? 'auto';
+    if (decryptedEnvelope.timestamp && ctx.relay && receipts !== 'off') {
       if (inspectedContent.shouldSendDeliveryReceipt) {
         accumulateDeliveryReceipt(
           state.receiptAccumulator,
@@ -291,9 +308,11 @@ async function handleDecryptionSuccess(
 /**
  * Accumulate a delivery receipt timestamp for batched sending.
  *
- * Receipts are collected per-sender and flushed either when the batch
- * reaches RECEIPT_BATCH_MAX or after RECEIPT_BATCH_DELAY_MS, whichever
- * comes first.
+ * Receipts are collected per sender. A batch flushes when it reaches
+ * RECEIPT_BATCH_MAX, or at the earlier of RECEIPT_BATCH_DELAY_MS after its
+ * last arrival and RECEIPT_BATCH_MAX_AGE_MS after its first arrival. So steady
+ * traffic delays a receipt by at most RECEIPT_BATCH_MAX_AGE_MS. While the
+ * accumulator is held, the batch waits for stop() to flush it.
  */
 function accumulateDeliveryReceipt(
   acc: ReceiptAccumulator,
@@ -302,46 +321,73 @@ function accumulateDeliveryReceipt(
   flush: (userId: string, timestamps: number[]) => Promise<void>,
   logger: RelaySubscriptionContext['logger']
 ): void {
-  const existing = acc.pending.get(senderUserId) ?? [];
-  existing.push(timestamp);
-  acc.pending.set(senderUserId, existing);
+  const now = Date.now();
+  const batch = acc.pending.get(senderUserId) ?? { timestamps: [], firstArrivalAt: now };
+  batch.timestamps.push(timestamp);
+  acc.pending.set(senderUserId, batch);
+  if (acc.held) return;
 
-  if (existing.length >= RECEIPT_BATCH_MAX) {
+  if (batch.timestamps.length >= RECEIPT_BATCH_MAX) {
     flushReceipts(acc, senderUserId, flush, logger);
     return;
   }
 
-  // Reset timer for this sender
   const existingTimer = acc.timers.get(senderUserId);
   if (existingTimer) clearTimeout(existingTimer);
 
+  const flushAt = Math.min(
+    now + RECEIPT_BATCH_DELAY_MS,
+    batch.firstArrivalAt + RECEIPT_BATCH_MAX_AGE_MS
+  );
   acc.timers.set(
     senderUserId,
     setTimeout(() => {
       flushReceipts(acc, senderUserId, flush, logger);
-    }, RECEIPT_BATCH_DELAY_MS)
+    }, Math.max(0, flushAt - now))
   );
 }
 
 /**
- * Flush accumulated delivery receipts for a sender
+ * Flush the waiting delivery receipts of every sender, once each.
+ *
+ * Each batch leaves the accumulator and its timer stops, so no later timer
+ * sends it again. Call this before the relay subscription closes. The
+ * returned promises settle when the sends finish. They never reject.
+ */
+export function flushPendingReceipts(
+  acc: ReceiptAccumulator,
+  flush: (userId: string, timestamps: number[]) => Promise<void>,
+  logger: RelaySubscriptionContext['logger']
+): Promise<void>[] {
+  const sends: Promise<void>[] = [];
+  for (const senderUserId of [...acc.pending.keys()]) {
+    const send = flushReceipts(acc, senderUserId, flush, logger);
+    if (send) sends.push(send);
+  }
+  return sends;
+}
+
+/**
+ * Flush accumulated delivery receipts for a sender. The returned promise
+ * settles when the send finishes, and never rejects. It is undefined when the
+ * sender has no waiting receipt.
  */
 function flushReceipts(
   acc: ReceiptAccumulator,
   senderUserId: string,
   flush: (userId: string, timestamps: number[]) => Promise<void>,
   logger: RelaySubscriptionContext['logger']
-): void {
-  const timestamps = acc.pending.get(senderUserId);
-  if (!timestamps?.length) return;
-
-  acc.pending.delete(senderUserId);
+): Promise<void> | undefined {
   const timer = acc.timers.get(senderUserId);
   if (timer) clearTimeout(timer);
   acc.timers.delete(senderUserId);
 
-  // Fire and forget
-  flush(senderUserId, timestamps).catch((err) =>
+  const batch = acc.pending.get(senderUserId);
+  acc.pending.delete(senderUserId);
+  if (!batch?.timestamps.length) return undefined;
+
+  // The batch timer does not wait for the send. stop() does.
+  return flush(senderUserId, batch.timestamps).catch((err) =>
     logger.warn('Failed to flush delivery receipts', {
       category: 'E2EE',
       data: { senderUserId, error: (err as Error).message },

@@ -1167,9 +1167,16 @@ This device's ID (1-5)
 
 ##### onEnvelope
 
-(`envelope`) => `void`
+(`envelope`) => `void` \| `Promise`\<`void`\>
 
-Callback for each incoming envelope
+Callback for each incoming envelope. A relay that waits
+for the returned promise acknowledges or accepts the envelope itself only
+when it resolves. A rejected promise that did not acknowledge a durable
+envelope with `markDelivered` leaves it in the mailbox, and the hosted
+transport gives it to this callback again on the next recovery pull or
+socket replay. The hosted transport continues with the next envelope at
+once and does not keep the order across a rejected envelope. It holds
+back no envelope, durable or ephemeral.
 
 ##### options?
 

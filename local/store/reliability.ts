@@ -57,6 +57,8 @@ export interface StoredOutgoingMessageIntent {
     messageId: string;
     timestamp: number;
     recipientDeviceCount: number;
+    duplicate?: boolean;
+    expiresAt?: number;
     groupId?: string;
   };
 }

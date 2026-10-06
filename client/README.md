@@ -186,24 +186,21 @@ After the `onMessageDecrypted` handler resolves for a message that asks for a
 receipt, the client sends an end-to-end encrypted delivery receipt to each
 device of the sender. The `deliveryReceipts` option selects the messages:
 
-| Value                | Receipt                                                    |
-| -------------------- | ---------------------------------------------------------- |
-| `'always'` (default) | For each message that asks for one                         |
-| `'auto'`             | Only for a message that arrived through sealed sender      |
-| `'off'`              | None                                                       |
+| Value              | Receipt                                                  |
+| ------------------ | -------------------------------------------------------- |
+| `'auto'` (default) | The same receipts as `'always'`                          |
+| `'always'`         | For each message that asks for one, sealed or identified |
+| `'off'`            | None                                                     |
 
-`'auto'` is for a relay that reports the delivery of an identified message to
-its sender itself. The Signal Protocol Relay does not do that yet, so with
-`'auto'` the sender of an identified message gets no receipt.
-`DecryptedEnvelope.arrivedSealed` tells whether a message arrived through
-sealed sender. Read receipts are not affected.
+`'auto'` sends the same receipts as `'always'`.
+`DecryptedEnvelope.arrivedSealed` tells whether a message arrived through sealed
+sender. Read receipts are not affected.
 
 The sender keeps a copy of each message that it sends, plaintext included, so
 that it can send the message again when the recipient asks for a retry. A
 delivery receipt deletes that copy. A message that gets no receipt, with
-`'off'` or with `'auto'` for an identified message, keeps its copy on the
-sender device until the copy is 14 days old. Only client creation and `stop()`
-delete such old copies.
+`'off'`, keeps its copy on the sender device until the copy is 14 days old.
+Only client creation and `stop()` delete such old copies.
 
 ### Hosted presence
 

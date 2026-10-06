@@ -1556,7 +1556,7 @@ export class HostedRelayHttpTransport
   public subscribe(
     userId: string,
     deviceId: number,
-    onEnvelope: (envelope: Envelope) => void,
+    onEnvelope: (envelope: Envelope) => void | Promise<void>,
     options?: { onBatchStart?: () => void; onBatchEnd?: () => void },
   ): Unsubscribe {
     this.assertCurrentIdentity(userId, deviceId);

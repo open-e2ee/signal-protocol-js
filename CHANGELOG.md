@@ -1,5 +1,98 @@
 # Changelog
 
+## 9.4.0
+
+- **Breaking: `deliveryReceipts` defaults to `'auto'`.** Before, the default
+  was `'always'`. Now a client that does not set `deliveryReceipts` uses
+  `'auto'`, which sends the same receipts as `'always'`.
+- **Fixed: steady traffic no longer holds back a delivery receipt.** Before,
+  each new message from a sender restarted the 3 s batch timer of that
+  sender, so messages that came less than 3 s apart held every receipt back
+  until the traffic stopped. Now a receipt batch is sent 3 s after its last
+  message or 30 s after its first message, whichever comes first, or at 100
+  messages.
+- **Fixed: `stop()` sends the batched delivery receipts.** Before, `stop()`
+  dropped the receipts that waited in a batch, and `stopRelaySubscription()`
+  sent each batch but left it in place, so its timer sent the same receipt a
+  second time. Now both send each waiting batch once before the relay
+  subscription closes. `stop()` waits for delivery receipt sends, including
+  their app hooks, such as `onMessageEncrypted`, until one deadline 5 s
+  after it starts. It waits for each receipt send that is in progress when
+  it starts, except a send that an earlier `stop()` stopped, and for the
+  sends that it starts. A delivery that finishes during the wait batches its
+  receipt. At the end of each wait, `stop()` sends the batches that wait and
+  waits for those sends until the same deadline. It does this again while
+  the deadline is not past. `stop()` holds the receipt batches from its
+  first flush until it clears its tracking state. During the hold,
+  `stopRelaySubscription()` does not send them, and `stop()` drops a receipt
+  batched after its last flush. At the deadline it stops each receipt send
+  that is left: a send that waits in an app hook stops, and that receipt is
+  not sent. A send that is in its relay call at the deadline is waited for,
+  and that receipt can still be sent. A hook of a delivery receipt send that
+  awaits `stop()` holds `stop()` until the deadline. `stop()` does not wait
+  for read and viewed receipt sends. A call to `startRelaySubscription()` or
+  `startRetryRequestSubscription()` while `stop()` runs is refused and
+  logged; start again after `stop()` resolves. A `stop()` call that overlaps
+  a running `stop()` waits for it and settles as it settles.
+  `stop()` clears the retry timer of a failed delivery, read, or viewed
+  receipt send that started before `stop()` stops its relay work.
+- **Changed: `deliveryReceipts: 'auto'` sends a receipt for each message that
+  asks for one.** Before, `'auto'` sent a receipt only for a message that
+  arrived through sealed sender, so the sender of an identified message got no
+  receipt and kept its copy of that message for 14 days. Now `'auto'` sends
+  the same receipts as `'always'`.
+- **Fixed: a resent message keeps its retry copy.** Before, a resend that
+  answered a retry request deleted the sender's copy of the message, so a
+  second retry request for that message found no copy and the message could
+  not be sent again. Now the resend replaces the copy with the copy of the new
+  encryption. Only a delivery receipt from that recipient device, or the 14-day
+  limit, deletes it.
+- **Added: `SendResult` carries `duplicate` and `expiresAt`.** `client.send()`
+  now returns what the relay reported for the device posts of the send.
+  `duplicate` is true only when the relay had already accepted every device
+  post, so the send stored no new copy. This is the case when the application
+  calls `send()` again with the `clientMessageId` of a send whose posts the
+  relay accepted but whose result did not arrive. `expiresAt` is the earliest
+  time at which the relay drops the copy of a device post that the device has
+  not acknowledged. A group send also counts its shared sealed post. For a
+  group send over a group token, the shared post reports that the relay had
+  already accepted its fan-out, not that each destination stored a copy. Each
+  field is present only when every post reported it, so both are absent on a
+  relay that does not report them. The sync copies to this account's other
+  devices do not count. The sender key pre-messages of a group send do not
+  count. `send()` still resolves only after every device post, the sync
+  copies, and the outbox record complete. A send that the outbox had already
+  completed returns the result that it stored.
+- **Fixed: a hosted client accepts an ephemeral message only after it handled
+  it.** Before, the client did not give the relay the promise of its work for
+  an envelope, so the hosted transport did not wait for it. The client
+  accepted each ephemeral message before it decrypted it, even when the work
+  then failed, and sent an extra acknowledgment for each ephemeral message
+  that it handled. A durable message whose work failed stayed in the mailbox
+  until the next reconnect, and the notification batch of a burst ended before
+  its work. Now the hosted transport waits for the work of each envelope. It
+  accepts an ephemeral message after its work succeeds, and acknowledges a
+  burst in one socket frame after its work. A durable message whose work fails
+  stays in the mailbox, and the hosted transport gives it again on the next
+  recovery pull or socket replay. The transport continues with the next
+  message at once, whatever its sender, so it does not keep the order across a
+  failed message. It holds back no message. While a failed message remains,
+  the client pulls again after a random wait from half to one and a half of
+  the failed-work wait, which starts at 2 s and doubles to 64 s. A failed
+  message remains until its work succeeds or a recovery page shows it gone. A
+  page shows it gone when the page is not full and does not hold the message.
+  The client must also have started to pull the page more than 5 s after the
+  first failure of the message. Then the message expired or was acknowledged
+  elsewhere. A full recovery page whose batch acknowledged a message pulls the
+  next page after a random wait from 1 s to 3 s. A full page that acknowledged
+  nothing pulls again only while a failed message remains, after the
+  failed-work wait. The failed-work wait starts again at 2 s after a recovery
+  pull that leaves no failed message, and when a new socket opens. A socket
+  open while a failed message remains schedules one failed-work pull; the
+  replay can make that pull empty. The `onEnvelope` callback of
+  `SignalProtocolRelayServer.subscribe` returns `void | Promise<void>`, so a
+  custom relay can also wait for the work of each envelope.
+
 ## 9.3.0
 
 - **Fixed: a hosted client with `hosted.profileKeys` now sends sealed 1:1

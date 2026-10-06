@@ -302,6 +302,24 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   private readonly state = new SignalProtocolClientState();
 
   /**
+   * The delivery receipt sends in progress, from a batch timer, the batch
+   * bound, stopRelaySubscription(), or stop(): the relay work item of each
+   * send, and the promise that settles when the send finishes. While stop()
+   * holds the batches, only stop() starts a send. stop() waits until its
+   * receipt deadline for the sends that are in progress when it starts,
+   * except a send that an earlier stop() stopped, and for the sends that it
+   * starts. It does not stop them before then.
+   */
+  private readonly deliveryReceiptSends = new Map<RelayWork, Promise<void>>();
+
+  /**
+   * The stop() in progress. It is set before a step of stop() runs, so a
+   * stop() call that overlaps it, also from a step, waits for it, and a
+   * subscription start is refused.
+   */
+  private stopping?: Promise<void>;
+
+  /**
    * Get retry rate limiting state for retry operations
    */
   private get rateLimitState(): RetryOps.RetryRateLimitState {
@@ -826,11 +844,58 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         this.handleDeliveryReceipt(envelope, receipt, ctx),
       handleTypingIndicator: (envelope, typing) =>
         this.handleTypingIndicator(envelope, typing, ctx),
-      sendDeliveryReceipt: (userId, timestamps) =>
-        this.state.relayWork.run((work) =>
-          this.sendDeliveryReceipt(userId, timestamps, this.relayWorkContext(work))
-        ),
+      sendDeliveryReceipt: (userId, timestamps) => this.sendDeliveryReceiptAsRelayWork(userId, timestamps),
     };
+  }
+
+  /**
+   * Send one delivery receipt batch as relay work of its own. The context
+   * carries the stop signal of the tracker, which also aborts at a stop
+   * after the work ends, so a retry timer of the send sees that stop. The
+   * send is in deliveryReceiptSends while it runs.
+   */
+  private sendDeliveryReceiptAsRelayWork(userId: string, timestamps: number[]): Promise<void> {
+    return this.state.relayWork.run(async (work) => {
+      const send = this.sendDeliveryReceipt(userId, timestamps, {
+        ...this.relayWorkContext(work),
+        stopSignal: this.state.relayWork.stopSignal,
+      });
+      this.deliveryReceiptSends.set(work, send);
+      try {
+        await send;
+      } finally {
+        this.deliveryReceiptSends.delete(work);
+      }
+    });
+  }
+
+  /**
+   * Start the send of every batched delivery receipt, once each. The batches
+   * leave the accumulator, so no batch timer sends them again. The returned
+   * promises settle when the sends finish. They never reject.
+   */
+  private flushPendingDeliveryReceipts(): Promise<void>[] {
+    return RelaySubscriptionOps.flushPendingReceipts(
+      this.relaySubscriptionState.receiptAccumulator,
+      (userId, timestamps) => this.sendDeliveryReceiptAsRelayWork(userId, timestamps),
+      this.logger
+    );
+  }
+
+  /**
+   * Wait for the receipt sends that stop() waits for, with their app hooks,
+   * for no more than the given time.
+   */
+  private async waitForStopReceiptSends(sends: Promise<void>[], ms: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, Math.max(0, ms));
+    });
+    try {
+      await Promise.race([Promise.allSettled(sends), bound]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Client context whose hooks call the app through the given relay work. */
@@ -2108,6 +2173,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    *
    * Callers can run this manually after registering hooks via registerHook().
    * Called automatically by create() when relay + hook configured.
+   * A call while stop() runs is refused and logged; start again after stop()
+   * resolves.
    *
    * @see SignalProtocolClient.startRelaySubscription
    */
@@ -2121,6 +2188,14 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
     if (!this.hooks?.onMessageDecrypted) {
       this.logger.warn('Cannot start relay subscription: onMessageDecrypted hook required', {
+        category: 'E2EE',
+      });
+      return;
+    }
+
+    // A start while stop() runs would outlive stop()
+    if (this.stopping) {
+      this.logger.debug('Relay subscription not started: stop() in progress', {
         category: 'E2EE',
       });
       return;
@@ -2143,24 +2218,29 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       this.userId,
       this.deviceId,
       (envelope) => {
-        this.state.relayWork
-          .run((work) => {
-            const ctx = this.relayWorkContext(work);
-            return RelaySubscriptionOps.handleRelayMessage(
-              { ...ctx, cipher: this.cipher, stopSignal: work.stopSignal },
-              envelope,
-              this.relaySubscriptionState,
-              this.relaySubscriptionCallbacks(ctx),
-              this.relaySubscriptionConfig
-            );
-          })
-          .catch((error) => {
-            // The relay does not wait for the handler. It delivers the envelope again.
-            this.logger.error('Failed to handle relay envelope', {
-              category: 'E2EE',
-              data: { envelopeId: envelope.id, error: (error as Error).message },
-            });
+        const handled = this.state.relayWork.run((work) => {
+          const ctx = this.relayWorkContext(work);
+          return RelaySubscriptionOps.handleRelayMessage(
+            { ...ctx, cipher: this.cipher, stopSignal: work.stopSignal },
+            envelope,
+            this.relaySubscriptionState,
+            this.relaySubscriptionCallbacks(ctx),
+            this.relaySubscriptionConfig
+          );
+        });
+        handled.catch((error) => {
+          // The relay delivers an envelope that it did not acknowledge again.
+          this.logger.error('Failed to handle relay envelope', {
+            category: 'E2EE',
+            data: { envelopeId: envelope.id, error: (error as Error).message },
           });
+        });
+        // A relay that waits for the work, as the hosted transport does, ends
+        // its batch and accepts an ephemeral message only after the work
+        // settles, and pulls again after the work fails. A relay that does not
+        // wait ignores the promise, and the handler above already holds its
+        // failure.
+        return handled;
       },
       {
         // Batching callbacks for notification coalescing
@@ -2182,19 +2262,11 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * @see SignalProtocolClient.stopRelaySubscription
    */
   public stopRelaySubscription(): void {
-    // Flush any pending batched delivery receipts before unsubscribing
-    const { receiptAccumulator } = this.relaySubscriptionState;
-    for (const [userId, timestamps] of receiptAccumulator.pending) {
-      if (timestamps.length > 0) {
-        this.state.relayWork
-          .run((work) => this.sendDeliveryReceipt(userId, timestamps, this.relayWorkContext(work)))
-          .catch((_error) => {
-            this.logger.warn('Failed to send delivery receipt', {
-              category: 'E2EE',
-              data: { userId },
-            });
-          });
-      }
+    // Send the batched delivery receipts before unsubscribing. During the
+    // hold, stop() sends the batches that wait at each of its flushes and
+    // drops a batch made after its last flush.
+    if (!this.relaySubscriptionState.receiptAccumulator.held) {
+      this.flushPendingDeliveryReceipts();
     }
 
     if (this.relayUnsubscribe) {
@@ -2216,10 +2288,20 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    *
    * Automatically started if relay.subscribeRetryRequests is available.
    * Call this manually if you need to restart the subscription.
+   * A call while stop() runs is refused and logged; start again after stop()
+   * resolves.
    */
   public startRetryRequestSubscription(): void {
     if (!this.relay || !this.relay.subscribeRetryRequests) {
       this.logger.debug('Relay does not support retry request subscription', {
+        category: 'E2EE',
+      });
+      return;
+    }
+
+    // A start while stop() runs would outlive stop()
+    if (this.stopping) {
+      this.logger.debug('Retry request subscription not started: stop() in progress', {
         category: 'E2EE',
       });
       return;
@@ -2299,7 +2381,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   private async sendDeliveryReceipt(
     recipientUserId: string,
     timestamps: number[],
-    ctx: SignalProtocolClientContext = this.ctx
+    ctx: SignalProtocolClientContext = this.receiptContext()
   ): Promise<void> {
     return this.sendReceipt(recipientUserId, timestamps, ReceiptType.DELIVERY, ctx);
   }
@@ -2465,15 +2547,27 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   }
 
   /**
+   * Client context of a receipt send outside relay work, such as a read
+   * receipt that the app sends. It carries the stop signal of the tracker,
+   * so the next stop() clears the retry timer of the send. stop() does not
+   * wait for the send.
+   */
+  private receiptContext(): SignalProtocolClientContext {
+    return { ...this.ctx, stopSignal: this.state.relayWork.stopSignal };
+  }
+
+  /**
    * Internal method to send receipt (delivery or read)
    *
-   * Delegates to MessageOps.sendReceipt for implementation.
+   * Delegates to MessageOps.sendReceipt for implementation. The context
+   * carries the stop signal of the tracker, so the next stop() clears the
+   * retry timer of the send.
    */
   private async sendReceipt(
     recipientUserId: string,
     timestamps: number[],
     type: ReceiptType,
-    ctx: SignalProtocolClientContext = this.ctx
+    ctx: SignalProtocolClientContext = this.receiptContext()
   ): Promise<void> {
     return MessageOps.sendReceipt(ctx, recipientUserId, timestamps, type);
   }
@@ -2508,13 +2602,35 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * Stop the Signal Protocol client and clean up resources
    *
    * Call this when the user logs out or the app shuts down.
-   * Unsubscribes from relay server, waits for the SDK work of the
-   * deliveries, retry requests, and receipt sends in progress, and cleans up
-   * any pending operations.
+   * It starts the send of each batched delivery receipt, once each, and
+   * unsubscribes from the relay server. Then it waits for delivery receipt
+   * sends, with their app hooks, until one receipt deadline 5 s after stop()
+   * starts. It waits for each receipt send that is in progress when stop()
+   * starts, except a send that an earlier stop() stopped, and for the sends
+   * that it starts. A delivery that finishes during the wait batches its
+   * receipt. At the end of each wait, stop() sends the batches that wait and
+   * waits for those sends until the same deadline. It does this again while
+   * the deadline is not past. stop() holds the receipt batches from its
+   * first flush until it clears its tracking state. During the hold,
+   * stopRelaySubscription() does not send them, and stop() drops a receipt
+   * batched after its last flush. At the deadline it stops each receipt
+   * send that is left: a send that waits in an app hook stops, and that
+   * receipt is not sent. A send that is in its relay call at the deadline
+   * is waited for, and that receipt can still be sent. It also
+   * waits for the SDK work of the deliveries and retry requests in progress.
+   * Then it cleans up any pending operations.
    *
-   * It does not wait for app hooks, so a hook can await stop(). When a hook
-   * returns after stop(), the SDK drops the work after the hook and writes
-   * nothing more. The relay delivers the envelope again after the next start.
+   * Apart from the receipt wait, it does not wait for app hooks, so a hook
+   * can await stop(). A hook of a delivery receipt send that awaits stop()
+   * holds stop() until the receipt deadline. stop() does not wait for read
+   * and viewed receipt sends. When a hook returns after stop(), the SDK drops
+   * the work after the hook and writes nothing more. The relay delivers the
+   * envelope again after the next start.
+   *
+   * A call to startRelaySubscription() or startRetryRequestSubscription()
+   * while stop() runs is refused and logged; start again after stop()
+   * resolves. A stop() call that overlaps a running stop() waits for it and
+   * settles as it settles.
    *
    * @example
    * ```typescript
@@ -2523,32 +2639,118 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * ```
    */
   async stop(): Promise<void> {
-    // 1. Stop relay subscription
-    if (this.relayUnsubscribe) {
-      this.relayUnsubscribe();
+    if (this.stopping) {
+      // An overlapping call waits for the running stop() and settles as it
+      // settles. No subscription can start during the run
+      await this.stopping;
+      return;
+    }
+    this.stopping = this.stopOnce();
+    try {
+      await this.stopping;
+    } finally {
+      this.stopping = undefined;
+    }
+  }
+
+  /** The steps of one stop(). A stop() call that overlaps it waits for it. */
+  private async stopOnce(): Promise<void> {
+    // stop() sets this.stopping before step 1 runs. So a stop() call from a
+    // step, such as from a relay connection state listener in step 2, waits
+    // for this run and does not start a second run. A subscription start
+    // from a step is refused
+    await Promise.resolve();
+
+    // 1. Start the receipt deadline, 5 s from now. Take the receipt sends in
+    // progress, except a send that an earlier stop() stopped, and start the
+    // send of the batched delivery receipts, once each, as relay work. Until
+    // the end of step 7, a delivery that finishes batches its receipt with no
+    // timer, and stopRelaySubscription() does not send it. Step 6 sends the
+    // batches that wait at the end of each wait, again while the deadline is
+    // not past. A receipt batched after its last flush is dropped in step 7
+    const receiptDeadline = Date.now() + RelaySubscriptionOps.STOP_RECEIPT_FLUSH_MS;
+    const receiptSends = [
+      ...[...this.deliveryReceiptSends]
+        .filter(([work]) => !work.stopSignal.aborted)
+        .map(([, send]) => send),
+      ...this.flushPendingDeliveryReceipts(),
+    ];
+    const receiptAccumulator = this.relaySubscriptionState.receiptAccumulator;
+    receiptAccumulator.held = true;
+    try {
+      // 2. Stop relay subscription. Clear it before the call, so a call that
+      // the unsubscribe makes does not unsubscribe it again. If the call
+      // throws, put it back, so the next stop() calls it again
+      const relayUnsubscribe = this.relayUnsubscribe;
       this.relayUnsubscribe = undefined;
-      this.logger.debug('Relay subscription stopped', { category: 'E2EE' });
-    }
+      if (relayUnsubscribe) {
+        try {
+          relayUnsubscribe();
+        } catch (error) {
+          this.relayUnsubscribe ??= relayUnsubscribe;
+          throw error;
+        }
+        this.logger.debug('Relay subscription stopped', { category: 'E2EE' });
+      }
 
-    // 2. Stop retry request subscription
-    if (this.retryUnsubscribe) {
-      this.retryUnsubscribe();
+      // 3. Stop retry request subscription. Clear it before the call, and put
+      // it back if the call throws, as step 2 does
+      const retryUnsubscribe = this.retryUnsubscribe;
       this.retryUnsubscribe = undefined;
-      this.logger.debug('Retry request subscription stopped', {
-        category: 'E2EE',
-      });
+      if (retryUnsubscribe) {
+        try {
+          retryUnsubscribe();
+        } catch (error) {
+          this.retryUnsubscribe ??= retryUnsubscribe;
+          throw error;
+        }
+        this.logger.debug('Retry request subscription stopped', {
+          category: 'E2EE',
+        });
+      }
+
+      // 4. Stop all relay work except the delivery receipt sends, then wait
+      // for the receipt sends of step 1, with their app hooks, until the
+      // receipt deadline. A delivery or retry request whose app hook returns
+      // during the wait writes nothing more, and the relay delivers it again
+      // after the next start. A receipt send is not stopped here, because the
+      // relay has the acknowledgment of its messages and does not deliver
+      // them again
+      if (receiptSends.length > 0) {
+        this.state.relayWork.stopAllExcept(new Set(this.deliveryReceiptSends.keys()));
+        await this.waitForStopReceiptSends(receiptSends, receiptDeadline - Date.now());
+      }
+
+      // 5. Stop the relay work in progress and wait for its SDK work. Work
+      // that waits in an app hook is not awaited. It writes nothing after
+      // the hook, and the relay delivers it again after the next start. So a
+      // receipt send that waits in an app hook after the deadline stops, and
+      // that receipt is not sent. A receipt send that is still in its relay
+      // call is waited for, and that receipt can still be sent
+      await this.state.relayWork.settle();
+
+      // 6. A delivery can finish during steps 4, 5, and 6, and the relay does
+      // not deliver it again. Send the receipts that such deliveries batched,
+      // wait for them until the same receipt deadline, and stop what is left
+      // as step 5 does. Do this again while a batch waits and the deadline
+      // is not past
+      do {
+        const lateReceiptSends = this.flushPendingDeliveryReceipts();
+        if (lateReceiptSends.length === 0) break;
+        await this.waitForStopReceiptSends(lateReceiptSends, receiptDeadline - Date.now());
+        await this.state.relayWork.settle();
+      } while (Date.now() < receiptDeadline);
+
+      // 7. Clear internal tracking state via state manager. This drops the
+      // receipts batched after the last flush of step 6, which is the last
+      // flush before the deadline or the first flush after step 5. Then the
+      // hold ends, and new batches set their timers again
+      this.state.clearForStop();
+    } finally {
+      receiptAccumulator.held = false;
     }
 
-    // 3. Stop the relay work in progress and wait for its SDK work. Work
-    // that waits in an app hook is not awaited. It writes nothing after
-    // the hook, and the relay delivers it again after the next start
-    await this.state.relayWork.settle();
-
-    // 4. Clear internal tracking state via state manager. This cancels the
-    // receipt timers, so no receipt starts after the wait
-    this.state.clearForStop();
-
-    // 5. Cleanup expired Sesame sessions
+    // 8. Cleanup expired Sesame sessions
     try {
       await this.sesameManager.cleanupExpiredSessions();
     } catch (error) {
@@ -2558,7 +2760,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       });
     }
 
-    // 6. Cleanup expired message records (SESAME spec §6.2)
+    // 9. Cleanup expired message records (SESAME spec §6.2)
     try {
       const deleted = await this._storage.deleteExpiredMessageRecords(MESSAGE_RECORD_TTL_MS);
       if (deleted > 0) {

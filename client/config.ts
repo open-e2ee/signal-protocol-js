@@ -800,12 +800,9 @@ export interface SignalProtocolClientConfig {
    * When the client sends an end-to-end encrypted delivery receipt for a
    * received message that asks for one.
    *
-   * - `'always'` sends a receipt for each such message.
-   * - `'auto'` sends a receipt only for a message that arrived through sealed
-   *   sender. It is for a relay that reports the delivery of an identified
-   *   message to its sender itself. The OpenE2EE Signal Protocol Relay does not
-   *   do that yet, so with `'auto'` the sender of an identified message gets
-   *   no receipt.
+   * - `'auto'`, the default, sends the same receipts as `'always'`.
+   * - `'always'` sends an end-to-end receipt for each such message, sealed
+   *   or identified.
    * - `'off'` sends no receipt, so no sender can see that a message reached
    *   this device.
    *
@@ -819,7 +816,7 @@ export interface SignalProtocolClientConfig {
    * the copy is 14 days old. Only client creation and `stop()` delete such old
    * copies.
    *
-   * @default 'always'
+   * @default 'auto'
    */
   deliveryReceipts?: 'auto' | 'always' | 'off';
 
