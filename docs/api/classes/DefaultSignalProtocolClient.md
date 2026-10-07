@@ -1595,6 +1595,38 @@ This method:
 3. On retryable error: sends retry request via relay or options callback
 4. Re-throws error for caller to handle
 
+A `retry_request` envelope holds no plaintext. This method rejects it
+before decryption and sends no retry request. Give it to
+`receiveIncomingEnvelopes`, which handles it.
+
+A failed envelope that this client asked a resend for, and each resend
+or null message for it, gives plaintext at most once on both receive
+paths. When this client processed the envelope, or the application
+already has that content, this method acknowledges the envelope and
+throws MESSAGE_DUPLICATE with no decrypt.
+
+A null message carries no content. The client consumes a null message
+when the content adapter reports `nullMessage: true`, and a custom
+adapter must report it for its own null encoding. This method never
+returns a null message. It marks the null message processed,
+acknowledges it and throws MESSAGE_DUPLICATE. A null message for a
+failed envelope marks that envelope processed, so a redelivery of it
+is dropped, but a content resend for it that comes later still gives
+its plaintext.
+
+A resend or null message that fails to decrypt, or whose seal fails to
+open, asks again for its failed envelope under the same retry ID. When
+the processed record of the failed envelope fails to store after a
+decrypt, the client writes a warning with the behavior
+RETRY_FULFILL_WRITE_FAILED, as on every receive path, and this method
+returns the plaintext. A redelivery of the failed envelope or of
+another family member can then give the content again. When a
+processed record of a null message or of its failed envelope fails to
+store, the client writes a warning with the behavior
+RETRY_NULL_WRITE_FAILED, as on every receive path, and this method
+still throws MESSAGE_DUPLICATE. A redelivery of the failed envelope
+can then give the content.
+
 #### Parameters
 
 ##### envelope
@@ -1618,6 +1650,16 @@ Decrypted plaintext
 #### Throws
 
 EncryptionError after sending retry request if decryption fails
+
+#### Throws
+
+EncryptionError INVALID_CIPHERTEXT for a `retry_request` envelope
+
+#### Throws
+
+EncryptionError MESSAGE_DUPLICATE when this client processed the
+  envelope, the application already has the content of the failed
+  envelope of a retry request, or the envelope is a null message
 
 #### Implementation of
 
@@ -1709,7 +1751,10 @@ Decrypted plaintext
 
 Receive a pulled batch through the subscription content handler.
 The application must register onMessageDecrypted before calling this method.
-Successful IDs are ready for transport acknowledgment.
+Processed IDs are ready for transport acknowledgment. They include
+each envelope that the client drops as a duplicate, and each null
+message that the content adapter reports, which the client consumes
+and never gives to onMessageDecrypted.
 
 #### Parameters
 
@@ -1935,33 +1980,6 @@ Which keys the rotation published, and one error per failed identity type
 
 ***
 
-### runPeriodicCleanup()
-
-> **runPeriodicCleanup**(): `number`
-
-Run periodic cleanup of internal tracking state.
-
-Safe to call frequently - internally throttled to avoid overhead.
-Recommended call sites:
-- App foreground transition
-- After successful message batch processing
-- Periodically during long sessions
-
-Cleans up:
-- Expired retry dedup entries (recentRetryRequests)
-
-#### Returns
-
-`number`
-
-Number of entries cleaned up
-
-#### Implementation of
-
-[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`runPeriodicCleanup`](../interfaces/SignalProtocolClient.md#runperiodiccleanup)
-
-***
-
 ### send()
 
 > **send**(`recipientId`, `content`, `options?`): `Promise`\<[`SendResult`](../interfaces/SendResult.md)\>
@@ -2165,27 +2183,6 @@ SignalProtocolClient.startRelaySubscription
 
 ***
 
-### startRetryRequestSubscription()
-
-> **startRetryRequestSubscription**(): `void`
-
-Start listening for retry requests from recipients (SESAME spec §6.2)
-
-When a recipient cannot decrypt a message, they send a retry request.
-This method subscribes to incoming retry requests and processes them
-by resending the original message with a new session.
-
-Automatically started if relay.subscribeRetryRequests is available.
-Call this manually if you need to restart the subscription.
-A call while stop() runs is refused and logged; start again after stop()
-resolves.
-
-#### Returns
-
-`void`
-
-***
-
 ### stop()
 
 > **stop**(): `Promise`\<`void`\>
@@ -2218,10 +2215,9 @@ and viewed receipt sends. When a hook returns after stop(), the SDK drops
 the work after the hook and writes nothing more. The relay delivers the
 envelope again after the next start.
 
-A call to startRelaySubscription() or startRetryRequestSubscription()
-while stop() runs is refused and logged; start again after stop()
-resolves. A stop() call that overlaps a running stop() waits for it and
-settles as it settles.
+A call to startRelaySubscription() while stop() runs is refused and
+logged; start again after stop() resolves. A stop() call that overlaps a
+running stop() waits for it and settles as it settles.
 
 #### Returns
 

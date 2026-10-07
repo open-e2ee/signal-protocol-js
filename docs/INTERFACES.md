@@ -105,6 +105,8 @@ The application backend must:
 - atomically consume one-time prekeys
 - allocate linked-device identifiers
 - apply retention and abuse controls
+- give an envelope one `id`, and keep that `id` on every redelivery of the
+  envelope, because the client delivers content at most once by that `id`
 
 A client-supplied user identifier is a routing input, not proof of identity.
 

@@ -11,6 +11,7 @@ import type { SealedSenderConfig, SealedSenderDeliveryMode } from './config';
 import type { Envelope, SealedSenderAuth } from '../remote/relay/types';
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import type { Base64, SignalProtocolLocalStore } from '../types';
+import { ContentHint } from '../types/messages';
 import { ProtocolAddress } from '../types/address';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { base64ToBytes, bytesToBase64 } from '../internal/crypto';
@@ -66,7 +67,8 @@ export async function serializeDirectSealedSenderMessage(
   ciphertextBase64: string,
   messageType: 'prekey_bundle' | 'ciphertext' | 'sender_key',
   recipientRegistrationId: number | undefined,
-  sealedSender: ResolvedSealedSenderContext
+  sealedSender: ResolvedSealedSenderContext,
+  contentHint: ContentHint | undefined
 ): Promise<string> {
   const senderCertificate = deserializeSenderCertificate(
     base64ToBytes(sealedSender.senderCertificateBase64 as Base64)
@@ -84,6 +86,7 @@ export async function serializeDirectSealedSenderMessage(
       },
     ],
     signalProtocolMessage: base64ToBytes(ciphertextBase64 as Base64),
+    contentHint,
     contentType:
       messageType === 'sender_key'
         ? SealedSenderContentType.SENDERKEY_MESSAGE
@@ -264,7 +267,7 @@ export async function resolveSealedSenderContext(
  * @param recipientDeviceId - Recipient's device ID
  * @param config - Sealed sender config with trust roots
  * @param relayEnqueueTime - Immutable time when Relay accepted the message
- * @returns Unsealed envelope info with sender identity and inner ciphertext
+ * @returns Unsealed envelope info with sender identity, inner ciphertext and content hint
  */
 export async function unsealMessage(
   sealedCiphertextBase64: string,
@@ -279,6 +282,7 @@ export async function unsealMessage(
   senderDeviceId: number;
   innerCiphertextBase64: string;
   contentType: SealedSenderContentType;
+  contentHint: ContentHint;
 }> {
   if (
     typeof relayEnqueueTime !== 'number' ||
@@ -331,6 +335,7 @@ async function unsealReceivedMessage(
   senderDeviceId: number;
   innerCiphertextBase64: string;
   contentType: SealedSenderContentType;
+  contentHint: ContentHint;
 }> {
   // 1. Deserialize per-device ReceivedMessage
   const deserialized = deserializeReceivedMessage(sealedBytes);
@@ -386,6 +391,7 @@ async function unsealReceivedMessage(
     senderDeviceId: content.senderCertificate.senderDeviceId,
     innerCiphertextBase64: content.signalProtocolMessage as string,
     contentType: content.contentType,
+    contentHint: content.contentHint ?? ContentHint.Default,
   };
 }
 
@@ -393,7 +399,8 @@ async function unsealReceivedMessage(
  * Reconstruct an Envelope from an unsealed message.
  *
  * Takes the original sealed sender envelope (with empty sender fields)
- * and fills in the sender identity revealed by unsealing.
+ * and fills in the sender identity revealed by unsealing. The content hint
+ * also travels inside the seal, so the unsealed envelope carries it.
  *
  * @param originalEnvelope - The incoming envelope with messageType 'unidentified_sender'
  * @param unsealed - The unsealed sender info and inner ciphertext
@@ -406,6 +413,7 @@ export function reconstructEnvelope(
     senderDeviceId: number;
     innerCiphertextBase64: string;
     contentType: SealedSenderContentType;
+    contentHint: ContentHint;
   }
 ): Envelope {
   return {
@@ -414,7 +422,24 @@ export function reconstructEnvelope(
     senderDeviceId: unsealed.senderDeviceId,
     ciphertext: unsealed.innerCiphertextBase64,
     messageType: envelopeTypeForContent(unsealed.contentType),
+    contentHint: unsealed.contentHint,
   };
+}
+
+const unsealedEnvelopes = new WeakMap<object, Envelope>();
+
+/**
+ * Attach the unsealed envelope to an error that its decryption threw. The
+ * error handler then asks the unsealed sender device for a resend, because
+ * the sealed envelope names no sender.
+ */
+export function attachUnsealedEnvelope(error: unknown, envelope: Envelope): void {
+  if (typeof error === 'object' && error !== null) unsealedEnvelopes.set(error, envelope);
+}
+
+/** The unsealed envelope that `attachUnsealedEnvelope` attached to an error. */
+export function unsealedEnvelopeOf(error: unknown): Envelope | undefined {
+  return typeof error === 'object' && error !== null ? unsealedEnvelopes.get(error) : undefined;
 }
 
 /**

@@ -130,6 +130,8 @@ import * as SessionOps from './sessions';
 import * as GroupOps from './groups';
 import * as PreKeyOps from './prekeys';
 import * as RetryOps from './retry';
+import { receiveInRetryFamily, type RetryFamilyReceive } from './retry-family';
+import { deliveredEnvelopeFingerprint } from '../local/store/received-content';
 import * as RelaySubscriptionOps from './relay-subscription';
 import { SignalProtocolClientState, SIGNAL_PROTOCOL_CLIENT_CONSTANTS } from './state';
 import { clientRelayFanOut, rethrowRelayWorkStopped, type RelayWork } from './relay-work';
@@ -286,7 +288,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   }
 
   private relayUnsubscribe?: Unsubscribe;
-  private retryUnsubscribe?: Unsubscribe;
 
   /**
    * Cached sender certificate for sealed sender.
@@ -792,33 +793,32 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   private get retryConfig(): RetryOps.RetryConfig {
     return {
       keyRotationDebounceMs: SIGNAL_PROTOCOL_CLIENT_CONSTANTS.KEY_ROTATION_DEBOUNCE_MS,
-      retryDedupWindowMs: SIGNAL_PROTOCOL_CLIENT_CONSTANTS.RETRY_DEDUP_WINDOW_MS,
-      retryCleanupIntervalMs: SIGNAL_PROTOCOL_CLIENT_CONSTANTS.RETRY_CLEANUP_INTERVAL_MS,
     };
   }
 
   /**
-   * Get retry dedup state for retry operations
+   * Get retry response state for retry operations
    */
-  private get retryDedupState(): RetryOps.RetryDedupState {
-    return this.state.getRetryDedupState();
+  private get retryResponseState(): RetryOps.RetryResponseState {
+    return this.state.getRetryResponseState();
   }
 
   /**
-   * Get retry callbacks for retry operations. Session changes and resends use
-   * the given context, so their hooks run through its relay work. A resend
-   * waits for the recipient's lock only until stop() stops the work.
+   * Get retry callbacks for retry operations. Session changes use the given
+   * context, so their hooks run through its relay work. A resend goes only to
+   * the device that asked, and waits for the recipient's lock only until the
+   * stop signal aborts.
    */
   private retryCallbacks(
-    work: RelayWork,
+    stopSignal: AbortSignal | undefined,
     ctx: SignalProtocolClientContext
   ): RetryOps.RetryCallbacks {
     return {
       archiveSession: (address) => SessionOps.archiveSession(ctx, address),
       establishSession: (address, bundle) =>
         SessionOps.establishSession(ctx, this.sesameManager, address, bundle),
-      send: (recipientId, content, options) =>
-        this.sendWithContext(recipientId, content, options, ctx, work.stopSignal),
+      resend: (userId, deviceId, content, options) =>
+        this.cipher.resendToDevice(userId, deviceId, content, options, stopSignal),
       forcePreKeyRotation: () => this.regeneratePreKeysWithFreshIds(),
     };
   }
@@ -832,11 +832,14 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
   /**
    * Get relay subscription callbacks (delegate back to DefaultSignalProtocolClient methods).
-   * Receipts and typing indicators use the given context, so their hooks run
-   * through its relay work. Each receipt send is relay work of its own.
+   * Receipts, typing indicators and retry requests use the given context, so
+   * their hooks run through its relay work. Each receipt send is relay work of
+   * its own. A retry request runs in the current work, so a stop of that work
+   * reaches the receive route, and the route keeps the request envelope.
    */
   private relaySubscriptionCallbacks(
-    ctx: SignalProtocolClientContext
+    ctx: SignalProtocolClientContext,
+    stopSignal?: AbortSignal
   ): RelaySubscriptionOps.RelaySubscriptionCallbacks {
     return {
       forcePreKeyRotation: () => this.regeneratePreKeysWithFreshIds(),
@@ -845,6 +848,15 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       handleTypingIndicator: (envelope, typing) =>
         this.handleTypingIndicator(envelope, typing, ctx),
       sendDeliveryReceipt: (userId, timestamps) => this.sendDeliveryReceiptAsRelayWork(userId, timestamps),
+      handleRetryRequest: (request, retry) =>
+        RetryOps.handleRetryRequestAndResend(
+          ctx as RetryOps.RetryContext,
+          request,
+          this.retryResponseState,
+          this.retryCallbacks(stopSignal, ctx),
+          this.retryConfig,
+          retry
+        ),
     };
   }
 
@@ -1151,11 +1163,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       // Only subscribe if sync succeeded - subscriptions require a valid server session
       if (!syncFailed && finalConfig?.relay && finalConfig?.hooks?.onMessageDecrypted) {
         client.startRelaySubscription();
-      }
-
-      // Start retry request subscription if relay supports it (SESAME spec §6.2)
-      if (!syncFailed && finalConfig?.relay?.subscribeRetryRequests) {
-        client.startRetryRequestSubscription();
       }
 
       // Validate sender keys config and warn on extreme values
@@ -1568,13 +1575,97 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * 3. On retryable error: sends retry request via relay or options callback
    * 4. Re-throws error for caller to handle
    *
+   * A `retry_request` envelope holds no plaintext. This method rejects it
+   * before decryption and sends no retry request. Give it to
+   * `receiveIncomingEnvelopes`, which handles it.
+   *
+   * A failed envelope that this client asked a resend for, and each resend
+   * or null message for it, gives plaintext at most once on both receive
+   * paths. When this client processed the envelope, or the application
+   * already has that content, this method acknowledges the envelope and
+   * throws MESSAGE_DUPLICATE with no decrypt.
+   *
+   * A null message carries no content. The client consumes a null message
+   * when the content adapter reports `nullMessage: true`, and a custom
+   * adapter must report it for its own null encoding. This method never
+   * returns a null message. It marks the null message processed,
+   * acknowledges it and throws MESSAGE_DUPLICATE. A null message for a
+   * failed envelope marks that envelope processed, so a redelivery of it
+   * is dropped, but a content resend for it that comes later still gives
+   * its plaintext.
+   *
+   * A resend or null message that fails to decrypt, or whose seal fails to
+   * open, asks again for its failed envelope under the same retry ID. When
+   * the processed record of the failed envelope fails to store after a
+   * decrypt, the client writes a warning with the behavior
+   * RETRY_FULFILL_WRITE_FAILED, as on every receive path, and this method
+   * returns the plaintext. A redelivery of the failed envelope or of
+   * another family member can then give the content again. When a
+   * processed record of a null message or of its failed envelope fails to
+   * store, the client writes a warning with the behavior
+   * RETRY_NULL_WRITE_FAILED, as on every receive path, and this method
+   * still throws MESSAGE_DUPLICATE. A redelivery of the failed envelope
+   * can then give the content.
+   *
    * @param envelope - The encrypted message envelope
    * @param options - Transport callbacks for background (no relay) scenarios
    * @returns Decrypted plaintext
    * @throws EncryptionError after sending retry request if decryption fails
+   * @throws EncryptionError INVALID_CIPHERTEXT for a `retry_request` envelope
+   * @throws EncryptionError MESSAGE_DUPLICATE when this client processed the
+   *   envelope, the application already has the content of the failed
+   *   envelope of a retry request, or the envelope is a null message
    */
   async processIncomingEnvelope(
     envelope: IncomingEnvelope,
+    options?: ProcessEnvelopeOptions
+  ): Promise<string> {
+    if (envelope.messageType === 'retry_request') {
+      throw new EncryptionError(
+        'A retry_request envelope holds no plaintext; give it to receiveIncomingEnvelopes',
+        EncryptionErrorCode.INVALID_CIPHERTEXT,
+        { messageType: envelope.messageType, senderId: envelope.senderUserId }
+      );
+    }
+    // The fingerprint covers the envelope as the Relay delivered it, before
+    // any unseal, so every receive path stores one value for it.
+    const fingerprint = envelope.id
+      ? await deliveredEnvelopeFingerprint(this.userId, this.deviceId, envelope)
+      : undefined;
+    return receiveInRetryFamily(this._storage, this.logger, envelope, async (family) => {
+      if (!(await family.admit())) {
+        await this.markMessageDeliveredSilently(envelope.id, options);
+        throw new EncryptionError(
+          'The application already has the content of this failed envelope',
+          EncryptionErrorCode.MESSAGE_DUPLICATE,
+          { senderId: envelope.senderUserId }
+        );
+      }
+      const plaintext = await this.decryptIncomingEnvelope(envelope, family, fingerprint, options);
+      // A null message carries no content, so the caller never gets it.
+      if (this.contentAdapter.inspectContent(plaintext).nullMessage) {
+        await family.consumeNull(fingerprint);
+        await this.markMessageDeliveredSilently(envelope.id, options);
+        throw new EncryptionError(
+          'A null message carries no content',
+          EncryptionErrorCode.MESSAGE_DUPLICATE,
+          { senderId: envelope.senderUserId }
+        );
+      }
+      await family.fulfill();
+      return plaintext;
+    });
+  }
+
+  /**
+   * Decrypt one envelope that is not a `retry_request`, under its retry family
+   * lock. The fingerprint is that of the delivered envelope, also for the
+   * inner envelope of a seal.
+   */
+  private async decryptIncomingEnvelope(
+    envelope: IncomingEnvelope,
+    family: RetryFamilyReceive,
+    fingerprint: string | undefined,
     options?: ProcessEnvelopeOptions
   ): Promise<string> {
     // Handle sealed sender envelopes: unseal to reveal sender before decrypting
@@ -1588,28 +1679,47 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       }
 
       const recipientPrivateKeyBytes = base64ToBytes(identityKeyPair.dhKey.privateKey);
-      const unsealed = await unsealMessage(
-        envelope.ciphertext,
-        recipientPrivateKeyBytes,
-        this.userId,
-        this.deviceId,
-        this.config.sealedSender,
-        envelope.serverTimestamp,
-        this.logger
-      );
+      let unsealed: Awaited<ReturnType<typeof unsealMessage>>;
+      try {
+        unsealed = await unsealMessage(
+          envelope.ciphertext,
+          recipientPrivateKeyBytes,
+          this.userId,
+          this.deviceId,
+          this.config.sealedSender,
+          envelope.serverTimestamp,
+          this.logger
+        );
+      } catch (error) {
+        // A member whose seal fails to open asks the device of its request
+        // for the next attempt, as a member whose decrypt fails does.
+        if (family.member !== undefined) {
+          await this.sendRetryRequestInternal(
+            family.withRequestedSender(envelope),
+            error as Error,
+            family,
+            fingerprint,
+            options
+          );
+        }
+        throw error;
+      }
 
       // Process the inner envelope with revealed sender identity. The inner
-      // type travels inside the seal. Nothing outside it distinguishes a
-      // group message from a pairwise one. The same mapping serves the other
-      // receive path via `reconstructEnvelope`.
-      return this.processIncomingEnvelope(
+      // type and the content hint travel inside the seal. Nothing outside it
+      // distinguishes a group message from a pairwise one. The same mapping
+      // serves the other receive path via `reconstructEnvelope`.
+      return this.decryptIncomingEnvelope(
         {
           ...envelope,
           senderUserId: unsealed.senderUserId,
           senderDeviceId: unsealed.senderDeviceId,
           ciphertext: unsealed.innerCiphertextBase64,
           messageType: envelopeTypeForContent(unsealed.contentType),
+          contentHint: unsealed.contentHint,
         },
+        family,
+        fingerprint,
         options
       );
     }
@@ -1655,7 +1765,13 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     } catch (error) {
       // Send retry request if error is retryable (per SESAME spec §4.1)
       if (isRetryableDecryptionError(error as Error)) {
-        await this.sendRetryRequestInternal(envelope, error as Error, options);
+        await this.sendRetryRequestInternal(
+          envelope,
+          error as Error,
+          family,
+          fingerprint,
+          options
+        );
       }
 
       // Re-throw so caller can handle (log, skip message, etc.)
@@ -1726,7 +1842,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   /**
    * Receive a pulled batch through the subscription content handler.
    * The application must register onMessageDecrypted before calling this method.
-   * Successful IDs are ready for transport acknowledgment.
+   * Processed IDs are ready for transport acknowledgment. They include
+   * each envelope that the client drops as a duplicate, and each null
+   * message that the content adapter reports, which the client consumes
+   * and never gives to onMessageDecrypted.
    */
   async receiveIncomingEnvelopes(envelopes: IncomingEnvelope[]): Promise<{
     processedMessageIds: string[];
@@ -1769,11 +1888,15 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    *
    * @param envelope - The failed message envelope
    * @param error - The decryption error
+   * @param family - The retry family of the delivered envelope
+   * @param fingerprint - The fingerprint of the delivered envelope
    * @param options - Optional transport callbacks (for background without relay)
    */
   private async sendRetryRequestInternal(
     envelope: IncomingEnvelope,
     error: Error,
+    family: RetryFamilyReceive,
+    fingerprint: string | undefined,
     options?: ProcessEnvelopeOptions
   ): Promise<void> {
     return RetryOps.sendRetryRequestInternal(
@@ -1783,6 +1906,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       this.rateLimitState,
       { forcePreKeyRotation: () => this.regeneratePreKeysWithFreshIds() },
       this.retryConfig,
+      family,
+      fingerprint,
       options
     );
   }
@@ -2061,30 +2186,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     identity: import('../keys').CompositeIdentityV1,
     identityType: import('../keys').IdentityType = 'aci'
   ): Promise<import('../keys').ContactIdentityRecord> {
-    const accepted = await SessionOps.acceptIdentityRotation(
-      this.ctx,
-      userId,
-      identity,
-      identityType
-    );
-
-    // A retry that first discovered the changed tuple may already have failed
-    // closed and entered the short-lived dedup window. Explicit acceptance is
-    // the authority to try those still-pending requests again. It is never
-    // inferred from the retry request itself.
-    const retryPrefix = `${userId}:`;
-    for (const key of this.retryDedupState.recentRetryRequests.keys()) {
-      if (key.startsWith(retryPrefix)) {
-        this.retryDedupState.recentRetryRequests.delete(key);
-      }
-    }
-    if (this.retryUnsubscribe) {
-      this.retryUnsubscribe();
-      this.retryUnsubscribe = undefined;
-      this.startRetryRequestSubscription();
-    }
-
-    return accepted;
+    return SessionOps.acceptIdentityRotation(this.ctx, userId, identity, identityType);
   }
 
   /**
@@ -2224,7 +2326,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
             { ...ctx, cipher: this.cipher, stopSignal: work.stopSignal },
             envelope,
             this.relaySubscriptionState,
-            this.relaySubscriptionCallbacks(ctx),
+            this.relaySubscriptionCallbacks(ctx, work.stopSignal),
             this.relaySubscriptionConfig
           );
         });
@@ -2277,91 +2379,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         data: { userId: this.userId, deviceId: this.deviceId },
       });
     }
-  }
-
-  /**
-   * Start listening for retry requests from recipients (SESAME spec §6.2)
-   *
-   * When a recipient cannot decrypt a message, they send a retry request.
-   * This method subscribes to incoming retry requests and processes them
-   * by resending the original message with a new session.
-   *
-   * Automatically started if relay.subscribeRetryRequests is available.
-   * Call this manually if you need to restart the subscription.
-   * A call while stop() runs is refused and logged; start again after stop()
-   * resolves.
-   */
-  public startRetryRequestSubscription(): void {
-    if (!this.relay || !this.relay.subscribeRetryRequests) {
-      this.logger.debug('Relay does not support retry request subscription', {
-        category: 'E2EE',
-      });
-      return;
-    }
-
-    // A start while stop() runs would outlive stop()
-    if (this.stopping) {
-      this.logger.debug('Retry request subscription not started: stop() in progress', {
-        category: 'E2EE',
-      });
-      return;
-    }
-
-    // Avoid duplicate subscriptions
-    if (this.retryUnsubscribe) {
-      this.logger.debug('Retry request subscription already active', {
-        category: 'E2EE',
-      });
-      return;
-    }
-
-    this.logger.debug('Starting retry request subscription', {
-      category: 'E2EE',
-      data: { userId: this.userId, deviceId: this.deviceId },
-    });
-
-    this.retryUnsubscribe = this.relay.subscribeRetryRequests(
-      this.userId,
-      this.deviceId,
-      async (retryRequest) => {
-        await this.handleRetryRequestAndResend(retryRequest);
-      }
-    );
-  }
-
-  /**
-   * Handle a retry request and resend the original message
-   *
-   * Per SESAME spec §4.1 (Resending Process):
-   * 1. Look up MessageRecord by sequence number
-   * 2. Validate retry limits and message TTL
-   * 3. Check session state:
-   *    - If NO active session OR active session IS orphaned (matches MessageRecord.sessionStateId):
-   *      → Fetch prekey bundle and create new session
-   *    - If DIFFERENT active session exists:
-   *      → Use it directly (no prekey fetch, prevents rate limit issues)
-   * 4. Re-encrypt and send the original message
-   *
-   * This prevents infinite retry loops where each retry creates a new session
-   * with different header keys.
-   *
-   * The request runs as relay work, so its hooks run through that work.
-   *
-   * @param retryRequest - The retry request from the recipient
-   */
-  private handleRetryRequestAndResend(
-    retryRequest: import('../internal/sesame/types').RetryRequest
-  ): Promise<void> {
-    return this.state.relayWork.run((work) => {
-      const ctx = this.relayWorkContext(work);
-      return RetryOps.handleRetryRequestAndResend(
-        ctx as RetryOps.RetryContext,
-        retryRequest,
-        this.retryDedupState,
-        this.retryCallbacks(work, ctx),
-        this.retryConfig
-      );
-    });
   }
 
   /**
@@ -2627,10 +2644,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * the work after the hook and writes nothing more. The relay delivers the
    * envelope again after the next start.
    *
-   * A call to startRelaySubscription() or startRetryRequestSubscription()
-   * while stop() runs is refused and logged; start again after stop()
-   * resolves. A stop() call that overlaps a running stop() waits for it and
-   * settles as it settles.
+   * A call to startRelaySubscription() while stop() runs is refused and
+   * logged; start again after stop() resolves. A stop() call that overlaps a
+   * running stop() waits for it and settles as it settles.
    *
    * @example
    * ```typescript
@@ -2664,10 +2680,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     // 1. Start the receipt deadline, 5 s from now. Take the receipt sends in
     // progress, except a send that an earlier stop() stopped, and start the
     // send of the batched delivery receipts, once each, as relay work. Until
-    // the end of step 7, a delivery that finishes batches its receipt with no
-    // timer, and stopRelaySubscription() does not send it. Step 6 sends the
+    // the end of step 6, a delivery that finishes batches its receipt with no
+    // timer, and stopRelaySubscription() does not send it. Step 5 sends the
     // batches that wait at the end of each wait, again while the deadline is
-    // not past. A receipt batched after its last flush is dropped in step 7
+    // not past. A receipt batched after its last flush is dropped in step 6
     const receiptDeadline = Date.now() + RelaySubscriptionOps.STOP_RECEIPT_FLUSH_MS;
     const receiptSends = [
       ...[...this.deliveryReceiptSends]
@@ -2693,23 +2709,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         this.logger.debug('Relay subscription stopped', { category: 'E2EE' });
       }
 
-      // 3. Stop retry request subscription. Clear it before the call, and put
-      // it back if the call throws, as step 2 does
-      const retryUnsubscribe = this.retryUnsubscribe;
-      this.retryUnsubscribe = undefined;
-      if (retryUnsubscribe) {
-        try {
-          retryUnsubscribe();
-        } catch (error) {
-          this.retryUnsubscribe ??= retryUnsubscribe;
-          throw error;
-        }
-        this.logger.debug('Retry request subscription stopped', {
-          category: 'E2EE',
-        });
-      }
-
-      // 4. Stop all relay work except the delivery receipt sends, then wait
+      // 3. Stop all relay work except the delivery receipt sends, then wait
       // for the receipt sends of step 1, with their app hooks, until the
       // receipt deadline. A delivery or retry request whose app hook returns
       // during the wait writes nothing more, and the relay delivers it again
@@ -2721,7 +2721,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         await this.waitForStopReceiptSends(receiptSends, receiptDeadline - Date.now());
       }
 
-      // 5. Stop the relay work in progress and wait for its SDK work. Work
+      // 4. Stop the relay work in progress and wait for its SDK work. Work
       // that waits in an app hook is not awaited. It writes nothing after
       // the hook, and the relay delivers it again after the next start. So a
       // receipt send that waits in an app hook after the deadline stops, and
@@ -2729,10 +2729,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       // call is waited for, and that receipt can still be sent
       await this.state.relayWork.settle();
 
-      // 6. A delivery can finish during steps 4, 5, and 6, and the relay does
+      // 5. A delivery can finish during steps 3, 4, and 5, and the relay does
       // not deliver it again. Send the receipts that such deliveries batched,
       // wait for them until the same receipt deadline, and stop what is left
-      // as step 5 does. Do this again while a batch waits and the deadline
+      // as step 4 does. Do this again while a batch waits and the deadline
       // is not past
       do {
         const lateReceiptSends = this.flushPendingDeliveryReceipts();
@@ -2741,16 +2741,16 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         await this.state.relayWork.settle();
       } while (Date.now() < receiptDeadline);
 
-      // 7. Clear internal tracking state via state manager. This drops the
-      // receipts batched after the last flush of step 6, which is the last
-      // flush before the deadline or the first flush after step 5. Then the
+      // 6. Clear internal tracking state via state manager. This drops the
+      // receipts batched after the last flush of step 5, which is the last
+      // flush before the deadline or the first flush after step 4. Then the
       // hold ends, and new batches set their timers again
       this.state.clearForStop();
     } finally {
       receiptAccumulator.held = false;
     }
 
-    // 8. Cleanup expired Sesame sessions
+    // 7. Cleanup expired Sesame sessions
     try {
       await this.sesameManager.cleanupExpiredSessions();
     } catch (error) {
@@ -2760,7 +2760,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       });
     }
 
-    // 9. Cleanup expired message records (SESAME spec §6.2)
+    // 8. Cleanup expired message records (SESAME spec §6.2)
     try {
       const deleted = await this._storage.deleteExpiredMessageRecords(MESSAGE_RECORD_TTL_MS);
       if (deleted > 0) {
@@ -2821,33 +2821,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       data: { count: cleaned },
     });
     return cleaned;
-  }
-
-  /**
-   * Run periodic cleanup of internal tracking state.
-   *
-   * Safe to call frequently - internally throttled to avoid overhead.
-   * Recommended call sites:
-   * - App foreground transition
-   * - After successful message batch processing
-   * - Periodically during long sessions
-   *
-   * Cleans up:
-   * - Expired retry dedup entries (recentRetryRequests)
-   *
-   * @returns Number of entries cleaned up
-   */
-  runPeriodicCleanup(): number {
-    const result = this.state.runPeriodicCleanup();
-
-    if (result.cleaned > 0) {
-      this.logger.debug('Periodic cleanup completed', {
-        category: 'E2EE',
-        data: { cleaned: result.cleaned },
-      });
-    }
-
-    return result.cleaned;
   }
 
   // ============================================================================

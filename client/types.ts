@@ -537,6 +537,14 @@ export interface IncomingEnvelope {
   /** Server-assigned message ID */
   id: string;
 
+  /**
+   * The SDK ID of the message, when the relay assigns its own `id` and
+   * delivers the SDK ID with the envelope. The retry family of a resend or
+   * a null message resolves by this ID, or by `id` when it is absent. The
+   * processed record and the acknowledgment use `id`.
+   */
+  clientMessageId?: string;
+
   /** Sender's user ID (Convex _id) */
   senderUserId: string;
 
@@ -588,9 +596,10 @@ export interface ProcessEnvelopeOptions {
    * Callback to send retry requests when no relay is available.
    *
    * Required for background processing where there is no WebSocket relay.
-   * The callback receives a fully-formed RetryRequest created by SesameManager.
+   * The callback receives a `retry_request` envelope for the device that sent
+   * the failed message. Deliver it to that device as any other envelope.
    */
-  sendRetryRequest?: (request: import('../internal/sesame/types').RetryRequest) => Promise<void>;
+  sendRetryRequest?: (envelope: import('../remote/relay/types').Envelope) => Promise<void>;
 
   /**
    * Callback to mark message as delivered when no relay is available.

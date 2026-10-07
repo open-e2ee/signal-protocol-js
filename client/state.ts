@@ -6,34 +6,17 @@
  * and centralized mutation methods.
  *
  * State categories:
- * - Retry deduplication: Prevents duplicate retry request processing
+ * - Retry response counting: Caps the resends of one message
  * - Rate limiting: Prevents retry storms
  * - Prekey rotation debouncing: Rate-limits forced prekey rotations
  * - Relay work: Deliveries, retry requests, and receipt sends in progress, which stop() settles
  */
 
-import type { RetryDedupState, RetryRateLimitState } from './retry';
+import type { RetryResponseState, RetryRateLimitState } from './retry';
 import type { ReceiptAccumulator, RelaySubscriptionState } from './relay-subscription';
 import { RelayWorkTracker } from './relay-work';
 
-/**
- * Configuration for state management
- */
 export {};
-export interface SignalProtocolClientStateConfig {
-  /** Deduplication window for retry requests in ms */
-  retryDedupWindowMs: number;
-  /** Cleanup interval for retry dedup entries in ms */
-  retryCleanupIntervalMs: number;
-}
-
-/**
- * Default configuration values
- */
-export const DEFAULT_STATE_CONFIG: SignalProtocolClientStateConfig = {
-  retryDedupWindowMs: 5000,
-  retryCleanupIntervalMs: 60_000,
-};
 
 /**
  * Consolidated constants for SignalProtocolClient
@@ -42,10 +25,6 @@ export const DEFAULT_STATE_CONFIG: SignalProtocolClientStateConfig = {
 export const SIGNAL_PROTOCOL_CLIENT_CONSTANTS = {
   /** Debounce interval for forced prekey rotations (1 hour). */
   KEY_ROTATION_DEBOUNCE_MS: 3_600_000,
-  /** Retry request deduplication window in milliseconds */
-  RETRY_DEDUP_WINDOW_MS: DEFAULT_STATE_CONFIG.retryDedupWindowMs,
-  /** Cleanup interval for expired retry dedup entries */
-  RETRY_CLEANUP_INTERVAL_MS: DEFAULT_STATE_CONFIG.retryCleanupIntervalMs,
 } as const;
 
 /**
@@ -53,29 +32,14 @@ export const SIGNAL_PROTOCOL_CLIENT_CONSTANTS = {
  *
  * This class consolidates all the per-session and per-message tracking
  * that SignalProtocolClient needs for:
- * - Retry request deduplication (prevents processing same retry twice)
+ * - Retry response counting (caps the resends of one message)
  * - Rate limiting (prevents retry storms per sender)
  * - Prekey rotation debouncing (rate-limits forced prekey rotations)
  */
 export class SignalProtocolClientState {
-  private readonly config: SignalProtocolClientStateConfig;
-
   // ============================================================================
-  // Retry Deduplication State
+  // Prekey Rotation State
   // ============================================================================
-
-  /**
-   * Tracks recent retry requests to prevent duplicate processing
-   * Key: `${sessionId}:${failedTimestamp}` (sessionId = userId:deviceId)
-   * Value: timestamp when last processed
-   */
-  private readonly recentRetryRequests = new Map<string, number>();
-
-  /**
-   * Timestamp of last cleanup of recentRetryRequests map
-   * Used for time-based cleanup instead of modulo-based
-   */
-  private lastRetryCleanupTime = 0;
 
   /**
    * Timestamp of last forced prekey rotation.
@@ -100,7 +64,7 @@ export class SignalProtocolClientState {
 
   /**
    * Tracks how many times we have responded to retry requests per message.
-   * Key: `${sessionId}:${failedTimestamp}` (same as dedup key)
+   * Key: `${sessionId}:${failedTimestamp}` (sessionId = userId:deviceId)
    * Value: number of retry responses sent
    * Prevents infinite retry loops
    */
@@ -134,23 +98,15 @@ export class SignalProtocolClientState {
     held: false,
   };
 
-  constructor(config: Partial<SignalProtocolClientStateConfig> = {}) {
-    this.config = { ...DEFAULT_STATE_CONFIG, ...config };
-  }
-
   // ============================================================================
   // State Views (for operation modules)
   // ============================================================================
 
   /**
-   * Get retry dedup state for retry operations
+   * Get retry response state for retry operations
    */
-  getRetryDedupState(): RetryDedupState {
-    return {
-      recentRetryRequests: this.recentRetryRequests,
-      lastRetryCleanupTime: this.lastRetryCleanupTime,
-      retryResponseCounts: this.retryResponseCounts,
-    };
+  getRetryResponseState(): RetryResponseState {
+    return { retryResponseCounts: this.retryResponseCounts };
   }
 
   /**
@@ -179,13 +135,6 @@ export class SignalProtocolClientState {
   // ============================================================================
 
   /**
-   * Update lastRetryCleanupTime after cleanup operation
-   */
-  setLastRetryCleanupTime(time: number): void {
-    this.lastRetryCleanupTime = time;
-  }
-
-  /**
    * Update lastPreKeyRotationTime after forced rotation
    */
   setLastPreKeyRotationTime(time: number): void {
@@ -204,9 +153,7 @@ export class SignalProtocolClientState {
    * Resets all tracking to initial state for clean shutdown
    */
   clearAll(): void {
-    this.recentRetryRequests.clear();
     this.retryResponseCounts.clear();
-    this.lastRetryCleanupTime = 0;
 
     this.lastPreKeyRotationTime = 0;
 
@@ -219,7 +166,6 @@ export class SignalProtocolClientState {
    */
   clearForStop(): void {
     this.lastPreKeyRotationTime = 0;
-    this.recentRetryRequests.clear();
     this.retryResponseCounts.clear();
     this.retryRateLimitCounts.clear();
 
@@ -232,50 +178,6 @@ export class SignalProtocolClientState {
   }
 
   // ============================================================================
-  // Cleanup Operations
-  // ============================================================================
-
-  /**
-   * Run all periodic cleanups.
-   * Safe to call frequently - internally throttled.
-   *
-   * @param now - Current timestamp (defaults to Date.now())
-   * @returns Object with count of entries cleaned
-   */
-  runPeriodicCleanup(now: number = Date.now()): { cleaned: number } {
-    let cleaned = 0;
-    cleaned += this.cleanupExpiredRetryEntries(now);
-    return { cleaned };
-  }
-
-  /**
-   * Cleanup expired retry dedup entries.
-   * Returns number of entries removed.
-   *
-   * @param now - Current timestamp (defaults to Date.now())
-   * @returns Number of entries removed
-   */
-  cleanupExpiredRetryEntries(now: number = Date.now()): number {
-    if (now - this.lastRetryCleanupTime < this.config.retryCleanupIntervalMs) {
-      return 0; // Not time yet
-    }
-
-    this.lastRetryCleanupTime = now;
-    let removed = 0;
-
-    for (const [key, timestamp] of this.recentRetryRequests) {
-      // Clean entries older than 2x the dedup window
-      if (now - timestamp > this.config.retryDedupWindowMs * 2) {
-        this.recentRetryRequests.delete(key);
-        this.retryResponseCounts.delete(key);
-        removed++;
-      }
-    }
-
-    return removed;
-  }
-
-  // ============================================================================
   // Diagnostics
   // ============================================================================
 
@@ -283,13 +185,11 @@ export class SignalProtocolClientState {
    * Get state sizes for debugging
    */
   getDebugInfo(): {
-    retryRequestsCount: number;
-    lastRetryCleanupTime: number;
+    retryResponseCount: number;
     lastPreKeyRotationTime: number;
   } {
     return {
-      retryRequestsCount: this.recentRetryRequests.size,
-      lastRetryCleanupTime: this.lastRetryCleanupTime,
+      retryResponseCount: this.retryResponseCounts.size,
       lastPreKeyRotationTime: this.lastPreKeyRotationTime,
     };
   }

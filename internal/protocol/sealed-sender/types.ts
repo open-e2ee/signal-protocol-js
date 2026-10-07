@@ -167,7 +167,7 @@ export enum SealedSenderContentType {
  *
  * `PLAINTEXT_CONTENT` is deliberately excluded. The reference uses it to carry
  * a decryption-error receipt when no session exists. This implementation
- * delivers those over a dedicated relay channel instead (`retryRequests`), so
+ * sends those as identified `retry_request` mailbox envelopes instead, so
  * nothing here produces the type and no decrypt path consumes it. Accepting it
  * would mean routing an unauthenticated payload through a path with no handler
  * for it. The whole point of the type is that it is not encrypted.

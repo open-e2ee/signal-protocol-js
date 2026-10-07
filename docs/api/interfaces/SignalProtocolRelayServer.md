@@ -983,7 +983,7 @@ A relay that reports them also returns `duplicate` and `expiresAt`.
 
 ### sendMultiRecipientUnidentified()?
 
-> `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `deliveryClass`, `recipientUserIds?`, `clientMessageId?`): `Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
+> `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `deliveryClass`, `recipientUserIds?`, `clientMessageId?`, `operationEpochMilliseconds?`): `Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
 
 Send a multi-recipient sealed sender message.
 
@@ -1027,6 +1027,15 @@ Original user IDs in same order as binary recipients
 
 `string`
 
+The operation ID of the send
+
+##### operationEpochMilliseconds?
+
+`number`
+
+The operation epoch that the relay
+  admits the post by. Without it, the relay uses `timestamp`
+
 #### Returns
 
 `Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
@@ -1066,30 +1075,6 @@ AES-GCM encrypted payload (JSON string with ciphertext, iv, authTag)
 #### Inherited from
 
 `ProvisioningService.sendProvisioningMessage`
-
-***
-
-### sendRetryRequest()?
-
-> `optional` **sendRetryRequest**(`request`): `Promise`\<`void`\>
-
-Send retry request to the original sender.
-
-The recipient calls this when decryption fails. The retry request stays
-unencrypted (per SESAME spec) and contains only the message ID
-and reason. Transport is TLS-secured.
-
-#### Parameters
-
-##### request
-
-[`RetryRequest`](RetryRequest.md)
-
-Retry request with sender/requester info and failed sequence number
-
-#### Returns
-
-`Promise`\<`void`\>
 
 ***
 
@@ -1218,47 +1203,6 @@ current state when it subscribes.
 (`state`) => `void`
 
 Callback for each transition
-
-#### Returns
-
-[`Unsubscribe`](../type-aliases/Unsubscribe.md)
-
-Unsubscribe function
-
-***
-
-### subscribeRetryRequests()?
-
-> `optional` **subscribeRetryRequests**(`userId`, `deviceId`, `handler`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
-
-Subscribe to incoming retry requests for this device.
-
-Called by sender to listen for retry requests from recipients.
-When a retry request arrives, the sender should:
-1. Look up the MessageRecord by sequence number
-2. Fetch the requester's current prekey bundle
-3. Establish a new session (X3DH/PQXDH)
-4. Re-encrypt and send the original message
-
-#### Parameters
-
-##### userId
-
-`string`
-
-Current user ID (the original sender)
-
-##### deviceId
-
-`number`
-
-This device's ID
-
-##### handler
-
-(`request`) => `Promise`\<`void`\>
-
-Callback for each incoming retry request
 
 #### Returns
 

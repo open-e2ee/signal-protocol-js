@@ -168,6 +168,7 @@ See the [client guide](./client/README.md#with-relay).
 - Device registration, unlink, and stale cleanup must stay consistent across active identity types.
 - Provisioning slot assignment is server-owned, not client-owned.
 - Public-key reads and writes must enforce correct account ownership rules.
+- An envelope gets one `id`, and that `id` stays the same on every redelivery. A relay that assigns its own ids delivers the SDK id as `clientMessageId`. See [docs/INTERFACES.md](./docs/INTERFACES.md).
 
 ### Storage implementations
 

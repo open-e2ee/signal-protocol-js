@@ -21,7 +21,6 @@ import type {
 } from "../remote/relay/types";
 import AsyncLock from "async-lock";
 import type { GroupAuthorization } from "../internal/groups/manager";
-
 import type { CompositeIdentityV1, IdentityType } from "../keys/types";
 import {
   createCompositeIdentityV1,
@@ -620,7 +619,17 @@ function decodeDeliveryWire(value: Uint8Array): HostedDeliveryWireEnvelope {
   ) {
     throw new Error("Signal Protocol Relay mailbox envelope is invalid");
   }
-  return wire as unknown as HostedDeliveryWireEnvelope;
+  // Only the fields that the sender encodes leave the wire. The Relay
+  // message, not the wire, gives the envelope ID.
+  return {
+    ciphertext: wire.ciphertext,
+    ...(wire.contentHint === undefined
+      ? {}
+      : { contentHint: wire.contentHint as number }),
+    messageType: wire.messageType as Envelope["messageType"],
+    timestamp: wire.timestamp as number,
+    version: DELIVERY_WIRE_VERSION,
+  };
 }
 
 export class HostedRelayHttpTransport
@@ -1204,9 +1213,13 @@ export class HostedRelayHttpTransport
       throw new Error("Signal Protocol Relay returned an invalid mailbox message");
     }
     const decoded = this.decodeMailboxEnvelope(candidate);
+    const messageId = requiredString(candidate, "messageId");
+    // The Relay message ID is the client message ID of the sender, and it
+    // is the ID of the envelope. The decoded wire never sets either.
     return {
-      id: requiredString(candidate, "messageId"),
       ...decoded,
+      id: messageId,
+      clientMessageId: messageId,
       serverTimestamp: requiredNumber(candidate, "enqueuedAt"),
     };
   }
@@ -1312,6 +1325,7 @@ export class HostedRelayHttpTransport
     deliveryClass: DeliveryClass,
     recipientUserIds?: string[],
     clientMessageId?: string,
+    operationEpochMilliseconds?: number,
   ) {
     return this.anonymousDelivery.send(
       sentMessageBase64,
@@ -1320,6 +1334,7 @@ export class HostedRelayHttpTransport
       deliveryClass,
       recipientUserIds,
       clientMessageId,
+      operationEpochMilliseconds,
     );
   }
 
@@ -1490,7 +1505,8 @@ export class HostedRelayHttpTransport
           },
           envelope: bytesToBase64(encodeDeliveryWire(envelope)),
           messageId,
-          operationEpochMilliseconds: envelope.timestamp,
+          operationEpochMilliseconds:
+            envelope.operationEpochMilliseconds ?? envelope.timestamp,
           publishableKey: this.connection.publishableKey,
           ...(envelope.recipientRegistrationId === undefined
             ? {}
@@ -1608,6 +1624,7 @@ export class HostedRelayHttpTransport
         const envelope: Envelope = {
           ...wire,
           id: messageId,
+          clientMessageId: messageId,
           deliveryClass: "ephemeral",
           targetUserId: this.session.canonicalAccountId,
           targetDeviceId: this.session.deviceId,
