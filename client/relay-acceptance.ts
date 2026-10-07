@@ -30,3 +30,17 @@ export function aggregateRelayAcceptance(
     }),
   };
 }
+
+/**
+ * The Relay's refusal of one delivery operation. OPERATION_EXPIRED: the
+ * operation epoch is outside the admission window or the replay horizon.
+ * RETRY_CONFLICT: the Relay holds another operation under the same message ID.
+ */
+export type RelayOperationRefusal = 'OPERATION_EXPIRED' | 'RETRY_CONFLICT';
+
+/** The operation refusal that a relay error carries as its code, if any. */
+export function relayOperationRefusal(error: unknown): RelayOperationRefusal | undefined {
+  if (error === null || typeof error !== 'object') return undefined;
+  const { code } = error as { code?: unknown };
+  return code === 'OPERATION_EXPIRED' || code === 'RETRY_CONFLICT' ? code : undefined;
+}

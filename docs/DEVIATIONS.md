@@ -821,10 +821,9 @@ checks extend the upstream certificate semantics.
 **`PLAINTEXT_CONTENT` (8) is a known wire value that this SDK rejects.**
 `libsignal` uses it to carry a `DecryptionErrorMessage` when no session exists
 to encrypt one under ([`sealed_sender.rs:2055-2075`][ss]). This SDK instead
-delivers decryption-error signals over a dedicated relay channel. Sesame §4.1
-defines that channel, and the SDK builds it from the `retryRequests` table and
-`sendRetryRequest`. No send path produces the type, and no decrypt path consumes
-it. The envelope parse therefore
+sends a decryption-error signal as an identified mailbox envelope with
+`messageType: 'retry_request'` (Sesame §4.1, `client/retry-request-envelope.ts`).
+No send path produces the type, and no decrypt path consumes it. The envelope parse therefore
 rejects the value (`internal/protocol/sealed-sender/types.ts`) rather than map it
 to an envelope type with no handler.
 
@@ -905,7 +904,7 @@ signing key as 33 bytes where the SDK uses 32.
 
 ### 7.2 Message-key derivation matches the reference
 
-Reviewed: 2026-10-02.
+Reviewed: 2026-10-06.
 
 The SDK derives Sender Keys message material with HKDF-SHA256 Extract and
 Expand. Its input is `HMAC-SHA256(chain_key, 0x01)`, its salt is 32 zero bytes,

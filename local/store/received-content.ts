@@ -3,11 +3,18 @@ import type { Envelope } from '../../remote/relay/types';
 import type { SignalProtocolLocalStore, ReceivedContent } from '../../types/api';
 import { RELIABILITY_RECORD_TTL_MS } from './reliability';
 
-/** Bind recovery to the exact envelope and the device that consumed it. */
+/**
+ * Bind recovery to the device that consumed an envelope, and to the
+ * envelope ID, the sender, the message type and the ciphertext of the
+ * envelope. The timestamps are not part of the ID: a push can omit the
+ * server timestamp that a pull of the same envelope sets.
+ */
 export async function receivedContentId(
   userId: string,
   deviceId: number,
-  envelope: Envelope
+  envelope: Pick<Envelope, 'senderUserId' | 'senderDeviceId' | 'ciphertext' | 'id'> & {
+    messageType?: string;
+  }
 ): Promise<string> {
   const ciphertext =
     typeof envelope.ciphertext === 'string'
@@ -22,13 +29,28 @@ export async function receivedContentId(
         envelope.senderUserId,
         envelope.senderDeviceId,
         envelope.messageType,
-        envelope.timestamp ?? null,
-        envelope.serverTimestamp ?? null,
         ciphertext,
       ])
     )
   );
   return bytesToBase64(digest);
+}
+
+/**
+ * The fingerprint of an envelope as the Relay delivered it. Every receive
+ * path gives one value for one delivered envelope: an absent message type
+ * is `ciphertext`, as the Relay delivers it, a sealed envelope is hashed
+ * before any unseal, and the timestamps are not part of the value.
+ */
+export async function deliveredEnvelopeFingerprint(
+  userId: string,
+  deviceId: number,
+  envelope: Parameters<typeof receivedContentId>[2]
+): Promise<string> {
+  return receivedContentId(userId, deviceId, {
+    ...envelope,
+    messageType: envelope.messageType ?? 'ciphertext',
+  });
 }
 
 export function receivedContentKey(id: string): string {

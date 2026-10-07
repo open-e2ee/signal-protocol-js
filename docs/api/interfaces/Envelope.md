@@ -37,6 +37,9 @@ namespace. Two sealed senders reusing the same value would silently
 collapse into one stored message. The second sender would receive the
 first message's receipt.
 
+A relay that assigns its own `id` delivers this value with the
+envelope. A retry request names its attempt here.
+
 ***
 
 ### contentHint?
@@ -65,13 +68,15 @@ Exact persistence and wake behavior for this encrypted envelope.
 
 > `optional` **id?**: `string`
 
-Server-assigned envelope ID (set by server)
+Server-assigned envelope ID (set by server). A relay gives an envelope
+one `id` and keeps it on every redelivery of that envelope. The
+at-most-once rule of the client depends on it.
 
 ***
 
 ### messageType
 
-> **messageType**: `"ciphertext"` \| `"prekey_bundle"` \| `"sender_key"` \| `"server_delivery_receipt"` \| `"unidentified_sender"`
+> **messageType**: `"ciphertext"` \| `"prekey_bundle"` \| `"sender_key"` \| `"server_delivery_receipt"` \| `"unidentified_sender"` \| `"retry_request"`
 
 Relay-visible envelope type.
 A ciphertext envelope holds the client-to-client types (delivery_receipt,
@@ -83,6 +88,9 @@ relay contract carries only the outer envelope type.
 - sender_key: Group message encrypted with sender keys
 - server_delivery_receipt: Server-generated delivery receipts
 - unidentified_sender: Sealed sender protocol messages
+- retry_request: A request that the original sender device resend a
+  message that the requester could not decrypt. The payload is not
+  encrypted. The envelope sender is the requester.
 
 `sender_key` tells the receiver to decrypt the payload as a framed
 SenderKeyMessage rather than as a pairwise ratchet message. It names no
@@ -90,6 +98,16 @@ group: the receiver reads the opaque distribution identifier out of the
 frame and resolves the group from its own sender key store. The relay
 therefore learns that an envelope is group traffic, which its fan-out
 pattern already implies, but not which group.
+
+***
+
+### operationEpochMilliseconds?
+
+> `optional` **operationEpochMilliseconds?**: `number`
+
+The operation epoch that the relay admits the post by. Without it, the
+relay uses `timestamp`. A retry resend keeps the original `timestamp`, so
+it posts the time of its first attempt here.
 
 ***
 

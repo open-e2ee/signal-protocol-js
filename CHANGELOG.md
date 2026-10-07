@@ -1,5 +1,181 @@
 # Changelog
 
+## 9.5.0
+
+- **Breaking: a retry request is now a mailbox envelope.** Before, a
+  recipient that could not decrypt a message sent the retry request on a
+  separate relay channel, and the Signal Protocol Relay had no such
+  channel, so a hosted client could not ask for a resend. Now the
+  recipient sends an identified `retry_request` envelope to the sender
+  device through `send()`, on every relay. The receiving client takes the
+  requester from the envelope sender, never from the payload. It resends
+  only to the device that asked, and it keeps the request when the resend
+  fails, so the next pull tries again. It acknowledges a malformed retry
+  request and drops it. `SignalProtocolRelayServer` no longer has a
+  separate retry-request channel, and `DefaultSignalProtocolClient` no
+  longer starts a retry subscription. A custom relay must carry
+  `messageType: 'retry_request'` like any other envelope. Each request,
+  resend and null message carries its retry family ID in its
+  `clientMessageId`. The sender reads the request attempt from it, and the
+  requester finds the failed envelope of a resend or a null message by
+  it. So a relay that assigns its own envelope IDs must deliver the
+  `clientMessageId` with the envelope on every delivery path, as the
+  in-memory relay and the Convex subscription and poll do. The client
+  keeps the delivered envelope ID for its processed record and its
+  acknowledgment. The client drops a request that carries a retry ID
+  under another ID.
+  `ProcessEnvelopeOptions.sendRetryRequest` now receives that envelope. The
+  Convex component no longer has a retry-request table, its cron or its
+  three functions, so deploy the new component.
+- **Fixed: a client asks the sender of a sealed message for a resend.**
+  Before, when a sealed message failed to decrypt inside the seal, the
+  client used the sender of the outer envelope. For a hosted anonymous
+  envelope that sender is empty, so the client could not ask for a resend
+  and the message failed again at each pull. Now the client asks the
+  sender device that it finds inside the seal. When the seal itself fails
+  to open, the message names no sender. For a resend or a null message,
+  the retry request record names the device that the request went to, so
+  the client asks that device for the next attempt, on each receive path.
+  It marks the message processed and acknowledges it only after that
+  request posts. For any other message, the client sends no retry request
+  and writes a log line. A foreground delivery acknowledges that message,
+  and a background pull keeps it, as for any other message that fails to
+  decrypt.
+- **Fixed: a sealed message keeps its content hint.** Before, a sealed
+  message carried the default content hint inside the seal, and the
+  receiver did not read it. A sealed IMPLICIT message, such as the null
+  message of a retry reset, that failed to decrypt then caused a retry
+  request. Now the sender seals the content hint of the message, and the
+  receiver puts it on the unsealed envelope. A sealed IMPLICIT message
+  that fails to decrypt causes no retry request.
+- **Fixed: `processIncomingEnvelope()` sends one retry request for each
+  failed envelope.** Before, when `markDelivered` failed, the next
+  processing of the same envelope sent a second retry request. Now the
+  client stores the encrypted retry request under the failed envelope ID,
+  as on the relay subscription path. A later processing of the same
+  envelope posts the stored request again, so the relay sees one
+  operation. Each post counts toward the retry rate limit. The record holds
+  a fingerprint of the envelope as the Relay delivered it, the same on
+  every receive path. The fingerprint covers the envelope ID, the sender,
+  the message type and the ciphertext, but not the timestamps, so a push
+  without a server timestamp and a pull with one match. When the relay
+  gives the same envelope ID with changed content, the client sends no
+  retry request, keeps the envelope unacknowledged and writes a log line.
+- **Fixed: one failed message gets one resend.** Before, each retry request
+  had its own ID, so two requests for one failed message gave two resends,
+  and the requester decrypted both. Now the requester keeps one retry
+  request record for each failed envelope. The record holds a random retry
+  ID, and that ID names the request family on the wire: the request is
+  `<retry ID>:retry-request`, the resend is `<retry ID>:resend`, and the
+  null message of a retry reset is `<retry ID>:null`. Each attempt from 2
+  adds `:<n>`, for example `<retry ID>:retry-request:2`. The failed
+  envelope ID travels only in the request payload, in the new
+  `failedEnvelopeId` and `retryId` fields. When the Relay refuses the
+  stored request as expired, or when a resend or a null message fails to
+  decrypt, the requester encrypts the next request attempt under the same
+  retry ID, on each receive path. A second delivery of the same failed
+  resend starts no new request attempt. The resend and the null message
+  carry the attempt number of the request that they answer, so the answer
+  to `<retry ID>:retry-request:2` is `<retry ID>:resend:2`. The sender
+  encrypts one resend for each request attempt and stores it, so a second
+  delivery of the same request attempt posts the stored resend again. A
+  retry request ciphertext is at most 2,048 characters, and a failed
+  envelope ID is at most 128 characters.
+- **Fixed: a resend of an older message reaches the Signal Protocol
+  Relay.** Before, a resend posted the original message time as its
+  operation epoch. The Relay refuses an epoch older than 5 minutes, so it
+  refused the resend of an older message. Now the resend keeps the original
+  timestamp in the envelope, and posts the epoch of its stored attempt. A
+  new encryption after the admission window posts a fresh epoch under the
+  same attempt ID. `Envelope.operationEpochMilliseconds` and a new last
+  parameter of `sendMultiRecipientUnidentified()` carry that epoch to the
+  relay.
+- **Fixed: a failed resend repeats the same post.** Before, each attempt
+  encrypted the message again. A second attempt under the same client
+  message ID then carried other bytes, and the Relay refused it as a retry
+  conflict. Now each resend attempt stores its encrypted bytes and its
+  epoch, and a second delivery of the same request attempt posts them
+  again. A later request attempt gets a new encryption under the ID of
+  that request attempt, for example `<retry ID>:resend:2`. When the Relay
+  refuses the stored bytes as expired, the client encrypts again with a
+  fresh epoch under the same ID. A retry conflict to a resend post means
+  that the Relay holds an earlier encryption under that ID, so the attempt
+  is complete. When the Relay admits the new bytes after the requester
+  processed the earlier encryption, the requester drops them. The null
+  message of a retry reset has its own IDs. The client keeps the records
+  for 30 days, so a later delivery of the same request attempt posts them
+  again.
+- **Fixed: the application gets each message at most once, unless a local
+  store write fails after the application got the message.** The Relay
+  frees a message ID after the acknowledgment, so a second resend attempt
+  can arrive after the first. The client processes one resend or the failed
+  envelope itself for each failed envelope. When a resend decrypts, the
+  client marks the failed envelope as processed, and it acknowledges a
+  later delivery of the failed envelope and drops it. When the failed
+  envelope decrypts on a later delivery, the client drops each resend for
+  it. It acknowledges each dropped envelope and does not decrypt it. This
+  applies to the relay subscription, to `receiveIncomingEnvelopes()` and to
+  `processIncomingEnvelope()`, which throws `MESSAGE_DUPLICATE` for a
+  dropped envelope. Two attempts that arrive at the same time are processed
+  one after the other. A resend or a null message that fails to decrypt
+  while the retry rate limit refuses its request stays unacknowledged, so a
+  later delivery asks again. When the client cannot store that a resend or
+  the failed envelope decrypted, it writes a warning with the behavior
+  `RETRY_FULFILL_WRITE_FAILED` on each receive path, and continues as for
+  any decrypted envelope: the relay subscription acknowledges it,
+  `receiveIncomingEnvelopes()` returns its ID as processed, and
+  `processIncomingEnvelope()` returns the plaintext. A redelivery of the
+  failed envelope or of a resend may then give the message again. The
+  client stores that the application got the content as the `fulfilled`
+  flag of the processed record of the failed envelope, in one write.
+  `getProcessedEnvelope()` returns the flag, and `storeProcessedEnvelope()`
+  takes it as a new last parameter.
+- **Fixed: the application never gets a null message.** Before, a
+  decrypted null message of a retry reset reached `onMessageDecrypted` as
+  the content `{"nullMessage":{}}`, and `processIncomingEnvelope()`
+  returned it. Now the client consumes a null message when the content
+  adapter reports `nullMessage: true`, and a custom adapter must report it
+  for its own null encoding. The client marks the null message processed
+  and acknowledges it on each receive path, and
+  `processIncomingEnvelope()` throws `MESSAGE_DUPLICATE` for it. A null
+  message answers a retry request when the sender has no plaintext. It
+  marks its failed envelope processed, so the client drops a redelivery of
+  that envelope, but it does not mark the content as delivered. A content
+  resend for the same failed envelope that arrives later, of any attempt,
+  is decrypted and given to the application once. When the client cannot
+  store the processed record of a null message or of its failed envelope,
+  it writes a warning with the behavior `RETRY_NULL_WRITE_FAILED` and
+  still consumes the null message, so `processIncomingEnvelope()` still
+  throws `MESSAGE_DUPLICATE`. A redelivery of the failed envelope may then
+  give the message.
+- **Breaking: a content adapter must decide the null message.**
+  `InspectedSignalProtocolContent.nullMessage` is now a required
+  `boolean`. A custom content adapter must set it on every inspect result,
+  and report `nullMessage: true` for its own null encoding. The default
+  adapter sets it.
+- **Fixed: the hosted transport takes envelope IDs from the Relay.**
+  Before, the hosted transport spread the decoded wire JSON over the
+  envelope, so a sender could set `id` or `clientMessageId` in the wire
+  and replace the Relay message ID. Now the transport keeps only the wire
+  fields that a sender encodes: the ciphertext, the content hint, the
+  message type, the timestamp and the version. The envelope ID and the
+  `clientMessageId` both come from the Relay message ID, on the pull,
+  subscription and ephemeral paths.
+- **Fixed: a late resend attempt is still dropped.** A sender now refuses
+  a retry request for a message sent more than 30 days ago. The Relay can
+  keep the last resend post for 30 more days, so the requester keeps its
+  retry records for 60 days.
+- **Fixed: a processed envelope ID with new content is acknowledged.**
+  Before, when the relay gave a processed envelope ID with changed bytes,
+  the client threw on each pull and never acknowledged the envelope. The
+  Relay can reuse an ID after it forgets a row. Now the client
+  acknowledges the envelope, drops it and writes a debug log line.
+  `hasProcessedEnvelope()` no longer takes a fingerprint, and the new
+  `getProcessedEnvelope()` returns the stored record.
+- **Breaking: `runPeriodicCleanup()` is removed.** It cleaned only a
+  retry deduplication map that the client no longer fills, so it did
+  nothing. Remove each call to it.
+
 ## 9.4.0
 
 - **Breaking: `deliveryReceipts` defaults to `'auto'`.** Before, the default

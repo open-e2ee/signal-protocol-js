@@ -54,18 +54,19 @@ from being re-fetched indefinitely.
 
 ### sendRetryRequest?
 
-> `optional` **sendRetryRequest?**: (`request`) => `Promise`\<`void`\>
+> `optional` **sendRetryRequest?**: (`envelope`) => `Promise`\<`void`\>
 
 Callback to send retry requests when no relay is available.
 
 Required for background processing where there is no WebSocket relay.
-The callback receives a fully-formed RetryRequest created by SesameManager.
+The callback receives a `retry_request` envelope for the device that sent
+the failed message. Deliver it to that device as any other envelope.
 
 #### Parameters
 
-##### request
+##### envelope
 
-[`RetryRequest`](RetryRequest.md)
+[`Envelope`](Envelope.md)
 
 #### Returns
 

@@ -14,6 +14,18 @@
 
 ***
 
+### nullMessage
+
+> **nullMessage**: `boolean`
+
+True for a null message. A sender answers a retry request with one
+when it no longer has the plaintext. A null message carries no
+content. The client consumes a null message when the content adapter
+reports `nullMessage: true`, and never gives it to the application.
+A custom adapter must report it for its own null encoding.
+
+***
+
 ### profileKey?
 
 > `optional` **profileKey?**: `string`

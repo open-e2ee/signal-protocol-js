@@ -5,22 +5,22 @@
  * Handles retry request creation, sending, and response handling.
  */
 
-import type { SignalProtocolRelayServer } from '../remote/relay/types';
+import type { Envelope, SignalProtocolRelayServer } from '../remote/relay/types';
 import type { PreKeyBundle } from '../keys';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { ContentHint } from '../types/messages';
 import { ProtocolAddress } from '../types/address';
 import { determineRetryReason } from './retry-utils';
-import { rethrowRelayWorkStopped } from './relay-work';
+import { postRetryRequest } from './retry-request-envelope';
+import type { RetryFamilyReceive } from './retry-family';
 import type {
   SignalProtocolClientContext,
   IncomingEnvelope,
   ProcessEnvelopeOptions,
-  SendResult,
-  DataMessageInput,
 } from './types';
 import {
   RetryReason,
+  SesameError,
   type SesameManager,
   type SesameMessage,
   type RetryRequest,
@@ -30,20 +30,22 @@ import {
   MESSAGE_RECORD_TTL_MS,
   MAX_RETRY_RESPONSES_PER_MESSAGE,
 } from './constants';
-import { DEFAULT_STATE_CONFIG, SIGNAL_PROTOCOL_CLIENT_CONSTANTS } from './state';
+import { SIGNAL_PROTOCOL_CLIENT_CONSTANTS } from './state';
 import { base64ToBytes } from '../internal/crypto/utils';
 import type { Base64 } from '../types/utils';
+import type { MessageRecord } from '../types/api';
+import {
+  getRetryResend,
+  RELIABILITY_RECORD_TTL_MS,
+  type RetryResendTarget,
+} from '../local/store/reliability';
 
 /**
- * State for retry deduplication (passed by client, mutated in place)
+ * Retry response state (passed by client, mutated in place)
  */
 export {};
-export interface RetryDedupState {
-  /** Tracks recent retry requests: key = `${sessionId}:${timestamp}`, value = request time */
-  recentRetryRequests: Map<string, number>;
-  /** Timestamp of last cleanup */
-  lastRetryCleanupTime: number;
-  /** Tracks retry response counts per message: key = dedupKey, value = response count */
+export interface RetryResponseState {
+  /** Retry responses per message: key = `${sessionId}:${failedTimestamp}`, value = response count */
   retryResponseCounts: Map<string, number>;
 }
 
@@ -55,6 +57,12 @@ export interface RetryContext extends SignalProtocolClientContext {
 }
 
 /**
+ * The request attempt that a retry request envelope is: the failed envelope,
+ * the retry ID of its request record and the ID of the request envelope.
+ */
+export type RetryRequestAttempt = Omit<RetryResendTarget, 'kind'>;
+
+/**
  * Callbacks for operations that need to delegate back to SignalProtocolClient
  */
 export interface RetryCallbacks {
@@ -62,12 +70,26 @@ export interface RetryCallbacks {
   archiveSession: (address: ProtocolAddress) => Promise<void>;
   /** Establish a new session with prekey bundle */
   establishSession: (address: ProtocolAddress, bundle: PreKeyBundle) => Promise<void>;
-  /** Send a message to a recipient */
-  send: (
-    recipientId: string,
-    content: DataMessageInput | string | Uint8Array,
-    options?: { timestamp?: number; contentHint?: ContentHint }
-  ) => Promise<SendResult>;
+  /**
+   * Encrypt content for one device of a user and post it to that device
+   * only. The send makes no sent-sync transcript. With a retry target, the
+   * sender keeps one resend record for the device and the failed envelope.
+   * A call for the request attempt and the kind of that record posts its
+   * stored bytes again under their own ID. A call for another request
+   * attempt or kind encrypts again, and the resend takes the attempt
+   * number of the request. A new encryption for the same request attempt,
+   * as after the Relay refuses the stored bytes as expired, posts the same
+   * ID: the processed ledger of the requester and the RETRY_CONFLICT
+   * answer of the Relay cover the new bytes. Null content posts only a
+   * stored attempt. It returns false only when null content has no stored
+   * attempt to post.
+   */
+  resend: (
+    userId: string,
+    deviceId: number,
+    content: string | null,
+    options: { timestamp: number; contentHint?: ContentHint; retry?: RetryResendTarget }
+  ) => Promise<boolean>;
   /** Generate replacement prekeys and upload their public material. */
   forcePreKeyRotation: () => Promise<void>;
 }
@@ -78,10 +100,6 @@ export interface RetryCallbacks {
 export interface RetryConfig {
   /** Debounce interval for forced prekey rotations in ms */
   keyRotationDebounceMs: number;
-  /** Deduplication window for retry requests in ms */
-  retryDedupWindowMs: number;
-  /** Cleanup interval for retry dedup entries in ms */
-  retryCleanupIntervalMs: number;
 }
 
 // Max 10 retry requests per sender per 3-hour window
@@ -147,13 +165,8 @@ export function checkRetryRateLimit(
 
 /**
  * Default configuration values
- * Imports common values from state.ts to avoid duplication
  */
 export const DEFAULT_RETRY_CONFIG: RetryConfig = {
-  // Import shared values from SignalProtocolClientStateConfig
-  retryDedupWindowMs: DEFAULT_STATE_CONFIG.retryDedupWindowMs,
-  retryCleanupIntervalMs: DEFAULT_STATE_CONFIG.retryCleanupIntervalMs,
-  // Retry-specific values
   keyRotationDebounceMs: SIGNAL_PROTOCOL_CLIENT_CONSTANTS.KEY_ROTATION_DEBOUNCE_MS,
 };
 
@@ -191,13 +204,62 @@ async function markMessageDeliveredSilently(
 async function sendNullMessageForRetryReset(
   callbacks: RetryCallbacks,
   retryRequest: RetryRequest,
-  ctx: RetryContext
-): Promise<void> {
-  await callbacks.send(retryRequest.requesterUserId, ctx.contentAdapter.serializeNullMessage(), {
-    // Reuse failed timestamp for correlation with the retry request.
-    timestamp: retryRequest.failedTimestamp,
-    // The reference implementation treats null-message reset responses as implicit/protocol content.
-    contentHint: ContentHint.Implicit,
+  ctx: RetryContext,
+  retry: RetryRequestAttempt | undefined
+): Promise<boolean> {
+  return await callbacks.resend(
+    retryRequest.requesterUserId,
+    retryRequest.requesterDeviceId,
+    ctx.contentAdapter.serializeNullMessage(),
+    {
+      // Reuse failed timestamp for correlation with the retry request.
+      timestamp: retryRequest.failedTimestamp,
+      // The reference implementation treats null-message reset responses as implicit/protocol content.
+      contentHint: ContentHint.Implicit,
+      ...(retry && { retry: { ...retry, kind: 'null' } }),
+    }
+  );
+}
+
+/**
+ * Post the stored resend or null message that answered this request
+ * envelope again: the post of that answer did not complete. It does no
+ * session work. It returns false when the sender stored no answer to this
+ * request envelope, or when the Relay refuses the stored answer as expired
+ * and the plaintext is gone. A stored answer to another request envelope is
+ * an earlier attempt: the caller answers this one with a new encryption.
+ */
+async function replayStoredResend(
+  ctx: RetryContext,
+  retryRequest: RetryRequest,
+  record: MessageRecord | null,
+  callbacks: RetryCallbacks,
+  retry: RetryRequestAttempt
+): Promise<boolean> {
+  const { requesterUserId, requesterDeviceId } = retryRequest;
+  const stored = await getRetryResend(
+    ctx.storage,
+    requesterUserId,
+    requesterDeviceId,
+    retry.failedEnvelopeId
+  );
+  if (stored?.requestEnvelopeId !== retry.requestEnvelopeId) return false;
+  if (stored.kind === 'null') {
+    const posted = await sendNullMessageForRetryReset(callbacks, retryRequest, ctx, retry);
+    // As after the first post, delete the record that the send of the null
+    // message stored, so no later request resends the null message as content.
+    await ctx.storage
+      .deleteMessageRecord(`${requesterUserId}:${requesterDeviceId}`, retryRequest.failedTimestamp)
+      .catch(() => {
+        // Non-fatal: the null message is posted.
+      });
+    return posted;
+  }
+  // The plaintext is gone after a delivery receipt or the record TTL.
+  const plaintext = record?.recipientUserId === requesterUserId ? record.plaintext : null;
+  return await callbacks.resend(requesterUserId, requesterDeviceId, plaintext, {
+    timestamp: record?.timestamp ?? retryRequest.failedTimestamp,
+    retry: { ...retry, kind: 'resend' },
   });
 }
 
@@ -211,8 +273,17 @@ export function getSessionKey(userId: string, deviceId: number): string {
 /**
  * Send retry request for failed decryption (internal)
  *
- * Uses relay if available, otherwise falls back to options callback.
+ * Sends a `retry_request` envelope to the failed sender device through the
+ * relay. Without a relay, it gives the envelope to the options callback.
  * Handles IMPLICIT content type discarding, rate limiting, and stale prekey rotation.
+ * An envelope without an identified sender, or from the local device, gets
+ * one warn line and no request. The request is stored under the failed
+ * envelope ID before its post, and a later failure of the same envelope posts
+ * the stored request again. The rate limit counts each post. A failed resend
+ * or null message asks again for its failed envelope through the retry
+ * family, whatever its content hint. A member that fails with an error that
+ * is not retryable posts nothing here, and its redelivery on the pull path
+ * asks again.
  *
  * @param ctx - Retry context with dependencies
  * @param envelope - The failed message envelope
@@ -220,6 +291,9 @@ export function getSessionKey(userId: string, deviceId: number): string {
  * @param rateLimitState - State for rate limiting (mutated in place)
  * @param callbacks - Callbacks for operations needing SignalProtocolClient
  * @param config - Configuration constants
+ * @param family - The retry family of the envelope
+ * @param fingerprint - The fingerprint of the envelope as the Relay delivered
+ *   it, before any unseal. The stored request binds to it.
  * @param options - Optional transport callbacks (for background without relay)
  */
 export async function sendRetryRequestInternal(
@@ -229,12 +303,14 @@ export async function sendRetryRequestInternal(
   rateLimitState: RetryRateLimitState,
   callbacks: Pick<RetryCallbacks, 'forcePreKeyRotation'>,
   config: RetryConfig,
+  family: RetryFamilyReceive,
+  fingerprint: string | undefined,
   options?: ProcessEnvelopeOptions
 ): Promise<void> {
   try {
     // Implicit messages (typing indicators, receipts) do not store MessageRecords -
     // retry would always fail. The Signal Protocol behavior is to discard it.
-    if (isImplicitContentType(envelope)) {
+    if (family.member === undefined && isImplicitContentType(envelope)) {
       ctx.logger.debug('Skipping retry request for protocol message (IMPLICIT)', {
         category: 'E2EE',
         data: {
@@ -248,102 +324,145 @@ export async function sendRetryRequestInternal(
       return;
     }
 
+    // An anonymous envelope names no device to ask.
+    if (!envelope.senderUserId || !(envelope.senderDeviceId >= 1)) {
+      ctx.logger.warn('No retry request for a failed envelope without an identified sender', {
+        category: 'E2EE',
+        data: {
+          envelopeId: envelope.id,
+          messageType: envelope.messageType,
+          behavior: 'RETRY_REQUEST_SKIP',
+        },
+      });
+      return;
+    }
+
+    // A device never asks itself for a resend. Its resend would fail again.
+    if (envelope.senderUserId === ctx.userId && envelope.senderDeviceId === ctx.deviceId) {
+      ctx.logger.warn('No retry request for a failed envelope from the local device', {
+        category: 'E2EE',
+        data: {
+          envelopeId: envelope.id,
+          messageType: envelope.messageType,
+          behavior: 'RETRY_REQUEST_SKIP',
+        },
+      });
+      return;
+    }
+
     const retryReason = determineRetryReason(error);
 
-    // Receiver-side rate limiting
-    if (!checkRetryRateLimit(rateLimitState, envelope.senderUserId)) {
-      ctx.logger.warn('Retry rate limit exceeded for sender', {
-        category: 'E2EE',
-        data: { senderId: envelope.senderUserId, windowMs: RETRY_REQUEST_WINDOW_MS },
-      });
-      await markMessageDeliveredSilently(envelope.id, ctx.relay, ctx.logger, options);
-      return;
-    }
+    // Send via relay (foreground) or callback (background)
+    const relay = ctx.relay;
+    const send = relay ? (request: Envelope) => relay.send(request) : options?.sendRetryRequest;
+    const createRequest = async (): Promise<RetryRequest> => {
+      // Rotate before sending a retry request for a stale-prekey failure.
+      const isStalePreKeyIndicator =
+        error instanceof EncryptionError &&
+        (error.code === EncryptionErrorCode.PREKEY_NOT_FOUND ||
+          (error.code === EncryptionErrorCode.DECRYPTION_FAILED &&
+            envelope.messageType === 'prekey_bundle'));
 
-    // Rotate before sending a retry request for a stale-prekey failure.
-    const isStalePreKeyIndicator =
-      error instanceof EncryptionError &&
-      (error.code === EncryptionErrorCode.PREKEY_NOT_FOUND ||
-        (error.code === EncryptionErrorCode.DECRYPTION_FAILED &&
-          envelope.messageType === 'prekey_bundle'));
+      if (isStalePreKeyIndicator) {
+        // Debounce to prevent excessive rotations
+        const now = Date.now();
+        const timeSinceLastRotation = now - rateLimitState.lastPreKeyRotationTime;
 
-    if (isStalePreKeyIndicator) {
-      // Debounce to prevent excessive rotations
-      const now = Date.now();
-      const timeSinceLastRotation = now - rateLimitState.lastPreKeyRotationTime;
-
-      if (timeSinceLastRotation > config.keyRotationDebounceMs || timeSinceLastRotation < 0) {
-        try {
-          if (ctx.relay) {
-            await callbacks.forcePreKeyRotation();
-            rateLimitState.lastPreKeyRotationTime = Date.now();
-            ctx.logger.info('Forced prekey rotation before retry (relay)', {
+        if (timeSinceLastRotation > config.keyRotationDebounceMs || timeSinceLastRotation < 0) {
+          try {
+            if (ctx.relay) {
+              await callbacks.forcePreKeyRotation();
+              rateLimitState.lastPreKeyRotationTime = Date.now();
+              ctx.logger.info('Forced prekey rotation before retry (relay)', {
+                category: 'E2EE',
+                data: { errorCode: (error as EncryptionError).code },
+              });
+            } else if (options?.forcePreKeyRotation) {
+              await options.forcePreKeyRotation();
+              rateLimitState.lastPreKeyRotationTime = Date.now();
+              ctx.logger.info('Forced prekey rotation before retry (callback)', {
+                category: 'E2EE',
+                data: { errorCode: (error as EncryptionError).code },
+              });
+            } else {
+              ctx.logger.warn('Cannot force prekey rotation: no relay or callback available', {
+                category: 'E2EE',
+                data: { errorCode: (error as EncryptionError).code },
+              });
+            }
+          } catch (rotationError) {
+            ctx.logger.warn('Failed to force prekey rotation before retry', {
               category: 'E2EE',
-              data: { errorCode: (error as EncryptionError).code },
-            });
-          } else if (options?.forcePreKeyRotation) {
-            await options.forcePreKeyRotation();
-            rateLimitState.lastPreKeyRotationTime = Date.now();
-            ctx.logger.info('Forced prekey rotation before retry (callback)', {
-              category: 'E2EE',
-              data: { errorCode: (error as EncryptionError).code },
-            });
-          } else {
-            ctx.logger.warn('Cannot force prekey rotation: no relay or callback available', {
-              category: 'E2EE',
-              data: { errorCode: (error as EncryptionError).code },
+              data: { error: (rotationError as Error).message },
             });
           }
-        } catch (rotationError) {
-          ctx.logger.warn('Failed to force prekey rotation before retry', {
+        } else {
+          ctx.logger.debug('Skipping prekey rotation (debounced)', {
             category: 'E2EE',
-            data: { error: (rotationError as Error).message },
+            data: {
+              timeSinceLastRotationMs: timeSinceLastRotation,
+              debounceMs: config.keyRotationDebounceMs,
+            },
           });
         }
-      } else {
-        ctx.logger.debug('Skipping prekey rotation (debounced)', {
-          category: 'E2EE',
-          data: {
-            timeSinceLastRotationMs: timeSinceLastRotation,
-            debounceMs: config.keyRotationDebounceMs,
-          },
-        });
       }
-    }
 
-    // Create SesameMessage for sesameManager
-    let failedCiphertext: Uint8Array<ArrayBufferLike> = new Uint8Array();
-    try {
-      failedCiphertext = base64ToBytes(envelope.ciphertext as Base64);
-    } catch {
-      // Keep empty ciphertext for malformed envelopes. The retry request still proceeds.
-    }
+      // Create SesameMessage for sesameManager
+      let failedCiphertext: Uint8Array<ArrayBufferLike> = new Uint8Array();
+      try {
+        // A seal that fails to open gives no ratchet key.
+        if (envelope.messageType !== 'unidentified_sender') {
+          failedCiphertext = base64ToBytes(envelope.ciphertext as Base64);
+        }
+      } catch {
+        // Keep empty ciphertext for malformed envelopes. The retry request still proceeds.
+      }
 
-    const failedMessage: SesameMessage = {
-      senderUserId: envelope.senderUserId,
-      senderDeviceId: envelope.senderDeviceId,
-      recipientUserId: ctx.userId,
-      recipientDeviceId: ctx.deviceId,
-      sessionId: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
-      // Used to extract sender ratchet key for SDK retry validation.
-      ciphertext: failedCiphertext,
-      isInitiating: false,
-      initHeader: null,
-      timestamp: envelope.timestamp,
+      const failedMessage: SesameMessage = {
+        senderUserId: envelope.senderUserId,
+        senderDeviceId: envelope.senderDeviceId,
+        recipientUserId: ctx.userId,
+        recipientDeviceId: ctx.deviceId,
+        sessionId: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
+        // Used to extract sender ratchet key for SDK retry validation.
+        ciphertext: failedCiphertext,
+        isInitiating: false,
+        initHeader: null,
+        timestamp: envelope.timestamp,
+      };
+
+      // Create retry request via SesameManager
+      return ctx.sesameManager.createRetryRequest(failedMessage, retryReason);
     };
-
-    // Create retry request via SesameManager
-    const retryRequest = await ctx.sesameManager.createRetryRequest(failedMessage, retryReason);
-
-    // Send via relay (foreground) or callback (background)
-    if (ctx.relay?.sendRetryRequest) {
-      await ctx.relay.sendRetryRequest(retryRequest);
-    } else if (options?.sendRetryRequest) {
-      await options.sendRetryRequest(retryRequest);
-    } else {
-      ctx.logger.warn('Cannot send retry request: no relay or callback', { category: 'E2EE' });
-      return;
-    }
+    const posted = await family.requestRetry(fingerprint, async (failed) => {
+      // Receiver-side rate limiting. A post of a stored request counts too.
+      if (!checkRetryRateLimit(rateLimitState, envelope.senderUserId)) {
+        ctx.logger.warn('Retry rate limit exceeded for sender', {
+          category: 'E2EE',
+          data: { senderId: envelope.senderUserId, windowMs: RETRY_REQUEST_WINDOW_MS },
+        });
+        // A member stays unacknowledged, so its redelivery after the
+        // window asks again.
+        if (family.member === undefined) {
+          await markMessageDeliveredSilently(envelope.id, ctx.relay, ctx.logger, options);
+        }
+        return false;
+      }
+      if (!send) {
+        ctx.logger.warn('Cannot send retry request: no relay or callback', { category: 'E2EE' });
+        return false;
+      }
+      await postRetryRequest(
+        ctx.storage,
+        failed,
+        createRequest,
+        { userId: ctx.userId, deviceId: ctx.deviceId },
+        send
+      );
+      return true;
+    });
+    // An envelope with no post stays unacknowledged.
+    if (!posted) return;
 
     ctx.logger.info('Sent retry request for failed decryption', {
       category: 'E2EE',
@@ -382,7 +501,9 @@ export async function sendRetryRequestInternal(
  * Handle incoming retry request and resend the original message
  *
  * Per SESAME spec §4.1, this method:
- * 1. Looks up the MessageRecord for the failed sequence number
+ * 1. Looks up the MessageRecord for the failed sequence number. When the
+ *    sender already stored a resend or a null message for this request
+ *    envelope, it posts the stored bytes again and does no session work
  * 2. Verifies the requester is the intended recipient
  * 3. Checks retry limits and TTL
  * 4. Creates new session if orphaned, or uses existing different session
@@ -390,42 +511,55 @@ export async function sendRetryRequestInternal(
  *    MessageRecord with the record of the new encryption. Only a delivery
  *    receipt from the device or the TTL deletes that record.
  *
+ * It refuses a request for a message sent more than
+ * `RELIABILITY_RECORD_TTL_MS` ago, before it reads a stored resend. The
+ * Relay can keep the last resend post for that time again, and the
+ * requester keeps its retry records for both periods.
+ *
+ * It returns normally when it resends the message or refuses the request.
+ * It throws every other error, so the caller keeps the request envelope and
+ * a later pull gives it again.
+ *
  * @param ctx - Retry context with dependencies
  * @param retryRequest - The retry request from the recipient
- * @param dedupState - State for deduplication (mutated in place)
+ * @param responseState - Retry response counts (mutated in place)
  * @param callbacks - Callbacks for SignalProtocolClient operations
  * @param config - Configuration constants
+ * @param retry - The ID of the envelope that the requester could not
+ *   decrypt and the retry ID of its request record, from the request, and
+ *   the ID of the request envelope. Each request attempt gets one
+ *   encryption. The content resend has the ID `<retryId>:resend`, and the
+ *   null message has the ID `<retryId>:null`. Attempt n of either adds
+ *   `:<n>` from attempt 2.
  */
 export async function handleRetryRequestAndResend(
   ctx: RetryContext,
   retryRequest: RetryRequest,
-  dedupState: RetryDedupState,
+  responseState: RetryResponseState,
   callbacks: RetryCallbacks,
-  config: RetryConfig
+  config: RetryConfig,
+  retry?: RetryRequestAttempt
 ): Promise<void> {
   const sessionId = `${retryRequest.requesterUserId}:${retryRequest.requesterDeviceId}`;
 
-  // Deduplication check: ignore duplicate retry requests within the window
-  // Use timestamp for dedup key
-  const dedupKey = `${sessionId}:${retryRequest.failedTimestamp}`;
-  const now = Date.now();
-  const lastProcessed = dedupState.recentRetryRequests.get(dedupKey);
-
-  if (lastProcessed && now - lastProcessed < config.retryDedupWindowMs) {
-    ctx.logger.debug('Ignoring duplicate retry request within dedup window', {
+  if (Date.now() - retryRequest.failedTimestamp > RELIABILITY_RECORD_TTL_MS) {
+    ctx.logger.warn('Refusing a retry request for a message older than the retry TTL', {
       category: 'E2EE',
       data: {
-        dedupKey,
-        msSinceLastProcess: now - lastProcessed,
-        windowMs: config.retryDedupWindowMs,
+        sessionId,
+        failedTimestamp: retryRequest.failedTimestamp,
+        behavior: 'RETRY_REQUEST_EXPIRED',
       },
     });
     return;
   }
 
+  // The response count of one message is keyed by its session and timestamp.
+  const dedupKey = `${sessionId}:${retryRequest.failedTimestamp}`;
+
   // Enforce retry response limit
   // Prevents infinite retry loops when decryption consistently fails
-  const responseCount = dedupState.retryResponseCounts.get(dedupKey) ?? 0;
+  const responseCount = responseState.retryResponseCounts.get(dedupKey) ?? 0;
   if (responseCount >= MAX_RETRY_RESPONSES_PER_MESSAGE) {
     ctx.logger.warn('Retry response limit reached, ignoring further retry requests', {
       category: 'E2EE',
@@ -436,20 +570,6 @@ export async function handleRetryRequestAndResend(
       },
     });
     return;
-  }
-
-  // Mark this retry request as being processed
-  dedupState.recentRetryRequests.set(dedupKey, now);
-
-  // Clean up old entries periodically
-  if (now - dedupState.lastRetryCleanupTime > config.retryCleanupIntervalMs) {
-    dedupState.lastRetryCleanupTime = now;
-    const cutoff = now - config.retryDedupWindowMs * 2;
-    for (const [key, timestamp] of dedupState.recentRetryRequests) {
-      if (timestamp < cutoff) {
-        dedupState.recentRetryRequests.delete(key);
-      }
-    }
   }
 
   ctx.logger.info('Processing retry request', {
@@ -464,6 +584,20 @@ export async function handleRetryRequestAndResend(
   try {
     // Look up the original outbound record by peer session and timestamp.
     const record = await ctx.storage.getMessageRecord(sessionId, retryRequest.failedTimestamp);
+
+    // The sender already answered this request envelope, and the post did
+    // not complete. Post the stored bytes again, with no session work.
+    if (
+      retry !== undefined &&
+      (await replayStoredResend(ctx, retryRequest, record, callbacks, retry))
+    ) {
+      responseState.retryResponseCounts.set(dedupKey, responseCount + 1);
+      ctx.logger.info('Posted the stored resend of this request attempt again', {
+        category: 'E2EE',
+        data: { sessionId, failedTimestamp: retryRequest.failedTimestamp },
+      });
+      return;
+    }
 
     if (!record) {
       ctx.logger.warn('MessageRecord not found for retry request', {
@@ -496,13 +630,13 @@ export async function handleRetryRequestAndResend(
         skipMessageRecordValidation: true,
       });
       if (lifecycle.action === 'SESSION_ARCHIVED' && lifecycle.requiresNewSession) {
-        await sendNullMessageForRetryReset(callbacks, retryRequest, ctx);
+        await sendNullMessageForRetryReset(callbacks, retryRequest, ctx, retry);
         // Null-message fallbacks are not retryable payloads. Delete the
         // synthetic record created by the generic send pipeline.
         await ctx.storage.deleteMessageRecord(sessionId, retryRequest.failedTimestamp).catch(() => {
           // Non-fatal: retry fallback already sent.
         });
-        dedupState.retryResponseCounts.set(dedupKey, responseCount + 1);
+        responseState.retryResponseCounts.set(dedupKey, responseCount + 1);
 
         ctx.logger.info('Sent null-message retry response after session reset', {
           category: 'E2EE',
@@ -554,7 +688,7 @@ export async function handleRetryRequestAndResend(
       return;
     }
 
-    // 4. Get current session to check for orphaned session
+    // 3. Get current session to check for orphaned session
     const currentSession = await ctx.sesameManager.getActiveSession(
       retryRequest.requesterUserId,
       retryRequest.requesterDeviceId
@@ -576,7 +710,7 @@ export async function handleRetryRequestAndResend(
     const needsFreshBundle = isOrphanedSession;
 
     if (needsFreshBundle) {
-      // 5a. Need fresh bundle: Archive old session and create new session
+      // 4a. Need fresh bundle: Archive old session and create new session
       const result = await ctx.sesameManager.handleRetryRequest(retryRequest);
 
       if (!result.requiresNewSession) {
@@ -621,7 +755,7 @@ export async function handleRetryRequestAndResend(
         },
       });
     } else {
-      // 5b. Different active session exists AND not MAC failure - use it directly
+      // 4b. Different active session exists AND not MAC failure - use it directly
       ctx.logger.debug('Using existing different session for retry (no prekey fetch)', {
         category: 'E2EE',
         data: {
@@ -633,16 +767,23 @@ export async function handleRetryRequestAndResend(
       });
     }
 
-    // 6. SESAME Step 4-5: Re-encrypt and send the original message
-    // reuse original timestamp for envelope alignment
-    await callbacks.send(retryRequest.requesterUserId, record.plaintext, {
-      timestamp: record.timestamp,
-    });
+    // 5. SESAME Step 4-5: Re-encrypt the original message and send it only
+    // to the device that asked. Reuse the original timestamp for envelope
+    // alignment. The post has a fresh operation epoch.
+    await callbacks.resend(
+      retryRequest.requesterUserId,
+      retryRequest.requesterDeviceId,
+      record.plaintext,
+      {
+        timestamp: record.timestamp,
+        ...(retry && { retry: { ...retry, kind: 'resend' } }),
+      }
+    );
 
     // Track retry response count
-    dedupState.retryResponseCounts.set(dedupKey, responseCount + 1);
+    responseState.retryResponseCounts.set(dedupKey, responseCount + 1);
 
-    // 7. The resend replaced the MessageRecord at the same timestamp with the
+    // 6. The resend replaced the MessageRecord at the same timestamp with the
     // record of the new encryption. A delivery receipt from the device or the
     // TTL deletes it, so a failed resend can be requested again.
 
@@ -654,15 +795,25 @@ export async function handleRetryRequestAndResend(
       },
     });
   } catch (error) {
-    rethrowRelayWorkStopped(error);
-    ctx.logger.error('Failed to handle retry request', {
-      category: 'E2EE',
-      error: error as Error,
-      data: {
-        sessionId,
-        failedTimestamp: retryRequest.failedTimestamp,
-      },
-    });
-    // Do not rethrow - let the subscription continue processing other requests
+    if (isRetryRefusal(error)) {
+      ctx.logger.warn('Retry request refused', {
+        category: 'E2EE',
+        data: {
+          sessionId,
+          failedTimestamp: retryRequest.failedTimestamp,
+          code: error.code,
+        },
+      });
+      return;
+    }
+    throw error;
   }
+}
+
+/** A SesameError that refuses the retry request. A later attempt gets the same refusal. */
+function isRetryRefusal(error: unknown): error is SesameError {
+  return (
+    error instanceof SesameError &&
+    (error.code === 'RETRY_DISABLED' || error.code === 'WRONG_RETRY_DEVICE')
+  );
 }

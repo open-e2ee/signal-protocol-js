@@ -118,6 +118,14 @@ export interface InspectedSignalProtocolContent {
   profileKey?: string;
   /** True for a DataMessage with the Signal `PROFILE_KEY_UPDATE` flag. */
   profileKeyUpdate?: boolean;
+  /**
+   * True for a null message. A sender answers a retry request with one
+   * when it no longer has the plaintext. A null message carries no
+   * content. The client consumes a null message when the content adapter
+   * reports `nullMessage: true`, and never gives it to the application.
+   * A custom adapter must report it for its own null encoding.
+   */
+  nullMessage: boolean;
 }
 
 export interface SignalProtocolContentAdapter {
@@ -434,6 +442,11 @@ function inspectPayload(payload: JsonObject): InspectedSignalProtocolContent {
     ...(typeof flags === 'number' && (flags & PROFILE_KEY_UPDATE_FLAG) !== 0
       ? { profileKeyUpdate: true }
       : {}),
+    nullMessage: Boolean(
+      payload.nullMessage &&
+        typeof payload.nullMessage === 'object' &&
+        !Array.isArray(payload.nullMessage)
+    ),
   };
 }
 
@@ -646,6 +659,7 @@ export function createDefaultSignalProtocolContentAdapter(): SignalProtocolConte
           typing: null,
           sync: null,
           shouldSendDeliveryReceipt: false,
+          nullMessage: false,
         };
       }
 

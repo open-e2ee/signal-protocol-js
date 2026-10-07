@@ -21,6 +21,17 @@ Base64-encoded ciphertext
 
 ***
 
+### clientMessageId?
+
+> `optional` **clientMessageId?**: `string`
+
+The SDK ID of the message, when the relay assigns its own `id` and
+delivers the SDK ID with the envelope. The retry family of a resend or
+a null message resolves by this ID, or by `id` when it is absent. The
+processed record and the acknowledgment use `id`.
+
+***
+
 ### contentHint?
 
 > `optional` **contentHint?**: [`ContentHint`](../enumerations/ContentHint.md)

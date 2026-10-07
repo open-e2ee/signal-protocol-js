@@ -219,6 +219,7 @@ export class HostedAnonymousDelivery {
     deliveryClass: DeliveryClass,
     recipientUserIds?: string[],
     clientMessageId?: string,
+    operationEpochMilliseconds = timestamp,
   ): Promise<{
     messageId: string;
     serverTimestamp: number;
@@ -325,7 +326,7 @@ export class HostedAnonymousDelivery {
           destinations,
           deliveryClass,
           logicalSendId: clientMessageId,
-          operationEpochMilliseconds: timestamp,
+          operationEpochMilliseconds,
         }),
       );
       if (
@@ -357,7 +358,7 @@ export class HostedAnonymousDelivery {
           destination,
           deliveryClass,
           messageId: clientMessageId,
-          operationEpochMilliseconds: timestamp,
+          operationEpochMilliseconds,
           envelope: bytesToBase64(
             concatBytes(bytes(recipientPrefix), parsed.messageCiphertext),
           ),

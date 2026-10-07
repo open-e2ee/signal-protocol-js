@@ -57,12 +57,20 @@ import * as CryptoUtils from '../internal/crypto';
 import {
   completeOutgoingMessageIntent,
   getOutgoingMessageIntent,
+  getRetryResend,
   reconcileOutgoingDirectDeviceMessages,
   replaceOutgoingDirectDeviceMessage,
+  retryAttemptClientMessageId,
+  retryNullMessageClientMessageId,
+  retryRequestAttempt,
+  retryResendClientMessageId,
   storeOutgoingMessageIntent,
+  storeRetryResend,
   withOutgoingMessageIntentLock,
+  type RetryResendTarget,
   type StoredOutgoingDeviceMessage,
   type StoredOutgoingMessageIntent,
+  type StoredRetryResend,
 } from '../local/store/reliability';
 import { FanOutError, firstItemError, type BoundedFanOut } from '../utils/bounded-fan-out';
 import { withRetry } from '../utils/retry';
@@ -74,10 +82,15 @@ import {
   rethrowRelayWorkStopped,
 } from './relay-work';
 import { refusesRemovedDevices, relayDeviceRefusal } from './relay-device-refusal';
-import { aggregateRelayAcceptance, type RelayPostAcceptance } from './relay-acceptance';
+import {
+  aggregateRelayAcceptance,
+  relayOperationRefusal,
+  type RelayPostAcceptance,
+} from './relay-acceptance';
 import { prepareGroupSharedMessage } from './group-sealed-sender';
 import { sendGroupWithExactOutbox } from './group-outbox';
 import {
+  attachUnsealedEnvelope,
   reconstructEnvelope,
   resolveSealedSenderContext as resolveSealedSenderSendContext,
   serializeDirectSealedSenderMessage as serializeDirectSealedSenderTransport,
@@ -113,6 +126,11 @@ interface DevicePostControl {
   readonly stopSignal?: AbortSignal;
   /** Runs just before the relay request, and refuses the post by throwing. */
   readonly admit?: () => void;
+  /**
+   * The operation epoch that the relay admits the post by. Without it, the
+   * post uses the message timestamp.
+   */
+  readonly operationEpochMilliseconds?: number;
 }
 
 /** A send-first post that waits for the reconcile pass. */
@@ -253,6 +271,18 @@ function isRefusalOfDevice(error: unknown, message: StoredOutgoingDeviceMessage)
   return (
     refusal?.userId === message.recipientUserId && refusal.deviceId === message.recipientDeviceId
   );
+}
+
+/** The encrypted bytes of a resend, without the retry request that it answers. */
+type EncryptedResend = Omit<StoredRetryResend, keyof RetryResendTarget | 'attempt'>;
+
+/** The client message ID of one attempt of a stored resend or null message. */
+function retryResendAttemptId(resend: StoredRetryResend): string {
+  const id =
+    resend.kind === 'resend'
+      ? retryResendClientMessageId(resend.retryId)
+      : retryNullMessageClientMessageId(resend.retryId);
+  return retryAttemptClientMessageId(id, resend.attempt);
 }
 
 /**
@@ -760,7 +790,13 @@ export class SignalProtocolServiceCipher {
       const innerEnvelope = reconstructEnvelope(envelope, unsealed);
 
       // Recursively decrypt the inner message (now a standard ciphertext)
-      const decrypted = await this.decrypt(innerEnvelope, undefined, receiveId, stopSignal);
+      let decrypted: DecryptedEnvelope;
+      try {
+        decrypted = await this.decrypt(innerEnvelope, undefined, receiveId, stopSignal);
+      } catch (error) {
+        attachUnsealedEnvelope(error, innerEnvelope);
+        throw error;
+      }
       return { ...decrypted, arrivedSealed: true };
     }
 
@@ -947,6 +983,200 @@ export class SignalProtocolServiceCipher {
     } catch (error) {
       throw attachClientMessageId(error, clientMessageId);
     }
+  }
+
+  /**
+   * Encrypt content for one device of a user and post it to that device only.
+   * The send makes no outbox intent and no sent-sync transcript. A retry
+   * resend uses it: the retry request is the durable job, and only the device
+   * that asked gets the message again. The post uses the sealed-sender
+   * context of a direct send to the user.
+   *
+   * With a retry target, the resend stores its encryption under the device
+   * and the failed envelope ID. The resend carries the attempt number of
+   * the request that it answers, from the request envelope ID. Its client
+   * message ID is `<retryId>:resend` or `<retryId>:null`, with
+   * `:<attempt>` from attempt 2. A call for the request envelope and the
+   * kind of the stored record posts the stored bytes with their epoch
+   * again, and does not encrypt: that is the sender's own retry of a post
+   * that did not complete. A call for another request envelope or kind
+   * encrypts with a fresh epoch, replaces the record in one write, and
+   * posts it. So does a call whose stored bytes the Relay refuses with
+   * OPERATION_EXPIRED: the new bytes post under the same ID. A
+   * RETRY_CONFLICT answer to a post means that the Relay holds an earlier
+   * encryption under this ID, so the answer is complete. When the Relay
+   * admits the new bytes after the recipient acknowledged the earlier
+   * ones, the recipient drops them as processed. Nothing deletes the
+   * record before `RELIABILITY_RECORD_TTL_MS`.
+   *
+   * @param recipientUserId - The user of the device
+   * @param recipientDeviceId - The device that gets the message
+   * @param content - The plaintext to encrypt. Null when the plaintext is
+   *   gone: then only a stored attempt can post
+   * @param options - The client timestamp and the content hint of the
+   *   message, and the retry request that a retry resend answers. Without a
+   *   retry target, the client message ID is a new UUID and nothing is
+   *   stored. The timestamp goes in the envelope
+   * @param stopSignal - The stop signal of the relay work that sends. When it
+   *   aborts while the send waits for the recipient's lock, the send throws
+   *   RelayWorkStopped
+   * @returns False only when the content is null and no stored attempt can
+   *   post: there is none for this request attempt, or the Relay refused it
+   *   with OPERATION_EXPIRED
+   * @throws Error when the request envelope ID is not a retry request of
+   *   the retry ID. Nothing is posted
+   */
+  async resendToDevice(
+    recipientUserId: string,
+    recipientDeviceId: number,
+    content: string | null,
+    options: { timestamp: number; contentHint?: ContentHint; retry?: RetryResendTarget },
+    stopSignal?: AbortSignal
+  ): Promise<boolean> {
+    if (!this.relay) throw new Error('Relay not configured - cannot resend');
+    const { retry } = options;
+    if (content === null && retry === undefined) {
+      throw new Error('A resend without content needs a stored attempt');
+    }
+    // The answer carries the attempt number of its request.
+    const target = retry && { ...retry, attempt: retryRequestAttempt(retry) };
+    const post = async (resend: StoredRetryResend): Promise<void> => {
+      try {
+        await this.postResend(resend, retryResendAttemptId(resend), stopSignal);
+      } catch (error) {
+        if (relayOperationRefusal(error) !== 'RETRY_CONFLICT') throw error;
+        // Only this sender posts this ID. A new encryption for the same
+        // request attempt and kind posts the same ID, so a conflict means
+        // that the Relay holds the earlier encryption.
+        this.logger.info('The Relay holds an earlier encryption of a retry resend attempt', {
+          category: 'E2EE',
+          data: { retryId: resend.retryId, kind: resend.kind, attempt: resend.attempt },
+        });
+      }
+    };
+    return await acquireUntilStopped(
+      this.lock,
+      `encrypt:${recipientUserId}`,
+      async () => {
+        if (target === undefined) {
+          const resend = await this.encryptResend(
+            recipientUserId,
+            recipientDeviceId,
+            content!,
+            options
+          );
+          await this.postResend(resend, await CryptoUtils.generateUuidV4(), stopSignal);
+          return true;
+        }
+        const stored = await getRetryResend(
+          this.storage,
+          recipientUserId,
+          recipientDeviceId,
+          target.failedEnvelopeId
+        );
+        if (stored?.requestEnvelopeId === target.requestEnvelopeId && stored.kind === target.kind) {
+          try {
+            await post(stored);
+            return true;
+          } catch (error) {
+            if (relayOperationRefusal(error) !== 'OPERATION_EXPIRED') throw error;
+          }
+          // The Relay no longer admits or replays the stored operation.
+          if (content === null) {
+            this.logger.info('A stored retry resend expired, and its plaintext is gone', {
+              category: 'E2EE',
+              data: { retryId: stored.retryId, attempt: stored.attempt },
+            });
+            return false;
+          }
+        }
+        if (content === null) return false;
+        // A new encryption replaces the record before its post.
+        const resend: StoredRetryResend = {
+          ...target,
+          ...(await this.encryptResend(recipientUserId, recipientDeviceId, content, options)),
+        };
+        await storeRetryResend(this.storage, resend);
+        await post(resend);
+        return true;
+      },
+      stopSignal
+    );
+  }
+
+  /** Post the encrypted bytes of a resend with their operation epoch, under one client message ID. */
+  private async postResend(
+    resend: EncryptedResend,
+    clientMessageId: string,
+    stopSignal?: AbortSignal
+  ): Promise<void> {
+    const { message } = resend;
+    if (
+      resend.transportMode !== 'identified' &&
+      (!message.sealedSenderMessage || !resend.sealedSenderAuth)
+    ) {
+      throw new Error('Corrupt retry-resend record');
+    }
+    await this.sendToDevice(
+      message,
+      message.ciphertext,
+      message.messageType,
+      message.recipientRegistrationId,
+      null,
+      resend.contentHint,
+      clientMessageId,
+      resend.transportMode === 'identified'
+        ? undefined
+        : {
+            sentMessageBase64: message.sealedSenderMessage!,
+            auth: resend.sealedSenderAuth!,
+            deliveryMode:
+              resend.transportMode === 'sealed_sender_required' ? 'required' : 'preferred',
+          },
+      {
+        ...(stopSignal && { stopSignal }),
+        operationEpochMilliseconds: resend.operationEpochMilliseconds,
+      }
+    );
+  }
+
+  /** Encrypt one attempt of a resend, with the current time as its operation epoch. */
+  private async encryptResend(
+    recipientUserId: string,
+    recipientDeviceId: number,
+    content: string,
+    options: { timestamp: number; contentHint?: ContentHint }
+  ): Promise<EncryptedResend> {
+    const operationEpochMilliseconds = Date.now();
+    const sealedSender = await this.resolveSealedSenderContext(recipientUserId);
+    const directSealedSender =
+      sealedSender && this.relay?.sendMultiRecipientUnidentified ? sealedSender : null;
+    if (directSealedSender && directSealedSender.auth.type !== 'accessKey') {
+      throw new Error('Direct sealed-sender delivery requires access-key authorization');
+    }
+    const message = await this.sesameManager.sendMessage(
+      recipientUserId,
+      recipientDeviceId,
+      new TextEncoder().encode(content),
+      { clientTimestamp: options.timestamp, includeSyncMessages: false }
+    );
+    return {
+      operationEpochMilliseconds,
+      transportMode: directSealedSender
+        ? directSealedSender.config.deliveryMode === 'required'
+          ? 'sealed_sender_required'
+          : 'sealed_sender_preferred'
+        : 'identified',
+      ...(directSealedSender?.auth.type === 'accessKey' && {
+        sealedSenderAuth: { ...directSealedSender.auth },
+      }),
+      ...(options.contentHint !== undefined && { contentHint: options.contentHint }),
+      message: await this.prepareStoredDirectDeviceMessage(
+        message,
+        directSealedSender,
+        options.contentHint
+      ),
+    };
   }
 
   /**
@@ -1444,7 +1674,7 @@ export class SignalProtocolServiceCipher {
     // Local work: a stop does not end it, so the intent keeps the ciphertext.
     const deviceMessages = await this.fanOut
       .all(batch.deviceMessages, (message) =>
-        this.prepareStoredDirectDeviceMessage(message, directSealedSender)
+        this.prepareStoredDirectDeviceMessage(message, directSealedSender, options.contentHint)
       )
       .catch((error: unknown) => {
         throw firstItemError(error);
@@ -1605,7 +1835,9 @@ export class SignalProtocolServiceCipher {
       if (sealedSender === undefined) {
         sealedSender = await this.resolveStoredDirectSealedSender(intent);
       }
-      added.push(await this.prepareStoredDirectDeviceMessage(message, sealedSender));
+      added.push(
+        await this.prepareStoredDirectDeviceMessage(message, sealedSender, intent.contentHint)
+      );
     }
     if (removed.length === 0 && added.length === 0) return intent;
     return reconcileOutgoingDirectDeviceMessages(
@@ -1630,7 +1862,8 @@ export class SignalProtocolServiceCipher {
 
   private async prepareStoredDirectDeviceMessage(
     message: import('../internal/sesame/types').SesameMessage,
-    sealedSender: ResolvedSealedSenderContext | null
+    sealedSender: ResolvedSealedSenderContext | null,
+    contentHint: ContentHint | undefined
   ): Promise<StoredOutgoingDeviceMessage> {
     const messageType = getEnvelopeMessageType(message.ciphertext);
     const session =
@@ -1656,7 +1889,8 @@ export class SignalProtocolServiceCipher {
         storedMessage.ciphertext,
         storedMessage.messageType,
         storedMessage.recipientRegistrationId,
-        sealedSender
+        sealedSender,
+        contentHint
       );
     }
     return storedMessage;
@@ -1707,7 +1941,8 @@ export class SignalProtocolServiceCipher {
     );
     const replacement = await this.prepareStoredDirectDeviceMessage(
       freshMessage,
-      await this.resolveStoredDirectSealedSender(intent)
+      await this.resolveStoredDirectSealedSender(intent),
+      intent.contentHint
     );
     await replaceOutgoingDirectDeviceMessage(
       this.storage,
@@ -2015,7 +2250,8 @@ export class SignalProtocolServiceCipher {
       ciphertext,
       'sender_key',
       undefined,
-      sealedSender
+      sealedSender,
+      undefined
     );
     stored.sealedSenderDeliveryMode =
       sealedSender.config.deliveryMode === 'required' ? 'required' : 'preferred';
@@ -2075,14 +2311,16 @@ export class SignalProtocolServiceCipher {
     ciphertextBase64: string,
     messageType: 'prekey_bundle' | 'ciphertext' | 'sender_key',
     recipientRegistrationId: number | undefined,
-    sealedSender: ResolvedSealedSenderContext
+    sealedSender: ResolvedSealedSenderContext,
+    contentHint: ContentHint | undefined
   ): Promise<string> {
     return serializeDirectSealedSenderTransport(
       msg,
       ciphertextBase64,
       messageType,
       recipientRegistrationId,
-      sealedSender
+      sealedSender,
+      contentHint
     );
   }
 
@@ -2208,7 +2446,8 @@ export class SignalProtocolServiceCipher {
                 ciphertextBase64,
                 messageType,
                 recipientRegistrationId,
-                sealedSender
+                sealedSender,
+                contentHint
               ),
               auth: sealedSender.auth,
               deliveryMode:
@@ -2217,7 +2456,12 @@ export class SignalProtocolServiceCipher {
           : undefined);
       if (!prepared) throw new Error('Missing sealed-sender delivery state');
 
-      identifiedControl = { ...(control.stopSignal && { stopSignal: control.stopSignal }) };
+      identifiedControl = {
+        ...(control.stopSignal && { stopSignal: control.stopSignal }),
+        ...(control.operationEpochMilliseconds !== undefined && {
+          operationEpochMilliseconds: control.operationEpochMilliseconds,
+        }),
+      };
       try {
         const result = await this.postToRelay(
           () =>
@@ -2227,7 +2471,10 @@ export class SignalProtocolServiceCipher {
               msg.timestamp,
               'user-visible',
               [msg.recipientUserId],
-              effectiveClientMessageId
+              effectiveClientMessageId,
+              ...(control.operationEpochMilliseconds === undefined
+                ? []
+                : [control.operationEpochMilliseconds])
             ),
           true,
           control
@@ -2324,6 +2571,9 @@ export class SignalProtocolServiceCipher {
           messageType,
           deliveryClass: 'user-visible',
           timestamp: msg.timestamp,
+          ...(identifiedControl.operationEpochMilliseconds !== undefined && {
+            operationEpochMilliseconds: identifiedControl.operationEpochMilliseconds,
+          }),
           clientMessageId: effectiveClientMessageId,
           recipientRegistrationId,
           contentHint,
@@ -2467,7 +2717,7 @@ export class SignalProtocolServiceCipher {
             });
             const stored: StoredOutgoingDeviceMessage[] = [];
             for (const message of batch.deviceMessages) {
-              stored.push(await this.prepareStoredDirectDeviceMessage(message, null));
+              stored.push(await this.prepareStoredDirectDeviceMessage(message, null, undefined));
             }
             return stored;
           },

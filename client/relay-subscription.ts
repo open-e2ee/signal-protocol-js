@@ -8,21 +8,31 @@
 import type { Envelope } from '../remote/relay/types';
 import { EncryptionError, EncryptionErrorCode, type Base64 } from '../types';
 import { determineRetryReason, isRetryableDecryptionError } from './retry-utils';
-import { checkRetryRateLimit, RETRY_REQUEST_WINDOW_MS } from './retry';
+import { checkRetryRateLimit, RETRY_REQUEST_WINDOW_MS, type RetryRequestAttempt } from './retry';
 import type { DecryptedEnvelope } from './event-hooks';
-import type { ParsedReceiptContent, ParsedTypingContent } from './content-adapter';
+import type {
+  InspectedSignalProtocolContent,
+  ParsedReceiptContent,
+  ParsedTypingContent,
+} from './content-adapter';
 import type { SignalProtocolClientContext } from './types';
-import type { SesameMessage } from '../internal/sesame/types';
+import type { RetryRequest, SesameMessage } from '../internal/sesame/types';
 import { base64ToBytes } from '../internal/crypto';
 import {
-  hasProcessedEnvelope,
+  getProcessedEnvelope,
+  retryFamilyMember,
   storeProcessedEnvelope,
-  withProcessedEnvelopeLock,
 } from '../local/store/reliability';
-import { receivedContentId, pruneReceivedContent } from '../local/store/received-content';
+import {
+  deliveredEnvelopeFingerprint,
+  pruneReceivedContent,
+} from '../local/store/received-content';
 import { isImplicitContentType } from './constants';
 import type { SignalProtocolServiceCipher } from './signal-service-cipher';
 import { rethrowRelayWorkStopped } from './relay-work';
+import { postRetryRequest, readRetryRequestEnvelope } from './retry-request-envelope';
+import { receiveInRetryFamily, type RetryFamilyReceive } from './retry-family';
+import { unsealedEnvelopeOf } from './sealed-sender';
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -93,6 +103,16 @@ export interface RelaySubscriptionCallbacks {
   handleTypingIndicator: (envelope: Envelope, typing: ParsedTypingContent | null) => Promise<void>;
   /** Send delivery receipt back to sender (all devices) */
   sendDeliveryReceipt: (userId: string, timestamps: number[]) => Promise<void>;
+  /**
+   * Resend the message that a `retry_request` envelope asks for, or refuse
+   * it. A throw keeps the request envelope unacknowledged. The resend
+   * derives its client message ID from the retry ID that the request
+   * carries. The sender encrypts one resend for each request envelope ID.
+   */
+  handleRetryRequest: (
+    request: RetryRequest,
+    retry: RetryRequestAttempt | undefined
+  ) => Promise<void>;
 }
 
 /**
@@ -151,6 +171,9 @@ async function markDeliveredSilently(
  * │   → dataMessage: Content → onMessageDecrypted → ContentRouter   │
  * │   → receiptMessage: Receipt → handleDeliveryReceipt             │
  * │   → typingMessage: Typing → handleTypingIndicator               │
+ * │                                                                 │
+ * │ A 'retry_request' envelope is not encrypted. It skips           │
+ * │ decryption and goes to handleRetryRequest.                      │
  * └─────────────────────────────────────────────────────────────────┘
  * ```
  *
@@ -179,37 +202,55 @@ export async function processRelayMessage(
   callbacks: RelaySubscriptionCallbacks,
   config: RelaySubscriptionConfig
 ): Promise<boolean> {
-  if (!envelope.id) {
-    return handleRelayMessageLocked(ctx, envelope, state, callbacks, config);
-  }
-  return withProcessedEnvelopeLock(ctx.storage, envelope.id, () =>
-    handleRelayMessageLocked(ctx, envelope, state, callbacks, config)
+  return receiveInRetryFamily(ctx.storage, ctx.logger, envelope, (family) =>
+    handleRelayMessageLocked(ctx, envelope, family, state, callbacks, config)
   );
 }
 
 async function handleRelayMessageLocked(
   ctx: RelaySubscriptionContext,
   envelope: Envelope,
+  family: RetryFamilyReceive,
   state: RelaySubscriptionState,
   callbacks: RelaySubscriptionCallbacks,
   config: RelaySubscriptionConfig
 ): Promise<boolean> {
   const receiveId = envelope.id
-    ? await receivedContentId(ctx.userId, ctx.deviceId, envelope)
+    ? await deliveredEnvelopeFingerprint(ctx.userId, ctx.deviceId, envelope)
     : undefined;
   await pruneReceivedContent(ctx.storage);
-  if (
-    envelope.id &&
-    (await hasProcessedEnvelope(ctx.storage, envelope.id, Date.now(), receiveId))
-  ) {
+  const processed = envelope.id ? await getProcessedEnvelope(ctx.storage, envelope.id) : null;
+  if (processed) {
     if (receiveId) await ctx.storage.deleteReceivedContent(receiveId);
-    ctx.logger.debug('Acknowledging previously processed relay envelope', {
-      category: 'E2EE',
-      data: {
-        envelopeId: envelope.id,
-        behavior: 'PERSISTENT_DUPLICATE_DISCARD',
-      },
-    });
+    // After the Relay forgets a row, the same ID can carry a new encryption.
+    // The local device processed that ID, so it drops the new bytes too.
+    const identityChanged = receiveId !== undefined && receiveId !== processed.fingerprint;
+    ctx.logger.debug(
+      identityChanged
+        ? 'Acknowledging a processed relay envelope ID with changed content'
+        : 'Acknowledging previously processed relay envelope',
+      {
+        category: 'E2EE',
+        data: {
+          envelopeId: envelope.id,
+          behavior: 'PERSISTENT_DUPLICATE_DISCARD',
+        },
+      }
+    );
+    return true;
+  }
+
+  if (envelope.messageType === 'retry_request') {
+    await handleRetryRequestEnvelope(ctx, envelope, callbacks);
+    if (envelope.id) {
+      await storeProcessedEnvelope(ctx.storage, envelope.id, Date.now(), receiveId);
+    }
+    return true;
+  }
+
+  if (!(await family.admit())) {
+    if (envelope.id) await storeProcessedEnvelope(ctx.storage, envelope.id, Date.now(), receiveId);
+    if (receiveId) await ctx.storage.deleteReceivedContent(receiveId);
     return true;
   }
 
@@ -225,15 +266,111 @@ async function handleRelayMessageLocked(
     );
   } catch (error) {
     rethrowRelayWorkStopped(error);
-    // ERROR: Handle decryption failure
-    await handleDecryptionError(ctx, envelope, error as Error, state, callbacks, config);
+    // A failure inside the seal names the unsealed sender, so the retry
+    // request goes to that device. The unsealed envelope keeps the ID. A
+    // member whose seal fails to open asks the device of its request.
+    const failed = family.withRequestedSender(unsealedEnvelopeOf(error) ?? envelope);
+    await handleDecryptionError(
+      ctx,
+      failed,
+      error as Error,
+      state,
+      callbacks,
+      config,
+      receiveId,
+      family
+    );
     return false;
   }
 
-  await handleDecryptionSuccess(ctx, envelope, decryptedEnvelope, state, callbacks);
-  if (envelope.id) await storeProcessedEnvelope(ctx.storage, envelope.id, Date.now(), receiveId);
+  // Route by decrypted content type, not the outer relay-envelope type.
+  const inspectedContent = ctx.contentAdapter.inspectContent(decryptedEnvelope.content);
+  // A null message carries no content, so the application never gets it
+  // and it fulfills nothing. It is acknowledged as a duplicate is.
+  if (inspectedContent.nullMessage) {
+    await family.consumeNull(receiveId);
+  } else {
+    await handleDecryptionSuccess(
+      ctx,
+      envelope,
+      decryptedEnvelope,
+      inspectedContent,
+      state,
+      callbacks
+    );
+    await family.fulfill();
+    if (envelope.id) {
+      await storeProcessedEnvelope(ctx.storage, envelope.id, Date.now(), receiveId);
+    }
+  }
   if (receiveId) await ctx.storage.deleteReceivedContent(receiveId);
   return true;
+}
+
+/**
+ * Handle a `retry_request` envelope. The payload is not encrypted, so the
+ * envelope never reaches decryption.
+ *
+ * The function returns normally when the request is handled, refused or
+ * dropped, and the caller then acknowledges the envelope. It drops an
+ * envelope from an anonymous sender and an envelope that does not decode,
+ * with one warn line. An error from the handler propagates, so the envelope
+ * stays in the mailbox for the next pull.
+ */
+async function handleRetryRequestEnvelope(
+  ctx: RelaySubscriptionContext,
+  envelope: Envelope,
+  callbacks: RelaySubscriptionCallbacks
+): Promise<void> {
+  if (!envelope.senderUserId || !(envelope.senderDeviceId >= 1)) {
+    ctx.logger.warn('Dropping retry request without an identified sender', {
+      category: 'E2EE',
+      data: { envelopeId: envelope.id, behavior: 'RETRY_REQUEST_DROP' },
+    });
+    return;
+  }
+
+  const read = readRetryRequestEnvelope(envelope, { userId: ctx.userId, deviceId: ctx.deviceId });
+  if (!read.ok) {
+    ctx.logger.warn('Dropping malformed retry request', {
+      category: 'E2EE',
+      data: {
+        envelopeId: envelope.id,
+        sender: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
+        cause: read.cause,
+        behavior: 'RETRY_REQUEST_DROP',
+      },
+    });
+    return;
+  }
+
+  // The requester names each request attempt
+  // `<retryId>:retry-request[:n]`. The Signal Protocol Relay delivers that
+  // name as the envelope ID. A relay that assigns its own envelope IDs
+  // delivers it as the client message ID. The sender keys one resend
+  // encryption by it and answers with its attempt number, so a redelivery
+  // of the same request replays the stored resend.
+  const requestEnvelopeId = envelope.clientMessageId ?? envelope.id;
+  const member = requestEnvelopeId ? retryFamilyMember(requestEnvelopeId) : undefined;
+  if (
+    read.retry &&
+    (member?.kind !== 'retry-request' || member.retryId !== read.retry.retryId)
+  ) {
+    ctx.logger.warn('Dropping malformed retry request', {
+      category: 'E2EE',
+      data: {
+        envelopeId: envelope.id,
+        sender: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
+        cause: 'envelope ID is not a request attempt of the retry ID',
+        behavior: 'RETRY_REQUEST_DROP',
+      },
+    });
+    return;
+  }
+  await callbacks.handleRetryRequest(
+    read.request,
+    read.retry && { ...read.retry, requestEnvelopeId: requestEnvelopeId! }
+  );
 }
 
 /**
@@ -243,12 +380,12 @@ async function handleDecryptionSuccess(
   ctx: RelaySubscriptionContext,
   envelope: Envelope,
   decryptedEnvelope: DecryptedEnvelope,
+  inspectedContent: InspectedSignalProtocolContent,
   state: RelaySubscriptionState,
   callbacks: RelaySubscriptionCallbacks
 ): Promise<void> {
-  // Route by decrypted content type, not the outer relay-envelope type.
-  // Parse content to determine if it is a receipt, typing indicator, or data message.
-  const inspectedContent = ctx.contentAdapter.inspectContent(decryptedEnvelope.content);
+  // The inspected content tells a receipt, a typing indicator and a data
+  // message apart.
   const { receipt, typing } = inspectedContent;
   const authenticatedEnvelope = {
     ...envelope,
@@ -401,6 +538,10 @@ function flushReceipts(
  * Classifies failures by ContentHint:
  * - IMPLICIT: silently discard (typing indicators, receipts, legacy messages)
  * - RESENDABLE: request retry from sender
+ *
+ * A failed resend or null message of a retry request asks again for its
+ * failed envelope, whatever its content hint: the failed envelope still has
+ * no content.
  */
 async function handleDecryptionError(
   ctx: RelaySubscriptionContext,
@@ -408,7 +549,9 @@ async function handleDecryptionError(
   error: Error,
   state: RelaySubscriptionState,
   callbacks: RelaySubscriptionCallbacks,
-  config: RelaySubscriptionConfig
+  config: RelaySubscriptionConfig,
+  receiveId: string | undefined,
+  family: RetryFamilyReceive
 ): Promise<void> {
   // A consumed ratchet key proves decryption, not application persistence.
   // Only the processed-envelope receipt above can authorize duplicate ACKs.
@@ -422,6 +565,11 @@ async function handleDecryptionError(
         behavior: 'UNHANDLED_DUPLICATE',
       },
     });
+    return;
+  }
+
+  if (family.member !== undefined && envelope.timestamp > 0) {
+    await sendRetryRequest(ctx, envelope, error, state, callbacks, config, receiveId, family);
     return;
   }
 
@@ -500,11 +648,21 @@ async function handleDecryptionError(
   }
 
   // RESENDABLE behavior: request retry from sender
-  await sendRetryRequest(ctx, envelope, error, state, callbacks, config);
+  await sendRetryRequest(ctx, envelope, error, state, callbacks, config, receiveId, family);
 }
 
 /**
- * Send retry request for failed message decryption
+ * Send a `retry_request` envelope to the device that sent a failed message.
+ *
+ * The checks run in this order: an identified sender that is not the local
+ * device, then the per-sender rate limit, which counts each post. A failed
+ * envelope that does not pass them gets no request, and the caller keeps it
+ * or acknowledges it as for any failed envelope. The request is stored
+ * under the failed envelope ID before its post, and a later failure of the
+ * same envelope posts the stored request again.
+ *
+ * A failed resend or null message asks again for its failed envelope
+ * through the retry family (`RetryFamilyReceive.requestRetry`).
  */
 async function sendRetryRequest(
   ctx: RelaySubscriptionContext,
@@ -512,34 +670,36 @@ async function sendRetryRequest(
   error: Error,
   state: RelaySubscriptionState,
   callbacks: RelaySubscriptionCallbacks,
-  config: RelaySubscriptionConfig
+  config: RelaySubscriptionConfig,
+  receiveId: string | undefined,
+  family: RetryFamilyReceive
 ): Promise<void> {
   try {
-    // Convert envelope to SesameMessage format for retry request
-    const failedMessage: SesameMessage = {
-      senderUserId: envelope.senderUserId,
-      senderDeviceId: envelope.senderDeviceId,
-      recipientUserId: ctx.userId,
-      recipientDeviceId: ctx.deviceId,
-      sessionId: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
-      ciphertext:
-        typeof envelope.ciphertext === 'string'
-          ? base64ToBytes(envelope.ciphertext as Base64)
-          : (envelope.ciphertext as Uint8Array),
-      isInitiating: envelope.messageType === 'prekey_bundle',
-      initHeader: null,
-      timestamp: envelope.timestamp,
-    };
-
-    const retryReason = determineRetryReason(error);
-
-    // Receiver-side rate limiting
-    if (!checkRetryRateLimit(state, envelope.senderUserId)) {
-      ctx.logger.warn('Retry rate limit exceeded for sender', {
+    // An anonymous envelope names no device to ask. A member stays
+    // unacknowledged, so the content of its failed envelope is not lost.
+    if (!envelope.senderUserId || !(envelope.senderDeviceId >= 1)) {
+      ctx.logger.warn('No retry request for a failed envelope without an identified sender', {
         category: 'E2EE',
         data: {
-          senderId: envelope.senderUserId,
-          windowMs: RETRY_REQUEST_WINDOW_MS,
+          envelopeId: envelope.id,
+          messageType: envelope.messageType,
+          behavior: 'RETRY_REQUEST_SKIP',
+        },
+      });
+      if (config.acknowledgeFailures !== false && family.member === undefined) {
+        await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+      }
+      return;
+    }
+
+    // A device never asks itself for a resend. Its resend would fail again.
+    if (envelope.senderUserId === ctx.userId && envelope.senderDeviceId === ctx.deviceId) {
+      ctx.logger.warn('No retry request for a failed envelope from the local device', {
+        category: 'E2EE',
+        data: {
+          envelopeId: envelope.id,
+          messageType: envelope.messageType,
+          behavior: 'RETRY_REQUEST_SKIP',
         },
       });
       if (config.acknowledgeFailures !== false) {
@@ -548,57 +708,102 @@ async function sendRetryRequest(
       return;
     }
 
-    // Handle stale prekey indicators
-    await handleStalePreKeyIndicator(ctx, envelope, error, state, callbacks, config);
+    // Convert envelope to SesameMessage format for retry request
+    const failedMessage: SesameMessage = {
+      senderUserId: envelope.senderUserId,
+      senderDeviceId: envelope.senderDeviceId,
+      recipientUserId: ctx.userId,
+      recipientDeviceId: ctx.deviceId,
+      sessionId: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
+      // A seal that fails to open gives no ratchet key.
+      ciphertext:
+        envelope.messageType === 'unidentified_sender'
+          ? new Uint8Array()
+          : typeof envelope.ciphertext === 'string'
+            ? base64ToBytes(envelope.ciphertext as Base64)
+            : (envelope.ciphertext as Uint8Array),
+      isInitiating: envelope.messageType === 'prekey_bundle',
+      initHeader: null,
+      timestamp: envelope.timestamp,
+    };
 
-    // Create retry request via SESAME manager
-    const retryRequest = await ctx.sesameManager.createRetryRequest(failedMessage, retryReason);
+    const retryReason = determineRetryReason(error);
 
-    ctx.logger.info('Retry request created for failed message', {
-      category: 'E2EE',
-      data: {
-        sender: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
-        timestamp: envelope.timestamp,
-        reason: retryReason,
-        localUserId: ctx.userId,
-        localDeviceId: ctx.deviceId,
-      },
-    });
-
-    // Send retry request via relay
-    if (ctx.relay?.sendRetryRequest) {
-      await ctx.relay.sendRetryRequest(retryRequest);
+    if (!ctx.relay) throw new Error('Relay not configured - cannot send a retry request');
+    const relay = ctx.relay;
+    const posted = await family.requestRetry(receiveId, async (failed) => {
+      // Receiver-side rate limiting. A post of a stored request counts too.
+      if (!checkRetryRateLimit(state, envelope.senderUserId)) {
+        ctx.logger.warn('Retry rate limit exceeded for sender', {
+          category: 'E2EE',
+          data: {
+            senderId: envelope.senderUserId,
+            windowMs: RETRY_REQUEST_WINDOW_MS,
+          },
+        });
+        // A member stays unacknowledged, so its redelivery after the
+        // window asks again.
+        if (config.acknowledgeFailures !== false && family.member === undefined) {
+          await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+        }
+        return false;
+      }
+      await postRetryRequest(
+        ctx.storage,
+        failed,
+        async () => {
+          // Handle stale prekey indicators
+          await handleStalePreKeyIndicator(ctx, envelope, error, state, callbacks, config);
+          const retryRequest = await ctx.sesameManager.createRetryRequest(
+            failedMessage,
+            retryReason
+          );
+          ctx.logger.info('Retry request created for failed message', {
+            category: 'E2EE',
+            data: {
+              sender: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
+              timestamp: envelope.timestamp,
+              reason: retryReason,
+              localUserId: ctx.userId,
+              localDeviceId: ctx.deviceId,
+            },
+          });
+          return retryRequest;
+        },
+        { userId: ctx.userId, deviceId: ctx.deviceId },
+        (request) => relay.send(request)
+      );
       ctx.logger.info('Retry request sent to sender', {
         category: 'E2EE',
         data: {
           originalSender: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
           timestamp: envelope.timestamp,
           reason: retryReason,
+          stored: failed.stored !== null,
         },
       });
+      return true;
+    });
+    // An envelope with no post stays unacknowledged.
+    if (!posted) return;
 
-      // Mark failed message as delivered so it does not reappear
-      if (envelope.id && config.acknowledgeFailures !== false) {
-        try {
-          await ctx.relay.markDelivered(envelope.id);
-          ctx.logger.debug('Marked failed message as delivered after retry request', {
-            category: 'E2EE',
-            data: { envelopeId: envelope.id },
-          });
-        } catch (markError) {
-          ctx.logger.warn('Failed to mark message as delivered after retry', {
-            category: 'E2EE',
-            data: {
-              envelopeId: envelope.id,
-              error: (markError as Error).message,
-            },
-          });
-        }
+    // Mark failed message as delivered so it does not reappear
+    if (envelope.id && config.acknowledgeFailures !== false) {
+      try {
+        await relay.markDelivered(envelope.id);
+        ctx.logger.debug('Marked failed message as delivered after retry request', {
+          category: 'E2EE',
+          data: { envelopeId: envelope.id },
+        });
+      } catch (markError) {
+        ctx.logger.warn('Failed to mark message as delivered after retry', {
+          category: 'E2EE',
+          data: {
+            envelopeId: envelope.id,
+            error: (markError as Error).message,
+          },
+        });
       }
-    } else {
-      ctx.logger.debug('Relay does not support retry requests', {
-        category: 'E2EE',
-      });
     }
   } catch (retryError) {
     ctx.logger.warn('Failed to send retry request', {

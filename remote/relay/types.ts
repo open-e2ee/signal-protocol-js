@@ -697,6 +697,9 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
    * @param timestamp - Client timestamp for message identification
    * @param deliveryClass - Exact persistence and wake behavior
    * @param recipientUserIds - Original user IDs in same order as binary recipients
+   * @param clientMessageId - The operation ID of the send
+   * @param operationEpochMilliseconds - The operation epoch that the relay
+   *   admits the post by. Without it, the relay uses `timestamp`
    * @returns Message ID, server timestamp, and list of unknown recipient UUIDs
    *
    */
@@ -706,7 +709,8 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
     timestamp: number,
     deliveryClass: DeliveryClass,
     recipientUserIds?: string[],
-    clientMessageId?: string
+    clientMessageId?: string,
+    operationEpochMilliseconds?: number
   ): Promise<{
     messageId: string;
     serverTimestamp: number;
@@ -729,43 +733,6 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
      */
     expiresAt?: number;
   }>;
-
-  // ════════════════════════════════════════════════════════════
-  // RETRY REQUESTS (SESAME Spec §6.2)
-  // Maps to: retryRequests table
-  // ════════════════════════════════════════════════════════════
-
-  /**
-   * Send retry request to the original sender.
-   *
-   * The recipient calls this when decryption fails. The retry request stays
-   * unencrypted (per SESAME spec) and contains only the message ID
-   * and reason. Transport is TLS-secured.
-   *
-   * @param request - Retry request with sender/requester info and failed sequence number
-   */
-  sendRetryRequest?(request: RetryRequest): Promise<void>;
-
-  /**
-   * Subscribe to incoming retry requests for this device.
-   *
-   * Called by sender to listen for retry requests from recipients.
-   * When a retry request arrives, the sender should:
-   * 1. Look up the MessageRecord by sequence number
-   * 2. Fetch the requester's current prekey bundle
-   * 3. Establish a new session (X3DH/PQXDH)
-   * 4. Re-encrypt and send the original message
-   *
-   * @param userId - Current user ID (the original sender)
-   * @param deviceId - This device's ID
-   * @param handler - Callback for each incoming retry request
-   * @returns Unsubscribe function
-   */
-  subscribeRetryRequests?(
-    userId: string,
-    deviceId: number,
-    handler: (request: RetryRequest) => Promise<void>
-  ): Unsubscribe;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -872,6 +839,9 @@ export interface Envelope {
    * - sender_key: Group message encrypted with sender keys
    * - server_delivery_receipt: Server-generated delivery receipts
    * - unidentified_sender: Sealed sender protocol messages
+   * - retry_request: A request that the original sender device resend a
+   *   message that the requester could not decrypt. The payload is not
+   *   encrypted. The envelope sender is the requester.
    *
    * `sender_key` tells the receiver to decrypt the payload as a framed
    * SenderKeyMessage rather than as a pairwise ratchet message. It names no
@@ -885,12 +855,17 @@ export interface Envelope {
     | 'prekey_bundle'
     | 'sender_key'
     | 'server_delivery_receipt'
-    | 'unidentified_sender';
+    | 'unidentified_sender'
+    | 'retry_request';
 
   /** Exact persistence and wake behavior for this encrypted envelope. */
   deliveryClass: DeliveryClass;
 
-  /** Server-assigned envelope ID (set by server) */
+  /**
+   * Server-assigned envelope ID (set by server). A relay gives an envelope
+   * one `id` and keeps it on every redelivery of that envelope. The
+   * at-most-once rule of the client depends on it.
+   */
   id?: string;
 
   /** Server timestamp (set by server) */
@@ -916,8 +891,18 @@ export interface Envelope {
    * namespace. Two sealed senders reusing the same value would silently
    * collapse into one stored message. The second sender would receive the
    * first message's receipt.
+   *
+   * A relay that assigns its own `id` delivers this value with the
+   * envelope. A retry request names its attempt here.
    */
   clientMessageId?: string;
+
+  /**
+   * The operation epoch that the relay admits the post by. Without it, the
+   * relay uses `timestamp`. A retry resend keeps the original `timestamp`, so
+   * it posts the time of its first attempt here.
+   */
+  operationEpochMilliseconds?: number;
 
   // ════════════════════════════════════════════════════════════
   // STALE-DEVICE HANDLING
