@@ -2,6 +2,7 @@ import { utf8Decode } from '../internal/platform';
 import type { SignalProtocolClientCompositionOptions } from './compose';
 import type { HostedRelayConnection } from './hosted-connection';
 import { withRelayRequestDeadline } from './relay-request-deadline';
+import { relayProtocolHeaders, throwIfUpgradeRequired } from './relay-protocol';
 import {
   EndorsementManager,
   type EndorsementCacheStore,
@@ -28,15 +29,13 @@ async function fetchAuthority(connection: HostedRelayConnection) {
         headers: {
           'content-type': 'application/json',
           accept: 'application/json',
+          ...relayProtocolHeaders(),
         },
         body: JSON.stringify({ publishableKey: connection.publishableKey }),
         signal,
       }
     );
-    if (!response.ok || !response.body) {
-      await response.body?.cancel();
-      throw new Error('Managed group authority is unavailable');
-    }
+    if (!response.body) throw new Error('Managed group authority is unavailable');
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
     let length = 0;
@@ -47,7 +46,11 @@ async function fetchAuthority(connection: HostedRelayConnection) {
         length += part.value.length;
         if (length > 8192) {
           await reader.cancel();
-          throw new Error('Managed group authority exceeds its size limit');
+          throw new Error(
+            response.ok
+              ? 'Managed group authority exceeds its size limit'
+              : 'Managed group authority is unavailable'
+          );
         }
         chunks.push(part.value);
       }
@@ -59,6 +62,17 @@ async function fetchAuthority(connection: HostedRelayConnection) {
     for (const part of chunks) {
       body.set(part, offset);
       offset += part.length;
+    }
+    if (!response.ok) {
+      // Only the error body tells a terminal `UPGRADE_REQUIRED` from an outage.
+      let error: unknown;
+      try {
+        error = JSON.parse(utf8Decode(body, { fatal: true }));
+      } catch {
+        error = undefined;
+      }
+      throwIfUpgradeRequired(response.status, error);
+      throw new Error('Managed group authority is unavailable');
     }
     return body;
   });

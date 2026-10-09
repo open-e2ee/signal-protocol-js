@@ -10,6 +10,7 @@ import { base64ToBytes, bytesToBase64 } from '../internal/crypto';
 import type { Base64 } from '../types';
 import type { HostedRelayConnection } from './hosted-connection';
 import { withRelayRequestDeadline } from './relay-request-deadline';
+import { relayProtocolHeaders, throwIfUpgradeRequired } from './relay-protocol';
 import {
   isGroupErrorDetail,
   type GroupErrorDetail,
@@ -154,6 +155,7 @@ export class HostedGroupServer implements GroupServer {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
+            ...relayProtocolHeaders(),
           },
           body: JSON.stringify({
             publishableKey: this.connection.publishableKey,
@@ -167,7 +169,10 @@ export class HostedGroupServer implements GroupServer {
         },
       );
       const value = await readResponse(response);
-      if (!response.ok) throw new HostedGroupError(response.status, value);
+      if (!response.ok) {
+        throwIfUpgradeRequired(response.status, value);
+        throw new HostedGroupError(response.status, value);
+      }
       return value;
     });
   }

@@ -19,9 +19,15 @@ import {
   decodeRelayDeliveryReceipts,
   type RelayDeliveryReceipt,
 } from "./relay-receipt-intake";
+import {
+  HostedRelayUpgradeRequiredError,
+  RELAY_AUTH_PROTOCOL_PREFIX,
+  RELAY_PROTOCOL_VERSION,
+  relayProtocolToken,
+} from "./relay-protocol";
 
-const MAILBOX_PROTOCOL = "open-e2ee-relay.v1";
-const AUTH_PROTOCOL_PREFIX = "open-e2ee-relay.auth.";
+/** The subprotocol token that the socket offers and the Relay must echo. */
+const RELAY_PROTOCOL_TOKEN = relayProtocolToken(RELAY_PROTOCOL_VERSION);
 /**
  * The recovery pull waits a random time from half to one and a half of this
  * value after the call that asks for it, so clients that lose their sockets
@@ -79,6 +85,12 @@ const MAXIMUM_PENDING_PRESENCE_REQUESTS = 16;
 const PRESENCE_ANSWER_MILLISECONDS = 10_000;
 /** The Relay closes the socket with this code on a frame that it refuses. */
 const POLICY_VIOLATION_CLOSE_CODE = 1008;
+/**
+ * The Relay closes the socket with this code and the reason
+ * `UPGRADE_REQUIRED` when it no longer serves the offered protocol version.
+ */
+const UPGRADE_REQUIRED_CLOSE_CODE = 4426;
+const UPGRADE_REQUIRED_CLOSE_REASON = "UPGRADE_REQUIRED";
 
 /**
  * A presence event of the live socket: `open` when a new socket opens, which
@@ -137,8 +149,9 @@ interface MailboxSubscription {
   onBatchEnd?(): void;
   /**
    * Receives each connection transition. The subscription starts at
-   * `connecting` and ends at `stopped`. A token renewal on a live socket is not
-   * a transition.
+   * `connecting` and ends at `stopped`. It ends at `stopped` with the reason
+   * `upgrade-required` when the Relay no longer serves the protocol version of
+   * this SDK. A token renewal on a live socket is not a transition.
    */
   onConnectionState(
     state: RelayConnectionState["state"],
@@ -197,6 +210,8 @@ export function subscribeHostedMailbox(
   options: MailboxSubscription,
 ): MailboxSubscriptionHandle {
   let active = true;
+  /** True after the Relay refused the protocol version of this SDK. */
+  let upgradeRequired = false;
   let socket: WebSocket | undefined;
   let connectionGeneration = 0;
   let reconnectDelay = FIRST_RECONNECT_MILLISECONDS;
@@ -394,7 +409,11 @@ export function subscribeHostedMailbox(
         if ("receipt" in work) {
           try {
             await options.receiveReceipt(work.receipt);
-            receiptAcknowledgments.push(work.receipt.receiptId);
+            // A hand-off that settles after the upgrade stop is not
+            // acknowledged, because the Relay refuses the acknowledgment. The
+            // Relay keeps the receipt.
+            if (!upgradeRequired)
+              receiptAcknowledgments.push(work.receipt.receiptId);
           } catch {
             failed = true;
           }
@@ -490,10 +509,13 @@ export function subscribeHostedMailbox(
         if (messages.length >= MAXIMUM_PENDING_FRAMES && acknowledged > 0)
           recoverLater();
       }
-    } catch {
+    } catch (error) {
       // A pull, an ephemeral message, or a batch callback failed. Retained
-      // durable work stays in the mailbox. Ephemeral work can be lost.
-      recoverLater();
+      // durable work stays in the mailbox. Ephemeral work can be lost. A pull
+      // that the Relay refuses with `UPGRADE_REQUIRED` fails the same way
+      // each time, so it ends the subscription.
+      if (error instanceof HostedRelayUpgradeRequiredError) stopForUpgrade();
+      else recoverLater();
     } finally {
       draining = false;
       if (
@@ -536,7 +558,35 @@ export function subscribeHostedMailbox(
     }
   };
 
-  const retryConnection = (reason: RelayConnectionReason) => {
+  /**
+   * Ends the subscription because the Relay no longer serves the protocol
+   * version of this SDK. Each reconnect and each recovery pull would fail the
+   * same way, so none follows. Queued acknowledgments are not sent, because
+   * the Relay refuses them too. A receipt hand-off that settles after the stop
+   * is not acknowledged either. The Relay keeps their messages and receipts,
+   * and each queued message gets the reply `receipted` false.
+   */
+  const stopForUpgrade = () => {
+    if (!active) return;
+    active = false;
+    upgradeRequired = true;
+    const unsent = acknowledgments.splice(0);
+    receiptAcknowledgments.length = 0;
+    for (const messageId of unsent)
+      options.onAcknowledgmentReply(messageId, false);
+    clearTimeout(reconnectTimer);
+    reconnectTimer = undefined;
+    clearTimeout(recoveryTimer);
+    recoveryTimer = undefined;
+    clearTimeout(acknowledgmentTimer);
+    acknowledgmentTimer = undefined;
+    disconnect();
+    options.onConnectionState("stopped", "upgrade-required");
+  };
+
+  const retryConnection = (
+    reason: Exclude<RelayConnectionReason, "upgrade-required">,
+  ) => {
     if (!active || reconnectTimer !== undefined) return;
     disconnect();
     options.onConnectionState("reconnecting", reason);
@@ -586,8 +636,8 @@ export function subscribeHostedMailbox(
       authenticated = true;
       if (!active || generation !== connectionGeneration) return;
       const candidate = new WebSocket(authority.url, [
-        MAILBOX_PROTOCOL,
-        `${AUTH_PROTOCOL_PREFIX}${authority.token}`,
+        RELAY_PROTOCOL_TOKEN,
+        `${RELAY_AUTH_PROTOCOL_PREFIX}${authority.token}`,
       ]);
       socket = candidate;
       const current = () => active && socket === candidate;
@@ -596,7 +646,7 @@ export function subscribeHostedMailbox(
       }, 10_000);
       candidate.addEventListener("open", () => {
         if (!current()) return;
-        if (candidate.protocol !== MAILBOX_PROTOCOL) {
+        if (candidate.protocol !== RELAY_PROTOCOL_TOKEN) {
           retryConnection("protocol");
           return;
         }
@@ -708,6 +758,17 @@ export function subscribeHostedMailbox(
       });
       candidate.addEventListener("close", (event: CloseEvent) => {
         if (!current()) return;
+        if (
+          event.code === UPGRADE_REQUIRED_CLOSE_CODE &&
+          event.reason === UPGRADE_REQUIRED_CLOSE_REASON
+        ) {
+          stopForUpgrade();
+          return;
+        }
+        // A close 4400 with the reason `PROTOCOL_UNSUPPORTED` takes the
+        // retry below. The Relay sends it for a version above the newest one
+        // that it serves, which happens only after a Relay rollback. The
+        // version comes back when the newer Relay does, so the socket retries.
         if (event.code === POLICY_VIOLATION_CLOSE_CODE)
           rejectPresence(
             new HostedRelayPresenceError(
@@ -721,9 +782,10 @@ export function subscribeHostedMailbox(
       candidate.addEventListener("error", () => {
         if (current()) retryConnection("error");
       });
-    } catch {
-      if (active && generation === connectionGeneration)
-        retryConnection(authenticated ? "error" : "authentication");
+    } catch (error) {
+      if (!active || generation !== connectionGeneration) return;
+      if (error instanceof HostedRelayUpgradeRequiredError) stopForUpgrade();
+      else retryConnection(authenticated ? "error" : "authentication");
     }
   };
 

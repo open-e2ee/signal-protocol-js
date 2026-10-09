@@ -121,6 +121,7 @@ function isRaceConditionError(error: unknown): boolean {
  * Non-retryable:
  * - The eight codes in NON_RETRYABLE_ERROR_CODES (invalid prekey bundle,
  *   untrusted identity, and the rest)
+ * - The Relay code UPGRADE_REQUIRED (HostedRelayUpgradeRequiredError)
  *
  * Retryable:
  * - Network/timeout errors
@@ -133,6 +134,12 @@ export function isRetryableError(error: Error): boolean {
 
   // Check for encryption error codes
   if (typeof code === 'string' && NON_RETRYABLE_ERROR_CODES.has(code as EncryptionErrorCode)) {
+    return false;
+  }
+
+  // The Relay no longer serves the protocol version of this SDK. Only a newer
+  // SDK can send the request again.
+  if (code === 'UPGRADE_REQUIRED') {
     return false;
   }
 

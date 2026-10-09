@@ -6,9 +6,10 @@
 
 # Type Alias: RelayConnectionReason
 
-> **RelayConnectionReason** = `"handshake"` \| `"protocol"` \| `"closed"` \| `"error"` \| `"frame"` \| `"authentication"` \| `"silent"`
+> **RelayConnectionReason** = `"handshake"` \| `"protocol"` \| `"closed"` \| `"error"` \| `"frame"` \| `"authentication"` \| `"silent"` \| `"upgrade-required"`
 
-The transition site that moved a relay connection to `reconnecting`.
+The transition site that moved a relay connection to `reconnecting`, or to
+`stopped` without a call to stop it.
 
 - `handshake`: the socket did not open within 10 seconds.
 - `protocol`: the socket opened with a subprotocol other than the mailbox one.
@@ -17,3 +18,6 @@ The transition site that moved a relay connection to `reconnecting`.
 - `frame`: the socket delivered a frame that the client refuses.
 - `authentication`: the device token for the socket could not be issued.
 - `silent`: the Relay did not answer a ping before the next one was due.
+- `upgrade-required`: the Relay no longer serves the protocol version of
+  this SDK. The state is `stopped`, and the subscription does not retry.
+  Only a newer SDK can connect again.

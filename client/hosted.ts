@@ -60,6 +60,7 @@ export {
   hostedRelayPresence,
   hostedRelayWakePresence,
 } from './hosted-presence';
+export { HostedRelayUpgradeRequiredError } from './relay-protocol';
 export type {
   HostedRelayPresence,
   HostedRelayPresenceAccount,
