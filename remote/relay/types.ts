@@ -700,6 +700,8 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
    * @param clientMessageId - The operation ID of the send
    * @param operationEpochMilliseconds - The operation epoch that the relay
    *   admits the post by. Without it, the relay uses `timestamp`
+   * @param contentKind - The cleartext label that a relay can count by.
+   *   Without it, the send is a `message`
    * @returns Message ID, server timestamp, and list of unknown recipient UUIDs
    *
    */
@@ -710,7 +712,8 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
     deliveryClass: DeliveryClass,
     recipientUserIds?: string[],
     clientMessageId?: string,
-    operationEpochMilliseconds?: number
+    operationEpochMilliseconds?: number,
+    contentKind?: ContentKind
   ): Promise<{
     messageId: string;
     serverTimestamp: number;
@@ -810,6 +813,12 @@ export type SealedSenderAuth =
 export type DeliveryClass = 'user-visible' | 'background-sync' | 'ephemeral';
 
 /**
+ * Coarse cleartext label of the encrypted content: `receipt` for an E2EE
+ * delivery, read, or viewed receipt, and `message` for everything else.
+ */
+export type ContentKind = 'message' | 'receipt';
+
+/**
  * Envelope for delivery.
  *
  * Server treats ciphertext as opaque bytes (zero-knowledge).
@@ -837,7 +846,6 @@ export interface Envelope {
    * - ciphertext: Standard Double Ratchet message (contains encrypted Content)
    * - prekey_bundle: Session initiation (X3DH/PQXDH)
    * - sender_key: Group message encrypted with sender keys
-   * - server_delivery_receipt: Server-generated delivery receipts
    * - unidentified_sender: Sealed sender protocol messages
    * - retry_request: A request that the original sender device resend a
    *   message that the requester could not decrypt. The payload is not
@@ -854,12 +862,17 @@ export interface Envelope {
     | 'ciphertext'
     | 'prekey_bundle'
     | 'sender_key'
-    | 'server_delivery_receipt'
     | 'unidentified_sender'
     | 'retry_request';
 
   /** Exact persistence and wake behavior for this encrypted envelope. */
   deliveryClass: DeliveryClass;
+
+  /**
+   * Cleartext label that a relay can count by. The SDK sets `receipt` on
+   * each E2EE receipt that it sends. An envelope without it is a `message`.
+   */
+  contentKind?: ContentKind;
 
   /**
    * Server-assigned envelope ID (set by server). A relay gives an envelope

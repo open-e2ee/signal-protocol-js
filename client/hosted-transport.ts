@@ -2,6 +2,7 @@ import { utf8Decode, websocketUrl } from "../internal/platform";
 import type {
   AccountIdentityProvisioning,
   AccountIdentityRotation,
+  ContentKind,
   DeliveryClass,
   DeviceInfo,
   DeviceRegistration,
@@ -58,6 +59,7 @@ import type {
 import { RemoteObjectUploadError } from "../remote/object-store";
 import { RelayConnectionStateOwner } from "../remote/relay/connection-state";
 import type {
+  HostedMailboxPage,
   HostedRelayPushRegistration,
   HostedRelayPushRuntime,
 } from "./hosted-push";
@@ -68,6 +70,7 @@ import {
 } from "./hosted-presence-frames";
 import {
   subscribeHostedMailbox,
+  type MailboxAcknowledgment,
   type MailboxSubscriptionHandle,
   type PresenceSocketEvent,
 } from "./hosted-mailbox-subscription";
@@ -97,6 +100,16 @@ import {
   declareRefusesRemovedDevices,
   markRelayDeviceRefusal,
 } from "./relay-device-refusal";
+import {
+  RelayReceiptInbox,
+  declareRelayReceiptIntake,
+  decodeRelayDeliveryReceipts,
+  type RelayDeliveryReceipt,
+} from "./relay-receipt-intake";
+import {
+  RelayReceiptJoin,
+  declareRelayReceiptJoin,
+} from "./relay-receipt-join";
 
 const SESSION_METADATA_PREFIX = "hostedRelay.session.v1:";
 const DEVICE_TOKEN_REFRESH_SECONDS = 60;
@@ -246,6 +259,15 @@ async function withOneUncertainRetry<T>(
 
 function record(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The Relay takes at most this many ids in each HTTP acknowledgment list. */
+const MAXIMUM_ACKNOWLEDGMENT_IDS = 100;
+
+function strings(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) && value.every((entry) => typeof entry === "string")
+  );
 }
 
 function uint32be(value: number): Uint8Array {
@@ -653,6 +675,8 @@ export class HostedRelayHttpTransport
   private readonly presenceListeners = new Set<
     (event: PresenceSocketEvent) => void
   >();
+  private readonly receiptInbox = new RelayReceiptInbox();
+  private readonly receiptJoin = new RelayReceiptJoin();
 
   public constructor(
     private readonly connection: HostedRelayConnection,
@@ -663,6 +687,10 @@ export class HostedRelayHttpTransport
     // The Relay refuses a removed device's mailbox on every send path before
     // its device list shows the removal, so a direct send may post first.
     declareRefusesRemovedDevices(this);
+    // The Relay sends Relay delivery receipts to the sender, and replies to
+    // each acknowledgment with the messages whose receipt it owns.
+    declareRelayReceiptIntake(this, this.receiptInbox);
+    declareRelayReceiptJoin(this, this.receiptJoin);
     this.groups = new HostedGroupServer(connection);
     this.groupServer = {
       server: this.groups,
@@ -1197,14 +1225,32 @@ export class HostedRelayHttpTransport
     );
   }
 
-  private async pullIncoming(): Promise<readonly IncomingEnvelope[]> {
+  /**
+   * One mailbox page. Its `relayReceipts` holds for this pull only: a page
+   * carries `receipts` only when it is true.
+   */
+  private async pullIncoming(): Promise<HostedMailboxPage> {
     const value = await this.authenticatedPost("/mailbox/pull", {
       publishableKey: this.connection.publishableKey,
     });
-    if (!record(value) || !Array.isArray(value.messages)) {
+    if (
+      !record(value) ||
+      !Array.isArray(value.messages) ||
+      (value.relayReceipts !== undefined &&
+        typeof value.relayReceipts !== "boolean") ||
+      (value.receipts !== undefined && value.relayReceipts !== true)
+    ) {
       throw new Error("Signal Protocol Relay returned an invalid mailbox page");
     }
-    return value.messages.map((candidate) => this.incomingEnvelope(candidate));
+    return {
+      messages: value.messages.map((candidate) =>
+        this.incomingEnvelope(candidate),
+      ),
+      receipts:
+        value.receipts === undefined
+          ? []
+          : decodeRelayDeliveryReceipts(value.receipts),
+    };
   }
 
   /** One retained mailbox message, from a pull page or a `durable-message` frame. */
@@ -1326,6 +1372,7 @@ export class HostedRelayHttpTransport
     recipientUserIds?: string[],
     clientMessageId?: string,
     operationEpochMilliseconds?: number,
+    contentKind?: ContentKind,
   ) {
     return this.anonymousDelivery.send(
       sentMessageBase64,
@@ -1335,17 +1382,57 @@ export class HostedRelayHttpTransport
       recipientUserIds,
       clientMessageId,
       operationEpochMilliseconds,
+      contentKind,
     );
   }
 
-  private async acknowledge(messageIds: readonly string[]): Promise<void> {
+  /**
+   * Acknowledges messages and Relay receipts over HTTP. The response lists,
+   * in `receipted`, each message whose delivery receipt the Relay owns.
+   */
+  private async acknowledge(
+    messageIds: readonly string[],
+    receiptIds: readonly string[] = [],
+  ): Promise<MailboxAcknowledgment & { readonly receiptsAcknowledged: number }> {
     const value = await this.authenticatedPost("/mailbox/acknowledge", {
       messageIds: [...messageIds],
+      ...(receiptIds.length === 0 ? {} : { receiptIds: [...receiptIds] }),
       publishableKey: this.connection.publishableKey,
     });
-    if (!record(value) || requiredNumber(value, "acknowledged") < 0) {
+    if (
+      !record(value) ||
+      requiredNumber(value, "acknowledged") < 0 ||
+      (value.receipted !== undefined && !strings(value.receipted)) ||
+      (value.receiptsAcknowledged !== undefined &&
+        (!Number.isSafeInteger(value.receiptsAcknowledged) ||
+          (value.receiptsAcknowledged as number) < 0))
+    ) {
       throw new Error("Signal Protocol Relay returned an invalid acknowledgment");
     }
+    return {
+      receipted: (value.receipted as string[] | undefined) ?? [],
+      receiptsAcknowledged: (value.receiptsAcknowledged as number | undefined) ?? 0,
+    };
+  }
+
+  /**
+   * Acknowledges over HTTP, and gives each message the reply: the response,
+   * or a failed acknowledgment when the request fails.
+   */
+  private async acknowledgeAndAnswer(
+    messageIds: readonly string[],
+    receiptIds: readonly string[] = [],
+  ): Promise<void> {
+    let receipted: readonly string[];
+    try {
+      ({ receipted } = await this.acknowledge(messageIds, receiptIds));
+    } catch (error) {
+      for (const messageId of messageIds)
+        this.receiptJoin.settle(messageId, false);
+      throw error;
+    }
+    for (const messageId of messageIds)
+      this.receiptJoin.settle(messageId, receipted.includes(messageId));
   }
 
   public async registerPush(
@@ -1403,14 +1490,35 @@ export class HostedRelayHttpTransport
     );
   }
 
-  public async pullMailbox(): Promise<readonly IncomingEnvelope[]> {
+  public async pullMailbox(): Promise<HostedMailboxPage> {
     return this.pullIncoming();
   }
 
+  /**
+   * Acknowledges one pull page. The Relay takes at most 100 ids in each list,
+   * so receipt ids past the first 100 leave in further requests.
+   */
   public async acknowledgeMailbox(
     messageIds: readonly string[],
+    receiptIds: readonly string[],
   ): Promise<void> {
-    await this.acknowledge(messageIds);
+    await this.acknowledgeAndAnswer(
+      messageIds,
+      receiptIds.slice(0, MAXIMUM_ACKNOWLEDGMENT_IDS),
+    );
+    for (
+      let start = MAXIMUM_ACKNOWLEDGMENT_IDS;
+      start < receiptIds.length;
+      start += MAXIMUM_ACKNOWLEDGMENT_IDS
+    )
+      await this.acknowledge(
+        [],
+        receiptIds.slice(start, start + MAXIMUM_ACKNOWLEDGMENT_IDS),
+      );
+  }
+
+  public receiveRelayReceipt(receipt: RelayDeliveryReceipt): Promise<void> {
+    return this.receiptInbox.handOff(receipt);
   }
 
   private async createObjectUpload(
@@ -1497,6 +1605,7 @@ export class HostedRelayHttpTransport
       value = await withOneUncertainRetry(envelope.deliveryClass, () => {
         attempts++;
         return this.authenticatedPost("/delivery/send", {
+          contentKind: envelope.contentKind ?? "message",
           deliveryClass: envelope.deliveryClass,
           destination: {
             accountAddress: envelope.targetUserId,
@@ -1613,9 +1722,16 @@ export class HostedRelayHttpTransport
         };
       },
       decodeDurable: (message) => this.incomingEnvelope(message) as Envelope,
-      pull: async () => (await this.pullIncoming()) as readonly Envelope[],
-      acknowledge: (messageIds) => this.acknowledge(messageIds),
+      pull: async () => {
+        const { messages, receipts } = await this.pullIncoming();
+        return { messages: messages as readonly Envelope[], receipts };
+      },
+      acknowledge: (messageIds, receiptIds) =>
+        this.acknowledge(messageIds, receiptIds),
       receive: onEnvelope,
+      receiveReceipt: (receipt) => this.receiptInbox.handOff(receipt),
+      onAcknowledgmentReply: (messageId, receipted) =>
+        this.receiptJoin.settle(messageId, receipted),
       receiveEphemeral: async (candidate, current) => {
         if (!record(candidate) || !record(candidate.sender))
           throw new Error("Invalid ephemeral mailbox message.");
@@ -1663,7 +1779,7 @@ export class HostedRelayHttpTransport
   public async markDelivered(envelopeId: string): Promise<void> {
     if (this.ephemeralAcknowledgments.has(envelopeId)) return;
     if (this.subscription?.acknowledge(envelopeId) === true) return;
-    await this.acknowledge([envelopeId]);
+    await this.acknowledgeAndAnswer([envelopeId]);
   }
 
   public async getDevices(userId: string): Promise<DeviceInfo[]> {

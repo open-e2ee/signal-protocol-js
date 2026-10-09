@@ -42,7 +42,7 @@ Content hint for retry behavior per Signal Protocol.
 - RESENDABLE: Content messages - can trigger retry requests
 - DEFAULT: Standard handling
 
-If not set, the client infers behavior from messageType via IMPLICIT_ENVELOPE_TYPES.
+If not set, the message is not implicit.
 
 ***
 

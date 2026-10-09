@@ -63,14 +63,22 @@ import type {
   Base64,
 } from '../types';
 import { EncryptionError, EncryptionErrorCode } from '../types';
-import { base64ToBytes, bytesToBase64, constantTimeEqual } from '../internal/crypto';
+import { base64ToBytes, bytesToBase64, constantTimeEqual, generateUuidV4 } from '../internal/crypto';
 import { deriveGroupSecretParams, getGroupPublicParams } from '../internal/protocol/zk/groups';
 import { SERVICE_ID_ACI } from '../internal/protocol/zk/groups/uid-struct';
 import {
   deserializeSenderCertificate,
   validateSenderCertificate,
 } from '../internal/protocol/sealed-sender';
-import { deferHooks, type SignalProtocolClientHooks } from './event-hooks';
+import {
+  assertHookName,
+  callHook,
+  deferHooks,
+  type DeliveredEvent,
+  type SignalProtocolClientHooks,
+} from './event-hooks';
+import { DeliveryStatusTracker } from './delivery-status';
+import { relayReceiptIntakeOf, type RelayDeliveryReceipt } from './relay-receipt-intake';
 import { ProtocolAddress } from '../types/address';
 import {
   getActiveIdentityTypes,
@@ -133,8 +141,14 @@ import * as RetryOps from './retry';
 import { receiveInRetryFamily, type RetryFamilyReceive } from './retry-family';
 import { deliveredEnvelopeFingerprint } from '../local/store/received-content';
 import * as RelaySubscriptionOps from './relay-subscription';
+import { relayReceiptJoinOf } from './relay-receipt-join';
 import { SignalProtocolClientState, SIGNAL_PROTOCOL_CLIENT_CONSTANTS } from './state';
-import { clientRelayFanOut, rethrowRelayWorkStopped, type RelayWork } from './relay-work';
+import {
+  clientRelayFanOut,
+  rethrowRelayWorkStopped,
+  RelayWorkStopped,
+  type RelayWork,
+} from './relay-work';
 import type { BoundedFanOut } from '../utils/bounded-fan-out';
 import {
   deleteMediaAttachment,
@@ -155,9 +169,7 @@ import type { GroupId } from '../internal/groups/group-id';
 import { SignalProtocolGroupStateStore } from '../internal/groups/sdk-store';
 import { deriveAccessKey } from '../internal/protocol/sealed-sender/delivery-token';
 
-// Re-export for backwards compatibility (definition moved to constants.ts to avoid require cycles)
 export {};
-export { IMPLICIT_ENVELOPE_TYPES } from './constants';
 
 /**
  * Module-level lock for storage initialization.
@@ -209,6 +221,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   private readonly _userId: string;
   public readonly logger: Required<Logger>;
   private hooks: SignalProtocolClientHooks;
+  /** The delivery status of the outgoing messages of this client. */
+  private readonly deliveries: DeliveryStatusTracker;
   private readonly contentAdapter: SignalProtocolContentAdapter;
 
   // Multi-device support (Phase 2)
@@ -348,6 +362,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     this.deviceId = deviceId;
     this.config = config;
     this.logger = resolveSignalProtocolLogger(config.logger);
+    for (const name of Object.keys(config.hooks ?? {})) assertHookName(name);
     this.hooks = config.hooks || {};
     this.contentAdapter = config.contentAdapter ?? createDefaultSignalProtocolContentAdapter();
 
@@ -364,6 +379,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       throw new Error('Storage must be provided by DefaultSignalProtocolClient.create() callers');
     }
     this._storage = config.storage;
+    this.deliveries = new DeliveryStatusTracker(this._storage);
     (
       this._storage as SignalProtocolLocalStore & {
         setLogger?: (logger?: Logger) => void;
@@ -501,6 +517,11 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       this.cipher.setGroupSendBarrierChecker((groupId) =>
         this.groupManager!.assertGroupSendAllowed(groupId)
       );
+    }
+
+    // The client applies each Relay delivery receipt of its relay.
+    if (this.relay) {
+      relayReceiptIntakeOf(this.relay)?.subscribe((receipt) => this.receiveRelayReceipt(receipt));
     }
 
     // Set up auto-session establishment and stale-session refresh.
@@ -675,7 +696,52 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       sesameManager: this.sesameManager,
       contentAdapter: this.contentAdapter,
       profileKeys: profileKeyExchange(this),
+      deliveries: this.deliveries,
+      sealReceipt: (recipientUserId, recipientDeviceId, ciphertextBase64) =>
+        this.cipher.sealReceipt(recipientUserId, recipientDeviceId, ciphertextBase64),
     };
+  }
+
+  /**
+   * Apply one Relay delivery receipt, then announce its deliveries. A
+   * receipt that stop() kept from its write throws, so the Relay replays it.
+   */
+  private async receiveRelayReceipt(receipt: RelayDeliveryReceipt): Promise<void> {
+    let applied = false;
+    await this.state.relayWork.run(async (work) => {
+      work.proceed();
+      const events = await this.deliveries.applyRelayReceipt(receipt);
+      applied = true;
+      await this.announceDeliveries(work.wrapHooks(this.hooks), events);
+    });
+    if (!applied) throw new RelayWorkStopped();
+  }
+
+  /** Run the onDelivered hook once for each event, in order. */
+  private async announceDeliveries(
+    hooks: SignalProtocolClientHooks,
+    events: readonly DeliveredEvent[]
+  ): Promise<void> {
+    for (const event of events) await callHook(hooks, 'onDelivered', event);
+  }
+
+  /**
+   * Announce the deliveries that waited for a send of this client message ID
+   * to resolve.
+   */
+  private releaseDeliveries(clientMessageId: string): void {
+    void this.state.relayWork
+      .run(async (work) => {
+        work.proceed();
+        const events = await this.deliveries.release(clientMessageId);
+        await this.announceDeliveries(work.wrapHooks(this.hooks), events);
+      })
+      .catch((error: unknown) => {
+        this.logger.warn('Failed to announce deliveries', {
+          category: 'E2EE',
+          data: { clientMessageId, error: (error as Error).message },
+        });
+      });
   }
 
   /**
@@ -2079,21 +2145,31 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       plaintextBytes = content; // already Uint8Array
     }
 
+    // A receipt for this send waits until the send resolves.
+    const clientMessageId = options?.clientMessageId ?? (await generateUuidV4());
     const encrypt = (sendContext: SignalProtocolClientContext) =>
       this.cipher.encrypt(
         recipientId,
         plaintextBytes,
         {
           ...options,
+          clientMessageId,
           ...(clientTimestamp !== undefined && { timestamp: clientTimestamp }),
         },
         this.sendSessionCallbacks(() => sendContext, stopSignal),
         stopSignal
       );
-    // A group send sets up sessions while it holds the group's Sender Key lock.
-    const result = await (isGroupId(recipientId)
-      ? this.withDeferredHooks(context, encrypt)
-      : encrypt(context));
+    this.deliveries.beginSend(clientMessageId);
+    let result: SendResult;
+    try {
+      // A group send sets up sessions while it holds the group's Sender Key lock.
+      result = await (isGroupId(recipientId)
+        ? this.withDeferredHooks(context, encrypt)
+        : encrypt(context));
+    } finally {
+      this.deliveries.endSend(clientMessageId);
+    }
+    this.releaseDeliveries(clientMessageId);
     if (profileKey) await profileKeys?.delivered(recipientId, profileKey);
     return clientTimestamp !== undefined ? { ...result, clientTimestamp } : result;
   }
@@ -2249,6 +2325,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     name: K,
     callback: NonNullable<import('./event-hooks').SignalProtocolClientHooks[K]>
   ): void {
+    assertHookName(name);
     this.hooks[name] = callback as SignalProtocolClientHooks[K];
 
     this.logger.debug('Hook registered', {
@@ -2730,21 +2807,28 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       await this.state.relayWork.settle();
 
       // 5. A delivery can finish during steps 3, 4, and 5, and the relay does
-      // not deliver it again. Send the receipts that such deliveries batched,
+      // not deliver it again. A delivery that waits for the Relay reply to its
+      // acknowledgment gets no reply after the unsubscribe, so release it to
+      // its E2EE receipt. Send the receipts that such deliveries batched,
       // wait for them until the same receipt deadline, and stop what is left
       // as step 4 does. Do this again while a batch waits and the deadline
       // is not past
+      const receiptJoin = this.relay === undefined ? undefined : relayReceiptJoinOf(this.relay);
       do {
+        receiptJoin?.release();
         const lateReceiptSends = this.flushPendingDeliveryReceipts();
         if (lateReceiptSends.length === 0) break;
         await this.waitForStopReceiptSends(lateReceiptSends, receiptDeadline - Date.now());
         await this.state.relayWork.settle();
       } while (Date.now() < receiptDeadline);
 
-      // 6. Clear internal tracking state via state manager. This drops the
-      // receipts batched after the last flush of step 5, which is the last
-      // flush before the deadline or the first flush after step 4. Then the
-      // hold ends, and new batches set their timers again
+      // 6. Release a delivery that started to wait for its reply after the
+      // last release, so that no reply timer batches its receipt after
+      // stop(). Then clear internal tracking state via state manager. This
+      // drops the receipts batched after the last flush of step 5, which is
+      // the last flush before the deadline or the first flush after step 4.
+      // Then the hold ends, and new batches set their timers again
+      receiptJoin?.release();
       this.state.clearForStop();
     } finally {
       receiptAccumulator.held = false;

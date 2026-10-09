@@ -129,6 +129,8 @@ export type {
 export { createDefaultSignalProtocolContentAdapter } from "./content-adapter";
 export type {
   DecryptedEnvelope,
+  DeliveredEvent,
+  DeliverySource,
   SignalProtocolClientHooks,
 } from "./event-hooks";
 export type {

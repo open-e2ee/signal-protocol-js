@@ -11,7 +11,11 @@ import {
   serializeReceivedMessage,
   serviceIdToBytes,
 } from "../internal/protocol/sealed-sender/multi-recipient-message";
-import type { DeliveryClass, SealedSenderAuth } from "../remote/relay/types";
+import type {
+  ContentKind,
+  DeliveryClass,
+  SealedSenderAuth,
+} from "../remote/relay/types";
 import type { Base64 } from "../types";
 import { SealedSenderAuthError } from "../types/errors";
 import { FanOutError, type BoundedFanOut } from "../utils/bounded-fan-out";
@@ -220,6 +224,7 @@ export class HostedAnonymousDelivery {
     recipientUserIds?: string[],
     clientMessageId?: string,
     operationEpochMilliseconds = timestamp,
+    contentKind: ContentKind = "message",
   ): Promise<{
     messageId: string;
     serverTimestamp: number;
@@ -231,7 +236,8 @@ export class HostedAnonymousDelivery {
     if (
       !clientMessageId ||
       clientMessageId.length > 128 ||
-      !["user-visible", "background-sync", "ephemeral"].includes(deliveryClass)
+      !["user-visible", "background-sync", "ephemeral"].includes(deliveryClass) ||
+      !["message", "receipt"].includes(contentKind)
     )
       throw new Error("Anonymous delivery operation is invalid");
     const parsed = deserializeSentMessage(bytes(sentMessageBase64));
@@ -324,6 +330,7 @@ export class HostedAnonymousDelivery {
           },
           body: bytesToBase64(parsed.messageCiphertext),
           destinations,
+          contentKind,
           deliveryClass,
           logicalSendId: clientMessageId,
           operationEpochMilliseconds,
@@ -356,6 +363,7 @@ export class HostedAnonymousDelivery {
         const body = {
           auth,
           destination,
+          contentKind,
           deliveryClass,
           messageId: clientMessageId,
           operationEpochMilliseconds,

@@ -45,6 +45,39 @@ import { rethrowRelayWorkStopped } from './relay-work';
  * The content is the raw decrypted plaintext (typically JSON).
  */
 export {};
+
+/**
+ * A source that reports that a recipient device has a message.
+ *
+ * - `'relay'`: the Relay handed the message to the device. The device has not
+ *   yet decrypted it.
+ * - `'e2ee'`: the device decrypted the message and sent an encrypted delivery
+ *   receipt.
+ */
+export type DeliverySource = 'relay' | 'e2ee';
+
+/** The delivery of one outgoing message to one recipient device. */
+export interface DeliveredEvent {
+  /** The client message ID of the send. */
+  clientMessageId: string;
+  /** The recipient user. For a group message, the group member. */
+  recipientId: string;
+  /** The recipient device. */
+  recipientDeviceId: number;
+  /** The source that this event reports. */
+  source: DeliverySource;
+  /** Each source of the delivery so far, in the order of arrival. */
+  sources: DeliverySource[];
+  /** True when `sources` includes `'e2ee'`: the device decrypted the message. */
+  decryptionConfirmed: boolean;
+  /** The time of the first source, in epoch milliseconds. */
+  deliveredAt: number;
+  /** The client timestamp of the send. */
+  clientTimestamp: number;
+  /** The group ID, for a group message. */
+  groupId?: string;
+}
+
 export interface DecryptedEnvelope {
   /** Unique message ID (from server or generated) */
   messageId: string;
@@ -262,24 +295,28 @@ export interface SignalProtocolClientHooks {
   onKeysCleanedUp?: (sessionId: string, removedCount: number) => void | Promise<void>;
 
   /**
-   * Runs when the client receives a delivery receipt
+   * Runs when a recipient device gets one of this client's messages
    *
-   * Allows the app to update message status from 'sent' to 'delivered'.
-   * The timestamps array contains server timestamps of delivered messages.
+   * A message to one device goes from accepted (the send resolved) to
+   * delivered. The hook runs once for each source that reports the delivery:
+   * `'relay'` when the Relay hands the message to the device, and `'e2ee'`
+   * when the device decrypts it and sends an encrypted delivery receipt. A
+   * second report from the same source does not run the hook. A receipt that
+   * arrives before the send resolves runs the hook after the send resolves.
    *
-   * @param senderId - The user who sent the delivery receipt (message recipient)
-   * @param timestamps - Array of message timestamps for the delivered messages
+   * @param event - The delivery and its sources so far
    *
    * @example
    * ```typescript
-   * onDeliveryReceiptReceived: async (senderId, timestamps) => {
-   *   for (const timestamp of timestamps) {
-   *     await updateMessageStatus(timestamp, 'delivered');
-   *   }
+   * onDelivered: async (event) => {
+   *   await updateMessageStatus(event.clientMessageId, event.recipientDeviceId, {
+   *     status: 'delivered',
+   *     decryptionConfirmed: event.decryptionConfirmed,
+   *   });
    * }
    * ```
    */
-  onDeliveryReceiptReceived?: (senderId: string, timestamps: number[]) => void | Promise<void>;
+  onDelivered?: (event: DeliveredEvent) => void | Promise<void>;
 
   /**
    * Runs when the client receives a read receipt
@@ -353,6 +390,34 @@ export interface SignalProtocolClientHooks {
  * Helper type to extract hook names from SignalProtocolClientHooks
  */
 export type HookName = keyof SignalProtocolClientHooks;
+
+const HOOK_NAMES = {
+  onSessionEstablished: true,
+  onSessionDeleted: true,
+  onSessionArchived: true,
+  onKeyRotated: true,
+  onMessageEncrypted: true,
+  onMessageDecrypted: true,
+  onDecryptionError: true,
+  onEncryptionError: true,
+  onKeysCleanedUp: true,
+  onDelivered: true,
+  onReadReceiptReceived: true,
+  onViewedReceiptReceived: true,
+  onTypingIndicatorReceived: true,
+} as const satisfies Record<HookName, true>;
+
+/**
+ * Throw for a name that is not a client hook, so that a misspelled or removed
+ * hook fails at registration and not silently.
+ *
+ * @internal
+ */
+export function assertHookName(name: string): asserts name is HookName {
+  if (!Object.prototype.hasOwnProperty.call(HOOK_NAMES, name)) {
+    throw new Error(`Unknown Signal Protocol client hook: ${name}`);
+  }
+}
 
 /**
  * Helper to safely call a hook if it exists

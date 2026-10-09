@@ -53,28 +53,26 @@ onDecryptionError: (sessionId, error) => {
 
 ***
 
-### onDeliveryReceiptReceived?
+### onDelivered?
 
-> `optional` **onDeliveryReceiptReceived?**: (`senderId`, `timestamps`) => `void` \| `Promise`\<`void`\>
+> `optional` **onDelivered?**: (`event`) => `void` \| `Promise`\<`void`\>
 
-Runs when the client receives a delivery receipt
+Runs when a recipient device gets one of this client's messages
 
-Allows the app to update message status from 'sent' to 'delivered'.
-The timestamps array contains server timestamps of delivered messages.
+A message to one device goes from accepted (the send resolved) to
+delivered. The hook runs once for each source that reports the delivery:
+`'relay'` when the Relay hands the message to the device, and `'e2ee'`
+when the device decrypts it and sends an encrypted delivery receipt. A
+second report from the same source does not run the hook. A receipt that
+arrives before the send resolves runs the hook after the send resolves.
 
 #### Parameters
 
-##### senderId
+##### event
 
-`string`
+[`DeliveredEvent`](DeliveredEvent.md)
 
-The user who sent the delivery receipt (message recipient)
-
-##### timestamps
-
-`number`[]
-
-Array of message timestamps for the delivered messages
+The delivery and its sources so far
 
 #### Returns
 
@@ -83,10 +81,11 @@ Array of message timestamps for the delivered messages
 #### Example
 
 ```typescript
-onDeliveryReceiptReceived: async (senderId, timestamps) => {
-  for (const timestamp of timestamps) {
-    await updateMessageStatus(timestamp, 'delivered');
-  }
+onDelivered: async (event) => {
+  await updateMessageStatus(event.clientMessageId, event.recipientDeviceId, {
+    status: 'delivered',
+    decryptionConfirmed: event.decryptionConfirmed,
+  });
 }
 ```
 

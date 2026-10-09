@@ -8,9 +8,10 @@
 
 > **pullHostedRelayAfterWake**(`options`): `Promise`\<[`HostedRelayWakeResult`](../interfaces/HostedRelayWakeResult.md)\>
 
-Authenticate, pull the durable mailbox, process each envelope, and acknowledge
-only handled content. Register onMessageDecrypted to persist application
-content before calling this function. Push is not required.
+Authenticate, pull the durable mailbox, process each envelope, hand off
+each Relay receipt after the envelopes, and acknowledge only handled work.
+Register onMessageDecrypted to persist application content before calling
+this function. Push is not required.
 
 ## Parameters
 

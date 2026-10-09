@@ -5,7 +5,7 @@
  * and the extracted operation modules.
  */
 
-import type { SignalProtocolRelayServer } from '../remote/relay/types';
+import type { SealedSenderAuth, SignalProtocolRelayServer } from '../remote/relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import type { SignalProtocolLocalStore, SignalProtocolManager } from '../types';
 import type { SignalProtocolClientConfig } from './config';
@@ -14,6 +14,7 @@ import type { SignalProtocolClientHooks } from './event-hooks';
 import { ContentHint } from '../types/messages';
 import type { SignalProtocolContentAdapter } from './content-adapter';
 import type { ProfileKeyExchange } from './profile-key-exchange';
+import type { DeliveryStatusTracker } from './delivery-status';
 import type { Logger } from '../logger';
 import type {
   MediaAttachmentCheckpointCallback,
@@ -84,6 +85,41 @@ export interface SignalProtocolClientContext {
    * @internal
    */
   readonly stopSignal?: AbortSignal;
+
+  /**
+   * The delivery status of the outgoing messages of this client.
+   *
+   * @internal
+   */
+  readonly deliveries?: DeliveryStatusTracker;
+
+  /**
+   * Seal an encrypted receipt for anonymous delivery. Resolves to undefined
+   * when the receipt goes identified. Rejects when sealed sender is required
+   * and the receipt cannot be sealed.
+   *
+   * @internal
+   */
+  readonly sealReceipt?: (
+    recipientUserId: string,
+    recipientDeviceId: number,
+    ciphertextBase64: string
+  ) => Promise<SealedReceipt | undefined>;
+}
+
+/**
+ * One encrypted receipt sealed for anonymous delivery.
+ *
+ * @internal
+ */
+export interface SealedReceipt {
+  readonly sentMessageBase64: string;
+  readonly auth: SealedSenderAuth;
+  /**
+   * Whether a Relay that refuses the access key sends the receipt identified.
+   * False when sealed sender is required, as for a message.
+   */
+  readonly identifiedFallback: boolean;
 }
 
 /**
@@ -580,7 +616,7 @@ export interface IncomingEnvelope {
    * - RESENDABLE: Content messages - can trigger retry requests
    * - DEFAULT: Standard handling
    *
-   * If not set, the client infers behavior from messageType via IMPLICIT_ENVELOPE_TYPES.
+   * If not set, the message is not implicit.
    */
   contentHint?: ContentHint;
 }

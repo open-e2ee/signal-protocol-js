@@ -33,6 +33,7 @@ import { rethrowRelayWorkStopped } from './relay-work';
 import { postRetryRequest, readRetryRequestEnvelope } from './retry-request-envelope';
 import { receiveInRetryFamily, type RetryFamilyReceive } from './retry-family';
 import { unsealedEnvelopeOf } from './sealed-sender';
+import { relayReceiptJoinOf } from './relay-receipt-join';
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -421,18 +422,35 @@ async function handleDecryptionSuccess(
 
     // Batch delivery receipts before sending
     // Multi-device: sendDeliveryReceipt fans out to all sender's devices
-    // 'auto' is the default, and it sends as 'always' does, for a sealed,
-    // identified, or unknown arrival.
     const receipts = ctx.config.deliveryReceipts ?? 'auto';
     if (decryptedEnvelope.timestamp && ctx.relay && receipts !== 'off') {
       if (inspectedContent.shouldSendDeliveryReceipt) {
-        accumulateDeliveryReceipt(
-          state.receiptAccumulator,
-          decryptedEnvelope.senderId,
-          decryptedEnvelope.timestamp,
-          callbacks.sendDeliveryReceipt,
-          ctx.logger
-        );
+        const { senderId, timestamp } = decryptedEnvelope;
+        const accumulate = () =>
+          accumulateDeliveryReceipt(
+            state.receiptAccumulator,
+            senderId,
+            timestamp,
+            callbacks.sendDeliveryReceipt,
+            ctx.logger
+          );
+        // 'auto' leaves the receipt of an identified or unknown arrival to
+        // the Relay when the reply to its acknowledgment lists it. A sealed
+        // arrival, an ephemeral one, and one through a relay without a
+        // receipt join always get the E2EE receipt.
+        const join = receipts === 'auto' ? relayReceiptJoinOf(ctx.relay) : undefined;
+        if (
+          join !== undefined &&
+          envelope.id !== undefined &&
+          decryptedEnvelope.arrivedSealed !== true &&
+          envelope.deliveryClass !== 'ephemeral'
+        ) {
+          join.await(envelope.id, (relayOwnsReceipt) => {
+            if (!relayOwnsReceipt) accumulate();
+          });
+        } else {
+          accumulate();
+        }
       }
     }
   }

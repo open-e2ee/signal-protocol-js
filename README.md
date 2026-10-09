@@ -39,7 +39,7 @@ The relay never needs message plaintext or device private keys.
 
 The OpenE2EE Signal Protocol SDK implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
-Version `9.5.x`. Public APIs and persisted formats follow semantic versioning.
+Version `10.0.x`. Public APIs and persisted formats follow semantic versioning.
 
 ## Install
 

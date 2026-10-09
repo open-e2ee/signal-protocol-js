@@ -14,6 +14,11 @@ import {
   type HostedRelayPresenceRequest,
   type HostedRelayPresenceUpdate,
 } from "./hosted-presence-frames";
+import {
+  MAXIMUM_RECEIPTS_PER_FRAME,
+  decodeRelayDeliveryReceipts,
+  type RelayDeliveryReceipt,
+} from "./relay-receipt-intake";
 
 const MAILBOX_PROTOCOL = "open-e2ee-relay.v1";
 const AUTH_PROTOCOL_PREFIX = "open-e2ee-relay.auth.";
@@ -63,7 +68,10 @@ const PING_MILLISECONDS = 30_000;
 const MAXIMUM_UNANSWERED_PINGS = 2;
 const MAXIMUM_FRAME_CHARACTERS = 1024 * 1024;
 const MAXIMUM_PENDING_FRAMES = 100;
-/** The Relay refuses an acknowledgment frame that carries more ids. */
+/**
+ * The Relay refuses an `acknowledge` or `acknowledge-receipts` frame, and an
+ * HTTP acknowledgment list, that carries more ids.
+ */
 const MAXIMUM_ACKNOWLEDGMENT_IDS = 100;
 /** A presence request fails with `BUSY` while this many wait for an answer. */
 const MAXIMUM_PENDING_PRESENCE_REQUESTS = 16;
@@ -80,15 +88,50 @@ export type PresenceSocketEvent =
   | { readonly type: "open" }
   | { readonly type: "update"; readonly update: HostedRelayPresenceUpdate };
 
+/**
+ * One HTTP pull page: the retained messages, then, on a page of fewer than
+ * 100 messages from a Relay that advertised Relay receipts, the retained
+ * Relay delivery receipts.
+ */
+export interface MailboxPage {
+  readonly messages: readonly Envelope[];
+  readonly receipts: readonly RelayDeliveryReceipt[];
+}
+
+/** The Relay's answer to one HTTP acknowledgment. */
+export interface MailboxAcknowledgment {
+  /** The acknowledged message ids whose delivery receipt the Relay owns. */
+  readonly receipted: readonly string[];
+}
+
 interface MailboxSubscription {
   authenticate(): Promise<{ url: string; token: string; renewAt: number }>;
   /** Decodes the `message` of a `durable-message` frame. */
   decodeDurable(message: unknown): Envelope;
-  /** Recovers retained messages over HTTP while no socket delivers them. */
-  pull(): Promise<readonly Envelope[]>;
-  /** Acknowledges over HTTP when queued socket acknowledgments lose their socket. */
-  acknowledge(messageIds: readonly string[]): Promise<void>;
+  /** Recovers retained work over HTTP while no socket delivers it. */
+  pull(): Promise<MailboxPage>;
+  /**
+   * Acknowledges messages and Relay receipts over HTTP when queued socket
+   * acknowledgments lose their socket.
+   */
+  acknowledge(
+    messageIds: readonly string[],
+    receiptIds: readonly string[],
+  ): Promise<MailboxAcknowledgment>;
   receive(envelope: Envelope): void | Promise<void>;
+  /**
+   * Hands one Relay delivery receipt off. The receipt is acknowledged after
+   * the hand-off resolves. A rejection leaves it in the mailbox for a replay.
+   */
+  receiveReceipt(receipt: RelayDeliveryReceipt): Promise<void>;
+  /**
+   * Receives the reply to the acknowledgment of each message that this
+   * subscription acknowledged. `receipted` is true only when the reply lists
+   * the message. It is false when the reply omits it, when the HTTP
+   * acknowledgment fails, when the socket that carried it closes before the
+   * reply, and when that socket did not advertise Relay receipts.
+   */
+  onAcknowledgmentReply(messageId: string, receipted: boolean): void;
   receiveEphemeral(message: unknown, current: () => boolean): Promise<string>;
   onBatchStart?(): void;
   onBatchEnd?(): void;
@@ -124,6 +167,11 @@ export interface MailboxSubscriptionHandle {
   presence(request: HostedRelayPresenceRequest): Promise<unknown>;
 }
 
+/** One item of the durable queue, in mailbox order. */
+type DurableWork =
+  | { readonly message: Envelope }
+  | { readonly receipt: RelayDeliveryReceipt };
+
 interface PendingPresence {
   readonly resolve: (result: unknown) => void;
   readonly reject: (error: HostedRelayPresenceError) => void;
@@ -140,8 +188,10 @@ function notConnected(): HostedRelayPresenceError {
 
 /**
  * Delivers durable and ephemeral frames from the mailbox socket and acknowledges
- * durable frames over the same socket. HTTP pull recovers retained messages
- * only while the socket is down or after a handler failure.
+ * durable frames over the same socket. Relay delivery receipts share the
+ * durable queue, so each one is handed off behind the messages that came
+ * before it. HTTP pull recovers retained work only while the socket is down
+ * or after a handler failure.
  */
 export function subscribeHostedMailbox(
   options: MailboxSubscription,
@@ -171,8 +221,17 @@ export function subscribeHostedMailbox(
   let draining = false;
   let pullRequested = false;
   const ephemeral: { socket: WebSocket; message: unknown }[] = [];
-  const durable: Envelope[] = [];
+  const durable: DurableWork[] = [];
   const acknowledgments: string[] = [];
+  /** The ids of the Relay receipts handed off and not yet acknowledged. */
+  const receiptAcknowledgments: string[] = [];
+  /**
+   * True after the live socket advertised Relay receipts in its
+   * `mailbox-capabilities` frame. Each new socket starts at false.
+   */
+  let relayReceipts = false;
+  /** The messages acknowledged on the live socket that wait for its reply. */
+  const awaitingReply = new Set<string>();
   const presenceRequests = new Map<string, PendingPresence>();
   let presenceSequence = 0;
 
@@ -200,23 +259,85 @@ export function subscribeHostedMailbox(
     else request.resolve(answer.result);
   };
 
+  /** Gives each message the reply of an HTTP acknowledgment. */
+  const answerHttpAcknowledgment = (
+    messageIds: readonly string[],
+    request: Promise<MailboxAcknowledgment>,
+  ) => {
+    request.then(
+      ({ receipted }) => {
+        for (const messageId of messageIds)
+          options.onAcknowledgmentReply(
+            messageId,
+            receipted.includes(messageId),
+          );
+      },
+      () => {
+        for (const messageId of messageIds)
+          options.onAcknowledgmentReply(messageId, false);
+      },
+    );
+  };
+
   const flushAcknowledgments = () => {
     clearTimeout(acknowledgmentTimer);
     acknowledgmentTimer = undefined;
-    while (acknowledgments.length > 0) {
-      const messageIds = acknowledgments.splice(
+    const live = socket?.readyState === 1 ? socket : undefined;
+    if (live !== undefined) {
+      while (acknowledgments.length > 0) {
+        const messageIds = acknowledgments.splice(
+          0,
+          MAXIMUM_ACKNOWLEDGMENT_IDS,
+        );
+        // Only a socket that advertised Relay receipts replies with
+        // `receipted`, so the reply of any other socket is known now.
+        for (const messageId of messageIds)
+          if (relayReceipts) awaitingReply.add(messageId);
+          else options.onAcknowledgmentReply(messageId, false);
+        live.send(JSON.stringify({ type: "acknowledge", messageIds }));
+      }
+      // A socket that did not advertise Relay receipts closes on an
+      // `acknowledge-receipts` frame, so the receipts of a pull page go over
+      // HTTP while it is live. A replay acknowledges a lost receipt again.
+      while (receiptAcknowledgments.length > 0) {
+        const receiptIds = receiptAcknowledgments.splice(
+          0,
+          MAXIMUM_ACKNOWLEDGMENT_IDS,
+        );
+        if (relayReceipts)
+          live.send(
+            JSON.stringify({ type: "acknowledge-receipts", receiptIds }),
+          );
+        else options.acknowledge([], receiptIds).catch(() => undefined);
+      }
+      return;
+    }
+    // The socket left after delivery. Reconnect redelivery re-acknowledges
+    // anything this request loses.
+    while (acknowledgments.length > 0 || receiptAcknowledgments.length > 0) {
+      const messageIds = acknowledgments.splice(0, MAXIMUM_ACKNOWLEDGMENT_IDS);
+      const receiptIds = receiptAcknowledgments.splice(
         0,
         MAXIMUM_ACKNOWLEDGMENT_IDS,
       );
-      const live = socket?.readyState === 1 ? socket : undefined;
-      if (live !== undefined) {
-        live.send(JSON.stringify({ type: "acknowledge", messageIds }));
-        continue;
-      }
-      // The socket left after delivery. Reconnect redelivery re-acknowledges
-      // anything this request loses.
-      options.acknowledge(messageIds).catch(() => undefined);
+      answerHttpAcknowledgment(
+        messageIds,
+        options.acknowledge(messageIds, receiptIds),
+      );
     }
+  };
+
+  /** Gives each message of an `acknowledged` frame the reply of its socket. */
+  const answerAcknowledgment = (frame: Record<string, unknown>) => {
+    const { messageIds, receipted = [] } = frame;
+    const ids = (value: unknown): value is string[] =>
+      Array.isArray(value) &&
+      value.every((messageId) => typeof messageId === "string");
+    if (!ids(messageIds) || !ids(receipted))
+      throw new Error("Invalid mailbox frame.");
+    for (const messageId of messageIds)
+      if (awaitingReply.delete(messageId))
+        options.onAcknowledgmentReply(messageId, receipted.includes(messageId));
   };
 
   /**
@@ -251,24 +372,35 @@ export function subscribeHostedMailbox(
   };
 
   /**
-   * Receives each message in mailbox order. A message whose work fails stays
-   * in the mailbox, and the next recovery pull or socket replay gives it
-   * again. The batch continues with the next message at once, whatever its
-   * sender, so the order is not kept across a failed message. Resolves with
-   * `failed` true when the work of a message failed, and with the number of
-   * acknowledgments made during the batch. A message that resolves without an
-   * acknowledgment, as an unhandled duplicate or a failed retry-request send
-   * does, is not counted.
+   * Receives each message and hands off each Relay receipt in mailbox order.
+   * A message whose work fails stays in the mailbox, and the next recovery
+   * pull or socket replay gives it again. A receipt whose hand-off fails is
+   * not acknowledged, so it stays too. The batch continues with the next item
+   * at once, whatever its sender, so the order is not kept across a failed
+   * item. Resolves with `failed` true when the work of an item failed, and
+   * with the number of message acknowledgments made during the batch. A
+   * message that resolves without an acknowledgment, as an unhandled
+   * duplicate or a failed retry-request send does, is not counted.
    */
-  const receiveBatch = async (messages: readonly Envelope[]) => {
-    if (!active || messages.length === 0)
+  const receiveBatch = async (batch: readonly DurableWork[]) => {
+    if (!active || batch.length === 0)
       return { failed: false, acknowledged: 0 };
     let failed = false;
     const acknowledgmentsBefore = acknowledgmentCount;
     options.onBatchStart?.();
     try {
-      for (const message of messages) {
+      for (const work of batch) {
         if (!active) break;
+        if ("receipt" in work) {
+          try {
+            await options.receiveReceipt(work.receipt);
+            receiptAcknowledgments.push(work.receipt.receiptId);
+          } catch {
+            failed = true;
+          }
+          continue;
+        }
+        const { message } = work;
         try {
           await options.receive(message);
           if (message.id !== undefined) failedMessages.delete(message.id);
@@ -339,8 +471,11 @@ export function subscribeHostedMailbox(
         pullRequested = false;
         flushAcknowledgments();
         const pulledAt = Date.now();
-        const messages = await options.pull();
-        const { failed, acknowledged } = await receiveBatch(messages);
+        const { messages, receipts } = await options.pull();
+        const { failed, acknowledged } = await receiveBatch([
+          ...messages.map((message) => ({ message })),
+          ...receipts.map((receipt) => ({ receipt })),
+        ]);
         flushAcknowledgments();
         // A failed message can be missing from the page while it waits in the
         // Relay's hot delivery window, so a pull follows while one remains.
@@ -382,6 +517,12 @@ export function subscribeHostedMailbox(
     connectionGeneration++;
     ephemeral.length = 0;
     durable.length = 0;
+    relayReceipts = false;
+    // A reply can arrive only on the socket that carried the acknowledgment.
+    const unanswered = [...awaitingReply];
+    awaitingReply.clear();
+    for (const messageId of unanswered)
+      options.onAcknowledgmentReply(messageId, false);
     clearTimeout(handshakeTimer);
     clearTimeout(renewalTimer);
     clearTimeout(pingTimer);
@@ -416,7 +557,24 @@ export function subscribeHostedMailbox(
       recoverLater();
       return;
     }
-    if (socket === candidate) durable.push(envelope);
+    if (socket === candidate) durable.push({ message: envelope });
+    void drain();
+  };
+
+  const queueReceipts = (candidate: WebSocket, frame: unknown) => {
+    const receipts = decodeRelayDeliveryReceipts(
+      frame,
+      MAXIMUM_RECEIPTS_PER_FRAME,
+    );
+    for (const receipt of receipts) {
+      if (durable.length >= MAXIMUM_PENDING_FRAMES) {
+        // The receipt stays retained until it is acknowledged; the recovery
+        // pull collects it.
+        recoverLater();
+        break;
+      }
+      if (socket === candidate) durable.push({ receipt });
+    }
     void drain();
   };
 
@@ -510,7 +668,20 @@ export function subscribeHostedMailbox(
             typeof frame.type !== "string"
           )
             throw new Error("Invalid mailbox frame.");
-          if (isPresenceAnswerType(frame.type))
+          if (frame.type === "mailbox-capabilities") {
+            const advertised = (frame as Record<string, unknown>)
+              .relayReceipts;
+            if (typeof advertised !== "boolean")
+              throw new Error("Invalid mailbox frame.");
+            relayReceipts = advertised;
+          } else if (frame.type === "acknowledged")
+            answerAcknowledgment(frame as Record<string, unknown>);
+          else if (frame.type === "delivery-receipt") {
+            // Only a socket that advertised Relay receipts sends them.
+            if (!relayReceipts || !("receipts" in frame))
+              throw new Error("Invalid mailbox frame.");
+            queueReceipts(candidate, frame.receipts);
+          } else if (isPresenceAnswerType(frame.type))
             answerPresence(frame as Record<string, unknown>);
           else if (isPresenceUpdateType(frame.type)) {
             const update = decodePresenceUpdate(
