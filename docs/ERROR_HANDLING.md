@@ -150,6 +150,55 @@ holds each member to a production construction site.
 | `SEALED_SENDER_AUTH_FAILED` | The relay rejected sealed-sender authorization. | Reauthorize or use identified delivery when policy permits it. |
 | `INVALID_STATE` | The requested operation is invalid for current state. | Correct the call order or synchronize state. |
 
+## Relay Protocol Errors
+
+The Relay serves a set of Relay protocol versions. This SDK speaks
+protocol version 1. Two errors come from that set. Neither is an `EncryptionError`.
+
+| Error | Cause | Application response |
+|---|---|---|
+| `HostedRelayUpgradeRequiredError` | The Relay no longer serves version 1. `code` is `UPGRADE_REQUIRED`, `status` is the HTTP status (426), and `retryable` is false. | Ship a newer SDK. The same request fails again, so do not retry it. |
+| `PROTOCOL_UNSUPPORTED` | The Relay does not serve version 1. The request fails with status 400, the `code` `PROTOCOL_UNSUPPORTED`, and `retryable` true. | Retry later. The Relay never rolls back below a version that a published SDK sends, so this is a transient fault, not a planned state. |
+
+The SDK does not retry an HTTP request that `UPGRADE_REQUIRED` refuses. Each
+Relay route that answers with a JSON body throws
+`HostedRelayUpgradeRequiredError`. An attachment download does not read the
+response body, so it reports the 426 as a
+[`MediaAttachmentError`](./api/namespaces/media/classes/MediaAttachmentError.md)
+with the code `download-failed` and the `status` 426.
+
+The mailbox subscription stops for the same refusal on its socket, with the
+state `stopped` and the reason `upgrade-required`. It does not reconnect and
+does not pull. For `PROTOCOL_UNSUPPORTED` on its socket, the subscription
+reconnects with its usual backoff. See [`RelayConnectionReason`](./api/type-aliases/RelayConnectionReason.md).
+
+A client call can wrap the error in an `EncryptionError`. It is then the
+`originalError`.
+
+<!-- doc-snippet:skip requires-existing-client -->
+```typescript
+import {
+  EncryptionError,
+  HostedRelayUpgradeRequiredError,
+} from '@open-e2ee/signal-protocol-sdk';
+
+function upgradeRequired(error: unknown): boolean {
+  return (
+    error instanceof HostedRelayUpgradeRequiredError ||
+    (error instanceof EncryptionError &&
+      error.originalError instanceof HostedRelayUpgradeRequiredError)
+  );
+}
+
+try {
+  await signal.send(remoteUserId, plaintext);
+} catch (error) {
+  // Only a newer SDK can send again. Ask the user to update the app.
+  if (upgradeRequired(error)) showUpdateRequired();
+  else throw error;
+}
+```
+
 ## Error Handling Patterns
 
 ### One Handler for Every Error

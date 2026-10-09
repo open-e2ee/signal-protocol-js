@@ -13,9 +13,10 @@ The local device's relay connection, as its envelope subscription sees it.
 - `connected`: the subscription has a live connection.
 - `reconnecting`: the connection failed and the subscription retries it.
 
-`reason` names the transition site of the last move to `reconnecting`. It is
-never an error message. `since` is the Unix time in milliseconds of the
-transition. A planned token renewal on a live connection is not a transition.
+`reason` names the transition site of the last move to `reconnecting`, or
+`upgrade-required` on a `stopped` state that the Relay caused. It is never an
+error message. `since` is the Unix time in milliseconds of the transition. A
+planned token renewal on a live connection is not a transition.
 
 ## Properties
 

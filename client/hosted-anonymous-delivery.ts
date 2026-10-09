@@ -22,6 +22,7 @@ import { FanOutError, type BoundedFanOut } from "../utils/bounded-fan-out";
 import type { HostedRelayConnection } from "./hosted-connection";
 import { aggregateRelayAcceptance } from "./relay-acceptance";
 import { markRelayDeviceRefusal } from "./relay-device-refusal";
+import { relayProtocolHeaders, throwIfUpgradeRequired } from "./relay-protocol";
 import { withRelayRequestDeadline } from "./relay-request-deadline";
 
 const FRAME_VERSION = 1;
@@ -176,6 +177,7 @@ export class HostedAnonymousDelivery {
             headers: {
               accept: "application/json",
               "content-type": "application/json",
+              ...relayProtocolHeaders(),
             },
             body: JSON.stringify({
               ...body,
@@ -191,6 +193,7 @@ export class HostedAnonymousDelivery {
       }
       const value = await responseObject(response);
       if (!response.ok) {
+        throwIfUpgradeRequired(response.status, value);
         const code = record(value.error) ? value.error.code : undefined;
         const authenticationCode =
           path === "/delivery/send"

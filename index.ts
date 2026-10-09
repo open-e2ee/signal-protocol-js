@@ -73,6 +73,7 @@ export {
 export {
   BraidPolicy,
   HostedRelayPresenceError,
+  HostedRelayUpgradeRequiredError,
   advanceHostedRelayIdentityMigration,
   createHostedSignalProtocolClient,
   createSignalProtocolClient,

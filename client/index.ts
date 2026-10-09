@@ -28,6 +28,7 @@ export {
 } from "./compose";
 export {
   HostedRelayPresenceError,
+  HostedRelayUpgradeRequiredError,
   advanceHostedRelayIdentityMigration,
   createHostedSignalProtocolClient,
   hostedRelayPresence,

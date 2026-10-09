@@ -746,7 +746,8 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
 export type Unsubscribe = () => void;
 
 /**
- * The transition site that moved a relay connection to `reconnecting`.
+ * The transition site that moved a relay connection to `reconnecting`, or to
+ * `stopped` without a call to stop it.
  *
  * - `handshake`: the socket did not open within 10 seconds.
  * - `protocol`: the socket opened with a subprotocol other than the mailbox one.
@@ -755,6 +756,9 @@ export type Unsubscribe = () => void;
  * - `frame`: the socket delivered a frame that the client refuses.
  * - `authentication`: the device token for the socket could not be issued.
  * - `silent`: the Relay did not answer a ping before the next one was due.
+ * - `upgrade-required`: the Relay no longer serves the protocol version of
+ *   this SDK. The state is `stopped`, and the subscription does not retry.
+ *   Only a newer SDK can connect again.
  */
 export type RelayConnectionReason =
   | 'handshake'
@@ -763,7 +767,8 @@ export type RelayConnectionReason =
   | 'error'
   | 'frame'
   | 'authentication'
-  | 'silent';
+  | 'silent'
+  | 'upgrade-required';
 
 /**
  * The local device's relay connection, as its envelope subscription sees it.
@@ -773,9 +778,10 @@ export type RelayConnectionReason =
  * - `connected`: the subscription has a live connection.
  * - `reconnecting`: the connection failed and the subscription retries it.
  *
- * `reason` names the transition site of the last move to `reconnecting`. It is
- * never an error message. `since` is the Unix time in milliseconds of the
- * transition. A planned token renewal on a live connection is not a transition.
+ * `reason` names the transition site of the last move to `reconnecting`, or
+ * `upgrade-required` on a `stopped` state that the Relay caused. It is never an
+ * error message. `since` is the Unix time in milliseconds of the transition. A
+ * planned token renewal on a live connection is not a transition.
  */
 export interface RelayConnectionState {
   readonly state: 'stopped' | 'connecting' | 'connected' | 'reconnecting';

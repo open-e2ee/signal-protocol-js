@@ -1,5 +1,24 @@
 # Changelog
 
+## 10.1.0
+
+- **Added: the SDK names Relay protocol version 1 on HTTP.** Each HTTP
+  request to a Relay route carries the header
+  `x-open-e2ee-relay-protocol: 1`. The fetch of the connection document
+  carries no version. The mailbox socket still offers `open-e2ee-relay.v1`.
+  The Relay reads a request without the header as version 1, so a Relay
+  that serves version 1 serves this SDK and SDK 10.0.0.
+- **Added: `HostedRelayUpgradeRequiredError`.** An HTTP call throws it when
+  the Relay no longer serves the protocol version of the SDK. Its `code` is
+  `UPGRADE_REQUIRED`, and its `retryable` is false. The SDK does not retry
+  it. The class is exported from the main entry and from `/client`.
+- **Added: the connection reason `upgrade-required`.** The mailbox
+  subscription moves to `stopped` with this reason when the Relay closes
+  the socket with code 4426 and the reason `UPGRADE_REQUIRED`. It does not
+  reconnect and does not pull. A close 4400 with the reason
+  `PROTOCOL_UNSUPPORTED`, and the HTTP code `PROTOCOL_UNSUPPORTED`, stay
+  retryable.
+
 ## 10.0.0
 
 - **Breaking: `onDelivered` replaces `onDeliveryReceiptReceived`.** The

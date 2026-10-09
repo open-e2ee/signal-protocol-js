@@ -75,6 +75,7 @@ import {
   type PresenceSocketEvent,
 } from "./hosted-mailbox-subscription";
 import { HostedGroupServer } from "./hosted-groups";
+import { relayProtocolHeaders, throwIfUpgradeRequired } from "./relay-protocol";
 import {
   HostedAnonymousDelivery,
   decodeHostedAnonymousEnvelope,
@@ -341,6 +342,13 @@ async function parseResponse(response: Response): Promise<unknown> {
     throw new Error("Signal Protocol Relay returned invalid JSON");
   }
   if (!response.ok) {
+    // `UPGRADE_REQUIRED` is terminal at any error status, so
+    // `authenticatedPost` and every other retry, which matches only a
+    // `HostedRelayHttpError`, never repeat it. `PROTOCOL_UNSUPPORTED` stays a
+    // `HostedRelayHttpError` whose `retryable` is true: the Relay sends it for
+    // a version above the newest one that it serves, which happens only after
+    // a Relay rollback.
+    throwIfUpgradeRequired(response.status, parsed);
     const error = record(parsed) && record(parsed.error) ? parsed.error : {};
     const code = typeof error.code === "string" ? error.code : "UNKNOWN";
     const message =
@@ -374,6 +382,7 @@ async function postJson(
   const headers = new Headers({
     accept: "application/json",
     "content-type": "application/json",
+    ...relayProtocolHeaders(),
   });
   if (token !== undefined) headers.set("authorization", `Bearer ${token}`);
   return withRelayRequestDeadline(async (signal) => {
@@ -1571,6 +1580,7 @@ export class HostedRelayHttpTransport
       expiresAt: tokenExpiration(token, this.session) * 1_000,
       headers: {
         authorization: `Bearer ${token}`,
+        ...relayProtocolHeaders(),
         "x-open-e2ee-publishable-key": this.connection.publishableKey,
         "x-open-e2ee-object-id": input.objectId,
         "x-open-e2ee-attachment-capability": input.readCapability,
