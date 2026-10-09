@@ -83,7 +83,15 @@ notification batching, and privacy preference policy.
 When the client sends an end-to-end encrypted delivery receipt for a
 received message that asks for one.
 
-- `'auto'`, the default, sends the same receipts as `'always'`.
+- `'auto'`, the default, leaves the receipt to the Signal Protocol Relay
+  when the Relay can send one. The client acknowledges each identified
+  message to the Relay, and sends no end-to-end receipt for a message that
+  the Relay reply lists as receipted. The client sends the end-to-end
+  receipt when the reply omits the message, when the acknowledgment fails,
+  when no reply comes in 30 seconds, or when the connection closes first.
+  A sealed message always gets the end-to-end receipt, because the Relay
+  does not know its sender. On any other relay, `'auto'` sends the same
+  receipts as `'always'`.
 - `'always'` sends an end-to-end receipt for each such message, sealed
   or identified.
 - `'off'` sends no receipt, so no sender can see that a message reached
@@ -91,10 +99,17 @@ received message that asks for one.
 
 A receipt is a message to each device of the sender. The relay cannot read
 it, but it sees when the receipt is sent, and it sees the sender of a
-receipt that is not sealed. Read receipts are not affected.
+receipt that is not sealed. The client seals a receipt when it holds the
+access key of the sender, and sends it identified otherwise. Read receipts
+are not affected.
+
+The sender gets each receipt through the `onDelivered` hook. A Relay
+receipt states only that the recipient device acknowledged the message to
+the Relay. It does not state that the device decrypted it.
 
 The sender keeps a copy of each message that it sends, plaintext included,
-to send it again on a retry request. A delivery receipt deletes that copy.
+to send it again on a retry request. An end-to-end receipt from a device
+deletes that copy for that device. A Relay receipt does not delete it.
 A message that gets no receipt keeps its copy on the sender device until
 the copy is 14 days old. Only client creation and `stop()` delete such old
 copies.

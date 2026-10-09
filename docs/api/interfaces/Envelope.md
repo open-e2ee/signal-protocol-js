@@ -56,6 +56,15 @@ Set by sender, used by recipient to decide retry behavior on decryption failure.
 
 ***
 
+### contentKind?
+
+> `optional` **contentKind?**: [`ContentKind`](../type-aliases/ContentKind.md)
+
+Cleartext label that a relay can count by. The SDK sets `receipt` on
+each E2EE receipt that it sends. An envelope without it is a `message`.
+
+***
+
 ### deliveryClass
 
 > **deliveryClass**: [`DeliveryClass`](../type-aliases/DeliveryClass.md)
@@ -76,7 +85,7 @@ at-most-once rule of the client depends on it.
 
 ### messageType
 
-> **messageType**: `"ciphertext"` \| `"prekey_bundle"` \| `"sender_key"` \| `"server_delivery_receipt"` \| `"unidentified_sender"` \| `"retry_request"`
+> **messageType**: `"ciphertext"` \| `"prekey_bundle"` \| `"sender_key"` \| `"unidentified_sender"` \| `"retry_request"`
 
 Relay-visible envelope type.
 A ciphertext envelope holds the client-to-client types (delivery_receipt,
@@ -86,7 +95,6 @@ relay contract carries only the outer envelope type.
 - ciphertext: Standard Double Ratchet message (contains encrypted Content)
 - prekey_bundle: Session initiation (X3DH/PQXDH)
 - sender_key: Group message encrypted with sender keys
-- server_delivery_receipt: Server-generated delivery receipts
 - unidentified_sender: Sealed sender protocol messages
 - retry_request: A request that the original sender device resend a
   message that the requester could not decrypt. The payload is not

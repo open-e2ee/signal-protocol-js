@@ -5,10 +5,10 @@
 Security fixes ship in the newest release line. Older lines receive no
 backports.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 9.5.x   | :white_check_mark: |
-| < 9.5.0 | :x:                |
+| Version  | Supported          |
+| -------- | ------------------ |
+| 10.0.x   | :white_check_mark: |
+| < 10.0.0 | :x:                |
 
 ## Reporting a Vulnerability
 

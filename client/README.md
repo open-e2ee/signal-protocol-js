@@ -186,21 +186,38 @@ After the `onMessageDecrypted` handler resolves for a message that asks for a
 receipt, the client sends an end-to-end encrypted delivery receipt to each
 device of the sender. The `deliveryReceipts` option selects the messages:
 
-| Value              | Receipt                                                  |
-| ------------------ | -------------------------------------------------------- |
-| `'auto'` (default) | The same receipts as `'always'`                          |
-| `'always'`         | For each message that asks for one, sealed or identified |
-| `'off'`            | None                                                     |
+| Value              | Receipt                                                     |
+| ------------------ | ----------------------------------------------------------- |
+| `'auto'` (default) | Leaves the receipt to the Signal Protocol Relay when it can |
+| `'always'`         | For each message that asks for one, sealed or identified    |
+| `'off'`            | None                                                        |
 
-`'auto'` sends the same receipts as `'always'`.
+With `'auto'` on the Signal Protocol Relay, the client sends no end-to-end
+receipt for an identified message that the Relay acknowledgment lists as
+receipted. On any other relay, `'auto'` sends the same receipts as `'always'`.
 `DecryptedEnvelope.arrivedSealed` tells whether a message arrived through sealed
-sender. Read receipts are not affected.
+sender. The client seals a receipt when it holds the access key of the sender,
+and sends it identified otherwise. Read receipts are not affected.
+
+The sender gets each receipt through the `onDelivered` hook, once for each
+source and recipient device:
+
+| `source`  | Sender                    | `decryptionConfirmed` |
+| --------- | ------------------------- | --------------------- |
+| `'relay'` | The Signal Protocol Relay | `false`               |
+| `'e2ee'`  | The recipient device      | `true`                |
+
+The status of a device only moves forward. `sources` holds each source that the
+device has given so far, so an `'e2ee'` event after a `'relay'` event carries
+both. A second receipt of the same source changes nothing. A receipt for a send
+that has not resolved yet comes after the send resolves.
 
 The sender keeps a copy of each message that it sends, plaintext included, so
-that it can send the message again when the recipient asks for a retry. A
-delivery receipt deletes that copy. A message that gets no receipt, with
-`'off'`, keeps its copy on the sender device until the copy is 14 days old.
-Only client creation and `stop()` delete such old copies.
+that it can send the message again when the recipient asks for a retry. An
+end-to-end receipt from a device deletes that copy for that device. A Relay
+receipt does not delete it. A message that gets no end-to-end receipt keeps its
+copy on the sender device until the copy is 14 days old. Only client creation
+and `stop()` delete such old copies.
 
 ### Hosted presence
 

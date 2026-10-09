@@ -477,6 +477,7 @@ export type { GroupId, GroupTrustRoot } from "./internal/groups";
 export type {
   RelayGroupServer,
   SignalProtocolRelayServer,
+  ContentKind,
   DeliveryClass,
   Envelope,
   DeviceInfo,
@@ -620,6 +621,8 @@ export type {
   SignalProtocolClientHooks,
   HookName,
   DecryptedEnvelope,
+  DeliveredEvent,
+  DeliverySource,
 } from "./client/event-hooks";
 
 // Error types, message types, and enums

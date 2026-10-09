@@ -9,10 +9,11 @@ import type { Ciphertext } from '../keys';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { ProtocolAddress } from '../types/address';
 import type { Envelope } from '../remote/relay/types';
+import { SealedSenderAuthError } from '../types/errors';
 import { callHook } from './event-hooks';
 import { rethrowRelayWorkStopped } from './relay-work';
 import type { ParsedReceiptContent, ParsedTypingContent } from './content-adapter';
-import type { SignalProtocolClientContext } from './types';
+import type { SealedReceipt, SignalProtocolClientContext } from './types';
 import { TypingAction, ReceiptType, type DeliveryReceipt } from './types';
 import { ContentHint } from '../types/messages';
 import * as CryptoUtils from '../internal/crypto';
@@ -529,10 +530,31 @@ async function sendReceiptToDevice(
   const hasSession = await SessionOps.hasSession(ctx, address);
   if (!hasSession) return;
 
-  let prepared: Envelope | undefined;
+  let prepared: PreparedReceipt | undefined;
   const sendPrepared = async () => {
     prepared ??= await prepareReceiptToDevice(ctx, address, type, timestamps, recipientUserId, deviceId);
-    await ctx.relay!.send(prepared);
+    const { envelope, sealed } = prepared;
+    if (sealed) {
+      try {
+        await ctx.relay!.sendMultiRecipientUnidentified!(
+          sealed.sentMessageBase64,
+          sealed.auth,
+          envelope.timestamp,
+          envelope.deliveryClass,
+          [recipientUserId],
+          envelope.clientMessageId,
+          undefined,
+          'receipt'
+        );
+        return;
+      } catch (error) {
+        // A rejected access key sends this receipt and its retry identified,
+        // unless sealed sender is required.
+        if (!(error instanceof SealedSenderAuthError) || !sealed.identifiedFallback) throw error;
+        prepared = { envelope };
+      }
+    }
+    await ctx.relay!.send(envelope);
   };
   try {
     await sendPrepared();
@@ -563,7 +585,18 @@ async function sendReceiptToDevice(
 }
 
 /**
- * Prepare one encrypted receipt for exact transport retries.
+ * One encrypted receipt, and its sealed form when the receipt goes sealed.
+ */
+interface PreparedReceipt {
+  envelope: Envelope & { ciphertext: string; clientMessageId: string };
+  sealed?: SealedReceipt;
+}
+
+/**
+ * Prepare one encrypted receipt for exact transport retries. The receipt
+ * goes sealed when this client knows the recipient's access key, and
+ * identified otherwise. When sealed sender is required, a receipt that
+ * cannot be sealed is not prepared.
  */
 async function prepareReceiptToDevice(
   ctx: SignalProtocolClientContext,
@@ -572,7 +605,7 @@ async function prepareReceiptToDevice(
   timestamps: number[],
   recipientUserId: string,
   deviceId: number
-): Promise<Envelope> {
+): Promise<PreparedReceipt> {
   // Wrap the receipt in the Content protobuf.
   const encrypted = await encryptMessage(
     ctx,
@@ -585,7 +618,7 @@ async function prepareReceiptToDevice(
 
   // Send as ciphertext. Receipts are encrypted Content inside a ciphertext
   // envelope. The relay contract carries only the outer type.
-  return {
+  const envelope: PreparedReceipt['envelope'] = {
     targetUserId: recipientUserId,
     targetDeviceId: deviceId,
     senderUserId: ctx.userId,
@@ -599,14 +632,19 @@ async function prepareReceiptToDevice(
     contentHint: ContentHint.Implicit,
     // Receipts persist for convergence but never request a visible alert.
     deliveryClass: 'background-sync',
+    contentKind: 'receipt',
   };
+  const sealed = await ctx.sealReceipt?.(recipientUserId, deviceId, ciphertextBase64);
+  return sealed ? { envelope, sealed } : { envelope };
 }
 
 /**
  * Handle incoming delivery/read/viewed receipt and clean up MessageRecords
  *
- * Delivery receipts allow the corresponding outbound MessageRecords to be
- * removed because their retry payloads are no longer needed.
+ * A delivery receipt tells that the sender device decrypted the named
+ * messages. It removes the outbound MessageRecords of that device, because
+ * their retry payloads are no longer needed, and adds the `'e2ee'` source to
+ * the delivery status of each named message.
  *
  * @param ctx - Client context with dependencies
  * @param envelope - The original envelope containing sender info
@@ -704,13 +742,15 @@ export async function handleDeliveryReceipt(
         receipt.timestamps
       );
     } else {
-      // Update message status to 'delivered'
-      await callHook(
-        ctx.hooks,
-        'onDeliveryReceiptReceived',
-        envelope.senderUserId,
-        receipt.timestamps
-      );
+      // Write the delivery status before any hook runs.
+      const events =
+        (await ctx.deliveries?.applyE2eeReceipt(
+          envelope.senderUserId,
+          envelope.senderDeviceId,
+          receipt.timestamps,
+          envelope.serverTimestamp ?? Date.now()
+        )) ?? [];
+      for (const event of events) await callHook(ctx.hooks, 'onDelivered', event);
     }
   } catch (error) {
     rethrowRelayWorkStopped(error);

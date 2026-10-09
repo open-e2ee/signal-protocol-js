@@ -37,7 +37,7 @@ import { isGroupId, extractGroupId } from '../internal/groups';
 import type { EndorsementManager } from './endorsement-manager';
 import type { GroupReceiveAuthorizer } from './group-receive-authorization';
 import { GroupSenderKeyOperations } from './group-sender-key-operations';
-import type { PreparedAttachmentUpload, SendOptions, SendResult } from './types';
+import type { PreparedAttachmentUpload, SealedReceipt, SendOptions, SendResult } from './types';
 import { ContentHint } from '../types/messages';
 
 import {
@@ -807,7 +807,6 @@ export class SignalProtocolServiceCipher {
       'prekey_bundle',
       'ciphertext',
       'sender_key',
-      'server_delivery_receipt',
       'unidentified_sender',
     ] as const;
     if (!validMessageTypes.includes(envelope.messageType as (typeof validMessageTypes)[number])) {
@@ -2377,6 +2376,44 @@ export class SignalProtocolServiceCipher {
       recipientUserId,
       groupId
     );
+  }
+
+  /**
+   * Seal an encrypted delivery receipt for anonymous delivery. A receipt
+   * follows the sealed sender delivery mode of a message. Resolves to
+   * undefined when the receipt goes identified: sealed sender is disabled,
+   * or it is preferred and the relay has no anonymous delivery or this
+   * client knows no access key of the recipient. In `'required'` mode a
+   * receipt that cannot be sealed throws `SEALED_SENDER_REQUIRED`, and the
+   * sealed receipt permits no identified fallback. A receipt never uses a
+   * group send endorsement.
+   */
+  async sealReceipt(
+    recipientUserId: string,
+    recipientDeviceId: number,
+    ciphertextBase64: string
+  ): Promise<SealedReceipt | undefined> {
+    // The resolver returns null, or throws in required mode, when the relay
+    // has no anonymous delivery.
+    const sealedSender = await this.resolveSealedSenderContext(recipientUserId);
+    if (!sealedSender) return undefined;
+    if (sealedSender.auth.type !== 'accessKey') {
+      // A direct context carries an access key. This guards the type.
+      this.useIdentifiedDeliveryOrThrow(recipientUserId, 'receipt needs an access key');
+      return undefined;
+    }
+    return {
+      sentMessageBase64: await this.serializeDirectSealedSenderMessage(
+        { recipientUserId, recipientDeviceId },
+        ciphertextBase64,
+        'ciphertext',
+        undefined,
+        sealedSender,
+        ContentHint.Implicit
+      ),
+      auth: sealedSender.auth,
+      identifiedFallback: sealedSender.config.deliveryMode !== 'required',
+    };
   }
 
   /**

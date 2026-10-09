@@ -1,6 +1,7 @@
 import { parseUrl, type ParsedUrl } from '../internal/platform';
 import type { DefaultSignalProtocolClient } from './client';
 import type { IncomingEnvelope } from './types';
+import type { RelayDeliveryReceipt } from './relay-receipt-intake';
 
 const PUSH_TOKEN_MAXIMUM_LENGTH = 4_096;
 const PUSH_ENDPOINT_MAXIMUM_LENGTH = 2_048;
@@ -41,10 +42,24 @@ export interface HostedRelayWebPushRegistration {
 export type HostedRelayPushRegistration =
   HostedRelayTokenPushRegistration | HostedRelayWebPushRegistration;
 
+/**
+ * @internal One mailbox pull: the retained messages, then the retained Relay
+ * delivery receipts.
+ */
+export interface HostedMailboxPage {
+  readonly messages: readonly IncomingEnvelope[];
+  readonly receipts: readonly RelayDeliveryReceipt[];
+}
+
 /** @internal SDK-owned transport for one authenticated hosted client. */
 export interface HostedRelayPushRuntime {
-  acknowledgeMailbox(messageIds: readonly string[]): Promise<void>;
-  pullMailbox(): Promise<readonly IncomingEnvelope[]>;
+  acknowledgeMailbox(
+    messageIds: readonly string[],
+    receiptIds: readonly string[],
+  ): Promise<void>;
+  pullMailbox(): Promise<HostedMailboxPage>;
+  /** Hands one Relay receipt off. A rejection leaves it unacknowledged. */
+  receiveRelayReceipt(receipt: RelayDeliveryReceipt): Promise<void>;
   registerPush(registration: HostedRelayPushRegistration): Promise<void>;
   removePush(): Promise<void>;
 }
@@ -177,15 +192,16 @@ export async function removeHostedRelayPush(options: {
 }
 
 /**
- * Authenticate, pull the durable mailbox, process each envelope, and acknowledge
- * only handled content. Register onMessageDecrypted to persist application
- * content before calling this function. Push is not required.
+ * Authenticate, pull the durable mailbox, process each envelope, hand off
+ * each Relay receipt after the envelopes, and acknowledge only handled work.
+ * Register onMessageDecrypted to persist application content before calling
+ * this function. Push is not required.
  */
 export async function pullHostedRelayAfterWake(
   options: HostedRelayWakeOptions,
 ): Promise<HostedRelayWakeResult> {
   const runtime = hostedRuntime(options.client);
-  const envelopes = await runtime.pullMailbox();
+  const { messages: envelopes, receipts } = await runtime.pullMailbox();
   const inputIds = new Set(envelopes.map((envelope) => envelope.id));
   if (
     inputIds.size !== envelopes.length ||
@@ -208,8 +224,18 @@ export async function pullHostedRelayAfterWake(
       'Signal Protocol Relay mailbox processing returned an invalid result',
     );
   }
-  if (acknowledgedMessageIds.length > 0) {
-    await runtime.acknowledgeMailbox(acknowledgedMessageIds);
+  // A receipt whose hand-off fails stays in the mailbox for a replay.
+  const receiptIds: string[] = [];
+  for (const receipt of receipts) {
+    try {
+      await runtime.receiveRelayReceipt(receipt);
+      receiptIds.push(receipt.receiptId);
+    } catch {
+      // The Relay replays it on the next pull or connect.
+    }
+  }
+  if (acknowledgedMessageIds.length > 0 || receiptIds.length > 0) {
+    await runtime.acknowledgeMailbox(acknowledgedMessageIds, receiptIds);
   }
   return {
     acknowledgedMessageIds,

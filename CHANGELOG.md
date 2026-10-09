@@ -1,5 +1,58 @@
 # Changelog
 
+## 10.0.0
+
+- **Breaking: `onDelivered` replaces `onDeliveryReceiptReceived`.** The
+  hook gets one `DeliveredEvent` for each new receipt source of each
+  recipient device. A Relay receipt gives `source: 'relay'` and
+  `decryptionConfirmed: false`. An end-to-end receipt gives
+  `source: 'e2ee'` and `decryptionConfirmed: true`. The status of a device
+  only moves forward, `sources` holds each source that the device has given
+  so far, and a second receipt of the same source changes nothing. A receipt
+  for a send that has not resolved yet comes after the send resolves. The
+  new `DeliveredEvent` and `DeliverySource` types are exported.
+- **Breaking: an unknown hook name throws.** `registerHook()` and the
+  `hooks` option of client creation throw for a name that is not a hook.
+- **Breaking: the `server_delivery_receipt` message type and
+  `IMPLICIT_ENVELOPE_TYPES` are removed.** An envelope is implicit only
+  when its `contentHint` is `ContentHint.Implicit`.
+- **Changed: only an end-to-end receipt deletes the retry copy.** The
+  sender deletes its copy of a message for a recipient device when that
+  device sends an end-to-end delivery receipt. A Relay receipt does not
+  delete it.
+- **Changed: end-to-end receipts are sealed when the client can seal
+  them.** The client seals a delivery receipt when it holds the access key
+  of the sender, and sends it identified otherwise. A receipt follows the
+  sealed sender delivery mode of a message: in `'required'` mode the client
+  does not send a receipt that it cannot seal, and a Relay that refuses the
+  access key does not make the receipt identified.
+  `sendMultiRecipientUnidentified()` takes an optional `contentKind`, so a
+  sealed receipt carries `'receipt'`.
+- **Added: each envelope names its content kind.** `Envelope` has an
+  optional `contentKind`, of the new exported `ContentKind` type. The client
+  sets `'receipt'` on each end-to-end delivery, read, and viewed receipt
+  that it sends. The Signal Protocol Relay transport sends `'message'` for every
+  other envelope, on identified, anonymous and group sends, so the Relay
+  can tell a receipt from a message without reading it.
+- **Added: the client takes Relay delivery receipts from the Signal
+  Protocol Relay.** A Relay that states the receipt capability on a
+  connection sends `delivery-receipt` frames on that connection, and a pull
+  returns its receipts only when it asks for them. The client passes each
+  receipt through the same ordered queue as the messages, hands each receipt
+  ID off once, and acknowledges it to the Relay after the hand-off, in
+  frames of at most 100 IDs on the socket or with `receiptIds` over HTTP.
+  A Relay receipt states only that the recipient device acknowledged the
+  message to the Relay, not that the device decrypted it.
+- **Changed: `deliveryReceipts: 'auto'` leaves the receipt to the Relay
+  when it can.** On the Signal Protocol Relay, the client sends no
+  end-to-end delivery receipt for an identified message that the Relay
+  acknowledgment lists as receipted. It sends the end-to-end receipt when
+  the acknowledgment omits the message, when it fails, when no reply comes
+  in 30 seconds, or when the connection closes first. A sealed message
+  always gets the end-to-end receipt. `stop()` sends each receipt that
+  still waits for a Relay reply, once. On any other relay, `'auto'` sends
+  the same receipts as `'always'`.
+
 ## 9.5.0
 
 - **Breaking: a retry request is now a mailbox envelope.** Before, a

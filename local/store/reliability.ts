@@ -8,6 +8,8 @@ const INCOMING_PREFIX = 'reliability:processed-envelopes:v2';
 const RETRY_REQUESTED_PREFIX = 'reliability:retry-requested:v1';
 const RETRY_RESEND_PREFIX = 'reliability:retry-resend:v1';
 const RETRY_FAMILY_PREFIX = 'reliability:retry-family:v1';
+const SENT_TIMESTAMP_PREFIX = 'reliability:sent-timestamps:v1';
+const DELIVERY_STATUS_PREFIX = 'reliability:delivery-status:v1';
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
 export const RELIABILITY_RECORD_TTL_MS = 30 * DAY_MS;
@@ -87,7 +89,9 @@ type LedgerKind =
   | 'incoming'
   | 'retry-requested'
   | 'retry-family'
-  | 'retry-resend';
+  | 'retry-resend'
+  | 'sent-timestamp'
+  | 'delivery-status';
 
 const mutationTails = new WeakMap<object, Promise<void>>();
 const outgoingIntentLocks = createKeyedLocks();
@@ -99,6 +103,8 @@ const LEDGER_PREFIXES: Record<LedgerKind, string> = {
   'retry-requested': RETRY_REQUESTED_PREFIX,
   'retry-family': RETRY_FAMILY_PREFIX,
   'retry-resend': RETRY_RESEND_PREFIX,
+  'sent-timestamp': SENT_TIMESTAMP_PREFIX,
+  'delivery-status': DELIVERY_STATUS_PREFIX,
 };
 
 const LEDGER_TTL_MS: Record<LedgerKind, number> = {
@@ -107,6 +113,8 @@ const LEDGER_TTL_MS: Record<LedgerKind, number> = {
   'retry-requested': RETRY_REQUESTER_RECORD_TTL_MS,
   'retry-family': RETRY_REQUESTER_RECORD_TTL_MS,
   'retry-resend': RELIABILITY_RECORD_TTL_MS,
+  'sent-timestamp': RELIABILITY_RECORD_TTL_MS,
+  'delivery-status': RELIABILITY_RECORD_TTL_MS,
 };
 
 function prefix(kind: LedgerKind): string {
@@ -440,8 +448,102 @@ export async function storeOutgoingMessageIntent(
     if (retainedExisting && !sameIntent(retainedExisting, intent)) {
       throw new Error('A clientMessageId cannot identify two different encrypted sends');
     }
-    if (!retainedExisting) await store.setMetadata(key, JSON.stringify(intent));
+    if (!retainedExisting) {
+      await store.setMetadata(key, JSON.stringify(intent));
+      await indexSentTimestamp(store, intent, now);
+    }
     await indexRecord(store, 'outbox', intent.clientMessageId, intent.createdAt, retainedDays);
+  });
+}
+
+/**
+ * Index the client message ID of a new intent under its client timestamp,
+ * the value by which an E2EE receipt names the message. The index expires
+ * with the intent.
+ */
+async function indexSentTimestamp(
+  store: ReliabilityMetadataStore,
+  intent: StoredOutgoingMessageIntent,
+  now: number
+): Promise<void> {
+  const retainedDays = await pruneExpiredBuckets(store, 'sent-timestamp', now);
+  const id = String(intent.clientTimestamp);
+  const key = recordKey('sent-timestamp', id);
+  const clientMessageIds = parseJson<string[]>(await store.getMetadata(key), []);
+  if (!clientMessageIds.includes(intent.clientMessageId)) {
+    clientMessageIds.push(intent.clientMessageId);
+    await store.setMetadata(key, JSON.stringify(clientMessageIds));
+  }
+  await indexRecord(store, 'sent-timestamp', id, intent.createdAt, retainedDays);
+}
+
+/**
+ * The client message IDs of the intents with this client timestamp. More
+ * than one intent can have the same timestamp, so the caller matches the
+ * recipient.
+ */
+export async function getSentClientMessageIds(
+  store: ReliabilityMetadataStore,
+  clientTimestamp: number
+): Promise<string[]> {
+  return parseJson<string[]>(
+    await store.getMetadata(recordKey('sent-timestamp', String(clientTimestamp))),
+    []
+  );
+}
+
+/** A source that tells that a recipient device has a message. */
+export type StoredDeliverySource = 'relay' | 'e2ee';
+
+/** The delivery of one message to one recipient device. */
+export interface StoredDeviceDelivery {
+  /** Each source of the delivery, once, in the order of arrival. */
+  sources: StoredDeliverySource[];
+  /** The time of the first source, in epoch milliseconds. */
+  deliveredAt: number;
+  /** The number of leading `sources` that the client announced. */
+  announced: number;
+}
+
+/** The delivery status of one outgoing message, by recipient user and device. */
+export interface StoredDeliveryStatus {
+  clientMessageId: string;
+  /** The creation time of the intent. The status expires with the intent. */
+  createdAt: number;
+  devices: Record<string, Record<string, StoredDeviceDelivery>>;
+}
+
+/**
+ * Read and change the delivery status of one outgoing message in one
+ * serialized step. The step also reads the outbox intent, so an intent that
+ * completes during a receipt is seen by either the receipt or the next
+ * step. `update` changes `status` in place. A changed status is written.
+ * Resolves to undefined, and changes nothing, when no intent of this client
+ * message ID counts.
+ */
+export async function updateDeliveryStatus<T>(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string,
+  update: (status: StoredDeliveryStatus, intent: StoredOutgoingMessageIntent) => T,
+  now = Date.now()
+): Promise<T | undefined> {
+  return serializeMutation(store, async () => {
+    const intent = await getOutgoingMessageIntent(store, clientMessageId, now);
+    if (!intent) return undefined;
+    const key = recordKey('delivery-status', clientMessageId);
+    const stored = parseJson<StoredDeliveryStatus | null>(await store.getMetadata(key), null);
+    const status: StoredDeliveryStatus =
+      stored && stored.createdAt === intent.createdAt
+        ? stored
+        : { clientMessageId, createdAt: intent.createdAt, devices: {} };
+    const before = JSON.stringify(status);
+    const value = update(status, intent);
+    if (JSON.stringify(status) !== before) {
+      const retainedDays = await pruneExpiredBuckets(store, 'delivery-status', now);
+      await store.setMetadata(key, JSON.stringify(status));
+      await indexRecord(store, 'delivery-status', clientMessageId, status.createdAt, retainedDays);
+    }
+    return value;
   });
 }
 

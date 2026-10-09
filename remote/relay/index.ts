@@ -23,6 +23,7 @@
 export {};
 export type {
   SignalProtocolRelayServer,
+  ContentKind,
   DeliveryClass,
   Envelope,
   DeviceInfo,

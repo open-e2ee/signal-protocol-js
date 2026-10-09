@@ -983,7 +983,7 @@ A relay that reports them also returns `duplicate` and `expiresAt`.
 
 ### sendMultiRecipientUnidentified()?
 
-> `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `deliveryClass`, `recipientUserIds?`, `clientMessageId?`, `operationEpochMilliseconds?`): `Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
+> `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `deliveryClass`, `recipientUserIds?`, `clientMessageId?`, `operationEpochMilliseconds?`, `contentKind?`): `Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
 
 Send a multi-recipient sealed sender message.
 
@@ -1035,6 +1035,13 @@ The operation ID of the send
 
 The operation epoch that the relay
   admits the post by. Without it, the relay uses `timestamp`
+
+##### contentKind?
+
+[`ContentKind`](../type-aliases/ContentKind.md)
+
+The cleartext label that a relay can count by.
+  Without it, the send is a `message`
 
 #### Returns
 
