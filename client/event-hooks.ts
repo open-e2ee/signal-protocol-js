@@ -36,6 +36,8 @@
  * ```
  */
 
+import type { RetryTerminalClass } from '../local/store/reliability';
+export type { RetryTerminalClass };
 import { rethrowRelayWorkStopped } from './relay-work';
 
 /**
@@ -76,6 +78,20 @@ export interface DeliveredEvent {
   clientTimestamp: number;
   /** The group ID, for a group message. */
   groupId?: string;
+}
+
+/**
+ * The end of a retry request with no resend. The device that asked for the
+ * resend gets it for each class except `missing-prekey`. The device that
+ * sent the failed message gets `missing-prekey`, when it cannot start a new
+ * session with the requester. Each request ends once, and the hook runs once
+ * for it.
+ */
+export interface RetryTerminalEvent {
+  /** Why the request ended. */
+  class: RetryTerminalClass;
+  /** The Relay message ID of the envelope that the requester failed to decrypt. */
+  failedEnvelopeId: string;
 }
 
 export interface DecryptedEnvelope {
@@ -319,6 +335,28 @@ export interface SignalProtocolClientHooks {
   onDelivered?: (event: DeliveredEvent) => void | Promise<void>;
 
   /**
+   * Runs when a retry request ends with no resend
+   *
+   * A failed decrypt asks the sender device for a resend. The request ends
+   * when the Relay gives a conclusive answer to its post, when it gets no
+   * answer within 24 hours, when the sender used up its retry allowance, or
+   * when the sender device has no prekey bundle of the requester. The
+   * content of the failed envelope is then lost. The hook runs once for
+   * each request. A client stop during the hook can make it run again after
+   * the next start.
+   *
+   * @param event - The class of the end and the failed envelope
+   *
+   * @example
+   * ```typescript
+   * onRetryTerminal: async (event) => {
+   *   await messageStore.markUndecryptable(event.failedEnvelopeId, event.class);
+   * }
+   * ```
+   */
+  onRetryTerminal?: (event: RetryTerminalEvent) => void | Promise<void>;
+
+  /**
    * Runs when the client receives a read receipt
    *
    * Allows the app to update message status from 'delivered' to 'read'.
@@ -402,6 +440,7 @@ const HOOK_NAMES = {
   onEncryptionError: true,
   onKeysCleanedUp: true,
   onDelivered: true,
+  onRetryTerminal: true,
   onReadReceiptReceived: true,
   onViewedReceiptReceived: true,
   onTypingIndicatorReceived: true,

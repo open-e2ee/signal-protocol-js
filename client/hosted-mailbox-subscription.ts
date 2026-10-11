@@ -25,6 +25,33 @@ import {
   RELAY_PROTOCOL_VERSION,
   relayProtocolToken,
 } from "./relay-protocol";
+import {
+  HostedRelayDeviceRevokedError,
+  HostedRelayDeviceUnknownError,
+} from "./hosted-device-standing";
+
+/** The stop reason for each Relay refusal that every retry would repeat. */
+type RelayRefusalReason = Extract<
+  RelayConnectionReason,
+  | "upgrade-required"
+  | "device-revoked"
+  | "device-unknown"
+  | "authority-refused"
+>;
+
+/**
+ * The stop reason that a typed Relay refusal names, or undefined for any other
+ * error. A conclusive `HostedRelayHttpError` refusal is not typed. The
+ * subscription asks `isConclusiveRefusal` for it.
+ */
+function relayRefusalReason(
+  error: unknown,
+): Exclude<RelayRefusalReason, "authority-refused"> | undefined {
+  if (error instanceof HostedRelayUpgradeRequiredError) return "upgrade-required";
+  if (error instanceof HostedRelayDeviceRevokedError) return "device-revoked";
+  if (error instanceof HostedRelayDeviceUnknownError) return "device-unknown";
+  return undefined;
+}
 
 /** The subprotocol token that the socket offers and the Relay must echo. */
 const RELAY_PROTOCOL_TOKEN = relayProtocolToken(RELAY_PROTOCOL_VERSION);
@@ -54,11 +81,15 @@ const MAXIMUM_RECOVERY_MILLISECONDS = 64_000;
  */
 const FAILED_MESSAGE_GONE_MILLISECONDS = 5_000;
 /**
- * The reconnect ceiling starts at 1 s and doubles to 30 s. Each wait is a
- * random time from zero up to the ceiling (full jitter), the first one too, so
- * clients that lose their sockets together, for example in a Relay deploy, do
- * not reconnect together. The ceiling starts again at 1 s when the Relay
- * answers a ping, 30 s after the socket opens. A socket that closes sooner,
+ * The retry schedule. Its ceiling starts at 1 s and doubles to 30 s. Each wait
+ * is a random time from zero up to the ceiling (full jitter), the first one
+ * too, so clients that lose their sockets together, for example in a Relay
+ * deploy, do not reconnect together. A failed socket, a failed socket
+ * authentication, and a failed pull share this one schedule. While a wait is
+ * pending, a further failure draws no new wait, so failures of different
+ * kinds do not multiply the requests of an outage. The ceiling starts again at
+ * 1 s when the Relay answers a ping, 30 s after the socket opens, and when the
+ * socket authentication gets a new device token. A socket that closes sooner,
  * for example on a frame that the client refuses on each connect, keeps the
  * ceiling growing, so a loop of short connections backs off to 30 s.
  */
@@ -117,7 +148,22 @@ export interface MailboxAcknowledgment {
 }
 
 interface MailboxSubscription {
-  authenticate(): Promise<{ url: string; token: string; renewAt: number }>;
+  /**
+   * Gets the socket address and a device token. `refreshed` is true when the
+   * call got a new device token from the Relay.
+   */
+  authenticate(): Promise<{
+    url: string;
+    token: string;
+    renewAt: number;
+    refreshed: boolean;
+  }>;
+  /**
+   * Returns true for a Relay refusal of a socket authentication or a pull
+   * that the same request gets again. The subscription then stops with the
+   * reason `authority-refused`. Each other failure goes to the retry schedule.
+   */
+  isConclusiveRefusal(error: unknown): boolean;
   /** Decodes the `message` of a `durable-message` frame. */
   decodeDurable(message: unknown): Envelope;
   /** Recovers retained work over HTTP while no socket delivers it. */
@@ -151,7 +197,9 @@ interface MailboxSubscription {
    * Receives each connection transition. The subscription starts at
    * `connecting` and ends at `stopped`. It ends at `stopped` with the reason
    * `upgrade-required` when the Relay no longer serves the protocol version of
-   * this SDK. A token renewal on a live socket is not a transition.
+   * this SDK, with `device-revoked` or `device-unknown` when the Relay refuses
+   * this device, and with `authority-refused` after a conclusive refusal. A
+   * token renewal on a live socket is not a transition.
    */
   onConnectionState(
     state: RelayConnectionState["state"],
@@ -210,17 +258,44 @@ export function subscribeHostedMailbox(
   options: MailboxSubscription,
 ): MailboxSubscriptionHandle {
   let active = true;
-  /** True after the Relay refused the protocol version of this SDK. */
-  let upgradeRequired = false;
+  /**
+   * True after the Relay refused the protocol version of this SDK, refused
+   * this device, or refused the subscription conclusively.
+   */
+  let refused = false;
   let socket: WebSocket | undefined;
+  /** True after the current socket opened with the mailbox subprotocol. */
+  let socketOpened = false;
+  /** True while a connect waits for its socket authentication. */
+  let authenticating = false;
   let connectionGeneration = 0;
+  /** The ceiling of the retry schedule. */
   let reconnectDelay = FIRST_RECONNECT_MILLISECONDS;
-  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
   let renewalTimer: ReturnType<typeof setTimeout> | undefined;
-  let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * The one timer of the retries. It fires at the sooner of `retryDue` and
+   * `recoveryDue`.
+   */
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * The `Date.now()` time of the next retry of the schedule. The retry
+   * reconnects a missing socket, or runs an owed pull while a socket is up or
+   * connecting. Undefined while no retry waits.
+   */
+  let retryDue: number | undefined;
   /** The `Date.now()` time at which the pending recovery pull starts. */
-  let recoveryDue = 0;
+  let recoveryDue: number | undefined;
+  /**
+   * True from a failed socket authentication or a failed pull until a pull
+   * succeeds, the socket authentication gets a new device token, or the
+   * Relay answers a ping. In an outage a failed socket draws no recovery pull
+   * of its own. A socket attempt that fails before it opens pulls at once
+   * instead, on the retry schedule.
+   */
+  let outage = false;
+  /** True while a failed pull waits for the next retry. */
+  let pullOwed = false;
   let failedWorkRecoveryDelay = RECOVERY_MILLISECONDS;
   /**
    * The id of each message whose work failed, with the `Date.now()` time of
@@ -355,6 +430,71 @@ export function subscribeHostedMailbox(
         options.onAcknowledgmentReply(messageId, receipted.includes(messageId));
   };
 
+  /** Sets the one retry timer for the sooner of the two pending times. */
+  const armRetryTimer = () => {
+    clearTimeout(retryTimer);
+    retryTimer = undefined;
+    if (!active) return;
+    const due = Math.min(retryDue ?? Infinity, recoveryDue ?? Infinity);
+    if (due === Infinity) return;
+    retryTimer = setTimeout(
+      () => runRetries(due),
+      Math.max(0, due - Date.now()),
+    );
+  };
+
+  /**
+   * Runs each retry that is due at `due`, the time of the timer that fired,
+   * then sets the timer for the rest.
+   */
+  const runRetries = (due: number) => {
+    retryTimer = undefined;
+    if (retryDue !== undefined && retryDue <= due) {
+      retryDue = undefined;
+      // A new socket attempt carries the owed pull, which runs when the
+      // attempt fails before it opens.
+      if (socket === undefined && !authenticating) void connect();
+      else if (pullOwed) {
+        pullOwed = false;
+        requestPull();
+      }
+    }
+    if (recoveryDue !== undefined && recoveryDue <= due) {
+      recoveryDue = undefined;
+      requestPull();
+    }
+    armRetryTimer();
+  };
+
+  /**
+   * Draws the next retry wait from the schedule and doubles the ceiling,
+   * unless a retry already waits. A failure during the wait draws nothing.
+   */
+  const scheduleRetry = () => {
+    if (!active || retryDue !== undefined) return;
+    retryDue = Date.now() + Math.floor(Math.random() * reconnectDelay);
+    reconnectDelay = Math.min(MAXIMUM_RECONNECT_MILLISECONDS, reconnectDelay * 2);
+    armRetryTimer();
+  };
+
+  /** A request succeeded, so the outage ends and the ceiling starts again. */
+  const endOutage = () => {
+    outage = false;
+    reconnectDelay = FIRST_RECONNECT_MILLISECONDS;
+  };
+
+  /**
+   * Owes a failed pull to the retry schedule. The pending recovery pull
+   * ends, so the failed pull does not run twice.
+   */
+  const retryPull = () => {
+    outage = true;
+    pullOwed = true;
+    recoveryDue = undefined;
+    armRetryTimer();
+    scheduleRetry();
+  };
+
   /**
    * Schedules one recovery pull. A pending pull that starts sooner stays, and
    * a pending pull that starts later is replaced, so a longer wait for failed
@@ -365,15 +505,9 @@ export function subscribeHostedMailbox(
     if (!active) return false;
     const wait = delay * (0.5 + Math.random());
     const due = Date.now() + wait;
-    if (recoveryTimer !== undefined) {
-      if (due >= recoveryDue) return false;
-      clearTimeout(recoveryTimer);
-    }
+    if (recoveryDue !== undefined && due >= recoveryDue) return false;
     recoveryDue = due;
-    recoveryTimer = setTimeout(() => {
-      recoveryTimer = undefined;
-      requestPull();
-    }, wait);
+    armRetryTimer();
     return true;
   };
 
@@ -409,10 +543,10 @@ export function subscribeHostedMailbox(
         if ("receipt" in work) {
           try {
             await options.receiveReceipt(work.receipt);
-            // A hand-off that settles after the upgrade stop is not
+            // A hand-off that settles after a refusal stop is not
             // acknowledged, because the Relay refuses the acknowledgment. The
             // Relay keeps the receipt.
-            if (!upgradeRequired)
+            if (!refused)
               receiptAcknowledgments.push(work.receipt.receiptId);
           } catch {
             failed = true;
@@ -460,6 +594,8 @@ export function subscribeHostedMailbox(
   const drain = async () => {
     if (draining || !active) return;
     draining = true;
+    /** True while `options.pull` runs, so the catch knows what failed. */
+    let pulling = false;
     try {
       while (
         active &&
@@ -490,7 +626,13 @@ export function subscribeHostedMailbox(
         pullRequested = false;
         flushAcknowledgments();
         const pulledAt = Date.now();
+        pulling = true;
         const { messages, receipts } = await options.pull();
+        pulling = false;
+        // The Relay answered, so the HTTP outage ends. The reconnect ceiling
+        // stays, because the socket can still fail.
+        outage = false;
+        pullOwed = false;
         const { failed, acknowledged } = await receiveBatch([
           ...messages.map((message) => ({ message })),
           ...receipts.map((receipt) => ({ receipt })),
@@ -512,10 +654,15 @@ export function subscribeHostedMailbox(
     } catch (error) {
       // A pull, an ephemeral message, or a batch callback failed. Retained
       // durable work stays in the mailbox. Ephemeral work can be lost. A pull
-      // that the Relay refuses with `UPGRADE_REQUIRED` fails the same way
-      // each time, so it ends the subscription.
-      if (error instanceof HostedRelayUpgradeRequiredError) stopForUpgrade();
-      else recoverLater();
+      // that the Relay refuses for this SDK or this device, or refuses
+      // conclusively, fails the same way each time, so it ends the
+      // subscription. Each other failed pull goes to the retry schedule. A
+      // callback error is the application's, so it only schedules a pull.
+      const refusal = relayRefusalReason(error);
+      if (refusal !== undefined) stop(refusal);
+      else if (!pulling) recoverLater();
+      else if (options.isConclusiveRefusal(error)) stop("authority-refused");
+      else retryPull();
     } finally {
       draining = false;
       if (
@@ -536,6 +683,9 @@ export function subscribeHostedMailbox(
   const disconnect = () => {
     const previous = socket;
     socket = undefined;
+    socketOpened = false;
+    // A connect that still authenticates is dropped by its generation.
+    authenticating = false;
     connectionGeneration++;
     ephemeral.length = 0;
     durable.length = 0;
@@ -559,45 +709,54 @@ export function subscribeHostedMailbox(
   };
 
   /**
-   * Ends the subscription because the Relay no longer serves the protocol
-   * version of this SDK. Each reconnect and each recovery pull would fail the
-   * same way, so none follows. Queued acknowledgments are not sent, because
-   * the Relay refuses them too. A receipt hand-off that settles after the stop
-   * is not acknowledged either. The Relay keeps their messages and receipts,
-   * and each queued message gets the reply `receipted` false.
+   * Ends the subscription because the Relay refused it in a way that each
+   * reconnect and each pull gets again: `upgrade-required` when the Relay no
+   * longer serves the protocol version of this SDK, `device-revoked` or
+   * `device-unknown` when the Relay refuses this device, and
+   * `authority-refused` after a conclusive refusal of a socket authentication
+   * or a pull. No retry
+   * follows. Queued acknowledgments are not sent, because the Relay refuses
+   * them too. A receipt hand-off that settles after the stop is not
+   * acknowledged either. The Relay keeps their messages and receipts, and each
+   * queued message gets the reply `receipted` false.
    */
-  const stopForUpgrade = () => {
+  const stop = (reason: RelayRefusalReason) => {
     if (!active) return;
     active = false;
-    upgradeRequired = true;
+    refused = true;
     const unsent = acknowledgments.splice(0);
     receiptAcknowledgments.length = 0;
     for (const messageId of unsent)
       options.onAcknowledgmentReply(messageId, false);
-    clearTimeout(reconnectTimer);
-    reconnectTimer = undefined;
-    clearTimeout(recoveryTimer);
-    recoveryTimer = undefined;
+    clearTimeout(retryTimer);
+    retryTimer = undefined;
+    retryDue = undefined;
+    recoveryDue = undefined;
     clearTimeout(acknowledgmentTimer);
     acknowledgmentTimer = undefined;
     disconnect();
-    options.onConnectionState("stopped", "upgrade-required");
+    options.onConnectionState("stopped", reason);
   };
 
   const retryConnection = (
-    reason: Exclude<RelayConnectionReason, "upgrade-required">,
+    reason: Exclude<RelayConnectionReason, RelayRefusalReason>,
   ) => {
-    if (!active || reconnectTimer !== undefined) return;
+    if (!active) return;
+    const replayed = socketOpened;
     disconnect();
     options.onConnectionState("reconnecting", reason);
-    // One recovery pull per reconnect attempt, paced by the reconnect backoff.
-    recoverLater();
-    const delay = Math.floor(Math.random() * reconnectDelay);
-    reconnectDelay = Math.min(MAXIMUM_RECONNECT_MILLISECONDS, reconnectDelay * 2);
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = undefined;
-      void connect();
-    }, delay);
+    if (!outage) {
+      // One recovery pull per reconnect attempt, drawn before the wait.
+      recoverLater();
+    } else if (reason !== "authentication" && !replayed) {
+      // In an outage, a socket attempt that fails before it opens pulls at
+      // once, on the retry schedule. A socket that opened replayed the
+      // retained work. A pull after a failed authentication would fail on
+      // the same device token.
+      pullOwed = false;
+      requestPull();
+    }
+    scheduleRetry();
   };
 
   const queueDurable = (candidate: WebSocket, message: unknown) => {
@@ -631,10 +790,14 @@ export function subscribeHostedMailbox(
   const connect = async () => {
     const generation = ++connectionGeneration;
     let authenticated = false;
+    authenticating = true;
     try {
       const authority = await options.authenticate();
       authenticated = true;
       if (!active || generation !== connectionGeneration) return;
+      authenticating = false;
+      // A new device token shows that the Relay serves this device again.
+      if (authority.refreshed) endOutage();
       const candidate = new WebSocket(authority.url, [
         RELAY_PROTOCOL_TOKEN,
         `${RELAY_AUTH_PROTOCOL_PREFIX}${authority.token}`,
@@ -659,8 +822,10 @@ export function subscribeHostedMailbox(
         // a failed message remains. This pull is scheduled before the replay
         // arrives, so it can find an empty page when the replay handles the
         // last failed message.
-        clearTimeout(recoveryTimer);
-        recoveryTimer = undefined;
+        socketOpened = true;
+        recoveryDue = undefined;
+        pullOwed = false;
+        armRetryTimer();
         failedWorkRecoveryDelay = RECOVERY_MILLISECONDS;
         if (failedMessages.size > 0) recoverFailedWork();
         options.onConnectionState("connected");
@@ -707,7 +872,7 @@ export function subscribeHostedMailbox(
           if (event.data === "pong") {
             unansweredPings = 0;
             // The socket stayed open and the Relay answers it.
-            reconnectDelay = FIRST_RECONNECT_MILLISECONDS;
+            endOutage();
             return;
           }
           const frame: unknown = JSON.parse(event.data);
@@ -762,7 +927,7 @@ export function subscribeHostedMailbox(
           event.code === UPGRADE_REQUIRED_CLOSE_CODE &&
           event.reason === UPGRADE_REQUIRED_CLOSE_REASON
         ) {
-          stopForUpgrade();
+          stop("upgrade-required");
           return;
         }
         // A close 4400 with the reason `PROTOCOL_UNSUPPORTED` takes the
@@ -784,8 +949,15 @@ export function subscribeHostedMailbox(
       });
     } catch (error) {
       if (!active || generation !== connectionGeneration) return;
-      if (error instanceof HostedRelayUpgradeRequiredError) stopForUpgrade();
-      else retryConnection(authenticated ? "error" : "authentication");
+      authenticating = false;
+      const refusal = relayRefusalReason(error);
+      if (refusal !== undefined) stop(refusal);
+      else if (options.isConclusiveRefusal(error)) stop("authority-refused");
+      else {
+        // A failed socket authentication is a failed Relay request.
+        if (!authenticated) outage = true;
+        retryConnection(authenticated ? "error" : "authentication");
+      }
     }
   };
 
@@ -850,8 +1022,8 @@ export function subscribeHostedMailbox(
       if (!active) return;
       flushAcknowledgments();
       active = false;
-      clearTimeout(reconnectTimer);
-      clearTimeout(recoveryTimer);
+      clearTimeout(retryTimer);
+      retryTimer = undefined;
       disconnect();
       options.onConnectionState("stopped");
     },

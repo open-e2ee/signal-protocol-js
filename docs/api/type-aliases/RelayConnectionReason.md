@@ -6,7 +6,7 @@
 
 # Type Alias: RelayConnectionReason
 
-> **RelayConnectionReason** = `"handshake"` \| `"protocol"` \| `"closed"` \| `"error"` \| `"frame"` \| `"authentication"` \| `"silent"` \| `"upgrade-required"`
+> **RelayConnectionReason** = `"handshake"` \| `"protocol"` \| `"closed"` \| `"error"` \| `"frame"` \| `"authentication"` \| `"silent"` \| `"upgrade-required"` \| `"authority-refused"` \| `"device-revoked"` \| `"device-unknown"`
 
 The transition site that moved a relay connection to `reconnecting`, or to
 `stopped` without a call to stop it.
@@ -21,3 +21,11 @@ The transition site that moved a relay connection to `reconnecting`, or to
 - `upgrade-required`: the Relay no longer serves the protocol version of
   this SDK. The state is `stopped`, and the subscription does not retry.
   Only a newer SDK can connect again.
+- `authority-refused`: the Relay refused the device token refresh or a
+  pull in a way that a retry gets again, for example for a deleted account.
+  The state is `stopped`, and the subscription does not retry.
+- `device-revoked`: an account recovery revoked this device. The state is
+  `stopped`, and the subscription does not retry.
+- `device-unknown`: the Relay has no device for the stored session. The
+  state is `stopped`, and the subscription does not retry. Only an explicit
+  re-registration can connect this device again.

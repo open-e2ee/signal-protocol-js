@@ -51,7 +51,11 @@ export interface OneTimePreKeyRefill {
   kemGenerated: number;
 }
 
-function nextOneTimePreKeyId(retained: readonly { keyId: number }[]): number {
+/**
+ * The first ID of a fresh one-time batch: the highest retained ID of its type
+ * plus one, or 0 when none is retained.
+ */
+export function nextOneTimePreKeyId(retained: readonly { keyId: number }[]): number {
   return retained.reduce((max, key) => Math.max(max, key.keyId), -1) + 1;
 }
 

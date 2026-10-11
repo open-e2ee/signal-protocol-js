@@ -72,6 +72,8 @@ export {
 } from "./client/relay-lifecycle";
 export {
   BraidPolicy,
+  HostedRelayDeviceRevokedError,
+  HostedRelayDeviceUnknownError,
   HostedRelayPresenceError,
   HostedRelayUpgradeRequiredError,
   advanceHostedRelayIdentityMigration,
@@ -624,6 +626,8 @@ export type {
   DecryptedEnvelope,
   DeliveredEvent,
   DeliverySource,
+  RetryTerminalClass,
+  RetryTerminalEvent,
 } from "./client/event-hooks";
 
 // Error types, message types, and enums

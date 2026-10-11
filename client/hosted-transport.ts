@@ -77,6 +77,10 @@ import {
 import { HostedGroupServer } from "./hosted-groups";
 import { relayProtocolHeaders, throwIfUpgradeRequired } from "./relay-protocol";
 import {
+  HostedRelayDeviceUnknownError,
+  throwIfDeviceRevoked,
+} from "./hosted-device-standing";
+import {
   HostedAnonymousDelivery,
   decodeHostedAnonymousEnvelope,
 } from "./hosted-anonymous-delivery";
@@ -234,6 +238,30 @@ export class HostedRelayHttpError extends Error {
 }
 
 /**
+ * The Relay refusal codes that end a subscription when the Relay marks them
+ * not retryable: a deleted account or device, a missing resource, and an
+ * expired operation. The same request gets the same refusal again.
+ */
+const CONCLUSIVE_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  "AUTHORITY_DENIED",
+  "NOT_FOUND",
+  "OPERATION_EXPIRED",
+]);
+
+/**
+ * Returns true for a Relay refusal that a retry gets again. A refusal that the
+ * Relay marks `retryable`, for example a missing binding during a Relay
+ * outage, is not conclusive.
+ */
+function isConclusiveRefusal(error: unknown): boolean {
+  return (
+    error instanceof HostedRelayHttpError &&
+    !error.retryable &&
+    CONCLUSIVE_REFUSAL_CODES.has(error.code)
+  );
+}
+
+/**
  * A durable delivery whose mailbox reset inside its acknowledgment hold
  * answers 503 `DELIVERY_UNCERTAIN`. The operation identifier makes a repeat
  * exact, so the transport sends the same request once more before it
@@ -342,13 +370,14 @@ async function parseResponse(response: Response): Promise<unknown> {
     throw new Error("Signal Protocol Relay returned invalid JSON");
   }
   if (!response.ok) {
-    // `UPGRADE_REQUIRED` is terminal at any error status, so
-    // `authenticatedPost` and every other retry, which matches only a
-    // `HostedRelayHttpError`, never repeat it. `PROTOCOL_UNSUPPORTED` stays a
-    // `HostedRelayHttpError` whose `retryable` is true: the Relay sends it for
-    // a version above the newest one that it serves, which happens only after
-    // a Relay rollback.
+    // `UPGRADE_REQUIRED` and `DEVICE_REVOKED` are terminal at any error
+    // status, so `authenticatedPost` and every other retry, which matches only
+    // a `HostedRelayHttpError`, never repeat them. `PROTOCOL_UNSUPPORTED`
+    // stays a `HostedRelayHttpError` whose `retryable` is true: the Relay
+    // sends it for a version above the newest one that it serves, which
+    // happens only after a Relay rollback.
     throwIfUpgradeRequired(response.status, parsed);
+    throwIfDeviceRevoked(response.status, parsed);
     const error = record(parsed) && record(parsed.error) ? parsed.error : {};
     const code = typeof error.code === "string" ? error.code : "UNKNOWN";
     const message =
@@ -860,14 +889,28 @@ export class HostedRelayHttpTransport
       ),
     );
     const proof = await this.deviceAuthentication.signChallenge(challenge);
-    const value = await postJson(this.connection, "/identity/token", {
-      accountAddress: this.session.canonicalAccountId,
-      deviceId: this.session.deviceId,
-      deviceProof: bytesToBase64(proof),
-      nonce: bytesToUrlSafeBase64(nonce),
-      publishableKey: this.connection.publishableKey,
-      requestedAtSeconds,
-    });
+    let value: unknown;
+    try {
+      value = await postJson(this.connection, "/identity/token", {
+        accountAddress: this.session.canonicalAccountId,
+        // The Relay checks this key against the keys that a recovery revoked.
+        deviceAuthenticationPublicKey: bytesToBase64(
+          this.deviceAuthentication.publicKey,
+        ),
+        deviceId: this.session.deviceId,
+        deviceProof: bytesToBase64(proof),
+        nonce: bytesToUrlSafeBase64(nonce),
+        publishableKey: this.connection.publishableKey,
+        requestedAtSeconds,
+      });
+    } catch (error) {
+      // A token refusal names this device, so it is not a
+      // `HostedRelayHttpError`. A catch that reads `NOT_FOUND` as a missing
+      // destination cannot take it.
+      if (error instanceof HostedRelayHttpError && error.code === "NOT_FOUND")
+        throw new HostedRelayDeviceUnknownError(error.status, error.message);
+      throw error;
+    }
     if (!record(value) || typeof value.deviceToken !== "string") {
       throw new Error("Signal Protocol Relay returned an invalid device token");
     }
@@ -1717,6 +1760,7 @@ export class HostedRelayHttpTransport
         }
       },
       authenticate: async () => {
+        const previous = this.session.deviceToken;
         const token = await this.token();
         const url = websocketUrl(
           `${identifiedEndpoint(this.connection)}/mailbox/connect`,
@@ -1729,8 +1773,10 @@ export class HostedRelayHttpTransport
             (tokenExpiration(token, this.session) -
               DEVICE_TOKEN_REFRESH_SECONDS) *
             1_000,
+          refreshed: token !== previous,
         };
       },
+      isConclusiveRefusal,
       decodeDurable: (message) => this.incomingEnvelope(message) as Envelope,
       pull: async () => {
         const { messages, receipts } = await this.pullIncoming();

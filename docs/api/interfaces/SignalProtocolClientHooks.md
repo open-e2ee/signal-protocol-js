@@ -320,6 +320,42 @@ onReadReceiptReceived: async (senderId, timestamps) => {
 
 ***
 
+### onRetryTerminal?
+
+> `optional` **onRetryTerminal?**: (`event`) => `void` \| `Promise`\<`void`\>
+
+Runs when a retry request ends with no resend
+
+A failed decrypt asks the sender device for a resend. The request ends
+when the Relay gives a conclusive answer to its post, when it gets no
+answer within 24 hours, when the sender used up its retry allowance, or
+when the sender device has no prekey bundle of the requester. The
+content of the failed envelope is then lost. The hook runs once for
+each request. A client stop during the hook can make it run again after
+the next start.
+
+#### Parameters
+
+##### event
+
+[`RetryTerminalEvent`](RetryTerminalEvent.md)
+
+The class of the end and the failed envelope
+
+#### Returns
+
+`void` \| `Promise`\<`void`\>
+
+#### Example
+
+```typescript
+onRetryTerminal: async (event) => {
+  await messageStore.markUndecryptable(event.failedEnvelopeId, event.class);
+}
+```
+
+***
+
 ### onSessionArchived?
 
 > `optional` **onSessionArchived?**: (`sessionId`) => `void` \| `Promise`\<`void`\>

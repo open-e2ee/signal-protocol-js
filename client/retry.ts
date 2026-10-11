@@ -11,7 +11,7 @@ import { EncryptionError, EncryptionErrorCode } from '../types';
 import { ContentHint } from '../types/messages';
 import { ProtocolAddress } from '../types/address';
 import { determineRetryReason } from './retry-utils';
-import { postRetryRequest } from './retry-request-envelope';
+import { acknowledgesRetryRequest, requestRetryInFamily } from './retry-request-lifecycle';
 import type { RetryFamilyReceive } from './retry-family';
 import type {
   SignalProtocolClientContext,
@@ -37,8 +37,13 @@ import type { MessageRecord } from '../types/api';
 import {
   getRetryResend,
   RELIABILITY_RECORD_TTL_MS,
+  retryRequestAttempt,
+  storeRetryResend,
   type RetryResendTarget,
+  type RetryResendTerminal,
+  type RetryTerminalClass,
 } from '../local/store/reliability';
+import { callHook } from './event-hooks';
 
 /**
  * Retry response state (passed by client, mutated in place)
@@ -222,6 +227,46 @@ async function sendNullMessageForRetryReset(
 }
 
 /**
+ * Store the terminal state of the answer to a request attempt, call the
+ * `onRetryTerminal` hook, and then store the state as emitted. A
+ * RelayWorkStopped from the hook propagates and leaves the state not
+ * emitted, so a redelivery of the request calls the hook again.
+ */
+async function endRetryResend(
+  ctx: RetryContext,
+  retryRequest: RetryRequest,
+  retry: RetryRequestAttempt,
+  terminalClass: RetryTerminalClass
+): Promise<void> {
+  const ended: RetryResendTerminal = {
+    ...retry,
+    kind: 'resend',
+    attempt: retryRequestAttempt(retry),
+    recipientUserId: retryRequest.requesterUserId,
+    recipientDeviceId: retryRequest.requesterDeviceId,
+    terminal: { class: terminalClass, at: Date.now(), emitted: false },
+  };
+  await storeRetryResend(ctx.storage, ended);
+  await emitRetryResendTerminal(ctx, ended);
+}
+
+/** Call the hook for a terminal answer that is not emitted, and store it as emitted. */
+async function emitRetryResendTerminal(
+  ctx: RetryContext,
+  ended: RetryResendTerminal
+): Promise<void> {
+  if (ended.terminal.emitted) return;
+  await callHook(ctx.hooks, 'onRetryTerminal', {
+    class: ended.terminal.class,
+    failedEnvelopeId: ended.failedEnvelopeId,
+  });
+  await storeRetryResend(ctx.storage, {
+    ...ended,
+    terminal: { ...ended.terminal, emitted: true },
+  });
+}
+
+/**
  * Post the stored resend or null message that answered this request
  * envelope again: the post of that answer did not complete. It does no
  * session work. It returns false when the sender stored no answer to this
@@ -278,12 +323,12 @@ export function getSessionKey(userId: string, deviceId: number): string {
  * Handles IMPLICIT content type discarding, rate limiting, and stale prekey rotation.
  * An envelope without an identified sender, or from the local device, gets
  * one warn line and no request. The request is stored under the failed
- * envelope ID before its post, and a later failure of the same envelope posts
- * the stored request again. The rate limit counts each post. A failed resend
- * or null message asks again for its failed envelope through the retry
- * family, whatever its content hint. A member that fails with an error that
- * is not retryable posts nothing here, and its redelivery on the pull path
- * asks again.
+ * envelope ID before its post, and the request record then owns it, as
+ * `requestRetryInFamily` tells. A redelivery of the failed envelope posts
+ * nothing. A failed resend or null message asks again for its failed
+ * envelope through the retry family, whatever its content hint. A member
+ * that fails with an error that is not retryable posts nothing here, and its
+ * redelivery on the pull path asks again.
  *
  * @param ctx - Retry context with dependencies
  * @param envelope - The failed message envelope
@@ -434,44 +479,36 @@ export async function sendRetryRequestInternal(
       // Create retry request via SesameManager
       return ctx.sesameManager.createRetryRequest(failedMessage, retryReason);
     };
-    const posted = await family.requestRetry(fingerprint, async (failed) => {
-      // Receiver-side rate limiting. A post of a stored request counts too.
-      if (!checkRetryRateLimit(rateLimitState, envelope.senderUserId)) {
-        ctx.logger.warn('Retry rate limit exceeded for sender', {
-          category: 'E2EE',
-          data: { senderId: envelope.senderUserId, windowMs: RETRY_REQUEST_WINDOW_MS },
-        });
-        // A member stays unacknowledged, so its redelivery after the
-        // window asks again.
-        if (family.member === undefined) {
-          await markMessageDeliveredSilently(envelope.id, ctx.relay, ctx.logger, options);
-        }
-        return false;
-      }
-      if (!send) {
-        ctx.logger.warn('Cannot send retry request: no relay or callback', { category: 'E2EE' });
-        return false;
-      }
-      await postRetryRequest(
-        ctx.storage,
-        failed,
-        createRequest,
-        { userId: ctx.userId, deviceId: ctx.deviceId },
-        send
-      );
-      return true;
+    const outcome = await requestRetryInFamily(family, fingerprint, {
+      storage: ctx.storage,
+      logger: ctx.logger,
+      hooks: ctx.hooks,
+      local: { userId: ctx.userId, deviceId: ctx.deviceId },
+      senderUserId: envelope.senderUserId,
+      // Receiver-side rate limiting. A failed envelope with a request record
+      // spends nothing, as `requestRetryInFamily` tells.
+      allow: () => checkRetryRateLimit(rateLimitState, envelope.senderUserId),
+      windowMs: RETRY_REQUEST_WINDOW_MS,
+      send,
+      createRequest,
+      schedule: ctx.scheduleRetryRequest,
     });
-    // An envelope with no post stays unacknowledged.
-    if (!posted) return;
-
-    ctx.logger.info('Sent retry request for failed decryption', {
-      category: 'E2EE',
-      data: {
-        sender: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
-        timestamp: envelope.timestamp,
-        reason: retryReason,
-      },
-    });
+    if (outcome === 'posted' || outcome === 'pending') {
+      ctx.logger.info('Sent retry request for failed decryption', {
+        category: 'E2EE',
+        data: {
+          sender: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
+          timestamp: envelope.timestamp,
+          reason: retryReason,
+          outcome,
+        },
+      });
+    }
+    // The record of the failed envelope owns its request, so the envelope
+    // is acknowledged. A member is acknowledged only when its request
+    // attempt is posted or ended: a deferred member asks again on its
+    // redelivery after the rate limit window.
+    if (!acknowledgesRetryRequest(outcome, family.member !== undefined)) return;
 
     // Mark failed message as delivered so it does not reappear
     if (ctx.relay?.markDelivered) {
@@ -584,6 +621,21 @@ export async function handleRetryRequestAndResend(
   try {
     // Look up the original outbound record by peer session and timestamp.
     const record = await ctx.storage.getMessageRecord(sessionId, retryRequest.failedTimestamp);
+
+    // The answer to this failed envelope ended. A redelivery of a request
+    // only calls the hook when the client stopped before it stored the call.
+    if (retry !== undefined) {
+      const stored = await getRetryResend(
+        ctx.storage,
+        retryRequest.requesterUserId,
+        retryRequest.requesterDeviceId,
+        retry.failedEnvelopeId
+      );
+      if (stored?.terminal !== undefined) {
+        await emitRetryResendTerminal(ctx, stored);
+        return;
+      }
+    }
 
     // The sender already answered this request envelope, and the post did
     // not complete. Post the stored bytes again, with no session work.
@@ -739,6 +791,11 @@ export async function handleRetryRequestAndResend(
             deviceId: retryRequest.requesterDeviceId,
           },
         });
+        // The requester has no prekey bundle, so no resend can reach it.
+        // The answer ends, and the request envelope is acknowledged.
+        if (retry !== undefined) {
+          await endRetryResend(ctx, retryRequest, retry, 'missing-prekey');
+        }
         return;
       }
 

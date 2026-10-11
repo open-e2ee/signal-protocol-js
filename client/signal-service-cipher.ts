@@ -1073,7 +1073,13 @@ export class SignalProtocolServiceCipher {
           recipientDeviceId,
           target.failedEnvelopeId
         );
-        if (stored?.requestEnvelopeId === target.requestEnvelopeId && stored.kind === target.kind) {
+        // A terminal record holds no resend to post again.
+        if (
+          stored !== null &&
+          stored.terminal === undefined &&
+          stored.requestEnvelopeId === target.requestEnvelopeId &&
+          stored.kind === target.kind
+        ) {
           try {
             await post(stored);
             return true;

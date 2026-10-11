@@ -23,6 +23,7 @@ import type { SignalProtocolRelayServer } from '../remote/relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import type { SignalProtocolLocalStore, Base64 } from '../types';
 import { DefaultSignalProtocolClient } from './client';
+import { nextOneTimePreKeyId } from './one-time-prekey-refill';
 import type { SignalProtocolClientCompositionOptions } from './compose';
 import { createSignalProtocolClientConfig } from './compose';
 import type { SealedSenderAccessMode } from './config';
@@ -60,6 +61,10 @@ export {
   hostedRelayPresence,
   hostedRelayWakePresence,
 } from './hosted-presence';
+export {
+  HostedRelayDeviceRevokedError,
+  HostedRelayDeviceUnknownError,
+} from './hosted-device-standing';
 export { HostedRelayUpgradeRequiredError } from './relay-protocol';
 export type {
   HostedRelayPresence,
@@ -92,6 +97,9 @@ const DEVICE_AUTHENTICATION_METADATA_PREFIX =
   'hostedRelay.deviceAuthentication.v1:';
 const REGISTRATION_SNAPSHOT_METADATA_PREFIX =
   'hostedRelay.registrationSnapshot.v1:';
+/** The pending snapshot of a re-registration that the Relay has not confirmed. */
+const REREGISTRATION_SNAPSHOT_METADATA_PREFIX =
+  'hostedRelay.reregistrationSnapshot.v1:';
 const HOSTED_REGISTRATION_ONE_TIME_PREKEY_COUNT = 10;
 const DEVICE_AUTHENTICATION_SIGNATURE_LABEL = stringToBytes(
   'OpenE2EE Relay device authentication v1\0',
@@ -298,7 +306,19 @@ export interface HostedSignalProtocolClientOptions extends Omit<
     /** Public environment-scoped Signal Protocol Relay connection URL. */
     readonly relayUrl: string;
     readonly getIdentityAssertion: GetIdentityAssertion;
-    readonly assertionPurpose?: Exclude<IdentityAssertionPurpose, 'refresh'>;
+    /**
+     * `register` (the default) resumes the stored session or registers a new
+     * device. `recover` registers through an account recovery.
+     *
+     * `reregister` registers this device again with its stored identity and
+     * device key, and skips the stored session. Use it only after a
+     * `HostedRelayDeviceUnknownError` and after the user confirms it. It asks
+     * for a `register` assertion. The Relay can give a new device ID, so the
+     * messages queued for the old device are lost.
+     */
+    readonly assertionPurpose?:
+      | Exclude<IdentityAssertionPurpose, 'refresh'>
+      | 'reregister';
     readonly assurance?: IdentityAssertionAssurance;
     readonly onProgress?: HostedRelayIdentityProgressCallback;
     readonly sealedSenderAccessMode?: SealedSenderAccessMode;
@@ -552,19 +572,22 @@ async function decodeRegistrationSnapshot(
   return { operationId, registrationPreKeys };
 }
 
-async function getOrCreateRegistrationSnapshot(
-  storage: SignalProtocolLocalStore,
+type StoredIdentityKeyPair = NonNullable<
+  Awaited<ReturnType<SignalProtocolLocalStore['getIdentityKey']>>
+>;
+
+interface HostedRegistrationSnapshot {
+  operationId: string;
+  registrationPreKeys: HostedRelayRegistrationPreKeys;
+}
+
+async function registrationSnapshotMetadataKey(
+  prefix: string,
   publishableKey: string,
   identity: CompositeIdentityV1,
   registrationId: number,
-  identityKeyPair: NonNullable<
-    Awaited<ReturnType<SignalProtocolLocalStore['getIdentityKey']>>
-  >,
-): Promise<{
-  operationId: string;
-  registrationPreKeys: HostedRelayRegistrationPreKeys;
-}> {
-  const metadataKey = `${REGISTRATION_SNAPSHOT_METADATA_PREFIX}${bytesToBase64(
+): Promise<string> {
+  return `${prefix}${bytesToBase64(
     await sha256(
       concatBytes(
         stringToBytes(publishableKey),
@@ -575,14 +598,16 @@ async function getOrCreateRegistrationSnapshot(
       ),
     ),
   )}`;
-  const stored = await storage.getMetadata(metadataKey);
-  if (stored) {
-    return decodeRegistrationSnapshot(stored, identity, registrationId);
-  }
-  const registrationPreKeys = await getOrCreateRegistrationPreKeys(
-    storage,
-    identityKeyPair,
-  );
+}
+
+/** Derives the operation ID of a prekey set and stores the set under `metadataKey`. */
+async function storeRegistrationSnapshot(
+  storage: SignalProtocolLocalStore,
+  metadataKey: string,
+  identity: CompositeIdentityV1,
+  registrationId: number,
+  registrationPreKeys: HostedRelayRegistrationPreKeys,
+): Promise<HostedRegistrationSnapshot> {
   const operationId = await deriveHostedRegistrationOperationId(
     identity,
     registrationId,
@@ -603,12 +628,85 @@ async function getOrCreateRegistrationSnapshot(
   return { operationId, registrationPreKeys };
 }
 
-async function getOrCreateRegistrationPreKeys(
+async function getOrCreateRegistrationSnapshot(
   storage: SignalProtocolLocalStore,
-  identity: NonNullable<
-    Awaited<ReturnType<SignalProtocolLocalStore['getIdentityKey']>>
-  >,
-): Promise<HostedRelayRegistrationPreKeys> {
+  publishableKey: string,
+  identity: CompositeIdentityV1,
+  registrationId: number,
+  identityKeyPair: StoredIdentityKeyPair,
+): Promise<HostedRegistrationSnapshot> {
+  const metadataKey = await registrationSnapshotMetadataKey(
+    REGISTRATION_SNAPSHOT_METADATA_PREFIX,
+    publishableKey,
+    identity,
+    registrationId,
+  );
+  const stored = await storage.getMetadata(metadataKey);
+  if (stored) {
+    return decodeRegistrationSnapshot(stored, identity, registrationId);
+  }
+  return storeRegistrationSnapshot(
+    storage,
+    metadataKey,
+    identity,
+    registrationId,
+    await getOrCreateRegistrationPreKeys(storage, identityKeyPair),
+  );
+}
+
+/**
+ * The snapshot of a re-registration. It keeps the signed prekeys and adds a
+ * fresh one-time batch of each type, so its operation ID is new. The Relay
+ * then cannot answer it with an earlier registration of this identity.
+ *
+ * The snapshot stays pending until the Relay registers it, so a retry after a
+ * lost answer repeats the same operation. `promote` makes it the stored
+ * registration snapshot.
+ */
+async function getOrCreateReregistrationSnapshot(
+  storage: SignalProtocolLocalStore,
+  publishableKey: string,
+  identity: CompositeIdentityV1,
+  registrationId: number,
+  identityKeyPair: StoredIdentityKeyPair,
+): Promise<HostedRegistrationSnapshot & { promote(): Promise<void> }> {
+  const [pendingKey, registeredKey] = await Promise.all(
+    [
+      REREGISTRATION_SNAPSHOT_METADATA_PREFIX,
+      REGISTRATION_SNAPSHOT_METADATA_PREFIX,
+    ].map((prefix) =>
+      registrationSnapshotMetadataKey(
+        prefix,
+        publishableKey,
+        identity,
+        registrationId,
+      ),
+    ),
+  );
+  const stored = await storage.getMetadata(pendingKey!);
+  const snapshot = stored
+    ? await decodeRegistrationSnapshot(stored, identity, registrationId)
+    : await storeRegistrationSnapshot(
+        storage,
+        pendingKey!,
+        identity,
+        registrationId,
+        await createReregistrationPreKeys(storage, identityKeyPair),
+      );
+  return {
+    ...snapshot,
+    async promote() {
+      const pending = await storage.getMetadata(pendingKey!);
+      if (pending) await storage.setMetadata(registeredKey!, pending);
+      await storage.deleteMetadata(pendingKey!);
+    },
+  };
+}
+
+async function getOrCreateSignedRegistrationPreKeys(
+  storage: SignalProtocolLocalStore,
+  identity: StoredIdentityKeyPair,
+): Promise<HostedRelayRegistrationPreKeys['signedPreKeys']> {
   let signedPreKey = await storage.getEcSignedPreKey(undefined, 'aci');
   if (!signedPreKey) {
     signedPreKey = await generateEcSignedPreKey(identity);
@@ -619,6 +717,53 @@ async function getOrCreateRegistrationPreKeys(
     kyberPreKey = await generateKyberLastResortPreKey(identity, 1);
     await storage.storeKyberPreKey(kyberPreKey, 'aci');
   }
+  return [
+    {
+      algorithm: 'ec-x25519',
+      keyId: signedPreKey.keyId,
+      publicKey: base64ToBytes(signedPreKey.publicKey),
+      signature: base64ToBytes(signedPreKey.signature),
+    },
+    {
+      algorithm: 'kem-ml-kem-1024',
+      keyId: kyberPreKey.keyId,
+      publicKey: base64ToBytes(kyberPreKey.publicKey),
+      signature: base64ToBytes(kyberPreKey.signature),
+    },
+  ];
+}
+
+function registrationOneTimePreKeys(
+  ecOneTimePreKeys: Awaited<
+    ReturnType<SignalProtocolLocalStore['getEcOneTimePreKeys']>
+  >,
+  kemOneTimePreKeys: Awaited<
+    ReturnType<SignalProtocolLocalStore['getKemOneTimePreKeys']>
+  >,
+): HostedRelayRegistrationPreKeys['oneTimePreKeys'] {
+  return [
+    ...ecOneTimePreKeys.map((prekey) => ({
+      algorithm: 'ec-x25519' as const,
+      keyId: prekey.keyId,
+      publicKey: base64ToBytes(prekey.publicKey),
+    })),
+    ...kemOneTimePreKeys.map((prekey) => ({
+      algorithm: 'kem-ml-kem-1024' as const,
+      keyId: prekey.keyId,
+      publicKey: base64ToBytes(prekey.publicKey),
+      signature: base64ToBytes(prekey.signature),
+    })),
+  ];
+}
+
+async function getOrCreateRegistrationPreKeys(
+  storage: SignalProtocolLocalStore,
+  identity: StoredIdentityKeyPair,
+): Promise<HostedRelayRegistrationPreKeys> {
+  const signedPreKeys = await getOrCreateSignedRegistrationPreKeys(
+    storage,
+    identity,
+  );
   let ecOneTimePreKeys = await storage.getEcOneTimePreKeys('aci');
   if (ecOneTimePreKeys.length === 0) {
     ecOneTimePreKeys = await generateEcOneTimePreKeys(
@@ -637,33 +782,43 @@ async function getOrCreateRegistrationPreKeys(
     await storage.storeKemOneTimePreKeys(kemOneTimePreKeys, 'aci');
   }
   return {
-    signedPreKeys: [
-      {
-        algorithm: 'ec-x25519',
-        keyId: signedPreKey.keyId,
-        publicKey: base64ToBytes(signedPreKey.publicKey),
-        signature: base64ToBytes(signedPreKey.signature),
-      },
-      {
-        algorithm: 'kem-ml-kem-1024',
-        keyId: kyberPreKey.keyId,
-        publicKey: base64ToBytes(kyberPreKey.publicKey),
-        signature: base64ToBytes(kyberPreKey.signature),
-      },
-    ],
-    oneTimePreKeys: [
-      ...ecOneTimePreKeys.map((prekey) => ({
-        algorithm: 'ec-x25519' as const,
-        keyId: prekey.keyId,
-        publicKey: base64ToBytes(prekey.publicKey),
-      })),
-      ...kemOneTimePreKeys.map((prekey) => ({
-        algorithm: 'kem-ml-kem-1024' as const,
-        keyId: prekey.keyId,
-        publicKey: base64ToBytes(prekey.publicKey),
-        signature: base64ToBytes(prekey.signature),
-      })),
-    ],
+    signedPreKeys,
+    oneTimePreKeys: registrationOneTimePreKeys(
+      ecOneTimePreKeys,
+      kemOneTimePreKeys,
+    ),
+  };
+}
+
+/**
+ * The prekeys of a re-registration. Each fresh batch starts above the highest
+ * stored ID of its type, so no ID names a key that a peer may still address.
+ */
+async function createReregistrationPreKeys(
+  storage: SignalProtocolLocalStore,
+  identity: StoredIdentityKeyPair,
+): Promise<HostedRelayRegistrationPreKeys> {
+  const signedPreKeys = await getOrCreateSignedRegistrationPreKeys(
+    storage,
+    identity,
+  );
+  const ecOneTimePreKeys = await generateEcOneTimePreKeys(
+    HOSTED_REGISTRATION_ONE_TIME_PREKEY_COUNT,
+    nextOneTimePreKeyId(await storage.getEcOneTimePreKeys('aci')),
+  );
+  await storage.storeEcOneTimePreKeys(ecOneTimePreKeys, 'aci');
+  const kemOneTimePreKeys = await generateKemOneTimePreKeys(
+    identity,
+    HOSTED_REGISTRATION_ONE_TIME_PREKEY_COUNT,
+    nextOneTimePreKeyId(await storage.getKemOneTimePreKeys('aci')),
+  );
+  await storage.storeKemOneTimePreKeys(kemOneTimePreKeys, 'aci');
+  return {
+    signedPreKeys,
+    oneTimePreKeys: registrationOneTimePreKeys(
+      ecOneTimePreKeys,
+      kemOneTimePreKeys,
+    ),
   };
 }
 
@@ -1149,23 +1304,29 @@ export async function createHostedSignalProtocolClient(
 ): Promise<DefaultSignalProtocolClient> {
   const { adapters, hosted, ...clientOptions } = options;
   if (hosted.profileKeys !== undefined) assertHostedRelayProfileKeys(hosted.profileKeys);
+  const storage = adapters.storage;
+  const reregister = hosted.assertionPurpose === 'reregister';
+  let identity = await storage.getIdentityKey('aci');
+  // A re-registration keeps this device's keys, so it never makes new ones.
+  if (!identity && reregister) {
+    throw new Error(
+      'Signal Protocol Relay re-registration requires the stored identity',
+    );
+  }
   const connection = await resolveHostedRelayConnection(hosted.relayUrl);
   const { publishableKey } = connection;
   const operation =
     hosted.assertionPurpose === 'recover' ? 'recovery' : 'bootstrap';
   hosted.onProgress?.({ operation, phase: 'preparing-local-state' });
 
-  const storage = adapters.storage;
-  let identity = await storage.getIdentityKey('aci');
   if (!identity) {
     identity = await generateIdentityKeyPair();
     await storage.storeIdentityKey(identity, 'aci');
   }
-  const deviceAuthentication = await getOrCreateDeviceAuthentication(
-    storage,
-    publishableKey,
-  );
-  const resumed = hosted.assertionPurpose === 'recover'
+  const deviceAuthentication = reregister
+    ? await getExistingDeviceAuthentication(storage, publishableKey)
+    : await getOrCreateDeviceAuthentication(storage, publishableKey);
+  const resumed = hosted.assertionPurpose === 'recover' || reregister
     ? undefined
     : await resumeHostedRelayTransport({
         connection,
@@ -1191,15 +1352,26 @@ export async function createHostedSignalProtocolClient(
     return client;
   }
   const signalIdentity = createCompositeIdentityV1(identity);
-  const { operationId, registrationPreKeys } =
-    await getOrCreateRegistrationSnapshot(
-      storage,
-      publishableKey,
-      signalIdentity,
-      identity.registrationId,
-      identity,
-    );
-  const assertionPurpose = hosted.assertionPurpose ?? 'register';
+  const snapshot: HostedRegistrationSnapshot & {
+    promote?(): Promise<void>;
+  } = reregister
+    ? await getOrCreateReregistrationSnapshot(
+        storage,
+        publishableKey,
+        signalIdentity,
+        identity.registrationId,
+        identity,
+      )
+    : await getOrCreateRegistrationSnapshot(
+        storage,
+        publishableKey,
+        signalIdentity,
+        identity.registrationId,
+        identity,
+      );
+  const { operationId, registrationPreKeys } = snapshot;
+  const assertionPurpose =
+    hosted.assertionPurpose === 'recover' ? 'recover' : 'register';
   hosted.onProgress?.({ operation, phase: 'requesting-assertion' });
   const assertion = await hosted.getIdentityAssertion({
     purpose: assertionPurpose,
@@ -1221,6 +1393,7 @@ export async function createHostedSignalProtocolClient(
     registrationPreKeys,
     deviceAuthentication,
   });
+  await snapshot.promote?.();
   const client = await createClientFromHostedResult(
     result,
     connection,

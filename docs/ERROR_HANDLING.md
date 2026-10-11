@@ -172,6 +172,15 @@ state `stopped` and the reason `upgrade-required`. It does not reconnect and
 does not pull. For `PROTOCOL_UNSUPPORTED` on its socket, the subscription
 reconnects with its usual backoff. See [`RelayConnectionReason`](./api/type-aliases/RelayConnectionReason.md).
 
+The subscription also stops when the Relay refuses its socket token request or
+a pull conclusively. The refusal has `retryable` false and the code
+`AUTHORITY_DENIED`, `NOT_FOUND`, or `OPERATION_EXPIRED`. The state is `stopped`
+and the reason is `authority-refused`. A refusal with `retryable` true, for
+example a missing Relay binding, goes to the retry schedule. A `NOT_FOUND` on
+the socket token request is a refusal of this device instead, as
+[Relay Device Errors](#relay-device-errors) describes. See
+[`RelayConnectionState`](./api/interfaces/RelayConnectionState.md).
+
 A client call can wrap the error in an `EncryptionError`. It is then the
 `originalError`.
 
@@ -196,6 +205,67 @@ try {
   // Only a newer SDK can send again. Ask the user to update the app.
   if (upgradeRequired(error)) showUpdateRequired();
   else throw error;
+}
+```
+
+## Relay Device Errors
+
+The Relay can refuse this device. Two errors name that refusal. Neither is an
+`EncryptionError`, and the SDK retries neither one.
+
+| Error | Cause | Application response |
+|---|---|---|
+| [`HostedRelayDeviceRevokedError`](./api/classes/HostedRelayDeviceRevokedError.md) | An account recovery revoked this device. `code` is `DEVICE_REVOKED`, `status` is 403, and `retryable` is false. | Sign the user out of this device. The Relay refuses a registration with the revoked key, so a re-registration fails too. |
+| [`HostedRelayDeviceUnknownError`](./api/classes/HostedRelayDeviceUnknownError.md) | The Relay has no device for the stored session. `code` is `NOT_FOUND`, `status` is 404, and `retryable` is false. The message is the Relay's own message. | Ask the user to confirm a re-registration of this device. Do not re-register without that confirmation. |
+
+`createHostedSignalProtocolClient` throws either error when the stored session
+cannot get a device token. It does not register a new device in their place. A
+running client throws them from its Relay calls. A client call can wrap them
+in an `EncryptionError`, as the `originalError`. The mailbox subscription
+stops with the reason `device-revoked` or `device-unknown`. See
+[`RelayConnectionReason`](./api/type-aliases/RelayConnectionReason.md).
+
+To re-register, create the client again with `assertionPurpose: 'reregister'`.
+It keeps the stored identity and device key, and it asks for a `register`
+assertion. It throws before any assertion when the store holds no identity or
+no device key. A retry after a failed call sends the same registration again.
+
+A re-registration has these effects:
+
+- The Relay can give this device a new device ID. The messages queued for the
+  old device are lost.
+- Each re-registration reserves a device ID for good. An account has five
+  device IDs, so a registration fails when all five are reserved.
+- When the account itself was deleted, the re-registration makes a new account
+  address. Contacts of the old address do not reach the new one.
+- A device that a recovery revoked before the Relay recorded revoked keys reads
+  as unknown. A re-registration can then restore it. So always ask the user
+  first.
+
+<!-- doc-snippet:skip requires-existing-client -->
+```typescript
+import {
+  HostedRelayDeviceRevokedError,
+  HostedRelayDeviceUnknownError,
+  createHostedSignalProtocolClient,
+} from '@open-e2ee/signal-protocol-sdk';
+
+try {
+  signal = await createHostedSignalProtocolClient(options);
+} catch (error) {
+  if (error instanceof HostedRelayDeviceRevokedError) {
+    signOutThisDevice();
+  } else if (
+    error instanceof HostedRelayDeviceUnknownError &&
+    (await confirmReregistration())
+  ) {
+    signal = await createHostedSignalProtocolClient({
+      ...options,
+      hosted: { ...options.hosted, assertionPurpose: 'reregister' },
+    });
+  } else {
+    throw error;
+  }
 }
 ```
 

@@ -5,7 +5,7 @@ import { createKeyedLocks, withKeyedLock } from '../../utils/keyed-lock';
 
 const OUTBOX_PREFIX = 'reliability:exact-ciphertext-outbox:v2';
 const INCOMING_PREFIX = 'reliability:processed-envelopes:v2';
-const RETRY_REQUESTED_PREFIX = 'reliability:retry-requested:v1';
+const RETRY_REQUESTED_PREFIX = 'reliability:retry-requested:v2';
 const RETRY_RESEND_PREFIX = 'reliability:retry-resend:v1';
 const RETRY_FAMILY_PREFIX = 'reliability:retry-family:v1';
 const SENT_TIMESTAMP_PREFIX = 'reliability:sent-timestamps:v1';
@@ -24,6 +24,12 @@ export const RELIABILITY_RECORD_TTL_MS = 30 * DAY_MS;
  * time after the failure.
  */
 export const RETRY_REQUESTER_RECORD_TTL_MS = 2 * RELIABILITY_RECORD_TTL_MS;
+
+/**
+ * The time from attempt 1 of a retry request to the end of its attempts. A
+ * request with no answer at this time ends as `expired-content`.
+ */
+export const RETRY_REQUEST_DEADLINE_MS = DAY_MS;
 
 export interface StoredOutgoingDeviceMessage {
   recipientUserId: string;
@@ -896,8 +902,86 @@ export interface StoredRetryRequest {
    * answer attempt n, and its post is a replay.
    */
   answered: boolean;
-  /** The request envelope of the stored attempt. */
-  envelope: Envelope;
+  /**
+   * The end of the attempts: the time of attempt 1 plus
+   * `RETRY_REQUEST_DEADLINE_MS`, and no later than the failed message
+   * timestamp plus `RELIABILITY_RECORD_TTL_MS`. Each later attempt keeps it.
+   * A request with no answer at this time ends as `expired-content`.
+   */
+  deadlineAt: number;
+  /**
+   * The earliest time of the next post of the stored attempt. A new attempt
+   * stores its own time, so an attempt whose post a stop or a crash ended
+   * stays due. A post that failed with a retryable class sets a later time.
+   * A post that the Relay accepts, and a terminal state, clear it. With no
+   * value, the Relay holds the attempt, and the record waits for its answer
+   * or its deadline.
+   */
+  nextAttemptAt?: number;
+  /** The class of the last post that failed, until a post succeeds. */
+  lastFailureClass?: RetryFailureClass;
+  /** The conclusive end of the request. No attempt posts after it. */
+  terminal?: RetryTerminal;
+  /**
+   * The request envelope of the stored attempt. Only a request that ended
+   * before its first post, as at an exhausted abuse allowance, has none.
+   */
+  envelope?: Envelope;
+}
+
+/**
+ * The conclusive end of a retry request or a retry resend.
+ *
+ * - `missing-sender`: the device that sent the failed message is gone.
+ * - `missing-prekey`: the Relay has no prekey bundle of the requester, so the
+ *   sender of the resend cannot start a new session.
+ * - `revoked-authority`: the Relay revoked the authority of the post.
+ * - `expired-content`: the request got no answer before its deadline.
+ * - `deletion`: the account of the other device is deleted.
+ * - `abuse-allowance-exhausted`: the sender used up its retry allowance.
+ */
+export type RetryTerminalClass =
+  | 'missing-sender'
+  | 'missing-prekey'
+  | 'revoked-authority'
+  | 'expired-content'
+  | 'deletion'
+  | 'abuse-allowance-exhausted';
+
+/**
+ * The class of a retry request post that failed and can succeed later.
+ * `transport-outage`: the post did not reach the Relay, or its answer is
+ * unknown. `rate-refusal`: a rate limit or a full mailbox refused it.
+ */
+export type RetryFailureClass = 'transport-outage' | 'rate-refusal';
+
+/** The terminal state of a retry record. */
+export interface RetryTerminal {
+  class: RetryTerminalClass;
+  /** The time of the end. */
+  at: number;
+  /** True after the `onRetryTerminal` hook returned for this end. */
+  emitted: boolean;
+}
+
+const RETRY_TERMINAL_CLASSES: ReadonlySet<string> = new Set<RetryTerminalClass>([
+  'missing-sender',
+  'missing-prekey',
+  'revoked-authority',
+  'expired-content',
+  'deletion',
+  'abuse-allowance-exhausted',
+]);
+
+function isRetryTerminal(value: unknown): value is RetryTerminal {
+  if (value === null || typeof value !== 'object') return false;
+  const terminal = value as Partial<RetryTerminal>;
+  return (
+    typeof terminal.class === 'string' &&
+    RETRY_TERMINAL_CLASSES.has(terminal.class) &&
+    Number.isFinite(terminal.at) &&
+    typeof terminal.emitted === 'boolean'
+  );
 }
 
 /**
@@ -924,7 +1008,14 @@ export async function getRetryRequest(
     !isRetryId(record.retryId) ||
     !Number.isSafeInteger(record.attempt) ||
     record.attempt < 1 ||
-    typeof record.answered !== 'boolean'
+    typeof record.answered !== 'boolean' ||
+    !Number.isFinite(record.deadlineAt) ||
+    (record.nextAttemptAt !== undefined && !Number.isFinite(record.nextAttemptAt)) ||
+    (record.lastFailureClass !== undefined &&
+      record.lastFailureClass !== 'transport-outage' &&
+      record.lastFailureClass !== 'rate-refusal') ||
+    (record.terminal !== undefined && !isRetryTerminal(record.terminal)) ||
+    (record.envelope === undefined && record.terminal === undefined)
   ) {
     throw new Error('Corrupt retry-request record');
   }
@@ -964,11 +1055,131 @@ export async function markRetryRequestAnswered(
     ) {
       return;
     }
-    // The attempt keeps its time, so its bucket index stays.
+    // The attempt keeps its time, so its bucket index stays. An answer ends
+    // the wait for a later post of the attempt.
     await store.setMetadata(
       recordKey('retry-requested', failedEnvelopeId),
-      JSON.stringify({ ...record, answered: true })
+      JSON.stringify({
+        ...record,
+        answered: true,
+        nextAttemptAt: undefined,
+        lastFailureClass: undefined,
+      })
     );
+  });
+}
+
+/**
+ * Change the lifecycle fields of the stored attempt of a retry request. It
+ * writes only when the record holds the given retry ID and attempt, so a
+ * change for an attempt that a later attempt replaced writes nothing. A
+ * field with the value undefined is removed. The attempt keeps its time,
+ * so its bucket index stays.
+ *
+ * @returns The changed record, or null when no record matched.
+ */
+export async function updateRetryRequest(
+  store: ReliabilityMetadataStore,
+  failedEnvelopeId: string,
+  retryId: string,
+  attempt: number,
+  changes: Partial<Pick<StoredRetryRequest, 'nextAttemptAt' | 'lastFailureClass' | 'terminal'>>,
+  now = Date.now()
+): Promise<StoredRetryRequest | null> {
+  return serializeMutation(store, async () => {
+    const record = await getRetryRequest(store, failedEnvelopeId, now);
+    if (!record || record.retryId !== retryId || record.attempt !== attempt) return null;
+    const changed = cloneReliabilityValue({ ...record, ...changes });
+    await store.setMetadata(
+      recordKey('retry-requested', failedEnvelopeId),
+      JSON.stringify(changed)
+    );
+    return changed;
+  });
+}
+
+/**
+ * The failed envelope IDs of the stored retry requests that are not older
+ * than `RETRY_REQUESTER_RECORD_TTL_MS`. The caller reads each record with
+ * `getRetryRequest`.
+ */
+export async function listRetryRequestIds(
+  store: ReliabilityMetadataStore,
+  now = Date.now()
+): Promise<string[]> {
+  const firstRetainedDay = dayFor(now - RETRY_REQUESTER_RECORD_TTL_MS);
+  const days = parseJson<number[]>(await store.getMetadata(manifestKey('retry-requested')), []);
+  const ids: string[] = [];
+  for (const day of days) {
+    if (day < firstRetainedDay) continue;
+    for (const id of parseJson<string[]>(
+      await store.getMetadata(bucketKey('retry-requested', day)),
+      []
+    )) {
+      if (!ids.includes(id)) ids.push(id);
+    }
+  }
+  return ids;
+}
+
+/** The key prefix of the retry request records before the lifecycle fields. */
+const RETRY_REQUESTED_V1_PREFIX = 'reliability:retry-requested:v1';
+
+/** A v1 retry request record, or null for a value that does not parse. */
+function parseV1RetryRequest(value: string | null): Omit<StoredRetryRequest, 'deadlineAt'> | null {
+  try {
+    const record = parseJson<Omit<StoredRetryRequest, 'deadlineAt'> | null>(value, null);
+    return record !== null && typeof record === 'object' ? record : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Move each retry request record of the v1 prefix to the current prefix,
+ * and delete the v1 keys. A v1 record has no deadline, so the moved record
+ * gets the time of its stored attempt plus `RETRY_REQUEST_DEADLINE_MS`. A
+ * v1 record does not tell whether the post of its attempt reached the
+ * Relay, so an unanswered record is due at the time of its stored attempt,
+ * and the scheduler posts its stored bytes again. A
+ * record older than `RETRY_REQUESTER_RECORD_TTL_MS`, and a record that does
+ * not parse, is deleted. With no v1 keys, it writes nothing.
+ */
+export async function migrateRetryRequestRecords(
+  store: ReliabilityMetadataStore,
+  now = Date.now()
+): Promise<void> {
+  const v1ManifestKey = `${RETRY_REQUESTED_V1_PREFIX}:manifest`;
+  const days = parseJson<number[]>(await store.getMetadata(v1ManifestKey), []);
+  if (days.length === 0) return;
+  await serializeMutation(store, async () => {
+    for (const day of days) {
+      const v1BucketKey = `${RETRY_REQUESTED_V1_PREFIX}:bucket:${day}`;
+      for (const id of parseJson<string[]>(await store.getMetadata(v1BucketKey), [])) {
+        const v1RecordKey = `${RETRY_REQUESTED_V1_PREFIX}:record:${encodeURIComponent(id)}`;
+        const record = parseV1RetryRequest(await store.getMetadata(v1RecordKey));
+        if (
+          record &&
+          Number.isFinite(record.requestedAt) &&
+          record.requestedAt >= now - RETRY_REQUESTER_RECORD_TTL_MS
+        ) {
+          const retainedDays = await pruneExpiredBuckets(store, 'retry-requested', now);
+          await store.setMetadata(
+            recordKey('retry-requested', id),
+            JSON.stringify({
+              ...record,
+              deadlineAt: record.requestedAt + RETRY_REQUEST_DEADLINE_MS,
+              ...(!record.answered &&
+                record.envelope !== undefined && { nextAttemptAt: record.requestedAt }),
+            })
+          );
+          await indexRecord(store, 'retry-requested', id, record.requestedAt, retainedDays);
+        }
+        await store.deleteMetadata(v1RecordKey);
+      }
+      await store.deleteMetadata(v1BucketKey);
+    }
+    await store.deleteMetadata(v1ManifestKey);
   });
 }
 
@@ -991,7 +1202,8 @@ export async function storeRetryRequest(
   request: StoredRetryRequest
 ): Promise<void> {
   await serializeMutation(store, async () => {
-    await indexRetryFamily(store, request);
+    // A request with no envelope posted nothing, so no member can name it.
+    if (request.envelope) await indexRetryFamily(store, request);
     const key = recordKey('retry-requested', request.failedEnvelopeId);
     const replaced = parseJson<StoredRetryRequest | null>(await store.getMetadata(key), null);
     const retainedDays = await pruneExpiredBuckets(store, 'retry-requested', request.requestedAt);
@@ -1066,6 +1278,23 @@ export interface StoredRetryResend extends RetryResendTarget {
   sealedSenderAuth?: { type: 'accessKey'; unidentifiedAccessKey: string };
   contentHint?: ContentHint;
   message: StoredOutgoingDeviceMessage;
+  /** A stored encryption has no terminal state. */
+  terminal?: undefined;
+}
+
+/**
+ * The conclusive end of the answer to one device for one failed envelope,
+ * in place of an encryption. The sender answers no later request for that
+ * envelope from that device. The record expires from the time of the end.
+ */
+export interface RetryResendTerminal extends RetryResendTarget {
+  /** The attempt number of the request that ended the answer. */
+  attempt: number;
+  /** The user that asked for the answer. */
+  recipientUserId: string;
+  /** The device that asked for the answer. */
+  recipientDeviceId: number;
+  terminal: RetryTerminal;
 }
 
 /**
@@ -1090,8 +1319,8 @@ export async function getRetryResend(
   recipientDeviceId: number,
   failedEnvelopeId: string,
   now = Date.now()
-): Promise<StoredRetryResend | null> {
-  const record = parseJson<StoredRetryResend | null>(
+): Promise<StoredRetryResend | RetryResendTerminal | null> {
+  const record = parseJson<StoredRetryResend | RetryResendTerminal | null>(
     await store.getMetadata(
       recordKey(
         'retry-resend',
@@ -1101,6 +1330,22 @@ export async function getRetryResend(
     null
   );
   if (!record) return null;
+  if (record.terminal !== undefined) {
+    if (
+      !isRetryTerminal(record.terminal) ||
+      record.failedEnvelopeId !== failedEnvelopeId ||
+      !isRetryId(record.retryId) ||
+      typeof record.requestEnvelopeId !== 'string' ||
+      (record.kind !== 'resend' && record.kind !== 'null') ||
+      record.recipientUserId !== recipientUserId ||
+      record.recipientDeviceId !== recipientDeviceId ||
+      !answersItsRequestAttempt(record)
+    ) {
+      throw new Error('Corrupt retry-resend record');
+    }
+    if (record.terminal.at < now - RELIABILITY_RECORD_TTL_MS) return null;
+    return cloneReliabilityValue(record);
+  }
   if (
     !Number.isFinite(record.operationEpochMilliseconds) ||
     record.failedEnvelopeId !== failedEnvelopeId ||
@@ -1118,7 +1363,7 @@ export async function getRetryResend(
 }
 
 /** True when the record carries the attempt number of its request. */
-function answersItsRequestAttempt(record: StoredRetryResend): boolean {
+function answersItsRequestAttempt(record: StoredRetryResend | RetryResendTerminal): boolean {
   const member = retryFamilyMember(record.requestEnvelopeId);
   return (
     member?.kind === 'retry-request' &&
@@ -1127,40 +1372,50 @@ function answersItsRequestAttempt(record: StoredRetryResend): boolean {
   );
 }
 
+/** The time from which a retry-resend record expires. */
+function retryResendTime(record: StoredRetryResend | RetryResendTerminal): number {
+  return record.terminal === undefined ? record.operationEpochMilliseconds : record.terminal.at;
+}
+
 /**
- * Record the encrypted bytes of a retry resend before their post. A later
- * encryption replaces the earlier one in one write, so the record holds an
- * encryption at each point. Throws, and writes nothing, when the attempt
- * is not the attempt number of the request envelope.
+ * Record the encrypted bytes of a retry resend before their post, or the
+ * terminal state of the answer. A later write replaces the earlier one in
+ * one write, so the record holds one state at each point. Throws, and
+ * writes nothing, when the attempt is not the attempt number of the
+ * request envelope.
  */
 export async function storeRetryResend(
   store: ReliabilityMetadataStore,
-  resend: StoredRetryResend
+  resend: StoredRetryResend | RetryResendTerminal
 ): Promise<void> {
   if (resend.attempt !== retryRequestAttempt(resend)) {
     throw new Error('A retry resend carries the attempt number of its request');
   }
   await serializeMutation(store, async () => {
-    const id = retryResendRecordId(
-      resend.message.recipientUserId,
-      resend.message.recipientDeviceId,
-      resend.failedEnvelopeId
-    );
+    const id =
+      resend.terminal === undefined
+        ? retryResendRecordId(
+            resend.message.recipientUserId,
+            resend.message.recipientDeviceId,
+            resend.failedEnvelopeId
+          )
+        : retryResendRecordId(
+            resend.recipientUserId,
+            resend.recipientDeviceId,
+            resend.failedEnvelopeId
+          );
     const key = recordKey('retry-resend', id);
-    const replaced = parseJson<StoredRetryResend | null>(await store.getMetadata(key), null);
-    const retainedDays = await pruneExpiredBuckets(
-      store,
-      'retry-resend',
-      resend.operationEpochMilliseconds
+    const replaced = parseJson<StoredRetryResend | RetryResendTerminal | null>(
+      await store.getMetadata(key),
+      null
     );
+    const time = retryResendTime(resend);
+    const retainedDays = await pruneExpiredBuckets(store, 'retry-resend', time);
     await store.setMetadata(key, JSON.stringify(resend));
-    await indexRecord(store, 'retry-resend', id, resend.operationEpochMilliseconds, retainedDays);
-    // The bucket of the replaced epoch would prune the new attempt early.
-    if (
-      replaced &&
-      dayFor(replaced.operationEpochMilliseconds) !== dayFor(resend.operationEpochMilliseconds)
-    ) {
-      await unindexRecord(store, 'retry-resend', id, replaced.operationEpochMilliseconds);
+    await indexRecord(store, 'retry-resend', id, time, retainedDays);
+    // The bucket of the replaced time would prune the new record early.
+    if (replaced && dayFor(retryResendTime(replaced)) !== dayFor(time)) {
+      await unindexRecord(store, 'retry-resend', id, retryResendTime(replaced));
     }
   });
 }

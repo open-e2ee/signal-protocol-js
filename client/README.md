@@ -66,6 +66,20 @@ const signal = await createHostedSignalProtocolClient({
 See the [Expo storage guide](../local/store/expo/README.md) for the required
 database-binding and SQLCipher bootstrap.
 
+### Unknown or revoked device
+
+The hosted factory resumes the stored session. It throws
+`HostedRelayDeviceUnknownError` when the Relay has no device for that session.
+It throws `HostedRelayDeviceRevokedError` when an account recovery revoked the
+device. It never registers a new device in their place, and it does not retry.
+
+After an unknown device, ask the user to confirm. Then call the factory again
+with `assertionPurpose: 'reregister'`. It registers the same identity and
+device key again. The Relay can give a new device ID, so the messages queued
+for the old device are lost. A Relay that recorded the revocation of a device
+refuses its registration with `HostedRelayDeviceRevokedError`. See
+[Relay Device Errors](../docs/ERROR_HANDLING.md#relay-device-errors).
+
 ### Protocol policy
 
 Use product/security terms at the client boundary:

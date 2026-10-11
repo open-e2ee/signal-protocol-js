@@ -171,7 +171,16 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
 
 #### assertionPurpose?
 
-> `readonly` `optional` **assertionPurpose?**: `"register"` \| `"recover"`
+> `readonly` `optional` **assertionPurpose?**: `"register"` \| `"recover"` \| `"reregister"`
+
+`register` (the default) resumes the stored session or registers a new
+device. `recover` registers through an account recovery.
+
+`reregister` registers this device again with its stored identity and
+device key, and skips the stored session. Use it only after a
+`HostedRelayDeviceUnknownError` and after the user confirms it. It asks
+for a `register` assertion. The Relay can give a new device ID, so the
+messages queued for the old device are lost.
 
 #### assurance?
 

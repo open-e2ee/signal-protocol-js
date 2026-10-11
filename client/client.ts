@@ -139,6 +139,8 @@ import * as GroupOps from './groups';
 import * as PreKeyOps from './prekeys';
 import * as RetryOps from './retry';
 import { receiveInRetryFamily, type RetryFamilyReceive } from './retry-family';
+import { RetryRequestScheduler } from './retry-request-lifecycle';
+import { migrateRetryRequestRecords } from '../local/store/reliability';
 import { deliveredEnvelopeFingerprint } from '../local/store/received-content';
 import * as RelaySubscriptionOps from './relay-subscription';
 import { relayReceiptJoinOf } from './relay-receipt-join';
@@ -326,6 +328,23 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * starts. It does not stop them before then.
    */
   private readonly deliveryReceiptSends = new Map<RelayWork, Promise<void>>();
+
+  /**
+   * Posts the stored retry requests at their next attempt times, ends them
+   * at their deadlines, and calls `onRetryTerminal`. create() and
+   * startRelaySubscription() start it when a relay is configured, and stop()
+   * stops it. Each pass is relay work, so its hooks run through that work.
+   */
+  private readonly retryRequests = new RetryRequestScheduler(this.state.relayWork, (work) => {
+    const relay = this.relay;
+    return {
+      storage: this._storage,
+      logger: this.logger,
+      hooks: work.wrapHooks(this.hooks),
+      local: { userId: this.userId, deviceId: this.deviceId },
+      send: relay ? (envelope) => relay.send(envelope) : undefined,
+    };
+  });
 
   /**
    * The stop() in progress. It is set before a step of stop() runs, so a
@@ -697,6 +716,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       contentAdapter: this.contentAdapter,
       profileKeys: profileKeyExchange(this),
       deliveries: this.deliveries,
+      scheduleRetryRequest: (at) => this.retryRequests.schedule(at),
       sealReceipt: (recipientUserId, recipientDeviceId, ciphertextBase64) =>
         this.cipher.sealReceipt(recipientUserId, recipientDeviceId, ciphertextBase64),
     };
@@ -1195,6 +1215,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       const client = new DefaultSignalProtocolClient(userId, deviceId, finalConfig);
       await client.initialize();
       await client.hydratePersistedState();
+      await migrateRetryRequestRecords(client._storage);
 
       // Cleanup expired sessions and message records on startup.
       // The reference implementation relies on event-driven cleanup (identity change, retry, end-session).
@@ -1230,6 +1251,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       if (!syncFailed && finalConfig?.relay && finalConfig?.hooks?.onMessageDecrypted) {
         client.startRelaySubscription();
       }
+
+      // Post the stored retry requests whose next attempt time has come, and
+      // end the requests past their deadlines. The pass runs in the background.
+      if (finalConfig?.relay) client.startRetryRequests();
 
       // Validate sender keys config and warn on extreme values
       if (finalConfig?.senderKeys) {
@@ -2392,6 +2417,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       category: 'E2EE',
       data: { userId: this.userId, deviceId: this.deviceId },
     });
+    this.startRetryRequests();
 
     this.relayUnsubscribe = this.relay.subscribe(
       this.userId,
@@ -2427,6 +2453,11 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         onBatchEnd: () => this.contentAdapter.setRelayBatching(false),
       }
     );
+  }
+
+  /** Start the retry request scheduler with a pass in the background. */
+  private startRetryRequests(): void {
+    void this.retryRequests.start();
   }
 
   /**
@@ -2753,6 +2784,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     // for this run and does not start a second run. A subscription start
     // from a step is refused
     await Promise.resolve();
+
+    // 0. Stop the retry request scheduler, so no pass starts. Step 4 waits
+    // for a pass in progress, as for other relay work
+    this.retryRequests.stop();
 
     // 1. Start the receipt deadline, 5 s from now. Take the receipt sends in
     // progress, except a send that an earlier stop() stopped, and start the

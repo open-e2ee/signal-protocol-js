@@ -27,6 +27,8 @@ export {
   type SignalProtocolClientIdentityConfig,
 } from "./compose";
 export {
+  HostedRelayDeviceRevokedError,
+  HostedRelayDeviceUnknownError,
   HostedRelayPresenceError,
   HostedRelayUpgradeRequiredError,
   advanceHostedRelayIdentityMigration,
@@ -132,6 +134,8 @@ export type {
   DecryptedEnvelope,
   DeliveredEvent,
   DeliverySource,
+  RetryTerminalClass,
+  RetryTerminalEvent,
   SignalProtocolClientHooks,
 } from "./event-hooks";
 export type {
