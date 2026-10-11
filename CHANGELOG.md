@@ -1,5 +1,103 @@
 # Changelog
 
+## 11.0.0
+
+- **Added: the connection reason `authority-refused`.** The mailbox
+  subscription moves to `stopped` with this reason when the Relay refuses
+  the socket token request or a pull with `retryable` false and the code
+  `AUTHORITY_DENIED`, `NOT_FOUND`, or `OPERATION_EXPIRED`. A deleted account
+  gets this refusal. The subscription does not reconnect and does not pull.
+  A refusal with `retryable` true, for example a missing Relay binding, stays
+  retryable. A `NOT_FOUND` on the socket token request names this device,
+  so it stops with `device-unknown` instead. A `switch` over
+  `RelayConnectionReason` must handle the new value.
+- **Changed: one retry schedule for a Relay outage.** A failed socket, a
+  failed socket token request, and a failed pull now share one backoff with
+  a ceiling from 1 s to 30 s. A failure during a pending wait draws no new
+  wait. Before, a failed pull retried on its own timer, and each failed
+  token request also scheduled a pull. The ceiling starts again at 1 s when
+  the Relay answers a ping or the token request gets a new device token.
+- **Added: the `onRetryTerminal` hook.** A retry request that cannot
+  recover ends once with a `RetryTerminalEvent`. The event has the
+  terminal `class` and the `failedEnvelopeId`. The requester gets
+  `missing-sender`, `revoked-authority`, `expired-content`, `deletion`,
+  and `abuse-allowance-exhausted`. The sender of a resend gets
+  `missing-prekey` when the Relay has no prekey bundle of the requester.
+  The SDK stores the terminal state before it calls the hook. A restart
+  calls the hook again only when the earlier call did not finish. The
+  `RetryTerminalEvent` and `RetryTerminalClass` types are exported from the
+  main entry and from `/client`.
+- **Added: the retry request scheduler.** A retry request post that fails
+  with a transport outage or a rate refusal is posted again at its next
+  attempt time, with the same bytes and ID. The wait is the age of the
+  stored attempt, from 1 minute to 1 hour. The Relay codes map to classes:
+  `STALE_DEVICE` is `missing-sender`, `NOT_FOUND` is `deletion`,
+  `AUTHORITY_DENIED` and `AUTHORITY_OVERRIDE` are `revoked-authority`, and
+  `QUOTA_EXCEEDED` and `MAILBOX_FULL` are rate refusals. A client with a
+  Relay runs the scheduler at creation, at the start of the Relay
+  subscription, and at the next attempt time or deadline of a stored
+  request. A stop stops it.
+- **Changed: a redelivery of a failed envelope with a retry request record
+  posts nothing.** It spends no request of the sender rate limit, and it is
+  acknowledged. Before, each redelivery posted the stored request again and
+  spent one request.
+- **Changed: a retry request ends at its deadline.** The deadline is 24
+  hours after attempt 1, and no later than 30 days after the failed
+  message. A later attempt keeps it. A request with no answer at the
+  deadline ends as `expired-content`, and no attempt starts after it.
+- **Breaking: the retry request records use a new storage prefix.** Client
+  creation moves each record of the earlier prefix once, and deletes the
+  earlier keys. A moved record gets a deadline 24 hours after its stored
+  attempt. The move is forward-only, so an earlier SDK does not read the
+  moved records.
+- **Fixed: a failed retry request post no longer strands the request.**
+  Before, each failed post spent the sender rate limit, and the failed
+  envelope stayed the only trigger of a new post. The stored record now
+  owns the request, and the scheduler posts it again when the transport
+  recovers. The next start posts a request whose first post a stop or a
+  crash ended. It also posts an unanswered record that moved from the
+  earlier prefix.
+- **Fixed: a redelivery no longer extends the retry cooldown.** When the
+  rate limit refuses the request of a failed resend, the next attempt waits
+  for the end of the limit window from the refusal. Before, each
+  redelivery spent the limit again and moved the window.
+- **Added: `HostedRelayDeviceUnknownError`.** A device token request throws
+  it when the Relay has no device for the stored session. The Relay sends
+  this answer as `NOT_FOUND`. Its `code` is `NOT_FOUND`, its `status` is the
+  HTTP status, and its `retryable` is false. The class is exported from the
+  main entry and from `/client`.
+- **Added: `HostedRelayDeviceRevokedError`.** A Relay call throws it when an
+  account recovery revoked this device. Its `code` is `DEVICE_REVOKED`, its
+  `status` is 403, and its `retryable` is false. The class is exported from
+  the main entry and from `/client`.
+- **Added: the connection reasons `device-revoked` and `device-unknown`.**
+  The mailbox subscription moves to `stopped` with one of these reasons when
+  the Relay refuses this device. It does not reconnect and does not pull. A
+  `switch` over `RelayConnectionReason` must handle the new values.
+- **Added: the `reregister` assertion purpose.**
+  `createHostedSignalProtocolClient` with `assertionPurpose: 'reregister'`
+  registers this device again with its stored identity and device key. It
+  skips the stored session and asks for a `register` assertion. It throws
+  before any assertion when the store holds no identity or no device key.
+  It sends a fresh one-time prekey batch, so the operation ID is new. A
+  retry after a lost answer sends the same operation again.
+- **Changed: the device token request names its device key.** The body of
+  each `/identity/token` request carries `deviceAuthenticationPublicKey`. A
+  Relay that does not read the field ignores it.
+- **Breaking: the SDK never registers or retries after a device refusal.**
+  `createHostedSignalProtocolClient` throws the device error when the stored
+  session cannot get a token. `isRetryableError` returns false for both
+  errors. A receipt send that gets one of them makes no in-process retry.
+- **Breaking: a refused device token is not a refusal of the destination.**
+  A send whose token request the Relay refuses throws the device error. A
+  client call can wrap it in an `EncryptionError` as the `originalError`.
+  The send does not mark the destination device as refused.
+  `getIdentityKey` and `fetchPreKeyBundle` throw the device error instead of
+  returning null. `hostedRelayWakePresence` throws the device error as it
+  is, not as a `HostedRelayPresenceError`. The profile access key
+  registration does not mark the key as refused, so a later connect tries
+  it again.
+
 ## 10.1.0
 
 - **Added: the SDK names Relay protocol version 1 on HTTP.** Each HTTP

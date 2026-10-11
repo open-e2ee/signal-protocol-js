@@ -23,6 +23,7 @@ import {
   type StoredRetryRequest,
 } from '../local/store/reliability';
 import type { RetryRequestFailure } from './retry-request-envelope';
+import type { RetryRequestOutcome } from './retry-request-lifecycle';
 
 type RetryFamilyStore = Parameters<typeof withProcessedEnvelopeLock>[0];
 
@@ -80,7 +81,7 @@ export interface RetryFamilyReceive {
    * names no sender, and the request record that `admit` read names the
    * device that the request went to. The result is that envelope with the
    * sender of the record. Any other envelope, and a member with an
-   * identified sender or with no request record, is returned as it is.
+   * identified sender or with no request envelope, is returned as it is.
    */
   withRequestedSender<E extends { senderUserId: string; senderDeviceId: number }>(
     envelope: E
@@ -93,18 +94,19 @@ export interface RetryFamilyReceive {
    * failed envelope does not apply to it.
    *
    * @param fingerprint - The fingerprint of the received envelope.
-   * @param post - Posts the request for the given failure. It returns false
-   *   when it posts nothing, for example under the rate limit.
-   * @returns True when `post` posted the request. After the post, a member
-   *   is processed, so a redelivery of it on either path posts nothing. A
-   *   failed post leaves it unprocessed. False with no post, and one warn
-   *   line with the behavior RETRY_REQUEST_ENVELOPE_CHANGED, when the relay
-   *   changed the failed envelope after its retry request.
+   * @param post - Posts the request for the given failure, and gives what
+   *   it did.
+   * @returns The outcome of `post`. After a `posted` or `terminal` outcome,
+   *   a member is processed, so a redelivery of it on either path posts
+   *   nothing. Any other outcome leaves it unprocessed. `skipped` with no
+   *   post, and one warn line with the behavior
+   *   RETRY_REQUEST_ENVELOPE_CHANGED, when the relay changed the failed
+   *   envelope after its retry request.
    */
   requestRetry(
     fingerprint: string | undefined,
-    post: (failed: RetryRequestFailure) => Promise<boolean>
-  ): Promise<boolean>;
+    post: (failed: RetryRequestFailure) => Promise<RetryRequestOutcome>
+  ): Promise<RetryRequestOutcome>;
 }
 
 /**
@@ -233,7 +235,7 @@ function retryFamilyReceive(
       }
     },
     withRequestedSender(envelope) {
-      if (!member || !request) return envelope;
+      if (!member || !request?.envelope) return envelope;
       if (envelope.senderUserId && envelope.senderDeviceId >= 1) return envelope;
       const { targetUserId, targetDeviceId } = request.envelope;
       return { ...envelope, senderUserId: targetUserId, senderDeviceId: targetDeviceId };
@@ -251,7 +253,7 @@ function retryFamilyReceive(
             category: 'E2EE',
             data: { envelopeId, behavior: 'RETRY_REQUEST_ENVELOPE_CHANGED' },
           });
-          return false;
+          return 'skipped';
         }
         return post({
           id: failedEnvelopeId,
@@ -262,16 +264,16 @@ function retryFamilyReceive(
       // A member has its own content, so its fingerprint is not the
       // fingerprint of the failed envelope.
       const stored = await getRetryRequest(storage, failedEnvelopeId);
-      const posted = await post({
+      const outcome = await post({
         id: failedEnvelopeId,
         ...(stored?.fingerprint !== undefined && { fingerprint: stored.fingerprint }),
         stored,
         ...(envelopeId !== undefined && { member: envelopeId }),
       });
-      if (posted && envelopeId) {
+      if ((outcome === 'posted' || outcome === 'terminal') && envelopeId) {
         await storeProcessedEnvelope(storage, envelopeId, Date.now(), fingerprint);
       }
-      return posted;
+      return outcome;
     },
   };
 }

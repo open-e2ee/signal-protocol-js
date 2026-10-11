@@ -94,6 +94,14 @@ export interface SignalProtocolClientContext {
   readonly deliveries?: DeliveryStatusTracker;
 
   /**
+   * Arm the retry request scheduler for the next attempt time or the
+   * deadline of a request record.
+   *
+   * @internal
+   */
+  readonly scheduleRetryRequest?: (at: number) => void;
+
+  /**
    * Seal an encrypted receipt for anonymous delivery. Resolves to undefined
    * when the receipt goes identified. Rejects when sealed sender is required
    * and the receipt cannot be sealed.

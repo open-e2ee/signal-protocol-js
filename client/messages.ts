@@ -12,6 +12,10 @@ import type { Envelope } from '../remote/relay/types';
 import { SealedSenderAuthError } from '../types/errors';
 import { callHook } from './event-hooks';
 import { rethrowRelayWorkStopped } from './relay-work';
+import {
+  HostedRelayDeviceRevokedError,
+  HostedRelayDeviceUnknownError,
+} from './hosted-device-standing';
 import type { ParsedReceiptContent, ParsedTypingContent } from './content-adapter';
 import type { SealedReceipt, SignalProtocolClientContext } from './types';
 import { TypingAction, ReceiptType, type DeliveryReceipt } from './types';
@@ -562,6 +566,17 @@ async function sendReceiptToDevice(
     rethrowRelayWorkStopped(error);
     // A stopped client sends nothing more, so it makes no retry.
     if (ctx.stopSignal?.aborted) return;
+    // The Relay refused this device, so the same send fails again.
+    if (
+      error instanceof HostedRelayDeviceRevokedError ||
+      error instanceof HostedRelayDeviceUnknownError
+    ) {
+      ctx.logger.warn(`Receipt send refused for this device, no retry`, {
+        category: 'E2EE',
+        data: { recipientUserId, deviceId, code: error.code },
+      });
+      return;
+    }
     ctx.logger.warn(`Receipt send failed, scheduling retry`, {
       category: 'E2EE',
       data: { recipientUserId, deviceId },

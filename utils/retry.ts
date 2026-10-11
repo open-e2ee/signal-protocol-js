@@ -122,6 +122,8 @@ function isRaceConditionError(error: unknown): boolean {
  * - The eight codes in NON_RETRYABLE_ERROR_CODES (invalid prekey bundle,
  *   untrusted identity, and the rest)
  * - The Relay code UPGRADE_REQUIRED (HostedRelayUpgradeRequiredError)
+ * - The Relay code DEVICE_REVOKED (HostedRelayDeviceRevokedError)
+ * - An unknown device (HostedRelayDeviceUnknownError)
  *
  * Retryable:
  * - Network/timeout errors
@@ -140,6 +142,12 @@ export function isRetryableError(error: Error): boolean {
   // The Relay no longer serves the protocol version of this SDK. Only a newer
   // SDK can send the request again.
   if (code === 'UPGRADE_REQUIRED') {
+    return false;
+  }
+
+  // The Relay refuses this device for good. The error name identifies an
+  // unknown device, because its code NOT_FOUND also names other failures.
+  if (code === 'DEVICE_REVOKED' || error.name === 'HostedRelayDeviceUnknownError') {
     return false;
   }
 

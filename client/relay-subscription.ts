@@ -30,7 +30,8 @@ import {
 import { isImplicitContentType } from './constants';
 import type { SignalProtocolServiceCipher } from './signal-service-cipher';
 import { rethrowRelayWorkStopped } from './relay-work';
-import { postRetryRequest, readRetryRequestEnvelope } from './retry-request-envelope';
+import { readRetryRequestEnvelope } from './retry-request-envelope';
+import { acknowledgesRetryRequest, requestRetryInFamily } from './retry-request-lifecycle';
 import { receiveInRetryFamily, type RetryFamilyReceive } from './retry-family';
 import { unsealedEnvelopeOf } from './sealed-sender';
 import { relayReceiptJoinOf } from './relay-receipt-join';
@@ -673,11 +674,12 @@ async function handleDecryptionError(
  * Send a `retry_request` envelope to the device that sent a failed message.
  *
  * The checks run in this order: an identified sender that is not the local
- * device, then the per-sender rate limit, which counts each post. A failed
- * envelope that does not pass them gets no request, and the caller keeps it
- * or acknowledges it as for any failed envelope. The request is stored
- * under the failed envelope ID before its post, and a later failure of the
- * same envelope posts the stored request again.
+ * device, then the per-sender rate limit. A failed envelope that does not
+ * pass the sender checks gets no request, and the caller keeps it or
+ * acknowledges it as for any failed envelope. The request is stored under
+ * the failed envelope ID before its post, and the request record then owns
+ * it, as `requestRetryInFamily` tells. A redelivery of the same envelope
+ * posts nothing.
  *
  * A failed resend or null message asks again for its failed envelope
  * through the retry family (`RetryFamilyReceive.requestRetry`).
@@ -749,61 +751,53 @@ async function sendRetryRequest(
 
     if (!ctx.relay) throw new Error('Relay not configured - cannot send a retry request');
     const relay = ctx.relay;
-    const posted = await family.requestRetry(receiveId, async (failed) => {
-      // Receiver-side rate limiting. A post of a stored request counts too.
-      if (!checkRetryRateLimit(state, envelope.senderUserId)) {
-        ctx.logger.warn('Retry rate limit exceeded for sender', {
+    const outcome = await requestRetryInFamily(family, receiveId, {
+      storage: ctx.storage,
+      logger: ctx.logger,
+      hooks: ctx.hooks,
+      local: { userId: ctx.userId, deviceId: ctx.deviceId },
+      senderUserId: envelope.senderUserId,
+      // Receiver-side rate limiting. A failed envelope with a request record
+      // spends nothing, as `requestRetryInFamily` tells.
+      allow: () => checkRetryRateLimit(state, envelope.senderUserId),
+      windowMs: RETRY_REQUEST_WINDOW_MS,
+      send: (request) => relay.send(request),
+      createRequest: async () => {
+        // Handle stale prekey indicators
+        await handleStalePreKeyIndicator(ctx, envelope, error, state, callbacks, config);
+        const retryRequest = await ctx.sesameManager.createRetryRequest(
+          failedMessage,
+          retryReason
+        );
+        ctx.logger.info('Retry request created for failed message', {
           category: 'E2EE',
           data: {
-            senderId: envelope.senderUserId,
-            windowMs: RETRY_REQUEST_WINDOW_MS,
+            sender: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
+            timestamp: envelope.timestamp,
+            reason: retryReason,
+            localUserId: ctx.userId,
+            localDeviceId: ctx.deviceId,
           },
         });
-        // A member stays unacknowledged, so its redelivery after the
-        // window asks again.
-        if (config.acknowledgeFailures !== false && family.member === undefined) {
-          await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
-        }
-        return false;
-      }
-      await postRetryRequest(
-        ctx.storage,
-        failed,
-        async () => {
-          // Handle stale prekey indicators
-          await handleStalePreKeyIndicator(ctx, envelope, error, state, callbacks, config);
-          const retryRequest = await ctx.sesameManager.createRetryRequest(
-            failedMessage,
-            retryReason
-          );
-          ctx.logger.info('Retry request created for failed message', {
-            category: 'E2EE',
-            data: {
-              sender: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
-              timestamp: envelope.timestamp,
-              reason: retryReason,
-              localUserId: ctx.userId,
-              localDeviceId: ctx.deviceId,
-            },
-          });
-          return retryRequest;
-        },
-        { userId: ctx.userId, deviceId: ctx.deviceId },
-        (request) => relay.send(request)
-      );
+        return retryRequest;
+      },
+      schedule: ctx.scheduleRetryRequest,
+    });
+    if (outcome === 'posted' || outcome === 'pending') {
       ctx.logger.info('Retry request sent to sender', {
         category: 'E2EE',
         data: {
           originalSender: `${envelope.senderUserId}:${envelope.senderDeviceId}`,
           timestamp: envelope.timestamp,
           reason: retryReason,
-          stored: failed.stored !== null,
+          outcome,
         },
       });
-      return true;
-    });
-    // An envelope with no post stays unacknowledged.
-    if (!posted) return;
+    }
+    // The record of the failed envelope owns its request, so the envelope
+    // is acknowledged. A deferred member stays unacknowledged, so its
+    // redelivery after the rate limit window asks again.
+    if (!acknowledgesRetryRequest(outcome, family.member !== undefined)) return;
 
     // Mark failed message as delivered so it does not reappear
     if (envelope.id && config.acknowledgeFailures !== false) {

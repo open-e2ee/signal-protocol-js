@@ -759,6 +759,14 @@ export type Unsubscribe = () => void;
  * - `upgrade-required`: the Relay no longer serves the protocol version of
  *   this SDK. The state is `stopped`, and the subscription does not retry.
  *   Only a newer SDK can connect again.
+ * - `authority-refused`: the Relay refused the device token refresh or a
+ *   pull in a way that a retry gets again, for example for a deleted account.
+ *   The state is `stopped`, and the subscription does not retry.
+ * - `device-revoked`: an account recovery revoked this device. The state is
+ *   `stopped`, and the subscription does not retry.
+ * - `device-unknown`: the Relay has no device for the stored session. The
+ *   state is `stopped`, and the subscription does not retry. Only an explicit
+ *   re-registration can connect this device again.
  */
 export type RelayConnectionReason =
   | 'handshake'
@@ -768,7 +776,10 @@ export type RelayConnectionReason =
   | 'frame'
   | 'authentication'
   | 'silent'
-  | 'upgrade-required';
+  | 'upgrade-required'
+  | 'authority-refused'
+  | 'device-revoked'
+  | 'device-unknown';
 
 /**
  * The local device's relay connection, as its envelope subscription sees it.
@@ -778,8 +789,9 @@ export type RelayConnectionReason =
  * - `connected`: the subscription has a live connection.
  * - `reconnecting`: the connection failed and the subscription retries it.
  *
- * `reason` names the transition site of the last move to `reconnecting`, or
- * `upgrade-required` on a `stopped` state that the Relay caused. It is never an
+ * `reason` names the transition site of the last move to `reconnecting`. On a
+ * `stopped` state that the Relay caused, it is `upgrade-required`,
+ * `authority-refused`, `device-revoked`, or `device-unknown`. It is never an
  * error message. `since` is the Unix time in milliseconds of the transition. A
  * planned token renewal on a live connection is not a transition.
  */

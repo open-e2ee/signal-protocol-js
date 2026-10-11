@@ -13,8 +13,9 @@
  * `:<n>` from attempt 2. The resend and the null message carry the attempt
  * number of the request that they answer. The failed envelope ID travels
  * only in the payload.
- * The requester stores each request envelope before the post, and posts the
- * stored envelope again on a later decrypt failure of the same envelope.
+ * The requester stores each request envelope before the post. After a post
+ * that fails with a retryable class, the retry request scheduler posts the
+ * stored envelope again, until the deadline of the record.
  */
 
 import type { Envelope } from '../remote/relay/types';
@@ -24,13 +25,21 @@ import { utf8Decode } from '../internal/platform';
 import type { Base64 } from '../types';
 import {
   isRetryId,
+  RELIABILITY_RECORD_TTL_MS,
+  RETRY_REQUEST_DEADLINE_MS,
   retryAttemptClientMessageId,
   retryRequestClientMessageId,
   storeRetryRequest,
+  updateRetryRequest,
   type RetryRequestIds,
   type StoredRetryRequest,
 } from '../local/store/reliability';
-import { relayOperationRefusal } from './relay-acceptance';
+import {
+  classifyRetryRequestPostFailure,
+  relayOperationRefusal,
+  type RetryRequestPostFailure,
+} from './relay-acceptance';
+import { rethrowRelayWorkStopped } from './relay-work';
 
 /** The payload version that this client writes and reads. */
 const RETRY_REQUEST_PAYLOAD_VERSION = 1;
@@ -127,19 +136,33 @@ export async function retryRequestEnvelope(
   };
 }
 
+/** What a retry request post did. */
+export type RetryPostOutcome =
+  /** The Relay holds the request attempt. */
+  | 'posted'
+  /** The post failed with a retryable class. The record holds the next attempt time. */
+  | 'pending'
+  /** The request ended. The record holds the terminal state. */
+  | 'terminal';
+
+/** The shortest wait before the next post of a stored attempt. */
+const MIN_RETRY_REQUEST_BACKOFF_MS = 60_000;
+
+/** The longest wait before the next post of a stored attempt. */
+const MAX_RETRY_REQUEST_BACKOFF_MS = 60 * 60_000;
+
 /**
  * Post the retry request for one failed envelope.
  *
  * Without a failed envelope ID, it creates a request and posts it under a
- * new UUID, and stores nothing. With a stored attempt, it posts the stored
- * envelope again. Otherwise it creates attempt 1 with a new retry ID and
- * stores it before the post. Each later attempt keeps the retry ID. When
- * the Relay refuses a stored attempt with OPERATION_EXPIRED, or when a
- * member failed and the stored attempt is answered, it creates the next
- * attempt, replaces the record in one write, and posts it. Each new
- * attempt is not answered. A RETRY_CONFLICT answer to any post completes
- * the attempt, because the Relay holds an earlier encryption of this
- * attempt.
+ * new UUID, stores nothing, and throws when the post fails. Otherwise the
+ * request record owns the request. With no record, it creates attempt 1
+ * with a new retry ID and stores it before the post, due at once. A
+ * record that ended posts nothing. At the deadline of the record, the
+ * request ends as `expired-content` and posts nothing. When a member
+ * failed and the stored attempt is answered, it creates the next attempt
+ * under the same retry ID, with the same deadline, and posts it. Otherwise
+ * it posts the stored attempt, as `postStoredRetryRequest` does.
  *
  * @param store - The local store that keeps the request records.
  * @param failed - The failed envelope and its stored request.
@@ -154,54 +177,175 @@ export async function postRetryRequest(
   createRequest: () => Promise<RetryRequest>,
   sender: RetryRequestDevice,
   send: (envelope: Envelope) => Promise<unknown>
-): Promise<void> {
+): Promise<RetryPostOutcome> {
   const failedEnvelopeId = failed.id;
   if (failedEnvelopeId === undefined) {
     await send(await retryRequestEnvelope(await createRequest(), sender));
-    return;
+    return 'posted';
   }
-  const post = async (envelope: Envelope): Promise<void> => {
-    try {
-      await send(envelope);
-    } catch (error) {
-      if (relayOperationRefusal(error) !== 'RETRY_CONFLICT') throw error;
+  const attempts = retryRequestAttempts(store, createRequest, sender, send);
+  const { stored } = failed;
+  if (!stored) {
+    return attempts.postNew(
+      await attempts.create({
+        failedEnvelopeId,
+        retryId: await generateUuidV4(),
+        attempt: 1,
+        ...(failed.fingerprint !== undefined && { fingerprint: failed.fingerprint }),
+      })
+    );
+  }
+  if (stored.terminal !== undefined || stored.envelope === undefined) return 'terminal';
+  if (Date.now() >= stored.deadlineAt) return attempts.expire(stored);
+  if (failed.member !== undefined && stored.answered) {
+    return attempts.postNew(await attempts.next(stored));
+  }
+  return attempts.postStored(stored);
+}
+
+/**
+ * Post the stored attempt of a retry request again, with its stored bytes
+ * and ID. When the Relay refuses it with OPERATION_EXPIRED, it creates the
+ * next attempt under the same retry ID, with the same deadline, replaces
+ * the record in one write, and posts it.
+ *
+ * Each post classifies its failure. A RETRY_CONFLICT answer completes the
+ * attempt, because the Relay holds an earlier encryption of it. A
+ * conclusive class stores the terminal state, with `emitted` false, and
+ * gives 'terminal'. A retryable class stores the class and the next
+ * attempt time, the age of the attempt from 1 minute to 1 hour from now,
+ * and gives 'pending'. A post that the Relay accepts clears both.
+ *
+ * @param store - The local store that keeps the request records.
+ * @param stored - The stored attempt. It has an envelope.
+ * @param createRequest - Creates the request of a new attempt.
+ * @param sender - The local identity, which sends the envelope.
+ * @param send - Posts one request envelope.
+ */
+export async function postStoredRetryRequest(
+  store: Parameters<typeof storeRetryRequest>[0],
+  stored: StoredRetryRequest,
+  createRequest: () => Promise<RetryRequest>,
+  sender: RetryRequestDevice,
+  send: (envelope: Envelope) => Promise<unknown>
+): Promise<RetryPostOutcome> {
+  return retryRequestAttempts(store, createRequest, sender, send).postStored(stored);
+}
+
+/** The attempt steps of one retry request. */
+function retryRequestAttempts(
+  store: Parameters<typeof storeRetryRequest>[0],
+  createRequest: () => Promise<RetryRequest>,
+  sender: RetryRequestDevice,
+  send: (envelope: Envelope) => Promise<unknown>
+) {
+  const update = (
+    record: StoredRetryRequest,
+    changes: Parameters<typeof updateRetryRequest>[4]
+  ): Promise<unknown> =>
+    updateRetryRequest(store, record.failedEnvelopeId, record.retryId, record.attempt, changes);
+
+  /**
+   * Create and store a new attempt. Attempt 1 sets the deadline. The
+   * attempt is due at its own time until its post settles, so the
+   * scheduler posts it again when a stop or a crash ends the post.
+   */
+  const create = async (
+    attempt: Pick<StoredRetryRequest, 'failedEnvelopeId' | 'retryId' | 'attempt' | 'fingerprint'> & {
+      deadlineAt?: number;
     }
-  };
-  const create = async (attempt: number, retryId: string): Promise<Envelope> => {
-    const envelope = await retryRequestEnvelope(await createRequest(), sender, {
-      failedEnvelopeId,
-      retryId,
-      attempt,
-    });
-    await storeRetryRequest(store, {
-      failedEnvelopeId,
-      retryId,
-      attempt,
+  ): Promise<StoredRetryRequest> => {
+    const request = await createRequest();
+    const envelope = await retryRequestEnvelope(request, sender, attempt);
+    const record: StoredRetryRequest = {
+      failedEnvelopeId: attempt.failedEnvelopeId,
+      retryId: attempt.retryId,
+      attempt: attempt.attempt,
       requestedAt: envelope.timestamp,
-      ...(failed.fingerprint !== undefined && { fingerprint: failed.fingerprint }),
+      ...(attempt.fingerprint !== undefined && { fingerprint: attempt.fingerprint }),
       answered: false,
+      deadlineAt:
+        attempt.deadlineAt ??
+        Math.min(
+          envelope.timestamp + RETRY_REQUEST_DEADLINE_MS,
+          request.failedTimestamp + RELIABILITY_RECORD_TTL_MS
+        ),
+      nextAttemptAt: envelope.timestamp,
       envelope,
-    });
-    return envelope;
+    };
+    await storeRetryRequest(store, record);
+    return record;
   };
-  if (!failed.stored) {
-    await post(await create(1, await generateUuidV4()));
-    return;
-  }
-  const { attempt, retryId } = failed.stored;
-  if (failed.member !== undefined && failed.stored.answered) {
-    await post(await create(attempt + 1, retryId));
-    return;
-  }
-  try {
-    await post(failed.stored.envelope);
-    return;
-  } catch (error) {
-    if (relayOperationRefusal(error) !== 'OPERATION_EXPIRED') throw error;
-  }
-  // The Relay no longer admits or replays the stored operation. The new
-  // attempt replaces the record before its post.
-  await post(await create(attempt + 1, retryId));
+
+  /** Create the attempt after the stored one, with the same retry ID and deadline. */
+  const next = (stored: StoredRetryRequest): Promise<StoredRetryRequest> =>
+    create({
+      failedEnvelopeId: stored.failedEnvelopeId,
+      retryId: stored.retryId,
+      attempt: stored.attempt + 1,
+      fingerprint: stored.fingerprint,
+      deadlineAt: stored.deadlineAt,
+    });
+
+  const expire = async (stored: StoredRetryRequest): Promise<RetryPostOutcome> => {
+    await update(stored, {
+      terminal: { class: 'expired-content', at: Date.now(), emitted: false },
+      nextAttemptAt: undefined,
+    });
+    return 'terminal';
+  };
+
+  /**
+   * Post one attempt. `fresh` is true for an attempt that this call
+   * created: OPERATION_EXPIRED then means a clock outside the admission
+   * window, and counts as a transport outage.
+   */
+  const post = async (record: StoredRetryRequest, fresh: boolean): Promise<RetryPostOutcome> => {
+    try {
+      await send(record.envelope!);
+    } catch (error) {
+      rethrowRelayWorkStopped(error);
+      const refusal = relayOperationRefusal(error);
+      if (refusal === 'OPERATION_EXPIRED' && !fresh) {
+        // The Relay no longer admits or replays the stored operation. The
+        // new attempt replaces the record before its post.
+        return post(await next(record), true);
+      }
+      if (refusal !== 'RETRY_CONFLICT') {
+        const failure: RetryRequestPostFailure =
+          refusal === 'OPERATION_EXPIRED'
+            ? { retry: 'transport-outage' }
+            : classifyRetryRequestPostFailure(error);
+        if ('terminal' in failure) {
+          await update(record, {
+            terminal: { class: failure.terminal, at: Date.now(), emitted: false },
+            nextAttemptAt: undefined,
+            lastFailureClass: undefined,
+          });
+          return 'terminal';
+        }
+        const now = Date.now();
+        const wait = Math.min(
+          MAX_RETRY_REQUEST_BACKOFF_MS,
+          Math.max(MIN_RETRY_REQUEST_BACKOFF_MS, now - record.requestedAt)
+        );
+        await update(record, { lastFailureClass: failure.retry, nextAttemptAt: now + wait });
+        return 'pending';
+      }
+    }
+    if (record.nextAttemptAt !== undefined || record.lastFailureClass !== undefined) {
+      await update(record, { nextAttemptAt: undefined, lastFailureClass: undefined });
+    }
+    return 'posted';
+  };
+
+  return {
+    create,
+    next,
+    expire,
+    postNew: (record: StoredRetryRequest) => post(record, true),
+    postStored: (stored: StoredRetryRequest) => post(stored, false),
+  };
 }
 
 /**
