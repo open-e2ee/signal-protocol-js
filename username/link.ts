@@ -93,8 +93,8 @@ export function decodeUsernameLinkComponents(encoded: string): UsernameLinkCompo
 }
 
 /**
- * Serialize username-link components into a JSON-safe shape for app sync or
- * provisioning payloads.
+ * Serialize username-link components into a JSON-safe shape that the
+ * application syncs between its devices.
  */
 export function serializeUsernameLinkComponents(
   components: UsernameLinkComponents

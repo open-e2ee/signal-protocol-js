@@ -57,9 +57,9 @@ export const ONE_TIME_PREKEY_BATCH_SIZE = 100;
 // ============================================================================
 
 /**
- * Total bytes derived from X3DH/PQXDH HKDF.
+ * Total bytes derived from PQXDH HKDF.
  *
- * X3DH derives 96 bytes total:
+ * PQXDH derives 96 bytes total:
  * - Bytes 0-32: Shared secret (SK) / root key
  * - Bytes 32-64: Reserved / receiving chain key placeholder (Alice) or sending (Bob)
  * - Bytes 64-96: Sending chain key placeholder (Alice) or receiving (Bob)
@@ -69,7 +69,7 @@ export const ONE_TIME_PREKEY_BATCH_SIZE = 100;
 export const HKDF_OUTPUT_SIZE = 96;
 
 /**
- * HKDF output byte ranges for X3DH/PQXDH key derivation.
+ * HKDF output byte ranges for PQXDH key derivation.
  *
  * These ranges are relative to the 96-byte HKDF output.
  * For `additionalDerivedBytes` (bytes 32-96), subtract 32 from each range.
@@ -91,7 +91,7 @@ export const HKDF_RANGES = {
    * Initial PQR key (32 bytes, positions 32-64).
    *
    * Used as the SPQR initial-state authenticator key. Provides authentication
-   * binding between the X3DH/PQXDH shared secret and SPQR state.
+   * binding between the PQXDH shared secret and SPQR state.
    *
    * Named "RESERVED" in older documentation but actively used for SPQR.
    */
@@ -103,12 +103,12 @@ export const HKDF_RANGES = {
 /**
  * HKDF byte ranges relative to additionalDerivedBytes (SK already removed).
  *
- * When using `additionalDerivedBytes` from X3DH/PQXDH results,
+ * When using `additionalDerivedBytes` from PQXDH results,
  * use these offsets since the first 32 bytes (SK) are separate.
  *
  * @example
  * ```typescript
- * const { sharedSecret, additionalDerivedBytes } = x3dhResult;
+ * const { sharedSecret, additionalDerivedBytes } = pqxdhResult;
  * // sharedSecret is bytes 0-32 (SK)
  * // additionalDerivedBytes is bytes 32-96, so use ADDITIONAL_RANGES
  * const pqrKey = additionalDerivedBytes.slice(

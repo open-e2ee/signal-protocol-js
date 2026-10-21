@@ -182,7 +182,8 @@ export async function performPQXDH(
   });
 
   // PQXDH requires one signed KEM prekey - either one-time or last-resort.
-  // The session/handshake.ts orchestration layer handles fallback to X3DH.
+  // The session/handshake.ts orchestration layer refuses a bundle without
+  // KEM prekeys before this point, and this check fails closed as well.
   if (!theirBundle.kemOneTimePreKey && !theirBundle.kemLastResortPreKey) {
     logger.breadcrumb('PQXDH: KEM prekey missing from bundle', {
       category: 'E2EE',

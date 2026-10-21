@@ -72,6 +72,24 @@ Delete a group master key.
 
 ***
 
+### getGroupReceiveRecord()
+
+> **getGroupReceiveRecord**(`groupId`): `Promise`\<[`GroupReceiveRecord`](GroupReceiveRecord.md) \| `null`\>
+
+Get the group's receive record, or null when the group has no record.
+
+#### Parameters
+
+##### groupId
+
+`string`
+
+#### Returns
+
+`Promise`\<[`GroupReceiveRecord`](GroupReceiveRecord.md) \| `null`\>
+
+***
+
 ### getGroupState()
 
 > **getGroupState**(`groupId`): `Promise`\<[`DecryptedGroup`](DecryptedGroup.md) \| `null`\>
@@ -126,11 +144,24 @@ Get the accepted revision whose C7 rotation is still pending.
 
 ***
 
+### listGroupReceiveRecords()
+
+> **listGroupReceiveRecords**(): `Promise`\<`string`[]\>
+
+List the IDs of the groups that have a receive record.
+
+#### Returns
+
+`Promise`\<`string`[]\>
+
+***
+
 ### storeGroupState()
 
 > **storeGroupState**(`groupId`, `state`): `Promise`\<`void`\>
 
-Store decrypted group state cache.
+Store decrypted group state cache. Verified state also clears the
+`unverified` origin of the group's receive record in the same write.
 
 #### Parameters
 
@@ -153,7 +184,8 @@ Store decrypted group state cache.
 > **storeGroupStateWithSenderKeyRotationBarrier**(`groupId`, `state`): `Promise`\<`void`\>
 
 Atomically store accepted group state and establish C7's sender-key
-rotation barrier at that state's revision.
+rotation barrier at that state's revision. It clears the `unverified`
+origin as `storeGroupState` does.
 
 #### Parameters
 
@@ -190,3 +222,29 @@ Store a group master key.
 #### Returns
 
 `Promise`\<`void`\>
+
+***
+
+### updateGroupReceiveRecord()
+
+> **updateGroupReceiveRecord**(`groupId`, `apply`): `Promise`\<[`GroupReceiveRecord`](GroupReceiveRecord.md) \| `null`\>
+
+Atomically replace the group's receive record with `apply(current)`.
+
+`apply` is synchronous and may run more than once. A null result deletes
+the group's whole record, including its master key and cached state. The
+store returns the record that it wrote.
+
+#### Parameters
+
+##### groupId
+
+`string`
+
+##### apply
+
+(`current`) => [`GroupReceiveRecord`](GroupReceiveRecord.md) \| `null`
+
+#### Returns
+
+`Promise`\<[`GroupReceiveRecord`](GroupReceiveRecord.md) \| `null`\>

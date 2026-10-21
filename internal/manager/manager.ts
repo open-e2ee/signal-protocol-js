@@ -11,9 +11,9 @@
  *
  * The manager coordinates three main cryptographic components:
  *
- * 1. **X3DH/PQXDH Key Agreement** - Establishes shared secrets for new sessions
- *    - X3DH: Extended Triple Diffie-Hellman (classical security)
- *    - PQXDH: Post-Quantum X3DH with ML-KEM-1024 (quantum-resistant)
+ * 1. **PQXDH Key Agreement** - Establishes shared secrets for new sessions
+ *    - PQXDH: X25519 Diffie-Hellman combined with ML-KEM-1024. Every new
+ *      session requires it.
  *
  * 2. **Double Ratchet Algorithm** - Provides forward secrecy per message
  *    - Symmetric-key ratchet for message key derivation
@@ -27,8 +27,9 @@
  *
  * ## Thread Safety
  *
- * Uses per-session AsyncLock to prevent race conditions during concurrent
- * encrypt/decrypt operations. Different sessions do not block each other.
+ * Uses the per-session lock of the store to prevent race conditions during
+ * concurrent encrypt/decrypt operations. Different sessions do not block each
+ * other.
  *
  * ## Specification References
  *
@@ -56,7 +57,6 @@
  * ```
  */
 
-import type AsyncLock from 'async-lock';
 import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import type {
   Ciphertext,
@@ -75,7 +75,10 @@ import type {
   SessionState,
   SessionRecord,
 } from '../../types';
-import { CURRENT_SESSION_RECORD_VERSION } from '../../types/session';
+import {
+  CURRENT_SESSION_RECORD_VERSION,
+  SessionRecord as SessionRecordNS,
+} from '../../types/session';
 import {
   EncryptionError,
   EncryptionErrorCode,
@@ -85,6 +88,7 @@ import {
 import { DEFAULT_RATCHET_CONFIG } from '../protocol/double-ratchet';
 import { ProtocolAddress } from '../../types/address';
 import type { ProtocolStrategyConfig } from '../../types';
+import type { ReceiveWorkSeed } from '../../types/api';
 import { resolveSCKAMode } from '../../types/protocol-config';
 // DEFAULT_DEVICE_ID removed - device IDs must be explicitly provided
 import * as CryptoUtils from '../crypto';
@@ -105,7 +109,7 @@ import {
 } from '../../keys';
 import { PREKEY_ALGORITHM_X25519, verifyPreKeySignature } from '../../keys/prekey-signature';
 import { SessionBuilder, SessionCipher } from '../session';
-import { sessionLockFor, sessionLockKey } from '../session/record-locks';
+import { sessionLockFor, sessionLockKey, type RecordLock } from '../session/record-locks';
 
 /**
  * Signal Protocol Manager implementation
@@ -113,7 +117,7 @@ import { sessionLockFor, sessionLockKey } from '../session/record-locks';
  * Provides the core Signal Protocol functionality including:
  * - Identity key generation and management
  * - Prekey bundle generation (signed + one-time + Kyber)
- * - X3DH/PQXDH key agreement for session establishment
+ * - PQXDH key agreement for session establishment
  * - Double Ratchet encryption/decryption with forward secrecy
  * - Key rotation (weekly for signed prekeys)
  * - Message key cleanup (per spec section 8.4)
@@ -155,15 +159,16 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
   private localDeviceId: number | null = null;
 
   /**
-   * Async lock for concurrent safety
+   * Session lock for concurrent safety
    *
    * Prevents race conditions when multiple encrypt/decrypt operations
    * happen concurrently on the same session. Uses per-session locks
    * so different conversations do not block each other. The storage object
    * keys the lock, so the SESAME manager and the store sweeps over the same
-   * storage share it.
+   * storage share it. A store with a `storeIdentity` shares it with the
+   * other contexts of the origin through a Web Lock.
    */
-  private readonly lock: AsyncLock;
+  private readonly lock: RecordLock;
 
   /**
    * SessionCipher handles encrypt/decrypt operations.
@@ -403,18 +408,16 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
   }
 
   /**
-   * Start a new session with a partner using X3DH (with optional PQXDH)
+   * Start a new session with a partner using PQXDH
    *
-   * X3DH (Extended Triple Diffie-Hellman) provides mutual authentication and forward secrecy.
-   * It performs 3-4 ECDH operations and combines them using HKDF.
-   *
-   * PQXDH Extension: If Kyber prekey is available, adds post-quantum security via
-   * CRYSTALS-Kyber-1024, providing AES-256 equivalent security against quantum computers.
+   * PQXDH provides mutual authentication and forward secrecy. It performs 3-4
+   * ECDH operations, adds one ML-KEM-1024 encapsulation, and combines the
+   * secrets using HKDF. A bundle without ML-KEM prekeys is refused.
    *
    * Steps:
    * 1. Verify signed prekey signature
-   * 2. Perform X3DH key agreement (3-4 DH operations)
-   * 3. [Optional] Add Kyber KEM for post-quantum security (PQXDH)
+   * 2. Perform the ECDH operations (3-4 DH operations)
+   * 3. Add the ML-KEM-1024 shared secret (PQXDH)
    * 4. Derive initial root key and chain keys using HKDF
    * 5. Initialize Double Ratchet state
    * 6. Store session in SecureStore
@@ -496,8 +499,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
           logger: this.logger,
         });
 
-        const { sessionState, initialRootKeyForSPQR, usedPQXDH, usedClassicalFallback } =
-          builderResult;
+        const { sessionState, initialRootKeyForSPQR, usedPQXDH } = builderResult;
 
         // Step 3: Initialize Triple Ratchet (SPQR). PQXDH sessions always require SPQR v1.
         if (usedPQXDH && !initialRootKeyForSPQR) {
@@ -508,21 +510,19 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
               operation: 'establishSession',
               role: 'initiator',
               usedPQXDH,
-              usedClassicalFallback: !!usedClassicalFallback,
               hasInitialRootKeyForSPQR: !!initialRootKeyForSPQR,
             }
           );
         }
 
-        if (!usedPQXDH && !usedClassicalFallback) {
+        if (!usedPQXDH) {
           throw new EncryptionError(
-            'Non-PQXDH session requires explicit classical compatibility fallback',
+            'Session establishment requires PQXDH',
             EncryptionErrorCode.TRIPLE_RATCHET_REQUIRED,
             {
               operation: 'establishSession',
               role: 'initiator',
               usedPQXDH,
-              usedClassicalFallback: !!usedClassicalFallback,
             }
           );
         }
@@ -607,16 +607,41 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
         // session at one durable commit point. A racing identity rotation must
         // fail closed without leaving either half of the state visible.
         try {
+          // The new session archives the current session of the record and
+          // keeps its archived sessions, as a received PreKeyMessage does. A
+          // message that the peer encrypted on an older session then still
+          // decrypts, also after a reset archived that session. A record of
+          // an earlier version keeps no session: the commit replaces it.
+          const stored = await this.keyStorage.getSessionRecord(remoteAddress);
+          const existing = stored?.version === CURRENT_SESSION_RECORD_VERSION ? stored : null;
+          const record: SessionRecord = existing
+            ? {
+                ...SessionRecordNS.archiveCurrent(
+                  CryptoUtils.cloneProtocolState(existing),
+                  sessionState
+                ),
+                version: CURRENT_SESSION_RECORD_VERSION,
+              }
+            : {
+                currentSession: sessionState,
+                archivedSessions: {},
+                version: CURRENT_SESSION_RECORD_VERSION,
+              };
+          // A new session that replaces a current session needs the own
+          // sender keys again, so the same commit deletes the handoff rows
+          // of the device in every group. A first session has no rows.
+          // One Signal client replaces a session only after an archive, and the
+          // archive deletes the rows. Here the bundle commit archives the
+          // current session itself, so it deletes the rows too.
           await this.keyStorage.commitSessionTrust({
             address: remoteAddress,
-            record: {
-              currentSession: sessionState,
-              archivedSessions: {},
-              version: CURRENT_SESSION_RECORD_VERSION,
-            },
+            record,
             contactIdentity: prekeyBundle.identity,
             contactIdentityType: recipientIdentityType,
             localIdentityType: sessionState.localIdentityType,
+            senderKeyHandoffInvalidation: existing?.currentSession
+              ? { userId: remoteAddress.userId, deviceId: remoteAddress.deviceId }
+              : undefined,
           });
         } catch (storageError) {
           if (storageError instanceof EncryptionError) {
@@ -652,7 +677,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
   }
 
   /**
-   * Perform X3DH key exchange as responder (with optional PQXDH extension)
+   * Perform the PQXDH key exchange as responder
    *
    * Implements Signal Protocol Section 3.3 RatchetInitBob (with PQXDH extension).
    * Delegates to SessionBuilder for key agreement and session creation.
@@ -702,7 +727,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
       );
     }
 
-    // Validate identity DH key pair integrity before X3DH
+    // Validate identity DH key pair integrity before PQXDH
     // This catches storage corruption that causes MAC verification failures
     CryptoUtils.validateX25519KeyPair(
       myIdentityKey.dhKey.publicKey,
@@ -740,7 +765,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
       );
     }
 
-    // Validate signed prekey pair integrity before X3DH
+    // Validate signed prekey pair integrity before PQXDH
     // This catches storage corruption that causes MAC verification failures
     CryptoUtils.validateX25519KeyPair(
       mySignedPreKey.publicKey,
@@ -758,7 +783,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
         ) || null;
 
       if (!myOneTimePreKey) {
-        // CRITICAL: If Alice used an EC one-time prekey, Bob MUST have it for X3DH.
+        // CRITICAL: If Alice used an EC one-time prekey, Bob MUST have it for PQXDH.
         // If Bob does not have it, the IKM will be different and decryption will fail.
         //
         // This happens when:
@@ -781,7 +806,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
         );
       }
 
-      // Validate one-time prekey pair integrity before X3DH
+      // Validate one-time prekey pair integrity before PQXDH
       // This catches storage corruption that causes MAC verification failures
       CryptoUtils.validateX25519KeyPair(
         myOneTimePreKey.publicKey,
@@ -928,14 +953,13 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
       logger: this.logger,
     });
 
-    const { sessionState, usedPQXDH, initialRootKeyForSPQR, usedClassicalFallback } = builderResult;
+    const { sessionState, usedPQXDH, initialRootKeyForSPQR } = builderResult;
 
     this.logger.debug('performX3DHResponder: Received builder result', {
       category: 'E2EE',
       data: {
         operation: 'x3dh-responder',
         usedPQXDH,
-        usedClassicalFallback: !!usedClassicalFallback,
         hasInitialRootKeyForSPQR: !!initialRootKeyForSPQR,
         initialRootKeyLength: initialRootKeyForSPQR?.length,
       },
@@ -975,21 +999,19 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
           operation: 'performX3DHResponder',
           role: 'responder',
           usedPQXDH,
-          usedClassicalFallback: !!usedClassicalFallback,
           hasInitialRootKeyForSPQR: !!initialRootKeyForSPQR,
         }
       );
     }
 
-    if (!usedPQXDH && !usedClassicalFallback) {
+    if (!usedPQXDH) {
       throw new EncryptionError(
-        'Non-PQXDH session requires explicit classical compatibility fallback',
+        'Session establishment requires PQXDH',
         EncryptionErrorCode.TRIPLE_RATCHET_REQUIRED,
         {
           operation: 'performX3DHResponder',
           role: 'responder',
           usedPQXDH,
-          usedClassicalFallback: !!usedClassicalFallback,
         }
       );
     }
@@ -1166,9 +1188,9 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
   async decrypt(
     remoteAddress: ProtocolAddress,
     ciphertext: Ciphertext,
-    receiveId?: string
+    receiveWork?: ReceiveWorkSeed
   ): Promise<string> {
-    return this.getSessionCipher().decrypt(remoteAddress, ciphertext, receiveId);
+    return this.getSessionCipher().decrypt(remoteAddress, ciphertext, receiveWork);
   }
 
   /**
@@ -1376,7 +1398,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
    * Generate identity key pair with both DH and signing keys
    *
    * Signal Protocol needs:
-   * - DH key (ECDH) for X3DH key exchange (DH1 operation)
+   * - DH key (ECDH) for PQXDH key exchange (DH1 operation)
    * - Signing key (Ed25519) for signing prekeys
    *
    * @see https://signal.org/docs/specifications/x3dh/#keys - Identity key format (IKA, IKB)

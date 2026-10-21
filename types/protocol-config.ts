@@ -7,13 +7,13 @@
  */
 
 import type { IdentityType } from '../keys/types';
+import type { LocalStoreAtRest, LocalStoreKeyCustody } from './api';
 
 /**
  * Developer-facing post-quantum policy values.
  */
 export const PostQuantumPolicy = {
   Required: 'required',
-  Compatible: 'compatible',
 } as const;
 
 export type PostQuantumPolicy = (typeof PostQuantumPolicy)[keyof typeof PostQuantumPolicy];
@@ -32,15 +32,14 @@ export type BraidPolicy = (typeof BraidPolicy)[keyof typeof BraidPolicy];
  * Public Signal Protocol configuration.
  *
  * This keeps application code in product/security terms. Internal protocol
- * strategy details such as X3DH fallback remain below the SignalProtocolClient seam.
+ * strategy details remain below the SignalProtocolClient seam.
  */
 export interface SignalProtocolConfig {
   /**
    * Post-quantum policy for session establishment.
    *
-   * - `required`: require post-quantum peers. Peers without PQ material fail closed.
-   * - `compatible`: use post-quantum peers when available and allow classical
-   *   compatibility only for peers with no PQ material at all.
+   * `required` is the only value. Every new session uses PQXDH, and a peer
+   * without ML-KEM prekeys fails closed with `PQXDH_REQUIRED`.
    *
    * @default 'required'
    */
@@ -58,6 +57,180 @@ export interface SignalProtocolConfig {
    * @default 'required'
    */
   braid?: BraidPolicy;
+
+  /**
+   * Policy for the content that a sender keeps to answer a retry request.
+   *
+   * A device that cannot decrypt a message asks the sender for it again. To
+   * answer, the sender keeps the plaintext of each resendable message in its
+   * local store until the recipient device confirms it or the retention
+   * ends. This policy decides whether the local store may hold that
+   * plaintext. The client reads it at creation and shows the decision in
+   * `contentRecoveryStatus`.
+   *
+   * @default { mode: 'require-protected' }
+   */
+  contentRecovery?: ContentRecoveryPolicy;
+
+  /**
+   * Policy for received content that waits on this device.
+   *
+   * The client stores decrypted content before it acknowledges the Relay
+   * message, then processes it. Content waits when its group state is not
+   * current, when its delivery receipt is due, or until the application
+   * completes a helper receive. This policy bounds the queue. Content that
+   * waits 30 days from its first durable admission on this device expires,
+   * and the client runs `onReceiveExpired` and drops it. Content whose
+   * delivery receipt is due completes with no receipt and no
+   * `onReceiveExpired` report at that age, or 1 day after the receipt
+   * became due if that is earlier. The age uses the wall clock: a forward
+   * clock jump can expire content early. Retention cannot recover content
+   * whose keys or sender content are gone. No setting changes this age.
+   *
+   * @default { maxItems: 3000, maxBytes: 786432000, blockedGroupShare: 0.25 }
+   */
+  receiveQueue?: ReceiveQueuePolicy;
+}
+
+/** The receive queue policy of a client. */
+export interface ReceiveQueuePolicy {
+  /**
+   * The most receive records that the queue holds. At the bound, the client
+   * decrypts nothing more and does not acknowledge the message, so the
+   * Relay keeps it. A message that the Relay keeps expires at the TTL of
+   * the Relay project, and no local hook reports that expiry. While the
+   * mailbox of the device is full, the Relay refuses a new message to it
+   * with `MAILBOX_FULL` to its sender. The value is provisional until a
+   * measurement sets it.
+   * Two processes over one store, such as two tabs, can each pass the check
+   * and overshoot it.
+   *
+   * @default 3000
+   */
+  maxItems?: number;
+
+  /**
+   * The most plaintext bytes that the queue holds. It acts as `maxItems`.
+   *
+   * @default 786432000 (750 MiB)
+   */
+  maxBytes?: number;
+
+  /**
+   * The part of `maxItems` and `maxBytes` that the waiting records of one
+   * group can fill. A sender-key message of a group at its part is not
+   * decrypted, so other conversations keep room. Pairwise group content
+   * counts toward its group after decrypt. The value must be above 0 and at
+   * most 1.
+   *
+   * @default 0.25
+   */
+  blockedGroupShare?: number;
+
+  /**
+   * The longest time, in milliseconds, that a receive pass waits for one
+   * hook, such as `onMessageDecrypted`. At the bound, the client logs `RECEIVE_HOOK_TIMEOUT` and stops waiting for
+   * the call. A timeout of `onMessageDecrypted` or `onDelivered` counts as
+   * one failed attempt, so the content runs again after the backoff. A
+   * timeout of another hook ends that call, and the pass continues. The
+   * client ignores a result that the call gives after the bound. The value
+   * must be a positive integer of at most 2147483647 ms.
+   *
+   * @default 120000 (2 minutes)
+   */
+  receiveHookTimeoutMs?: number;
+}
+
+/**
+ * Which local store protection lets the client keep resendable content.
+ *
+ * - `require-protected`: keep it only when the store is encrypted and its
+ *   key is in an operating system keychain or a declared application vault.
+ * - `allow-co-located-key`: also keep it when the key is in storage that
+ *   the data shares, such as the same browser origin. Use it only after a
+ *   product review accepts that custody.
+ * - `off`: never keep it.
+ */
+export type ContentRecoveryMode = 'require-protected' | 'allow-co-located-key' | 'off';
+
+/** The content recovery policy of a client. */
+export interface ContentRecoveryPolicy {
+  /** @default 'require-protected' */
+  mode?: ContentRecoveryMode;
+
+  /**
+   * How long the sender keeps resendable content, in milliseconds, from the
+   * time it first stored the content. A retry does not extend it. The value
+   * must be a positive integer of at most 30 days.
+   *
+   * @default 1209600000 (14 days)
+   */
+  retentionMs?: number;
+
+  /**
+   * Answer whether a user is a current member of an ad hoc group. The
+   * sender asks it before it gives logged group content to a device again.
+   * A managed group is checked against its verified group state instead.
+   * The hook gets the prefixed group ID that `createGroupId` makes. Without
+   * this hook, the sender gives no content again for an ad hoc group.
+   * `contentRecoveryStatus.groupMembershipSource` names the source that the
+   * client has.
+   */
+  isCurrentMember?: (groupId: string, userId: string) => Promise<boolean>;
+}
+
+/**
+ * How well a local store protects resendable content.
+ *
+ * - `protected`: the store is encrypted, and its key is in an operating
+ *   system keychain or a declared application vault.
+ * - `co-located`: the store is encrypted, and its key is in storage that the
+ *   data shares, such as the same browser origin. This is weaker key
+ *   custody, not missing encryption.
+ * - `none`: the store has no encryption or no key.
+ */
+export type StorageProtectionLevel = 'protected' | 'co-located' | 'none';
+
+/**
+ * Where the client finds whether a user is a current member of a group,
+ * before it gives group content to a device again.
+ *
+ * - `managed`: `groups` with `resolveAciBytesByUserIds`. The client checks
+ *   a managed group against its verified group state. When
+ *   `isCurrentMember` is also set, it answers for an ad hoc group.
+ * - `hook`: only `protocol.contentRecovery.isCurrentMember`. It answers for
+ *   an ad hoc group. A resend for a managed group is refused.
+ * - `none`: no source. Each group resend is refused. A direct message
+ *   resend needs no source.
+ */
+export type GroupMembershipSource = 'managed' | 'hook' | 'none';
+
+/** Why the client keeps no resendable content. */
+export type ContentRecoveryDisabledReason =
+  | 'policy-off'
+  | 'co-located-key-not-allowed'
+  | 'unprotected-store';
+
+/**
+ * The content recovery decision of a client. The client makes it at
+ * creation from the protection that the local store declares and from
+ * `protocol.contentRecovery`. It does not change while the client runs.
+ *
+ * When `enabled` is false, the client keeps no resendable content. A retry
+ * request for a direct message then resets the session with no content, and
+ * a group message is sent with the `Default` content hint instead of
+ * `Resendable`.
+ */
+export interface ContentRecoveryStatus {
+  readonly enabled: boolean;
+  readonly level: StorageProtectionLevel;
+  readonly mode: ContentRecoveryMode;
+  readonly atRest: LocalStoreAtRest;
+  readonly keyCustody: LocalStoreKeyCustody;
+  /** Set only when `enabled` is false. */
+  readonly reason?: ContentRecoveryDisabledReason;
+  /** The group membership source that a group resend uses. */
+  readonly groupMembershipSource: GroupMembershipSource;
 }
 
 /**
@@ -67,21 +240,16 @@ export function protocolConfigToStrategy(config?: SignalProtocolConfig): Protoco
   const postQuantum = config?.postQuantum ?? PostQuantumPolicy.Required;
   const braid = config?.braid ?? BraidPolicy.Required;
 
-  let allowClassicalFallback: boolean;
-  if (postQuantum === PostQuantumPolicy.Required) {
-    allowClassicalFallback = false;
-  } else if (postQuantum === PostQuantumPolicy.Compatible) {
-    allowClassicalFallback = true;
-  } else {
+  if (postQuantum !== PostQuantumPolicy.Required) {
     throw new Error(`Unsupported postQuantum policy: ${String(postQuantum)}`);
   }
 
   if (braid === BraidPolicy.Required) {
-    return { allowClassicalFallback, sckaMode: 'braid' };
+    return { sckaMode: 'braid' };
   }
 
   if (braid === BraidPolicy.Disabled) {
-    return { allowClassicalFallback, sckaMode: 'direct' };
+    return { sckaMode: 'direct' };
   }
 
   throw new Error(`Unsupported braid policy: ${String(braid)}`);
@@ -90,23 +258,16 @@ export function protocolConfigToStrategy(config?: SignalProtocolConfig): Protoco
 /**
  * Resolve public and advanced protocol configuration.
  *
- * Public `protocol` owns fallback and Braid semantics. Advanced strategy
- * options may still provide telemetry callbacks, SPQR limits, KDF strings,
- * and protocol diagnostic hooks. They cannot also set fallback or SCKA mode
- * behavior.
+ * Public `protocol` owns the post-quantum and Braid semantics. Advanced
+ * strategy options may still provide telemetry callbacks, SPQR limits, KDF
+ * strings, and protocol diagnostic hooks. They cannot also set the SCKA mode.
  */
 export function resolveSignalProtocolStrategy(config?: {
   protocol?: SignalProtocolConfig;
   protocolStrategy?: ProtocolStrategyConfig;
 }): ProtocolStrategyConfig | undefined {
-  if (!config?.protocol) {
+  if (!config?.protocol || isPolicyOnly(config.protocol)) {
     return config?.protocolStrategy;
-  }
-
-  if (config.protocolStrategy?.allowClassicalFallback !== undefined) {
-    throw new Error(
-      'Do not set protocolStrategy.allowClassicalFallback with protocol.postQuantum; use protocol.postQuantum.'
-    );
   }
 
   if (config.protocolStrategy?.sckaMode !== undefined) {
@@ -121,10 +282,18 @@ export function resolveSignalProtocolStrategy(config?: {
   };
 }
 
+/** The `protocol` keys that set a client policy, not a protocol strategy. */
+const POLICY_KEYS: readonly string[] = ['contentRecovery', 'receiveQueue'];
+
 /**
- * Reason for using explicit classical compatibility fallback.
+ * The content recovery and receive queue policies are not a protocol
+ * strategy. A `protocol` object that sets only those policies leaves the
+ * advanced strategy alone.
  */
-export type ClassicalFallbackReason = 'remote_lacks_kem';
+function isPolicyOnly(protocol: SignalProtocolConfig): boolean {
+  const keys = Object.keys(protocol);
+  return keys.length > 0 && keys.every((key) => POLICY_KEYS.includes(key));
+}
 
 /**
  * Protocol selection event for analytics and debugging.
@@ -134,10 +303,6 @@ export interface ProtocolSelectionEvent {
   usedPQXDH: boolean;
   /** Whether Triple Ratchet (SPQR) was enabled for the session. */
   usedTripleRatchet: boolean;
-  /** Whether explicit X3DH compatibility fallback was used. */
-  usedClassicalFallback: boolean;
-  /** Narrow reason for explicit X3DH compatibility fallback. */
-  classicalFallbackReason?: ClassicalFallbackReason;
   /** Remote party's address (userId:deviceId). */
   remoteAddress: string;
   /** Timestamp of protocol selection. */
@@ -206,12 +371,15 @@ export interface NetworkConstraints {
  * SPQR security and performance limits.
  *
  * Defaults bound a forward jump to 25,000 and retained out-of-order keys to
- * 2,000.
+ * 2,000 in each epoch.
  */
 export interface SPQRLimits {
   /** Maximum forward jump in message numbers. @default 25000 */
   maxMessageJump?: number;
-  /** Maximum out-of-order keys to store. @default 2000 */
+  /**
+   * Maximum out-of-order keys that each epoch keeps. A key more than this
+   * count behind the newest received index is refused. @default 2000
+   */
   maxOutOfOrderKeys?: number;
 }
 
@@ -236,17 +404,6 @@ export interface SPQRInfoStrings {
  * Protocol strategy configuration for PQXDH and SPQR.
  */
 export interface ProtocolStrategyConfig {
-  /**
-   * Allow explicit X3DH compatibility fallback for peers that advertise no
-   * KEM/PQ material at all.
-   *
-   * This does not allow downgrade after malformed KEM metadata, failed PQXDH
-   * processing, or missing local KEM prekeys for incoming PQXDH messages.
-   *
-   * @default false
-   */
-  allowClassicalFallback?: boolean;
-
   /**
    * SCKA mode for SPQR key exchange.
    *
@@ -278,7 +435,7 @@ export interface ProtocolStrategyConfig {
   spqrInfoStrings?: SPQRInfoStrings;
 
   /**
-   * Override HKDF info string for both X3DH and PQXDH key derivation.
+   * Override HKDF info string for PQXDH key derivation.
    */
   keyExchangeInfoString?: string;
 
@@ -481,15 +638,6 @@ export const ARCHIVED_STATES_MAX_LENGTH = 40;
 export const PQXDH_INFO_DEFAULT = 'OpenE2EE_X25519_SHA-256_ML-KEM-1024';
 
 /**
- * Default HKDF info string for X3DH session initialization.
- *
- * X3DH section 2.1 defines `info` as an ASCII string identifying the
- * application. Section 3.3 uses it as the HKDF info directly, and unlike
- * PQXDH, no parameters are appended.
- */
-export const X3DH_INFO_DEFAULT = 'OpenE2EE';
-
-/**
  * Validation result for protocol strategy configuration.
  */
 export interface ProtocolStrategyValidation {
@@ -514,12 +662,6 @@ export function validateProtocolStrategy(
     return { valid: true, warnings, errors };
   }
 
-  if (config.allowClassicalFallback) {
-    warnings.push(
-      'Classical compatibility fallback is enabled; it is used only for peers with no KEM material.'
-    );
-  }
-
   if (config.sckaMode === 'direct') {
     warnings.push(
       'Direct SPQR SCKA is non-canonical; use it only for protocol tests or product-reviewed constraints.'
@@ -538,7 +680,7 @@ export function validateProtocolStrategy(
  */
 export function applyProtocolStrategyDefaults(
   config?: ProtocolStrategyConfig
-): Required<Pick<ProtocolStrategyConfig, 'sckaMode' | 'allowClassicalFallback'>> &
+): Required<Pick<ProtocolStrategyConfig, 'sckaMode'>> &
   Pick<
     ProtocolStrategyConfig,
     | 'onProtocolSelected'
@@ -549,7 +691,6 @@ export function applyProtocolStrategyDefaults(
     | 'keyExchangeInfoString'
   > {
   return {
-    allowClassicalFallback: config?.allowClassicalFallback ?? false,
     sckaMode: config?.sckaMode ?? 'braid',
     onProtocolSelected: config?.onProtocolSelected,
     onBraidProgress: config?.onBraidProgress,
@@ -566,7 +707,10 @@ export function applyProtocolStrategyDefaults(
 export interface ResolvedSPQRLimits {
   /** Max forward jump in message numbers. @default 25000 */
   maxMessageJump: number;
-  /** Max out-of-order keys to store. @default 2000 */
+  /**
+   * Max out-of-order keys that each epoch keeps. A key more than this count
+   * behind the newest received index is refused. @default 2000
+   */
   maxOutOfOrderKeys: number;
 }
 
@@ -601,19 +745,11 @@ export function resolveSCKAMode(config?: ProtocolStrategyConfig): SCKAMode {
 export interface ResolvedKeyExchangeInfoStrings {
   /** PQXDH info string. */
   pqxdh: string;
-  /** X3DH info string. */
-  x3dh: string;
 }
 
 /**
  * Resolve key exchange info strings.
  */
 export function resolveKeyExchangeInfoStrings(override?: string): ResolvedKeyExchangeInfoStrings {
-  if (override) {
-    return { pqxdh: override, x3dh: override };
-  }
-  return {
-    pqxdh: PQXDH_INFO_DEFAULT,
-    x3dh: X3DH_INFO_DEFAULT,
-  };
+  return { pqxdh: override || PQXDH_INFO_DEFAULT };
 }

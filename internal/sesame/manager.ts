@@ -43,6 +43,8 @@ import {
   RetryHandlingOptions,
   MIN_DEVICE_ID,
   MAX_DEVICE_ID,
+  isRemovedDevice,
+  isExpiredRemovedDevice,
   // Session record helpers
   updateSessionRecordAfterSend,
   updateSessionRecordAfterReceive,
@@ -52,6 +54,7 @@ import {
   OutgoingMessageBatch,
   // Send options
   SesameSendOptions,
+  MessageRecordPlaintext,
 } from './types';
 import type { MessageRecordStore } from '../../local/store';
 import { validateSesameConfig } from './validation';
@@ -75,6 +78,7 @@ import {
 import { SessionResolver } from '../session/session-resolver';
 import type { Ciphertext } from '../../keys';
 import { EncryptionError } from '../../types/errors';
+import type { ReceiveWorkSeed } from '../../types/api';
 import {
   canonicalizeDeviceIdentityKey,
   compareDeviceIdentityKeys,
@@ -147,7 +151,11 @@ interface PreKeyMessageResult {
  */
 export interface ProtocolManager {
   encrypt(remoteAddress: ProtocolAddress, plaintext: string): Promise<Ciphertext>;
-  decrypt(remoteAddress: ProtocolAddress, ciphertext: Ciphertext, receiveId?: string): Promise<string>;
+  decrypt(
+    remoteAddress: ProtocolAddress,
+    ciphertext: Ciphertext,
+    receiveWork?: ReceiveWorkSeed
+  ): Promise<string>;
   /**
    * Get the session record for a remote address.
    * Used by SESAME to sync sessions after PreKeyMessage decryption.
@@ -189,6 +197,7 @@ export class DefaultSesameManager implements SesameManager {
    * Per SESAME Specification Section 6.2.
    */
   private messageRecordStore: MessageRecordStore | null = null;
+  private messageRecordPlaintext: MessageRecordPlaintext = (plaintext) => plaintext;
 
   /**
    * O(1) session lookup index: sessionId -> { userId, deviceId }
@@ -254,8 +263,12 @@ export class DefaultSesameManager implements SesameManager {
    *
    * When set, sent messages are stored so they can be resent on retry request.
    */
-  setMessageRecordStore(store: MessageRecordStore): void {
+  setMessageRecordStore(
+    store: MessageRecordStore,
+    recordPlaintext: MessageRecordPlaintext = (plaintext) => plaintext
+  ): void {
     this.messageRecordStore = store;
+    this.messageRecordPlaintext = recordPlaintext;
   }
 
   /**
@@ -391,14 +404,20 @@ export class DefaultSesameManager implements SesameManager {
   }
 
   /**
-   * Remove a device from a user. The removal deletes the device's session, so
-   * it waits for a session write that is in progress for the device.
+   * Remove a device from a user. The removal archives the current session of
+   * the device, marks the record removed, and keeps the record, so a message
+   * that the device sent earlier still decrypts. The removal writes the
+   * session, so it waits for a session write that is in progress for the
+   * device. A device that is already removed stays as it is.
    */
   async removeDevice(userId: UserID, deviceId: DeviceID): Promise<void> {
     await this.withDeviceLocks(userId, deviceId, () => this.removeDeviceLocked(userId, deviceId));
   }
 
   private async removeDeviceLocked(userId: UserID, deviceId: DeviceID): Promise<void> {
+    const deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
+    if (!deviceRecord || isRemovedDevice(deviceRecord)) return;
+
     this.logger.debug('SESAME: Removing device', {
       category: 'E2EE',
       data: {
@@ -408,26 +427,59 @@ export class DefaultSesameManager implements SesameManager {
       },
     });
 
-    const userRecord = await this.storage.getUserRecord(userId);
-    if (!userRecord) return;
+    const now = Date.now();
+    // One Signal client archives the session of a device that the
+    // server no longer lists, and keeps the session for receive. The marker
+    // write carries the handoff invalidation with or without a session.
+    await this.storage.setDeviceRecord(
+      userId,
+      deviceId,
+      {
+        ...deviceRecord,
+        session: this.archiveCurrentIndexed(userId, deviceId, deviceRecord.session),
+        removedAt: now,
+        updatedAt: now,
+      },
+      { senderKeyHandoffInvalidation: { userId, deviceId } }
+    );
 
-    // Remove session index entries for this device
-    this.removeDeviceFromSessionIndex(userId, deviceId);
-
-    // Remove device
-    userRecord.devices.delete(deviceId);
-    userRecord.updatedAt = Date.now();
-
-    // Delete device record from storage
-    await this.storage.deleteDeviceRecord(userId, deviceId);
-
-    // Update user record (or clean up if empty)
-    if (userRecord.devices.size > 0) {
-      await this.storage.setUserRecord(userId, userRecord);
-    }
-
-    // Emit device removed event
     this.events.onDeviceRemoved?.(userId, deviceId);
+  }
+
+  /**
+   * Return a removed device to the fan-out set after its device list names
+   * it again. The marker clears, and the device has no current session until
+   * a send starts one. The archived sessions stay. A device that is not
+   * removed stays as it is.
+   */
+  async relistDevice(userId: UserID, deviceId: DeviceID): Promise<void> {
+    await this.withUserLock(userId, async () => {
+      const deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
+      if (deviceRecord) await this.relistDeviceLocked(deviceRecord);
+    });
+  }
+
+  /**
+   * Clear the removed marker of a record under the user lock. The write
+   * carries no session, so the stored session stays.
+   *
+   * @returns false when the record is not removed
+   */
+  private async relistDeviceLocked(deviceRecord: DeviceRecord): Promise<boolean> {
+    if (!isRemovedDevice(deviceRecord)) return false;
+    const { userId, deviceId } = deviceRecord;
+    const { removedAt: _removedAt, ...listed } = deviceRecord;
+    await this.storage.setDeviceRecord(userId, deviceId, {
+      ...listed,
+      session: null,
+      updatedAt: Date.now(),
+    });
+    this.logger.debug('SESAME: Relisted device', {
+      category: 'E2EE',
+      data: { operation: 'sesame-relist-device', userId, deviceId },
+    });
+    this.events.onDeviceAdded?.(userId, deviceId);
+    return true;
   }
 
   /**
@@ -482,6 +534,15 @@ export class DefaultSesameManager implements SesameManager {
   async getActiveSession(userId: UserID, deviceId: DeviceID): Promise<SessionState | null> {
     const sessionRecord = await this.getSession(userId, deviceId);
     return sessionRecord?.currentSession ?? null;
+  }
+
+  /**
+   * Get the registration ID of the remote device in the current session.
+   * Returns undefined if no current session exists.
+   */
+  async getRemoteRegistrationId(userId: UserID, deviceId: DeviceID): Promise<number | undefined> {
+    const session = await this.getActiveSession(userId, deviceId);
+    return session?.remoteRegistrationId;
   }
 
   /**
@@ -714,15 +775,21 @@ export class DefaultSesameManager implements SesameManager {
 
       // Store MessageRecord for retry request support (SESAME spec §6.2)
       // "Each MessageRecord stores the plaintext of the encrypted message"
-      if (this.messageRecordStore) {
+      // The policy can keep less than the sent plaintext, or no record.
+      const recordPlaintext = this.messageRecordStore
+        ? this.messageRecordPlaintext(plaintextString)
+        : null;
+      if (this.messageRecordStore && recordPlaintext !== null) {
         try {
           await this.messageRecordStore.storeMessageRecord({
             sessionId,
             timestamp: clientTimestamp,
             recipientUserId,
             recipientDeviceId,
-            plaintext: plaintextString,
-            createdAt: clientTimestamp,
+            plaintext: recordPlaintext,
+            // The store sets createdAt from its clock at the first write.
+            // Retention reads it, so the client timestamp never moves it.
+            createdAt: Date.now(),
             // store sender's
             // current ratchet key (DHs) for retry session matching. Detects intra-session
             // ratchet advancement, not just cross-session changes.
@@ -922,7 +989,7 @@ export class DefaultSesameManager implements SesameManager {
 
   async sendToLocalOtherDevices(
     plaintext: Uint8Array,
-    options?: SesameSendOptions
+    options: SesameSendOptions & { listedDeviceIds: readonly DeviceID[] }
   ): Promise<SesameMessage[]> {
     if (!this.localUserId || !this.localDeviceId) {
       throw new SesameError('DefaultSesameManager not initialized', 'NOT_INITIALIZED');
@@ -933,9 +1000,12 @@ export class DefaultSesameManager implements SesameManager {
       return [];
     }
 
+    const { listedDeviceIds, ...sendOptions } = options;
     const syncMessages: SesameMessage[] = [];
-    for (const [deviceId, deviceRecord] of localUserRecord.devices.entries()) {
+    for (const deviceId of new Set(listedDeviceIds)) {
       if (deviceId === this.localDeviceId) continue;
+      const deviceRecord = localUserRecord.devices.get(deviceId);
+      if (!deviceRecord || isRemovedDevice(deviceRecord)) continue;
 
       try {
         const activeSession = deviceRecord.session?.currentSession;
@@ -945,7 +1015,12 @@ export class DefaultSesameManager implements SesameManager {
         const canSend = await this.canSendOnSession(sessionId);
         if (!canSend) continue;
 
-        const syncMessage = await this.sendMessage(this.localUserId, deviceId, plaintext, options);
+        const syncMessage = await this.sendMessage(
+          this.localUserId,
+          deviceId,
+          plaintext,
+          sendOptions
+        );
         syncMessages.push(syncMessage);
       } catch {
         this.logger.debug('SESAME: Sync message failed for device', {
@@ -993,7 +1068,12 @@ export class DefaultSesameManager implements SesameManager {
       throw new SesameError(`No user record found for ${recipientUserId}`, 'USER_NOT_FOUND');
     }
 
-    if (userRecord.devices.size === 0) {
+    // A removed device gets no fan-out. A listed device with no current
+    // session is still attempted, and fails with NoActiveSessionError.
+    const devices = Array.from(userRecord.devices.entries()).filter(
+      ([, deviceRecord]) => !isRemovedDevice(deviceRecord)
+    );
+    if (devices.length === 0) {
       throw new SesameError(`User ${recipientUserId} has no devices`, 'NO_DEVICES');
     }
 
@@ -1008,13 +1088,13 @@ export class DefaultSesameManager implements SesameManager {
       data: {
         operation: 'sesame-send-user',
         recipientUserId,
-        deviceCount: userRecord.devices.size,
+        deviceCount: devices.length,
         includeSyncMessages,
       },
     });
 
     // Phase 1 & 2: Encrypt message for each recipient device
-    for (const [deviceId, deviceRecord] of userRecord.devices.entries()) {
+    for (const [deviceId, deviceRecord] of devices) {
       attemptedDevices++;
       try {
         // Check if device has an active session
@@ -1071,18 +1151,26 @@ export class DefaultSesameManager implements SesameManager {
       );
     }
 
-    // Encrypt sync messages for our own other devices (multi-device sync)
+    // Encrypt sync messages for our own other devices (multi-device sync).
+    // This batch reads no device list, so the copies go to the known devices.
     if (includeSyncMessages) {
+      const knownDeviceIds: DeviceID[] = [];
       if (this.localUserId) {
         const localUserRecord = await this.getUserRecord(this.localUserId);
         if (localUserRecord) {
-          attemptedDevices += Array.from(localUserRecord.devices.keys()).filter(
-            (deviceId) => deviceId !== this.localDeviceId
-          ).length;
+          for (const [deviceId, deviceRecord] of localUserRecord.devices) {
+            if (deviceId !== this.localDeviceId && !isRemovedDevice(deviceRecord)) {
+              knownDeviceIds.push(deviceId);
+            }
+          }
+          attemptedDevices += knownDeviceIds.length;
         }
       }
       const syncPayload = options?.syncPlaintext ?? plaintext;
-      const localSyncMessages = await this.sendToLocalOtherDevices(syncPayload, options);
+      const localSyncMessages = await this.sendToLocalOtherDevices(syncPayload, {
+        ...options,
+        listedDeviceIds: knownDeviceIds,
+      });
       syncMessages.push(...localSyncMessages);
     }
 
@@ -1122,7 +1210,7 @@ export class DefaultSesameManager implements SesameManager {
    *
    * @see https://signal.org/docs/specifications/sesame/
    */
-  async receive(message: SesameMessage, receiveId?: string): Promise<Uint8Array> {
+  async receive(message: SesameMessage, receiveWork?: ReceiveWorkSeed): Promise<Uint8Array> {
     if (!this.localUserId || !this.localDeviceId) {
       throw new SesameError('DefaultSesameManager not initialized', 'NOT_INITIALIZED');
     }
@@ -1171,7 +1259,7 @@ export class DefaultSesameManager implements SesameManager {
     // session establishment for first messages from new senders
     if (candidates.length === 0) {
       try {
-        const result = await this.handlePreKeyMessage(message, senderAddress, ciphertext, receiveId);
+        const result = await this.handlePreKeyMessage(message, senderAddress, ciphertext, receiveWork);
 
         // TRANSACTIONAL: Only persist after successful decrypt
         // This prevents session state corruption if decryption fails
@@ -1212,7 +1300,7 @@ export class DefaultSesameManager implements SesameManager {
 
     for (const candidate of candidates) {
       try {
-        const plaintextString = await this.protocol.decrypt(senderAddress, ciphertext, receiveId);
+        const plaintextString = await this.protocol.decrypt(senderAddress, ciphertext, receiveWork);
         decryptedPlaintext = new TextEncoder().encode(plaintextString);
         successfulCandidate = candidate;
         break;
@@ -1275,7 +1363,7 @@ export class DefaultSesameManager implements SesameManager {
     });
 
     try {
-      const result = await this.handlePreKeyMessage(message, senderAddress, ciphertext, receiveId);
+      const result = await this.handlePreKeyMessage(message, senderAddress, ciphertext, receiveWork);
 
       // TRANSACTIONAL: Only persist after successful decrypt
       // This prevents session state corruption if decryption fails
@@ -1315,7 +1403,8 @@ export class DefaultSesameManager implements SesameManager {
    */
   async createRetryRequest(
     failedMessage: SesameMessage,
-    reason: RetryReason
+    reason: RetryReason,
+    options?: { senderKey?: boolean }
   ): Promise<RetryRequest> {
     if (!this.config.enableRetryRequests) {
       throw new SesameError('Retry requests are disabled in configuration', 'RETRY_DISABLED');
@@ -1334,7 +1423,11 @@ export class DefaultSesameManager implements SesameManager {
       );
     }
 
-    const ratchetKey = this.extractRetryRatchetKey(failedMessage.ciphertext);
+    // A sender-key ciphertext has no ratchet key, and its bytes can parse as
+    // one. A request without a ratchet key names a sender-key failure.
+    const ratchetKey = options?.senderKey
+      ? undefined
+      : this.extractRetryRatchetKey(failedMessage.ciphertext);
 
     const retryRequest: RetryRequest = {
       requesterUserId: this.localUserId,
@@ -1448,7 +1541,7 @@ export class DefaultSesameManager implements SesameManager {
         const activeSession = await this.getActiveSession(requesterUserId, requesterDeviceId);
         const currentRatchetKey = activeSession?.DHs?.publicKey as string | undefined;
 
-        // Reference implementation behavior (Android/iOS): only reset session on retry if the ratchet
+        // Two Signal clients reset a session on retry only if the ratchet
         // key from DecryptionErrorMessage matches the current active session.
         if (
           !retryRequest.ratchetKey ||
@@ -1623,7 +1716,7 @@ export class DefaultSesameManager implements SesameManager {
     message: SesameMessage,
     senderAddress: ProtocolAddress,
     ciphertext: Ciphertext,
-    receiveId?: string
+    receiveWork?: ReceiveWorkSeed
   ): Promise<PreKeyMessageResult> {
     this.logger.debug('SESAME: No existing sessions, trying PreKeyMessage handling', {
       category: 'E2EE',
@@ -1644,7 +1737,7 @@ export class DefaultSesameManager implements SesameManager {
     );
 
     // Note: this.protocol is guaranteed non-null because receive() checks it before calling this method
-    const plaintextString = await this.protocol!.decrypt(senderAddress, ciphertext, receiveId);
+    const plaintextString = await this.protocol!.decrypt(senderAddress, ciphertext, receiveWork);
     const decryptedPlaintext = new TextEncoder().encode(plaintextString);
 
     // Parse PreKeyMessage to get sender's identity key (binary protobuf format)
@@ -1767,7 +1860,12 @@ export class DefaultSesameManager implements SesameManager {
       // Update session index for the newly established session
       this.removeDeviceFromSessionIndex(userId, deviceId);
       this.indexSessionRecord(userId, deviceId, deviceRecord.session);
-      await this.storage.setDeviceRecord(userId, deviceId, deviceRecord);
+      // The PreKey session can come from a new install of the device, which
+      // holds no own sender key. The same write deletes the handoff rows of
+      // the device in every group.
+      await this.storage.setDeviceRecord(userId, deviceId, deviceRecord, {
+        senderKeyHandoffInvalidation: { userId, deviceId },
+      });
 
       // A store joins a device that has no pin with the identity of its
       // session, and the decrypt committed that session. A device that had no
@@ -1898,6 +1996,24 @@ export class DefaultSesameManager implements SesameManager {
   }
 
   /**
+   * Archive the session of one device in the protocol store and in its
+   * device record, so the next send to the device starts a new session.
+   * Both writes run under one hold of the session lock of the device and
+   * the user lock: `archiveProtocolSession` first, and then the device
+   * record. A device record with no current session stays as it is.
+   */
+  async archiveSession(
+    userId: UserID,
+    deviceId: DeviceID,
+    archiveProtocolSession: () => Promise<void>
+  ): Promise<void> {
+    await this.withDeviceLocks(userId, deviceId, async () => {
+      await archiveProtocolSession();
+      await this.archiveSessionForDeviceLocked(userId, deviceId);
+    });
+  }
+
+  /**
    * Archive the active session for a specific device
    *
    * Moves the current session to archived, clearing the active session
@@ -1909,6 +2025,27 @@ export class DefaultSesameManager implements SesameManager {
     );
   }
 
+  /**
+   * Move the current session of a device record to its archived sessions,
+   * and index the result. The caller holds the device locks and writes the
+   * returned session. A record with no current session is returned as it is.
+   */
+  private archiveCurrentIndexed(
+    userId: UserID,
+    deviceId: DeviceID,
+    session: SessionRecord | null
+  ): SessionRecord | null {
+    if (!session?.currentSession) return session;
+    const archived = SessionResolver.archiveCurrentSession(
+      session,
+      this.config.maxInactiveSessions
+    );
+    // The session moved from current to archived.
+    this.removeDeviceFromSessionIndex(userId, deviceId);
+    this.indexSessionRecord(userId, deviceId, archived);
+    return archived;
+  }
+
   private async archiveSessionForDeviceLocked(userId: UserID, deviceId: DeviceID): Promise<void> {
     const deviceRecord = await this.storage.getDeviceRecord(userId, deviceId);
     if (!deviceRecord?.session?.currentSession) {
@@ -1917,18 +2054,14 @@ export class DefaultSesameManager implements SesameManager {
     }
 
     const sessionId = ProtocolAddress.toString(deviceRecord.session.currentSession.remoteAddress);
+    deviceRecord.session = this.archiveCurrentIndexed(userId, deviceId, deviceRecord.session);
 
-    // Archive the current session and clear it using SessionResolver
-    deviceRecord.session = SessionResolver.archiveCurrentSession(
-      deviceRecord.session,
-      this.config.maxInactiveSessions
-    );
-
-    // Rebuild session index for this device (session moved from current to archived)
-    this.removeDeviceFromSessionIndex(userId, deviceId);
-    this.indexSessionRecord(userId, deviceId, deviceRecord.session);
-
-    await this.storage.setDeviceRecord(userId, deviceId, deviceRecord);
+    // An archive follows a sign that the device lost its session, so it can
+    // also have lost the own sender keys. The same write deletes the handoff
+    // rows of the device in every group.
+    await this.storage.setDeviceRecord(userId, deviceId, deviceRecord, {
+      senderKeyHandoffInvalidation: { userId, deviceId },
+    });
 
     this.logger.debug('SESAME: Session archived', {
       category: 'E2EE',
@@ -1947,13 +2080,18 @@ export class DefaultSesameManager implements SesameManager {
    * Retry metadata includes the sender ratchet key for one-to-one
    * SignalProtocolMessage/PreKeySignalProtocolMessage failures and omits it for
    * sender-key messages.
+   *
+   * The failed message holds the stored wire form of the ciphertext: the
+   * UTF-8 bytes of the base64 text of the framed message. A sealed or
+   * malformed ciphertext gives no key.
    */
-  private extractRetryRatchetKey(ciphertext: Uint8Array): string | undefined {
-    if (ciphertext.length < 2) {
+  private extractRetryRatchetKey(wire: Uint8Array): string | undefined {
+    if (wire.length < 2) {
       return undefined;
     }
 
     try {
+      const ciphertext = base64ToBytes(utf8Decode(wire) as Base64);
       let signalMessageProtobuf: Uint8Array;
       const firstTag = ciphertext[1];
       const isPreKey = firstTag === 0x08 || firstTag === 0x12;
@@ -2111,7 +2249,9 @@ export class DefaultSesameManager implements SesameManager {
   }
 
   /**
-   * Clean up stale device records with no sessions and age > maxLatency
+   * Delete the stale device records: a record with no session that is older
+   * than maxLatency, and a removed record whose removal is older than
+   * maxLatency. The client runs it at start, after the receive queue resume.
    */
   async cleanupStaleRecords(): Promise<number> {
     if (!this.config.enableStaleRecordCleanup) {
@@ -2186,10 +2326,11 @@ export class DefaultSesameManager implements SesameManager {
         return null;
       }
 
-      // Devices that no longer exist on server
-      const replaced = Array.from(userRecord.devices.keys()).filter(
-        (deviceId) => !devices.has(deviceId)
-      );
+      // Devices that no longer exist on server. A device that is already
+      // removed stays as it is.
+      const replaced = Array.from(userRecord.devices.entries())
+        .filter(([deviceId, device]) => !devices.has(deviceId) && !isRemovedDevice(device))
+        .map(([deviceId]) => deviceId);
 
       // Add or update devices from server
       for (const [deviceId, identityKey] of devices) {
@@ -2197,26 +2338,34 @@ export class DefaultSesameManager implements SesameManager {
 
         if (!existingDevice) {
           await this.addDeviceLocked(userId, deviceId, identityKey);
-        } else if (identityKey.length > 0) {
-          // Only a device list that actually carries an identity key can tell us
-          // the identity changed. A response that omits it carries no
-          // information about identity, and must not be read as a change.
-          // Reading it as a change would drop every live session and raise a
-          // security event on each sync.
-          const comparison = compareDeviceIdentityKeys(existingDevice.identityKey, identityKey);
+          continue;
+        }
+        // Only a device list that actually carries an identity key can tell us
+        // the identity changed. A response that omits it carries no
+        // information about identity, and must not be read as a change.
+        // Reading it as a change would drop every live session and raise a
+        // security event on each sync.
+        const comparison =
+          identityKey.length > 0
+            ? compareDeviceIdentityKeys(existingDevice.identityKey, identityKey)
+            : undefined;
 
-          if (comparison === 'unpinned') {
-            // Device was tracked before its identity was known - TOFU-pin it.
-            existingDevice.identityKey = identityKey;
-            await this.storage.setDeviceRecord(userId, deviceId, {
-              ...existingDevice,
-              session: null,
-            });
-          }
-
-          if (comparison === 'changed') {
-            replaced.push(deviceId);
-          }
+        if (comparison === 'changed') {
+          // The replacement also clears a removed marker.
+          replaced.push(deviceId);
+        } else if (comparison === 'unpinned') {
+          // Device was tracked before its identity was known - TOFU-pin it.
+          // The same write clears a removed marker.
+          const { removedAt: _removedAt, ...listed } = existingDevice;
+          await this.storage.setDeviceRecord(userId, deviceId, {
+            ...listed,
+            identityKey,
+            session: null,
+            ...(isRemovedDevice(existingDevice) && { updatedAt: Date.now() }),
+          });
+          if (isRemovedDevice(existingDevice)) this.events.onDeviceAdded?.(userId, deviceId);
+        } else {
+          await this.relistDeviceLocked(existingDevice);
         }
       }
 
@@ -2254,10 +2403,15 @@ export class DefaultSesameManager implements SesameManager {
   }
 
   /**
-   * Remove a device that the device list no longer lists, or replace a
-   * device whose listed identity key changed. Another write can have changed
-   * the device since the list was compared under the user lock, so the
-   * decision is made again here.
+   * Remove a device that the device list no longer lists, or replace the
+   * identity of a device whose listed identity key changed. Another write can
+   * have changed the device since the list was compared under the user lock,
+   * so the decision is made again here.
+   *
+   * The identity change archives the current session, so a message under the
+   * old session still decrypts. The record takes the new identity key and
+   * pending verification, and it is not marked removed. A removed device is
+   * relisted.
    *
    * @param identityKey - The listed identity key, or undefined when the list
    * does not list the device
@@ -2280,20 +2434,24 @@ export class DefaultSesameManager implements SesameManager {
       return false;
     }
 
-    // Identity key changed - security event
-    // Remove old device and add new one (clears sessions)
-    await this.removeDeviceLocked(userId, deviceId);
-    await this.addDeviceLocked(userId, deviceId, identityKey);
-
-    // Mark device as pending verification to block messaging until user verifies
-    const newRecord = await this.getDeviceRecord(userId, deviceId);
-    if (newRecord) {
-      newRecord.pendingVerification = true;
-      await this.storage.setDeviceRecord(userId, deviceId, {
-        ...newRecord,
-        session: null,
-      });
-    }
+    // Identity key changed - security event. Pending verification blocks
+    // messaging until the user verifies. The handoff invalidation goes with
+    // the archive, as for every other archive.
+    const { removedAt: _removedAt, ...listed } = existingDevice;
+    await this.storage.setDeviceRecord(
+      userId,
+      deviceId,
+      {
+        ...listed,
+        identityKey,
+        session: this.archiveCurrentIndexed(userId, deviceId, existingDevice.session),
+        pendingVerification: true,
+        updatedAt: Date.now(),
+      },
+      { senderKeyHandoffInvalidation: { userId, deviceId } }
+    );
+    // The replacement relists a removed device, as the other relist paths do.
+    if (isRemovedDevice(existingDevice)) this.events.onDeviceAdded?.(userId, deviceId);
     return true;
   }
 
@@ -2327,7 +2485,10 @@ export class DefaultSesameManager implements SesameManager {
           : 0;
         const hasNoSessions = !hasCurrentSession && archivedSessionCount === 0;
         const isOld = now - deviceRecord.createdAt > this.config.maxLatency;
-        if (hasNoSessions && isOld) {
+        if (
+          (hasNoSessions && isOld) ||
+          isExpiredRemovedDevice(deviceRecord, now, this.config.maxLatency)
+        ) {
           staleRecords++;
         }
 

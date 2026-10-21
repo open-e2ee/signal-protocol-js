@@ -8,7 +8,7 @@
 
 PreKey Bundle - Public keys for establishing an encrypted session
 
-Contains all public information needed for X3DH/PQXDH key exchange.
+Contains all public information needed for PQXDH key exchange.
 Fetched from the server when initiating a session with a new device.
 
 ## Key Exchange Flow (PQXDH)
@@ -105,7 +105,7 @@ X25519 public key (32 bytes, base64)
 EC Signed PreKey (X25519 + Ed25519 signature).
 
 Medium-term key that rotates weekly. Signed by identitySigningKey
-to prove authenticity. Used for DH1 and DH3 in X3DH.
+to prove authenticity. Used for DH1 and DH3 in PQXDH.
 
 The signature covers the composite identity commitment, algorithm tag, key
 ID, and public key in the profile's domain-separated context.

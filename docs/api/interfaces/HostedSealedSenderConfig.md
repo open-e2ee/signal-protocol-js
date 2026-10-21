@@ -74,11 +74,20 @@ does not import the host app's persistence layer.
 
 > `optional` **deliveryMode?**: `SealedSenderDeliveryMode`
 
-Outbound delivery policy.
+Outbound delivery policy. It covers each message and resend, each
+delivery receipt, and each retry request that this client sends to a
+device of another account. A message can use a group send endorsement or
+the access key of the recipient. A delivery receipt and a retry request
+use only the access key. A typing indicator, and a sync message to
+another device of the local account, always go identified.
 
-- `preferred`: use identified delivery only when anonymous capability is
-  absent before send or the relay rejects anonymous authorization.
-- `required`: fail closed when anonymous delivery is unavailable or rejected.
+- `preferred`: seal each covered envelope. Use identified delivery only
+  when anonymous capability or the credential of the recipient is absent
+  before send, or the relay rejects anonymous authorization.
+- `required`: never send a covered envelope identified. A send that
+  cannot be sealed, or whose anonymous authorization the relay rejects,
+  fails closed. A retry request that fails this way stays pending, and
+  the scheduler posts it again until its deadline.
 - `disabled`: always use identified delivery and do not fetch a certificate.
 
 #### Default
@@ -97,7 +106,9 @@ Outbound delivery policy.
 
 > `optional` **onIdentifiedFallback?**: (`event`) => `void` \| `Promise`\<`void`\>
 
-Reports the only post-send-attempt privacy downgrade allowed by `preferred`.
+Reports a message or a resend that `preferred` sends identified after
+the relay rejects its anonymous authorization. A delivery receipt and a retry
+request that fall back the same way are not reported.
 
 #### Parameters
 

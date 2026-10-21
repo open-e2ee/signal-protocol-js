@@ -28,7 +28,8 @@ Max forward jump in message numbers.
 
 > **maxOutOfOrderKeys**: `number`
 
-Max out-of-order keys to store.
+Max out-of-order keys that each epoch keeps. A key more than this count
+behind the newest received index is refused.
 
 #### Default
 

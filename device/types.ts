@@ -89,7 +89,7 @@ export interface TransferDeviceInfo {
 }
 
 /**
- * Linked-device provisioning bundle.
+ * Device transfer bundle.
  *
  * It transfers only the account identity needed to bind a new device. The new
  * device generates its own signed and one-time prekeys after import. Ratchet

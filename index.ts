@@ -72,6 +72,11 @@ export {
 } from "./client/relay-lifecycle";
 export {
   BraidPolicy,
+  GroupReceiveRefusedError,
+  type GroupReceiveDenial,
+  GroupReceiveUnavailableError,
+  type GroupReceiveUnavailability,
+  GroupResendDeferredError,
   HostedRelayDeviceRevokedError,
   HostedRelayDeviceUnknownError,
   HostedRelayPresenceError,
@@ -139,6 +144,13 @@ export type {
   SignalProtocolConfig,
 } from "./client";
 export type {
+  ContentRecoveryDisabledReason,
+  ContentRecoveryMode,
+  ContentRecoveryPolicy,
+  ContentRecoveryStatus,
+  GroupMembershipSource,
+  ReceiveQueuePolicy,
+  StorageProtectionLevel,
   SignalProtocolClientConfig,
   ProgressCallback,
   Logger,
@@ -200,13 +212,29 @@ export type {
   SafetyNumberConfirmation,
   DataMessageInput,
   IncomingEnvelope,
+  PendingReceive,
   ProcessEnvelopeOptions,
+  ProcessedReceive,
+  ReceiveOutcome,
   SessionHealthResult,
   TypingAction,
 } from "./client/types";
 export { isOutgoingMessageError } from "./client/types";
+export {
+  DeviceSetReconciliationError,
+  RelayProtocolError,
+  type DeviceSetDevice,
+  type DeviceSetLastRefusal,
+  type DeviceSetPhase,
+  type DeviceSetRefusalAccount,
+  type DeviceSetUnresolved,
+  type DeviceSetUnresolvedReason,
+  type RelayProtocolErrorCode,
+  type RelayProtocolRoute,
+} from "./client/device-set-reconciliation";
 export type {
   BlockedRecipientsSyncInput,
+  GroupContentContext,
   InspectedSignalProtocolContent,
   ParsedReceiptContent,
   ParsedTypingContent,
@@ -576,6 +604,11 @@ export type {
   SessionStore,
   SesameStore,
   SenderKeyStore,
+  SenderKeyHandoffDevice,
+  SenderKeyHandoffRecord,
+  SenderKeyHandoffStore,
+  SenderKeyRecordWriteOptions,
+  SetDeviceRecordOptions,
   ProtocolStore,
   SessionTrustCommit,
 
@@ -606,6 +639,13 @@ export type {
   InvitedGroupMemberInput,
 } from "./internal/groups/manager";
 export type { DecryptedGroup } from "./internal/groups/types";
+export type {
+  GroupReceiveRecord,
+  GroupFetchState,
+  GroupFetchDenial,
+  GroupRecordSource,
+  GroupUnverifiedOrigin,
+} from "./internal/groups/receive-record";
 export type { SenderKeyState } from "./internal/protocol/sender-keys/manager";
 export type {
   MLKEMBraidAgentState,
@@ -625,9 +665,14 @@ export type {
   HookName,
   DecryptedEnvelope,
   DeliveredEvent,
+  DeliveryErrorCause,
+  DeliveryErrorEvent,
+  DeliveryRecoveredEvent,
   DeliverySource,
+  ReceiveExpiredEvent,
   RetryTerminalClass,
   RetryTerminalEvent,
+  RetryTerminalRecoveryEvent,
 } from "./client/event-hooks";
 
 // Error types, message types, and enums

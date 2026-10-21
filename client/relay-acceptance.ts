@@ -8,6 +8,10 @@ export interface RelayPostAcceptance {
   duplicate?: boolean;
   /** The time at which the relay drops the copy that a device has not acknowledged. */
   expiresAt?: number;
+  /** True when the relay compared the declared device set of this post. */
+  deviceSetChecked?: boolean;
+  /** True when the sender account has other devices that need a sync copy. */
+  needsSync?: boolean;
 }
 
 /**
@@ -16,6 +20,8 @@ export interface RelayPostAcceptance {
  * The send is a duplicate only when the relay had already accepted every
  * post, and the earliest expiry bounds the whole send. A field is present only
  * when every post reported it, so a send with no post has neither field.
+ * The device-set marks are not part of the aggregate. The device-set
+ * reconciliation reads them from each post.
  */
 export function aggregateRelayAcceptance(
   posts: readonly Pick<RelayPostAcceptance, 'duplicate' | 'expiresAt'>[]
@@ -52,35 +58,55 @@ export type RetryRequestPostFailure =
   | { terminal: RetryTerminalClass }
   | { retry: RetryFailureClass };
 
+/**
+ * The codes that end a retry request when the Relay does not mark them
+ * `retryable`. The hosted transport gets a new device token once on
+ * TOKEN_INVALID and posts again, so a TOKEN_INVALID that reaches this
+ * classifier is a refusal of the new token too. The SDK cannot get a token
+ * that the Relay accepts, so the authority of the device is revoked.
+ */
 const TERMINAL_CODES: ReadonlyMap<string, RetryTerminalClass> = new Map([
   ['STALE_DEVICE', 'missing-sender'],
   ['NOT_FOUND', 'deletion'],
   ['AUTHORITY_DENIED', 'revoked-authority'],
   ['AUTHORITY_OVERRIDE', 'revoked-authority'],
+  ['TOKEN_INVALID', 'revoked-authority'],
 ]);
 
 const RATE_CODES: ReadonlySet<string> = new Set(['QUOTA_EXCEEDED', 'MAILBOX_FULL']);
 
 /**
- * Classify the error of a retry request post. The error code comes first,
- * then the HTTP status. A conclusive class ends the request: STALE_DEVICE
- * or 410 is a missing sender, NOT_FOUND or 404 is a deletion, and an
- * authority refusal or 401 or 403 is a revoked authority. QUOTA_EXCEEDED,
- * MAILBOX_FULL and 429 are a rate refusal. Every other error, a network
- * error and a lost answer included, is a transport outage. The caller
- * handles OPERATION_EXPIRED and RETRY_CONFLICT first.
+ * Classify the error of a retry request post.
+ *
+ * The Relay's `retryable` hint comes first: the Relay sets it when the same
+ * post can succeed later, for example while a Relay binding is missing. A
+ * retryable error is a rate refusal for QUOTA_EXCEEDED, MAILBOX_FULL or 429,
+ * and a transport outage for every other code, AUTHORITY_DENIED included.
+ *
+ * Without the hint, the error code comes next, then the HTTP status. A
+ * conclusive class ends the request: STALE_DEVICE or 410 is a missing
+ * sender, NOT_FOUND or 404 is a deletion, and AUTHORITY_DENIED,
+ * AUTHORITY_OVERRIDE, TOKEN_INVALID, 401 or 403 is a revoked authority.
+ * QUOTA_EXCEEDED, MAILBOX_FULL and 429 are a rate refusal. Every other
+ * error, a network error and a lost answer included, is a transport outage.
+ * The caller handles OPERATION_EXPIRED and RETRY_CONFLICT first.
  */
 export function classifyRetryRequestPostFailure(error: unknown): RetryRequestPostFailure {
   if (error === null || typeof error !== 'object') return { retry: 'transport-outage' };
-  const { code, status } = error as { code?: unknown; status?: unknown };
+  const { code, status, retryable } = error as {
+    code?: unknown;
+    status?: unknown;
+    retryable?: unknown;
+  };
+  const rate = (typeof code === 'string' && RATE_CODES.has(code)) || status === 429;
+  if (retryable === true) return { retry: rate ? 'rate-refusal' : 'transport-outage' };
   if (typeof code === 'string') {
     const terminal = TERMINAL_CODES.get(code);
     if (terminal) return { terminal };
-    if (RATE_CODES.has(code)) return { retry: 'rate-refusal' };
   }
+  if (rate) return { retry: 'rate-refusal' };
   if (status === 410) return { terminal: 'missing-sender' };
   if (status === 404) return { terminal: 'deletion' };
   if (status === 401 || status === 403) return { terminal: 'revoked-authority' };
-  if (status === 429) return { retry: 'rate-refusal' };
   return { retry: 'transport-outage' };
 }

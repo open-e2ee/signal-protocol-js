@@ -27,10 +27,11 @@
  */
 
 import { generateRandomBytes } from '../../../internal/crypto/random';
-import type { SignalProtocolLocalSecretVault } from '../../../types/api';
+import type { LocalStoreProtection, SignalProtocolLocalSecretVault } from '../../../types/api';
 import { EncryptionError, EncryptionErrorCode } from '../../../types/errors';
 import type { SqliteDriver } from './driver';
-import { isPlaintextSqliteDatabase, type SqliteOpenOptions } from './encryption';
+import { secretVaultCustody } from '../../vault/custody';
+import { isPlaintextSqliteDatabase, readSqliteAtRest, type SqliteOpenOptions } from './encryption';
 import { SqliteKeyMismatchError } from './errors';
 import type { SqliteRootExecutor } from './executor';
 import { openMigratedSqliteDatabase } from './migrations';
@@ -144,6 +145,27 @@ export function resetSqliteStore(options: SqliteStoreOpenOptions): Promise<Sqlit
         : await replaceDatabaseKey(vault, sqliteDatabaseKeySlot(driver.identify(name)));
     return openMigratedSqliteDatabase(driver, name, key, options);
   });
+}
+
+/**
+ * Read the protection of a database that {@link openSqliteStore} or
+ * {@link resetSqliteStore} opened: the encryption that the database records,
+ * and the custody of the vault that holds its key. A database without
+ * encryption has no key. On a failure, it closes the database before it
+ * throws.
+ */
+export async function readSqliteStoreProtection(
+  db: SqliteRootExecutor,
+  vault: SignalProtocolLocalSecretVault
+): Promise<LocalStoreProtection> {
+  try {
+    const atRest = await readSqliteAtRest(db);
+    return { atRest, keyCustody: atRest === 'none' ? 'none' : secretVaultCustody(vault) };
+  } catch (error) {
+    // The read error is the one to report. A failed close adds nothing.
+    await db.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 /**

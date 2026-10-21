@@ -6,7 +6,13 @@
  * platform entry opens the database and supplies the executor.
  */
 
-import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
+import type {
+  ReceiveWorkMetadataWrite,
+  ReceiveWorkQuery,
+  ReceiveWorkRecord,
+  ReceiveWorkUsage,
+  SenderKeyReceiveCommit,
+} from '../../../types';
 import type {
   IdentityKeyPair,
   KyberPreKey,
@@ -18,22 +24,41 @@ import type {
   ContactIdentityRecord,
 } from '../../../keys';
 import type {
+  LocalStoreProtection,
   SignalProtocolLocalStore,
   RetainedKyberPreKey,
   MessageRecord,
+  NewSendLogPayload,
+  SendLogDevice,
+  SendLogEntry,
+  SendLogRecipient,
+  SendLogResendJob,
+  SendLogResendJobState,
   SessionRecord,
   SessionState,
   SessionTrustCommit,
+  SenderKeyHandoffDevice,
+  SenderKeyHandoffRecord,
+  SenderKeyRecordWriteOptions,
+  SetDeviceRecordOptions,
 } from '../../../types';
 import type { ProtocolAddress } from '../../../types/address';
 import type { IdentityKeyChange, TrustDirection } from '../../../types/trust';
-import type { DeviceRecord, UserRecord } from '../../../internal/sesame/types';
+import {
+  isExpiredRemovedDevice,
+  type DeviceRecord,
+  type UserRecord,
+} from '../../../internal/sesame/types';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { resolveSignalProtocolLogger, type Logger } from '../../../logger';
 
 import type { SqliteExecutor } from './driver';
 import { SqliteKeyStorage, type SqliteKeyStorageOptions } from './key-storage';
-import { setReceivedContent } from './key-storage/metadata';
+import { legacyReceivedContentSource } from './key-storage/metadata';
+import { writeReceiveWork } from './key-storage/receive-work';
+import * as handoffs from './key-storage/sender-key-handoff';
+import type { SqliteRootExecutor } from './executor';
+import { convertLegacyReceivedContent, LEGACY_RECEIVED_CONTENT_UNREADABLE } from '../receive-work';
 import { withDeviceRecordLocks } from '../../../internal/session/record-locks';
 import { withSession } from '../device-record';
 import {
@@ -55,22 +80,46 @@ import {
   storeSkippedSenderKey,
 } from './models';
 
+export interface SqliteSignalProtocolStoreOptions extends SqliteKeyStorageOptions {
+  /**
+   * The protection that the platform entry read when it opened the database.
+   * Default: no encryption and no key.
+   */
+  protection?: LocalStoreProtection;
+}
+
+const UNPROTECTED: LocalStoreProtection = Object.freeze({ atRest: 'none', keyCustody: 'none' });
+
 /**
  * @category Key Storage
  * @see {@link SignalProtocolLocalStore} for interface documentation
  */
 export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
+  readonly protection: LocalStoreProtection;
   protected readonly storage: SqliteKeyStorage;
   protected logger: Required<Logger>;
 
-  constructor(db: SqliteExecutor, options: SqliteKeyStorageOptions = {}) {
+  constructor(db: SqliteExecutor, options: SqliteSignalProtocolStoreOptions = {}) {
+    this.protection = options.protection ? Object.freeze({ ...options.protection }) : UNPROTECTED;
     this.logger = resolveSignalProtocolLogger(options.logger);
-    this.storage = new SqliteKeyStorage(db, { ...options, logger: this.logger });
+    this.storage = new SqliteKeyStorage(db, { logger: this.logger });
   }
 
   /** The executor that every operation of this store uses. */
   protected get db(): SqliteExecutor {
     return this.storage.db;
+  }
+
+  /**
+   * Run a key storage write and the handoff row deletes that it causes in one
+   * transaction. The key storage operations open savepoints inside it.
+   */
+  private inTransaction<T>(
+    operation: (storage: SqliteKeyStorage, tx: SqliteExecutor) => Promise<T>
+  ): Promise<T> {
+    return this.db.transaction((tx) =>
+      operation(new SqliteKeyStorage(tx, { logger: this.logger }), tx)
+    );
   }
 
   setLogger(providedLogger?: Logger): void {
@@ -137,12 +186,16 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
     identityType?: IdentityType,
     suppliedCommitment?: Uint8Array
   ): Promise<ContactIdentityRecord> {
-    return await this.storage.acceptContactIdentityRotationAndDeleteSessions(
-      address,
-      identity,
-      identityType,
-      suppliedCommitment
-    );
+    return this.inTransaction(async (storage, tx) => {
+      const replacement = await storage.acceptContactIdentityRotationAndDeleteSessions(
+        address,
+        identity,
+        identityType,
+        suppliedCommitment
+      );
+      await handoffs.deleteAccountSenderKeyHandoffs(tx, address.userId);
+      return replacement;
+    });
   }
 
   async acceptContactIdentityRotationAndDeleteSessions(
@@ -151,12 +204,16 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
     identityType?: IdentityType,
     suppliedCommitment?: Uint8Array
   ): Promise<ContactIdentityRecord> {
-    return await this.storage.acceptContactIdentityRotationAndDeleteSessions(
-      address,
-      identity,
-      identityType,
-      suppliedCommitment
-    );
+    return this.inTransaction(async (storage, tx) => {
+      const replacement = await storage.acceptContactIdentityRotationAndDeleteSessions(
+        address,
+        identity,
+        identityType,
+        suppliedCommitment
+      );
+      await handoffs.deleteAccountSenderKeyHandoffs(tx, address.userId);
+      return replacement;
+    });
   }
 
   async verifyContactIdentity(
@@ -297,7 +354,15 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
   }
 
   async commitSessionTrust(commit: SessionTrustCommit): Promise<void> {
-    await this.storage.commitSessionTrust(commit);
+    const invalidation = commit.senderKeyHandoffInvalidation;
+    if (!invalidation) {
+      await this.storage.commitSessionTrust(commit);
+      return;
+    }
+    await this.inTransaction(async (storage, tx) => {
+      await storage.commitSessionTrust(commit);
+      await handoffs.deleteDeviceSenderKeyHandoffs(tx, invalidation);
+    });
   }
 
   async getSessionRecord(address: ProtocolAddress): Promise<SessionRecord | null> {
@@ -306,15 +371,21 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
   }
 
   async deleteSessionRecord(address: ProtocolAddress): Promise<void> {
-    await this.storage.deleteSessionRecord(address);
+    await this.inTransaction(async (storage, tx) => {
+      await storage.deleteSessionRecord(address);
+      await handoffs.deleteDeviceSenderKeyHandoffs(tx, address);
+    });
   }
 
   async archiveCurrentSession(
     address: ProtocolAddress,
     newSession?: SessionState | null
   ): Promise<void> {
-    // Convert null to undefined for KeyStorage
-    await this.storage.archiveCurrentSession(address, newSession ?? undefined);
+    await this.inTransaction(async (storage, tx) => {
+      // Convert null to undefined for KeyStorage
+      await storage.archiveCurrentSession(address, newSession ?? undefined);
+      await handoffs.deleteDeviceSenderKeyHandoffs(tx, address);
+    });
   }
 
   async getSessionsForUser(userId: string): Promise<SessionRecord[]> {
@@ -400,12 +471,28 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
     return withSession(userId, deviceId, stored, session);
   }
 
-  async setDeviceRecord(userId: string, deviceId: number, record: DeviceRecord): Promise<void> {
-    await saveSesameDevice(this.db, userId, deviceId, record);
+  async setDeviceRecord(
+    userId: string,
+    deviceId: number,
+    record: DeviceRecord,
+    options?: SetDeviceRecordOptions
+  ): Promise<void> {
+    const invalidation = options?.senderKeyHandoffInvalidation;
+    if (!invalidation) {
+      await saveSesameDevice(this.db, userId, deviceId, record);
+      return;
+    }
+    await this.db.transaction(async (tx) => {
+      await saveSesameDevice(tx, userId, deviceId, record);
+      await handoffs.deleteDeviceSenderKeyHandoffs(tx, invalidation);
+    });
   }
 
   async deleteDeviceRecord(userId: string, deviceId: number): Promise<void> {
-    await deleteSesameDevice(this.db, userId, deviceId);
+    await this.db.transaction(async (tx) => {
+      await deleteSesameDevice(tx, userId, deviceId);
+      await handoffs.deleteDeviceSenderKeyHandoffs(tx, { userId, deviceId });
+    });
   }
 
   async getDeviceSession(userId: string, deviceId: number): Promise<SessionRecord | null> {
@@ -559,7 +646,8 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
     userId: string,
     deviceId: number,
     states: SenderKeyState[],
-    receive?: SenderKeyReceiveCommit
+    receive?: SenderKeyReceiveCommit,
+    options?: SenderKeyRecordWriteOptions
   ): Promise<void> {
     if (states.length === 0) return;
 
@@ -587,7 +675,7 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
             );
           }
         }
-        if (receive.content) await setReceivedContent(tx, receive.content);
+        if (receive.work) await writeReceiveWork(tx, receive.work);
         if (receive.consumedSkippedKey !== undefined)
           await deleteSkippedSenderKey(
             tx,
@@ -598,19 +686,71 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
             receive.consumedSkippedKey.chainIndex
           );
       }
+      if (options?.deleteSenderKeyHandoffs) {
+        await handoffs.deleteGroupSenderKeyHandoffs(tx, groupId);
+      }
     });
   }
 
-  async getReceivedContent(id: string): Promise<ReceivedContent | null> {
-    return this.storage.getReceivedContent(id);
+  // ============================================================================
+  // Sender-Key Handoff Ledger
+  // ============================================================================
+
+  async recordSenderKeyHandoff(record: SenderKeyHandoffRecord): Promise<void> {
+    await handoffs.recordSenderKeyHandoff(this.db, record);
   }
 
-  async deleteReceivedContent(id: string): Promise<void> {
-    await this.storage.deleteReceivedContent(id);
+  async listSenderKeyHandoffs(
+    groupId: string,
+    generation: number
+  ): Promise<SenderKeyHandoffRecord[]> {
+    return handoffs.listSenderKeyHandoffs(this.db, groupId, generation);
   }
 
-  async deleteExpiredReceivedContent(before: number): Promise<number> {
-    return this.storage.deleteExpiredReceivedContent(before);
+  async invalidateSenderKeyHandoff(
+    groupId: string,
+    device: SenderKeyHandoffDevice
+  ): Promise<boolean> {
+    return (await handoffs.deleteDeviceSenderKeyHandoffsInGroup(this.db, groupId, device)) > 0;
+  }
+
+  async invalidateAccountSenderKeyHandoffs(userId: string): Promise<boolean> {
+    return (await handoffs.deleteAccountSenderKeyHandoffs(this.db, userId)) > 0;
+  }
+
+  async listSenderKeyHandoffGroupIds(): Promise<string[]> {
+    return handoffs.listSenderKeyHandoffGroupIds(this.db);
+  }
+
+  async retainSenderKeyHandoffs(groupId: string, senderKeyId: string | null): Promise<number> {
+    return handoffs.retainSenderKeyHandoffs(this.db, groupId, senderKeyId);
+  }
+
+  async getReceiveWork(workId: string): Promise<ReceiveWorkRecord | null> {
+    return this.storage.getReceiveWork(workId);
+  }
+
+  async putReceiveWork(
+    record: ReceiveWorkRecord,
+    expectedRevision: number | null
+  ): Promise<boolean> {
+    return this.storage.putReceiveWork(record, expectedRevision);
+  }
+
+  async listReceiveWork(query?: ReceiveWorkQuery): Promise<ReceiveWorkRecord[]> {
+    return this.storage.listReceiveWork(query);
+  }
+
+  async receiveWorkUsage(query?: { groupId?: string }): Promise<ReceiveWorkUsage> {
+    return this.storage.receiveWorkUsage(query);
+  }
+
+  async completeReceiveWork(
+    workId: string,
+    expectedRevision: number,
+    metadata?: readonly ReceiveWorkMetadataWrite[]
+  ): Promise<boolean> {
+    return this.storage.completeReceiveWork(workId, expectedRevision, metadata);
   }
 
   async getSenderKeyRecord(
@@ -640,8 +780,20 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
     return findGroupBySenderKeyId(this.db, senderKeyId, userId, deviceId);
   }
 
-  async deleteSenderKey(groupId: string, userId: string, deviceId: number): Promise<void> {
-    await deleteSenderKey(this.db, groupId, userId, deviceId);
+  async deleteSenderKey(
+    groupId: string,
+    userId: string,
+    deviceId: number,
+    options?: SenderKeyRecordWriteOptions
+  ): Promise<void> {
+    if (!options?.deleteSenderKeyHandoffs) {
+      await deleteSenderKey(this.db, groupId, userId, deviceId);
+      return;
+    }
+    await this.db.transaction(async (tx) => {
+      await deleteSenderKey(tx, groupId, userId, deviceId);
+      await handoffs.deleteGroupSenderKeyHandoffs(tx, groupId);
+    });
   }
 
   async getAllSenderKeysForGroup(groupId: string): Promise<SenderKeyState[]> {
@@ -656,7 +808,11 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
   }
 
   async deleteAllSenderKeysForGroup(groupId: string): Promise<number> {
-    return deleteSenderKeysByGroup(this.db, groupId);
+    return this.db.transaction(async (tx) => {
+      const deleted = await deleteSenderKeysByGroup(tx, groupId);
+      await handoffs.deleteGroupSenderKeyHandoffs(tx, groupId);
+      return deleted;
+    });
   }
 
   // ============================================================================
@@ -769,7 +925,9 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
 
   /**
    * Delete a message record by session and timestamp (PRIMARY method).
-   * Called when processing delivery receipts to clean up confirmed messages.
+   * The client calls it after an E2EE delivery receipt from the recipient
+   * device, for an expired record at a retry request, and for a record that
+   * it must not resend: a null message, or a sender key distribution alone.
    */
   async deleteMessageRecord(sessionId: string, timestamp: number): Promise<void> {
     await this.storage.deleteMessageRecord(sessionId, timestamp);
@@ -785,6 +943,99 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
 
   async deleteMessageRecordsForSession(sessionId: string): Promise<number> {
     return await this.storage.deleteMessageRecordsForSession(sessionId);
+  }
+
+  async rewriteMessageRecords(rewrite: (record: MessageRecord) => string | null): Promise<number> {
+    return await this.storage.rewriteMessageRecords(rewrite);
+  }
+
+  // ============================================================================
+  // Send Log (resendable group content)
+  // ============================================================================
+
+  async storeSendLogEntry(
+    payload: NewSendLogPayload,
+    recipients: readonly SendLogDevice[]
+  ): Promise<void> {
+    await this.storage.storeSendLogEntry(payload, recipients);
+  }
+
+  async appendSendLogRecipients(
+    clientMessageId: string,
+    recipients: readonly SendLogDevice[]
+  ): Promise<void> {
+    await this.storage.appendSendLogRecipients(clientMessageId, recipients);
+  }
+
+  async markSendLogComplete(clientMessageId: string): Promise<void> {
+    await this.storage.markSendLogComplete(clientMessageId);
+  }
+
+  async getSendLogEntry(
+    clientMessageId: string,
+    recipient: SendLogDevice
+  ): Promise<SendLogEntry | null> {
+    return await this.storage.getSendLogEntry(clientMessageId, recipient);
+  }
+
+  async findSendLogEntries(
+    recipient: SendLogDevice,
+    clientTimestamp: number
+  ): Promise<SendLogEntry[]> {
+    return await this.storage.findSendLogEntries(recipient, clientTimestamp);
+  }
+
+  async getSendLogRecipients(clientMessageId: string): Promise<SendLogRecipient[]> {
+    return await this.storage.getSendLogRecipients(clientMessageId);
+  }
+
+  async deleteSendLogRecipient(clientMessageId: string, recipient: SendLogDevice): Promise<boolean> {
+    return await this.storage.deleteSendLogRecipient(clientMessageId, recipient);
+  }
+
+  async deleteSendLogRecipientsByTimestamp(
+    recipient: SendLogDevice,
+    clientTimestamps: readonly number[]
+  ): Promise<number> {
+    return await this.storage.deleteSendLogRecipientsByTimestamp(recipient, clientTimestamps);
+  }
+
+  async incrementSendLogResendCount(
+    clientMessageId: string,
+    recipient: SendLogDevice
+  ): Promise<number | null> {
+    return await this.storage.incrementSendLogResendCount(clientMessageId, recipient);
+  }
+
+  async deleteSendLogEntry(clientMessageId: string): Promise<boolean> {
+    return await this.storage.deleteSendLogEntry(clientMessageId);
+  }
+
+  async deleteExpiredSendLog(maxAgeMs: number): Promise<number> {
+    return await this.storage.deleteExpiredSendLog(maxAgeMs);
+  }
+
+  async clearSendLog(): Promise<number> {
+    return await this.storage.clearSendLog();
+  }
+
+  async storeResendJob(job: SendLogResendJob): Promise<void> {
+    await this.storage.storeResendJob(job);
+  }
+
+  async getResendJob(jobId: string): Promise<SendLogResendJob | null> {
+    return await this.storage.getResendJob(jobId);
+  }
+
+  async getPendingResendJobs(): Promise<SendLogResendJob[]> {
+    return await this.storage.getPendingResendJobs();
+  }
+
+  async completeResendJob(
+    jobId: string,
+    state: Exclude<SendLogResendJobState, 'pending'>
+  ): Promise<void> {
+    await this.storage.completeResendJob(jobId, state);
   }
 
   // ============================================================================
@@ -853,18 +1104,51 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
 
 /**
  * Device is stale if:
- * 1. No active session AND no archived sessions
- * 2. Age > maxLatency
+ * 1. No active session AND no archived sessions, AND age > maxLatency, or
+ * 2. Its removal is older than maxLatency
  */
 function isStaleDeviceRecord(record: DeviceRecord, now: number, maxLatency: number): boolean {
   const hasNoSessions =
     !record.session?.currentSession &&
     Object.keys(record.session?.archivedSessions ?? {}).length === 0;
-  return hasNoSessions && now - record.createdAt > maxLatency;
+  return (
+    (hasNoSessions && now - record.createdAt > maxLatency) ||
+    isExpiredRemovedDevice(record, now, maxLatency)
+  );
 }
 
 /** A session is expired when its age exceeds maxRecv. */
 function isExpiredSession(record: SessionRecord, now: number, maxRecv: number): boolean {
   const createdAt = record.metadata?.createdAt ?? now;
   return now - createdAt > maxRecv;
+}
+
+/**
+ * Convert the legacy received content rows of a store that a platform entry
+ * opened, then return the store. A row that does not parse is reported as an
+ * error through the logger of the store. A failure closes the database, so
+ * the failed open holds no file.
+ */
+export async function convertSqliteLegacyReceivedContent<Store extends SqliteSignalProtocolStore>(
+  store: Store,
+  database: SqliteRootExecutor
+): Promise<Store> {
+  // The logger is protected. The store routes its other diagnostics through
+  // it, and setLogger can replace it, so the report reads it at the call.
+  const reportUnreadable = (legacyKey: string) =>
+    (store as unknown as { logger: Required<Logger> }).logger.error(
+      LEGACY_RECEIVED_CONTENT_UNREADABLE,
+      { legacyKey }
+    );
+  try {
+    await convertLegacyReceivedContent(
+      store,
+      legacyReceivedContentSource(database),
+      reportUnreadable
+    );
+  } catch (error) {
+    await database.close().catch(() => undefined);
+    throw error;
+  }
+  return store;
 }

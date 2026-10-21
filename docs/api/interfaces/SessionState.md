@@ -35,9 +35,9 @@ Session state identifier - initiator's ephemeral public key (EKA).
 The initiator's ephemeral public key is the unique identifier for this
 session state. This field takes the name "baseKey" because:
 - "ephemeral" describes the key's LIFECYCLE (temporary, single-use)
-- "base" describes the key's ROLE (foundation for SK derivation in X3DH/PQXDH)
+- "base" describes the key's ROLE (foundation for SK derivation in PQXDH)
 
-For initiator (Alice): Set to ephemeralKeyPair.publicKey from X3DH/PQXDH
+For initiator (Alice): Set to ephemeralKeyPair.publicKey from PQXDH
 For responder (Bob): Set to senderEphemeralKey from PreKeyMessage
 
 CRITICAL: This is different from sessionId/ProtocolAddress lookup.
@@ -281,7 +281,7 @@ Signal Protocol Section 3.5: Store skipped message keys indexed by
 This nested structure provides bounded skipped-key storage:
 - Up to MAX_RECEIVER_CHAINS (5) chains stored
 - Each chain indexed by sender's ratchet public key
-- Each chain contains up to MAX_MESSAGE_KEYS (2000 total) message keys
+- Each chain contains up to MAX_MESSAGE_KEYS (2000) message keys
 
 #### See
 

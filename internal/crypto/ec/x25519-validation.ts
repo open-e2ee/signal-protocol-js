@@ -144,7 +144,6 @@ export function isCanonicalX25519Point(
 /**
  * Validate an X25519 public key, throwing if non-canonical.
  *
- * Same interface as the previous local validators in x3dh.ts and pqxdh.ts.
  * Uses algebraic torsion-free + scalar range checks instead of a hardcoded
  * low-order point table.
  *

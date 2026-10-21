@@ -36,13 +36,23 @@ processed record and the acknowledgment use `id`.
 
 > `optional` **contentHint?**: [`ContentHint`](../enumerations/ContentHint.md)
 
-Content hint for retry behavior per Signal Protocol.
+The content hint of the sender. It sets what the receiver does when a
+decrypt fails with an error that a resend can repair.
 
-- IMPLICIT: Ephemeral messages (typing indicators, receipts) - silently discard on failure
-- RESENDABLE: Content messages - can trigger retry requests
-- DEFAULT: Standard handling
+- `Default`: the client sends a retry request and runs
+  `onDeliveryError` at once.
+- `Resendable`: the client sends a retry request. It runs
+  `onDeliveryError` one hour after the receive
+  (`RETRY_PLACEHOLDER_DEADLINE_MS`) if the content has not arrived. It
+  runs it at once when a rate limit refuses the request, when the
+  request allowance for the sender is used up, or when the request
+  ends.
+- `Implicit`: disposable content, such as typing indicators and
+  receipts. The client sends no retry request and never runs
+  `onDeliveryError`. A resend that answers a retry request of this
+  device still asks again.
 
-If not set, the message is not implicit.
+With no hint, the client uses the `Default` behavior.
 
 ***
 

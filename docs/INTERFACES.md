@@ -83,7 +83,7 @@ selected platform service and host configuration. See the
 
 `SignalProtocolRelayServer` represents the authenticated application backend used for
 device registration, account identity state, public prekeys, encrypted-envelope
-delivery, provisioning, key rotation, and encrypted group coordination.
+delivery, key rotation, and encrypted group coordination.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts

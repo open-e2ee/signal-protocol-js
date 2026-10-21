@@ -1,3 +1,4 @@
+import { hostedAssertionIdentifier } from "./hosted-assertion-id";
 import { utf8Decode, websocketUrl } from "../internal/platform";
 import type {
   AccountIdentityProvisioning,
@@ -82,6 +83,7 @@ import {
 } from "./hosted-device-standing";
 import {
   HostedAnonymousDelivery,
+  HostedAnonymousDeliveryError,
   decodeHostedAnonymousEnvelope,
 } from "./hosted-anonymous-delivery";
 import { createAdapterRelayFanOut } from "./relay-work";
@@ -105,6 +107,13 @@ import {
   declareRefusesRemovedDevices,
   markRelayDeviceRefusal,
 } from "./relay-device-refusal";
+import {
+  declareComparesDeviceSets,
+  deviceSetRefusal,
+  markDeviceSetRefusal,
+  parseDeviceSetRefusal,
+  type DeviceSetRefusal,
+} from "../remote/relay/device-set";
 import {
   RelayReceiptInbox,
   declareRelayReceiptIntake,
@@ -384,7 +393,10 @@ async function parseResponse(response: Response): Promise<unknown> {
       typeof error.message === "string"
         ? error.message
         : "Signal Protocol Relay request failed";
+    // A refused declared post names the devices of each account in
+    // `details`. The error keeps them for the device-set reconciliation.
     throw new HostedRelayHttpError(response.status, code, message, {
+      ...(record(error.details) ? { data: { details: error.details } } : {}),
       retryable: error.retryable === true,
     });
   }
@@ -430,25 +442,6 @@ async function postJson(
     }
     return parseResponse(response);
   });
-}
-
-function assertionIdentifier(assertion: string): string {
-  const parts = assertion.split(".");
-  if (parts.length !== 3) {
-    throw new Error("Identity provider returned an invalid assertion");
-  }
-  let claims: unknown;
-  try {
-    claims = JSON.parse(
-      utf8Decode(decodeBase64Url(parts[1]!, "Assertion claims")),
-    );
-  } catch {
-    throw new Error("Identity provider returned an invalid assertion");
-  }
-  if (!record(claims) || typeof claims.jti !== "string" || !claims.jti) {
-    throw new Error("Identity provider returned an invalid assertion");
-  }
-  return claims.jti;
 }
 
 function serializedPreKey(prekey: HostedRelayRegistrationPreKey): JsonRecord {
@@ -523,7 +516,13 @@ async function registrationChallenge(
         ? RECOVERY_CHALLENGE_LABEL
         : REGISTRATION_CHALLENGE_LABEL,
       text(relayScopeId(request.connection)),
-      text(assertionIdentifier(request.assertion)),
+      text(
+        await hostedAssertionIdentifier(
+          request.assertion,
+          request.assertionPurpose,
+          request.operationId,
+        ),
+      ),
       text(request.operationId),
       text(
         await registrationMaterialFingerprint(
@@ -725,6 +724,10 @@ export class HostedRelayHttpTransport
     // The Relay refuses a removed device's mailbox on every send path before
     // its device list shows the removal, so a direct send may post first.
     declareRefusesRemovedDevices(this);
+    // The Relay compares a declared device set on every send route, and
+    // answers a difference with DEVICE_SET_MISMATCH or a declared
+    // STALE_DEVICE.
+    declareComparesDeviceSets(this);
     // The Relay sends Relay delivery receipts to the sender, and replies to
     // each acknowledgment with the messages whose receipt it owns.
     declareRelayReceiptIntake(this, this.receiptInbox);
@@ -740,11 +743,18 @@ export class HostedRelayHttpTransport
     this.anonymousDelivery = new HostedAnonymousDelivery(
       connection,
       this.fanOut,
-      async (accountAddress, deviceId) => {
+      async (accountAddress, deviceId, declaredDeviceIds) => {
         const key = `${accountAddress}\0${deviceId}`;
         if (!this.destinationGenerations.has(key))
           await this.lookUpDestinations(accountAddress);
         const generation = this.destinationGenerations.get(key);
+        // A declared post gets the refusal that the Relay would give, so
+        // the send removes the device and posts again.
+        if (generation === undefined && declaredDeviceIds !== undefined)
+          throw markDeviceSetRefusal(
+            new HostedAnonymousDeliveryError(409, "DEVICE_SET_MISMATCH"),
+            this.directoryDeviceSetRefusal(accountAddress, declaredDeviceIds),
+          );
         if (generation === undefined)
           throw missingDestination(accountAddress, deviceId);
         return { accountAddress, deviceId, generation };
@@ -1279,18 +1289,22 @@ export class HostedRelayHttpTransport
 
   /**
    * One mailbox page. Its `relayReceipts` holds for this pull only: a page
-   * carries `receipts` only when it is true.
+   * carries `receipts` only when it is true. With `cursor`, the page starts
+   * after the last message of the page that issued it. The cursor is opaque.
    */
-  private async pullIncoming(): Promise<HostedMailboxPage> {
+  private async pullIncoming(cursor?: string): Promise<HostedMailboxPage> {
     const value = await this.authenticatedPost("/mailbox/pull", {
       publishableKey: this.connection.publishableKey,
+      ...(cursor === undefined ? {} : { cursor }),
     });
     if (
       !record(value) ||
       !Array.isArray(value.messages) ||
       (value.relayReceipts !== undefined &&
         typeof value.relayReceipts !== "boolean") ||
-      (value.receipts !== undefined && value.relayReceipts !== true)
+      (value.receipts !== undefined && value.relayReceipts !== true) ||
+      (value.nextCursor !== undefined &&
+        (typeof value.nextCursor !== "string" || value.nextCursor === ""))
     ) {
       throw new Error("Signal Protocol Relay returned an invalid mailbox page");
     }
@@ -1302,6 +1316,9 @@ export class HostedRelayHttpTransport
         value.receipts === undefined
           ? []
           : decodeRelayDeliveryReceipts(value.receipts),
+      ...(value.nextCursor === undefined
+        ? {}
+        : { nextCursor: value.nextCursor }),
     };
   }
 
@@ -1425,17 +1442,76 @@ export class HostedRelayHttpTransport
     clientMessageId?: string,
     operationEpochMilliseconds?: number,
     contentKind?: ContentKind,
+    deviceSets?: readonly { userId: string; deviceIds: readonly number[] }[],
   ) {
-    return this.anonymousDelivery.send(
-      sentMessageBase64,
-      auth,
-      timestamp,
-      deliveryClass,
-      recipientUserIds,
-      clientMessageId,
-      operationEpochMilliseconds,
-      contentKind,
-    );
+    try {
+      return await this.anonymousDelivery.send(
+        sentMessageBase64,
+        auth,
+        timestamp,
+        deliveryClass,
+        recipientUserIds,
+        clientMessageId,
+        operationEpochMilliseconds,
+        contentKind,
+        deviceSets,
+      );
+    } catch (error) {
+      // A refused declared post can name a re-registered device, so the
+      // next post reads each named account's mailbox generations again.
+      const refusal = deviceSetRefusal(error);
+      if (refusal !== undefined)
+        this.forgetDestinationGenerations(refusal.accounts);
+      throw error;
+    }
+  }
+
+  /** Drops the cached mailbox generations of each named account. */
+  private forgetDestinationGenerations(
+    accounts: readonly { readonly userId: string }[],
+  ): void {
+    for (const { userId } of accounts) {
+      for (const key of this.destinationGenerations.keys()) {
+        if (key.startsWith(`${userId}\0`)) this.destinationGenerations.delete(key);
+      }
+    }
+  }
+
+  /**
+   * The refusal that the Relay would give a declared post whose device the
+   * directory does not list: the declared set differs from the directory.
+   * The directory read just before it filled the cache for the account.
+   */
+  private directoryDeviceSetRefusal(
+    userId: string,
+    declaredDeviceIds: readonly number[],
+  ): DeviceSetRefusal {
+    const listed = new Set<number>();
+    for (const key of this.destinationGenerations.keys()) {
+      if (!key.startsWith(`${userId}\0`)) continue;
+      const deviceId = Number(key.slice(userId.length + 1));
+      if (
+        userId === this.session.canonicalAccountId &&
+        deviceId === this.session.deviceId
+      )
+        continue;
+      listed.add(deviceId);
+    }
+    const declared = new Set(declaredDeviceIds);
+    return {
+      kind: "mismatch",
+      accounts: [
+        {
+          userId,
+          missingDeviceIds: [...listed]
+            .filter((id) => !declared.has(id))
+            .sort((a, b) => a - b),
+          extraDeviceIds: [...declared]
+            .filter((id) => !listed.has(id))
+            .sort((a, b) => a - b),
+        },
+      ],
+    };
   }
 
   /**
@@ -1542,8 +1618,8 @@ export class HostedRelayHttpTransport
     );
   }
 
-  public async pullMailbox(): Promise<HostedMailboxPage> {
-    return this.pullIncoming();
+  public async pullMailbox(cursor?: string): Promise<HostedMailboxPage> {
+    return this.pullIncoming(cursor);
   }
 
   /**
@@ -1650,8 +1726,30 @@ export class HostedRelayHttpTransport
       await this.directory(envelope.targetUserId);
       generation = this.destinationGenerations.get(key);
     }
+    if (generation === undefined && envelope.declaredDeviceIds !== undefined) {
+      throw markDeviceSetRefusal(
+        new HostedRelayHttpError(
+          409,
+          "DEVICE_SET_MISMATCH",
+          "The declared device set differs from the device directory",
+        ),
+        this.directoryDeviceSetRefusal(
+          envelope.targetUserId,
+          envelope.declaredDeviceIds,
+        ),
+      );
+    }
     if (generation === undefined)
       throw missingDestination(envelope.targetUserId, envelope.targetDeviceId);
+    const deviceSets =
+      envelope.declaredDeviceIds === undefined
+        ? undefined
+        : [
+            {
+              accountAddress: envelope.targetUserId,
+              deviceIds: [...envelope.declaredDeviceIds],
+            },
+          ];
     let value: unknown;
     let attempts = 0;
     try {
@@ -1673,6 +1771,7 @@ export class HostedRelayHttpTransport
           ...(envelope.recipientRegistrationId === undefined
             ? {}
             : { recipientRegistrationId: envelope.recipientRegistrationId }),
+          ...(deviceSets === undefined ? {} : { deviceSets }),
         });
       });
     } catch (error) {
@@ -1680,6 +1779,13 @@ export class HostedRelayHttpTransport
         userId: envelope.targetUserId,
         deviceId: envelope.targetDeviceId,
       };
+      if (deviceSets !== undefined && error instanceof HostedRelayHttpError) {
+        const refusal = parseDeviceSetRefusal(error.code, error.data?.details);
+        if (refusal !== undefined) {
+          this.forgetDestinationGenerations(refusal.accounts);
+          throw markDeviceSetRefusal(error, refusal);
+        }
+      }
       if (
         error instanceof HostedRelayHttpError &&
         error.code === "STALE_DEVICE"
@@ -1709,7 +1815,10 @@ export class HostedRelayHttpTransport
       (value.duplicate !== undefined && typeof value.duplicate !== "boolean") ||
       (value.expiresAt !== undefined &&
         (!Number.isSafeInteger(value.expiresAt) ||
-          (value.expiresAt as number) <= 0))
+          (value.expiresAt as number) <= 0)) ||
+      (value.deviceSetChecked !== undefined &&
+        value.deviceSetChecked !== true) ||
+      (value.needsSync !== undefined && typeof value.needsSync !== "boolean")
     ) {
       throw new Error("Signal Protocol Relay returned an invalid delivery receipt");
     }
@@ -1727,6 +1836,10 @@ export class HostedRelayHttpTransport
         : {}),
       ...(typeof value.expiresAt === "number"
         ? { expiresAt: value.expiresAt }
+        : {}),
+      ...(value.deviceSetChecked === true ? { deviceSetChecked: true } : {}),
+      ...(typeof value.needsSync === "boolean"
+        ? { needsSync: value.needsSync }
         : {}),
     };
   }
@@ -1778,9 +1891,14 @@ export class HostedRelayHttpTransport
       },
       isConclusiveRefusal,
       decodeDurable: (message) => this.incomingEnvelope(message) as Envelope,
-      pull: async () => {
-        const { messages, receipts } = await this.pullIncoming();
-        return { messages: messages as readonly Envelope[], receipts };
+      pull: async (cursor) => {
+        const { messages, receipts, nextCursor } =
+          await this.pullIncoming(cursor);
+        return {
+          messages: messages as readonly Envelope[],
+          receipts,
+          ...(nextCursor === undefined ? {} : { nextCursor }),
+        };
       },
       acknowledge: (messageIds, receiptIds) =>
         this.acknowledge(messageIds, receiptIds),
@@ -2076,63 +2194,6 @@ export class HostedRelayHttpTransport
   }
   public async removeDevice(_userId: string, _deviceId: number): Promise<void> {
     unsupported("direct device removal");
-  }
-  public async createProvisioningSession(
-    _userId: string,
-    _key: string,
-  ): Promise<{ sessionId: string }> {
-    unsupported("legacy provisioning sessions");
-  }
-  public async connectNewDevice(
-    _sessionId: string,
-    _key: string,
-    _metadata: { platform?: string; appVersion?: string; osVersion?: string },
-  ): Promise<void> {
-    unsupported("legacy provisioning sessions");
-  }
-  public async sendProvisioningMessage(
-    _sessionId: string,
-    _message: string,
-    _userId?: string,
-  ): Promise<void> {
-    unsupported("legacy provisioning sessions");
-  }
-  public async getProvisioningMessage(_sessionId: string): Promise<{
-    status:
-      | "waiting"
-      | "connected"
-      | "ready"
-      | "linked_pending_ack"
-      | "completed"
-      | "rolled_back"
-      | "expired";
-    message: string | null;
-    expiresAt: number | null;
-  }> {
-    unsupported("legacy provisioning sessions");
-  }
-  public async completeProvisioning(
-    _sessionId: string,
-    _metadata: {
-      encryptedDeviceName: ArrayBuffer;
-      platform?: string;
-      appVersion?: string;
-      osVersion?: string;
-    },
-  ): Promise<{ deviceId: number }> {
-    unsupported("legacy provisioning sessions");
-  }
-  public async acknowledgeProvisioning(_sessionId: string): Promise<void> {
-    unsupported("legacy provisioning sessions");
-  }
-  public async rollbackProvisioning(_sessionId: string): Promise<void> {
-    unsupported("legacy provisioning sessions");
-  }
-  public async deleteProvisioningSession(
-    _sessionId: string,
-    _userId?: string,
-  ): Promise<void> {
-    unsupported("legacy provisioning sessions");
   }
   public async createGroupState(
     groupId: Uint8Array,

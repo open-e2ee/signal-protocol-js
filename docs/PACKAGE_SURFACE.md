@@ -86,7 +86,6 @@ implementations are outside the published SDK.
 - `@open-e2ee/signal-protocol-sdk/device/device-id`
 - `@open-e2ee/signal-protocol-sdk/device/expo`
 - `@open-e2ee/signal-protocol-sdk/device/lifecycle`
-- `@open-e2ee/signal-protocol-sdk/device/provisioning`
 - `@open-e2ee/signal-protocol-sdk/device/react-native`
 - `@open-e2ee/signal-protocol-sdk/encoding`
 - `@open-e2ee/signal-protocol-sdk/encoding/hex`
@@ -224,13 +223,15 @@ implement the same `MediaAttachmentTransfer` seam.
   default adapters.
 - `createSignalProtocolClient()` is the preferred composition helper when app
   code owns multiple adapters.
-- Linked devices must already contain provisioned identity material before
-  `DefaultSignalProtocolClient.create(..., { deviceId: 2 })`.
+- Linked devices must already contain the account identity before
+  `DefaultSignalProtocolClient.create(..., { deviceId: 2 })`. The application
+  imports it by device transfer or by a channel that the application owns.
 - Username-only apps typically run ACI-only. Phone-capable apps can enable both
   ACI and PNI with `enablePniKeys: true`.
 - `protocol.postQuantum` and `protocol.braid` are product-facing policy.
-  Advanced protocol strategy knobs remain available for diagnostics, telemetry,
-  and protocol-level tuning.
+  `'required'` is the only `postQuantum` value, and no classical key agreement
+  exists. Advanced protocol strategy knobs remain available for diagnostics,
+  telemetry, and protocol-level tuning.
 - The package is workspace-friendly in this repo and dist-first for packed
   consumers.
 

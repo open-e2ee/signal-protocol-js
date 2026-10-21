@@ -13,7 +13,6 @@ The relay interface handles server-owned Signal Protocol state:
 - prekey upload and fetch
 - device registration and device listing
 - envelope delivery / message fanout
-- linked-device provisioning support
 
 Use:
 
@@ -166,13 +165,14 @@ See the [client guide](./client/README.md#with-relay).
 
 - Prekey bundle fetch must preserve the package’s one-time-prekey semantics.
 - Device registration, unlink, and stale cleanup must stay consistent across active identity types.
-- Provisioning slot assignment is server-owned, not client-owned.
+- Linked-device slot assignment is server-owned, not client-owned.
 - Public-key reads and writes must enforce correct account ownership rules.
 - An envelope gets one `id`, and that `id` stays the same on every redelivery. A relay that assigns its own ids delivers the SDK id as `clientMessageId`. See [docs/INTERFACES.md](./docs/INTERFACES.md).
 
 ### Storage implementations
 
 - Protect local key material at rest.
+- Declare `protection`: the encryption at rest and the custody of the key. State what the store does. A declaration adds no encryption. Client creation fails without a valid one, and [Content Recovery](./docs/PROTOCOL_POLICY.md#content-recovery) uses it to decide whether the store may hold resendable content.
 - Keep contact identity trust decisions stable and explicit.
 - Persist linked-device identity state atomically enough that startup verification cannot enter a half-linked state.
 - Preserve session record semantics. Do not treat sessions as opaque blobs without honoring update and archive behavior.
@@ -184,8 +184,8 @@ Prefer these composition patterns:
 - use `createSignalProtocolClient()` when app code owns identity, adapters, and protocol policy
 - pass `storage` explicitly to every client composition
 - pass `relay` only when you need sync, prekeys, or linked-device workflows
-- keep `protocol.postQuantum` in product/security terms: `'required'` by default,
-  `'compatible'` only for explicit non-PQ peer compatibility
+- keep `protocol.postQuantum` in product/security terms: `'required'` is the
+  only value, and a peer without post-quantum prekeys is refused
 - keep backend-specific code at integration boundaries, not in shared app logic
 - keep platform storage imports on explicit subpaths, not the root package
 

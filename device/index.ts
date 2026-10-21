@@ -79,36 +79,8 @@ export {
   BACKUP_FORMAT_VERSION,
 } from './types';
 
-// Provisioning functions (device linking via QR code)
-//
-// `getDeviceMetadata` is deliberately absent: it reads the platform, and lives
-// on `./device/expo` and `./device/react-native` so that the provisioning
-// protocol stays importable everywhere. Callers elsewhere build
-// `LocalDeviceMetadata` themselves.
-export {
-  generateProvisioningQR,
-  provisionDevice,
-  parseProvisioningQR,
-  connectToProvisioningSession,
-  receiveProvisioningMessage,
-  cancelProvisioning,
-} from './provisioning';
-
 // Device name encryption/decryption
 export { encryptDeviceName, decryptDeviceName } from './device-name-crypto';
-
-// Provisioning types
-export type {
-  ProvisioningKeyPair,
-  ProvisioningQRData,
-  ProvisioningMessage,
-  LocalDeviceMetadata,
-  ProvisioningIdentityStore,
-  ProvisioningLocalStateStore,
-  ProvisioningSendOptions,
-  ProvisioningReceiveOptions,
-  ProvisioningUsernameStateStore,
-} from './provisioning';
 
 // Device ID utilities (for non-React contexts)
 export { getDeviceId, getDeviceIdSync, clearDeviceIdCache, preloadDeviceId } from './device-id';

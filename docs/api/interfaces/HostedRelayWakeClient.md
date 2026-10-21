@@ -8,6 +8,24 @@
 
 ## Methods
 
+### processPendingReceives()
+
+> **processPendingReceives**(`options?`): `Promise`\<\{ `processed`: `number`; `remaining`: `number`; \}\>
+
+#### Parameters
+
+##### options?
+
+###### deadlineMs?
+
+`number`
+
+#### Returns
+
+`Promise`\<\{ `processed`: `number`; `remaining`: `number`; \}\>
+
+***
+
 ### receiveIncomingEnvelopes()
 
 > **receiveIncomingEnvelopes**(`envelopes`): `Promise`\<\{ `failedMessageIds`: `string`[]; `processedMessageIds`: `string`[]; \}\>

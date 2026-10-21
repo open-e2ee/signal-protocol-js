@@ -55,8 +55,9 @@ Number of stored skipped keys for this sender
 
 > **deleteAllSenderKeysForGroup**(`groupId`): `Promise`\<`number`\>
 
-Delete all sender keys and skipped sender message keys for a group (when the caller deletes
-the group). Returns the number of sender keys deleted.
+Delete all sender keys, skipped sender message keys, and sender-key
+handoff rows for a group (when the caller deletes the group), in one
+write. Returns the number of sender keys deleted.
 
 #### Parameters
 
@@ -114,7 +115,7 @@ Number of deleted keys
 
 ### deleteSenderKey()
 
-> **deleteSenderKey**(`groupId`, `userId`, `deviceId`): `Promise`\<`void`\>
+> **deleteSenderKey**(`groupId`, `userId`, `deviceId`, `options?`): `Promise`\<`void`\>
 
 Delete sender key for a group member device.
 
@@ -131,6 +132,14 @@ Delete sender key for a group member device.
 ##### deviceId
 
 `number`
+
+##### options?
+
+[`SenderKeyRecordWriteOptions`](SenderKeyRecordWriteOptions.md)
+
+With `deleteSenderKeyHandoffs`, the same write deletes
+  every sender-key handoff row of the group. The manager sets it when it
+  deletes the local device's own key.
 
 #### Returns
 
@@ -388,7 +397,7 @@ Store sender key state for a group member device.
 
 ### storeSenderKeyRecord()
 
-> **storeSenderKeyRecord**(`groupId`, `userId`, `deviceId`, `states`, `receive?`): `Promise`\<`void`\>
+> **storeSenderKeyRecord**(`groupId`, `userId`, `deviceId`, `states`, `receive?`, `options?`): `Promise`\<`void`\>
 
 Store all sender key states (current + previous) for a group member device.
 
@@ -429,6 +438,16 @@ Array of states (current first, then previous, capped at MAX_SENDER_KEY_STATES)
 ##### receive?
 
 `SenderKeyReceiveCommit`
+
+The receive effects to commit with the record
+
+##### options?
+
+[`SenderKeyRecordWriteOptions`](SenderKeyRecordWriteOptions.md)
+
+With `deleteSenderKeyHandoffs`, the same write deletes
+  every sender-key handoff row of the group. The manager sets it when it
+  writes a new own key.
 
 #### Returns
 

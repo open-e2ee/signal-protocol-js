@@ -50,7 +50,7 @@ export async function generateRegistrationId(): Promise<number> {
  * Generate identity key pair
  *
  * Creates the long-lived identity key pair consisting of:
- * - DH key pair for X3DH/PQXDH key agreement
+ * - DH key pair for PQXDH key agreement
  * - Signing key pair for prekey signatures
  * - Registration ID for session reset detection
  *
@@ -129,7 +129,7 @@ export async function generateEcSignedPreKey(
 /**
  * Generate batch of EC one-time prekeys
  *
- * Creates multiple EC one-time prekeys for X3DH.
+ * Creates multiple EC one-time prekeys for PQXDH.
  * Each key serves only one use, for forward secrecy.
  *
  * @param count Number of prekeys to generate

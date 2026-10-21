@@ -151,8 +151,8 @@ export enum SealedSenderContentType {
   /** Framed SenderKeyMessage: group traffic. */
   SENDERKEY_MESSAGE = 7,
   /**
-   * Unencrypted content. Listed to keep the enum a faithful record of the
-   * wire values, but **not supported**. See `isSealedSenderContentType`.
+   * Content that is not ratchet-encrypted. The seal is its only encryption.
+   * This SDK uses it only for a sealed retry request.
    */
   PLAINTEXT_CONTENT = 8,
 }
@@ -165,18 +165,17 @@ export enum SealedSenderContentType {
  * Rejecting at the parse keeps the parse canonical: one byte, one meaning. No
  * value survives to be interpreted by a routing default further downstream.
  *
- * `PLAINTEXT_CONTENT` is deliberately excluded. The reference uses it to carry
- * a decryption-error receipt when no session exists. This implementation
- * sends those as identified `retry_request` mailbox envelopes instead, so
- * nothing here produces the type and no decrypt path consumes it. Accepting it
- * would mean routing an unauthenticated payload through a path with no handler
- * for it. The whole point of the type is that it is not encrypted.
+ * `PLAINTEXT_CONTENT` carries a retry request, as the reference carries a
+ * decryption-error message when no session exists. The seal authenticates the
+ * sender of the payload, and the receive paths route it to the retry request
+ * handler, never to a ratchet decrypt.
  */
 export function isSealedSenderContentType(value: number): value is SealedSenderContentType {
   return (
     value === SealedSenderContentType.PREKEY_MESSAGE ||
     value === SealedSenderContentType.MESSAGE ||
-    value === SealedSenderContentType.SENDERKEY_MESSAGE
+    value === SealedSenderContentType.SENDERKEY_MESSAGE ||
+    value === SealedSenderContentType.PLAINTEXT_CONTENT
   );
 }
 

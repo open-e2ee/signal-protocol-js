@@ -139,6 +139,39 @@ export async function deleteMessageRecordsBySessionId(
   return db.run('DELETE FROM message_records WHERE session_id = ?', [sessionId]);
 }
 
+/**
+ * Get every message record, in primary key order.
+ *
+ * @returns MessageRecord instances
+ */
+export async function getAllMessageRecords(db: SqliteExecutor): Promise<MessageRecord[]> {
+  const rows = await db.all<MessageRecordRow>(
+    `SELECT ${MESSAGE_RECORD_COLUMNS} FROM message_records ORDER BY session_id, timestamp`
+  );
+  return rows.map((row) => new MessageRecord(row));
+}
+
+/**
+ * Replace the plaintext of a message record. The other columns, created_at
+ * included, stay as they are.
+ *
+ * @param sessionId - Session ID (format: userId:deviceId)
+ * @param timestamp - Client timestamp (set before encryption)
+ * @param plaintext - The plaintext to keep
+ */
+export async function updateMessageRecordPlaintext(
+  db: SqliteExecutor,
+  sessionId: string,
+  timestamp: number,
+  plaintext: string
+): Promise<void> {
+  await db.run('UPDATE message_records SET plaintext = ? WHERE session_id = ? AND timestamp = ?', [
+    plaintext,
+    sessionId,
+    timestamp,
+  ]);
+}
+
 // ============================================================================
 // Factory Functions
 // ============================================================================

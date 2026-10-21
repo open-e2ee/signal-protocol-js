@@ -11,7 +11,7 @@
 Archive the current session and optionally set a new one.
 
 The function moves the current session to archivedSessions, keyed by its
-baseKey. It trims old archived sessions if we exceed maxArchived.
+baseKey, at the newest end. Over maxArchived, the oldest insertions leave.
 
 ## Parameters
 
@@ -31,7 +31,7 @@ Optional new session to set as current
 
 `number` = `MAX_ARCHIVED_SESSIONS`
 
-Maximum number of archived sessions to keep (default: 5)
+Maximum number of archived sessions to keep (default: 40)
 
 ## Returns
 

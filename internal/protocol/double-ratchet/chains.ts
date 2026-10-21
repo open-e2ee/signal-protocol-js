@@ -19,7 +19,8 @@ import {
 import type { Base64 } from '../../../types';
 import { EncryptionError, EncryptionErrorCode } from '../../../types';
 import type { DoubleRatchetState, DoubleRatchetConfig } from './ratchet';
-import { DEFAULT_RATCHET_CONFIG, MAX_RECEIVER_CHAINS, MAX_MESSAGE_KEYS } from './ratchet';
+import { DEFAULT_RATCHET_CONFIG, MAX_RECEIVER_CHAINS } from './ratchet';
+
 import type { ReceiverChain } from '../../../types/session';
 
 /**
@@ -394,82 +395,12 @@ export function getOrCreateReceiverChain(
 }
 
 /**
- * Count total message keys across all receiver chains.
- *
- * @param state Session state with receiverChains
- * @returns Total number of stored message keys
- */
-export function countTotalMessageKeys(state: DoubleRatchetState): number {
-  if (!state.receiverChains) {
-    return 0;
-  }
-  return state.receiverChains.reduce((sum, chain) => sum + chain.messageKeys.length, 0);
-}
-
-/**
- * Evict oldest message key across all receiver chains (FIFO).
- *
- * If a chain becomes empty after eviction, it is removed.
- *
- * @param state Session state with receiverChains
- */
-export function evictOldestMessageKey(
-  state: DoubleRatchetState,
-  logger: Required<Logger> = defaultSignalProtocolLogger
-): void {
-  if (!state.receiverChains || state.receiverChains.length === 0) {
-    return;
-  }
-
-  let oldestTimestamp = Infinity;
-  let oldestChainIdx = -1;
-  let oldestKeyIdx = -1;
-
-  // Find the oldest key across all chains
-  for (let ci = 0; ci < state.receiverChains.length; ci++) {
-    const chain = state.receiverChains[ci]!;
-    for (let ki = 0; ki < chain.messageKeys.length; ki++) {
-      const key = chain.messageKeys[ki]!;
-      if (key.timestamp < oldestTimestamp) {
-        oldestTimestamp = key.timestamp;
-        oldestChainIdx = ci;
-        oldestKeyIdx = ki;
-      }
-    }
-  }
-
-  // Remove the oldest key
-  if (oldestChainIdx >= 0 && oldestKeyIdx >= 0) {
-    const chain = state.receiverChains[oldestChainIdx]!;
-    const removedKey = chain.messageKeys[oldestKeyIdx];
-
-    // Securely zero the key before removal
-    if (removedKey) {
-      secureZero(removedKey.seed);
-    }
-
-    chain.messageKeys.splice(oldestKeyIdx, 1);
-
-    // Keep empty chains for late out-of-order messages. Evict them only when
-    // MAX_RECEIVER_CHAINS is exceeded.
-    // Empty chains may still receive out-of-order messages.
-
-    logger.debug('Evicted oldest message key (MAX_MESSAGE_KEYS reached)', {
-      category: 'E2EE',
-      data: {
-        operation: 'message-key-eviction',
-        timestamp: oldestTimestamp,
-      },
-    });
-  }
-}
-
-/**
  * Store a skipped message key in the receiver chain.
  *
- * Two-tier eviction:
- * 1. Per-chain: FIFO eviction when chain exceeds MAX_MESSAGE_KEYS (2000)
- * 2. Global: FIFO eviction when total across all chains exceeds limit
+ * The cap applies to one receiver chain, as the reference implementation applies
+ * `MAX_MESSAGE_KEYS`: when the chain holds `config.maxMessageKeysStored`
+ * keys, the key with the lowest index of that chain leaves. A key in another
+ * chain is never evicted. `MAX_RECEIVER_CHAINS` bounds the number of chains.
  *
  * @param state Session state with receiverChains
  * @param senderRatchetKey Sender's DH public key
@@ -492,26 +423,31 @@ export function storeMessageKeyInChain(
     return; // Already stored
   }
 
-  // Count total keys and evict if at limit (use config, not hardcoded constant)
-  const totalKeys = countTotalMessageKeys(state);
-  if (totalKeys >= config.maxMessageKeysStored) {
-    evictOldestMessageKey(state, logger);
+  // The cap is per chain. The lowest index of this chain leaves first.
+  while (chain.messageKeys.length >= config.maxMessageKeysStored && chain.messageKeys.length > 0) {
+    const evictedIndex = evictLowestIndex(chain);
+    logger.debug('Evicted lowest-index message key (per-chain cap reached)', {
+      category: 'E2EE',
+      data: { operation: 'message-key-eviction', index: evictedIndex },
+    });
   }
 
-  // Store new key
   chain.messageKeys.push({
     index,
     seed: bytesToBase64(seed),
     timestamp: Date.now(),
   });
+}
 
-  // Per-chain hard cap with FIFO eviction.
-  if (chain.messageKeys.length > MAX_MESSAGE_KEYS) {
-    const evicted = chain.messageKeys.shift();
-    if (evicted) {
-      secureZero(evicted.seed);
-    }
+/** Remove the key with the lowest index of one receiver chain. */
+function evictLowestIndex(chain: ReceiverChain): number | undefined {
+  let lowest = 0;
+  for (let i = 1; i < chain.messageKeys.length; i++) {
+    if (chain.messageKeys[i]!.index < chain.messageKeys[lowest]!.index) lowest = i;
   }
+  const [evicted] = chain.messageKeys.splice(lowest, 1);
+  if (evicted) secureZero(evicted.seed);
+  return evicted?.index;
 }
 
 /**

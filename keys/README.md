@@ -29,8 +29,8 @@ const signedPreKey = await generateEcSignedPreKey(identity);
 ```
 
 Ordinary application code usually lets `SignalProtocolClient` generate and
-persist this material. Direct key APIs serve adapter, provisioning, and
-advanced lifecycle integrations.
+persist this material. Direct key APIs serve adapter, device transfer,
+and advanced lifecycle integrations.
 
 ## Composite identity
 
@@ -91,7 +91,7 @@ For ML-KEM-1024, `serialized public key` includes the `0x0A` tag.
 ## Prekey bundle
 
 `PreKeyBundle` carries one composite identity and the device-specific material
-needed for X3DH/PQXDH session establishment:
+needed for PQXDH session establishment:
 
 - registration ID and device ID.
 - composite identity tuple.

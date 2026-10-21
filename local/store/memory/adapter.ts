@@ -8,17 +8,34 @@
  * DO NOT use in production.
  */
 
-import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
 import type {
+  ReceiveWorkMetadataWrite,
+  ReceiveWorkQuery,
+  ReceiveWorkRecord,
+  ReceiveWorkUsage,
+  SenderKeyReceiveCommit,
+} from '../../../types';
+import type {
+  LocalStoreProtection,
   SignalProtocolLocalStore,
   MessageRecord,
+  NewSendLogPayload,
+  SendLogDevice,
+  SendLogEntry,
+  SendLogRecipient,
+  SendLogResendJob,
+  SendLogResendJobState,
   SkippedSenderMessageKey,
   SessionTrustCommit,
+  SenderKeyHandoffDevice,
+  SenderKeyHandoffRecord,
+  SenderKeyRecordWriteOptions,
+  SetDeviceRecordOptions,
 } from '../../../types';
 import {
   assertCurrentSessionRecord,
   CURRENT_SESSION_RECORD_VERSION,
-  type SessionRecord,
+  SessionRecord,
 } from '../../../types/session';
 import type {
   IdentityKeyPair,
@@ -39,12 +56,16 @@ import type { SessionState } from '../../../types';
 import type { ProtocolAddress } from '../../../types/address';
 import { IdentityKeyChange, TrustDirection } from '../../../types/trust';
 import type { UserRecord, DeviceRecord } from '../../../types';
+import { isExpiredRemovedDevice } from '../../../internal/sesame/types';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { generateRandomBytes } from '../../../internal/crypto/random';
 import { cloneProtocolState } from '../../../internal/crypto/utils';
 import { withDeviceRecordLocks } from '../../../internal/session/record-locks';
 import { withSession } from '../device-record';
 import { StoreFailureController, type StoreFailureOptions } from './failures';
+import { MemorySendLog } from './send-log';
+import { SenderKeyHandoffTable } from '../sender-key-handoff-table';
+import { assertReceiveWork, isBlockedInGroup, selectReceiveWork } from '../receive-work';
 import {
   assertUnambiguousKyberPreKeyStore,
   assertKyberPreKeyUse,
@@ -87,6 +108,8 @@ function cloneStored<T>(value: T): T {
  */
 export {};
 export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
+  /** The data lives only in process memory, without encryption or a key. */
+  readonly protection: LocalStoreProtection = Object.freeze({ atRest: 'none', keyCustody: 'none' });
   readonly failures: StoreFailureController;
 
   // Identity keys and registration IDs keyed by identityType
@@ -123,34 +146,70 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
   // Also indexed by timestamp for delivery receipt processing
   private messageRecords = new Map<string, MessageRecord>();
 
+  // Send log: resendable group content and the persisted resend jobs
+  private readonly sendLog: MemorySendLog;
+
+  // Sender-key handoff ledger of the own sender keys
+  private readonly senderKeyHandoffs = new SenderKeyHandoffTable();
+
   // Metadata storage
   private readonly _metadata = new Map<string, string>();
-  private readonly receivedContent = new Map<string, ReceivedContent>();
+  // Receive records. A restart of the process loses them, as it loses the sessions.
+  private readonly receiveWork = new Map<string, ReceiveWorkRecord>();
 
-  async getReceivedContent(id: string): Promise<ReceivedContent | null> {
-    const value = this.receivedContent.get(id);
+  async getReceiveWork(workId: string): Promise<ReceiveWorkRecord | null> {
+    const value = this.receiveWork.get(workId);
     return value ? cloneStored(value) : null;
   }
 
-  async deleteReceivedContent(id: string): Promise<void> {
-    this.failures.beforeWrite('deleteReceivedContent');
-    this.receivedContent.delete(id);
+  async putReceiveWork(
+    record: ReceiveWorkRecord,
+    expectedRevision: number | null
+  ): Promise<boolean> {
+    assertReceiveWork(record);
+    this.failures.beforeWrite('putReceiveWork');
+    const current = this.receiveWork.get(record.workId);
+    if ((current?.revision ?? null) !== expectedRevision) return false;
+    this.receiveWork.set(record.workId, cloneStored(record));
+    return true;
   }
 
-  async deleteExpiredReceivedContent(before: number): Promise<number> {
-    this.failures.beforeWrite('deleteExpiredReceivedContent');
-    let count = 0;
-    for (const [id, value] of this.receivedContent) {
-      if (value.receivedAt < before) {
-        this.receivedContent.delete(id);
-        count++;
-      }
+  async listReceiveWork(query?: ReceiveWorkQuery): Promise<ReceiveWorkRecord[]> {
+    return selectReceiveWork(this.receiveWork.values(), query).map((record) =>
+      cloneStored(record)
+    );
+  }
+
+  async receiveWorkUsage(query: { groupId?: string } = {}): Promise<ReceiveWorkUsage> {
+    let items = 0;
+    let bytes = 0;
+    for (const record of this.receiveWork.values()) {
+      if (query.groupId !== undefined && !isBlockedInGroup(record, query.groupId)) continue;
+      items += 1;
+      bytes += record.sizeBytes;
     }
-    return count;
+    return { items, bytes };
+  }
+
+  async completeReceiveWork(
+    workId: string,
+    expectedRevision: number,
+    metadata: readonly ReceiveWorkMetadataWrite[] = []
+  ): Promise<boolean> {
+    this.failures.beforeWrite('completeReceiveWork');
+    if (this.receiveWork.get(workId)?.revision !== expectedRevision) return false;
+    // One synchronous commit point: the delete and the metadata writes.
+    this.receiveWork.delete(workId);
+    for (const { key, value } of metadata) {
+      if (value === null) this._metadata.delete(key);
+      else this._metadata.set(key, value);
+    }
+    return true;
   }
 
   constructor(options: InMemorySignalProtocolStoreOptions = {}) {
     this.failures = new StoreFailureController(options.failures);
+    this.sendLog = new MemorySendLog(this.failures);
   }
 
   // ============================================================================
@@ -257,6 +316,7 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
 
     this.contactIdentities.set(key, cloneStored(replacement));
     for (const sessionKey of sessionKeys) this.sessionRecords.delete(sessionKey);
+    this.senderKeyHandoffs.deleteAccount(address.userId);
     return cloneProtocolState(replacement);
   }
 
@@ -549,6 +609,10 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     if (commit.kyberPreKeyUse) {
       assertKyberPreKeyUse(kyberState, commit.localIdentityType, commit.kyberPreKeyUse);
     }
+    if (commit.receiveWork) {
+      assertReceiveWork(commit.receiveWork);
+      this.failures.beforeWrite('putReceiveWork');
+    }
 
     // Map mutations cannot fail after validation. This is one synchronous commit point.
     if (newContact) this.contactIdentities.set(contactKey, cloneStored(newContact));
@@ -558,8 +622,12 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     if (commit.kyberPreKeyUse) {
       recordKyberPreKeyUse(kyberState, commit.localIdentityType, commit.kyberPreKeyUse);
     }
-    if (commit.receivedContent)
-      this.receivedContent.set(commit.receivedContent.id, cloneStored(commit.receivedContent));
+    if (commit.receiveWork) {
+      this.receiveWork.set(commit.receiveWork.workId, cloneStored(commit.receiveWork));
+    }
+    if (commit.senderKeyHandoffInvalidation) {
+      this.senderKeyHandoffs.deleteDevice(commit.senderKeyHandoffInvalidation);
+    }
   }
 
   /**
@@ -589,6 +657,7 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     this.failures.beforeWrite('deleteSessionRecord');
     const key = this.getAddressKey(address);
     this.sessionRecords.delete(key);
+    this.senderKeyHandoffs.deleteDevice(address);
   }
 
   async archiveCurrentSession(
@@ -600,18 +669,16 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     // This preserves the old session for potential delayed message decryption
     const key = this.getAddressKey(address);
     const record = this.sessionRecords.get(key);
+    this.senderKeyHandoffs.deleteDevice(address);
 
-    if (record && record.currentSession) {
-      // Archive the current session before replacing
+    if (record) {
       if (!record.archivedSessions) {
         record.archivedSessions = {};
       }
-      record.archivedSessions[record.currentSession.baseKey] = cloneStored(record.currentSession);
-    }
-
-    if (record) {
-      // Set new current session (may be null/undefined to clear)
-      record.currentSession = newSession ? cloneStored(newSession) : null;
+      // The record rule archives the current session, which clears its
+      // pending prekey state and keeps the archive bound. The new current
+      // session may be null to clear it.
+      SessionRecord.archiveCurrent(record, newSession ? cloneStored(newSession) : null);
       if (record.metadata) record.metadata.lastSentAt = Date.now();
       this.sessionRecords.set(key, record);
     } else if (newSession) {
@@ -694,10 +761,18 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     return withSession(userId, deviceId, stored ? cloneStored(stored) : null, session);
   }
 
-  async setDeviceRecord(userId: string, deviceId: number, record: DeviceRecord): Promise<void> {
+  async setDeviceRecord(
+    userId: string,
+    deviceId: number,
+    record: DeviceRecord,
+    options?: SetDeviceRecordOptions
+  ): Promise<void> {
     this.failures.beforeWrite('setDeviceRecord');
+    if (record.session) assertCurrentSessionRecord(record.session);
+    if (options?.senderKeyHandoffInvalidation) {
+      this.senderKeyHandoffs.deleteDevice(options.senderKeyHandoffInvalidation);
+    }
     if (record.session) {
-      assertCurrentSessionRecord(record.session);
       this.sessionRecords.set(this.getAddressKey({ userId, deviceId }), cloneStored(record.session));
     }
 
@@ -713,6 +788,7 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
   async deleteDeviceRecord(userId: string, deviceId: number): Promise<void> {
     this.failures.beforeWrite('deleteDeviceRecord');
     this.sessionRecords.delete(this.getAddressKey({ userId, deviceId }));
+    this.senderKeyHandoffs.deleteDevice({ userId, deviceId });
 
     const userRecord = this.sesameUserRecords.get(userId);
     if (!userRecord) return;
@@ -754,14 +830,9 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
       if (!this.isStaleDevice(userId, deviceId, now, maxLatency)) continue;
       const removed = await withDeviceRecordLocks(this, userId, deviceId, async () => {
         if (!this.isStaleDevice(userId, deviceId, now, maxLatency)) return false;
-        const userRecord = this.sesameUserRecords.get(userId)!;
-        userRecord.devices.delete(deviceId);
-        userRecord.updatedAt = Date.now();
-
-        // Clean up empty user records
-        if (userRecord.devices.size === 0) {
-          this.sesameUserRecords.delete(userId);
-        }
+        // A removed record keeps its archived sessions, so the delete also
+        // takes the session and the handoff rows of the device.
+        await this.deleteDeviceRecord(userId, deviceId);
         return true;
       });
       if (removed) deleted++;
@@ -772,8 +843,9 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
 
   /**
    * A record is stale if:
-   * 1. It has no session (or session has no currentSession and no archived)
-   * 2. It is older than maxLatency
+   * 1. It has no session (or session has no currentSession and no archived),
+   *    and it is older than maxLatency, or
+   * 2. Its removal is older than maxLatency
    */
   private isStaleDevice(userId: string, deviceId: number, now: number, maxLatency: number): boolean {
     const deviceRecord = this.sesameUserRecords.get(userId)?.devices.get(deviceId);
@@ -781,7 +853,10 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     const session = this.readSession({ userId, deviceId });
     const hasNoSessions =
       !session || (!session.currentSession && Object.keys(session.archivedSessions).length === 0);
-    return hasNoSessions && now - deviceRecord.createdAt > maxLatency;
+    return (
+      (hasNoSessions && now - deviceRecord.createdAt > maxLatency) ||
+      isExpiredRemovedDevice(deviceRecord, now, maxLatency)
+    );
   }
 
   async cleanupExpiredSessions(maxRecv: number): Promise<number> {
@@ -902,8 +977,14 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     return state ? cloneStored(state) : null;
   }
 
-  async deleteSenderKey(groupId: string, userId: string, deviceId: number): Promise<void> {
+  async deleteSenderKey(
+    groupId: string,
+    userId: string,
+    deviceId: number,
+    options?: SenderKeyRecordWriteOptions
+  ): Promise<void> {
     this.failures.beforeWrite('deleteSenderKey');
+    if (options?.deleteSenderKeyHandoffs) this.senderKeyHandoffs.deleteGroup(groupId);
     const groupMap = this.senderKeys.get(groupId);
     if (!groupMap) return;
 
@@ -965,6 +1046,7 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
 
   async deleteAllSenderKeysForGroup(groupId: string): Promise<number> {
     this.failures.beforeWrite('deleteAllSenderKeysForGroup');
+    this.senderKeyHandoffs.deleteGroup(groupId);
     const skippedPrefix = this.getSkippedKeyPrefix(groupId);
     for (const key of this.skippedSenderKeys.keys()) {
       if (key.startsWith(skippedPrefix)) this.skippedSenderKeys.delete(key);
@@ -998,14 +1080,16 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     userId: string,
     deviceId: number,
     states: SenderKeyState[],
-    receive?: SenderKeyReceiveCommit
+    receive?: SenderKeyReceiveCommit,
+    options?: SenderKeyRecordWriteOptions
   ): Promise<void> {
     this.failures.beforeWrite('storeSenderKeyRecord');
     if (states.length === 0) return;
 
     const record = cloneStored(states);
     const current = cloneStored(states[0]);
-    const content = receive?.content ? cloneStored(receive.content) : undefined;
+    const work = receive?.work ? cloneStored(receive.work) : undefined;
+    if (work) assertReceiveWork(work);
     const changesSkippedKeys =
       (receive?.skippedKeys?.keys.length ?? 0) > 0 || receive?.consumedSkippedKey;
     const skippedKeys = changesSkippedKeys
@@ -1045,7 +1129,7 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
         )
       );
     }
-    if (content) this.failures.beforeWrite('storeReceivedContent');
+    if (work) this.failures.beforeWrite('putReceiveWork');
 
     // Publish only after every staged operation succeeds. There is no await in this commit.
     // Store current state without a second injected write boundary.
@@ -1062,7 +1146,8 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     const key = this.getSenderKeyRecordKey(groupId, userId, deviceId);
     this.senderKeyRecords.set(key, record);
     this.skippedSenderKeys = skippedKeys;
-    if (content) this.receivedContent.set(content.id, content);
+    if (work) this.receiveWork.set(work.workId, work);
+    if (options?.deleteSenderKeyHandoffs) this.senderKeyHandoffs.deleteGroup(groupId);
   }
 
   async getSenderKeyRecord(
@@ -1078,6 +1163,44 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     const currentState = await this.getSenderKey(groupId, userId, deviceId);
     if (!currentState) return null;
     return [currentState];
+  }
+
+  // ============================================================================
+  // Sender-Key Handoff Ledger
+  // ============================================================================
+
+  async recordSenderKeyHandoff(record: SenderKeyHandoffRecord): Promise<void> {
+    this.failures.beforeWrite('recordSenderKeyHandoff');
+    this.senderKeyHandoffs.record(record);
+  }
+
+  async listSenderKeyHandoffs(
+    groupId: string,
+    generation: number
+  ): Promise<SenderKeyHandoffRecord[]> {
+    return this.senderKeyHandoffs.list(groupId, generation);
+  }
+
+  async invalidateSenderKeyHandoff(
+    groupId: string,
+    device: SenderKeyHandoffDevice
+  ): Promise<boolean> {
+    this.failures.beforeWrite('invalidateSenderKeyHandoff');
+    return this.senderKeyHandoffs.deleteDeviceInGroup(groupId, device);
+  }
+
+  async invalidateAccountSenderKeyHandoffs(userId: string): Promise<boolean> {
+    this.failures.beforeWrite('invalidateAccountSenderKeyHandoffs');
+    return this.senderKeyHandoffs.deleteAccount(userId);
+  }
+
+  async listSenderKeyHandoffGroupIds(): Promise<string[]> {
+    return this.senderKeyHandoffs.groupIds();
+  }
+
+  async retainSenderKeyHandoffs(groupId: string, senderKeyId: string | null): Promise<number> {
+    this.failures.beforeWrite('retainSenderKeyHandoffs');
+    return this.senderKeyHandoffs.retain(groupId, senderKeyId);
   }
 
   // ============================================================================
@@ -1200,7 +1323,8 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
   async storeMessageRecord(record: MessageRecord): Promise<void> {
     this.failures.beforeWrite('storeMessageRecord');
     const key = this.getMessageRecordKey(record.sessionId, record.timestamp);
-    this.messageRecords.set(key, cloneStored(record));
+    const createdAt = this.messageRecords.get(key)?.createdAt ?? Date.now();
+    this.messageRecords.set(key, cloneStored({ ...record, createdAt }));
   }
 
   /**
@@ -1258,6 +1382,109 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     return deleted;
   }
 
+  async rewriteMessageRecords(rewrite: (record: MessageRecord) => string | null): Promise<number> {
+    this.failures.beforeWrite('rewriteMessageRecords');
+    let changed = 0;
+
+    for (const [key, record] of [...this.messageRecords.entries()]) {
+      const plaintext = rewrite(cloneStored(record));
+      if (plaintext === record.plaintext) continue;
+      if (plaintext === null) {
+        this.messageRecords.delete(key);
+      } else {
+        this.messageRecords.set(key, { ...record, plaintext });
+      }
+      changed++;
+    }
+
+    return changed;
+  }
+
+  // ============================================================================
+  // Send Log (resendable group content)
+  // The send log concept lives in ./send-log.ts. This store implements the
+  // whole local store interface, so it keeps these delegates.
+  // ============================================================================
+
+  storeSendLogEntry(
+    payload: NewSendLogPayload,
+    recipients: readonly SendLogDevice[]
+  ): Promise<void> {
+    return this.sendLog.storeSendLogEntry(payload, recipients);
+  }
+
+  appendSendLogRecipients(
+    clientMessageId: string,
+    recipients: readonly SendLogDevice[]
+  ): Promise<void> {
+    return this.sendLog.appendSendLogRecipients(clientMessageId, recipients);
+  }
+
+  markSendLogComplete(clientMessageId: string): Promise<void> {
+    return this.sendLog.markSendLogComplete(clientMessageId);
+  }
+
+  getSendLogEntry(clientMessageId: string, recipient: SendLogDevice): Promise<SendLogEntry | null> {
+    return this.sendLog.getSendLogEntry(clientMessageId, recipient);
+  }
+
+  findSendLogEntries(recipient: SendLogDevice, clientTimestamp: number): Promise<SendLogEntry[]> {
+    return this.sendLog.findSendLogEntries(recipient, clientTimestamp);
+  }
+
+  getSendLogRecipients(clientMessageId: string): Promise<SendLogRecipient[]> {
+    return this.sendLog.getSendLogRecipients(clientMessageId);
+  }
+
+  deleteSendLogRecipient(clientMessageId: string, recipient: SendLogDevice): Promise<boolean> {
+    return this.sendLog.deleteSendLogRecipient(clientMessageId, recipient);
+  }
+
+  deleteSendLogRecipientsByTimestamp(
+    recipient: SendLogDevice,
+    clientTimestamps: readonly number[]
+  ): Promise<number> {
+    return this.sendLog.deleteSendLogRecipientsByTimestamp(recipient, clientTimestamps);
+  }
+
+  incrementSendLogResendCount(
+    clientMessageId: string,
+    recipient: SendLogDevice
+  ): Promise<number | null> {
+    return this.sendLog.incrementSendLogResendCount(clientMessageId, recipient);
+  }
+
+  deleteSendLogEntry(clientMessageId: string): Promise<boolean> {
+    return this.sendLog.deleteSendLogEntry(clientMessageId);
+  }
+
+  deleteExpiredSendLog(maxAgeMs: number): Promise<number> {
+    return this.sendLog.deleteExpiredSendLog(maxAgeMs);
+  }
+
+  clearSendLog(): Promise<number> {
+    return this.sendLog.clearSendLog();
+  }
+
+  storeResendJob(job: SendLogResendJob): Promise<void> {
+    return this.sendLog.storeResendJob(job);
+  }
+
+  getResendJob(jobId: string): Promise<SendLogResendJob | null> {
+    return this.sendLog.getResendJob(jobId);
+  }
+
+  getPendingResendJobs(): Promise<SendLogResendJob[]> {
+    return this.sendLog.getPendingResendJobs();
+  }
+
+  completeResendJob(
+    jobId: string,
+    state: Exclude<SendLogResendJobState, 'pending'>
+  ): Promise<void> {
+    return this.sendLog.completeResendJob(jobId, state);
+  }
+
   // ============================================================================
   // Utility
   // ============================================================================
@@ -1279,8 +1506,10 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     this.senderKeyRecords.clear();
     this.skippedSenderKeys.clear();
     this.messageRecords.clear();
+    this.sendLog.clear();
+    this.senderKeyHandoffs.clear();
     this._metadata.clear();
-    this.receivedContent.clear();
+    this.receiveWork.clear();
   }
 
   // ============================================================================

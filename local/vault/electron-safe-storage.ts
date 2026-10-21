@@ -1,6 +1,6 @@
 import { open, readFile, rename, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { SignalProtocolLocalSecretVault } from '../../types/api';
+import type { SecretVaultCustody, SignalProtocolLocalSecretVault } from '../../types/api';
 import { EncryptionError, EncryptionErrorCode } from '../../types/errors';
 import { asBase64 } from '../../types/utils';
 import { base64ToBytes, bytesToBase64 } from '../../encoding';
@@ -90,6 +90,9 @@ function parseSecrets(text: string): Map<string, string> {
 export class ElectronSafeStorageSignalProtocolSecretVault
   implements SignalProtocolLocalSecretVault
 {
+  /** safeStorage encrypts the secrets with a key in the operating system keychain. */
+  readonly custody: SecretVaultCustody = 'os-keychain';
+
   readonly #safeStorage: ElectronSafeStorage;
   readonly #file: string;
   #queue: Promise<unknown> = Promise.resolve();

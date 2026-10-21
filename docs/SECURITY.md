@@ -42,7 +42,7 @@ implement XEdDSA and cannot consume or produce XEdDSA identity signatures.
 
 ### PQXDH and ML-KEM-1024
 
-- Required post-quantum session establishment is the default.
+- Post-quantum session establishment is mandatory.
 - PQXDH uses standardized FIPS 203 ML-KEM-1024 behavior.
 - Public keys and ciphertexts require exactly `0x0A || raw ML-KEM-1024 bytes`.
   Untagged values, the deployed Kyber1024 `0x08` tag, unknown tags, and wrong
@@ -50,9 +50,8 @@ implement XEdDSA and cannot consume or produce XEdDSA identity signatures.
 - Prekey signatures cover a domain-separated context. That context contains the
   locally derived composite identity commitment, algorithm tag, key ID, and
   complete tagged public key.
-- `protocol.postQuantum: 'compatible'` is an explicit opt-in. It permits a
-  classical session only when a peer advertises no PQ material. Malformed or
-  failed PQ processing does not trigger fallback.
+- No classical key agreement exists. A peer that advertises no PQ material
+  fails with `PQXDH_REQUIRED`. Malformed or failed PQ processing fails closed.
 
 The `0x0A` encoding is distinct from Signal Messenger deployments that use
 round-3 Kyber1024 tagged `0x08`.
@@ -138,6 +137,8 @@ requires stronger timing or erasure assurance.
 
 ## Storage Boundary
 
+Reviewed: 2026-10-20.
+
 Local adapters own identity keys, contact trust metadata, prekeys, session
 records, retry records, and group state. The package requires:
 
@@ -146,7 +147,8 @@ records, retry records, and group state. The package requires:
 - that an adapter reject stale-format writes before it replaces current state.
 - that an adapter remove or reject stale persisted session records on read.
 - no authoritative cached identity commitment.
-- authenticated encryption for adapters that persist encrypted records.
+- authenticated encryption of records and metadata values in an adapter that
+  declares a cipher.
 
 Adapter encryption does not compensate for:
 
@@ -156,6 +158,89 @@ Adapter encryption does not compensate for:
 
 Browser IndexedDB and caller-provided React Native storage inherit their host
 application's security boundary.
+
+Each local store declares its `protection`: how it encrypts its data at rest
+(`atRest`) and where it keeps the key (`keyCustody`). Client creation fails
+when the store declares no `protection`, an unknown value, or a cipher
+without a key. The client derives a level from the declaration, and
+[Content Recovery](./PROTOCOL_POLICY.md#content-recovery) uses that level to
+decide whether the store may hold resendable content. The built-in stores
+declare:
+
+| Store | `atRest` | `keyCustody` | Level |
+| --- | --- | --- | --- |
+| Expo or React Native SQLite store, default vault | `file-cipher` | `os-keychain` | `protected` |
+| Node SQLite store with the Electron safeStorage vault | `file-cipher` | `os-keychain` | `protected` |
+| Web SQLite store, default IndexedDB vault | `file-cipher` | `same-origin` | `co-located` |
+| `IndexedDbSignalProtocolStore` | `record-cipher` | `same-origin` | `co-located` |
+| `KeyValueSignalProtocolStore` | `record-cipher` | The custody of its vault | From the vault |
+| Any SQLite store with `encryptionAtRest: false` | `none` | `none` | `none` |
+| `InMemorySignalProtocolStore` | `none` | `none` | `none` |
+
+A SQLite store with another vault, and a key-value store, take the custody
+that the vault declares. A vault that declares no custody counts as
+`same-origin`. An encrypted store with a vault that declares `app-vault` is
+`protected`. That declaration is a claim of the application, and the SDK
+cannot check it.
+
+The record-cipher stores encrypt each metadata value as well as each record.
+Metadata values include group master keys, the device authentication key, and
+outbox intents. Metadata key names stay in clear text in these stores. Some
+names hold an identifier: a group ID, a recipient user ID, or a message ID. A
+reader of the storage can see these identifiers and the number of entries, but
+not the values. An encrypted SQLite store keeps the metadata keys and values
+inside its file cipher.
+
+A record-cipher store encrypts clear metadata values from an earlier SDK when
+it opens. It writes its migration marker last, so a stop during the migration
+is safe. When the storage is full, the store still opens, keeps those values
+clear, and tries again at the next open. An earlier SDK cannot read the
+encrypted values.
+
+Retention and deletion limit how long the store holds content. They do not
+erase it. The SQLite stores do not set `secure_delete`, so a deleted row
+can stay in free pages of the file and in the SQLite journal until SQLite
+writes over it. Flash storage, backups, and the browser storage can also
+keep earlier copies. A reader who has an earlier copy and its key can read
+content that the store deleted. The SDK does not promise erasure.
+
+The store also keeps receive records: the plaintext of each envelope that
+the client decrypted on the Relay subscription path, in
+`receiveIncomingEnvelopes`, or in `processIncomingEnvelope`. A record is
+written in the same transaction as the ratchet or sender key state, so a
+crash before the application handles the message does not lose it. The
+content recovery policy does not cover it, so every store keeps it, also a
+store with the level `none`. The client deletes a record after the
+application handles its content and its E2EE delivery receipt is sent. Content
+that waits 30 days runs `onReceiveExpired`, and the client then deletes
+its record. No setting changes the 30 days.
+A record that waits only for its E2EE delivery receipt is deleted 1 day after
+the receipt becomes due, or at its age when that comes first, with no
+receipt, no `onMessageDecrypted` call, and no `onReceiveExpired` report,
+because the application has its content. When the record is a
+resend, its completion still reports `onDeliveryRecovered` through its gate. `maxItems` and `maxBytes` bound how many records the store holds.
+
+### Storage protection audit
+
+Encryption, key custody, and content recovery are separate properties. This
+table shows how the built-in configurations combine them:
+
+| Configuration | Encryption | Key custody | Content recovery, default `require-protected` | Receive records | Consequence |
+| --- | --- | --- | --- | --- | --- |
+| Expo, React Native, or Node SQLite store with a keychain vault | File cipher | Operating system keychain | Kept at `protected` | File cipher | Full content recovery |
+| Web SQLite store, default IndexedDB vault | File cipher | `same-origin`, co-located | Off unless `allow-co-located-key` | File cipher | Same custody as `IndexedDbSignalProtocolStore`. A switch between them adds no custody strength |
+| `IndexedDbSignalProtocolStore` | Record cipher, AES-256-GCM, on records and metadata values | Key in the same database, co-located | Off unless `allow-co-located-key` | Record cipher | Metadata key names stay in clear text |
+| `KeyValueSignalProtocolStore` | Record cipher, AES-256-GCM, on records and metadata values | The custody of its vault, default `same-origin` | Kept with an `os-keychain` or `app-vault` vault. A `same-origin` vault needs `allow-co-located-key` | Record cipher | Metadata key names stay in clear text |
+| Any SQLite store with `encryptionAtRest: false` | None | None | Off | Clear text on disk | Same exposure as the sessions on that store |
+| `InMemorySignalProtocolStore` | None, process memory only | None | Off | Lost at restart | A message that the client acknowledged but the application did not handle is lost at restart |
+| Custom store | As declared | As declared | From the declaration | As declared | The SDK cannot check the stored bytes |
+
+The client checks only the shape of a `protection` declaration. It cannot
+check that the bytes on disk are encrypted or where the key is. A custom store
+must commit the ratchet state and the receive record in one transaction. It
+must declare `protection` truthfully, and keep the key outside the data store
+when it declares `protected`. Do not restore a store from a backup while the
+client runs. An earlier ratchet state makes later messages fail to decrypt.
 
 Group sender key state never leaves the device. A sender key record holds the
 chain key that every message key on that chain derives from, and the sender's

@@ -54,6 +54,20 @@ The client blocks messaging until the user verifies safety numbers.
 
 ***
 
+### removedAt?
+
+> `optional` **removedAt?**: `number`
+
+The time at which the device left the device list of its user. The
+removal archives the current session and keeps the record, so a message
+that the device sent before its removal still decrypts. A removed device
+gets no fan-out. When the device list names the device again, the
+marker clears and the device returns to fan-out with no current session.
+The stale-record cleanup deletes the record when the marker is older than
+`SesameConfig.maxLatency`. Absent on a device that is listed.
+
+***
+
 ### session
 
 > **session**: [`SessionRecord`](SessionRecord.md) \| `null`

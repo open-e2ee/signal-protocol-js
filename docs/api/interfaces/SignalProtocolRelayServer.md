@@ -11,7 +11,7 @@ Client transport contract for encrypted envelope delivery.
 Responsibilities:
 - Envelope delivery (push to devices via real-time subscription)
 - Device registry (multi-device support, max 5 devices per user)
-- Prekey management (X3DH/PQXDH key exchange)
+- Prekey management (PQXDH key exchange)
 
 The hosted client configures this transport for the OpenE2EE Signal Protocol Relay.
 
@@ -38,7 +38,7 @@ await relay.send({
 
 ## Extends
 
-- `ProvisioningService`.`KeyRotationService`
+- `KeyRotationService`
 
 ## Properties
 
@@ -60,32 +60,6 @@ It reads `stopped` before `subscribe` and after its unsubscribe. The value
 is replaced on each transition and is stable between transitions.
 
 ## Methods
-
-### acknowledgeProvisioning()
-
-> **acknowledgeProvisioning**(`sessionId`): `Promise`\<`void`\>
-
-Acknowledge that the linked device finished persisting its local
-bootstrap state, allowing the backend to clear the reversible
-provisioning session state.
-
-#### Parameters
-
-##### sessionId
-
-`string`
-
-Session ID to finalize
-
-#### Returns
-
-`Promise`\<`void`\>
-
-#### Inherited from
-
-`ProvisioningService.acknowledgeProvisioning`
-
-***
 
 ### clearStaleKemPreKeys()
 
@@ -123,96 +97,6 @@ Number of keys cleared
 
 ***
 
-### completeProvisioning()
-
-> **completeProvisioning**(`sessionId`, `deviceMetadata`): `Promise`\<\{ `deviceId`: `number`; \}\>
-
-Mark provisioning as complete and finalize linked-device registration.
-
-#### Parameters
-
-##### sessionId
-
-`string`
-
-Session ID to complete
-
-##### deviceMetadata
-
-Final device metadata, including the encrypted device name
-
-###### appVersion?
-
-`string`
-
-###### encryptedDeviceName
-
-`ArrayBuffer`
-
-###### osVersion?
-
-`string`
-
-###### platform?
-
-`string`
-
-#### Returns
-
-`Promise`\<\{ `deviceId`: `number`; \}\>
-
-#### Inherited from
-
-`ProvisioningService.completeProvisioning`
-
-***
-
-### connectNewDevice()
-
-> **connectNewDevice**(`sessionId`, `ephemeralPublicKey`, `deviceMetadata`): `Promise`\<`void`\>
-
-Connect a new device to an existing provisioning session.
-
-#### Parameters
-
-##### sessionId
-
-`string`
-
-Provisioning session ID from QR code
-
-##### ephemeralPublicKey
-
-`string`
-
-New device's ECDH public key (Base64)
-
-##### deviceMetadata
-
-Non-sensitive device information available before provisioning completes
-
-###### appVersion?
-
-`string`
-
-###### osVersion?
-
-`string`
-
-###### platform?
-
-`string`
-
-#### Returns
-
-`Promise`\<`void`\>
-
-#### Inherited from
-
-`ProvisioningService.connectNewDevice`
-
-***
-
 ### createGroupState()
 
 > **createGroupState**(`groupId`, `encryptedState`, `authorization`): `Promise`\<`void`\>
@@ -243,66 +127,6 @@ ZK auth credential for anonymous group access
 #### Returns
 
 `Promise`\<`void`\>
-
-***
-
-### createProvisioningSession()
-
-> **createProvisioningSession**(`userId`, `ephemeralPublicKey`): `Promise`\<\{ `sessionId`: `string`; \}\>
-
-Create a new provisioning session.
-
-#### Parameters
-
-##### userId
-
-`string`
-
-User ID creating the session
-
-##### ephemeralPublicKey
-
-`string`
-
-Base64-encoded ECDH public key for key agreement
-
-#### Returns
-
-`Promise`\<\{ `sessionId`: `string`; \}\>
-
-Session ID for the provisioning flow
-
-#### Inherited from
-
-`ProvisioningService.createProvisioningSession`
-
-***
-
-### deleteProvisioningSession()
-
-> **deleteProvisioningSession**(`sessionId`, `userId?`): `Promise`\<`void`\>
-
-Delete/cancel a provisioning session.
-
-#### Parameters
-
-##### sessionId
-
-`string`
-
-Session ID to delete
-
-##### userId?
-
-`string`
-
-#### Returns
-
-`Promise`\<`void`\>
-
-#### Inherited from
-
-`ProvisioningService.deleteProvisioningSession`
 
 ***
 
@@ -691,32 +515,6 @@ Request new observations after intervening work.
 
 ***
 
-### getProvisioningMessage()
-
-> **getProvisioningMessage**(`sessionId`): `Promise`\<\{ `expiresAt`: `number` \| `null`; `message`: `string` \| `null`; `status`: `"completed"` \| `"waiting"` \| `"connected"` \| `"ready"` \| `"linked_pending_ack"` \| `"rolled_back"` \| `"expired"`; \}\>
-
-Get provisioning message for new device.
-
-#### Parameters
-
-##### sessionId
-
-`string`
-
-Provisioning session ID
-
-#### Returns
-
-`Promise`\<\{ `expiresAt`: `number` \| `null`; `message`: `string` \| `null`; `status`: `"completed"` \| `"waiting"` \| `"connected"` \| `"ready"` \| `"linked_pending_ack"` \| `"rolled_back"` \| `"expired"`; \}\>
-
-Status and encrypted message (if ready)
-
-#### Inherited from
-
-`ProvisioningService.getProvisioningMessage`
-
-***
-
 ### issueAuthCredential()
 
 > **issueAuthCredential**(`userId`): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
@@ -912,31 +710,6 @@ Device to remove
 
 ***
 
-### rollbackProvisioning()
-
-> **rollbackProvisioning**(`sessionId`): `Promise`\<`void`\>
-
-Undo a completed provisioning link if the new device fails to persist its
-local bootstrap state after the server-side link succeeded.
-
-#### Parameters
-
-##### sessionId
-
-`string`
-
-Session ID to roll back
-
-#### Returns
-
-`Promise`\<`void`\>
-
-#### Inherited from
-
-`ProvisioningService.rollbackProvisioning`
-
-***
-
 ### rotateIdentityKey()
 
 > **rotateIdentityKey**(`request`): `Promise`\<`void`\>
@@ -959,7 +732,7 @@ selected identity namespace.
 
 ### send()
 
-> **send**(`envelope`): `Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; \}\>
+> **send**(`envelope`): `Promise`\<\{ `deviceSetChecked?`: `boolean`; `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `needsSync?`: `boolean`; `serverTimestamp`: `number`; \}\>
 
 Send encrypted envelope to a device.
 Server pushes to recipient via their subscription.
@@ -974,7 +747,7 @@ Encrypted envelope with targeting info
 
 #### Returns
 
-`Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; \}\>
+`Promise`\<\{ `deviceSetChecked?`: `boolean`; `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `needsSync?`: `boolean`; `serverTimestamp`: `number`; \}\>
 
 Message ID and server timestamp (for delivery receipt matching).
 A relay that reports them also returns `duplicate` and `expiresAt`.
@@ -983,13 +756,19 @@ A relay that reports them also returns `duplicate` and `expiresAt`.
 
 ### sendMultiRecipientUnidentified()?
 
-> `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `deliveryClass`, `recipientUserIds?`, `clientMessageId?`, `operationEpochMilliseconds?`, `contentKind?`): `Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
+> `optional` **sendMultiRecipientUnidentified**(`sentMessageBase64`, `auth`, `timestamp`, `deliveryClass`, `recipientUserIds?`, `clientMessageId?`, `operationEpochMilliseconds?`, `contentKind?`, `deviceSets?`): `Promise`\<\{ `deviceSetChecked?`: `boolean`; `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `refusals?`: `object`[]; `refusedDestinationCount?`: `number`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
 
 Send a multi-recipient sealed sender message.
 
 Client sends the full binary blob (base64-encoded).
 Relay parses client-side, sends structured JSON to mutation.
 Server constructs per-device ReceivedMessage blobs and fans out.
+
+The blob gives each destination device a registration ID. A nonzero ID
+names the registration that the send expects at that device, as
+`Envelope.recipientRegistrationId` does on the identified route. The
+relay refuses that device as `STALE_DEVICE` when its current registration
+differs. A device with registration 0 gets no check.
 
 #### Parameters
 
@@ -1043,45 +822,23 @@ The operation epoch that the relay
 The cleartext label that a relay can count by.
   Without it, the send is a `message`
 
+##### deviceSets?
+
+readonly `object`[]
+
+The device set that the sender declares for each
+  recipient account, sent as the wire field `deviceSets`. A relay that
+  compares refuses the whole post with `DEVICE_SET_MISMATCH` when a
+  declared set differs from the account's device list, and with a
+  declared `STALE_DEVICE` when a registration changed. Each account
+  appears once, with 1 to 5 device IDs. Without it, the relay does not
+  compare
+
 #### Returns
 
-`Promise`\<\{ `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
+`Promise`\<\{ `deviceSetChecked?`: `boolean`; `duplicate?`: `boolean`; `expiresAt?`: `number`; `messageId`: `string`; `refusals?`: `object`[]; `refusedDestinationCount?`: `number`; `serverTimestamp`: `number`; `uuids404`: `string`[]; \}\>
 
 Message ID, server timestamp, and list of unknown recipient UUIDs
-
-***
-
-### sendProvisioningMessage()
-
-> **sendProvisioningMessage**(`sessionId`, `encryptedMessage`, `userId?`): `Promise`\<`void`\>
-
-Send encrypted provisioning message from primary to new device.
-
-#### Parameters
-
-##### sessionId
-
-`string`
-
-Provisioning session ID
-
-##### encryptedMessage
-
-`string`
-
-AES-GCM encrypted payload (JSON string with ciphertext, iv, authTag)
-
-##### userId?
-
-`string`
-
-#### Returns
-
-`Promise`\<`void`\>
-
-#### Inherited from
-
-`ProvisioningService.sendProvisioningMessage`
 
 ***
 

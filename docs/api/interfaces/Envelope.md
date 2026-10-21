@@ -46,13 +46,23 @@ envelope. A retry request names its attempt here.
 
 > `optional` **contentHint?**: [`ContentHint`](../enumerations/ContentHint.md)
 
-Content hint for retry behavior per Signal Protocol.
+The content hint of the sender. It sets what the receiver does when a
+decrypt fails with an error that a resend can repair.
 
-- IMPLICIT: Ephemeral messages (typing indicators, receipts) - silently discard on failure
-- RESENDABLE: Content messages - can trigger retry requests
-- DEFAULT: Standard handling
+- `Default`: the client sends a retry request and runs
+  `onDeliveryError` at once.
+- `Resendable`: the client sends a retry request. It runs
+  `onDeliveryError` one hour after the receive
+  (`RETRY_PLACEHOLDER_DEADLINE_MS`) if the content has not arrived. It
+  runs it at once when a rate limit refuses the request, when the
+  request allowance for the sender is used up, or when the request
+  ends.
+- `Implicit`: disposable content, such as typing indicators and
+  receipts. The client sends no retry request and never runs
+  `onDeliveryError`. A resend that answers a retry request of this
+  device still asks again.
 
-Set by sender, used by recipient to decide retry behavior on decryption failure.
+With no hint, the client uses the `Default` behavior.
 
 ***
 
@@ -62,6 +72,20 @@ Set by sender, used by recipient to decide retry behavior on decryption failure.
 
 Cleartext label that a relay can count by. The SDK sets `receipt` on
 each E2EE receipt that it sends. An envelope without it is a `message`.
+
+***
+
+### declaredDeviceIds?
+
+> `optional` **declaredDeviceIds?**: readonly `number`[]
+
+The device IDs that the sender declares for the target account, sent as
+the wire field `deviceSets` with one entry for `targetUserId`. A sync
+copy to the sender's own account leaves out the sender device. A relay
+that compares refuses the post with `DEVICE_SET_MISMATCH` when the
+declared set differs from the account's device list, and with a
+declared `STALE_DEVICE` when a registration changed. Without it, the
+relay does not compare.
 
 ***
 
@@ -93,7 +117,7 @@ typing_indicator, sender_key_distribution) as encrypted content types. The
 relay contract carries only the outer envelope type.
 
 - ciphertext: Standard Double Ratchet message (contains encrypted Content)
-- prekey_bundle: Session initiation (X3DH/PQXDH)
+- prekey_bundle: Session initiation (PQXDH)
 - sender_key: Group message encrypted with sender keys
 - unidentified_sender: Sealed sender protocol messages
 - retry_request: A request that the original sender device resend a
@@ -123,8 +147,11 @@ it posts the time of its first attempt here.
 
 > `optional` **recipientRegistrationId?**: `number`
 
-Recipient's registration ID from the prekey bundle.
-For PreKeyMessages only. Server validates this matches recipient's current registration.
+The registration ID of the recipient device's current session. All six
+post kinds name it: a direct message, a sync copy, a sender-key
+distribution, a group device message, a receipt, and a retry request.
+A post to a device with no session names none.
+Server validates this matches recipient's current registration.
 If mismatch (device reinstalled), server returns STALE_DEVICE error (equivalent to HTTP 410).
 
 ***

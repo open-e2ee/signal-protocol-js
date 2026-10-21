@@ -18,9 +18,18 @@ import type {
 } from '../../../../keys';
 import type {
   MessageRecord,
-  ReceivedContent,
+  NewSendLogPayload,
+  ReceiveWorkMetadataWrite,
+  ReceiveWorkQuery,
+  ReceiveWorkRecord,
+  ReceiveWorkUsage,
   RetainedKyberPreKey,
   SessionState,
+  SendLogDevice,
+  SendLogEntry,
+  SendLogRecipient,
+  SendLogResendJob,
+  SendLogResendJobState,
   SessionTrustCommit,
 } from '../../../../types';
 import { ProtocolAddress } from '../../../../types/address';
@@ -35,6 +44,8 @@ import * as identity from './identity-keys';
 import * as messageRecords from './message-records';
 import * as metadata from './metadata';
 import * as oneTime from './one-time-prekeys';
+import * as receiveWork from './receive-work';
+import * as sendLog from './send-log';
 import * as sessions from './sessions';
 import { commitSessionTrust } from './session-trust';
 import * as signed from './signed-prekeys';
@@ -274,7 +285,7 @@ export class SqliteKeyStorage {
     return sessions.getSessionCount(this.context);
   }
 
-  // Metadata and received content
+  // Metadata
 
   getMetadata(key: string): Promise<string | null> {
     return metadata.getMetadata(this.context.db, key);
@@ -292,16 +303,30 @@ export class SqliteKeyStorage {
     return metadata.compareAndSetMetadata(this.context.db, key, expected, value);
   }
 
-  getReceivedContent(id: string): Promise<ReceivedContent | null> {
-    return metadata.getReceivedContent(this.context.db, id);
+  // Receive records
+
+  getReceiveWork(workId: string): Promise<ReceiveWorkRecord | null> {
+    return receiveWork.getReceiveWork(this.context.db, workId);
   }
 
-  deleteReceivedContent(id: string): Promise<void> {
-    return metadata.deleteReceivedContent(this.context.db, id);
+  putReceiveWork(record: ReceiveWorkRecord, expectedRevision: number | null): Promise<boolean> {
+    return receiveWork.putReceiveWork(this.context.db, record, expectedRevision);
   }
 
-  deleteExpiredReceivedContent(before: number): Promise<number> {
-    return metadata.deleteExpiredReceivedContent(this.context.db, before);
+  listReceiveWork(query?: ReceiveWorkQuery): Promise<ReceiveWorkRecord[]> {
+    return receiveWork.listReceiveWork(this.context.db, query);
+  }
+
+  receiveWorkUsage(query?: { groupId?: string }): Promise<ReceiveWorkUsage> {
+    return receiveWork.receiveWorkUsage(this.context.db, query);
+  }
+
+  completeReceiveWork(
+    workId: string,
+    expectedRevision: number,
+    metadataWrites?: readonly ReceiveWorkMetadataWrite[]
+  ): Promise<boolean> {
+    return receiveWork.completeReceiveWork(this.context.db, workId, expectedRevision, metadataWrites);
   }
 
   // Contact identities
@@ -403,12 +428,94 @@ export class SqliteKeyStorage {
     return messageRecords.deleteMessageRecordsForSession(this.context, sessionId);
   }
 
+  rewriteMessageRecords(rewrite: (record: MessageRecord) => string | null): Promise<number> {
+    return messageRecords.rewriteMessageRecords(this.context, rewrite);
+  }
+
   getMessageRecordCount(): Promise<number> {
     return messageRecords.getMessageRecordCount(this.context);
   }
 
   deleteMessageRecord(sessionId: string, timestamp: number): Promise<void> {
     return messageRecords.deleteMessageRecord(this.context, sessionId, timestamp);
+  }
+
+  // Send log
+
+  storeSendLogEntry(payload: NewSendLogPayload, recipients: readonly SendLogDevice[]): Promise<void> {
+    return sendLog.storeSendLogEntry(this.context, payload, recipients);
+  }
+
+  appendSendLogRecipients(
+    clientMessageId: string,
+    recipients: readonly SendLogDevice[]
+  ): Promise<void> {
+    return sendLog.appendSendLogRecipients(this.context, clientMessageId, recipients);
+  }
+
+  markSendLogComplete(clientMessageId: string): Promise<void> {
+    return sendLog.markSendLogComplete(this.context, clientMessageId);
+  }
+
+  getSendLogEntry(clientMessageId: string, recipient: SendLogDevice): Promise<SendLogEntry | null> {
+    return sendLog.getSendLogEntry(this.context, clientMessageId, recipient);
+  }
+
+  findSendLogEntries(recipient: SendLogDevice, clientTimestamp: number): Promise<SendLogEntry[]> {
+    return sendLog.findSendLogEntries(this.context, recipient, clientTimestamp);
+  }
+
+  getSendLogRecipients(clientMessageId: string): Promise<SendLogRecipient[]> {
+    return sendLog.getSendLogRecipients(this.context, clientMessageId);
+  }
+
+  deleteSendLogRecipient(clientMessageId: string, recipient: SendLogDevice): Promise<boolean> {
+    return sendLog.deleteSendLogRecipient(this.context, clientMessageId, recipient);
+  }
+
+  deleteSendLogRecipientsByTimestamp(
+    recipient: SendLogDevice,
+    clientTimestamps: readonly number[]
+  ): Promise<number> {
+    return sendLog.deleteSendLogRecipientsByTimestamp(this.context, recipient, clientTimestamps);
+  }
+
+  incrementSendLogResendCount(
+    clientMessageId: string,
+    recipient: SendLogDevice
+  ): Promise<number | null> {
+    return sendLog.incrementSendLogResendCount(this.context, clientMessageId, recipient);
+  }
+
+  deleteSendLogEntry(clientMessageId: string): Promise<boolean> {
+    return sendLog.deleteSendLogEntry(this.context, clientMessageId);
+  }
+
+  deleteExpiredSendLog(maxAgeMs: number): Promise<number> {
+    return sendLog.deleteExpiredSendLog(this.context, maxAgeMs);
+  }
+
+  clearSendLog(): Promise<number> {
+    return sendLog.clearSendLog(this.context);
+  }
+
+  storeResendJob(job: SendLogResendJob): Promise<void> {
+    return sendLog.storeResendJob(this.context, job);
+  }
+
+  getResendJob(jobId: string): Promise<SendLogResendJob | null> {
+    return sendLog.getResendJob(this.context, jobId);
+  }
+
+  getPendingResendJobs(): Promise<SendLogResendJob[]> {
+    return sendLog.getPendingResendJobs(this.context);
+  }
+
+  completeResendJob(
+    jobId: string,
+    state: Exclude<SendLogResendJobState, 'pending'>
+  ): Promise<void> {
+    return sendLog.completeResendJob(this.context, jobId, state);
   }
 
   // Account

@@ -70,6 +70,12 @@ export class SignalProtocolClientState {
    */
   private readonly retryResponseCounts = new Map<string, number>();
 
+  /**
+   * The groups whose refused resends the client logged: groups with no
+   * source of current membership. Each is logged once.
+   */
+  private readonly refusedGroupResends = new Set<string>();
+
   // ============================================================================
   // Retry Rate Limiting State
   // ============================================================================
@@ -106,7 +112,10 @@ export class SignalProtocolClientState {
    * Get retry response state for retry operations
    */
   getRetryResponseState(): RetryResponseState {
-    return { retryResponseCounts: this.retryResponseCounts };
+    return {
+      retryResponseCounts: this.retryResponseCounts,
+      refusedGroupResends: this.refusedGroupResends,
+    };
   }
 
   /**
@@ -154,6 +163,7 @@ export class SignalProtocolClientState {
    */
   clearAll(): void {
     this.retryResponseCounts.clear();
+    this.refusedGroupResends.clear();
 
     this.lastPreKeyRotationTime = 0;
 
@@ -167,6 +177,7 @@ export class SignalProtocolClientState {
   clearForStop(): void {
     this.lastPreKeyRotationTime = 0;
     this.retryResponseCounts.clear();
+    this.refusedGroupResends.clear();
     this.retryRateLimitCounts.clear();
 
     // Drop the pending receipt batches and their timers

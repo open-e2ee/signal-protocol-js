@@ -49,3 +49,37 @@ export function markRelayDeviceRefusal<T extends Error>(error: T, refusal: Relay
 export function relayDeviceRefusal(error: unknown): RelayDeviceRefusal | undefined {
   return error !== null && typeof error === 'object' ? refusals.get(error) : undefined;
 }
+
+/**
+ * True when the relay refused one direct post because the registration of
+ * its device changed: a marked `STALE_DEVICE` refusal, or a relay error whose
+ * data names `STALE_DEVICE`.
+ */
+export function isStaleDeviceRefusal(error: unknown): boolean {
+  if (relayDeviceRefusal(error)?.code === 'STALE_DEVICE') return true;
+  if (error === null || typeof error !== 'object' || !('data' in error)) return false;
+  const { data } = error as { data: unknown };
+  return (
+    data !== null &&
+    typeof data === 'object' &&
+    (data as { code?: unknown }).code === 'STALE_DEVICE'
+  );
+}
+
+/**
+ * The refresh of a stale session failed for a transient reason: the bundle
+ * fetch or the new session failed. A failed fetch keeps the stale session.
+ * The error carries no relay code, so a receipt and a retry request retry
+ * their post, and the next stale refusal refreshes again.
+ */
+export class StaleSessionRefreshError extends Error {
+  override readonly name = 'StaleSessionRefreshError';
+
+  constructor(
+    readonly userId: string,
+    readonly deviceId: number,
+    cause: unknown
+  ) {
+    super(`The session refresh of device ${deviceId} failed`, { cause });
+  }
+}

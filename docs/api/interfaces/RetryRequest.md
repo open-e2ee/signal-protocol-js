@@ -11,6 +11,16 @@ Unencrypted message requesting sender to resend with updated session state
 
 ## Properties
 
+### failedClientMessageId?
+
+> `optional` **failedClientMessageId?**: `string`
+
+The client message ID of the failed message: the ID that its sender
+chose. The requester sets it when its relay delivered that ID, as a
+relay that assigns its own envelope ID does.
+
+***
+
 ### failedTimestamp
 
 > **failedTimestamp**: `number`
@@ -45,7 +55,8 @@ Sender ratchet key from the failed message (1:1 messages only).
 Allows the sender to verify that a session-reset request targets the active
 ratchet.
 
-Undefined for sender-key/group failures.
+Undefined for sender-key/group failures. A request without it names a
+failed sender-key message.
 
 ***
 

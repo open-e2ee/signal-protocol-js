@@ -159,7 +159,7 @@ export interface DoubleRatchetState {
 export interface DoubleRatchetConfig {
   /** Maximum messages to skip in a single chain (DoS protection) */
   maxSkippedMessages: number;
-  /** Maximum total message keys to store */
+  /** Maximum skipped message keys to store per receiver chain */
   maxMessageKeysStored: number;
   /** Maximum age of stored message keys (ms) */
   maxMessageKeyAge: number;
@@ -171,7 +171,7 @@ export interface DoubleRatchetConfig {
  * | Parameter | Value | Rationale |
  * |-----------|-------|--------|
  * | maxSkippedMessages | 25000 | Bounded forward progress |
- * | maxMessageKeysStored | 2000 | Bounded out-of-order storage |
+ * | maxMessageKeysStored | 2000 | Bounded out-of-order storage per receiver chain |
  * | maxMessageKeyAge | 7 days | Bounded retained key lifetime |
  */
 export const DEFAULT_RATCHET_CONFIG: DoubleRatchetConfig = {
@@ -200,11 +200,9 @@ export const MAX_RECEIVER_CHAINS = 5;
 export const MAX_SKIP = 25000;
 
 /**
- * Maximum total message keys to store across all receiver chains.
- *
- * This is a global limit, not per-chain. Past it, a FIFO strategy evicts the
- * oldest keys.
- *
+ * Maximum skipped message keys to store in one receiver chain, as the reference implementation
+ * keeps `MAX_MESSAGE_KEYS`. Past it, the key with the lowest index of that chain
+ * leaves. `MAX_RECEIVER_CHAINS` bounds the number of chains.
  */
 export const MAX_MESSAGE_KEYS = 2000;
 

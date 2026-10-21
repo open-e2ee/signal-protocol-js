@@ -62,6 +62,35 @@ when the app provides media lifecycle callbacks in `config.media`.
 
 ## Accessors
 
+### contentRecoveryStatus
+
+#### Get Signature
+
+> **get** **contentRecoveryStatus**(): [`ContentRecoveryStatus`](../interfaces/ContentRecoveryStatus.md)
+
+Whether this client keeps resendable content to answer retry requests.
+
+##### See
+
+SignalProtocolClient.contentRecoveryStatus
+
+##### Returns
+
+[`ContentRecoveryStatus`](../interfaces/ContentRecoveryStatus.md)
+
+Whether this client keeps resendable content to answer retry requests.
+
+The client decides at creation, from the `protection` that the local
+store declares and from `protocol.contentRecovery`. When `enabled` is
+false, `reason` says why, and the client deletes any resendable content
+that the store already holds.
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`contentRecoveryStatus`](../interfaces/SignalProtocolClient.md#contentrecoverystatus)
+
+***
+
 ### isSealedSenderEnabled
 
 #### Get Signature
@@ -354,6 +383,32 @@ Use only for local development or when resetting the app.
 
 ***
 
+### completeReceive()
+
+> **completeReceive**(`messageId`): `Promise`\<`void`\>
+
+Complete a helper receive: delete its receive record and mark its
+envelope processed. Call it after the application stored the content
+of a `processed` outcome. An unknown or completed message ID is a no-op.
+
+#### Parameters
+
+##### messageId
+
+`string`
+
+The `messageId` of the `processed` outcome
+
+#### Returns
+
+`Promise`\<`void`\>
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`completeReceive`](../interfaces/SignalProtocolClient.md#completereceive)
+
+***
+
 ### confirmSafetyNumber()
 
 > **confirmSafetyNumber**(`confirmation`): `Promise`\<`void`\>
@@ -506,6 +561,53 @@ Decline this account's ACI- or PNI-keyed pending invitation.
 
 ***
 
+### decryptEnvelope()
+
+> **decryptEnvelope**(`envelope`): `Promise`\<\{ `groupContext?`: [`GroupContentContext`](../interfaces/GroupContentContext.md); `plaintext`: `string`; \}\>
+
+Decrypt one envelope with no receive record.
+
+The decrypt installs a sender key distribution that the content
+carries, and checks that a managed group context binds to the group of
+the transport. It stores no content, decides no group state, and sends
+no receipt.
+
+Warning: the decrypt spends the ratchet step. When the application
+loses the returned plaintext, no later decrypt of the envelope gives it
+again. Use `processIncomingEnvelope`, which keeps the content until the
+application completes the receive.
+
+#### Parameters
+
+##### envelope
+
+[`IncomingEnvelope`](../interfaces/IncomingEnvelope.md)
+
+The encrypted message envelope
+
+#### Returns
+
+`Promise`\<\{ `groupContext?`: [`GroupContentContext`](../interfaces/GroupContentContext.md); `plaintext`: `string`; \}\>
+
+The plaintext as its sender gave it, and the group context of
+  managed-group content
+
+#### Throws
+
+EncryptionError when the decrypt fails, and INVALID_CIPHERTEXT
+  for a `retry_request` envelope, identified or sealed
+
+#### Throws
+
+GroupReceiveRefusedError when the group context is malformed or
+  names another group than the transport
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`decryptEnvelope`](../interfaces/SignalProtocolClient.md#decryptenvelope)
+
+***
+
 ### decryptFile()
 
 > **decryptFile**(`remoteAddress`, `encryptedBlob`, `encryptedKey`): `Promise`\<`Blob`\>
@@ -574,7 +676,7 @@ Array of decrypted file blobs in the same order
 
 ***
 
-### decryptGroupMessage()
+### ~~decryptGroupMessage()~~
 
 > **decryptGroupMessage**(`groupId`, `senderId`, `senderDeviceId`, `framedMessage`): `Promise`\<`string`\>
 
@@ -582,6 +684,10 @@ Decrypt a group message from a sender
 
 Use this to decrypt messages from other group members.
 You must process the sender's distribution message first.
+
+The message passes the group decision of `processIncomingEnvelope`.
+Content whose group state must update first stays stored, and a later
+call with the same message decides it with no second decrypt.
 
 #### Parameters
 
@@ -614,6 +720,29 @@ Framed SenderKeyMessage bytes
 `Promise`\<`string`\>
 
 Decrypted plaintext
+
+#### Deprecated
+
+Use `processIncomingEnvelope`, which returns a receive
+  outcome and keeps the content until the application completes the
+  receive. This method completes the receive before it returns, so a
+  plaintext that the application loses is gone.
+
+#### Throws
+
+GroupReceiveUnavailableError when the group state of the content
+  is not current. Its `messageId` names the stored receive. Call again
+  later with the same message.
+
+#### Throws
+
+GroupReceiveRefusedError when the client refuses the content
+
+#### Throws
+
+EncryptionError MESSAGE_DUPLICATE for a message that this client
+  processed, or that carries no content, and STORAGE_QUOTA_EXCEEDED when
+  the receive queue has no room
 
 #### Example
 
@@ -776,6 +905,40 @@ Remote device's protocol address
 #### Implementation of
 
 [`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`deleteSession`](../interfaces/SignalProtocolClient.md#deletesession)
+
+***
+
+### discardPendingReceive()
+
+> **discardPendingReceive**(`messageId`): `Promise`\<[`PendingReceive`](../interfaces/PendingReceive.md) \| `null`\>
+
+Remove one stored receive that the application gives up on, such as a
+receive whose `onMessageDecrypted` hook fails at each start. The client
+deletes the receive and marks its envelope processed, so a redelivery
+of the envelope is a duplicate. The call sends no receipt, calls no
+hook, and runs no `onReceiveExpired`. A hook call that already started
+for the receive still runs, and no receipt follows it.
+
+#### Parameters
+
+##### messageId
+
+`string`
+
+The `messageId` of a receive that
+  `listPendingReceives` lists
+
+#### Returns
+
+`Promise`\<[`PendingReceive`](../interfaces/PendingReceive.md) \| `null`\>
+
+The removed receive, or null when the client removed nothing:
+  no listed receive has the ID, or another path wrote the receive during
+  the call and again after one read
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`discardPendingReceive`](../interfaces/SignalProtocolClient.md#discardpendingreceive)
 
 ***
 
@@ -1161,6 +1324,30 @@ Delegates to PreKeyOps.forceCompleteKeyReset for implementation.
 
 ***
 
+### forgetSentContent()
+
+> **forgetSentContent**(`clientMessageId`): `Promise`\<`boolean`\>
+
+#### Parameters
+
+##### clientMessageId
+
+`string`
+
+#### Returns
+
+`Promise`\<`boolean`\>
+
+#### See
+
+SignalProtocolClient.forgetSentContent
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`forgetSentContent`](../interfaces/SignalProtocolClient.md#forgetsentcontent)
+
+***
+
 ### getGroupSenderKeyDistribution()
 
 > **getGroupSenderKeyDistribution**(`groupId`): `Promise`\<[`SenderKeyDistributionMessage`](../interfaces/SenderKeyDistributionMessage.md) \| `null`\>
@@ -1262,6 +1449,30 @@ Get client's identity public key
 `Promise`\<[`PublicKey`](../type-aliases/PublicKey.md)\>
 
 Public key for this device's identity
+
+***
+
+### getPendingRecipients()
+
+> **getPendingRecipients**(`clientMessageId`): `Promise`\<`SendLogDevice`[]\>
+
+#### Parameters
+
+##### clientMessageId
+
+`string`
+
+#### Returns
+
+`Promise`\<`SendLogDevice`[]\>
+
+#### See
+
+SignalProtocolClient.getPendingRecipients
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`getPendingRecipients`](../interfaces/SignalProtocolClient.md#getpendingrecipients)
 
 ***
 
@@ -1492,6 +1703,51 @@ Leave a group.
 
 ***
 
+### listPendingReceives()
+
+> **listPendingReceives**(`query?`): `Promise`\<\{ `items`: [`PendingReceive`](../interfaces/PendingReceive.md)[]; `next?`: `string`; \}\>
+
+List the stored receives in arrival order, one page at a time. A receive
+whose content the application has, and whose receipt waits, is not
+listed.
+
+#### Parameters
+
+##### query?
+
+`ready` lists only the helper receives whose content
+  waits for `completeReceive`. `after` is the `next` value of the page
+  before. `limit` is the page size, 100 by default.
+
+###### after?
+
+`string`
+
+###### limit?
+
+`number`
+
+###### ready?
+
+`boolean`
+
+#### Returns
+
+`Promise`\<\{ `items`: [`PendingReceive`](../interfaces/PendingReceive.md)[]; `next?`: `string`; \}\>
+
+The page, and `next` when a later page can follow
+
+#### Throws
+
+Error when `after` is not a `next` value or `limit` is not a
+  positive integer
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`listPendingReceives`](../interfaces/SignalProtocolClient.md#listpendingreceives)
+
+***
+
 ### markAsRead()
 
 > **markAsRead**(`messageId`): `Promise`\<`void`\>
@@ -1582,50 +1838,49 @@ await signal.processGroupSenderKeyDistribution(
 
 ### processIncomingEnvelope()
 
-> **processIncomingEnvelope**(`envelope`, `options?`): `Promise`\<`string`\>
+> **processIncomingEnvelope**(`envelope`, `options?`): `Promise`\<[`ReceiveOutcome`](../type-aliases/ReceiveOutcome.md)\>
 
 Process an incoming encrypted message envelope.
 
-Unified entry point for both foreground (relay) and background (HTTP) message processing.
-Handles decryption and automatically sends SESAME retry requests on retryable failures.
+The receive helper for an application that pulls envelopes itself. It
+decrypts the envelope and commits its content as a receive record with
+the ratchet step, then decides the group of the content. The content
+stays recoverable until the application calls `completeReceive`, or
+until `onPersist` resolves.
 
-This method:
-1. Decodes base64 ciphertext from the envelope
-2. Decrypts message using Double Ratchet
-3. On retryable error: sends retry request via relay or options callback
-4. Re-throws error for caller to handle
+The outcome tells the caller what to do with the envelope:
+
+- `processed`: give the content to the application, then acknowledge
+  the envelope. A redelivery of the envelope before `completeReceive`
+  returns the same outcome again with no second decrypt.
+- `pending`: the content is stored, and its group state must update
+  first. Acknowledge the envelope. The client decides the content again
+  when the group updates, and `listPendingReceives({ ready: true })`
+  then lists it.
+- `duplicate`: this client processed the envelope, or the application
+  already has the content of the failed envelope of a retry request.
+  The client acknowledged the envelope.
+- `null-message`: the envelope carries no content. The client consumed
+  it and acknowledged it. A null message for a failed envelope marks
+  that envelope processed, but a content resend for it that comes later
+  still gives its content.
+- `denied`: the client refused the content. The ratchet step is spent,
+  and the client acknowledged the envelope. Content from another
+  account that carries a sync message is denied in any envelope.
+- `refused`: the receive queue has no room. Nothing is decrypted or
+  stored. Do not acknowledge the envelope. Give it again later.
+
+On a retryable decrypt failure the client sends a SESAME retry request,
+which acknowledges the envelope, and throws the error. A message with
+the Implicit content hint gets no request and is acknowledged.
 
 A `retry_request` envelope holds no plaintext. This method rejects it
 before decryption and sends no retry request. Give it to
 `receiveIncomingEnvelopes`, which handles it.
 
-A failed envelope that this client asked a resend for, and each resend
-or null message for it, gives plaintext at most once on both receive
-paths. When this client processed the envelope, or the application
-already has that content, this method acknowledges the envelope and
-throws MESSAGE_DUPLICATE with no decrypt.
-
-A null message carries no content. The client consumes a null message
-when the content adapter reports `nullMessage: true`, and a custom
-adapter must report it for its own null encoding. This method never
-returns a null message. It marks the null message processed,
-acknowledges it and throws MESSAGE_DUPLICATE. A null message for a
-failed envelope marks that envelope processed, so a redelivery of it
-is dropped, but a content resend for it that comes later still gives
-its plaintext.
-
-A resend or null message that fails to decrypt, or whose seal fails to
-open, asks again for its failed envelope under the same retry ID. When
-the processed record of the failed envelope fails to store after a
-decrypt, the client writes a warning with the behavior
-RETRY_FULFILL_WRITE_FAILED, as on every receive path, and this method
-returns the plaintext. A redelivery of the failed envelope or of
-another family member can then give the content again. When a
-processed record of a null message or of its failed envelope fails to
-store, the client writes a warning with the behavior
-RETRY_NULL_WRITE_FAILED, as on every receive path, and this method
-still throws MESSAGE_DUPLICATE. A redelivery of the failed envelope
-can then give the content.
+A resend that brings only the sender key of a failed group message
+gives no content. It does not mark the failed envelope processed, so a
+redelivery of that envelope decrypts with the key.
 
 #### Parameters
 
@@ -1639,13 +1894,14 @@ The encrypted message envelope
 
 [`ProcessEnvelopeOptions`](../interfaces/ProcessEnvelopeOptions.md)
 
-Transport callbacks for background (no relay) scenarios
+Transport callbacks for background (no relay)
+  scenarios, and `onPersist`
 
 #### Returns
 
-`Promise`\<`string`\>
+`Promise`\<[`ReceiveOutcome`](../type-aliases/ReceiveOutcome.md)\>
 
-Decrypted plaintext
+The receive outcome
 
 #### Throws
 
@@ -1653,13 +1909,8 @@ EncryptionError after sending retry request if decryption fails
 
 #### Throws
 
-EncryptionError INVALID_CIPHERTEXT for a `retry_request` envelope
-
-#### Throws
-
-EncryptionError MESSAGE_DUPLICATE when this client processed the
-  envelope, the application already has the content of the failed
-  envelope of a retry request, or the envelope is a null message
+EncryptionError INVALID_CIPHERTEXT for a `retry_request` envelope,
+  identified or sealed
 
 #### Implementation of
 
@@ -1669,7 +1920,7 @@ EncryptionError MESSAGE_DUPLICATE when this client processed the
 
 ### processIncomingEnvelopes()
 
-> **processIncomingEnvelopes**(`envelopes`, `options?`): `Promise`\<(\{ `envelope`: [`IncomingEnvelope`](../interfaces/IncomingEnvelope.md); `plaintext`: `string`; \} \| \{ `envelope`: [`IncomingEnvelope`](../interfaces/IncomingEnvelope.md); `error`: `Error`; \})[]\>
+> **processIncomingEnvelopes**(`envelopes`, `options?`): `Promise`\<(\{ `envelope`: [`IncomingEnvelope`](../interfaces/IncomingEnvelope.md); `outcome`: [`ReceiveOutcome`](../type-aliases/ReceiveOutcome.md); \} \| \{ `envelope`: [`IncomingEnvelope`](../interfaces/IncomingEnvelope.md); `error`: `Error`; \})[]\>
 
 Process multiple incoming encrypted message envelopes.
 
@@ -1694,21 +1945,21 @@ Array of encrypted message envelopes
 
 [`ProcessEnvelopeOptions`](../interfaces/ProcessEnvelopeOptions.md)
 
-Transport callbacks for background scenarios
+Transport callbacks for background scenarios, and `onPersist`
 
 #### Returns
 
-`Promise`\<(\{ `envelope`: [`IncomingEnvelope`](../interfaces/IncomingEnvelope.md); `plaintext`: `string`; \} \| \{ `envelope`: [`IncomingEnvelope`](../interfaces/IncomingEnvelope.md); `error`: `Error`; \})[]\>
+`Promise`\<(\{ `envelope`: [`IncomingEnvelope`](../interfaces/IncomingEnvelope.md); `outcome`: [`ReceiveOutcome`](../type-aliases/ReceiveOutcome.md); \} \| \{ `envelope`: [`IncomingEnvelope`](../interfaces/IncomingEnvelope.md); `error`: `Error`; \})[]\>
 
-Array of results, each either success (plaintext) or failure (error)
+Array of results, each either the receive outcome or the error
 
 #### Example
 
 ```typescript
 const results = await signal.processIncomingEnvelopes(pendingMessages);
 for (const result of results) {
-  if ('plaintext' in result) {
-    handleDecryptedMessage(result.envelope, result.plaintext);
+  if ('outcome' in result) {
+    handleReceiveOutcome(result.envelope, result.outcome);
   } else {
     handleDecryptionError(result.envelope, result.error);
   }
@@ -1718,6 +1969,38 @@ for (const result of results) {
 #### See
 
 https://signal.org/docs/specifications/sesame/ Section 3.4
+
+***
+
+### processPendingReceives()
+
+> **processPendingReceives**(`options?`): `Promise`\<\{ `processed`: `number`; `remaining`: `number`; \}\>
+
+Run one pass of the receive queue now, and stop between records at the
+deadline. A host that wakes for a push calls it after it acknowledged
+the pulled envelopes.
+
+#### Parameters
+
+##### options?
+
+`deadlineMs` bounds the pass. With no deadline, the
+  pass runs until each record is handled.
+
+###### deadlineMs?
+
+`number`
+
+#### Returns
+
+`Promise`\<\{ `processed`: `number`; `remaining`: `number`; \}\>
+
+The receives that the pass handled, and the receives that
+  still wait
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`processPendingReceives`](../interfaces/SignalProtocolClient.md#processpendingreceives)
 
 ***
 
@@ -1755,6 +2038,11 @@ Processed IDs are ready for transport acknowledgment. They include
 each envelope that the client drops as a duplicate, and each null
 message that the content adapter reports, which the client consumes
 and never gives to onMessageDecrypted.
+
+The content reaches onMessageDecrypted in a later pass of the receive
+queue, after this call returns. After `stop()`, the content waits for
+the next start of the queue from `startRelaySubscription`, or for
+`processPendingReceives`.
 
 #### Parameters
 
@@ -1855,7 +2143,7 @@ Remove a member from a group. Triggers sender key rotation.
 
 Explicitly rotate this account's relay identity using a caller-authenticated
 compare-and-swap commitment, then publish fresh prekeys for that namespace.
-Normal sync and linked-device provisioning never call this operation.
+Normal sync and the managed device link never call this operation.
 
 #### Parameters
 
@@ -2737,10 +3025,10 @@ const signal = await DefaultSignalProtocolClient.create('user-123', {
   storage,
 });
 
-// Linked device; storage must already contain provisioned identity material.
+// Linked device; storage must already contain the account identity.
 const signal = await DefaultSignalProtocolClient.create('user-123', {
   deviceId: 2,
-  storage: provisionedLinkedDeviceStorage
+  storage: linkedDeviceStorage
 });
 
 // With an application-owned authenticated relay transport.

@@ -55,7 +55,6 @@ An `SignalProtocolRelayServer` implementation must preserve the package’s prot
 - prekey bundle fetch
 - device registration and listing
 - envelope delivery
-- linked-device provisioning state
 - stale-device and unlink cleanup
 
 ## Security Invariants

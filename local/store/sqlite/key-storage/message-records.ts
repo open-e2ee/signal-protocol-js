@@ -14,15 +14,21 @@ import {
   deleteExpiredMessageRecords as modelDeleteExpiredMessageRecords,
   deleteMessageRecord as modelDeleteMessageRecord,
   deleteMessageRecordsBySessionId,
+  getAllMessageRecords,
   getMessageRecord as modelGetMessageRecord,
+  updateMessageRecordPlaintext,
 } from '../models';
 import { keyStorageError, type KeyStorageContext } from './context';
 
 /**
- * Store a message record for potential retry resending
+ * Store a message record for a later retry resend. A record with the same
+ * session and timestamp is replaced, and the replace keeps the first
+ * `created_at`.
  *
- * Called after successful encryption to store the plaintext.
- * Record is deleted after confirmed delivery or expiration.
+ * The client writes a record after encryption only when
+ * `protocol.contentRecovery` keeps content. It deletes the record after an
+ * E2EE delivery receipt from the recipient device, and after the content
+ * retention: 14 days from `created_at` by default, at most 30.
  */
 export async function storeMessageRecord(
   ctx: KeyStorageContext,
@@ -36,7 +42,8 @@ export async function storeMessageRecord(
       recipientDeviceId: record.recipientDeviceId,
       plaintext: record.plaintext,
       sessionStateId: record.sessionStateId,
-      createdAt: record.createdAt,
+      // A replace keeps the stored created_at, so this is the first write.
+      createdAt: Date.now(),
     });
     await messageRecordModel.save(ctx.db);
 
@@ -138,6 +145,45 @@ export async function deleteMessageRecordsForSession(
   }
 }
 
+/**
+ * Rewrite the plaintext of each message record. A null result deletes the
+ * record, and the same plaintext leaves it as it is. The read and the
+ * writes run in one transaction, so no write lands between them.
+ */
+export async function rewriteMessageRecords(
+  ctx: KeyStorageContext,
+  rewrite: (record: MessageRecord) => string | null
+): Promise<number> {
+  try {
+    const changed = await ctx.db.transaction(async (tx) => {
+      let count = 0;
+      for (const model of await getAllMessageRecords(tx)) {
+        const record = model.toStoredMessageRecord();
+        const plaintext = rewrite(record);
+        if (plaintext === record.plaintext) continue;
+        if (plaintext === null) {
+          await modelDeleteMessageRecord(tx, record.sessionId, record.timestamp);
+        } else {
+          await updateMessageRecordPlaintext(tx, record.sessionId, record.timestamp, plaintext);
+        }
+        count += 1;
+      }
+      return count;
+    });
+
+    if (changed > 0) {
+      ctx.logger.info('Rewrote message records', {
+        category: 'KeyStorage',
+        data: { changed },
+      });
+    }
+
+    return changed;
+  } catch (error) {
+    throw keyStorageError('Failed to rewrite message records', error);
+  }
+}
+
 export async function getMessageRecordCount(ctx: KeyStorageContext): Promise<number> {
   try {
     return await countMessageRecords(ctx.db);
@@ -149,7 +195,9 @@ export async function getMessageRecordCount(ctx: KeyStorageContext): Promise<num
 /**
  * Delete a message record by session and timestamp.
  *
- * Called when processing delivery receipts to clean up confirmed messages.
+ * The client calls it after an E2EE delivery receipt from the recipient
+ * device, for an expired record at a retry request, and for a record that
+ * it must not resend: a null message, or a sender key distribution alone.
  * Per Signal Protocol, messages are identified by client timestamp.
  */
 export async function deleteMessageRecord(

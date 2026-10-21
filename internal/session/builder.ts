@@ -1,11 +1,11 @@
 /**
- * Session Establishment - Orchestrates X3DH/PQXDH + Session Creation
+ * Session Establishment - Orchestrates PQXDH + Session Creation
  *
  * Handles the session establishment phase of the Signal Protocol.
  * Creates session states for both initiator (Alice) and responder (Bob).
  *
  * This module orchestrates:
- * - Key agreement via handshake.ts (X3DH/PQXDH)
+ * - PQXDH key agreement via handshake.ts
  * - Initial DH ratchet step for initiator
  * - Session state creation via factory.ts
  *
@@ -31,7 +31,7 @@ import type {
 import { asBase64 } from '../../types/utils';
 
 /**
- * SessionBuilder - Handles session establishment via X3DH/PQXDH
+ * SessionBuilder - Handles session establishment via PQXDH
  *
  * This class provides static methods for creating initiator and responder
  * session state.
@@ -69,10 +69,10 @@ export class SessionBuilder {
    * Build a session as initiator (Alice)
    *
    * Implements Signal Protocol Section 3.3 RatchetInitAlice (with PQXDH extension).
-   * Completes the X3DH/PQXDH key agreement and creates the initial session state.
+   * Completes the PQXDH key agreement and creates the initial session state.
    *
    * Steps:
-   * 1. Complete the X3DH/PQXDH key agreement (delegates to handshake module)
+   * 1. Complete the PQXDH key agreement (delegates to handshake module)
    * 2. Take the initial DH ratchet step (per RatchetInitAlice)
    * 3. Create session state using factory
    * 4. Preserve original SK for Triple Ratchet initialization
@@ -107,7 +107,7 @@ export class SessionBuilder {
     });
 
     // ========================================================================
-    // Step 1: Key Agreement (X3DH or PQXDH)
+    // Step 1: Key Agreement (PQXDH)
     // ========================================================================
 
     const keyAgreementResult = await performKeyAgreement(identityKeyPair, prekeyBundle, {
@@ -125,7 +125,6 @@ export class SessionBuilder {
       kemOneTimePreKeyCiphertext,
       usedKemOneTimePreKeyId,
       usedPQXDH,
-      usedClassicalFallback,
     } = keyAgreementResult;
 
     // ========================================================================
@@ -156,17 +155,17 @@ export class SessionBuilder {
       data: { operation: 'init-alice', step: 'dh-ratchet' },
     });
 
-    // Use the same ephemeral key from X3DH as our initial DH ratchet key (DHs).
+    // Use the same ephemeral key from PQXDH as our initial DH ratchet key (DHs).
     // The PreKeyMessage carries this ephemeral key, so the responder can
     // derive the same shared secret.
     const dhOutput = await CryptoUtils.computeSharedSecret(
-      asBase64(ephemeralKey.privateKey), // DHs (Alice's ephemeral key from X3DH)
+      asBase64(ephemeralKey.privateKey), // DHs (Alice's ephemeral key from PQXDH)
       prekeyBundle.ecSignedPreKey.publicKey // DHr (Bob's signed prekey)
     );
 
     // Call KDF_RK to derive new root key and sending chain key
     const { rootKey: ratchetedRootKey, chainKey: sendingChainKey } = await CryptoUtils.kdfRootKey(
-      initialRootKey, // SK from X3DH
+      initialRootKey, // SK from PQXDH
       dhOutput
     );
 
@@ -188,7 +187,7 @@ export class SessionBuilder {
 
     // Alice's receiving chain key (CKr):
     // Per spec, Bob has not sent anything yet, so CKr can stay undefined.
-    // However, for compatibility, we derive it from X3DH HKDF.
+    // However, for compatibility, we derive it from the PQXDH HKDF.
     const receivingChainKey =
       additionalDerivedBytes?.slice(
         HKDF_ADDITIONAL_RANGES.CK.start,
@@ -225,7 +224,6 @@ export class SessionBuilder {
       data: {
         baseKey: sessionState.baseKey.substring(0, 20),
         usedPQXDH,
-        usedClassicalFallback: !!usedClassicalFallback,
       },
     });
 
@@ -235,7 +233,6 @@ export class SessionBuilder {
       kyberPreKeyId,
       initialRootKeyForSPQR,
       usedPQXDH,
-      usedClassicalFallback,
     };
   }
 
@@ -312,12 +309,7 @@ export class SessionBuilder {
       }
     );
 
-    const {
-      sharedSecret: rootKey,
-      additionalDerivedBytes,
-      usedPQXDH,
-      usedClassicalFallback,
-    } = keyAgreementResult;
+    const { sharedSecret: rootKey, additionalDerivedBytes, usedPQXDH } = keyAgreementResult;
 
     // ========================================================================
     // Step 3: LAZY Session Initialization (per Signal Protocol Section 3.3)
@@ -330,7 +322,7 @@ export class SessionBuilder {
     // RatchetInitBob sets:
     // - state.DHs = bob_dh_key_pair    (Bob's signed prekey)
     // - state.DHr = None               (NOT set until first message decrypt)
-    // - state.RK = SK                  (NOT ratcheted - direct from X3DH/PQXDH)
+    // - state.RK = SK                  (NOT ratcheted - direct from PQXDH)
     // - state.CKs = None               (NOT set until DHRatchet)
     // - state.CKr = None               (NOT set until DHRatchet)
     //
@@ -369,7 +361,6 @@ export class SessionBuilder {
       data: {
         baseKey: sessionState.baseKey.substring(0, 20),
         usedPQXDH,
-        usedClassicalFallback: !!usedClassicalFallback,
         lazyInit: true,
         DHrSet: sessionState.DHr !== undefined,
         CKsSet: sessionState.CKs !== undefined,
@@ -393,7 +384,6 @@ export class SessionBuilder {
       data: {
         operation: 'builder-responder',
         usedPQXDH,
-        usedClassicalFallback: !!usedClassicalFallback,
         hasInitialRootKeyForSPQR: !!initialRootKeyForSPQR,
         initialRootKeyLength: initialRootKeyForSPQR?.length,
       },
@@ -403,7 +393,6 @@ export class SessionBuilder {
       sessionState,
       usedPQXDH,
       initialRootKeyForSPQR,
-      usedClassicalFallback,
     };
   }
 }

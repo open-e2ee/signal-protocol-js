@@ -40,7 +40,6 @@ export {
   deriveSPQRSendKey,
   deriveSPQRReceiveKey,
   tryGetSkippedSPQRKey,
-  cleanupSPQRState,
   isSpqrBootstrapComplete,
   SPQR_CONFIG,
   // Black-box API
@@ -49,7 +48,7 @@ export {
 } from './spqr';
 
 // Validation functions
-export { validateSPQRState, trimSkippedKeys } from './validate';
+export { validateSPQRState, trimEpochSkippedKeys, skippedKeyTrimSize } from './validate';
 
 // Serialization functions
 export { serializeSPQRState, deserializeSPQRState } from './serialize';

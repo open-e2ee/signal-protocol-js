@@ -257,6 +257,10 @@ An `SignalProtocolLocalStore` implementation must preserve:
 - session record persistence
 - message record persistence used by retry and resend flows
 - local recovery helpers required by the client lifecycle
+- a `protection` declaration that states what the store does: its
+  encryption at rest and the custody of its key. Client creation fails
+  without one, and [Content Recovery](../../docs/PROTOCOL_POLICY.md#content-recovery)
+  reads it
 
 ## Session Record Shape
 
@@ -288,8 +292,9 @@ failure rollback, compare-and-swap behavior, one-time-prekey replay rejection,
 and exact per-user session deletion.
 
 For the key-value store, the supplied backend's `atomicWrite` is a security boundary.
-It must commit `check`, `set`, `remove`, `removeSessionsForUser`, and
-`pruneSkippedSenderKeys` operations in one crash-durable transaction.
+It must commit `check`, `set`, `remove`, `removeSessionsForUser`,
+`pruneSkippedSenderKeys`, and `removeSenderKeyHandoffs` operations in one
+crash-durable transaction.
 The `removeSessionsForUser` operation must enumerate exact plaintext session
 metadata inside that transaction. An adapter that matches a prefix or enumerates before the
 transaction can leave a concurrently-created session trusted under a rotated
@@ -301,6 +306,15 @@ inside the transaction. It removes the lowest numeric chain indexes until
 The operation observes earlier writes in the same batch. Equal indexes belong
 to distinct generations and remain separate entries.
 
+The `removeSenderKeyHandoffs` operation enumerates keys under its exact
+`keyPrefix` inside the transaction. The part of a key after the prefix has five
+colon-separated segments: the group hash, the generation, the account hash, the
+recipient hash, and the entry hash. The operation removes every key whose group,
+account, and recipient segments equal each hash that it gives. A hash that it
+omits matches every value. A key of another shape stays. The operation observes
+earlier writes in the same batch, and `assertBackendConformance` checks that
+rule.
+
 For eviction ties, the store may remove either generation.
 Use `createTransactionalKeyValueBackend` to apply
 these operations through the shared interpreter, and verify custom backends
@@ -308,18 +322,20 @@ with `assertBackendConformance`.
 
 ## Design Notes
 
-Received content uses the same encryption and transaction boundary as protocol state.
+Reviewed: 2026-10-20.
 
-The `commitSessionTrust` method commits received content, ratchet state, contact trust, and consumed prekeys together.
+Receive records use the same encryption and transaction boundary as protocol state.
+
+The `commitSessionTrust` method commits the receive record, ratchet state, contact trust, and consumed prekeys together.
 The `storeSenderKeyRecord` method commits the full sender-key record and every
 `SenderKeyReceiveCommit` effect together. These effects include skipped-key
-additions, capacity eviction, skipped-key consumption, and optional received
-content. The manager stages additions until authentication and decryption
+additions, capacity eviction, skipped-key consumption, and an optional receive
+record. The manager stages additions until authentication and decryption
 succeed.
 
 The store applies additions in order, with capacity eviction before
 each addition. A rejected commit preserves the prior record, skipped keys,
-and received content. This applies to current and archived generations and
+and receive records. This applies to current and archived generations and
 to receives without a durable ID. A retry uses that preserved state.
 
 An adapter must reject the complete transaction if any write fails.
@@ -327,15 +343,63 @@ When the database file of a SQLite store cannot grow because the disk or the
 storage quota is full, the write rejects with `StorageQuotaExceededError`
 (`STORAGE_QUOTA_EXCEEDED`). SQLite rolls the write back, and the store stays
 open. Free space, then retry the write.
-`getReceivedContent`, `deleteReceivedContent`, and `deleteExpiredReceivedContent`
-own recovery and cleanup. Generic unencrypted metadata cannot hold this content.
-Expo, bare React Native, and Node use SQLCipher, and the web SQLite store
-encrypts its whole file with SQLite3 Multiple Ciphers. The IndexedDB web store
-and the key-value store encrypt each content record with their existing store
-key.
+
+A receive record keeps one decrypted message until the client completes it.
+`commitSessionTrust` with `receiveWork` and `storeSenderKeyRecord` with `work`
+write the record in the same transaction as the ratchet state. Generic
+metadata cannot hold this record, because a metadata write does not join the
+ratchet transaction. Five methods own the records:
+
+- `getReceiveWork(workId)` reads one record.
+- `putReceiveWork(record, expectedRevision)` inserts the record when
+  `expectedRevision` is `null`. Otherwise it replaces the record that has
+  that revision. On a mismatch it returns `false` and writes nothing.
+- `listReceiveWork(query)` lists the records in ascending `(arrivalSeq,
+  workId)` order, and compares `workId` values by UTF-16 code unit. It
+  filters by `stage`, `dueBy`, and the `after` cursor, and returns at most
+  `limit` records (100 when not set). A record passes the cursor when its
+  `arrivalSeq` is above the cursor `arrivalSeq`, or equal to it with a
+  `workId` above the cursor `workId`.
+- `receiveWorkUsage({ groupId })` counts the records and their bytes. With a
+  `groupId`, it counts only the records that wait for an update of that group.
+- `completeReceiveWork(workId, expectedRevision, metadata)` deletes the record
+  and applies the metadata writes in one atomic write. On a revision mismatch
+  it returns `false` and writes nothing.
+
+Each store keeps the arrival order, the stage, the due time, and the size in
+clear index fields beside the record, so a listing or a usage count does not
+decrypt each record. Expo, bare React Native, and Node use SQLCipher, and the
+web SQLite store encrypts its whole file with SQLite3 Multiple Ciphers. The
+IndexedDB web store and the key-value store encrypt each record with their
+existing store key. For a record that waits for its group, they keep a keyed
+hash of the group ID, not the group ID. A SQLite store with
+`encryptionAtRest: false` and the in-memory store keep the records without
+encryption.
+
+At the first open after an upgrade from an earlier SDK, each durable store
+converts the legacy received-content rows to receive records, and writes the
+conversion marker last. An interrupted conversion continues at the next open,
+and skips each row that already has a record. A row that does not parse stays
+under its legacy key. The store logs the key, never the value, and keeps the
+key in the marker.
+
+The IndexedDB web store and the key-value store also encrypt each metadata
+value with their store key. Their metadata key names stay in clear text. Some
+names hold a group ID, a recipient user ID, or a message ID. These stores
+encrypt clear metadata values from an earlier SDK when they open, and they
+write the migration marker last.
+An earlier SDK cannot read the encrypted values. An encrypted SQLite store
+keeps the metadata keys and values inside its file cipher.
+
+`protocol.contentRecovery` does not decide whether a store keeps receive
+records. That policy covers only the content that a sender keeps to answer
+a retry request. Every store keeps receive records, also a store whose
+`protection` is `none`.
 
 The SDK removes content after durable handling and retains separate bounded
-duplicate evidence. Cleanup uses the existing thirty-day retry horizon.
+duplicate evidence. The receive queue deletes a receive record whose content
+waited 30 days, after `onReceiveExpired` runs. A deletion does not erase the
+bytes. See the [security model](../../docs/SECURITY.md#storage-boundary).
 The host application must use idempotent writes keyed by message ID.
 
 - The Expo adapter is the primary supported mobile implementation. Deployment

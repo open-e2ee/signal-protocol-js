@@ -7,7 +7,8 @@
  *
  * Implementation follows Signal Protocol's safety number specification:
  * - Computes individual fingerprints for each user using SHA-512 iteration
- * - Uses deterministic ordering (lexicographical by user ID)
+ * - Orders the two parties by unsigned byte comparison of their 30-digit
+ *   display strings, as the reference implementation does
  * - Uses SHA-512 with 5,200 iterations for this Signal Protocol profile
  * - Generates a 60-digit number (easier to compare than hex)
  * - Also provides emoji representation for easier visual verification
@@ -74,20 +75,19 @@ const CACHE_MAX_SIZE = 50;
 const fingerprintCache = new Map<string, SafetyNumber>();
 
 /**
- * Generate cache key from inputs
+ * Generate the cache key from the oriented inputs.
+ *
+ * The key keeps the local party first. The cached result carries a
+ * `ScannableFingerprint` whose local party is the caller, so the swapped call
+ * must not share the entry: its QR payload has the other orientation.
  */
 function getCacheKey(
-  user1IdentityKey: string,
-  user2IdentityKey: string,
-  user1Identifier: string,
-  user2Identifier: string
+  localIdentityKey: string,
+  remoteIdentityKey: string,
+  localIdentifier: string,
+  remoteIdentifier: string
 ): string {
-  // Sort so the key is the same regardless of argument order
-  const sorted = [
-    `${user1Identifier}:${user1IdentityKey}`,
-    `${user2Identifier}:${user2IdentityKey}`,
-  ].sort();
-  return sorted.join('|');
+  return JSON.stringify([localIdentifier, localIdentityKey, remoteIdentifier, remoteIdentityKey]);
 }
 
 /**
@@ -203,12 +203,8 @@ export function generateSingleKeyReferenceSafetyNumber(
     FINGERPRINT_VERSION
   );
 
-  // Generate emojis from the first user's fingerprint (sorted order)
-  const firstFingerprint =
-    user1Identifier.localeCompare(user2Identifier) <= 0
-      ? pair.localFingerprint
-      : pair.remoteFingerprint;
-  const emojis = formatEmojis(generateEmojiFingerprint(firstFingerprint.full));
+  // Generate emojis from the fingerprint whose display digits come first
+  const emojis = formatEmojis(generateEmojiFingerprint(pair.firstFingerprint.full));
 
   const result: SafetyNumber = {
     numeric: pair.displayable, // Already formatted with spaces
@@ -248,13 +244,9 @@ export function generateCompositeSafetyNumber(
     pair.remoteFingerprint.scannable,
     COMPOSITE_FINGERPRINT_VERSION
   );
-  const firstFingerprint =
-    localIdentifier.localeCompare(remoteIdentifier) <= 0
-      ? pair.localFingerprint
-      : pair.remoteFingerprint;
   return {
     numeric: pair.displayable,
-    emojis: formatEmojis(generateEmojiFingerprint(firstFingerprint.full)),
+    emojis: formatEmojis(generateEmojiFingerprint(pair.firstFingerprint.full)),
     hex: pair.hex,
     qrData: scannable.toBase64(),
     scannable,

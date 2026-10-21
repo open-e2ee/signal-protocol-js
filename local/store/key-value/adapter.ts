@@ -29,17 +29,33 @@
  */
 
 import { utf8Decode } from '../../../internal/platform';
-import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
+import type { SenderKeyReceiveCommit } from '../../../types';
 import * as SignalProtocolCrypto from '../../../internal/crypto';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 import type {
   SignalProtocolLocalStore,
   MessageRecord,
+  NewSendLogPayload,
+  SendLogDevice,
+  SendLogEntry,
+  SendLogRecipient,
+  SendLogResendJob,
+  SendLogResendJobState,
   UserRecord,
   DeviceRecord,
   SkippedSenderMessageKey,
   SessionTrustCommit,
+  SenderKeyHandoffDevice,
+  SenderKeyHandoffRecord,
+  SenderKeyRecordWriteOptions,
+  SetDeviceRecordOptions,
 } from '../../../types';
+import type {
+  ReceiveWorkMetadataWrite,
+  ReceiveWorkQuery,
+  ReceiveWorkRecord,
+  ReceiveWorkUsage,
+} from '../../../types/api';
 import { assertCurrentSessionRecord, type SessionRecord } from '../../../types/session';
 import type {
   IdentityKeyPair,
@@ -59,17 +75,22 @@ import {
 import type { SessionState } from '../../../types';
 import { ProtocolAddress } from '../../../types/address';
 import { IdentityKeyChange, StorageQuotaExceededError, TrustDirection } from '../../../types';
-import type { SignalProtocolLocalSecretVault } from '../../../types/api';
+import type { LocalStoreProtection, SignalProtocolLocalSecretVault } from '../../../types/api';
+import { secretVaultCustody } from '../../vault/custody';
 import { requireSecretVault } from '../../vault/require';
 import { asBase64, type Base64 } from '../../../types/utils';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import type { KeyValueOperation, KeyValueStorage } from './storage';
 import { withDeviceRecordLocks } from '../../../internal/session/record-locks';
+import { isExpiredRemovedDevice } from '../../../internal/sesame/types';
 import { withSession } from '../device-record';
 import { decodeUserRecord, encodeUserRecord } from './device-record';
 import { deleteDataThenReplaceValueKey, openValueKey } from './value-key';
+import { KeyValueSendLog } from './send-log';
+import { KeyValueSenderKeyHandoffs } from './sender-key-handoff';
 import { deserializeSessionRecord, serializeSessionRecord } from '../session-codec';
-import { parseReceivedContent } from '../received-content';
+import { convertLegacyReceivedContent } from '../receive-work';
+import { KeyValueReceiveWork, LEGACY_RECEIVED_CONTENT_PREFIX } from './receive-work';
 import {
   createKyberPreKeyState,
   createKyberPreKeyInstanceId,
@@ -90,6 +111,8 @@ const STORAGE_KEYS = {
   IDENTITY_KEY_PREFIX: '@signal:identity:keyPair:',
   REGISTRATION_ID_PREFIX: '@signal:metadata:registrationId:',
   METADATA_PREFIX: '@signal:metadata:value:',
+  // Set after every clear metadata value is encrypted.
+  METADATA_CIPHER_MARKER: '@signal:metadata-cipher-version',
   CONTACT_PREFIX: '@signal:contacts:',
   CONTACT_V1_PREFIX: '@signal:contacts:v1:',
   PREKEY_PREFIX: '@signal:prekeys:',
@@ -114,6 +137,16 @@ const STORAGE_KEYS = {
   MESSAGE_RECORD_PREFIX: '@signal:message-record:',
   SECURITY_EVENTS: '@signal:security-events',
 } as const;
+
+/**
+ * The version tag of an encrypted metadata value. The record cipher's base64
+ * output follows it. A value without the tag is a clear value that an older
+ * SDK wrote.
+ */
+const METADATA_CIPHER_TAG = 'sealed:v1:';
+
+/** The marker value. The marker is the last write of the migration. */
+const METADATA_CIPHER_VERSION = '1';
 
 /**
  * Escape a value so it cannot contain the `:` that joins composite keys.
@@ -274,14 +307,37 @@ export interface KeyValueSignalProtocolStoreOptions {
  * ```
  */
 export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
+  /** Each value is encrypted with the value key, which the vault holds. */
+  readonly protection: LocalStoreProtection;
   private databaseKey: Uint8Array | null = null;
   private initialized = false;
   private readonly storageBackend: KeyValueStorage;
   private readonly vault: SignalProtocolLocalSecretVault;
+  private readonly sendLog: KeyValueSendLog;
+  private readonly senderKeyHandoffs: KeyValueSenderKeyHandoffs;
+  private readonly receiveWork: KeyValueReceiveWork;
 
   private constructor(options: KeyValueSignalProtocolStoreOptions, operation: string) {
     this.storageBackend = options.storage;
     this.vault = requireSecretVault(options.vault, operation);
+    this.sendLog = new KeyValueSendLog(this.storageBackend, {
+      encrypt: (plaintext) => this.encrypt(plaintext),
+      decrypt: (encrypted) => this.decrypt(encrypted),
+    });
+    this.receiveWork = new KeyValueReceiveWork(this.storageBackend, {
+      encrypt: (plaintext) => this.encrypt(plaintext),
+      decrypt: (encrypted) => this.decrypt(encrypted),
+      databaseKey: () => this.getDatabaseKey(),
+    });
+    this.senderKeyHandoffs = new KeyValueSenderKeyHandoffs(this.storageBackend, {
+      encrypt: (plaintext) => this.encrypt(plaintext),
+      decrypt: (encrypted) => this.decrypt(encrypted),
+      databaseKey: () => this.getDatabaseKey(),
+    });
+    this.protection = Object.freeze({
+      atRest: 'record-cipher',
+      keyCustody: secretVaultCustody(this.vault),
+    });
     mapQuotaFailuresAtBoundary(this);
   }
 
@@ -331,7 +387,9 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
       return;
     }
     this.databaseKey = await openValueKey(this.storageBackend, this.vault);
+    await this.encryptClearMetadata();
     this.initialized = true;
+    await this.convertLegacyReceivedRows();
   }
 
   /** Delete the store data, then replace the value key. See `deleteDataThenReplaceValueKey`. */
@@ -463,6 +521,7 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
         keyPrefix: STORAGE_KEYS.SESSION_PREFIX,
         userId: address.userId,
       },
+      await this.senderKeyHandoffs.removeAccount(address.userId),
     ]);
     return replacement;
   }
@@ -729,6 +788,15 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
 
   async storeSessionRecord(address: ProtocolAddress, record: SessionRecord): Promise<void> {
     this.ensureInitialized();
+    const write = await this.sessionRecordWrite(address, record);
+    await this.storageBackend.setItem(write.key, write.value);
+  }
+
+  /** The write of one session record, for a batch that commits it with other changes. */
+  private async sessionRecordWrite(
+    address: ProtocolAddress,
+    record: SessionRecord
+  ): Promise<{ type: 'set'; key: string; value: string }> {
     assertCurrentSessionRecord(record);
     const addressKey = this.serializeAddress(address);
     const storageKey = `${STORAGE_KEYS.SESSION_PREFIX}${addressKey}`;
@@ -741,7 +809,7 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
       updatedAt: Date.now(),
     };
 
-    await this.storageBackend.setItem(storageKey, JSON.stringify(storedRecord));
+    return { type: 'set', key: storageKey, value: JSON.stringify(storedRecord) };
   }
 
   async getSessionRecord(address: ProtocolAddress): Promise<SessionRecord | null> {
@@ -823,9 +891,9 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
       recordKyberPreKeyUse(state, commit.localIdentityType, commit.kyberPreKeyUse);
       updatedKyberStateValue = await this.encrypt(JSON.stringify(state));
     }
-    const operations = [
-      { type: 'check' as const, key: contactStorageKey, expectedValue: existingContactValue },
-      { type: 'set' as const, key: sessionStorageKey, value: sessionValue },
+    const operations: KeyValueOperation[] = [
+      { type: 'check', key: contactStorageKey, expectedValue: existingContactValue },
+      { type: 'set', key: sessionStorageKey, value: sessionValue },
     ];
     if (contactStatus === 'NEW') {
       const newContact = createUnverifiedContactIdentityRecord(commit.contactIdentity, Date.now());
@@ -859,45 +927,23 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
       operations.push({ type: 'check', key: kyberStorageKey, expectedValue: kyberStateValue });
       operations.push({ type: 'set', key: kyberStorageKey, value: updatedKyberStateValue });
     }
-    if (commit.receivedContent)
-      operations.push({
-        type: 'set',
-        key: `@signal:received-content:${commit.receivedContent.id}`,
-        value: await this.encrypt(JSON.stringify(commit.receivedContent)),
-      });
-    await this.storageBackend.atomicWrite(operations);
-  }
-
-  async getReceivedContent(id: string): Promise<ReceivedContent | null> {
-    this.ensureInitialized();
-    const value = await this.storageBackend.getItem(`@signal:received-content:${id}`);
-    return value ? parseReceivedContent(await this.decrypt(value), id) : null;
-  }
-
-  async deleteReceivedContent(id: string): Promise<void> {
-    this.ensureInitialized();
-    await this.storageBackend.removeItem(`@signal:received-content:${id}`);
-  }
-
-  async deleteExpiredReceivedContent(before: number): Promise<number> {
-    this.ensureInitialized();
-    const prefix = '@signal:received-content:';
-    const keys = (await this.storageBackend.getAllKeys()).filter((key) => key.startsWith(prefix));
-    const expired: string[] = [];
-    for (const key of keys) {
-      const value = await this.getReceivedContent(key.slice(prefix.length));
-      if (value && value.receivedAt < before) expired.push(key);
+    if (commit.receiveWork) operations.push(await this.receiveWork.seal(commit.receiveWork));
+    if (commit.senderKeyHandoffInvalidation) {
+      operations.push(
+        await this.senderKeyHandoffs.removeDevice(commit.senderKeyHandoffInvalidation)
+      );
     }
-    if (expired.length)
-      await this.storageBackend.atomicWrite(expired.map((key) => ({ type: 'remove', key })));
-    return expired.length;
+    await this.storageBackend.atomicWrite(operations);
   }
 
   async deleteSessionRecord(address: ProtocolAddress): Promise<void> {
     this.ensureInitialized();
     const addressKey = this.serializeAddress(address);
     const storageKey = `${STORAGE_KEYS.SESSION_PREFIX}${addressKey}`;
-    await this.storageBackend.removeItem(storageKey);
+    await this.storageBackend.atomicWrite([
+      { type: 'remove', key: storageKey },
+      await this.senderKeyHandoffs.removeDevice(address),
+    ]);
   }
 
   async archiveCurrentSession(
@@ -907,7 +953,9 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
     this.ensureInitialized();
 
     // With SessionRecord, archiving is handled at the DeviceRecord level
-    // This method updates or replaces the session state
+    // This method updates or replaces the session state. The handoff rows of
+    // the device go in the same batch.
+    const operations: KeyValueOperation[] = [];
     if (newSession) {
       const record = await this.getSessionRecord(address);
 
@@ -917,12 +965,17 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
         if (record.metadata) {
           record.metadata.lastSentAt = Date.now();
         }
-        await this.storeSessionRecord(address, record);
+        operations.push(await this.sessionRecordWrite(address, record));
       }
     } else {
       // If no new session, just delete the old one
-      await this.deleteSessionRecord(address);
+      operations.push({
+        type: 'remove',
+        key: `${STORAGE_KEYS.SESSION_PREFIX}${this.serializeAddress(address)}`,
+      });
     }
+    operations.push(await this.senderKeyHandoffs.removeDevice(address));
+    await this.storageBackend.atomicWrite(operations);
   }
 
   async getSessionsForUser(userId: string): Promise<SessionRecord[]> {
@@ -980,14 +1033,22 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
   // ============================================================================
 
   async getMetadata(key: string): Promise<string | null> {
-    return this.storageBackend.getItem(this.getMetadataStorageKey(key));
+    this.ensureInitialized();
+    return this.openMetadataValue(
+      await this.storageBackend.getItem(this.getMetadataStorageKey(key))
+    );
   }
 
   async setMetadata(key: string, value: string): Promise<void> {
-    await this.storageBackend.setItem(this.getMetadataStorageKey(key), value);
+    this.ensureInitialized();
+    await this.storageBackend.setItem(
+      this.getMetadataStorageKey(key),
+      await this.sealMetadataValue(value)
+    );
   }
 
   async deleteMetadata(key: string): Promise<void> {
+    this.ensureInitialized();
     await this.storageBackend.removeItem(this.getMetadataStorageKey(key));
   }
 
@@ -996,13 +1057,19 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
     expected: string | null,
     value: string | null
   ): Promise<boolean> {
+    this.ensureInitialized();
     const storageKey = this.getMetadataStorageKey(key);
+    // Compare the decrypted value, then check the raw value that was read.
+    // The cipher draws a new IV for each write, so a writer that changed the
+    // value since the read fails the check, even when it wrote equal text.
+    const observed = await this.storageBackend.getItem(storageKey);
+    if ((await this.openMetadataValue(observed)) !== expected) return false;
     try {
       await this.storageBackend.atomicWrite([
-        { type: 'check', key: storageKey, expectedValue: expected },
+        { type: 'check', key: storageKey, expectedValue: observed },
         value === null
           ? { type: 'remove', key: storageKey }
-          : { type: 'set', key: storageKey, value },
+          : { type: 'set', key: storageKey, value: await this.sealMetadataValue(value) },
       ]);
       return true;
     } catch (error) {
@@ -1014,8 +1081,123 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
         error.name === 'QuotaExceededError'
       )
         throw error;
-      if ((await this.storageBackend.getItem(storageKey)) !== expected) return false;
+      if ((await this.storageBackend.getItem(storageKey)) !== observed) return false;
       throw error;
+    }
+  }
+
+  // ============================================================================
+  // Receive records
+  // ============================================================================
+
+  async getReceiveWork(workId: string): Promise<ReceiveWorkRecord | null> {
+    this.ensureInitialized();
+    return this.receiveWork.get(workId);
+  }
+
+  async putReceiveWork(
+    record: ReceiveWorkRecord,
+    expectedRevision: number | null
+  ): Promise<boolean> {
+    this.ensureInitialized();
+    return this.receiveWork.put(record, expectedRevision);
+  }
+
+  async listReceiveWork(query?: ReceiveWorkQuery): Promise<ReceiveWorkRecord[]> {
+    this.ensureInitialized();
+    return this.receiveWork.list(query);
+  }
+
+  async receiveWorkUsage(query?: { groupId?: string }): Promise<ReceiveWorkUsage> {
+    this.ensureInitialized();
+    return this.receiveWork.usage(query);
+  }
+
+  async completeReceiveWork(
+    workId: string,
+    expectedRevision: number,
+    metadata: readonly ReceiveWorkMetadataWrite[] = []
+  ): Promise<boolean> {
+    this.ensureInitialized();
+    const writes: KeyValueOperation[] = [];
+    for (const { key, value } of metadata) {
+      const storageKey = this.getMetadataStorageKey(key);
+      writes.push(
+        value === null
+          ? { type: 'remove', key: storageKey }
+          : { type: 'set', key: storageKey, value: await this.sealMetadataValue(value) }
+      );
+    }
+    return this.receiveWork.complete(workId, expectedRevision, writes);
+  }
+
+  /**
+   * Convert the legacy received-content rows to receive records. A backend
+   * without legacy rows gets no marker, so opening an empty store writes
+   * nothing. A full backend stops the conversion without the marker, and
+   * the next open continues it.
+   */
+  private async convertLegacyReceivedRows(): Promise<void> {
+    const keys = await this.storageBackend.getAllKeys();
+    if (!keys.some((key) => key.startsWith(LEGACY_RECEIVED_CONTENT_PREFIX))) return;
+    try {
+      await convertLegacyReceivedContent(this, this.receiveWork.legacySource());
+    } catch (error) {
+      if (!isQuotaExceededError(error) && !(error instanceof StorageQuotaExceededError)) {
+        throw error;
+      }
+    }
+  }
+
+  /** Encrypt one metadata value with the record cipher, behind its version tag. */
+  private async sealMetadataValue(value: string): Promise<string> {
+    return `${METADATA_CIPHER_TAG}${await this.encrypt(value)}`;
+  }
+
+  /** Read one stored metadata value, encrypted or clear. */
+  private async openMetadataValue(stored: string | null): Promise<string | null> {
+    if (stored === null || !stored.startsWith(METADATA_CIPHER_TAG)) return stored;
+    return this.decrypt(stored.slice(METADATA_CIPHER_TAG.length));
+  }
+
+  /**
+   * Encrypt every clear metadata value, then set the marker. The marker is
+   * set last, so a crash partway leaves it unset and the next open runs the
+   * migration again. A value that carries the tag is never sealed again, so
+   * a corrupt encrypted value stays corrupt and its read fails in the cipher.
+   * Each value is replaced only while it still holds the clear value that was
+   * read, so a concurrent writer is never overwritten.
+   *
+   * A backend without metadata gets no marker, so opening an empty store
+   * writes nothing. A full backend stops the migration without the marker.
+   * The store still opens, because a reader accepts clear values, and the
+   * next open continues the migration.
+   */
+  private async encryptClearMetadata(): Promise<void> {
+    const backend = this.storageBackend;
+    const marker = await backend.getItem(STORAGE_KEYS.METADATA_CIPHER_MARKER);
+    if (marker === METADATA_CIPHER_VERSION) return;
+    const keys = (await backend.getAllKeys()).filter((key) =>
+      key.startsWith(STORAGE_KEYS.METADATA_PREFIX)
+    );
+    if (keys.length === 0) return;
+    try {
+      for (const key of keys) {
+        const stored = await backend.getItem(key);
+        if (stored === null || stored.startsWith(METADATA_CIPHER_TAG)) continue;
+        const sealed = await this.sealMetadataValue(stored);
+        try {
+          await backend.atomicWrite([
+            { type: 'check', key, expectedValue: stored },
+            { type: 'set', key, value: sealed },
+          ]);
+        } catch (error) {
+          if (isQuotaExceededError(error) || (await backend.getItem(key)) === stored) throw error;
+        }
+      }
+      await backend.setItem(STORAGE_KEYS.METADATA_CIPHER_MARKER, METADATA_CIPHER_VERSION);
+    } catch (error) {
+      if (!isQuotaExceededError(error)) throw error;
     }
   }
 
@@ -1326,7 +1508,12 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
     return withSession(userId, deviceId, stored, session);
   }
 
-  async setDeviceRecord(userId: string, deviceId: number, record: DeviceRecord): Promise<void> {
+  async setDeviceRecord(
+    userId: string,
+    deviceId: number,
+    record: DeviceRecord,
+    options?: SetDeviceRecordOptions
+  ): Promise<void> {
     const now = Date.now();
     const userRecord = (await this.getStoredUserRecord(userId)) ?? {
       userId,
@@ -1356,12 +1543,19 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
         } satisfies StoredSessionRecord),
       });
     }
+    if (options?.senderKeyHandoffInvalidation) {
+      operations.push(
+        await this.senderKeyHandoffs.removeDevice(options.senderKeyHandoffInvalidation)
+      );
+    }
     await this.storageBackend.atomicWrite(operations);
   }
 
   async deleteDeviceRecord(userId: string, deviceId: number): Promise<void> {
     const userRecord = await this.getStoredUserRecord(userId);
+    const removeHandoffs = await this.senderKeyHandoffs.removeDevice({ userId, deviceId });
     if (!userRecord) {
+      await this.storageBackend.atomicWrite([removeHandoffs]);
       return;
     }
 
@@ -1379,6 +1573,7 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
             key: userKey,
             value: await this.encrypt(JSON.stringify(encodeUserRecord(userRecord))),
           },
+      removeHandoffs,
     ]);
   }
 
@@ -1490,12 +1685,21 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
     return record?.[0] ?? null;
   }
 
-  async deleteSenderKey(groupId: string, userId: string, deviceId: number): Promise<void> {
+  async deleteSenderKey(
+    groupId: string,
+    userId: string,
+    deviceId: number,
+    options?: SenderKeyRecordWriteOptions
+  ): Promise<void> {
     this.ensureInitialized();
-    await this.removeSenderKeyIdPointers(groupId, userId, deviceId);
-    await this.storageBackend.removeItem(
-      this.getSenderKeyRecordStorageKey(groupId, userId, deviceId)
-    );
+    const operations: KeyValueOperation[] = [
+      ...(await this.senderKeyIdPointerRemovals(groupId, userId, deviceId)),
+      { type: 'remove', key: this.getSenderKeyRecordStorageKey(groupId, userId, deviceId) },
+    ];
+    if (options?.deleteSenderKeyHandoffs) {
+      operations.push(await this.senderKeyHandoffs.removeGroup(groupId));
+    }
+    await this.storageBackend.atomicWrite(operations);
   }
 
   /**
@@ -1520,20 +1724,22 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
    * self-healing, because `resolveGroupForSenderKeyId` confirms and deletes
    * it. A record that outlives its pointers is simply unreachable by id.
    */
-  private async removeSenderKeyIdPointers(
+  /** The removals of the `senderKeyId` pointers of one stored record. */
+  private async senderKeyIdPointerRemovals(
     groupId: string,
     userId: string,
     deviceId: number
-  ): Promise<void> {
+  ): Promise<KeyValueOperation[]> {
     const record = await this.getSenderKeyRecord(groupId, userId, deviceId);
-    if (!record) return;
+    if (!record) return [];
 
-    await this.storageBackend.removeMany(
-      record
-        .map((state) => state.senderKeyId)
-        .filter(Boolean)
-        .map((senderKeyId) => this.getSenderKeyIdPointerKey(senderKeyId, userId, deviceId))
-    );
+    return record
+      .map((state) => state.senderKeyId)
+      .filter(Boolean)
+      .map((senderKeyId) => ({
+        type: 'remove' as const,
+        key: this.getSenderKeyIdPointerKey(senderKeyId, userId, deviceId),
+      }));
   }
 
   async resolveGroupForSenderKeyId(
@@ -1628,17 +1834,22 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
       key.startsWith(this.getSenderKeyRecordGroupPrefix(groupId))
     );
 
+    const operations: KeyValueOperation[] = [];
     for (const recordKey of senderKeys) {
       const parsed = this.parseSenderKeyRecordStorageKey(recordKey);
       if (parsed) {
-        await this.removeSenderKeyIdPointers(parsed.groupId, parsed.userId, parsed.deviceId);
+        operations.push(
+          ...(await this.senderKeyIdPointerRemovals(parsed.groupId, parsed.userId, parsed.deviceId))
+        );
       }
     }
 
     const skippedKeys = allKeys.filter((key) =>
       key.startsWith(this.getSkippedSenderKeyGroupPrefix(groupId))
     );
-    await this.storageBackend.removeMany([...senderKeys, ...skippedKeys]);
+    for (const key of [...senderKeys, ...skippedKeys]) operations.push({ type: 'remove', key });
+    operations.push(await this.senderKeyHandoffs.removeGroup(groupId));
+    await this.storageBackend.atomicWrite(operations);
     return senderKeys.length;
   }
 
@@ -1647,7 +1858,8 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
     userId: string,
     deviceId: number,
     states: SenderKeyState[],
-    receive?: SenderKeyReceiveCommit
+    receive?: SenderKeyReceiveCommit,
+    options?: SenderKeyRecordWriteOptions
   ): Promise<void> {
     this.ensureInitialized();
     if (states.length === 0) {
@@ -1711,13 +1923,7 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
           );
         }
       }
-      if (receive.content) {
-        operations.push({
-          type: 'set',
-          key: `@signal:received-content:${receive.content.id}`,
-          value: await this.encrypt(JSON.stringify(receive.content)),
-        });
-      }
+      if (receive.work) operations.push(await this.receiveWork.seal(receive.work));
       if (receive.consumedSkippedKey !== undefined)
         operations.push({
           type: 'remove',
@@ -1730,7 +1936,50 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
           ),
         });
     }
+    if (options?.deleteSenderKeyHandoffs) {
+      operations.push(await this.senderKeyHandoffs.removeGroup(groupId));
+    }
     await this.storageBackend.atomicWrite(operations);
+  }
+
+  // ============================================================================
+  // Sender-Key Handoff Ledger
+  // ============================================================================
+
+  async recordSenderKeyHandoff(record: SenderKeyHandoffRecord): Promise<void> {
+    this.ensureInitialized();
+    await this.senderKeyHandoffs.record(record);
+  }
+
+  async listSenderKeyHandoffs(
+    groupId: string,
+    generation: number
+  ): Promise<SenderKeyHandoffRecord[]> {
+    this.ensureInitialized();
+    return this.senderKeyHandoffs.list(groupId, generation);
+  }
+
+  async invalidateSenderKeyHandoff(
+    groupId: string,
+    device: SenderKeyHandoffDevice
+  ): Promise<boolean> {
+    this.ensureInitialized();
+    return this.senderKeyHandoffs.deleteDeviceInGroup(groupId, device);
+  }
+
+  async invalidateAccountSenderKeyHandoffs(userId: string): Promise<boolean> {
+    this.ensureInitialized();
+    return this.senderKeyHandoffs.deleteAccount(userId);
+  }
+
+  async listSenderKeyHandoffGroupIds(): Promise<string[]> {
+    this.ensureInitialized();
+    return this.senderKeyHandoffs.groupIds();
+  }
+
+  async retainSenderKeyHandoffs(groupId: string, senderKeyId: string | null): Promise<number> {
+    this.ensureInitialized();
+    return this.senderKeyHandoffs.retain(groupId, senderKeyId);
   }
 
   async getSenderKeyRecord(
@@ -1839,15 +2088,130 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
   }
 
   // ============================================================================
+  // Send Log (resendable group content)
+  // The send log concept lives in ./send-log.ts. This store implements the
+  // whole local store interface, so it keeps these delegates.
+  // ============================================================================
+
+  async storeSendLogEntry(
+    payload: NewSendLogPayload,
+    recipients: readonly SendLogDevice[]
+  ): Promise<void> {
+    this.ensureInitialized();
+    return this.sendLog.storeSendLogEntry(payload, recipients);
+  }
+
+  async appendSendLogRecipients(
+    clientMessageId: string,
+    recipients: readonly SendLogDevice[]
+  ): Promise<void> {
+    this.ensureInitialized();
+    return this.sendLog.appendSendLogRecipients(clientMessageId, recipients);
+  }
+
+  async markSendLogComplete(clientMessageId: string): Promise<void> {
+    this.ensureInitialized();
+    return this.sendLog.markSendLogComplete(clientMessageId);
+  }
+
+  async getSendLogEntry(
+    clientMessageId: string,
+    recipient: SendLogDevice
+  ): Promise<SendLogEntry | null> {
+    this.ensureInitialized();
+    return this.sendLog.getSendLogEntry(clientMessageId, recipient);
+  }
+
+  async findSendLogEntries(
+    recipient: SendLogDevice,
+    clientTimestamp: number
+  ): Promise<SendLogEntry[]> {
+    this.ensureInitialized();
+    return this.sendLog.findSendLogEntries(recipient, clientTimestamp);
+  }
+
+  async getSendLogRecipients(clientMessageId: string): Promise<SendLogRecipient[]> {
+    this.ensureInitialized();
+    return this.sendLog.getSendLogRecipients(clientMessageId);
+  }
+
+  async deleteSendLogRecipient(
+    clientMessageId: string,
+    recipient: SendLogDevice
+  ): Promise<boolean> {
+    this.ensureInitialized();
+    return this.sendLog.deleteSendLogRecipient(clientMessageId, recipient);
+  }
+
+  async deleteSendLogRecipientsByTimestamp(
+    recipient: SendLogDevice,
+    clientTimestamps: readonly number[]
+  ): Promise<number> {
+    this.ensureInitialized();
+    return this.sendLog.deleteSendLogRecipientsByTimestamp(recipient, clientTimestamps);
+  }
+
+  async incrementSendLogResendCount(
+    clientMessageId: string,
+    recipient: SendLogDevice
+  ): Promise<number | null> {
+    this.ensureInitialized();
+    return this.sendLog.incrementSendLogResendCount(clientMessageId, recipient);
+  }
+
+  async deleteSendLogEntry(clientMessageId: string): Promise<boolean> {
+    this.ensureInitialized();
+    return this.sendLog.deleteSendLogEntry(clientMessageId);
+  }
+
+  async deleteExpiredSendLog(maxAgeMs: number): Promise<number> {
+    this.ensureInitialized();
+    return this.sendLog.deleteExpiredSendLog(maxAgeMs);
+  }
+
+  async clearSendLog(): Promise<number> {
+    this.ensureInitialized();
+    return this.sendLog.clearSendLog();
+  }
+
+  async storeResendJob(job: SendLogResendJob): Promise<void> {
+    this.ensureInitialized();
+    return this.sendLog.storeResendJob(job);
+  }
+
+  async getResendJob(jobId: string): Promise<SendLogResendJob | null> {
+    this.ensureInitialized();
+    return this.sendLog.getResendJob(jobId);
+  }
+
+  async getPendingResendJobs(): Promise<SendLogResendJob[]> {
+    this.ensureInitialized();
+    return this.sendLog.getPendingResendJobs();
+  }
+
+  async completeResendJob(
+    jobId: string,
+    state: Exclude<SendLogResendJobState, 'pending'>
+  ): Promise<void> {
+    this.ensureInitialized();
+    return this.sendLog.completeResendJob(jobId, state);
+  }
+
+  // ============================================================================
   // Message Record Storage (Not Yet Implemented)
   // Retry records are indexed by the client timestamp assigned before encryption.
   // ============================================================================
 
   async storeMessageRecord(record: MessageRecord): Promise<void> {
     this.ensureInitialized();
+    const key = this.getMessageRecordStorageKey(record.sessionId, record.timestamp);
+    const stored = await this.storageBackend.getItem(key);
+    const createdAt = stored
+      ? (JSON.parse(await this.decrypt(stored)) as MessageRecord).createdAt
+      : Date.now();
     await this.storageBackend.setItem(
-      this.getMessageRecordStorageKey(record.sessionId, record.timestamp),
-      await this.encrypt(JSON.stringify(record))
+      key,
+      await this.encrypt(JSON.stringify({ ...record, createdAt }))
     );
   }
 
@@ -1912,6 +2276,44 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
       await this.storageBackend.removeMany(messageKeys);
     }
     return messageKeys.length;
+  }
+
+  /**
+   * Each write checks that the record still holds the value that `rewrite`
+   * read. A record that another write replaced in between stays as that
+   * write left it.
+   */
+  async rewriteMessageRecords(rewrite: (record: MessageRecord) => string | null): Promise<number> {
+    this.ensureInitialized();
+    const allKeys = await this.storageBackend.getAllKeys();
+    const messageKeys = allKeys.filter((key) => key.startsWith(STORAGE_KEYS.MESSAGE_RECORD_PREFIX));
+
+    let changed = 0;
+    for (const key of messageKeys) {
+      const encrypted = await this.storageBackend.getItem(key);
+      if (!encrypted) continue;
+      const record = JSON.parse(await this.decrypt(encrypted)) as MessageRecord;
+      const plaintext = rewrite(record);
+      if (plaintext === record.plaintext) continue;
+      const write =
+        plaintext === null
+          ? ({ type: 'remove', key } as const)
+          : ({
+              type: 'set',
+              key,
+              value: await this.encrypt(JSON.stringify({ ...record, plaintext })),
+            } as const);
+      try {
+        await this.storageBackend.atomicWrite([
+          { type: 'check', key, expectedValue: encrypted },
+          write,
+        ]);
+        changed++;
+      } catch (error) {
+        if ((await this.storageBackend.getItem(key)) === encrypted) throw error;
+      }
+    }
+    return changed;
   }
 
   // ============================================================================
@@ -2018,13 +2420,17 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
 
 /**
  * A device record is stale when it has no current session and no archived
- * session, and it has not been updated within `maxLatency`.
+ * session, and it has not been updated within `maxLatency`, or when its
+ * removal is older than `maxLatency`.
  */
 function isStaleDeviceRecord(record: DeviceRecord, now: number, maxLatency: number): boolean {
   const hasNoSessions =
     !record.session ||
     (!record.session.currentSession && Object.keys(record.session.archivedSessions).length === 0);
-  return hasNoSessions && now - record.updatedAt > maxLatency;
+  return (
+    (hasNoSessions && now - record.updatedAt > maxLatency) ||
+    isExpiredRemovedDevice(record, now, maxLatency)
+  );
 }
 
 /**

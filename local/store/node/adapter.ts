@@ -7,16 +7,20 @@
  */
 
 import type { Logger } from '../../../logger';
-import type { SignalProtocolLocalSecretVault } from '../../../types/api';
+import type { LocalStoreProtection, SignalProtocolLocalSecretVault } from '../../../types/api';
 import { createBetterSqlite3MultipleCiphersDriver } from '../sqlite/better-sqlite3-multiple-ciphers-driver';
 import type { SqliteOpenOptions } from '../sqlite/encryption';
 import type { SqliteRootExecutor } from '../sqlite/executor';
 import {
   openSqliteStore,
+  readSqliteStoreProtection,
   resetSqliteStore,
   type SqliteStoreOpenOptions,
 } from '../sqlite/open-store';
-import { SqliteSignalProtocolStore } from '../sqlite/store';
+import {
+  SqliteSignalProtocolStore,
+  convertSqliteLegacyReceivedContent,
+} from '../sqlite/store';
 import { withOwnerLock } from './owner-lock';
 
 /** The database file name when the options name none. */
@@ -81,21 +85,30 @@ async function withStoreOptions(
  * @see {@link SignalProtocolLocalStore} for interface documentation
  */
 export class NodeSignalProtocolStore extends SqliteSignalProtocolStore {
-  private constructor(database: SqliteRootExecutor, logger: Logger | undefined) {
-    super(database, { logger });
+  private constructor(
+    database: SqliteRootExecutor,
+    protection: LocalStoreProtection,
+    logger: Logger | undefined
+  ) {
+    super(database, { logger, protection });
     databases.set(this, database);
   }
 
   /** @internal Use {@link nodeStore}. */
   static async open(options: NodeSignalProtocolStoreOptions): Promise<NodeSignalProtocolStore> {
     const database = await withStoreOptions(options, 'open', openSqliteStore);
-    return new NodeSignalProtocolStore(database, options.logger);
+    const protection = await readSqliteStoreProtection(database, options.vault);
+    return await convertSqliteLegacyReceivedContent(
+      new NodeSignalProtocolStore(database, protection, options.logger),
+      database
+    );
   }
 
   /** @internal Use {@link resetNodeStore}. */
   static async reset(options: NodeSignalProtocolStoreOptions): Promise<NodeSignalProtocolStore> {
     const database = await withStoreOptions(options, 'reset', resetSqliteStore);
-    return new NodeSignalProtocolStore(database, options.logger);
+    const protection = await readSqliteStoreProtection(database, options.vault);
+    return new NodeSignalProtocolStore(database, protection, options.logger);
   }
 
   /**

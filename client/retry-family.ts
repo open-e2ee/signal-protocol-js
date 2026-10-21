@@ -18,11 +18,14 @@ import {
   resolveRetryFamilyMember,
   RetryRequestedEnvelopeChangedError,
   storeProcessedEnvelope,
+  updateRetryRequest,
   withProcessedEnvelopeLock,
   type ResolvedRetryFamilyMember,
   type StoredRetryRequest,
 } from '../local/store/reliability';
 import type { RetryRequestFailure } from './retry-request-envelope';
+import type { SignalProtocolClientHooks } from './event-hooks';
+import { reportDeliveryRecovered } from './delivery-error';
 import type { RetryRequestOutcome } from './retry-request-lifecycle';
 
 type RetryFamilyStore = Parameters<typeof withProcessedEnvelopeLock>[0];
@@ -51,16 +54,56 @@ export interface RetryFamilyReceive {
    */
   admit(): Promise<boolean>;
   /**
-   * Record a decrypt that succeeded. For a member, and for a failed
-   * envelope with a request record, one write marks the failed envelope
-   * processed and fulfilled. A redelivery of the failed envelope on either
-   * path is then dropped, and so is each later member. When the write
-   * fails, it writes one warning with the behavior
-   * RETRY_FULFILL_WRITE_FAILED and returns, so the caller continues as for
-   * any decrypted envelope. A redelivery of the failed envelope or of
-   * another member can then give the content again.
+   * Tell which failed envelope a decrypt with this content fulfills: the
+   * failed envelope of a member, or of a failed envelope with a request
+   * record. Undefined when `fulfill` writes nothing for it. The receive
+   * record of the content names the result as its `failedEnvelopeId`.
+   * Call it after `admit`.
    */
-  fulfill(): Promise<void>;
+  fulfills(decrypted?: {
+    readonly senderKeyDistribution: boolean;
+    readonly content: boolean;
+  }): string | undefined;
+  /**
+   * Record a decrypt that succeeded: outcome 1. The receive path calls it
+   * right after the commit of the receive record, before the
+   * acknowledgment or the return. For a member, and for a failed envelope
+   * with a request record, one write marks the failed envelope processed
+   * and fulfilled. That write stops the retry scheduler for the failed
+   * envelope. A redelivery of the failed envelope on either path is then
+   * dropped, and so is each later member. When the write fails, the error
+   * propagates: the caller does not acknowledge the envelope, and its
+   * redelivery finds the committed receive record and writes again.
+   *
+   * The fulfilled write does not run `onDeliveryRecovered`. That hook waits
+   * for the completion of the receive record (outcome 2), as
+   * `reportDeliveryRecovered` tells.
+   *
+   * A failed group message whose sender key was missing has a request
+   * record with no group. When the decrypt that gives its content resolves
+   * the group, the record gets it before the fulfilled write, so
+   * `onDeliveryRecovered` names it. A record that names a group keeps it.
+   *
+   * A member that brings only a sender-key distribution, for a failed
+   * envelope that is a sender-key group message, writes nothing and does
+   * not fulfill the failed envelope. The member installs the sender key and
+   * gives no content. A redelivery of the failed envelope then decrypts
+   * with that key and gives its content, and a later member is admitted.
+   * One debug line records the behavior RETRY_SENDER_KEY_RESEND. A member
+   * that brings content beside the distribution fulfills the failed
+   * envelope, as any other member does.
+   *
+   * @param decrypted - The decrypted content. `senderKeyDistribution` is
+   *   true when the content carries a sender-key distribution. `content` is
+   *   true when it carries content other than a distribution. `groupId` is
+   *   the group that the decrypt resolved for group content, in the form
+   *   of `DecryptedEnvelope.conversationId`.
+   */
+  fulfill(decrypted?: {
+    readonly senderKeyDistribution: boolean;
+    readonly content: boolean;
+    readonly groupId?: string;
+  }): Promise<void>;
   /**
    * Record a decrypted null message, in place of `fulfill`. A null
    * message carries no content, so the caller never gives it to the
@@ -123,8 +166,14 @@ export interface RetryFamilyReceive {
  * The processed record and the acknowledgment use the delivered envelope
  * ID.
  *
+ * Under the lock and before the receive, it runs `onDeliveryRecovered` for
+ * a failed envelope whose recovery the hook did not mark. An error from
+ * that hook propagates, so the receive path does not acknowledge the
+ * envelope, and its redelivery runs the hook again.
+ *
  * @param storage - The local store that keeps the retry records.
  * @param logger - The client logger.
+ * @param hooks - The client hooks, for `onDeliveryRecovered`.
  * @param envelope - The IDs of the received envelope: the delivered
  *   envelope ID, and the client message ID when the relay delivers one.
  * @param receive - The receive path. It runs under the lock.
@@ -132,18 +181,25 @@ export interface RetryFamilyReceive {
 export async function receiveInRetryFamily<T>(
   storage: RetryFamilyStore,
   logger: Required<Logger>,
+  hooks: SignalProtocolClientHooks | undefined,
   envelope: { readonly id?: string; readonly clientMessageId?: string },
   receive: (family: RetryFamilyReceive) => Promise<T>
 ): Promise<T> {
   const envelopeId = envelope.id;
-  if (!envelopeId) return receive(retryFamilyReceive(storage, logger, undefined, undefined));
+  if (!envelopeId) {
+    return receive(retryFamilyReceive(storage, logger, undefined, undefined));
+  }
   const member = await resolveRetryFamilyMember(
     storage,
     envelope.clientMessageId ?? envelopeId
   );
-  return withProcessedEnvelopeLock(storage, member?.failedEnvelopeId ?? envelopeId, () =>
-    receive(retryFamilyReceive(storage, logger, envelopeId, member))
-  );
+  const failedEnvelopeId = member?.failedEnvelopeId ?? envelopeId;
+  return withProcessedEnvelopeLock(storage, failedEnvelopeId, async () => {
+    // A recovery whose hook did not return runs again. An error from the
+    // hook fails the receive, so the envelope is delivered again.
+    await reportDeliveryRecovered(storage, hooks, failedEnvelopeId);
+    return receive(retryFamilyReceive(storage, logger, envelopeId, member));
+  });
 }
 
 function retryFamilyReceive(
@@ -153,8 +209,7 @@ function retryFamilyReceive(
   member: ResolvedRetryFamilyMember | undefined
 ): RetryFamilyReceive {
   const failedEnvelopeId = member?.failedEnvelopeId ?? envelopeId;
-  // The read comes before the decrypt, so only writes follow the
-  // application hook.
+  // The read comes before the decrypt, so only writes follow the commit.
   let request: StoredRetryRequest | null = null;
   return {
     member,
@@ -193,17 +248,47 @@ function retryFamilyReceive(
       request = await getRetryRequest(storage, failedEnvelopeId);
       return true;
     },
-    async fulfill() {
+    fulfills(decrypted) {
+      if (
+        member &&
+        request?.groupMessage &&
+        decrypted?.senderKeyDistribution &&
+        !decrypted.content
+      ) {
+        return undefined;
+      }
+      if (failedEnvelopeId === undefined || !(member || request)) return undefined;
+      return failedEnvelopeId;
+    },
+    async fulfill(decrypted) {
+      if (
+        member &&
+        request?.groupMessage &&
+        decrypted?.senderKeyDistribution &&
+        !decrypted.content
+      ) {
+        logger.debug('A resend gave the sender key of a failed group message', {
+          category: 'E2EE',
+          data: { envelopeId, behavior: 'RETRY_SENDER_KEY_RESEND' },
+        });
+        return;
+      }
+      if (failedEnvelopeId === undefined || !(member || request)) return;
       try {
+        const groupId = decrypted?.groupId;
+        if (request && request.groupId === undefined && groupId !== undefined) {
+          request =
+            (await updateRetryRequest(storage, failedEnvelopeId, request.retryId, request.attempt, {
+              groupId,
+            })) ?? request;
+        }
         // One write marks the failed envelope processed and fulfilled. A
         // redelivery of it is then acknowledged with no decrypt, and each
         // later member of its request is dropped.
-        if (failedEnvelopeId !== undefined && (member || request)) {
-          await storeProcessedEnvelope(storage, failedEnvelopeId, Date.now(), undefined, true);
-        }
+        await storeProcessedEnvelope(storage, failedEnvelopeId, Date.now(), undefined, true);
       } catch (error) {
-        // The application gets the plaintext. Only a redelivery can
-        // decrypt the content again.
+        // The receive record holds the content. The caller does not
+        // acknowledge, so the redelivery writes outcome 1 again.
         logger.warn('The retry family record of a decrypted envelope failed to store', {
           category: 'E2EE',
           data: {
@@ -212,6 +297,7 @@ function retryFamilyReceive(
             error: (error as Error).message,
           },
         });
+        throw error;
       }
     },
     async consumeNull(fingerprint) {

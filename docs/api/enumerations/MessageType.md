@@ -15,7 +15,7 @@
 PreKey message for initial session establishment.
 
 First message from initiator to responder. Contains extra information
-needed for responder to establish session using X3DH/PQXDH.
+needed for responder to establish session using PQXDH.
 
 ***
 

@@ -129,9 +129,9 @@ holds each member to a production construction site.
 |---|---|---|
 | `INITIALIZATION_FAILED` | Client or group initialization failed. | Inspect `originalError` and the configuration. |
 | `SECURE_RANDOM_UNAVAILABLE` | The runtime has no global `crypto.getRandomValues`. The SDK throws `SecureRandomUnavailableError` from `@open-e2ee/signal-protocol-sdk/types`. | On React Native and Expo, install `react-native-get-random-values` 2.x or `react-native-quick-crypto` and load it before the first SDK call. |
-| `PQXDH_REQUIRED` | Policy requires PQXDH, but the peer lacks required keys. | Wait for new peer keys or queue the message. |
+| `PQXDH_REQUIRED` | Every new session requires PQXDH, and the peer bundle has no ML-KEM prekey. No classical key agreement exists. | Wait for new peer keys or queue the message. |
 | `PQXDH_FAILED` | The PQXDH exchange failed. | Abort setup and inspect `originalError`. |
-| `TRIPLE_RATCHET_REQUIRED` | Triple Ratchet policy lacks a PQXDH session. | Establish the required PQXDH session first. |
+| `TRIPLE_RATCHET_REQUIRED` | Triple Ratchet applies, but the session has no PQXDH result. | Establish a PQXDH session first. |
 
 ### SPQR Errors
 
@@ -208,6 +208,117 @@ try {
 }
 ```
 
+### Stale Devices
+
+A direct message, a sync copy, a sender-key distribution, a group device
+message, a receipt, and a retry request go to one device. Each of these
+posts names the registration ID of the recipient session. A shared group
+message names the registration of each destination device. The identified
+route and both sealed routes send the registration. A sealed post sends no
+sender identity. A post to a device with no session names none.
+
+The Relay compares this value with the current registration of the device.
+A device that was reinstalled with the same device ID has a new
+registration. The Relay then refuses the post:
+
+- The identified route and the sealed direct route answer HTTP 410 with
+  the code `STALE_DEVICE`. The sealed direct route takes an access key or
+  the group endorsement of the one recipient account.
+- The sealed group route refuses only that destination. Its receipt names
+  each refused destination with the code `STALE_DEVICE`. The refused count
+  alone names no device, so the SDK infers no code from it. A one-device post
+  goes on this route only after a fallback from the direct route. See
+  [Sealed Route Rejections](#sealed-route-rejections).
+
+The SDK handles this refusal for each of these post kinds. It refreshes
+the session of the device once and posts again. A direct message, a sync
+copy, a sender-key distribution, a group device message, and a receipt are
+encrypted again under the new session and get a new transport ID. A retry
+request is not encrypted, so it keeps its envelope: the second post has the
+same transport ID and names the registration of the new session. The
+application does not have to act. A retry request ends with the terminal
+class `missing-sender` only when the Relay has no bundle for the device, or
+when the device refuses the request again after the refresh. When the
+refresh of a receipt or a retry request fails for another reason, the SDK
+keeps the stale session and posts the item again later. A device that a
+shared group message names gets the same repair when the receipt refuses it.
+
+The registration field never identifies the sender. A sealed post that
+names an old registration tells the Relay only that some sender still has
+a session from before the reinstall. The post carries no sender identity,
+so it does not tell the Relay which sender that is.
+
+### Sealed Route Rejections
+
+A post to one device can use the group endorsement on the sealed direct
+route. The Relay answers a rejection in one of two ways:
+
+| Answer | Meaning | SDK behavior |
+|---|---|---|
+| 401 `ANONYMOUS_AUTH_REJECTED` | The direct route does not take the endorsement. The post did not start. | The SDK posts the message once on the sealed group route for that device, and writes one `info` log line with the behavior `GROUP_ROUTE_FALLBACK`. The post stays sealed. |
+| 401 `GROUP_CREDENTIAL_REJECTED` | The Relay rejected the endorsement. | No route fallback. In `required` mode, the send fails with `SEALED_SENDER_AUTH_FAILED` and makes no identified post. In `preferred` mode, the SDK posts identified and calls `onIdentifiedFallback`. |
+
+A resend that answers a retry request uses the same authorization as its
+original send. A resend of a group send to a member with no access key is
+sealed with the group endorsement. A resend in `required` mode that has no
+sealed authorization fails with `SEALED_SENDER_REQUIRED` and makes no
+identified post.
+
+### Device Sets
+
+A Relay that compares device sets checks each declared post. Each post to an
+account declares the device IDs that the sender holds records for. The Relay
+refuses a declaration that does not match its device list:
+
+- HTTP 409 with the code `DEVICE_SET_MISMATCH` names the missing and the extra
+  devices of each account.
+- HTTP 410 with the code `STALE_DEVICE` names each declared device whose
+  registration changed.
+
+The SDK repairs the set and posts again. It removes each extra device record,
+starts a new session with each missing or stale device, and encrypts the
+message again only for those devices. A device that the Relay accepted keeps
+its stored post. The application does not have to act.
+
+A send has two phases: the recipient phase, and then the sync phase for the
+own devices. Each phase can restart 10 times. When the Relay refuses the
+declaration of the recipient phase after the 10th restart, or refuses a
+restart post with `OPERATION_EXPIRED`, the send throws
+[`DeviceSetReconciliationError`](./api/classes/DeviceSetReconciliationError.md).
+`isOutgoingMessageError` is true for it. Its fields:
+
+| Field | Meaning |
+|---|---|
+| `reason` | `exhausted` after the 10th restart, or `expired` after `OPERATION_EXPIRED` |
+| `phase` | `recipient` or `sync` |
+| `restarts` | The restarts of the phase |
+| `lastRefusal` | The code and the devices of the last refusal. `BUNDLE_NOT_FOUND` is a listed device with no prekey bundle |
+| `acceptedDevices` | The devices that the Relay accepted. They stay accepted |
+| `unresolvedDevices` | The devices that did not get the message |
+| `clientMessageId` | The ID of the send |
+
+The outbox keeps the send as terminal and does not post it again. A call of
+`send()` with the same `clientMessageId` starts a new run at 0 restarts.
+
+The sync phase does not fail the send. The recipient result is stored first.
+When the sync phase does not complete, or the own device list cannot be read,
+the result carries `syncPending: true`. Call `send()` again with the same
+`clientMessageId` to post the pending copies.
+
+The Relay marks each accepted declared post with `deviceSetChecked`. When an
+accepted post has no mark, the Relay did not compare its device set. The send
+is delivered and its result does not change. The client reports a
+[`RelayProtocolError`](./api/classes/RelayProtocolError.md) with the code
+`DEVICE_SET_UNCHECKED` once for the send through the `onRelayProtocolError`
+hook. Its `route` names the post route. A sync copy to another own device is
+an `identified-direct` post. A sync payload of a method such as
+`syncReadToLinkedDevices` reports the error once, with no `clientMessageId`.
+Report it to the Relay operator.
+
+A relay that does not compare device sets gets no declaration. The Convex
+relay is one. With it, the SDK reads the device lists as before, and none of
+these errors occur.
+
 ## Relay Device Errors
 
 The Relay can refuse this device. Two errors name that refusal. Neither is an
@@ -266,6 +377,58 @@ try {
   } else {
     throw error;
   }
+}
+```
+
+## Group Receive Errors
+
+A managed group receive can end in three errors. None of them is an
+`EncryptionError`. Each one tells the caller what to do with the message.
+
+| Error | Cause | Keep rule |
+|---|---|---|
+| [`GroupReceiveUnavailableError`](./api/classes/GroupReceiveUnavailableError.md) | The group state is not current. `reason` names the wait, and `retryAfterMs` gives the time to the next try. The client stored the content in a receive record under `messageId`. | Call again later with the same message. The later call decides the stored content with no second decrypt. |
+| [`GroupReceiveRefusedError`](./api/classes/GroupReceiveRefusedError.md) | The client refused the content. `reason` names the refusal, for example `sender-not-member` or `sync-from-other-account`. The client asked for no resend. | Drop the message. A redelivery is dropped as a processed duplicate. |
+| [`GroupResendDeferredError`](./api/classes/GroupResendDeferredError.md) | A resend to a group member waits for the group state. The client neither sent nor refused the resend. | The Relay keeps the retry request. Do not acknowledge it. A later delivery decides again. |
+
+The deprecated `decryptGroupMessage` throws the first two errors. It also
+throws `EncryptionError` with `STORAGE_QUOTA_EXCEEDED` when the receive queue
+has no room, and with `MESSAGE_DUPLICATE` for a message that this client
+processed or that gives no content, such as a null message. A decrypt failure
+throws its error with no retry request and no report.
+`decryptEnvelope` throws `GroupReceiveRefusedError` for a group context that
+is malformed or names another group. `processIncomingEnvelope` throws none
+of them. It returns a receive outcome: `pending` for content that waits for
+its group state, and `denied` for refused content. Acknowledge the envelope
+for both. The receive queue keeps pending content on the device and decides
+it when its group updates. Do not acknowledge an envelope whose outcome is
+`refused`: the receive queue had no room, and the client stored nothing.
+
+Content from another account that carries a sync message is refused as
+`sync-from-other-account` on the Relay subscription, in
+`receiveIncomingEnvelopes`, in `decryptEnvelope` and `decryptGroupMessage`,
+and in `processIncomingEnvelope` as a `denied` outcome. The raw decrypt
+methods `receive`, `decryptMessage`, and `decryptMessages` return the
+plaintext with no group classification and do not refuse it.
+
+The Relay subscription applies the rule itself. It acknowledges an envelope
+after its content is committed, also when the content waits for its group
+or is denied. An envelope that the receive queue refuses for lack of room
+stays unacknowledged. `receiveIncomingEnvelopes` commits each envelope and sends
+no acknowledgment. It reports the committed envelopes in
+`processedMessageIds`, ready for the transport acknowledgment. It reports a
+deferred retry request and an envelope that the receive queue had no room
+for in `failedMessageIds`.
+
+<!-- doc-snippet:skip requires-existing-client -->
+```typescript
+const outcome = await signal.processIncomingEnvelope(envelope, {
+  onPersist: (processed) => saveMessage(processed.messageId, processed.plaintext),
+});
+if (outcome.kind === 'refused') {
+  keepForLater(envelope);
+} else {
+  acknowledge(envelope);
 }
 ```
 

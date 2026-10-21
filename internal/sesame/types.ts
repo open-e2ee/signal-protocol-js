@@ -20,6 +20,7 @@ import {
   type SessionRecord,
 } from '../../types/session';
 import type { ProtocolAddress } from '../../types/address';
+import type { ReceiveWorkSeed, SetDeviceRecordOptions } from '../../types/api';
 import type { MessageRecordStore } from '../../local/store';
 
 // ============================================================================
@@ -331,6 +332,40 @@ export interface DeviceRecord {
    * The client blocks messaging until the user verifies safety numbers.
    */
   pendingVerification?: boolean;
+
+  /**
+   * The time at which the device left the device list of its user. The
+   * removal archives the current session and keeps the record, so a message
+   * that the device sent before its removal still decrypts. A removed device
+   * gets no fan-out. When the device list names the device again, the
+   * marker clears and the device returns to fan-out with no current session.
+   * The stale-record cleanup deletes the record when the marker is older than
+   * `SesameConfig.maxLatency`. Absent on a device that is listed.
+   */
+  removedAt?: number;
+}
+
+/**
+ * Whether the device record is marked removed. Each device enumeration of
+ * the send paths skips a removed device. The store read methods return
+ * removed devices, and their callers apply this predicate.
+ */
+export function isRemovedDevice(record: Pick<DeviceRecord, 'removedAt'>): boolean {
+  return record.removedAt !== undefined;
+}
+
+/**
+ * Whether the stale-record cleanup deletes a removed device record: the
+ * record is marked removed, and its removal is older than `maxLatency`.
+ * Each store's `deleteStaleRecords` applies this clause beside its
+ * no-session clause.
+ */
+export function isExpiredRemovedDevice(
+  record: Pick<DeviceRecord, 'removedAt'>,
+  now: number,
+  maxLatency: number
+): boolean {
+  return record.removedAt !== undefined && now - record.removedAt > maxLatency;
 }
 
 // ============================================================================
@@ -522,12 +557,12 @@ export interface SesameMessage {
   ciphertext: Uint8Array;
 
   /**
-   * Whether this is an initiating message (contains X3DH/PQXDH header)
+   * Whether this is an initiating message (contains PQXDH header)
    */
   isInitiating: boolean;
 
   /**
-   * X3DH/PQXDH header data for initiating messages
+   * PQXDH header data for initiating messages
    * Null for non-initiating messages
    */
   initHeader: Uint8Array | null;
@@ -587,9 +622,17 @@ export interface RetryRequest {
    * Allows the sender to verify that a session-reset request targets the active
    * ratchet.
    *
-   * Undefined for sender-key/group failures.
+   * Undefined for sender-key/group failures. A request without it names a
+   * failed sender-key message.
    */
   ratchetKey?: string;
+
+  /**
+   * The client message ID of the failed message: the ID that its sender
+   * chose. The requester sets it when its relay delivered that ID, as a
+   * relay that assigns its own envelope ID does.
+   */
+  failedClientMessageId?: string;
 }
 
 /**
@@ -699,7 +742,7 @@ export interface DeviceListResponse {
 
 /**
  * Prekey bundle data for establishing new sessions
- * Contains public keys needed for X3DH/PQXDH key agreement
+ * Contains public keys needed for PQXDH key agreement
  */
 export interface PreKeyBundleData {
   /**
@@ -732,6 +775,9 @@ export interface PreKeyBundleData {
 // SESAME Manager Interface
 // ============================================================================
 
+/** The plaintext that a MessageRecord keeps for a sent plaintext, or null for no record. */
+export type MessageRecordPlaintext = (plaintext: string) => string | null;
+
 /**
  * Options for SESAME send operations.
  *
@@ -763,8 +809,13 @@ export interface SesameManager {
    * the plaintext of the encrypted message."
    *
    * When set, sent messages are stored so they can be resent on retry request.
+   *
+   * @param store - The store of the records
+   * @param recordPlaintext - The plaintext that the record of a send keeps,
+   *   from the sent plaintext. Null keeps no record. Each send applies it,
+   *   sync copies included. The default keeps the sent plaintext.
    */
-  setMessageRecordStore(store: MessageRecordStore): void;
+  setMessageRecordStore(store: MessageRecordStore, recordPlaintext?: MessageRecordPlaintext): void;
 
   /**
    * Register a newly established Double Ratchet session with SESAME
@@ -826,12 +877,15 @@ export interface SesameManager {
   /**
    * Encrypt a sync payload for this account's other linked devices.
    *
-   * Excludes the current sending device and never recursively produces more
-   * sync messages. Used for multi-device transcript fanout.
+   * The payload goes to each device of `listedDeviceIds` that has a session
+   * that can send, in list order. The caller reads the account's device list
+   * and passes it. The current sending device is never a target, and the
+   * call never recursively produces more sync messages. Used for
+   * multi-device transcript fanout.
    */
   sendToLocalOtherDevices(
     plaintext: Uint8Array,
-    options?: SesameSendOptions
+    options: SesameSendOptions & { listedDeviceIds: readonly DeviceID[] }
   ): Promise<SesameMessage[]>;
 
   /**
@@ -844,7 +898,7 @@ export interface SesameManager {
    * @returns Decrypted plaintext
    * @see https://signal.org/docs/specifications/sesame/
    */
-  receive(message: SesameMessage, receiveId?: string): Promise<Uint8Array>;
+  receive(message: SesameMessage, receiveWork?: ReceiveWorkSeed): Promise<Uint8Array>;
 
   /**
    * Handle a retry request from a recipient
@@ -865,9 +919,16 @@ export interface SesameManager {
    *
    * @param failedMessage - The message that could not be decrypted
    * @param reason - Why decryption failed
+   * @param options - `senderKey: true` when the failed message is a
+   *   sender-key message. The request then carries no ratchet key, because
+   *   the ciphertext holds none.
    * @returns The retry request to send
    */
-  createRetryRequest(failedMessage: SesameMessage, reason: RetryReason): Promise<RetryRequest>;
+  createRetryRequest(
+    failedMessage: SesameMessage,
+    reason: RetryReason,
+    options?: { senderKey?: boolean }
+  ): Promise<RetryRequest>;
 
   /**
    * Get the session record for a specific device.
@@ -882,6 +943,13 @@ export interface SesameManager {
    * Returns null if no active session exists.
    */
   getActiveSession(userId: UserID, deviceId: DeviceID): Promise<SessionState | null>;
+
+  /**
+   * Get the registration ID of the remote device in the current session.
+   * Returns undefined if no current session exists. A changed value shows a
+   * reinstalled device, which needs the sender keys of its groups again.
+   */
+  getRemoteRegistrationId(userId: UserID, deviceId: DeviceID): Promise<number | undefined>;
 
   /**
    * Get device record for a specific user's device
@@ -907,14 +975,39 @@ export interface SesameManager {
   ): Promise<void>;
 
   /**
-   * Remove a device for a user
-   * Deletes all sessions associated with that device
+   * Remove a device for a user. The current session of the device is
+   * archived, and the record is kept and marked removed (`removedAt`). The
+   * archived sessions still decrypt, and the device gets no fan-out. A device
+   * that is already removed stays as it is, and no event is emitted again.
+   * The stale-record cleanup deletes the record after `maxLatency`.
    */
   removeDevice(userId: UserID, deviceId: DeviceID): Promise<void>;
 
   /**
-   * Update local device list based on server response
-   * Adds new devices, removes deleted devices
+   * Clear the removed marker of a device that its device list names again.
+   * The device returns to fan-out with no current session, and the archived
+   * sessions stay. A device that is not removed stays as it is.
+   */
+  relistDevice(userId: UserID, deviceId: DeviceID): Promise<void>;
+
+  /**
+   * Archive the session of one device in the protocol store and in its
+   * device record, so the next send to the device starts a new session.
+   * Both writes run under one hold of the session lock of the device and
+   * the user lock: `archiveProtocolSession` first, and then the device
+   * record. `archiveProtocolSession` must not take either lock or call a
+   * protocol encrypt or decrypt.
+   */
+  archiveSession(
+    userId: UserID,
+    deviceId: DeviceID,
+    archiveProtocolSession: () => Promise<void>
+  ): Promise<void>;
+
+  /**
+   * Update local device list based on server response.
+   * Adds new devices, removes the devices that the list does not name, and
+   * relists a removed device that the list names again.
    */
   syncDeviceList(deviceListResponse: DeviceListResponse): Promise<void>;
 
@@ -925,7 +1018,8 @@ export interface SesameManager {
   cleanupExpiredSessions(): Promise<number>;
 
   /**
-   * Delete stale device records (orphaned sessions older than MAXLATENCY)
+   * Delete stale device records: a record with no session older than
+   * MAXLATENCY, and a removed record whose removal is older than MAXLATENCY.
    * Callers should run this periodically
    */
   cleanupStaleRecords(): Promise<number>;
@@ -980,7 +1074,7 @@ export interface SesameStats {
 export interface SesameEvents {
   /**
    * Fired when a new session is established with a device.
-   * This happens after successful X3DH/PQXDH key agreement.
+   * This happens after successful PQXDH key agreement.
    *
    * @param address - The ProtocolAddress of the remote device
    */
@@ -1159,7 +1253,16 @@ export interface SesameStorage {
 
   // Device record operations (includes session via DeviceRecord.session)
   getDeviceRecord(userId: UserID, deviceId: DeviceID): Promise<DeviceRecord | null>;
-  setDeviceRecord(userId: UserID, deviceId: DeviceID, record: DeviceRecord): Promise<void>;
+  /**
+   * Store a device record. With `senderKeyHandoffInvalidation`, the same
+   * write deletes the sender-key handoff rows of that device in every group.
+   */
+  setDeviceRecord(
+    userId: UserID,
+    deviceId: DeviceID,
+    record: DeviceRecord,
+    options?: SetDeviceRecordOptions
+  ): Promise<void>;
   deleteDeviceRecord(userId: UserID, deviceId: DeviceID): Promise<void>;
 
   // Session operations (convenience methods - delegate to DeviceRecord.session)

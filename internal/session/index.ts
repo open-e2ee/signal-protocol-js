@@ -8,7 +8,7 @@
  *
  * Provides:
  * - Factory functions for creating Signal Protocol session states
- * - SessionBuilder class for X3DH/PQXDH key agreement and session establishment
+ * - SessionBuilder class for PQXDH key agreement and session establishment
  * - SessionCipher class for encrypt/decrypt operations using Double Ratchet
  * - Branded key types for type-safe session key handling
  *

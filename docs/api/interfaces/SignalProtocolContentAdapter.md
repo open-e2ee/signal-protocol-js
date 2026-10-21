@@ -76,6 +76,78 @@
 
 ***
 
+### serializeContentBesideSenderKeyDistribution()
+
+> **serializeContentBesideSenderKeyDistribution**(`content`, `groupId`, `distribution`): `string`
+
+The logged content of a group message with a sender-key distribution
+beside it, in one payload. A sender answers a retry request for a group
+message with it, so the requesting device gets the content and the
+current sender key of the group in one resend. `inspectContent` must
+report the distribution of the result, and the result must give the
+content to the application as the original message.
+
+#### Parameters
+
+##### content
+
+`string`
+
+The plaintext of the group message, as the send logged it
+
+##### groupId
+
+`string`
+
+The raw group ID
+
+##### distribution
+
+[`SenderKeyDistributionMessage`](SenderKeyDistributionMessage.md)
+
+The current sender-key distribution of the sender
+
+#### Returns
+
+`string`
+
+#### Throws
+
+Error when the content cannot carry a distribution
+
+***
+
+### serializeContentWithGroupContext()
+
+> **serializeContentWithGroupContext**(`content`, `context`): `Uint8Array`
+
+The content of a managed group message with the group context in it.
+The client calls it once for each new send to a managed group, and the
+sent-sync transcript and each resend carry the result. Every content
+must be able to carry a context. `inspectContent` must report the
+context of the result, and `withoutGroupContext` must give the content
+back.
+
+#### Parameters
+
+##### content
+
+`Uint8Array`
+
+The content that the application sends
+
+##### context
+
+[`GroupContentContext`](GroupContentContext.md)
+
+The context of the group at the send
+
+#### Returns
+
+`Uint8Array`
+
+***
+
 ### serializeDataMessage()
 
 > **serializeDataMessage**(`content`): `Uint8Array`
@@ -323,3 +395,57 @@
 #### Returns
 
 `void`
+
+***
+
+### withoutGroupContext()
+
+> **withoutGroupContext**(`plaintext`): `string`
+
+The content that the application gets, with no group context in it.
+Return the plaintext unchanged when it carries no context. Apply the
+same rule to the content inside a sent-sync transcript in this
+adapter's format.
+
+#### Parameters
+
+##### plaintext
+
+`string`
+
+The decrypted plaintext
+
+#### Returns
+
+`string`
+
+***
+
+### withoutSenderKeyDistribution()
+
+> **withoutSenderKeyDistribution**(`plaintext`): `string` \| `null`
+
+The plaintext that a pairwise message record keeps, with no sender-key
+distribution in it. A distribution holds the chain key of a group
+sender key, and that key rests only in the sender key store.
+
+Return the plaintext unchanged when it carries no distribution. Return
+the other content when a distribution travels beside it, so the record
+stays resendable. Return null when the distribution is all it carries.
+Apply the same rule to the content inside a sent-sync transcript in
+this adapter's format, because the client syncs a sent distribution to
+its other devices.
+
+#### Parameters
+
+##### plaintext
+
+`string`
+
+The plaintext of a pairwise send
+
+#### Returns
+
+`string` \| `null`
+
+The plaintext to keep, or null to keep no record

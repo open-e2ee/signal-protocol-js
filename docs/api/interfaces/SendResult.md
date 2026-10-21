@@ -106,6 +106,17 @@ reads its mailbox.
 
 ***
 
+### refusedDestinationCount?
+
+> `optional` **refusedDestinationCount?**: `number`
+
+For a group send over a group token, the number of destination devices
+that the relay refused when it accepted the shared post. A refusal after
+that acceptance is not counted. Absent for any other send, and when the
+relay does not report it.
+
+***
+
 ### segmentSize?
 
 > `optional` **segmentSize?**: `number`
@@ -119,6 +130,17 @@ Segment size for streaming AEAD format
 > `optional` **storageId?**: `string`
 
 Opaque remote object identifier for the encrypted attachment
+
+***
+
+### syncPending?
+
+> `optional` **syncPending?**: `true`
+
+True when the relay accepted the send for every recipient device but the
+copies for this account's other devices are not posted yet. The send is
+delivered. Call `send()` again with the same `clientMessageId` to post
+the pending copies. Absent when the copies were posted or none were due.
 
 ***
 

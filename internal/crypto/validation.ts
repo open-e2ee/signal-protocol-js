@@ -26,7 +26,7 @@ import type { Base64 } from '../../types';
  *
  * If this validation fails:
  * - The stored keys are corrupted or mismatched
- * - Any X3DH computation using these keys would fail with MAC errors
+ * - Any PQXDH computation using these keys would fail with MAC errors
  * - The sender's shared secret would differ from the receiver's
  *
  * @param publicKey Base64-encoded public key from storage
@@ -42,7 +42,7 @@ import type { Base64 } from '../../types';
  *   signedPreKey.privateKey,
  *   `signedPreKey:${keyId}`
  * );
- * // Now safe to use for X3DH
+ * // Now safe to use for PQXDH
  * ```
  */
 export {};

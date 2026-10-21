@@ -68,9 +68,3 @@ export const DEFAULT_DEVICE_ID = 1;
  * Maximum number of devices per user (1 primary + 4 linked)
  */
 export const MAX_DEVICES = 5;
-
-/**
- * Provisioning session QR code expires after 5 minutes.
- * The short TTL blocks reuse of a QR code after the linking window.
- */
-export const PROVISIONING_SESSION_TTL_MS = 5 * 60 * 1000;

@@ -37,7 +37,7 @@ Remote party's protocol address (userId:deviceId)
 
 ### decrypt()
 
-> **decrypt**(`remoteAddress`, `ciphertext`): `Promise`\<`string`\>
+> **decrypt**(`remoteAddress`, `ciphertext`, `receiveWork?`): `Promise`\<`string`\>
 
 Decrypt a message using existing session
 
@@ -54,6 +54,13 @@ Remote party's protocol address (userId:deviceId)
 [`Ciphertext`](../type-aliases/Ciphertext.md)
 
 Message to decrypt
+
+##### receiveWork?
+
+`ReceiveWorkSeed`
+
+When set, the decrypt commits the receive record
+  that it builds in the same transaction as the session state
 
 #### Returns
 

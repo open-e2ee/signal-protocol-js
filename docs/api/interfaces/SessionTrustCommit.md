@@ -78,12 +78,27 @@ Local identity namespace. It also scopes any consumed recipient prekeys.
 
 ***
 
-### receivedContent?
+### receiveWork?
 
-> `optional` **receivedContent?**: `ReceivedContent`
+> `optional` **receiveWork?**: `ReceiveWorkRecord`
+
+The receive record of the decrypted message. The store writes it in the
+same transaction as the session state, so the ratchet step and the
+record roll back together.
 
 ***
 
 ### record
 
 > **record**: [`SessionRecord`](SessionRecord.md)
+
+***
+
+### senderKeyHandoffInvalidation?
+
+> `optional` **senderKeyHandoffInvalidation?**: [`SenderKeyHandoffDevice`](SenderKeyHandoffDevice.md)
+
+The device whose sender-key handoffs this commit invalidates. The store
+deletes the rows of that device in every group in the same transaction.
+The session layer sets it for an inbound PreKey session and for an
+outbound bundle session that archives a current session.

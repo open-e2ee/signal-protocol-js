@@ -14,7 +14,9 @@ import type { SignalProtocolClientHooks } from './event-hooks';
 import { ContentHint } from '../types/messages';
 import type { SignalProtocolContentAdapter } from './content-adapter';
 import type { ProfileKeyExchange } from './profile-key-exchange';
+import type { RetryTerminalResetSteps } from './retry-terminal-recovery';
 import type { DeliveryStatusTracker } from './delivery-status';
+import type { ResendableContent } from './resendable-content';
 import type { Logger } from '../logger';
 import type {
   MediaAttachmentCheckpointCallback,
@@ -94,12 +96,59 @@ export interface SignalProtocolClientContext {
   readonly deliveries?: DeliveryStatusTracker;
 
   /**
+   * The resendable content of this client and its retention.
+   *
+   * @internal
+   */
+  readonly resendableContent: ResendableContent;
+
+  /**
    * Arm the retry request scheduler for the next attempt time or the
    * deadline of a request record.
    *
    * @internal
    */
   readonly scheduleRetryRequest?: (at: number) => void;
+
+  /**
+   * The session reset steps of a retry request that ended as
+   * `expired-content`, bound to the given context. Undefined without a
+   * relay.
+   *
+   * @internal
+   */
+  readonly retryTerminalReset?: (
+    context: SignalProtocolClientContext
+  ) => RetryTerminalResetSteps | undefined;
+
+  /**
+   * The registration ID of the current session with one device, from the
+   * cipher. An identified receipt and an identified retry request name it,
+   * so the Relay refuses the post to a reinstalled device. Undefined when
+   * this client has no session with the device.
+   *
+   * @internal
+   */
+  readonly recipientRegistrationId?: (
+    recipientUserId: string,
+    recipientDeviceId: number
+  ) => Promise<number | undefined>;
+
+  /**
+   * Archive the session with a device that the Relay refused as stale, and
+   * start a new session from a fresh bundle. The session hooks run through
+   * the given context. Resolves to true when the new session is ready.
+   * Resolves to false without a relay, and when the Relay has no bundle of
+   * the device. Rejects with StaleSessionRefreshError when the bundle fetch
+   * or the new session fails. A failed fetch keeps the stale session.
+   *
+   * @internal
+   */
+  readonly refreshStaleSession?: (
+    context: SignalProtocolClientContext,
+    recipientUserId: string,
+    recipientDeviceId: number
+  ) => Promise<boolean>;
 
   /**
    * Seal an encrypted receipt for anonymous delivery. Resolves to undefined
@@ -113,10 +162,23 @@ export interface SignalProtocolClientContext {
     recipientDeviceId: number,
     ciphertextBase64: string
   ) => Promise<SealedReceipt | undefined>;
+
+  /**
+   * Seal the payload of a retry request for anonymous delivery. Resolves to
+   * undefined when the request goes identified. Rejects when sealed sender
+   * is required and the request cannot be sealed.
+   *
+   * @internal
+   */
+  readonly sealRetryRequest?: (
+    recipientUserId: string,
+    recipientDeviceId: number,
+    payloadBase64: string
+  ) => Promise<SealedReceipt | undefined>;
 }
 
 /**
- * One encrypted receipt sealed for anonymous delivery.
+ * One encrypted receipt or one retry request sealed for anonymous delivery.
  *
  * @internal
  */
@@ -124,8 +186,8 @@ export interface SealedReceipt {
   readonly sentMessageBase64: string;
   readonly auth: SealedSenderAuth;
   /**
-   * Whether a Relay that refuses the access key sends the receipt identified.
-   * False when sealed sender is required, as for a message.
+   * Whether a Relay that refuses the access key sends the envelope
+   * identified. False when sealed sender is required, as for a message.
    */
   readonly identifiedFallback: boolean;
 }
@@ -227,14 +289,25 @@ export interface SendOptions {
    * supplies a timestamp, that timestamp must match the original send. The SDK
    * persists the exact encrypted transmission before it contacts the Relay, so
    * an unknown result never advances the protocol ratchet twice.
+   *
+   * On a relay that does not compare device sets, a first send that fails on
+   * the read of the own device list throws before the SDK stores it. The
+   * error carries this identifier, but the outbox holds no transmission for
+   * it. The application calls `send()` again, and the SDK encrypts the
+   * content again.
    */
   clientMessageId?: string;
 
   /**
    * Content hint for recipient retry behavior.
    *
-   * Used for protocol/no-op payloads (for example NullMessage resend responses)
-   * that the client treats as IMPLICIT and silently discards on failure.
+   * A group send of a `DataMessage` defaults to `Resendable` when
+   * `protocol.contentRecovery` keeps content, and the client logs its
+   * content for a retry request before it sends. When the policy keeps no
+   * content, the send goes out as `Default`. A group send of a string or
+   * bytes keeps no content, so a `Resendable` hint on it goes out as
+   * `Default`. Use `Implicit` for protocol and no-op payloads, such as
+   * NullMessage resend responses, that the recipient discards on failure.
    */
   contentHint?: ContentHint;
 
@@ -317,6 +390,22 @@ export interface SendResult {
    */
   expiresAt?: number;
 
+  /**
+   * For a group send over a group token, the number of destination devices
+   * that the relay refused when it accepted the shared post. A refusal after
+   * that acceptance is not counted. Absent for any other send, and when the
+   * relay does not report it.
+   */
+  refusedDestinationCount?: number;
+
+  /**
+   * True when the relay accepted the send for every recipient device but the
+   * copies for this account's other devices are not posted yet. The send is
+   * delivered. Call `send()` again with the same `clientMessageId` to post
+   * the pending copies. Absent when the copies were posted or none were due.
+   */
+  syncPending?: true;
+
   /** Group ID if sent to a group */
   groupId?: string;
 
@@ -338,10 +427,16 @@ export interface SendResult {
 }
 
 /**
- * A send failure whose exact encrypted transmission remains in the outbox.
+ * A send failure that carries the logical-send identifier.
  *
- * Reuse `clientMessageId` when the application calls `send()` again after an
- * unknown Relay result. The durable outbox supplies the original timestamp.
+ * `isOutgoingMessageError` is true for every send error, also for an error
+ * before the SDK stores the send, such as a failed content serialization or
+ * a failed read of the own device list on a relay that does not compare
+ * device sets. The exact encrypted transmission stays in the outbox only for a send
+ * that the SDK already stored. In both cases, the application calls `send()`
+ * again with the same `clientMessageId`. For a stored send, the durable
+ * outbox supplies the original timestamp. For a send that the SDK did not
+ * store, the SDK encrypts the content again.
  *
  * A direct send attempts every device of the recipient, also when a device
  * before it fails, and the error is that of the first failed device. A
@@ -353,7 +448,7 @@ export interface OutgoingMessageError extends Error {
   readonly clientMessageId: string;
 }
 
-/** Return true when a send error exposes its durable logical-send identifier. */
+/** Return true when a send error exposes its logical-send identifier. */
 export function isOutgoingMessageError(error: unknown): error is OutgoingMessageError {
   return (
     error instanceof Error &&
@@ -395,9 +490,13 @@ export interface SafetyNumber {
  *
  * This uses strings instead of mutable Uint8Array instances, so application code
  * cannot accidentally change the value between display and confirmation.
+ *
+ * Version 2 carries the fingerprint in the byte order of the two display
+ * strings. A version 1 confirmation from an older SDK is refused as an
+ * unsupported version. Call `verify()` again to get a new one.
  */
 export interface SafetyNumberConfirmation {
-  readonly version: 1;
+  readonly version: 2;
   readonly userId: string;
   readonly identityType: import('../keys').IdentityType;
   /** Canonical Base64 of the complete displayed composite fingerprint. */
@@ -618,13 +717,23 @@ export interface IncomingEnvelope {
   messageType?: string;
 
   /**
-   * Content hint for retry behavior per Signal Protocol.
+   * The content hint of the sender. It sets what the receiver does when a
+   * decrypt fails with an error that a resend can repair.
    *
-   * - IMPLICIT: Ephemeral messages (typing indicators, receipts) - silently discard on failure
-   * - RESENDABLE: Content messages - can trigger retry requests
-   * - DEFAULT: Standard handling
+   * - `Default`: the client sends a retry request and runs
+   *   `onDeliveryError` at once.
+   * - `Resendable`: the client sends a retry request. It runs
+   *   `onDeliveryError` one hour after the receive
+   *   (`RETRY_PLACEHOLDER_DEADLINE_MS`) if the content has not arrived. It
+   *   runs it at once when a rate limit refuses the request, when the
+   *   request allowance for the sender is used up, or when the request
+   *   ends.
+   * - `Implicit`: disposable content, such as typing indicators and
+   *   receipts. The client sends no retry request and never runs
+   *   `onDeliveryError`. A resend that answers a retry request of this
+   *   device still asks again.
    *
-   * If not set, the message is not implicit.
+   * With no hint, the client uses the `Default` behavior.
    */
   contentHint?: ContentHint;
 }
@@ -642,14 +751,18 @@ export interface ProcessEnvelopeOptions {
    * Required for background processing where there is no WebSocket relay.
    * The callback receives a `retry_request` envelope for the device that sent
    * the failed message. Deliver it to that device as any other envelope.
+   * The envelope is identified, and without a relay the client cannot seal
+   * it. The client calls the callback only when the sealed sender delivery
+   * mode permits identified delivery, so `'required'` never calls it.
    */
   sendRetryRequest?: (envelope: import('../remote/relay/types').Envelope) => Promise<void>;
 
   /**
-   * Callback to mark message as delivered when no relay is available.
+   * Callback that acknowledges an envelope when no relay is available.
    *
-   * Call this after sending a retry request, to prevent the failed message
-   * from being re-fetched indefinitely.
+   * The client calls it after it sends a retry request for a failed
+   * envelope, and after it discards an envelope that it does not process
+   * again, so the envelope is not fetched again.
    */
   markDelivered?: (messageId: string) => Promise<void>;
 
@@ -664,4 +777,84 @@ export interface ProcessEnvelopeOptions {
    *
    */
   forcePreKeyRotation?: () => Promise<void>;
+
+  /**
+   * Save content that `processIncomingEnvelope` gives. The client calls it
+   * with the `processed` outcome before the method returns. When it
+   * resolves, the client completes the receive record, so you do not call
+   * `completeReceive`. When it rejects, the method still returns the
+   * `processed` outcome, and the record waits for `completeReceive` or for
+   * its expiry. A redelivery of the envelope calls it again.
+   */
+  onPersist?: (outcome: ProcessedReceive) => Promise<void>;
+}
+
+/**
+ * Content that `processIncomingEnvelope` gives. The client keeps it until
+ * the application calls `completeReceive` with its `messageId`, or until
+ * it expires after 30 days on this device. A redelivery of the
+ * envelope gives it again with the same `messageId`.
+ */
+export interface ProcessedReceive {
+  kind: 'processed';
+  /** The content, as its sender gave it. */
+  plaintext: string;
+  /** The ID that `completeReceive` takes. */
+  messageId: string;
+  /** The group of group content. */
+  groupId?: string;
+}
+
+/**
+ * The outcome of `processIncomingEnvelope`.
+ *
+ * - `processed`: the client gives the content. Save it, then call
+ *   `completeReceive`, or pass `onPersist`. Acknowledge the envelope.
+ * - `pending`: the client stored the content, and it waits for its group
+ *   state. The client resumes it and `listPendingReceives({ ready: true })`
+ *   lists it when it is ready. Acknowledge the envelope.
+ * - `duplicate`: the client processed the envelope before, or the
+ *   application already has its content. Acknowledge the envelope.
+ * - `null-message`: the envelope carries no content. Acknowledge it.
+ * - `denied`: the client refused the content and ran `onDecryptionError`,
+ *   except for a group that the user blocked (reason `blocked`), which has
+ *   no report. Acknowledge the envelope.
+ * - `refused`: the receive queue has no room, so the client decrypted
+ *   nothing. Do not acknowledge the envelope. Give it again later.
+ */
+export type ReceiveOutcome =
+  | ProcessedReceive
+  | { kind: 'pending'; messageId: string; reason: string }
+  | { kind: 'duplicate' }
+  | { kind: 'null-message' }
+  | { kind: 'denied'; reason: string }
+  | { kind: 'refused'; persisted: false; reason: string };
+
+/** One receive that `processIncomingEnvelope` stored and did not complete. */
+export interface PendingReceive {
+  /**
+   * The ID that `completeReceive` and `discardPendingReceive` take. A
+   * receive stored before the client kept message IDs gives its record ID.
+   */
+  messageId: string;
+  /**
+   * `awaiting-completion` when the content is ready and waits for
+   * `completeReceive`. `decrypted` when it waits for its group state.
+   */
+  stage: 'decrypted' | 'awaiting-completion';
+  /** `caller` for an envelope that the application gave. */
+  origin: 'relay' | 'caller';
+  /** The time of the first decrypt. */
+  receivedAt: number;
+  senderId?: string;
+  senderDeviceId?: number;
+  groupId?: string;
+  /** The content of a ready receive, as its sender gave it. */
+  plaintext?: string;
+  /**
+   * The calls of `onMessageDecrypted` that started for this receive and
+   * did not complete it. At the cap of 10 attempts, the receive holds back
+   * no later receive, and each start offers it to the hook once.
+   */
+  hookAttempts: number;
 }

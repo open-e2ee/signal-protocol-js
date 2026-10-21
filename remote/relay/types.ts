@@ -49,129 +49,6 @@ export interface RelayGroupServer {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// IPROVISIONINGSERVICE
-// ════════════════════════════════════════════════════════════════════════════
-
-/**
- * Device provisioning service interface.
- *
- * Handles secure device linking via QR code scanning:
- * 1. Primary device creates session with ephemeral key
- * 2. New device scans QR, performs ECDH key agreement
- * 3. Primary encrypts and sends identity key
- * 4. New device decrypts and initializes
- *
- */
-export interface ProvisioningService {
-  /**
-   * Create a new provisioning session.
-   *
-   * @param userId - User ID creating the session
-   * @param ephemeralPublicKey - Base64-encoded ECDH public key for key agreement
-   * @returns Session ID for the provisioning flow
-   */
-  createProvisioningSession(
-    userId: string,
-    ephemeralPublicKey: string
-  ): Promise<{ sessionId: string }>;
-
-  /**
-   * Connect a new device to an existing provisioning session.
-   *
-   * @param sessionId - Provisioning session ID from QR code
-   * @param ephemeralPublicKey - New device's ECDH public key (Base64)
-   * @param deviceMetadata - Non-sensitive device information available before provisioning completes
-   */
-  connectNewDevice(
-    sessionId: string,
-    ephemeralPublicKey: string,
-    deviceMetadata: {
-      platform?: string;
-      appVersion?: string;
-      osVersion?: string;
-    }
-  ): Promise<void>;
-
-  /**
-   * Send encrypted provisioning message from primary to new device.
-   *
-   * @param sessionId - Provisioning session ID
-   * @param encryptedMessage - AES-GCM encrypted payload (JSON string with ciphertext, iv, authTag)
-   */
-  sendProvisioningMessage(
-    sessionId: string,
-    encryptedMessage: string,
-    userId?: string
-  ): Promise<void>;
-
-  /**
-   * Get provisioning message for new device.
-   *
-   * @param sessionId - Provisioning session ID
-   * @returns Status and encrypted message (if ready)
-   */
-  getProvisioningMessage(sessionId: string): Promise<{
-    status:
-      | 'waiting'
-      | 'connected'
-      | 'ready'
-      | 'linked_pending_ack'
-      | 'completed'
-      | 'rolled_back'
-      | 'expired';
-    message: string | null;
-    /**
-     * Absolute expiry of the session's current window, or null when the
-     * session no longer exists. After completion this is the acknowledgment
-     * deadline. That deadline is a fresh full TTL, not the remainder of the
-     * original window. Clients must read it rather than compute it from the
-     * session's creation time.
-     */
-    expiresAt: number | null;
-  }>;
-
-  /**
-   * Mark provisioning as complete and finalize linked-device registration.
-   *
-   * @param sessionId - Session ID to complete
-   * @param deviceMetadata - Final device metadata, including the encrypted device name
-   */
-  completeProvisioning(
-    sessionId: string,
-    deviceMetadata: {
-      encryptedDeviceName: ArrayBuffer;
-      platform?: string;
-      appVersion?: string;
-      osVersion?: string;
-    }
-  ): Promise<{ deviceId: number }>;
-
-  /**
-   * Acknowledge that the linked device finished persisting its local
-   * bootstrap state, allowing the backend to clear the reversible
-   * provisioning session state.
-   *
-   * @param sessionId - Session ID to finalize
-   */
-  acknowledgeProvisioning(sessionId: string): Promise<void>;
-
-  /**
-   * Undo a completed provisioning link if the new device fails to persist its
-   * local bootstrap state after the server-side link succeeded.
-   *
-   * @param sessionId - Session ID to roll back
-   */
-  rollbackProvisioning(sessionId: string): Promise<void>;
-
-  /**
-   * Delete/cancel a provisioning session.
-   *
-   * @param sessionId - Session ID to delete
-   */
-  deleteProvisioningSession(sessionId: string, userId?: string): Promise<void>;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 // IKEYROTATIONSERVICE
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -242,7 +119,7 @@ export interface KeyRotationService {
  * Responsibilities:
  * - Envelope delivery (push to devices via real-time subscription)
  * - Device registry (multi-device support, max 5 devices per user)
- * - Prekey management (X3DH/PQXDH key exchange)
+ * - Prekey management (PQXDH key exchange)
  *
  * The hosted client configures this transport for the OpenE2EE Signal Protocol Relay.
  *
@@ -266,7 +143,7 @@ export interface KeyRotationService {
  * });
  * ```
  */
-export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotationService {
+export interface SignalProtocolRelayServer extends KeyRotationService {
   /** Optional conforming Group System transport and issuance capability. */
   readonly groupServer?: RelayGroupServer;
 
@@ -300,6 +177,21 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
      * not report it, as for an ephemeral message.
      */
     expiresAt?: number;
+    /**
+     * True when the relay compared `Envelope.declaredDeviceIds` with the
+     * target account's device list and accepted the post. Absent for a post
+     * without a declaration, and from a relay that does not compare. A
+     * declared post that the relay accepts without this mark is delivered,
+     * and the client reports `RelayProtocolError` with code
+     * `DEVICE_SET_UNCHECKED`.
+     */
+    deviceSetChecked?: boolean;
+    /**
+     * For a declared post to another account, true when the sender account
+     * has other devices that need a sync copy of the message. Absent when
+     * the relay does not report it.
+     */
+    needsSync?: boolean;
   }>;
 
   /**
@@ -426,7 +318,7 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
   getIdentityKey(userId: string, identityType?: IdentityType): Promise<CompositeIdentityV1 | null>;
 
   // ════════════════════════════════════════════════════════════
-  // PREKEY MANAGEMENT (X3DH/PQXDH)
+  // PREKEY MANAGEMENT (PQXDH)
   // Maps to: ecPreKeys, ecSignedPreKeys, kemOneTimePreKeys, kemLastResortPreKeys
   // ════════════════════════════════════════════════════════════
 
@@ -692,6 +584,12 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
    * Relay parses client-side, sends structured JSON to mutation.
    * Server constructs per-device ReceivedMessage blobs and fans out.
    *
+   * The blob gives each destination device a registration ID. A nonzero ID
+   * names the registration that the send expects at that device, as
+   * `Envelope.recipientRegistrationId` does on the identified route. The
+   * relay refuses that device as `STALE_DEVICE` when its current registration
+   * differs. A device with registration 0 gets no check.
+   *
    * @param sentMessageBase64 - Base64-encoded V2 multi-recipient binary blob
    * @param auth - Sealed sender authentication (access key or group send token)
    * @param timestamp - Client timestamp for message identification
@@ -702,6 +600,13 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
    *   admits the post by. Without it, the relay uses `timestamp`
    * @param contentKind - The cleartext label that a relay can count by.
    *   Without it, the send is a `message`
+   * @param deviceSets - The device set that the sender declares for each
+   *   recipient account, sent as the wire field `deviceSets`. A relay that
+   *   compares refuses the whole post with `DEVICE_SET_MISMATCH` when a
+   *   declared set differs from the account's device list, and with a
+   *   declared `STALE_DEVICE` when a registration changed. Each account
+   *   appears once, with 1 to 5 device IDs. Without it, the relay does not
+   *   compare
    * @returns Message ID, server timestamp, and list of unknown recipient UUIDs
    *
    */
@@ -713,7 +618,8 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
     recipientUserIds?: string[],
     clientMessageId?: string,
     operationEpochMilliseconds?: number,
-    contentKind?: ContentKind
+    contentKind?: ContentKind,
+    deviceSets?: readonly { userId: string; deviceIds: readonly number[] }[]
   ): Promise<{
     messageId: string;
     serverTimestamp: number;
@@ -735,6 +641,27 @@ export interface SignalProtocolRelayServer extends ProvisioningService, KeyRotat
      * relay does not report it for each destination.
      */
     expiresAt?: number;
+    /**
+     * For a group-token send, the number of destinations that the relay
+     * refused when it accepted the fan-out. A refusal after that acceptance
+     * is not counted. Absent for an access-key send, and when the relay does
+     * not report it.
+     */
+    refusedDestinationCount?: number;
+    /**
+     * True when the relay compared `deviceSets` with each account's device
+     * list and accepted the post. Absent for a post without `deviceSets`,
+     * and from a relay that does not compare.
+     */
+    deviceSetChecked?: boolean;
+    /**
+     * For a declared group-token send, each destination device that the
+     * relay refused, with the relay's result code. `NOT_FOUND` on a first
+     * acceptance names an account that the relay does not know. On a
+     * duplicate receipt it can also name a delivery that the relay ended
+     * later. Absent when the relay does not report it.
+     */
+    refusals?: { userId: string; deviceId: number; code: string }[];
   }>;
 }
 
@@ -862,7 +789,7 @@ export interface Envelope {
    * relay contract carries only the outer envelope type.
    *
    * - ciphertext: Standard Double Ratchet message (contains encrypted Content)
-   * - prekey_bundle: Session initiation (X3DH/PQXDH)
+   * - prekey_bundle: Session initiation (PQXDH)
    * - sender_key: Group message encrypted with sender keys
    * - unidentified_sender: Sealed sender protocol messages
    * - retry_request: A request that the original sender device resend a
@@ -935,28 +862,55 @@ export interface Envelope {
    */
   operationEpochMilliseconds?: number;
 
+  /**
+   * The device IDs that the sender declares for the target account, sent as
+   * the wire field `deviceSets` with one entry for `targetUserId`. A sync
+   * copy to the sender's own account leaves out the sender device. A relay
+   * that compares refuses the post with `DEVICE_SET_MISMATCH` when the
+   * declared set differs from the account's device list, and with a
+   * declared `STALE_DEVICE` when a registration changed. Without it, the
+   * relay does not compare.
+   */
+  declaredDeviceIds?: readonly number[];
+
   // ════════════════════════════════════════════════════════════
   // STALE-DEVICE HANDLING
-  // PreKeyMessages carry the registration ID for relay-side stale-device
-  // detection. Stale-prekey detection remains client-side through
-  // authentication failure and retry.
+  // All six post kinds carry the registration ID of the recipient
+  // session for relay-side stale-device detection: a direct message, a
+  // sync copy, a sender-key distribution, a group device message, a
+  // receipt, and a retry request, sealed or identified. A post to a
+  // device with no session carries none. Stale-prekey detection remains
+  // client-side through authentication failure and retry.
   // ════════════════════════════════════════════════════════════
 
   /**
-   * Recipient's registration ID from the prekey bundle.
-   * For PreKeyMessages only. Server validates this matches recipient's current registration.
+   * The registration ID of the recipient device's current session. All six
+   * post kinds name it: a direct message, a sync copy, a sender-key
+   * distribution, a group device message, a receipt, and a retry request.
+   * A post to a device with no session names none.
+   * Server validates this matches recipient's current registration.
    * If mismatch (device reinstalled), server returns STALE_DEVICE error (equivalent to HTTP 410).
    */
   recipientRegistrationId?: number;
 
   /**
-   * Content hint for retry behavior per Signal Protocol.
+   * The content hint of the sender. It sets what the receiver does when a
+   * decrypt fails with an error that a resend can repair.
    *
-   * - IMPLICIT: Ephemeral messages (typing indicators, receipts) - silently discard on failure
-   * - RESENDABLE: Content messages - can trigger retry requests
-   * - DEFAULT: Standard handling
+   * - `Default`: the client sends a retry request and runs
+   *   `onDeliveryError` at once.
+   * - `Resendable`: the client sends a retry request. It runs
+   *   `onDeliveryError` one hour after the receive
+   *   (`RETRY_PLACEHOLDER_DEADLINE_MS`) if the content has not arrived. It
+   *   runs it at once when a rate limit refuses the request, when the
+   *   request allowance for the sender is used up, or when the request
+   *   ends.
+   * - `Implicit`: disposable content, such as typing indicators and
+   *   receipts. The client sends no retry request and never runs
+   *   `onDeliveryError`. A resend that answers a retry request of this
+   *   device still asks again.
    *
-   * Set by sender, used by recipient to decide retry behavior on decryption failure.
+   * With no hint, the client uses the `Default` behavior.
    */
   contentHint?: ContentHint;
 }

@@ -93,18 +93,10 @@ await createSignalProtocolClient({
 });
 ```
 
-`postQuantum: 'required'` and `braid: 'required'` are the defaults. Use
-`compatible` only for an explicit product decision to support peers that
-publish no post-quantum material:
-
-<!-- doc-snippet:skip requires-external-context -->
-```ts
-await createSignalProtocolClient({
-  identity: { userId },
-  adapters: { storage, relay },
-  protocol: { postQuantum: 'compatible', braid: 'required' },
-});
-```
+`postQuantum: 'required'` and `braid: 'required'` are the defaults.
+`'required'` is the only `postQuantum` value. The SDK has no classical key
+agreement, so a session with a peer that publishes no ML-KEM prekeys fails
+with `PQXDHRequiredError` (`PQXDH_REQUIRED`).
 
 Use direct SPQR only as an explicit product-reviewed escape hatch:
 
@@ -173,26 +165,57 @@ const rotation = await signal.rotatePreKeys();
 
 Register `onMessageDecrypted` before calling `pullHostedRelayAfterWake()`.
 The handler must persist application content before it resolves. Use the message
-ID for idempotent application writes. A rejected handler leaves the envelope
-unacknowledged.
+ID for idempotent application writes.
 
-The hosted pull uses the same content handler as the foreground subscription.
-It installs pairwise sender-key distributions only for members of the verified
-local group. It handles receipts and typing separately from application messages.
-Successful content receipts permit acknowledgment retries without decryption.
+The hosted pull uses the same receive path as the foreground subscription. The
+client decrypts each envelope and commits its content as a receive record with
+the ratchet update or skipped-key consumption. It acknowledges the envelope only
+after that commit. The receive queue then decides the group of the content,
+gives the content to the handler, sends the E2EE delivery receipt, and deletes
+the record. The E2EE receipt is the only proof that the application processed
+the content. A Relay delivery receipt marks only the handoff to the device.
+Content that waits for its group state stays on the device. A waiting record
+holds back the later content of its conversation only. Group content waits by
+its group, a sent transcript by its destination, and other content by its
+sender account. A restart resumes the record with no sender retransmission. A
+rejected handler runs again after a backoff. After 10 attempts, the record no
+longer holds back the later content of its conversation. Each start then gives
+it to the handler once, in the start pass or when `onMessageDecrypted` is
+registered. After that, only `processPendingReceives` runs it again before the
+next start. A pass that ends before the retry, at a deadline or at a failed
+page read, leaves the retry to the next pass. That retry runs after the other
+content of the pass, so a hook call that ends the process on it does not stop
+the later content of its conversation. `listPendingReceives` gives the
+`hookAttempts` of each record. `discardPendingReceive` removes a record that
+the application cannot process, with no receipt, no handler call, and no
+expiry report.
 
-The device-local store commits recoverable content with the ratchet update or
-skipped-key consumption. A restart can resume the application write from that
-encrypted record without sender retransmission. The SDK deletes the content
-after a successful processing receipt. Retry cleanup removes abandoned records
-after the existing thirty-day retry horizon.
+A receive pass waits for each hook for at most
+`protocol.receiveQueue.receiveHookTimeoutMs`, 2 minutes by default. A timeout
+of `onMessageDecrypted` counts as one failed attempt. A handler that settles
+after the bound writes nothing. Content that waits
+30 days on the device runs `onReceiveExpired`, and the client deletes its
+record. The 30 days are fixed. Before the hook, the
+client reads the record again. Content that the client completed before that
+read, such as at the redelivery of its envelope, gets no expiry report. A
+record that waits only for its E2EE delivery receipt completes 1 day after the
+receipt becomes due, with no receipt and no expiry report.
 
-The application handler can run again if its write succeeds but the processing
-receipt fails. Use the message ID to prevent duplicate application records.
-Recovery rejects changes to the envelope identity or ciphertext.
+At a receive queue bound, the client decrypts nothing more and does not
+acknowledge the envelope, so the Relay keeps it. A refused envelope expires at
+the Relay at the TTL of the Relay project, and no local hook reports that
+expiry. While the mailbox of the device is full, the Relay refuses a new message
+to it with `MAILBOX_FULL` to its sender. Refused envelopes do not stop the
+messages behind them, on the socket or on an HTTP pull.
+The client handles receipts and typing separately from application messages.
 
-`processIncomingEnvelopes()` remains a lower-level decryption API. It returns
-plaintext to its caller. It does not run the application handler.
+The handler can run again if its write succeeds but the record does not
+complete. Use the message ID to prevent duplicate application records.
+
+`processIncomingEnvelopes()` is the receive helper for an application that pulls
+envelopes itself. It returns a receive outcome for each envelope and does not run
+the application handler. A `processed` receive keeps its content until the
+application calls `completeReceive()`.
 
 ### Delivery receipts
 
@@ -210,8 +233,10 @@ With `'auto'` on the Signal Protocol Relay, the client sends no end-to-end
 receipt for an identified message that the Relay acknowledgment lists as
 receipted. On any other relay, `'auto'` sends the same receipts as `'always'`.
 `DecryptedEnvelope.arrivedSealed` tells whether a message arrived through sealed
-sender. The client seals a receipt when it holds the access key of the sender,
-and sends it identified otherwise. Read receipts are not affected.
+sender. The client seals a receipt when it holds the access key of the sender.
+Otherwise it sends the receipt identified only when the `deliveryMode` of
+`sealedSender` permits it, and `'required'` sends no identified receipt. A
+retry request follows the same rule. Read receipts are not affected.
 
 The sender gets each receipt through the `onDelivered` hook, once for each
 source and recipient device:
@@ -223,8 +248,16 @@ source and recipient device:
 
 The status of a device only moves forward. `sources` holds each source that the
 device has given so far, so an `'e2ee'` event after a `'relay'` event carries
-both. A second receipt of the same source changes nothing. A receipt for a send
-that has not resolved yet comes after the send resolves.
+both. A receipt for a send that has not resolved yet comes after the send
+resolves.
+
+The hook runs at least once for each source. The client marks a source
+announced only after the hook returns. A hook that throws, a `stop()` during the
+hook, or a crash leaves the source unannounced. An error from the hook fails the
+receipt, so the relay delivers it again, and the hook runs again with the next
+receipt for the message. A second receipt of the same source after the hook
+returned changes nothing. Make the hook idempotent for one `clientMessageId`,
+`recipientDeviceId`, and `source`.
 
 The sender keeps a copy of each message that it sends, plaintext included, so
 that it can send the message again when the recipient asks for a retry. An
@@ -308,7 +341,7 @@ const result = await rotateKeysHeadless(relay, userId, deviceId, { storage });
 
 - device `1` is the primary device
 - linked devices use device IDs `2-5`
-- provision linked-device identity material into the provided storage before `DefaultSignalProtocolClient.create(..., { deviceId: 2 })`
+- put the account identity into the linked device's storage by device transfer or by a channel that the application owns before `DefaultSignalProtocolClient.create(..., { deviceId: 2 })`
 
 ## Notes
 

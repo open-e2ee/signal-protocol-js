@@ -10,29 +10,11 @@ Protocol strategy configuration for PQXDH and SPQR.
 
 ## Properties
 
-### allowClassicalFallback?
-
-> `optional` **allowClassicalFallback?**: `boolean`
-
-Allow explicit X3DH compatibility fallback for peers that advertise no
-KEM/PQ material at all.
-
-This does not allow downgrade after malformed KEM metadata, failed PQXDH
-processing, or missing local KEM prekeys for incoming PQXDH messages.
-
-#### Default
-
-```ts
-false
-```
-
-***
-
 ### keyExchangeInfoString?
 
 > `optional` **keyExchangeInfoString?**: `string`
 
-Override HKDF info string for both X3DH and PQXDH key derivation.
+Override HKDF info string for PQXDH key derivation.
 
 ***
 

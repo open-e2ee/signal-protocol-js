@@ -11,6 +11,27 @@ but not full session databases. A vault separate from
 then use a vault-held wrapping key without placing every protocol record in the
 platform keychain.
 
+## Key custody
+
+Reviewed: 2026-10-12.
+
+A vault can declare `custody`: where it keeps its secrets. A SQLite or
+key-value store reports the custody of its vault in its `protection`, and
+[Content Recovery](../../docs/PROTOCOL_POLICY.md#content-recovery) reads it.
+
+| Vault | `custody` |
+| --- | --- |
+| `ExpoSecureStoreSignalProtocolSecretVault` | `os-keychain` |
+| `ReactNativeKeychainSignalProtocolSecretVault` | `os-keychain` |
+| `ElectronSafeStorageSignalProtocolSecretVault` | `os-keychain` |
+| The IndexedDB vault, the default of the web SQLite store | `same-origin` |
+
+A vault that declares no custody counts as `same-origin`, so a stronger
+level needs a declaration. A vault that the application controls, and
+that keeps its secrets apart from the storage of the store data, declares
+`app-vault`. The SDK cannot check that declaration. The application owns
+it.
+
 ## Expo usage
 
 Install the optional peer `expo-secure-store` 55.0.15 or later.

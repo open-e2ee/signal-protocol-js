@@ -13,6 +13,9 @@
 import { base64ToBytes, bytesToBase64, type ResolvedSPQRInfoStrings } from '../../crypto';
 import type { ResolvedSPQRLimits } from '../../../types/protocol-config';
 import { asBase64 } from '../../../types/utils';
+import { defaultSignalProtocolLogger, type Logger } from '../../../logger';
+import { SPQR_LIMITS_DEFAULTS } from '../../../types/protocol-config';
+import { parseSkippedKeyName, skippedKeyTrimSize } from './validate';
 import { assertBraidChunkIndex } from './ml-kem-braid/chunk-domain';
 import { serializeBraidAgentState, deserializeBraidAgentState } from './braid-serialize';
 
@@ -119,16 +122,11 @@ function validateSPQRStateJSON(value: unknown): asserts value is SPQRStateJSON {
     assertInteger(value.limits.maxMessageJump, 'SPQR maxMessageJump', 1, 1_000_000);
     assertInteger(value.limits.maxOutOfOrderKeys, 'SPQR maxOutOfOrderKeys', 1, MAX_PERSISTED_SKIPPED_KEYS);
   }
-  const skippedLimit =
-    value.limits && typeof value.limits.maxOutOfOrderKeys === 'number'
-      ? value.limits.maxOutOfOrderKeys
-      : MAX_PERSISTED_SKIPPED_KEYS;
+  // The held-key count is bounded per epoch at load, not refused here. A
+  // malformed entry is still refused.
   assertRecord(value.MKSKIPPED, 'SPQR MKSKIPPED');
-  const skippedEntries = Object.entries(value.MKSKIPPED);
-  if (skippedEntries.length > skippedLimit) {
-    throw new Error(`SPQR MKSKIPPED exceeds ${skippedLimit}-entry limit`);
-  }
-  for (const [name, skipped] of skippedEntries) {
+  for (const [name, skipped] of Object.entries(value.MKSKIPPED)) {
+    if (!parseSkippedKeyName(name)) throw new Error(`Invalid SPQR MKSKIPPED key: ${name}`);
     assertRecord(skipped, `SPQR MKSKIPPED[${name}]`);
     assertCanonicalBase64(skipped.key, `SPQR MKSKIPPED[${name}].key`, 32);
     assertInteger(skipped.timestamp, `SPQR MKSKIPPED[${name}].timestamp`);
@@ -414,12 +412,63 @@ export async function serializeSPQRState(state: SPQRState): Promise<string> {
 }
 
 /**
+ * The held skipped keys of a validated state, bounded per epoch at
+ * `skippedKeyTrimSize(maxOutOfOrderKeys) - 1`, the most that a receive leaves
+ * stored. The lowest indexes of an epoch above the bound leave first, as the
+ * receive trim drops the oldest keys. Keys of an epoch with no KDF chain
+ * cannot decrypt, so they leave too.
+ */
+function restoreSkippedKeys(
+  json: SPQRStateJSON,
+  logger: Required<Logger>
+): Record<string, SkippedSPQRKey> {
+  const maxOOOKeys = json.limits?.maxOutOfOrderKeys ?? SPQR_LIMITS_DEFAULTS.maxOutOfOrderKeys;
+  const perEpochBound = skippedKeyTrimSize(maxOOOKeys) - 1;
+  const byEpoch = new Map<number, Array<[string, number]>>();
+  let dropped = 0;
+  for (const name of Object.keys(json.MKSKIPPED)) {
+    const held = parseSkippedKeyName(name)!;
+    if (!Object.prototype.hasOwnProperty.call(json.kdfChains, held.epoch)) {
+      dropped++;
+      continue;
+    }
+    const entries = byEpoch.get(held.epoch) ?? [];
+    entries.push([name, held.index]);
+    byEpoch.set(held.epoch, entries);
+  }
+
+  const MKSKIPPED: Record<string, SkippedSPQRKey> = {};
+  for (const entries of byEpoch.values()) {
+    entries.sort((a, b) => b[1] - a[1]);
+    dropped += Math.max(0, entries.length - perEpochBound);
+    for (const [name] of entries.slice(0, perEpochBound)) {
+      const value = json.MKSKIPPED[name];
+      MKSKIPPED[name] = { key: asBase64(value.key), timestamp: value.timestamp };
+    }
+  }
+  if (dropped > 0) {
+    logger.warn('SPQR state load dropped held skipped keys', {
+      category: 'E2EE',
+      data: { operation: 'deserializeSPQRState', dropped },
+    });
+  }
+  return MKSKIPPED;
+}
+
+/**
  * Deserialize SPQR state from JSON.
  *
  * Restores full SPQR state for resuming after app backgrounding.
  * Works in both direct and braid modes.
  *
+ * Held skipped keys are bounded per epoch, as the receive path keeps them.
+ * An epoch above `skippedKeyTrimSize - 1` keys loses its lowest indexes down
+ * to that bound, and the keys of an epoch with no KDF chain are dropped. One
+ * warn line gives the dropped count. A state that an older receive path
+ * stored above the bound therefore loads again.
+ *
  * @param jsonStr - JSON string from serializeSPQRState
+ * @param logger - Receives the warn line when load drops held keys
  * @returns Restored SPQR state
  *
  * @example
@@ -428,7 +477,10 @@ export async function serializeSPQRState(state: SPQRState): Promise<string> {
  * const spqrState = await deserializeSPQRState(json);
  * ```
  */
-export async function deserializeSPQRState(jsonStr: string): Promise<SPQRState> {
+export async function deserializeSPQRState(
+  jsonStr: string,
+  logger: Required<Logger> = defaultSignalProtocolLogger
+): Promise<SPQRState> {
   if (new TextEncoder().encode(jsonStr).length > MAX_RESTORED_STATE_BYTES) {
     throw new Error(`SPQR state exceeds ${MAX_RESTORED_STATE_BYTES}-byte input limit`);
   }
@@ -453,13 +505,7 @@ export async function deserializeSPQRState(jsonStr: string): Promise<SPQRState> 
   }
 
   // Restore skipped keys
-  const MKSKIPPED: Record<string, SkippedSPQRKey> = {};
-  for (const [keyName, value] of Object.entries(json.MKSKIPPED)) {
-    MKSKIPPED[keyName] = {
-      key: asBase64(value.key),
-      timestamp: value.timestamp,
-    };
-  }
+  const MKSKIPPED = restoreSkippedKeys(json, logger);
 
   const state: SPQRState = {
     RK: asBase64(json.RK),

@@ -1,6 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 
-import type { SignalProtocolLocalSecretVault } from '../../types/api';
+import type { SecretVaultCustody, SignalProtocolLocalSecretVault } from '../../types/api';
 import { EncryptionError, EncryptionErrorCode } from '../../types/errors';
 
 const DEFAULT_DATABASE_NAME = 'open-e2ee-secret-vault';
@@ -63,6 +63,9 @@ function isNonEmptyBytes(value: unknown): value is Uint8Array {
  * An app with a different custody supplies its own vault.
  */
 export class IndexedDbSignalProtocolSecretVault implements SignalProtocolLocalSecretVault {
+  /** The key sits in the same origin as the data that it protects. */
+  readonly custody: SecretVaultCustody = 'same-origin';
+
   private readonly databaseName: string;
   private database: Promise<IDBPDatabase<SecretVaultSchema>> | null = null;
 

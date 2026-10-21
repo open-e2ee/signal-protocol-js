@@ -9,7 +9,7 @@
 SPQR security and performance limits.
 
 Defaults bound a forward jump to 25,000 and retained out-of-order keys to
-2,000.
+2,000 in each epoch.
 
 ## Properties
 
@@ -31,7 +31,8 @@ Maximum forward jump in message numbers.
 
 > `optional` **maxOutOfOrderKeys?**: `number`
 
-Maximum out-of-order keys to store.
+Maximum out-of-order keys that each epoch keeps. A key more than this
+count behind the newest received index is refused.
 
 #### Default
 

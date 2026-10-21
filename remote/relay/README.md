@@ -1,8 +1,8 @@
 # Relay
 
 The relay module defines `SignalProtocolRelayServer`, the application-backend contract
-for device discovery, public prekeys, encrypted envelopes, key rotation,
-provisioning, and related synchronization.
+for device discovery, public prekeys, encrypted envelopes, key rotation, and
+related synchronization.
 
 ## Why it exists
 

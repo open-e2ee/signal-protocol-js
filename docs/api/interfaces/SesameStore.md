@@ -45,7 +45,8 @@ Delete expired sessions (sessions older than MAXRECV threshold).
 
 > **deleteDeviceRecord**(`userId`, `deviceId`): `Promise`\<`void`\>
 
-Delete device record.
+Delete device record. The same write deletes the sender-key handoff rows
+of the device in every group.
 
 #### Parameters
 
@@ -67,7 +68,10 @@ Delete device record.
 
 > **deleteStaleRecords**(`maxLatency`): `Promise`\<`number`\>
 
-Delete stale device records (orphaned sessions older than MAXLATENCY).
+Delete the stale device records with their sessions. A record is stale
+when it has no session and is older than `maxLatency`, or when it is
+marked removed and its removal is older than `maxLatency`
+(`isExpiredRemovedDevice`). A user record with no device left goes too.
 
 #### Parameters
 
@@ -143,7 +147,9 @@ The SessionRecord, or null if no session exists.
 
 > **getSesameDeviceIds**(`userId`): `Promise`\<`number`[]\>
 
-Get all device IDs for a specific user.
+Get all device IDs for a specific user. The list includes the devices
+whose record is marked removed. A caller that sends to the devices skips
+them with `isRemovedDevice`.
 
 #### Parameters
 
@@ -177,7 +183,7 @@ Get user record containing all devices for a user.
 
 ### setDeviceRecord()
 
-> **setDeviceRecord**(`userId`, `deviceId`, `record`): `Promise`\<`void`\>
+> **setDeviceRecord**(`userId`, `deviceId`, `record`, `options?`): `Promise`\<`void`\>
 
 Store device record.
 
@@ -194,6 +200,13 @@ Store device record.
 ##### record
 
 [`DeviceRecord`](DeviceRecord.md)
+
+##### options?
+
+[`SetDeviceRecordOptions`](SetDeviceRecordOptions.md)
+
+With `senderKeyHandoffInvalidation`, the same write
+  deletes the sender-key handoff rows of that device in every group
 
 #### Returns
 

@@ -44,14 +44,19 @@ Options:
 - `directory`: the directory of the database file. Use a private directory on
   a local file system. Do not use a network file system.
 - `vault`: the `SignalProtocolLocalSecretVault` that holds the database key.
-  Required. In Electron, use the safeStorage vault (see below).
+  Required. In Electron, use the safeStorage vault (see below). The store
+  reports the custody of the vault in its `protection`. The level is
+  `protected` with a vault that declares `os-keychain`, such as the
+  safeStorage vault, or `app-vault`. A vault that declares no custody counts
+  as `same-origin`, and the level is then `co-located`.
 - `name`: the database file name in `directory`. Letters, digits, `.`, `_`,
   and `-` only, and no `.lock`, `-wal`, `-shm`, or `-journal` ending.
   Default: `open-e2ee-signal-protocol.db`.
 - `encryptionAtRest`: pass `false` to store the database without encryption.
   The store then does not use the vault, and it logs a warning at each open. A
-  database created with one setting does not open with the other. Default:
-  `true`.
+  database created with one setting does not open with the other. The store
+  reports `none` protection, so the client keeps no resendable content.
+  Default: `true`.
 - `logger`: receives the warning of each open without encryption.
 
 Keep application tables in a separate database file. The SDK database holds

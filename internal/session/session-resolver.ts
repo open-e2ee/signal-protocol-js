@@ -84,7 +84,7 @@ export class SessionResolver {
   /**
    * Insert a new session, archiving the current one if present.
    *
-   * This is called when establishing a new session via X3DH/PQXDH.
+   * This is called when establishing a new session via PQXDH.
    * If there is an existing session, it is moved to the archived list
    * to handle race conditions (both parties initiating simultaneously).
    *

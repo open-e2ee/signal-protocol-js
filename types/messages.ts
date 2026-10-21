@@ -24,7 +24,7 @@ export enum MessageType {
    * PreKey message for initial session establishment.
    *
    * First message from initiator to responder. Contains extra information
-   * needed for responder to establish session using X3DH/PQXDH.
+   * needed for responder to establish session using PQXDH.
    */
   PREKEY = 'prekey',
 }
@@ -185,7 +185,7 @@ export interface RatchetMessage {
  *
  * This allows Bob to:
  * 1. Extract Alice's keys from the message
- * 2. Run X3DH as responder using Alice's ephemeral key
+ * 2. Run PQXDH as responder using Alice's ephemeral key
  * 3. Derive the same shared secret SK
  * 4. Decrypt the message and establish his session
  */
@@ -220,7 +220,7 @@ export interface PreKeyMessage {
   senderId: string; // Sender's user ID (needed for responder to establish session).
   senderDeviceId: number; // Sender's device ID (required for multi-device SESAME).
   senderIdentity: CompositeIdentityV1; // Sender's canonical composite identity.
-  senderEphemeralKey: PublicKey; // Sender's ephemeral DH public key, critical for responder X3DH.
+  senderEphemeralKey: PublicKey; // Sender's ephemeral DH public key, critical for responder PQXDH.
   senderRegistrationId: number; // Sender's registration ID (for session reset detection).
 
   /** Explicit recipient account identity namespace, authenticated by the inner message MAC. */
