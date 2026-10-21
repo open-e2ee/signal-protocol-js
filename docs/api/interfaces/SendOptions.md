@@ -56,6 +56,12 @@ supplies a timestamp, that timestamp must match the original send. The SDK
 persists the exact encrypted transmission before it contacts the Relay, so
 an unknown result never advances the protocol ratchet twice.
 
+On a relay that does not compare device sets, a first send that fails on
+the read of the own device list throws before the SDK stores it. The
+error carries this identifier, but the outbox holds no transmission for
+it. The application calls `send()` again, and the SDK encrypts the
+content again.
+
 ***
 
 ### clientUuid?
@@ -72,8 +78,13 @@ Optional client-generated media identifier for cross-device reconciliation
 
 Content hint for recipient retry behavior.
 
-Used for protocol/no-op payloads (for example NullMessage resend responses)
-that the client treats as IMPLICIT and silently discards on failure.
+A group send of a `DataMessage` defaults to `Resendable` when
+`protocol.contentRecovery` keeps content, and the client logs its
+content for a retry request before it sends. When the policy keeps no
+content, the send goes out as `Default`. A group send of a string or
+bytes keeps no content, so a `Resendable` hint on it goes out as
+`Default`. Use `Implicit` for protocol and no-op payloads, such as
+NullMessage resend responses, that the recipient discards on failure.
 
 ***
 

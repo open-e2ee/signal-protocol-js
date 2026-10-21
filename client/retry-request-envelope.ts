@@ -1,11 +1,18 @@
 /**
  * Wire form of a retry request.
  *
- * A retry request travels as an identified mailbox envelope with
- * `messageType: 'retry_request'`. The envelope sender is the requester: the
- * relay stamps it, so the payload never carries it. The `ciphertext` field
- * holds canonical base64 of a small UTF-8 JSON payload. The payload is not
- * encrypted. It holds only what the requester knows about the failed message.
+ * A retry request is a mailbox envelope with `messageType: 'retry_request'`.
+ * The envelope sender is the requester, so the payload never carries it.
+ * The `ciphertext` field holds canonical base64 of a small UTF-8 JSON
+ * payload. The payload is not ratchet-encrypted. It holds only what the
+ * requester knows about the failed message.
+ *
+ * The request record stores the identified form of the envelope.
+ * `retryRequestPost` seals it at each post when an access key of the target
+ * permits it: the seal holds the same payload as `PLAINTEXT_CONTENT`, and
+ * the sender certificate in the seal names the requester. Otherwise the
+ * post is identified, and the relay stamps the requester, only when the
+ * sealed sender delivery mode permits it.
  *
  * The requester keeps one request record for each failed envelope. The record
  * holds a random retry ID, and every wire ID of the request family derives from
@@ -16,16 +23,22 @@
  * The requester stores each request envelope before the post. After a post
  * that fails with a retryable class, the retry request scheduler posts the
  * stored envelope again, until the deadline of the record.
+ *
+ * A relay can assign its own envelope ID. The payload then also carries the
+ * client message ID of the failed envelope, the ID that the sender chose. A
+ * request without a ratchet key names a failed sender-key message.
  */
 
-import type { Envelope } from '../remote/relay/types';
+import type { Envelope, SignalProtocolRelayServer } from '../remote/relay/types';
+import { SealedSenderAuthError } from '../types/errors';
+import type { SealedReceipt } from './types';
 import { RetryReason, type RetryRequest } from '../internal/sesame/types';
 import { base64ToBytes, bytesToBase64, generateUuidV4, stringToBytes } from '../internal/crypto';
 import { utf8Decode } from '../internal/platform';
 import type { Base64 } from '../types';
+import type { ContentHint } from '../types/messages';
 import {
   isRetryId,
-  RELIABILITY_RECORD_TTL_MS,
   RETRY_REQUEST_DEADLINE_MS,
   retryAttemptClientMessageId,
   retryRequestClientMessageId,
@@ -40,6 +53,8 @@ import {
   type RetryRequestPostFailure,
 } from './relay-acceptance';
 import { rethrowRelayWorkStopped } from './relay-work';
+import { isStaleDeviceRefusal } from './relay-device-refusal';
+import { MAX_RETRY_RESPONSES_PER_MESSAGE } from './constants';
 
 /** The payload version that this client writes and reads. */
 const RETRY_REQUEST_PAYLOAD_VERSION = 1;
@@ -47,8 +62,11 @@ const RETRY_REQUEST_PAYLOAD_VERSION = 1;
 /** The decoder refuses a longer `ciphertext` value before it decodes it. */
 export const MAX_RETRY_REQUEST_CIPHERTEXT_LENGTH = 2_048;
 
-/** The Relay refuses a longer message ID, so a failed envelope ID is 1 to this many characters. */
-const MAX_FAILED_ENVELOPE_ID_LENGTH = 128;
+/**
+ * The Relay refuses a longer message ID, so a failed envelope ID and a
+ * failed client message ID are 1 to this many characters.
+ */
+const MAX_MESSAGE_ID_LENGTH = 128;
 
 /** The decoded ratchet key is 1 to this many bytes. */
 const MAX_RATCHET_KEY_BYTES = 64;
@@ -71,6 +89,7 @@ interface RetryRequestPayload {
   ratchetKey?: string;
   failedEnvelopeId?: string;
   retryId?: string;
+  failedClientMessageId?: string;
 }
 
 /**
@@ -91,6 +110,34 @@ export interface RetryRequestFailure {
   fingerprint?: string;
   /** The stored attempt of the request for this envelope, from `getRetryRequest`. */
   stored: StoredRetryRequest | null;
+  /**
+   * True when the failed envelope is a sender-key group message. A new
+   * record stores it. A new attempt keeps the value of the stored record.
+   */
+  groupMessage?: boolean;
+  /**
+   * The client message ID of the failed envelope. Set it only when the
+   * failed envelope itself failed, because a member has its own ID. A new
+   * record stores it. A new attempt keeps the value of the stored record.
+   */
+  clientMessageId?: string;
+  /**
+   * The raw group ID of the failed envelope, when the local device knows
+   * it. Set it only when the failed envelope itself failed. A new record
+   * stores it. A new attempt keeps the value of the stored record.
+   */
+  groupId?: string;
+  /**
+   * The content hint of the failed envelope. Set it only when the failed
+   * envelope itself failed. A new record stores it. A new attempt keeps the
+   * value of the stored record.
+   */
+  contentHint?: ContentHint;
+  /**
+   * The device that sent the failed envelope. A new record stores it. A
+   * new attempt keeps the value of the stored record.
+   */
+  sender?: { userId: string; deviceId: number };
   /**
    * The envelope ID of the resend or the null message that failed to
    * decrypt. Undefined when the failed envelope itself failed.
@@ -120,6 +167,10 @@ export async function retryRequestEnvelope(
     timestamp: request.timestamp,
     ...(request.ratchetKey === undefined ? {} : { ratchetKey: request.ratchetKey }),
     ...(failed && { failedEnvelopeId: failed.failedEnvelopeId, retryId: failed.retryId }),
+    // The sender chose this ID. A value that the decoder refuses is left out.
+    ...(isMessageId(request.failedClientMessageId) && {
+      failedClientMessageId: request.failedClientMessageId,
+    }),
   };
   return {
     targetUserId: request.originalSenderUserId,
@@ -136,6 +187,102 @@ export async function retryRequestEnvelope(
   };
 }
 
+/**
+ * Seals the payload of one retry request for its target device, or resolves
+ * to undefined when the request goes identified. It throws when sealed
+ * sender is required and the request cannot be sealed.
+ */
+export type SealRetryRequest = (
+  recipientUserId: string,
+  recipientDeviceId: number,
+  payloadBase64: string
+) => Promise<SealedReceipt | undefined>;
+
+/**
+ * Make the function that posts one retry request envelope, by the sealed
+ * sender delivery mode, as a receipt goes.
+ *
+ * With an access key of the target, the post is sealed: the Relay sees the
+ * target, the timing and the size, and not the requester. The sealed post
+ * keeps the client message ID and the timestamp of the envelope, so the
+ * Relay deduplicates the attempt by the same operation as an identified
+ * post. When the Relay refuses the access key, the post goes identified
+ * only when the delivery mode permits it. When `seal` resolves to
+ * undefined, the post goes identified. In `'required'` mode `seal` throws
+ * instead, and nothing goes identified. The caller classifies each error
+ * of the post.
+ *
+ * When the Relay refuses the post as `STALE_DEVICE`, the target device has
+ * a new registration. The post then refreshes the session with the device
+ * once from a fresh bundle, and posts the same envelope again, sealed and
+ * named with the new session, as a receipt goes. The request is plaintext,
+ * so nothing is encrypted again. A refresh that finds no bundle,
+ * or a second refusal, throws the refusal. A refresh that fails for another
+ * reason throws StaleSessionRefreshError, which classifies as a transport
+ * outage, so the next post refreshes again.
+ *
+ * @param seal - Seals the payload. Without it, each post is identified.
+ * @param relay - Posts the sealed envelope.
+ * @param sendIdentified - Posts the identified envelope.
+ * @param registrationOf - The registration ID of the current session with
+ *   the target device. The identified envelope names it, as the sealed body
+ *   does, so the Relay refuses the post to a reinstalled device. With no
+ *   session, or without this function, the envelope names none.
+ * @param refreshStaleSession - Refreshes the session with a refused device.
+ *   Resolves to true when the new session is ready. Without it, a stale
+ *   refusal throws.
+ */
+export function retryRequestPost(
+  seal: SealRetryRequest | undefined,
+  relay: Pick<SignalProtocolRelayServer, 'sendMultiRecipientUnidentified'> | undefined,
+  sendIdentified: (envelope: Envelope) => Promise<unknown>,
+  registrationOf?: (userId: string, deviceId: number) => Promise<number | undefined>,
+  refreshStaleSession?: (userId: string, deviceId: number) => Promise<boolean>
+): (envelope: Envelope) => Promise<unknown> {
+  const post = async (envelope: Envelope): Promise<unknown> => {
+    const payloadBase64 =
+      typeof envelope.ciphertext === 'string'
+        ? envelope.ciphertext
+        : bytesToBase64(envelope.ciphertext);
+    const sealed = await seal?.(envelope.targetUserId, envelope.targetDeviceId, payloadBase64);
+    if (sealed) {
+      // The seal resolves only when the relay has anonymous delivery.
+      if (!relay?.sendMultiRecipientUnidentified) {
+        throw new Error('Relay has no anonymous delivery for a sealed retry request');
+      }
+      try {
+        return await relay.sendMultiRecipientUnidentified(
+          sealed.sentMessageBase64,
+          sealed.auth,
+          envelope.timestamp,
+          envelope.deliveryClass,
+          [envelope.targetUserId],
+          envelope.clientMessageId
+        );
+      } catch (error) {
+        if (!(error instanceof SealedSenderAuthError) || !sealed.identifiedFallback) throw error;
+      }
+    }
+    const recipientRegistrationId = await registrationOf?.(
+      envelope.targetUserId,
+      envelope.targetDeviceId
+    );
+    return sendIdentified(
+      recipientRegistrationId === undefined ? envelope : { ...envelope, recipientRegistrationId }
+    );
+  };
+  return async (envelope) => {
+    try {
+      return await post(envelope);
+    } catch (error) {
+      if (!refreshStaleSession || !isStaleDeviceRefusal(error)) throw error;
+      const refreshed = await refreshStaleSession(envelope.targetUserId, envelope.targetDeviceId);
+      if (!refreshed) throw error;
+      return post(envelope);
+    }
+  };
+}
+
 /** What a retry request post did. */
 export type RetryPostOutcome =
   /** The Relay holds the request attempt. */
@@ -144,6 +291,16 @@ export type RetryPostOutcome =
   | 'pending'
   /** The request ended. The record holds the terminal state. */
   | 'terminal';
+
+/**
+ * Tell whether a stored request attempt is answered and is the last
+ * attempt of its request. A sender answers at most
+ * `MAX_RETRY_RESPONSES_PER_MESSAGE` requests for one message, so when the
+ * resend that answered this attempt also fails, the request ends.
+ */
+export function answeredLastRetryAttempt(stored: StoredRetryRequest): boolean {
+  return stored.answered && stored.attempt >= MAX_RETRY_RESPONSES_PER_MESSAGE;
+}
 
 /** The shortest wait before the next post of a stored attempt. */
 const MIN_RETRY_REQUEST_BACKOFF_MS = 60_000;
@@ -161,8 +318,15 @@ const MAX_RETRY_REQUEST_BACKOFF_MS = 60 * 60_000;
  * record that ended posts nothing. At the deadline of the record, the
  * request ends as `expired-content` and posts nothing. When a member
  * failed and the stored attempt is answered, it creates the next attempt
- * under the same retry ID, with the same deadline, and posts it. Otherwise
- * it posts the stored attempt, as `postStoredRetryRequest` does.
+ * under the same retry ID, with the same deadline, and posts it. When that
+ * answered attempt is the last one, as `answeredLastRetryAttempt` tells,
+ * the request ends as `attempts-exhausted` and posts nothing. Otherwise it
+ * posts the stored attempt, as `postStoredRetryRequest` does.
+ *
+ * Each new attempt carries the failed client message ID, the content hint,
+ * the sender, the receive time and the delivery error state of the stored
+ * record. Attempt 1 takes them from `failed`, with the time of now as the
+ * receive time.
  *
  * @param store - The local store that keeps the request records.
  * @param failed - The failed envelope and its stored request.
@@ -180,7 +344,8 @@ export async function postRetryRequest(
 ): Promise<RetryPostOutcome> {
   const failedEnvelopeId = failed.id;
   if (failedEnvelopeId === undefined) {
-    await send(await retryRequestEnvelope(await createRequest(), sender));
+    const request = withFailedClientMessageId(await createRequest(), failed.clientMessageId);
+    await send(await retryRequestEnvelope(request, sender));
     return 'posted';
   }
   const attempts = retryRequestAttempts(store, createRequest, sender, send);
@@ -192,12 +357,21 @@ export async function postRetryRequest(
         retryId: await generateUuidV4(),
         attempt: 1,
         ...(failed.fingerprint !== undefined && { fingerprint: failed.fingerprint }),
+        ...(failed.groupMessage && { groupMessage: true }),
+        ...(failed.clientMessageId !== undefined && {
+          failedClientMessageId: failed.clientMessageId,
+        }),
+        ...(failed.groupId !== undefined && { groupId: failed.groupId }),
+        receivedAt: Date.now(),
+        ...(failed.contentHint !== undefined && { contentHint: failed.contentHint }),
+        ...(failed.sender !== undefined && { failedSender: failed.sender }),
       })
     );
   }
   if (stored.terminal !== undefined || stored.envelope === undefined) return 'terminal';
-  if (Date.now() >= stored.deadlineAt) return attempts.expire(stored);
+  if (Date.now() >= stored.deadlineAt) return attempts.end(stored, 'expired-content');
   if (failed.member !== undefined && stored.answered) {
+    if (answeredLastRetryAttempt(stored)) return attempts.end(stored, 'attempts-exhausted');
     return attempts.postNew(await attempts.next(stored));
   }
   return attempts.postStored(stored);
@@ -246,16 +420,32 @@ function retryRequestAttempts(
     updateRetryRequest(store, record.failedEnvelopeId, record.retryId, record.attempt, changes);
 
   /**
-   * Create and store a new attempt. Attempt 1 sets the deadline. The
-   * attempt is due at its own time until its post settles, so the
-   * scheduler posts it again when a stop or a crash ends the post.
+   * Create and store a new attempt. Attempt 1 sets the deadline from its
+   * own time, the first failure. The attempt is due at its own time until
+   * its post settles, so the scheduler posts it again when a stop or a
+   * crash ends the post.
    */
   const create = async (
-    attempt: Pick<StoredRetryRequest, 'failedEnvelopeId' | 'retryId' | 'attempt' | 'fingerprint'> & {
-      deadlineAt?: number;
-    }
+    attempt: Pick<
+      StoredRetryRequest,
+      | 'failedEnvelopeId'
+      | 'retryId'
+      | 'attempt'
+      | 'fingerprint'
+      | 'groupMessage'
+      | 'failedClientMessageId'
+      | 'groupId'
+      | 'receivedAt'
+      | 'contentHint'
+      | 'failedSender'
+      | 'errorShown'
+      | 'recoveredEmitted'
+    > & { deadlineAt?: number }
   ): Promise<StoredRetryRequest> => {
-    const request = await createRequest();
+    const request = withFailedClientMessageId(
+      await createRequest(),
+      attempt.failedClientMessageId
+    );
     const envelope = await retryRequestEnvelope(request, sender, attempt);
     const record: StoredRetryRequest = {
       failedEnvelopeId: attempt.failedEnvelopeId,
@@ -263,13 +453,19 @@ function retryRequestAttempts(
       attempt: attempt.attempt,
       requestedAt: envelope.timestamp,
       ...(attempt.fingerprint !== undefined && { fingerprint: attempt.fingerprint }),
+      ...(attempt.groupId !== undefined && { groupId: attempt.groupId }),
       answered: false,
-      deadlineAt:
-        attempt.deadlineAt ??
-        Math.min(
-          envelope.timestamp + RETRY_REQUEST_DEADLINE_MS,
-          request.failedTimestamp + RELIABILITY_RECORD_TTL_MS
-        ),
+      ...(attempt.groupMessage && { groupMessage: true }),
+      ...(attempt.failedClientMessageId !== undefined && {
+        failedClientMessageId: attempt.failedClientMessageId,
+      }),
+      ...(attempt.groupId !== undefined && { groupId: attempt.groupId }),
+      ...(attempt.receivedAt !== undefined && { receivedAt: attempt.receivedAt }),
+      ...(attempt.contentHint !== undefined && { contentHint: attempt.contentHint }),
+      ...(attempt.failedSender !== undefined && { failedSender: attempt.failedSender }),
+      ...(attempt.errorShown && { errorShown: true }),
+      ...(attempt.recoveredEmitted && { recoveredEmitted: true }),
+      deadlineAt: attempt.deadlineAt ?? envelope.timestamp + RETRY_REQUEST_DEADLINE_MS,
       nextAttemptAt: envelope.timestamp,
       envelope,
     };
@@ -284,12 +480,23 @@ function retryRequestAttempts(
       retryId: stored.retryId,
       attempt: stored.attempt + 1,
       fingerprint: stored.fingerprint,
+      groupMessage: stored.groupMessage,
+      failedClientMessageId: stored.failedClientMessageId,
+      groupId: stored.groupId,
+      receivedAt: stored.receivedAt,
+      contentHint: stored.contentHint,
+      failedSender: stored.failedSender,
+      errorShown: stored.errorShown,
+      recoveredEmitted: stored.recoveredEmitted,
       deadlineAt: stored.deadlineAt,
     });
 
-  const expire = async (stored: StoredRetryRequest): Promise<RetryPostOutcome> => {
+  const end = async (
+    stored: StoredRetryRequest,
+    terminal: 'expired-content' | 'attempts-exhausted'
+  ): Promise<RetryPostOutcome> => {
     await update(stored, {
-      terminal: { class: 'expired-content', at: Date.now(), emitted: false },
+      terminal: { class: terminal, at: Date.now(), emitted: false },
       nextAttemptAt: undefined,
     });
     return 'terminal';
@@ -342,7 +549,7 @@ function retryRequestAttempts(
   return {
     create,
     next,
-    expire,
+    end,
     postNew: (record: StoredRetryRequest) => post(record, true),
     postStored: (stored: StoredRetryRequest) => post(stored, false),
   };
@@ -393,8 +600,16 @@ export function readRetryRequestEnvelope(
   if (payload.v !== RETRY_REQUEST_PAYLOAD_VERSION) {
     return { ok: false, cause: 'payload version is not supported' };
   }
-  const { failedTimestamp, deviceId, reason, timestamp, ratchetKey, failedEnvelopeId, retryId } =
-    payload;
+  const {
+    failedTimestamp,
+    deviceId,
+    reason,
+    timestamp,
+    ratchetKey,
+    failedEnvelopeId,
+    retryId,
+    failedClientMessageId,
+  } = payload;
   if (!Number.isSafeInteger(failedTimestamp) || (failedTimestamp as number) <= 0) {
     return { ok: false, cause: 'failedTimestamp is not valid' };
   }
@@ -422,12 +637,15 @@ export function readRetryRequestEnvelope(
     failedEnvelopeId !== undefined &&
     (typeof failedEnvelopeId !== 'string' ||
       failedEnvelopeId.length < 1 ||
-      failedEnvelopeId.length > MAX_FAILED_ENVELOPE_ID_LENGTH)
+      failedEnvelopeId.length > MAX_MESSAGE_ID_LENGTH)
   ) {
     return { ok: false, cause: 'failedEnvelopeId is not valid' };
   }
   if (retryId !== undefined && !isRetryId(retryId)) {
     return { ok: false, cause: 'retryId is not valid' };
+  }
+  if (failedClientMessageId !== undefined && !isMessageId(failedClientMessageId)) {
+    return { ok: false, cause: 'failedClientMessageId is not valid' };
   }
   // The sender derives the resend IDs from the retry ID and keys its record by
   // the failed envelope ID, so a payload carries both or neither.
@@ -449,11 +667,25 @@ export function readRetryRequestEnvelope(
       timestamp: timestamp as number,
       reason: reason as RetryReason,
       ...(ratchetKey === undefined ? {} : { ratchetKey: ratchetKey as string }),
+      ...(failedClientMessageId === undefined ? {} : { failedClientMessageId }),
     },
     ...(retryId === undefined
       ? {}
       : { retry: { failedEnvelopeId: failedEnvelopeId as string, retryId: retryId as string } }),
   };
+}
+
+/** The request with the failed client message ID, when there is one. */
+function withFailedClientMessageId(
+  request: RetryRequest,
+  failedClientMessageId: string | undefined
+): RetryRequest {
+  return failedClientMessageId === undefined ? request : { ...request, failedClientMessageId };
+}
+
+/** True for a string of 1 to `MAX_MESSAGE_ID_LENGTH` characters. */
+function isMessageId(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= MAX_MESSAGE_ID_LENGTH;
 }
 
 /** Decode canonical base64, or return undefined. */

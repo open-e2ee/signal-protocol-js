@@ -49,6 +49,11 @@ export type HostedRelayPushRegistration =
 export interface HostedMailboxPage {
   readonly messages: readonly IncomingEnvelope[];
   readonly receipts: readonly RelayDeliveryReceipt[];
+  /**
+   * The opaque Relay cursor after the last message of a page that is not
+   * empty. A pull with it starts after that message.
+   */
+  readonly nextCursor?: string;
 }
 
 /** @internal SDK-owned transport for one authenticated hosted client. */
@@ -57,7 +62,8 @@ export interface HostedRelayPushRuntime {
     messageIds: readonly string[],
     receiptIds: readonly string[],
   ): Promise<void>;
-  pullMailbox(): Promise<HostedMailboxPage>;
+  /** Pulls the page after `cursor`, or the head page without one. */
+  pullMailbox(cursor?: string): Promise<HostedMailboxPage>;
   /** Hands one Relay receipt off. A rejection leaves it unacknowledged. */
   receiveRelayReceipt(receipt: RelayDeliveryReceipt): Promise<void>;
   registerPush(registration: HostedRelayPushRegistration): Promise<void>;
@@ -68,10 +74,19 @@ export interface HostedRelayWakeClient {
   receiveIncomingEnvelopes(
     envelopes: IncomingEnvelope[],
   ): ReturnType<DefaultSignalProtocolClient['receiveIncomingEnvelopes']>;
+  processPendingReceives(
+    options?: Parameters<DefaultSignalProtocolClient['processPendingReceives']>[0],
+  ): ReturnType<DefaultSignalProtocolClient['processPendingReceives']>;
 }
 
 export interface HostedRelayWakeOptions {
   readonly client: HostedRelayWakeClient;
+  /**
+   * The time in milliseconds that the stored receives may take after the
+   * acknowledgment. The pass stops between records at the deadline, and
+   * the next pass continues. No limit by default.
+   */
+  readonly deadlineMs?: number;
 }
 
 export interface HostedRelayWakeResult {
@@ -81,6 +96,11 @@ export interface HostedRelayWakeResult {
 }
 
 const hostedRuntimes = new WeakMap<object, HostedRelayPushRuntime>();
+/**
+ * The pull cursor of each runtime. It lives in memory only, so a new runtime
+ * pulls from the head of the mailbox.
+ */
+const pullCursors = new WeakMap<HostedRelayPushRuntime, string>();
 
 /** @internal Bind the SDK-owned transport to the client that uses it. */
 export function bindHostedRelayPushRuntime(
@@ -192,16 +212,61 @@ export async function removeHostedRelayPush(options: {
 }
 
 /**
- * Authenticate, pull the durable mailbox, process each envelope, hand off
- * each Relay receipt after the envelopes, and acknowledge only handled work.
- * Register onMessageDecrypted to persist application content before calling
- * this function. Push is not required.
+ * Commit the pulled envelopes. The SDK client holds each committed record
+ * until `release` runs, so a queue pass gives no content to the application
+ * before the acknowledgment settles. A client without that path receives as
+ * its `receiveIncomingEnvelopes` does.
+ */
+async function commitHeld(
+  client: HostedRelayWakeClient,
+  envelopes: IncomingEnvelope[],
+): Promise<{
+  readonly processedMessageIds: readonly string[];
+  readonly failedMessageIds: readonly string[];
+  readonly release: () => void;
+}> {
+  const held = client as Partial<
+    Pick<DefaultSignalProtocolClient, 'commitIncomingEnvelopes'>
+  >;
+  if (typeof held.commitIncomingEnvelopes === 'function') {
+    return held.commitIncomingEnvelopes(envelopes);
+  }
+  return {
+    ...(await client.receiveIncomingEnvelopes(envelopes)),
+    release: () => {},
+  };
+}
+
+/**
+ * Authenticate, pull the durable mailbox, commit each envelope to the local
+ * store, hand off each Relay receipt after the envelopes, acknowledge the
+ * committed envelopes and the receipts, then process the stored receives
+ * until `deadlineMs`. Register onMessageDecrypted to persist application
+ * content before calling this function. Push is not required.
+ *
+ * Group content that waits for its group state is committed and
+ * acknowledged, and waits in the local store. Three kinds of envelope stay
+ * unacknowledged: an envelope that the receive bounds refuse, a decrypt
+ * failure that no retry request owns, and a retry request that waits for
+ * the next group fetch. A full page of such envelopes does not stall the
+ * pull: the next wake pulls the page after it with the Relay cursor. A
+ * wake whose page past the cursor is empty clears the cursor, so the wake
+ * after it pulls from the head and offers those envelopes again. A failed
+ * wake also clears the cursor.
  */
 export async function pullHostedRelayAfterWake(
   options: HostedRelayWakeOptions,
 ): Promise<HostedRelayWakeResult> {
   const runtime = hostedRuntime(options.client);
-  const { messages: envelopes, receipts } = await runtime.pullMailbox();
+  // A wake that fails anywhere leaves the cursor cleared, so the next wake
+  // pulls from the head. This includes a Relay refusal of the cursor.
+  const cursor = pullCursors.get(runtime);
+  pullCursors.delete(runtime);
+  const {
+    messages: envelopes,
+    receipts,
+    nextCursor,
+  } = await runtime.pullMailbox(cursor);
   const inputIds = new Set(envelopes.map((envelope) => envelope.id));
   if (
     inputIds.size !== envelopes.length ||
@@ -211,32 +276,50 @@ export async function pullHostedRelayAfterWake(
       'Signal Protocol Relay mailbox returned invalid envelope identities',
     );
   }
-  const results = await options.client.receiveIncomingEnvelopes([...envelopes]);
+  const results = await commitHeld(options.client, [...envelopes]);
   const acknowledgedMessageIds = [...results.processedMessageIds];
   const failedMessageIds = [...results.failedMessageIds];
-  const resultIds = [...acknowledgedMessageIds, ...failedMessageIds];
-  if (
-    resultIds.length !== inputIds.size ||
-    new Set(resultIds).size !== resultIds.length ||
-    resultIds.some((id) => !inputIds.has(id))
-  ) {
-    throw new Error(
-      'Signal Protocol Relay mailbox processing returned an invalid result',
-    );
-  }
-  // A receipt whose hand-off fails stays in the mailbox for a replay.
-  const receiptIds: string[] = [];
-  for (const receipt of receipts) {
-    try {
-      await runtime.receiveRelayReceipt(receipt);
-      receiptIds.push(receipt.receiptId);
-    } catch {
-      // The Relay replays it on the next pull or connect.
+  try {
+    const resultIds = [...acknowledgedMessageIds, ...failedMessageIds];
+    if (
+      resultIds.length !== inputIds.size ||
+      new Set(resultIds).size !== resultIds.length ||
+      resultIds.some((id) => !inputIds.has(id))
+    ) {
+      throw new Error(
+        'Signal Protocol Relay mailbox processing returned an invalid result',
+      );
     }
+    // A receipt whose hand-off fails stays in the mailbox for a replay.
+    const receiptIds: string[] = [];
+    for (const receipt of receipts) {
+      try {
+        await runtime.receiveRelayReceipt(receipt);
+        receiptIds.push(receipt.receiptId);
+      } catch {
+        // The Relay replays it on the next pull or connect.
+      }
+    }
+    if (acknowledgedMessageIds.length > 0 || receiptIds.length > 0) {
+      await runtime.acknowledgeMailbox(acknowledgedMessageIds, receiptIds);
+    }
+  } finally {
+    // The acknowledgment settled, so the queue may give the content to the
+    // application. The content is committed after a failed acknowledgment
+    // too, and the redelivery finds its record. The release wakes the queue.
+    results.release();
   }
-  if (acknowledgedMessageIds.length > 0 || receiptIds.length > 0) {
-    await runtime.acknowledgeMailbox(acknowledgedMessageIds, receiptIds);
+  // An empty page keeps the cursor cleared. A Relay page without a
+  // `nextCursor` makes the next pull start from the head. This branch is
+  // removed in the first release after every Relay lane serves the cursor.
+  if (envelopes.length > 0 && nextCursor !== undefined) {
+    pullCursors.set(runtime, nextCursor);
   }
+  // The committed receives are durable, so they run after the acknowledgment
+  // settles.
+  await options.client.processPendingReceives(
+    options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs },
+  );
   return {
     acknowledgedMessageIds,
     failedMessageIds,

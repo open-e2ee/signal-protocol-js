@@ -12,6 +12,15 @@ This interface is intentionally narrow: it exists for secrets that must
 remain outside the main local store, such as a database encryption key.
 It is not a second general-purpose Signal Protocol data store.
 
+## Properties
+
+### custody?
+
+> `readonly` `optional` **custody?**: `SecretVaultCustody`
+
+Where this vault keeps its secrets. A vault that does not declare it
+counts as `same-origin`.
+
 ## Methods
 
 ### deleteSecret()

@@ -10,7 +10,7 @@ Identity key pair (long-lived, per-user)
 
 The SDK's independent composite profile deliberately uses separate standard
 keys for DH and signatures:
-- dhKey: Used for X3DH key exchange (DH1 operation)
+- dhKey: Used for PQXDH key exchange (DH1 operation)
 - signingKey: Used for signing prekeys
 - registrationId: Random ID generated once per app install
 

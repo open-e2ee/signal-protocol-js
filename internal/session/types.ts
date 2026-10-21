@@ -2,7 +2,7 @@
  * Session Builder Types
  *
  * Type definitions for the SessionBuilder class, which handles
- * session establishment via X3DH/PQXDH key agreement.
+ * session establishment via PQXDH key agreement.
  *
  * Session Identification:
  * - A ProtocolAddress (userId:deviceId) LOOKS UP a session
@@ -101,7 +101,7 @@ export interface SessionBuilderInitiatorResult {
   /** ID of Kyber prekey used (PQXDH sessions only) */
   kyberPreKeyId?: number;
   /**
-   * Original X3DH/PQXDH shared secret (SK) for Triple Ratchet initialization.
+   * Original PQXDH shared secret (SK) for Triple Ratchet initialization.
    *
    * CRITICAL: This is the pre-ratcheted shared secret that both parties
    * must use for SPQR initialization. Alice's EC Double Ratchet uses a
@@ -112,8 +112,6 @@ export interface SessionBuilderInitiatorResult {
   initialRootKeyForSPQR?: Uint8Array;
   /** Whether the session used PQXDH (post-quantum) */
   usedPQXDH: boolean;
-  /** Whether the session used the explicit X3DH compatibility fallback */
-  usedClassicalFallback?: boolean;
 }
 
 /**
@@ -124,10 +122,8 @@ export interface SessionBuilderResponderResult {
   sessionState: SessionState;
   /** Whether the session used PQXDH (post-quantum) */
   usedPQXDH: boolean;
-  /** Whether the session used the explicit X3DH compatibility fallback */
-  usedClassicalFallback?: boolean;
   /**
-   * Original X3DH/PQXDH shared secret (SK) for Triple Ratchet initialization.
+   * Original PQXDH shared secret (SK) for Triple Ratchet initialization.
    * Only present if the session used PQXDH.
    */
   initialRootKeyForSPQR?: Uint8Array;
@@ -138,7 +134,7 @@ export interface SessionBuilderResponderResult {
 // ============================================================================
 
 /**
- * Result from key agreement modules (X3DH or PQXDH)
+ * Result from the PQXDH key agreement
  */
 export interface KeyAgreementResult {
   /** Shared secret from key agreement */
@@ -161,8 +157,6 @@ export interface KeyAgreementResult {
   usedKemOneTimePreKeyId?: number;
   /** Whether the session used PQXDH */
   usedPQXDH: boolean;
-  /** Whether the session used the explicit X3DH compatibility fallback */
-  usedClassicalFallback?: boolean;
 }
 
 /**
@@ -175,8 +169,6 @@ export interface ResponderKeyAgreementResult {
   additionalDerivedBytes?: Uint8Array;
   /** Whether the session used PQXDH */
   usedPQXDH: boolean;
-  /** Whether the session used the explicit X3DH compatibility fallback */
-  usedClassicalFallback?: boolean;
 }
 
 // ============================================================================

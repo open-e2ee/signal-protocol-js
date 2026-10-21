@@ -73,20 +73,29 @@ model and what is out of scope.
 |---|---|---|---|---|
 | **Identity keys** | X3DH §2.2; `libsignal` `identity_key.rs` | **Deviation.** A 67-byte composite of separate X25519 and Ed25519 keys replaces the single 33-byte Curve25519 identity key | Avoids XEdDSA, a non-standard signature scheme with no vetted JavaScript implementation; standard Ed25519 is independently verifiable | Two keys to store and rotate; larger identity; **no wire compatibility for any identity-bearing material** |
 | **Prekey signatures** | X3DH §2.2, §4.5 | **Deviation.** RFC 8032 Ed25519 over a domain-separated context binding the identity commitment, algorithm tag, and key ID — not XEdDSA over the bare key | Defeats cross-algorithm and cross-key-ID substitution that a bare-key signature does not cover | Strictly stronger binding; signatures are unverifiable by Signal Messenger clients and vice versa |
-| **Safety numbers** | `libsignal` `fingerprint.rs` | **Deviation.** Iteration and digit encoding are byte-identical, but the input is a composite-identity commitment under an SDK domain string, the QR version is `3`, and the two halves are ordered by user ID rather than by digit string | Follows from the composite identity; a single-key fingerprint cannot authenticate both components | **Safety numbers are not comparable to Signal Messenger's.** The ordering rule also differs from `libsignal` even on the single-key path |
-| **X3DH / PQXDH** | X3DH rev. 1; PQXDH rev. 3 | **Faithful** on DH order, the `0xFF`×32 prefix, zero-salt HKDF, KEM-secret position, and PQXDH §2.2's info-string construction. **Deviation:** ML-KEM-1024 (FIPS 203) replaces round-3 Kyber1024 | Standardized ML-KEM preferred over round-3 Kyber. The info string names it, and names this application rather than `libsignal`'s, as §2.1 and §2.2 require | Wire-incompatible with `libsignal` by construction, and the label now says so. The info string is part of the derivation, so any peer that names a different one derives a different `SK` and cannot complete the handshake |
+| **Safety numbers** | `libsignal` `fingerprint.rs` | **Deviation.** Iteration, digit encoding, and the order of the two halves are byte-identical, but the input is a composite-identity commitment under an SDK domain string, and the QR version is `4` | Follows from the composite identity; a single-key fingerprint cannot authenticate both components | **Safety numbers are not comparable to Signal Messenger's.** The low-level single-key path equals `libsignal`'s version 2 fingerprint |
+| **PQXDH** | PQXDH rev. 3; X3DH rev. 1 for the shared DH steps | **Faithful** on DH order, the `0xFF`×32 prefix, zero-salt HKDF, KEM-secret position, and PQXDH §2.2's info-string construction. **Deviation:** ML-KEM-1024 (FIPS 203) replaces round-3 Kyber1024 | Standardized ML-KEM preferred over round-3 Kyber. The info string names it, and names this application rather than `libsignal`'s, as §2.1 and §2.2 require. PQXDH is required: no classical X3DH session exists | Wire-incompatible with `libsignal` by construction, and the label now says so. The info string is part of the derivation, so any peer that names a different one derives a different `SK` and cannot complete the handshake |
 | **Associated data** | X3DH §3.3 | **Deviation.** `AD` is a domain-separated HMAC input over SHA-256 commitments to both composite identities, not `IK_A ‖ IK_B` | Binds the Ed25519 component, which a raw-key `AD` would leave uncovered | Stronger binding; wire-incompatible |
 | **Double Ratchet** | Double Ratchet rev. 4 | **Faithful** on `WhisperRatchet`, `WhisperMessageKeys`, the `0x01`/`0x02` seeds, the 80-byte split, AES-256-CBC, the `0x44` version byte, and 8-byte MAC truncation | — | The ratchet core follows the Double Ratchet specification |
 | **Message wire format** | `libsignal` `wire.proto` | **Faithful** field numbers 1–8. **Extension:** fields at 100+ carry identity type and ML-KEM one-time prekey material. **Deviation:** address binding uses variable-length UTF-8 user IDs and 4-byte device IDs instead of 17-byte ServiceIds and 1-byte device IDs | The SDK binds application-defined identifiers, not Signal Messenger ACIs | Wire-incompatible; a Signal Messenger client would silently ignore the added fields |
-| **Skipped keys and archiving** | Double Ratchet §2.6; `libsignal` `consts.rs` | **Deviation.** The 2000-key cap is global rather than per-chain, eviction is by wall-clock timestamp, and skipped keys expire after 7 days. Session records serialize as JSON, not protobuf | Simpler storage accounting and bounded growth | **Legitimate messages can become undecryptable** where `libsignal` would still decrypt them: a 5× smaller effective cap, cross-chain eviction, and a hard 7-day limit for offline recipients |
+| **Skipped keys and archiving** | Double Ratchet §2.6, §8.4; `libsignal` `consts.rs` | **Deviation.** The 2000-key cap applies to each receiver chain, as in `libsignal`, and a full chain evicts its lowest index. Skipped keys also expire after 7 days, which `libsignal` does not do. Session records serialize as JSON, not protobuf | Double Ratchet §8.4 recommends the deletion of skipped keys after one week. A held key decrypts its message for as long as it stays, so the expiry bounds what a compromised device state exposes | The worst case is 5 receiver chains of 2000 keys each, in the current session and in each of up to 40 archived sessions. **A message more than 7 days out of order is undecryptable** where `libsignal` decrypts it |
 | **Padding** | — | **Extension.** ISO 7816-4 bit padding to 160-byte buckets inside the library | Length hiding by default rather than left to the application | `libsignal` does not pad at this layer; Signal Messenger's apps do. PKCS#7 then adds a block, so ciphertext lands 16 bytes past each boundary |
 | **SPQR / ML-KEM Braid** | ML-KEM Braid rev. 1 | **Deviation.** Same protocol, same KDF labels, same Reed–Solomon parameters, byte-identical message framing — except `hek = SHA3-256(ek_seed ‖ ek_vector)`, the operand order the specification states, which is the reverse of `libsignal`'s implementation | The normative text was followed over the executable reference | Wire-visible. Headers, ciphertexts, and shared secrets diverge; a braid session cannot complete a single epoch against `libsignal`'s implementation. Also means the KEM is not FIPS 203 in braid mode |
 | **Triple Ratchet** | `libsignal` `triple_ratchet.rs` | **Faithful.** The PQ secret enters as the HKDF salt at message-key expansion, same label, same order | — | The braiding construction follows the ML-KEM Braid specification |
-| **Sesame** | Sesame rev. 2 | **Deviation** on session expiry (§4.2 applies only to unacknowledged sessions), on deleted devices (hard-removed rather than marked stale), and on device-list currency (the sender reads the relay's list at most once per 60 s instead of the server rejecting a stale send). **Extensions:** QR provisioning, device transfer, encrypted device names, identity-change gating, a 5-device cap | Product requirements the specification does not address | Hard deletion **drops the MAXLATENCY window, so in-flight messages from a just-removed device become permanently undecryptable**. A device linked or removed less than 60 s ago can miss a send or still receive one. Device transfer clones ratchet state, which weakens the forward-secrecy bound |
+| **Sesame** | Sesame rev. 2 | **Faithful** on deleted devices: a removed device is marked and kept for MAXLATENCY, and its archived sessions still decrypt. **Deviation** on session expiry (§4.2 applies only to unacknowledged sessions) and on device-list currency on the Convex relay only (the sender reads the relay's list at most once per 60 s). The Signal Protocol Relay and the memory relay reject a stale declared device set, as §3.3 requires. **Deviation** on stale-record cleanup timing (§5.1: the cleanup runs after the resume, not after a fetch of the whole mailbox, and the Relay's 30-day TTL cap bounds it). **Extensions:** device transfer, encrypted device names, identity-change gating, a 5-device cap | Product requirements the specification does not address | On the Convex relay, a device linked or removed less than 60 s ago can miss a send or still receive one. A client clock that moves forward against the Relay clock between a removal and the cleanup can lose a message accepted just before the removal. Device transfer copies the identity private key and no ratchet state, so each device starts its own sessions |
+| **Device-set reconciliation** | Signal's server `MessageController`; Signal's Desktop client `sendToGroup` | **Deviation** in detail. The answer order, one post for each device of a direct send, a bound on direct sends, no empty sync post, a refusal for each not-found group destination, an acknowledgment marker, and a group body sealed again with the same ciphertext (§5.6) | The Relay takes one destination for each direct body, keeps one record for each account, admits an operation for 5 minutes, and stores each send attempt | A phase that does not match in 10 restarts fails the send with `DeviceSetReconciliationError`. A relay that does not acknowledge the comparison raises `DEVICE_SET_UNCHECKED` |
 | **Sealed sender** | `libsignal` `sealed_sender.rs` | **Faithful** on the multi-recipient transport labels, KEM, AES-256-GCM-SIV, binary format, and `0x3FFF` registration-ID mask. **Extension:** sender and server certificates require signed Relay scope and issuer validity under operator-owned Ed25519 roots | Binds anonymous delivery to one Relay deployment and supports explicit issuer rotation and revocation | The transport follows `libsignal`; certificates are not interchangeable with Signal Messenger or another deployment |
 | **Delivery token** | `libsignal` `profile_key.rs` | **Faithful.** `deriveAccessKey` follows `libsignal`'s `ProfileKey::derive_access_key`, and reproduces `libsignal`'s published known-answer values | — | Not an SDK invention, despite what the module name suggests |
 | **Sender keys** | `libsignal` `sender_keys.rs` | **Deviation.** Protobuf fields, chain seeds, and HKDF-Extract/Expand match. The SDK uses frame version `0x44`, Ed25519 signatures, and UTF-8 distribution identifiers. | The identity profile selects Ed25519. The frame version marks the correction of the former missing Extract. | Message-key derivation matches the reference. Former SDK state and messages require a reset. Frames still differ from Signal Messenger. |
+| **Sender-key distribution tracking** | Signal's Android client `SenderKeySharedTable`; Signal's Desktop client `sendToGroup` | **Deviation** in detail. The same events delete rows. A session or key write deletes them in the same write. The row match adds the key ID and compares the registration ID, as Signal's Desktop client does. A replay keeps its group ciphertext | The Relay refuses a second operation under one message ID. The SQLite, IndexedDB, and key-value stores keep the rows in durable storage, and the memory store keeps them in memory by design | A device that a replay adds gets the content only for a `Resendable` send |
+| **Cross-tab locks** | Signal's Desktop and Android clients | **Faithful** in a browser: a group send and each session write take a Web Lock named by the store identity, so the tabs and workers of one origin run them one at a time. **Deviation** elsewhere: the lock orders one store object in one process | Signal runs one process for each device. Only the browser stores have a store identity, and Web Locks in Node order one process only | Two processes, or two store objects, that share one database need exclusive access from the application (§7.6) |
+| **Group send route** | Signal's server, multi-recipient send | **Faithful** in the SDK: each group send goes to the anonymous group route with a group send token. The Relay still serves an identified group route that no SDK release calls | The Relay removes the identified route forward only | Until the removal, a client that posts to the identified route sends under its account credential, with no device-set check when the post declares none (§7.7) |
 | **Groups** | Signal Private Group System | **Independent design.** Real zkgroup primitives underneath; profile-key credential issuance blinds the ACI-bound profile-key attribute, the server validates every change against zero-knowledge presentations and signs the accepted result, and clients verify those signatures | Ships a validating group server with an enforcement contract (S1–S14) specified in-tree | Not wire-compatible with the Signal Private Group System; credentials are not interchangeable. The issuer sees the authenticated ACI and redemption window, but not the raw profile key |
+| **Receive order** | Signal's Android client | **Faithful.** The receive queue (`client/receive-queue.ts`) holds back the later records of one conversation, as Android queues its message jobs: group content per group, a sent transcript per destination, and other content per sender account. The commit order stays per sender device | — | A record that waits for its group state holds back the later content of its group from every sender until a fetch of its group or `syncGroup` completes, or until the record expires after 30 days. Direct chats and other groups make progress. A record in hook backoff holds back its conversation until its hook succeeds, it reaches the hook attempt cap of 10, or it expires. Before the queue restores a record, it keys the record by its stored group or by its sender account. A missing sender key does not hold the queue: that content goes to the retry request handler |
+| **Receive hook attempt cap** | Signal's Desktop client | **Deviation.** After 10 failed `onMessageDecrypted` attempts, a record no longer holds back its conversation, as on Desktop. Desktop deletes the record at startup. The SDK keeps it, offers it to the hook once at each start, shows the count in `PendingReceive.hookAttempts`, and removes it at `discardPendingReceive` | The hook is application code. A drop loses content whose ratchet step is spent, and an application update can repair the hook | A hook that ends the process on the record ends it once at each start, until the record expires or the application discards it (§8.2) |
+| **Receive hook bound** | Signal's Desktop client | **Deviation** in detail. Each application hook that a receive pass awaits has a bound, `receiveHookTimeoutMs`, 2 minutes by default. Desktop bounds its receive dispatch at 2 minutes and its long-running tasks at 30 minutes | A founder ruling sets the bound at 2 minutes. The SDK cannot tell a slow hook from a hung one | A timeout of `onMessageDecrypted` counts as one failed attempt. A timeout of another hook is logged, and the pass continues. A settle after the bound writes nothing (§8.4) |
+| **Delivery receipt lifespan** | Signal's Android client | **Faithful.** A stored receipt is sent only within 1 day after it becomes owed, as Android's receipt job lives for 1 day. The receipt is durable across a restart, as on Android | — | A receipt that cannot go out within 1 day is not sent, and no hook reports it (§8.3) |
+| **Receive admission bounds** | Signal's Desktop client | **Extension.** Before a decrypt, the receive queue checks `maxItems`, `maxBytes`, and the group share `blockedGroupShare`. The defaults are provisional. Desktop decrypts each envelope as it arrives and bounds stored content only by age and attempts | The SDK shares a storage budget with the application in a browser and on mobile | A refused envelope is not acknowledged. It stays at the Relay and expires there with no local hook. The messages behind it still arrive (§8.5) |
 | **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation is structured as four labeled derivations rather than one seeded derivation | Server keys are the deploying operator's own trust root (each deployment generates its own seed), not Signal Messenger's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal Messenger's |
 | **Registration IDs** | `libsignal` `sealed_sender.rs` | **Faithful.** Generated in `[1, 16383]`, strictly inside the 14 bits the wire format reserves | — | — |
 
@@ -193,47 +202,48 @@ the safety number Signal Messenger shows for the same two users. A user cannot
 verify a contact by reading a number out of one application and comparing it
 against the other.
 
-Three independent reasons, any one of which is sufficient.
+Two independent reasons, either of which is sufficient.
 
 **The SDK computes the user-facing number over a composite commitment.**
 The `client.verify()` method uses `generateCompositeSafetyNumber`
-(`client/sessions.ts:326`, `:432-433`). Its per-party hash iterates over
+(`client/sessions.ts:374`, `:436`). Its per-party hash iterates over
 `UTF8("signal-protocol-js composite safety number v1") ‖ type-tagged user ID ‖
-SHA-256 identity commitment` (`safety/core.ts:48-50`, `:205-233`). None of that
+SHA-256 identity commitment` (`safety/core.ts:52-54`, `:249-262`). None of that
 input exists in `libsignal`'s construction ([`fingerprint.rs:161-192`][fp]).
 
 **The identity material differs.** Even the raw input is a 67-byte two-key tuple
 rather than a 33-byte `0x05 ‖ X25519` key.
 
-**A different rule orders the two halves.** This one applies even on the
-SDK's low-level single-key path, which is otherwise byte-identical to
-`libsignal`. The SDK orders by user identifier,
-`localId.localeCompare(remoteId)` (`safety/core.ts:177`). `libsignal` orders by
-the encoded digit strings themselves ([`fingerprint.rs:32-40`][fp]). Both rules
-are symmetric, so the two parties always agree with each other. They do not
-agree with Signal Messenger, and roughly half the time the halves come out in
-the opposite order.
-
-`localeCompare` is also locale-sensitive. Two devices with different default
-locales can in principle disagree on how to order the same pair of user IDs.
+**The order of the two halves is faithful.** The party whose 30-digit display
+string is lower by unsigned byte comparison comes first
+(`safety/core.ts:186-226`), as in `libsignal` ([`fingerprint.rs:32-40`][fp]).
+The SDK does not compare user identifiers, so neither the locale nor the
+UTF-16 code-unit order can change the result. When the two display strings
+are equal, the 60 digits do not depend on the order, and the full hash bytes
+choose the first fingerprint, so both parties still produce the same hex and
+emoji. The SDK's low-level single-key path is therefore byte-identical to
+`libsignal`'s version 2 fingerprint (`safety/core.ts:43`).
 
 Other parts *are* faithful. The iteration is byte-for-byte `libsignal`'s: 5200
 iterations of SHA-512 over `0x0000 ‖ key ‖ id`, then `hash ‖ key`
-(`safety/core.ts:138-143` vs [`fingerprint.rs:170-189`][fp]). So is the digit
+(`safety/core.ts:146-152` vs [`fingerprint.rs:170-189`][fp]). So is the digit
 encoding (six 5-byte big-endian chunks mod 100000, 30 digits per party). So is
 the scannable-fingerprint protobuf layout (`safety/protobuf.ts:94-109`). The
 cross-verification swap and constant-time comparison match as well.
 
-The QR format version is the SDK's own: `3` for the composite path
-(`safety/core.ts:46`), where `libsignal` knows only versions 1 and 2 and returns
-`VersionMismatch` for anything else. A distinct version in the same protobuf
-namespace is the correct fail-closed choice. A Signal Messenger client rejects
-the code rather than misreading it.
+The QR format version is the SDK's own: `4` for the composite path
+(`safety/core.ts:45-50`), where `libsignal` knows only versions 1 and 2 and
+returns `VersionMismatch` for anything else. A distinct version in the same
+protobuf namespace is the correct fail-closed choice. A Signal Messenger client
+rejects the code rather than misreading it. An earlier SDK ordered the two
+halves by user ID under version `3`. A version `3` code reports
+`version_mismatch` (`safety/fingerprint.ts:313-316`), so two parties never
+compare numbers that two different order rules made.
 
-The SDK also offers an emoji fingerprint (`safety/core.ts:308-392`) and
+The SDK also offers an emoji fingerprint (`safety/core.ts:321-435`) and
 verification deep links (`safety/url.ts`). Both are extensions with no
-`libsignal` counterpart. The emoji form derives from one party's fingerprint
-only. It therefore encodes roughly half of what the 60-digit number encodes.
+`libsignal` counterpart. The emoji form derives from the fingerprint that comes
+first only. It therefore encodes roughly half of what the 60-digit number encodes.
 Do not present it to users as an equal-strength alternative.
 
 ### 1.4 Registration ID range
@@ -288,11 +298,10 @@ tagged `0x0A` rather than `0x08` (`internal/crypto/pq/kyber.ts:79`). That much i
 deliberate. The SDK prefers the standardized algorithm over the round-3 draft,
 and a single unambiguous tag over a legacy fallback.
 
-The info strings are the SDK's own (`types/protocol-config.ts:363-386`):
+The info string is the SDK's own (`types/protocol-config.ts:624-638`):
 
 ```text
-OpenE2EE_X25519_SHA-256_ML-KEM-1024   (PQXDH)
-OpenE2EE                              (X3DH)
+OpenE2EE_X25519_SHA-256_ML-KEM-1024
 ```
 
 The SDK sets both implementer-chosen parameters to name itself and the KEM it
@@ -364,28 +373,30 @@ conditions (`internal/session/cipher.ts:1519-1527`).
 Two differences at the boundary between key agreement and the ratchet:
 
 **Alice reuses her key-agreement ephemeral as her first ratchet key**
-(`internal/session/builder.ts:159-171`). By contrast, `libsignal` generates a
+(`internal/session/builder.ts:158-170`). By contrast, `libsignal` generates a
 fresh sending ratchet key, distinct from the handshake ephemeral
 ([`ratchet.rs:77-81`][rat]). In `libsignal` the prekey message's base key and the
 first message's ratchet key therefore differ. Here they are the same value. No
 concrete attack follows, but the reuse weakens key separation and it is
 wire-visible.
 
-**Bob initializes without a sending chain** (`internal/session/builder.ts:326-364`),
+**Bob initializes without a sending chain** (`internal/session/builder.ts:318-356`),
 deriving chains on the first DH ratchet, where `libsignal` seeds a sending chain
 immediately ([`ratchet.rs:137-172`][rat]). A side effect is that bytes 32–64 of
 the 96-byte derivation, the initial chain key, never produce a message key on
 either side. The SDK keeps the 96-byte split for shape compatibility, but only
 the root key and the SPQR key are load-bearing.
 
-### 2.5 The SDK keeps a gated classical fallback
+### 2.5 PQXDH is required
 
-`libsignal` removed X3DH entirely and rejects pre-Kyber prekey messages
-([`session.rs:105-112`][sess]). The SDK keeps the X3DH path reachable only via an
-explicit opt-in. The default is fail-closed, and any PQXDH failure raises rather
-than silently downgrading (`internal/session/handshake.ts:167-260`). This is a
-downgrade surface that `libsignal` closed.
-[Protocol Policy](./PROTOCOL_POLICY.md) documents it.
+Every new session uses PQXDH. The SDK has no classical X3DH key agreement and
+no setting that enables one. A peer bundle without an ML-KEM prekey fails with
+`PQXDH_REQUIRED`, and any PQXDH failure raises rather than downgrading
+(`internal/session/handshake.ts:156-408`). This matches `libsignal`, which
+removed X3DH and rejects pre-Kyber prekey messages
+([`session.rs:105-112`][sess]). A stored classical session continues as a
+Double Ratchet session. [Protocol Policy](./PROTOCOL_POLICY.md) documents the
+policy.
 
 ---
 
@@ -439,36 +450,36 @@ The SDK is also stricter than `libsignal` on decode. It requires fields that
 lengths (`internal/encoding/proto/signal-message.ts:332-340`, `:488-505`). This
 is safer, and it is one more reason the formats cannot meet.
 
-### 3.3 Skipped-key retention is much tighter than in libsignal
+### 3.3 Skipped-key retention adds a 7-day expiry to libsignal's limits
 
-The constants match: `MAX_MESSAGE_KEYS = 2000` and `MAX_FORWARD_JUMPS = 25000`
-(`internal/protocol/double-ratchet/ratchet.ts:194-227` vs
-[`consts.rs:8-9`][consts]). The two implementations apply them differently, and
-the difference is user-visible.
+The constants match: `MAX_MESSAGE_KEYS = 2000`, `MAX_FORWARD_JUMPS = 25000`, and
+`MAX_RECEIVER_CHAINS = 5` (`internal/protocol/double-ratchet/ratchet.ts:194-207`
+vs [`consts.rs:8-10`][consts]). The SDK applies the caps as `libsignal` does,
+and it adds one limit that `libsignal` does not have.
 
-**The cap is global, not per-chain.** `libsignal` applies 2000 to each chain's key
-vector ([`double_ratchet.rs:349-361`][dr]). Five receiver chains therefore give a
-true system capacity of 10,000 skipped keys. The SDK counts across all chains and
-evicts when the total reaches 2000
-(`internal/protocol/double-ratchet/chains.ts:478-513`). The effective capacity is
-5× smaller, and traffic on a newer chain can evict keys that belong to an older
-one.
+**The cap is per chain.** `libsignal` applies 2000 to the key vector of each
+chain ([`double_ratchet.rs:346-361`][dr]). The SDK does the same
+(`internal/protocol/double-ratchet/chains.ts:425-447`). A store to one chain
+never evicts a key of another chain. The worst case is 5 receiver chains of
+2000 keys each, in the current session and in each of up to 40 archived
+sessions (`types/session.ts:800`).
 
-**Wall-clock timestamps drive eviction.** The SDK scans every chain for the
-oldest entry (`internal/protocol/double-ratchet/chains.ts:414-463`). By contrast,
-`libsignal` evicts strictly by insertion position. `Date.now()` is not monotonic,
-so a clock adjustment makes the eviction order non-deterministic.
+**A full chain evicts its lowest index.** `libsignal` inserts each key at the
+front and drops the last entry, which is the oldest insertion. The keys of one
+chain are stored in index order, so the two rules drop the same key. The SDK
+does not read the clock to choose the key.
 
 **Skipped keys expire after 7 days**
-(`internal/protocol/double-ratchet/ratchet.ts:197`). `libsignal` has no
-time-based expiry for message keys at all.
+(`internal/protocol/double-ratchet/ratchet.ts:180`). `libsignal` has no
+time-based expiry for message keys. Double Ratchet §8.4 recommends this policy:
+a held skipped key decrypts its message for as long as it stays, so a
+compromise of the device state exposes each message whose key is held. The
+expiry bounds that window.
 
-Taken together, these three differences create **message-delivery patterns where
-this SDK reports an undecryptable message and `libsignal` decrypts it**. Two
-recipients can lose messages that the specification's own limits keep. The first
-is offline for more than a week. The second takes heavy traffic on a new chain
-while older-chain messages are still in flight. The bounds are defensible as
-storage hygiene. The consequence should not be a surprise.
+The consequence: **a message more than 7 days out of order is undecryptable in
+this SDK, and `libsignal` decrypts it.** This occurs when the recipient is
+offline for more than a week, or when the message stays in transit for more
+than a week.
 
 Two related extensions go with this. A `processedChains` map rejects messages
 that bear a ratchet key from a retired chain
@@ -479,22 +490,29 @@ where `libsignal` uses `usize::MAX`.
 
 ### 3.4 Session archiving and serialization
 
-The cap matches: 40 archived states, [`consts.rs:11`][consts]. The structure
-differs. `libsignal` keeps an ordered list with strict insertion-order eviction
-([`session.rs:787-830`][st]). The SDK keeps a map keyed by base key and trims by
-`lastUsedAt` (`types/session.ts:815-847`). Archiving a session whose base key
-already exists overwrites rather than appends, so the effective history can be
-shorter than 40.
+The cap matches: 40 archived states, [`consts.rs:11`][consts]. The eviction
+order matches: `libsignal` drops the oldest insertion from its ordered list
+([`session.rs:814-826`][st]), and the SDK drops the oldest insertion from its
+archive (`types/session.ts:844-879`). The structure differs. The SDK keeps a
+map keyed by base key. Archiving a session whose base key is already archived
+moves that entry to the newest end rather than adding a second one, so the
+effective history can be shorter than 40.
 
-`libsignal` clears unacknowledged prekey state before archiving a session. The
-SDK does not. Retired sessions therefore keep pending prekey references alive in
-storage.
+The archive clears the unacknowledged prekey state, as `libsignal` does
+([`session.rs:814-826`][st] calls `clear_unacknowledged_pre_key_message`,
+[`session.rs:566-589`][st]). `SessionRecord.archiveCurrent` and
+`promoteSession` archive a copy of the session without the pending flag, the
+prekey identifiers, and the KEM ciphertexts (`types/session.ts:824-834`). A
+promoted session sends a SignalMessage, not a PreKeyMessage.
 
-**Session records serialize as JSON, not protobuf** (`types/session.ts:1002-1028`).
-The source states this as a simplicity and debuggability choice. Two consequences
-are worth naming. No Signal Messenger client can read or write these stored
-sessions. Key material also sits in immutable JavaScript strings that nothing can
-zero, where `libsignal` can zero its byte vectors.
+**Session records serialize as JSON, not protobuf**
+(`local/store/session-codec.ts:10-24`). The constraint is that no Signal client
+reads or writes an SDK store, so the stored format has no interoperability
+requirement. The SDK session also has fields that the `libsignal` record has no
+place for, such as the KEM one-time prekey ciphertext next to the Kyber
+ciphertext (`types/session.ts:255-256`). One consequence is worth naming. Key
+material sits in immutable JavaScript strings that nothing can zero, where
+`libsignal` can zero its byte vectors.
 
 ### 3.5 Padding
 
@@ -519,8 +537,8 @@ sits 16 bytes past each boundary rather than on it.
 ## 4. SPQR and the ML-KEM Braid
 
 This is the same protocol as the SparsePostQuantumRatchet v1 protocol, implemented
-independently and pinned against commit `fd32048`, which upstream tags
-`SparsePostQuantumRatchet v1.5.3`. The fidelity is high and specific:
+independently and pinned against commit `06959b4`, which upstream tags
+`SparsePostQuantumRatchet v1.6.0`. The fidelity is high and specific:
 
 - **KDF labels are byte-identical**, including the double space in
   `"Signal PQ Ratchet V1 Chain  Start"` (`internal/crypto/kdf/hkdf.ts:353-368`).
@@ -537,17 +555,45 @@ independently and pinned against commit `fd32048`, which upstream tags
 - **ML-KEM-768 with the same incremental split** (32-byte seed, 1152-byte vector,
   960/128-byte ciphertext parts).
 
-The delta review that moved the pin forward from `f2589fef` found one behavioral
-change upstream. Decoding a chain epoch direction now rejects a `next` chain key
-whose length is neither zero nor 32 bytes. The internal next-key assertion checks
-that same exact length rather than mere non-emptiness.
+Two delta reviews moved the pin forward from `f2589fef`.
 
-The SDK is already at least as strict. Restoring SPQR state requires every chain
-key, root key, and skipped-message key to be canonical base64 for exactly 32
-bytes (`internal/protocol/spqr/serialize.ts:44-72`). The SDK has no state in
-which the key is absent. Two upstream error strings now name the value they
-reject. The rest of the delta is proof-assistant annotation and loop rewriting,
+The step to `fd32048` found one behavioral change upstream. Decoding a chain
+epoch direction now rejects a `next` chain key whose length is neither zero nor
+32 bytes. The internal next-key assertion checks that same exact length rather
+than mere non-emptiness. Two upstream error strings now name the value they
+reject. The rest of that delta is proof-assistant annotation and loop rewriting,
 which leaves behavior unchanged.
+
+The SDK refuses the same key at a different point. The internal SPQR state
+loader requires every chain key, root key, and skipped-message key to be
+canonical base64 for exactly 32 bytes (`internal/protocol/spqr/serialize.ts:44-72`).
+The production session load does not run that loader, and it does not check the
+chain-key length. A stored wrong-length chain key fails at its first chain step,
+because the chain KDF refuses a key that is not 32 bytes
+(`internal/crypto/kdf/hkdf.ts:438-445`). Upstream refuses the key when it loads
+the state. The SDK has no state in which the key is absent.
+
+The step to `06959b4` has two commits that change behavior. `cb8a727` ("Improve
+handling of higher-than-1 SPQR versions") moves preamble parsing into
+`src/lib.rs` (`msg_preamble`) and moves the epoch-0 index-0 case into
+`Chain::recv_key` (`src/chain.rs:417-419`). `a395789` ("Disallow unsupported
+versions from turning off PQ ratcheting") makes an unknown version after
+negotiation a `VersionMismatch` error. It also removes `displaydoc`, moves
+`curve25519-dalek` to the dev-dependencies, and adds one lint attribute to
+`polynomial.rs`. The changed files are `src/lib.rs`, `src/chain.rs`,
+`src/v1/chunked/states.rs`, `src/v1/chunked/states/serialize.rs`,
+`src/encoding/polynomial.rs`, `Cargo.toml`, `Cargo.lock`, and one upstream
+test module. `Version::MAX` stays `V1` (`src/lib.rs:239`). No KDF label,
+framing byte, or Reed–Solomon parameter changes.
+
+The SDK behavior does not change. Upstream now returns an epoch-0 key for a
+higher-version message before negotiation, and it refuses an unknown version
+after negotiation. The SDK refuses a version byte other than 1 before
+negotiation and ignores it after negotiation. Neither path occurs between v1
+peers. The SDK fixes the braid version at 1
+(`internal/protocol/spqr/ml-kem-braid/serialize.ts:270-272`,
+`internal/protocol/spqr/spqr.ts:597`) and maps a version byte other than 1 to
+`v0` (`internal/protocol/version.ts:254`, `:183-197`).
 
 ### 4.1 The `hek` operand order diverges
 
@@ -607,10 +653,19 @@ analogue.
 where `libsignal` uses an 11-variant `oneof` over nested structures. Serialized SPQR
 state is not portable in either direction.
 
-**Deviation.** Skipped-key eviction in the SPQR chain triggers at the cap and
-evicts by wall-clock timestamp, where `libsignal` triggers at `max_ooo × 11/10 + 1` and
-evicts by message index. `libsignal`'s rule is deterministic and index-anchored.
-The SDK's rule puts a clock dependency into ratchet state.
+**Faithful.** The SPQR chain trims the held skipped keys of one epoch by
+message index, as `libsignal`'s chain collects its key history. When an epoch
+holds `max_ooo × 11/10 + 1` keys or more, 2201 by default, a receive drops each
+key of that epoch whose index is below the receive counter minus `max_ooo`
+(`internal/protocol/spqr/validate.ts:63-123`, called at
+`internal/protocol/spqr/spqr.ts:1331`, vs `src/chain.rs:84-88` and `:146` at
+`06959b4`). A jump past every held key clears the held keys of the epoch first
+(`internal/protocol/spqr/spqr.ts:1273`, `:1320-1324` vs `src/chain.rs:266-270`). The
+trim reads no clock. The horizon is equivalent: `libsignal` trims before it
+steps its counter to the received index and so keeps one key that its refusal
+rule (`src/chain.rs:192-194`) already refuses, and the SDK trims after the step
+and keeps exactly the keys that the same rule accepts, so both decrypt the same
+messages.
 
 **Deviation.** The varint decoder is the stricter of the two. It rejects any
 value above `uint64` (`internal/encoding/proto/pq-ratchet-serialize.ts:163-186`).
@@ -676,22 +731,68 @@ These parts are faithful:
 The per-user identity model is one of the two models the specification permits
 (§3.1).
 
-### 5.1 The SDK removes deleted devices instead of marking them stale
+### 5.1 The SDK marks a removed device and keeps it for MAXLATENCY
 
 §3.1 and §3.3 require an implementation to mark a removed device's record stale
 and keep it for MAXLATENCY. Messages already in flight from that device then
-still decrypt. The SDK removes the record immediately
-(`internal/sesame/manager.ts:2098-2102`). A send also removes, immediately, each
-device record that the relay no longer lists for the recipient (§5.5).
+still decrypt. The SDK does this. A removal sets `removedAt` on the device
+record, archives its current session, and keeps the record
+(`internal/sesame/manager.ts:417-447`). A message that the device sent before
+its removal therefore still decrypts against the archived session. Signal's
+Android client also archives the session of a device that the server no longer
+lists, in `SignalServiceMessageSender`. A send marks a device record in the
+same way on two triggers:
 
-**State the consequence plainly. A message that a device sent moments before its
-removal becomes permanently undecryptable.** The specification's staleness window
-exists to prevent exactly that. No other part of the codebase contradicts the
-Sesame text this directly.
+- The relay no longer lists the device for the recipient (§5.5).
+- On a relay that compares device sets, the send holds no message for the
+  account of the device, and the relay has no prekey bundle for the device
+  (`NOT_FOUND`). The Signal Protocol Relay gives that answer for an unregistered
+  device, and for a registered device that has no uploaded prekeys. The relay
+  can still list such a device.
 
-The SDK also reuses the word `stale` for a different concept: a device *list*
-that needs refetching (`internal/sesame/types.ts:476-483`). The specification uses
-the word for a deleted user or device.
+A removed device gets no fan-out. One predicate, `isRemovedDevice`
+(`internal/sesame/types.ts:347-355`), states the rule, and each device
+enumeration of the send paths applies it. When the device list names the
+device again, the marker clears, and the device returns to fan-out with no
+current session. Its archived sessions stay
+(`internal/sesame/manager.ts:449-483`).
+
+The stale-record cleanup deletes a removed record when its removal is older
+than `maxLatency`, 30 days by default (`internal/sesame/types.ts:357-369`,
+`internal/sesame/manager.ts:2251-2261`). The receive queue runs the cleanup
+once in each client run, after it resumes its stored receives. Nothing orders
+the cleanup after a fetch of the whole mailbox, which §3.1 recommends.
+
+The constraint is the message lifetime at the relay. The Signal Protocol Relay
+caps the durable TTL of a message at 30 days (`MAX_DURABLE_TTL_SECONDS` in the
+Relay mailbox contract). It enforces the cap when it parses a project and on
+each request. The SDK fixes `maxLatency` at the same 30 days
+(`internal/sesame/types.ts:114`), and no public client option sets it. The
+removal clause is strict: the cleanup deletes the record only when
+`now - removedAt > maxLatency`. A message that the Relay accepted before the
+removal is therefore gone from the Relay before `maxLatency` passes after the
+removal, and the record outlives it. The §3.1 guarantee for messages in flight
+thus holds without a fetch of the whole mailbox. The Convex relay keeps a
+message for 7 days (`remote/relay/convex/component/messages.ts:18`), so the
+bound holds there too.
+
+Two caveats limit the bound:
+
+- **Clock skew.** The client measures the window on its own clock, and the
+  Relay measures the TTL on its clock. A fixed offset between the two clocks
+  cancels. If the client clock moves forward by e against the Relay clock
+  between the removal and the cleanup, the record goes e early. A message that
+  the Relay accepted up to e before the removal can then fail to decrypt.
+- **Memory relay.** The in-process memory relay keeps a message with no TTL,
+  so the bound does not hold there. A message from a removed device that waits
+  there for longer than `maxLatency` after the removal can fail to decrypt.
+
+Guarantee tests pin the default `maxLatency` at exactly 30 days, and assert
+that no public client options type carries a `maxLatency` option.
+
+The SDK also uses the word `stale` for a different concept: a device *list*
+that needs refetching (`internal/sesame/types.ts:512-518`). The specification
+uses the word for a deleted user or device, which the SDK calls removed.
 
 ### 5.2 Session expiry applies only to unacknowledged sessions
 
@@ -715,29 +816,18 @@ permits device IDs up to 127. The cap is a
 product decision. A source comment credits it to the Signal Protocol, which is
 inaccurate.
 
-### 5.4 Extensions: provisioning, transfer, device names
+### 5.4 Extensions: transfer, device names
 
 Sesame rev. 2 holds none of these. It says nothing about how a device comes to
 exist, takes a name, or migrates.
 
-**QR device provisioning** (`device/provisioning.ts`). Ephemeral X25519 ECDH →
-HKDF → AES-256-GCM, with a `signalprotocol://link-device` QR scheme, strict prefix
-and key validation, a 5-minute TTL, and rollback on both server and local failure.
-The construction is sound. One property is worth naming. Nothing binds the
-provisioning key to the primary device's long-term identity. The only
-authentication for the channel is the out-of-band display of the QR code.
-
-**Device transfer** (`device/transfer.ts`). Clones the identity private key and
-live ratchet state to a new device. This is useful, and it **breaks the invariant
-that Sesame rests on**: one device record, one device, its own sessions. After a
-transfer, two physical devices hold the same identity private key and the same
-ratchet state for every peer.
-
-A peer message that one device decrypts desynchronizes the other. The duplicated
-ratchet state also weakens the
-forward-secrecy guarantee that keeps the compromise of one endpoint within that
-endpoint. Restore deliberately drops archived sessions, which discards the
-convergence state that §3.4 needs.
+**Device transfer** (`device/transfer.ts`). Copies the account identity key
+pair, private key included, to a new device. The bundle holds no prekeys,
+ratchet sessions, sender-key state, message state, or outbox state, and restore
+rejects a bundle that holds one. The new device generates its own prekeys and
+starts its own sessions, so each device keeps its own sessions as Sesame
+requires. After a transfer, two physical devices hold the same identity private
+key. That is the per-user identity model that the SDK selects.
 
 **Encrypted device names** (`device/device-name-crypto.ts`). A three-field
 protobuf carries a synthetic IV that HMAC derives, with AES-256-CTR. That is the
@@ -746,7 +836,7 @@ counterpart.
 
 **Identity-change gating.** The SDK TOFU-pins an unseen identity. A changed
 identity sets `pendingVerification` and blocks sending until the application
-accepts the rotation (`internal/sesame/manager.ts:561-566`, `:1682-1714`). Sesame
+accepts the rotation (`internal/sesame/manager.ts:702-706`, `:1843`). Sesame
 rev. 2 has no such concept. This is a genuine improvement.
 
 **Not implemented:** proof of possession. Registration does not make the device
@@ -754,48 +844,89 @@ sign a server-issued nonce with its identity private key. Registration therefore
 trusts the relay more than §6.3 assumes. A deployment that needs proof of
 possession must add it at the application layer.
 
-### 5.5 The sender reads the device list; the server does not reject a stale send
+### 5.5 The relay compares the declared device set
+
+Reviewed: 2026-10-18.
 
 §3.3 steps 3 and 4 make the server the check. The server accepts a send only
 when the sender's list of device IDs is current, and otherwise rejects it with
-the old and new device IDs. The Signal Protocol Relay takes one message per
-device and has no whole-user device-set check, so it cannot reject a send
-that omits a device.
+the old and new device IDs.
 
-The SDK therefore reads the recipient's device list from the relay
-(`getActiveDevices`) before a direct send or a sender key distribution, when
-the last read for that recipient is more than 60 s old
-(`RECIPIENT_DEVICE_LIST_FRESH_MILLISECONDS` in
+The Signal Protocol Relay and the memory relay make this check. Each post to
+an account declares the device IDs that the sender holds records for. The
+relay compares the declaration with its device list and with the registration
+of each device:
+
+- When a device is missing or extra, it refuses the post with
+  `DEVICE_SET_MISMATCH` (409), and names the missing and the extra devices.
+- When the registration of a device changed, it refuses the post with
+  `STALE_DEVICE` (410), and names those devices.
+
+The SDK then removes each extra device record, starts a new session with each
+missing or stale device, and encrypts the message again only for those
+devices. It posts again with the repaired declaration. §5.6 lists the details
+that differ from Signal.
+
+On these relays, a send to a recipient with a session reads no device list. A
+recipient with no session gets one list read to start the sessions. A group
+send declares the devices of the records that it holds, and reads the list of
+a member only when it holds no record for that member. The SDK reads the own
+device list only when a recipient receipt sets `needsSync` and the sender
+holds no record of another own device. One exception holds in a live send and
+in a replay. A repair that leaves an account with no device record reads the
+list of that account once.
+
+The Convex relay does not compare device sets. With it, the SDK declares
+nothing. It reads the recipient's device list (`getActiveDevices`) before a
+direct send or a sender key distribution, when the last read for that
+recipient is more than 60 s old (`RECIPIENT_DEVICE_LIST_FRESH_MILLISECONDS` in
 `client/signal-service-cipher.ts`). It makes a session for each listed device
-that has none, and removes each local device record that the relay does not
-list. The time of the last read is kept in memory only, so a restarted client
-reads the list on its first send to each recipient.
+that has none, marks each local device record that the relay does not list as
+removed, and clears the mark of a removed record that the list names again
+(§5.1). The time of the last read is kept in memory only, so a restarted client
+reads the list on its first send to each recipient. Each send also reads the
+own device list before it posts.
 
-On the Signal Protocol Relay, a direct send posts first and reads second
-when the last successful read for that recipient in this process is at least
-60 s and less than 300 s old
-(`RECIPIENT_DEVICE_LIST_MAXIMUM_AGE_MILLISECONDS`). The send posts to the known
-devices, and then reads the list. It encrypts the same message for each newly
-listed device and posts it in the same send. It drops a device that the Relay
-refused and the list no longer shows. The stored intent records that its read
-is pending, so a replay after a crash reads the list before it completes. A
-sender key distribution, and a send through the Convex or memory relay, reads
-first as above.
+**Consequence on the Signal Protocol Relay and the memory relay.** A device
+that is linked or removed before the relay accepts a post changes the answer
+to that post. A linked device gets the message, and a removed device does not.
+A phase of a send that does not match in 10 restarts fails the send with
+`DeviceSetReconciliationError`.
 
-**Consequence on the Signal Protocol Relay.** A device linked less than 60 s
-before a send can miss that send. A device linked 60 s to 300 s before a send
-receives it when the read in that send succeeds. A removed device receives no
-message, because the Relay refuses the device's mailbox before the list shows
-the removal. The 300 s maximum limits only how long a client posts first on a
-list that no read confirmed.
-
-**Consequence on the Convex and memory relays.** A device linked less than
-60 s before a send can miss that send, and a device removed less than 60 s
-before a send can still receive it.
+**Consequence on the Convex relay.** A device linked less than 60 s before a
+send can miss that send, and a device removed less than 60 s before a send can
+still receive it.
 
 The SESAME stale-device-list retry loop (`StaleDeviceListError`) stays in
 `internal/sesame/manager.ts`, but no caller supplies a device-list version, so
 it never runs.
+
+### 5.6 Device-set reconciliation differs in detail
+
+Reviewed: 2026-10-18.
+
+The reconciliation of §5.5 follows Signal's server and Signal's Desktop
+client in its rule: the server compares, the client repairs and posts again,
+and a bound stops the loop. The bound of 10 restarts in each phase equals the
+bound of Signal's Desktop client. It is stricter than the 4 attempts of
+Signal's Android client. The following details differ.
+
+| ID | Deviation | Constraint | Why Signal's form does not fit | Guarantee test |
+|---|---|---|---|---|
+| D1 | A stale registration is reported after missing and extra devices on every route, also for a direct post to one account | One answer order for every route | Signal's server reports stale devices first on its route for one account | Relay tests assert the order on each route |
+| D2 | A direct send is one post for each device, and each post carries the full declaration of the account | The direct Relay route takes one destination for each body. A replay works for each device | One Signal request carries every device of the account. Here a race can accept some posts and refuse others | A restart posts the stored bytes to each accepted device, and each device gets the message once. A partly accepted pass posts every device again, and an accepted device replays |
+| D3 | A group comparison reads the record of each account, up to 1,000, when the Relay accepts the post | The Relay keeps one record for each account | Signal's server reads accounts from one store in one process | Relay tests, and a cost measurement |
+| D4 | The operation time is fixed. `OPERATION_EXPIRED` ends the reconciliation | The Relay admits an operation for 5 minutes | Signal has no admission window | A restart post that gets `OPERATION_EXPIRED` ends the phase as expired |
+| D5 | No fallback to one post for each recipient after the bound | The same bound covers every path | Signal's Desktop client falls back because its one-to-one path has no bound. Under the bound, a fallback only moves the churn | The 11th refusal of a phase ends the send with `DeviceSetReconciliationError` |
+| D6 | A direct send also stops at 10 restarts | One bound for every send | Signal's Desktop client has no bound on missing or extra devices for a one-to-one send | The restart bound test of the direct send |
+| D7 | No empty sync post. A `needsSync` mark on the recipient receipt and one read of the own list replace it | A Relay post needs at least one destination | Signal's server accepts an empty sync list, and Signal's Android client addresses its own device | A new own device repairs the sync phase and the recipient post is not sent again. The own list is read only on `needsSync` with no own record, and a failed read leaves the sync phase pending |
+| D8 | A group post settles a not-found account as a refusal of each of its destinations, and the Relay accepts the rest | `NOT_FOUND` is a fan-out result code. A refusal of the whole post would use a restart | This is equivalent to the group-send-token path of Signal's server, which sends to the accounts it resolves and returns the others. Only the form differs: a refusal code for each destination | A removed account settles as refused and the send adds nothing. A lost response resumes as a duplicate with no not-found account |
+| D9 | The receipt of a declared post carries a `deviceSetChecked` mark | The identified Relay route passes unknown keys, and a deployment lane can lag the SDK | Signal ships its client and server together | A receipt without the mark raises `DEVICE_SET_UNCHECKED` through `onRelayProtocolError` |
+| D10 | The SDK seals a group body again only before the Relay accepts it, and only after a definite refusal | The Relay keeps a fingerprint of each operation and answers `RETRY_CONFLICT` to a second body under the same ID | Signal stores nothing on the server for a send attempt | A refused body is replaced in one write. A crash before the post of the replaced body posts it on resume |
+| D11 | A group restart keeps the group ciphertext, seals the shared body again, and replaces it in one write. It does not encrypt the content again | One group pass posts the same ciphertext in the shared body and in the device posts. A new ciphertext would change a device post that the Relay already accepted, and its replay would get `RETRY_CONFLICT` | Signal's Desktop client encrypts again for each attempt | The group ciphertext is byte-equal before and after the replacement, the accepted device post replays to its stored receipt, and the new body names the repaired destinations |
+| D12 | A declared post with no `recipientRegistrationId` skips the registration check | The field is optional on every Relay route | Signal's server compares the registration of each device of a post | A Relay test posts an unnamed registration |
+| D13 | A declaration that names the sender device gets 400 | The Relay refuses a malformed declaration before it compares | Signal's server answers 409 and names the sender device as an extra device | Relay tests on the direct and the group routes. The SDK does not declare the sender device |
+| D14 | The identified group route compares the declared device set, with the codes and the order of the direct route | The route serves Relay API customers | Signal has no identified group route | Relay tests. No SDK code calls the route |
 
 ---
 
@@ -818,26 +949,42 @@ The base trust-root loop also matches. It does not short-circuit and therefore
 does not reveal which root validated. Required signed scope and issuer-validity
 checks extend the upstream certificate semantics.
 
-**`PLAINTEXT_CONTENT` (8) is a known wire value that this SDK rejects.**
-`libsignal` uses it to carry a `DecryptionErrorMessage` when no session exists
-to encrypt one under ([`sealed_sender.rs:2055-2075`][ss]). This SDK instead
-sends a decryption-error signal as an identified mailbox envelope with
-`messageType: 'retry_request'` (Sesame §4.1, `client/retry-request-envelope.ts`).
-No send path produces the type, and no decrypt path consumes it. The envelope parse therefore
-rejects the value (`internal/protocol/sealed-sender/types.ts`) rather than map it
-to an envelope type with no handler.
+**`PLAINTEXT_CONTENT` (8) carries a sealed retry request, with an SDK payload.**
+`libsignal` uses the type to carry a serialized `DecryptionErrorMessage` when
+no session exists to encrypt one under ([`sealed_sender.rs:2055-2075`][ss]).
+This SDK uses the same type for its own retry request (Sesame §4.1,
+`client/retry-request-envelope.ts`). The sealed content is the small JSON
+payload that the identified `retry_request` envelope carries, not a
+`DecryptionErrorMessage`. The wire value matches. The payload does not.
 
-The enum keeps the member so the wire values stay a faithful record.
-`envelopeTypeForContent` throws on it, so a new member without a route fails
-loudly. A peer that sends one gets a clean parse failure, not a payload routed
-into the pairwise ratchet.
+A retry request follows the sealed sender delivery mode, as a delivery
+receipt does. When the requester holds the access key of the target, it seals
+the request, and the Relay does not see the requester. A group send
+endorsement never seals a retry request. Without an access key, or when the
+Relay refuses the access key, the request goes identified only in
+`'preferred'` mode. In `'required'` mode the request never goes identified.
+It stays pending, and the scheduler posts it again until its deadline. In
+`'disabled'` mode it is always identified. An identified retry request shows
+the Relay which device could not decrypt a message from which sender, so it
+does not have the privacy of a sealed request.
 
-Note the cost when you debug interop. The parsers throw a single generic error
-for every malformed envelope. A peer implementation that legitimately sends
-`PLAINTEXT_CONTENT` therefore fails with `Sealed sender verification failed`,
-which is the same string a MAC mismatch produces. The uniformity is deliberate,
-and the parse runs after authentication, so nothing here is an oracle. Watch for
-one pattern: sealed messages from one peer stack fail with that error while
+The receive path accepts the type only for this route. The cipher unseals the
+envelope, and a content type of 8 goes to the retry request handler, never to
+a ratchet decrypt. The seal authenticates the requester: the authentication
+tag binds the sealing key to the identity key of the sender certificate, and
+the certificate must validate against the trust roots. `envelopeTypeForContent`
+maps 8 to `retry_request`, so a new member without a route still fails loudly.
+
+Note the cost when you debug interop. A `libsignal` peer that sends
+`PLAINTEXT_CONTENT` with a `DecryptionErrorMessage` reaches the retry request
+handler, which drops it as a malformed retry request. A shipped `11.0.x`
+release of this SDK rejects the type at the parse. That receiver drops a
+sealed retry request from a newer client, and the requester ends the request
+as expired content. The parsers throw a single generic error for every
+malformed envelope, `Sealed sender verification failed`, which is the same
+string a MAC mismatch produces. The uniformity is deliberate, and the parse
+runs after authentication, so nothing here is an oracle. Watch for one
+pattern: sealed messages from one peer stack fail with that error while
 messages from this SDK succeed. Check the leading content-type byte before you
 treat that as a cryptographic failure.
 
@@ -904,7 +1051,7 @@ signing key as 33 bytes where the SDK uses 32.
 
 ### 7.2 Message-key derivation matches the reference
 
-Reviewed: 2026-10-06.
+Reviewed: 2026-10-11.
 
 The SDK derives Sender Keys message material with HKDF-SHA256 Extract and
 Expand. Its input is `HMAC-SHA256(chain_key, 0x01)`, its salt is 32 zero bytes,
@@ -1008,6 +1155,354 @@ Credential serialization is also ad hoc and carries no version byte, where
 `libsignal` uses a leading version byte. That is a forward-compatibility gap
 rather than a security one.
 
+### 7.5 Sender-key distribution tracking
+
+Reviewed: 2026-10-20.
+
+`libsignal` creates and processes sender-key distribution messages. It does
+not record which devices hold a key. The Signal apps do that work.
+Signal-Android keeps a shared-with set for each distribution
+(`SenderKeySharedTable`). Signal-Desktop keeps the member devices with
+each sender key. The SDK keeps a handoff
+ledger for the same role. A row records that the Relay accepted a distribution
+of the own key for one device of another member. A send gives the key to each
+listed device with no matching row, and to each device with no session.
+
+These parts follow Signal-Android:
+
+- An inbound PreKey session deletes the rows of that device in every group.
+  The SDK deletes them in the same write as the session. Signal-Android uses a
+  separate write.
+- A session archive deletes the rows of that device in every group.
+- An identity change deletes the rows of the account.
+- A retry request for a group message deletes the rows of that device in that
+  group only.
+- The session reset after an expired retry request deletes the rows of each
+  device of the account in every group, as `AutomaticSessionResetJob` does.
+  It does so for a group message and for a pairwise message. It archives the
+  session with the device that sent the failed envelope only.
+- A rotation deletes the rows of the group. The SDK deletes them in the same
+  write as the key.
+- Own devices get the sent transcript and no distribution.
+- When the Relay refuses a sync copy because the registration of the own
+  device changed, the SDK starts a new session and posts the transcript
+  again. Signal-Android tries a send up to 4 times. The SDK repairs each
+  refused copy once, as it does each other refused post. A second refusal
+  archives the session and drops the copy.
+
+The following details differ:
+
+**1. The row match includes the key ID and the registration ID**.
+Signal-Android keys a row by distribution and device. The registration-ID
+match is faithful to Signal-Desktop, which compares the registration IDs of
+the member devices. The key-ID match is an addition. A delete and then a
+create of the own key start again at generation 1, so the SDK also matches the
+key ID. A custom store can write the key and delete the rows in two writes,
+and a crash between them leaves a row. With the key ID in the match, that row
+never stops a device from getting the current key. A peer that holds the
+earlier key installs the new key, because the receiver matches a sender key by
+its ID and not by its generation.
+
+**2. A new session from a prekey bundle deletes rows**. Signal-Android
+replaces a session only after an archive. In the SDK, the commit of a new
+session from a bundle archives the current session itself, so the same commit
+deletes the rows of the device.
+
+**3. The SDK reads the own device list only on `needsSync`**. Signal learns
+of new and removed own devices from the 409 device-set mismatch answer of the
+server to a sync post, and it posts to the recipients first. The SDK keeps
+this order on the Signal Protocol Relay and the memory relay. The recipient
+phase posts first. Then the sync phase declares the own devices that the
+sender holds records for, and the relay compares them (§5.5). When a
+recipient receipt sets `needsSync` and the sender holds no record of another
+own device, the SDK reads the own list once (§5.6, D7). A failed read does
+not fail the send. The result carries `syncPending`, and a call to `send()`
+with the same `clientMessageId` reads the list again. The Convex relay does
+not compare device sets, so each send with it reads the own list before it
+posts. A failed read there stops the recipient post and fails the send or the
+sync API call.
+
+**4. A replay keeps the stored group ciphertext**. Signal encrypts again for
+the devices of each attempt. The Relay refuses a second operation under the
+same message ID, so the replay of a stored group send keeps its ciphertext. A
+device that the replay adds cannot decrypt it. That device gets the content
+only through its retry request and the resend of a `Resendable` send.
+
+**5. A sweep at start deletes the rows of a replaced key**. Signal has no
+sweep. The match already ignores these rows, so the sweep only frees storage.
+
+**6. The Relay names each refused group destination**. Signal's server
+names each stale device in a 410 answer. The Relay refuses a declared group
+post with `DEVICE_SET_MISMATCH` or `STALE_DEVICE` before it accepts the post,
+and the SDK repairs as §5.5 says. The receipt of an accepted post carries a
+`refusals` list with a code for each refused destination. A `NOT_FOUND`
+refusal settles a removed account (§5.6, D8). The SDK does not infer a stale
+device from the count of refused destinations.
+
+**7. Only a logged `Resendable` send can answer a retry request with its
+content** (2026-10-15). Signal-Android logs sends in its message send log
+through `MessageSendLogTables.insertIfPossible`. That method stores the
+content of a send only when the `retryReceipts` remote config is on, the send
+result is a success, and the result carries its content. For a group send, it
+stores one entry for the recipients whose result meets the last two
+conditions, and it stores no entry when no result does. The method does not
+read the content hint. A group send calls it only when its send operation
+returns true from `shouldIncludeInMessageLog`: a resendable data message or a
+story, and never a typing or call message (`GroupSendUtil`). A retry
+request for a group message with a log entry gets that content again. A
+request with no entry gets the sender-key distribution alone
+(`MessageContentProcessor`). Signal-Android keeps its own message
+database, so each resendable data message that it sends can have an
+entry. A data message sent through `sendUnresendableDataMessage`, such as
+a profile-key or group-call update, has none.
+
+The constraint is that the SDK does not own the message store of the
+application. The SDK keeps a send log entry only for a group send whose
+content hint is `Resendable`. The SDK sets the hint by default from the
+content and the recovery policy. A group send of a `DataMessage` is
+`Resendable` when content recovery is on, and `Default` when it is off. A
+string or bytes send has no hint. The application can set another hint for a
+send. When it sets `Resendable` and the SDK cannot answer, because recovery
+is off or the content is a string or bytes, the send goes out as `Default`.
+So a retry request for another send finds no entry. The SDK then answers with the current
+distribution alone, as Signal-Android does for a missing entry. The device
+gets the key for later messages, but it does not get that message. Item 4
+makes this outcome more frequent, because a device that a replay adds can
+decrypt the send only through its retry request.
+
+Two guarantee tests assert the two outcomes. For a send that is not `Resendable`, the send log has no entry, and
+the answer carries the current distribution and no message. For a
+`Resendable` send, the answer carries the message and the distribution.
+
+**8. A receipt or a retry request keeps the stale session until the new
+session commits** (2026-10-16). Signal-Android archives the session of each
+stale device first (`SignalServiceMessageSender.handleStaleDevices`).
+The next pass of the send loop then fetches a bundle and starts a new
+session. Signal-Desktop also archives each stale session first, and then
+fetches the keys of the device (`handleMismatchedDevicesError`).
+When the fetch fails, an application job sends again later, and that send
+starts the session.
+
+The constraint is that a receipt or a retry request has no application job
+that retries it. If the SDK archived first and the fetch failed, the item
+would have no session, and a lost session drops the item. So when the Relay
+refuses a receipt or a retry request as a stale device, the SDK fetches the
+bundle first. The session start then archives the stale session in the same
+record write that stores the new one. A failure before that write keeps the
+stale session, so the next post is refused again and refreshes again. A
+failure after that write, in the SESAME registration, leaves the new session,
+and the next post uses it. The `onSessionArchived` hook runs after the
+session start succeeds. The refresh of a send keeps the order of Signal: it
+archives the stale session first.
+
+A guarantee test asserts the order. The
+first session start fails, the stale session stays, and the hook does not
+run. The retry refreshes the session, the hook runs once for the device, and
+the device decrypts the receipt.
+
+**9. A late copy of a previous sender key changes nothing** (2026-10-16).
+Signal's published implementation keeps up to 5 sender-key states for each
+sender. When a distribution matches a kept state, [`add_sender_key_state`][sk]
+removes that state and puts it at the front of the record, so it becomes the
+current state again. The SDK also keeps up to 5 states and matches a
+distribution by its key ID. A distribution of the current key follows the
+generation rules of the SDK: a lower or the same generation changes nothing,
+and a higher generation replaces the current state in place. A distribution
+of a kept previous key changes nothing, and that state stays in its place.
+A distribution of another key becomes the current state, the earlier current
+state moves to the front of the previous states, and when the record already
+holds 5 states, the oldest state goes.
+So a replay of an installed distribution changes nothing only while its key
+is the current state or a kept previous state. When the key is neither, the
+replay installs it again as the current state, and when the record already
+holds 5 states, the oldest state goes.
+
+The constraint is that the current state is the newest key that the sender
+installed. The receiver matches the current state first, so a late copy of
+an earlier key must not displace it. The cost is in the order of eviction.
+When the record holds K5, K4, K3, K2, and K1, with K5 current, a late copy of
+K1 and then K6 leave K6, K5, K4, K3, and K2 in the SDK. Signal keeps K1 and
+evicts K2. A message in flight under K1 then fails in the SDK.
+
+A guarantee test asserts the rule. The receiver holds the replaced key as a
+previous state, and a late copy of its distribution arrives. The record keeps
+the new key current and the replaced key previous, and a message under the
+new key decrypts.
+
+### 7.6 Group sends and session writes take a lock across tabs
+
+Reviewed: 2026-10-20.
+
+Signal runs one process for each device. Signal's Desktop client exits a
+second instance and runs the sender-key jobs of one address one at a time.
+Signal's Android client takes its session lock around each group encrypt.
+`libsignal`'s `group_encrypt` loads the sender-key record and stores it with
+no lock of its own, so the caller supplies the exclusion.
+
+A browser application can open several tabs on one store. When
+`navigator.locks.request` exists and the store sets `storeIdentity`, the SDK
+takes a Web Lock for each group send and for each session write. A group send
+takes `open-e2ee:group-send:<store identity>:<lock key>`
+(`client/group-sender-key-operations.ts:41-57`). The session lock, the user
+lock, and the device-list sync lock take
+`open-e2ee:session:<store identity>:<lock key>`
+(`internal/session/record-locks.ts:60-142`). The IndexedDB store and the web
+SQLite store set `storeIdentity` to their database names. The tabs, workers,
+and clients of one origin that share the store then run one operation of each
+lock key at a time. Inside the group send lock, the sender-key manager reads
+its state from the store again, so a rotation keeps the states that another
+tab wrote. The session lock and the device-list sync lock keep their 5 s wait
+timeout, so a lock-order fault or a hung holder shows as an error and not as a
+receive or send that never ends. On the Web Lock path the wait rejects with
+`ORIGIN_LOCK_TIMEOUT_MESSAGE` (`utils/origin-lock.ts:18`). On the in-process
+path it rejects with the timeout message of the in-process lock. A Web Lock
+queue has no bound on the number of waiting requests.
+
+**Deviation.** Where `navigator.locks.request` does not exist, or the store
+sets no identity, `originLockScope` gives no scope
+(`utils/origin-lock.ts:25-32`), and each lock is an in-process lock keyed by
+the store object. The constraint is that a Web Lock name needs a name for the
+data that every tab gives alike, and such a runtime has no shared lock or no
+such name.
+The Node SQLite, key-value, and memory stores set no identity, and React
+Native has no `navigator.locks`. Node has `navigator.locks`, but its locks
+order one process only. Two processes, or two store objects, that share one
+database are then not ordered. The application must give one of them
+exclusive access, as Signal's Desktop client does with its single-instance
+lock.
+
+Guarantee tests assert both paths. Two browser tests open two tabs on one
+IndexedDB store. In the first, both tabs send to one group at the same time:
+the two ciphertexts carry distinct iterations, and the receiver decrypts each
+message. In the second, both tabs encrypt on one direct session at the same
+time: the two ciphertexts carry distinct counters, and the receiver decrypts
+each message. Unit tests assert the lock names, the order of two store
+objects with one identity, the in-process fallback with no Web Locks and with
+no identity, the 5 s session lock timeout and its message on each path, the
+stop of a wait, and two sender-key managers that rotate in turn and keep both
+states in the archive.
+
+### 7.7 The SDK posts group sends to the anonymous route only
+
+Reviewed: 2026-10-18.
+
+Signal's server accepts a multi-recipient send only with an access key or a
+group send token, and it checks the device set of each recipient. The SDK
+posts each group send with a group send token to the anonymous group route of
+the Signal Protocol Relay (`client/hosted-anonymous-delivery.ts:269`, `:520`).
+No SDK release posts to the identified group route.
+
+**Deviation in the Relay.** The Relay still serves the identified group
+route. It accepts a group post under the account credential of the sender,
+and it checks no device set when the post declares none. The constraint is
+that the Relay removes a served route forward only. The SDK does not depend on
+the route, so its removal changes no SDK behavior.
+
+---
+
+## 8. Receive queue
+
+Reviewed: 2026-10-20.
+
+The receive queue keeps each decrypted receive in the local store until the
+application hook accepts it and the receipt goes out (`client/receive-queue.ts`).
+Signal's Android client keeps the same work in its message jobs, and Signal's
+Desktop client keeps it in its table of unprocessed envelopes. This section
+states where the queue follows them and where it differs.
+
+### 8.1 The queue holds back one conversation
+
+**Faithful.** A record that waits holds back the later records of its
+conversation only (`client/receive-queue.ts:379-402`). Group content keys by
+its group, a sent transcript keys by its destination, and other content keys
+by its sender account, as Signal's Android client names its message job
+queues. A record that
+has not decrypted yet keys by its sender account, because its conversation is
+not known. The commit order stays per sender device, because the ratchet of
+one device must step in order.
+
+Guarantee tests assert a record that fails before its restore and holds back
+only its sender account, a group record that holds back its group from every
+sender, pairwise content of a blocked group, and a second sender in a blocked
+group whose direct message delivers.
+
+### 8.2 A failed hook has an attempt cap, and the record stays
+
+**Deviation.** After `RECEIVE_HOOK_ATTEMPT_CAP`, 10 failed
+`onMessageDecrypted` attempts (`client/receive-queue.ts:285`), a record no
+longer holds back its conversation. Signal's Desktop client has the same cap.
+Desktop deletes such a record at startup and loses the message. The SDK keeps
+it.
+Each client start offers it to the hook once. After that offer, only
+`processPendingReceives` runs it again before the next start.
+`discardPendingReceive` removes it with no receipt, no hook call, and no
+expiry report. `PendingReceive` shows `hookAttempts`.
+
+The constraint is that the hook is application code. The SDK cannot tell a
+lasting failure from a passing one. A drop loses content whose ratchet step is
+spent, and an application update can repair the hook. **Consequence:** a hook
+that ends the process on the record ends it once at each start, until the
+record expires or the application discards it.
+
+Guarantee tests assert the offer once at start and not again at the hook
+registration, no second offer before the next start, and a discard with no
+receipt, no hook call, and no expiry report.
+
+### 8.3 A delivery receipt lives for 1 day
+
+**Faithful.** A stored receipt is sent only within `RECEIPT_LIFESPAN_MS`, 1
+day, after the receipt becomes owed (`client/receive-queue.ts:292`). Signal's
+Android client gives its receipt job the same lifespan, and it creates the
+job when the receipt becomes owed. The record keeps the receipt across a
+restart, as Android stores its job. At the end of the lifespan the record
+completes with no receipt and no report.
+
+Guarantee tests assert a receipt 1 ms before the end of the lifespan, no
+receipt at the end, the recovery report of a resend record at the end, and
+the stop of the receipt retries of a running client.
+
+### 8.4 Each awaited hook has a bound
+
+**Deviation** in detail. A receive pass waits for each application hook for
+at most `receiveHookTimeoutMs`, 2 minutes by default
+(`client/receive-hook-bound.ts:36`). The value must be a positive integer no
+longer than the longest timer delay (`client/storage-protection.ts:169-179`).
+Signal's Desktop client bounds its receive dispatch at 2 minutes and its
+long-running tasks at 30 minutes.
+
+The constraint is a founder ruling that sets the bound at 2 minutes. The SDK
+cannot tell a slow hook from a hung one, and one hung hook would otherwise
+stop all receive. **Consequence:** a timeout of `onMessageDecrypted` counts as
+one failed attempt, with the normal backoff and the attempt cap. A timeout of
+another hook is logged, and the pass continues. A settle after the bound
+writes nothing. A hook that needs longer than the bound fails each attempt.
+
+Guarantee tests assert the 2-minute default, the refusal of an invalid bound,
+a hung `onMessageDecrypted` hook that counts one attempt for each pass, a
+late settle that writes nothing, and one timeout test for each other awaited
+hook.
+
+### 8.5 Admission bounds before a decrypt
+
+**Extension.** Before a decrypt, the receive queue checks `maxItems`,
+`maxBytes`, and the group share `blockedGroupShare`
+(`client/receive-admission.ts:67-96`). The defaults are 3000 items, 750 MiB,
+and 0.25. They are provisional until a measurement of real receive queues
+replaces them (`client/constants.ts:36-43`). Signal's Desktop client decrypts
+each envelope as it arrives and bounds stored content only by age and attempts.
+
+The constraint is that the SDK shares a storage budget with the application
+in a browser and on mobile. **Consequence:** a refused envelope is not
+acknowledged. It stays at the Relay and expires there with no local hook. On
+the WebSocket path, other conversations progress. An HTTP pull sends the Relay
+cursor of the page before it, so a full page of refused envelopes does not stop
+the pages behind it. A page without a Relay cursor clears the stored cursor,
+and the next pull starts at the head. Two processes that share one store can
+each pass the check and overshoot a bound.
+
+Guarantee tests assert the global item and byte bounds, the group item and
+byte shares, the progress of direct and other-group messages beside a full
+group, and an HTTP pull past a full page of refused envelopes.
 ---
 
 ## Unverified and needs review

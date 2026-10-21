@@ -39,11 +39,20 @@ with AES-256-GCM.
 
 ## Security boundary
 
+Reviewed: 2026-10-12.
+
 The adapter generates a random 32-byte database encryption key and persists it
 in the IndexedDB metadata store. This protects record contents from a copy that
 does not also contain the metadata key. It does not protect against JavaScript
 running with the application's origin, because that code can access both the
 encrypted records and their encryption key.
+
+The store therefore reports its `protection` as `record-cipher` with
+`same-origin` custody, and its level is `co-located`. The default content
+recovery mode, `require-protected`, keeps no resendable content in this
+store. Set `protocol.contentRecovery.mode` to `allow-co-located-key` only
+after a product review accepts that key custody. See
+[Content Recovery](../../../docs/PROTOCOL_POLICY.md#content-recovery).
 
 A script-injection or compromised-dependency incident can also observe
 plaintext and invoke the client as the signed-in user. Encryption at rest is

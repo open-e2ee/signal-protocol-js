@@ -21,6 +21,8 @@ import type { TrustDirection, IdentityKeyChange } from './trust';
 import type { UserRecord, DeviceRecord } from '../internal/sesame/types';
 import type { SenderKeyState } from '../internal/protocol/sender-keys/manager';
 import type { Logger } from '../logger';
+import type { ContentHint } from './messages';
+import type { ContentRecoveryStatus } from './protocol-config';
 import type { RelayConnectionState, Unsubscribe } from '../remote/relay/types';
 
 // Re-export IdentityType for consumers
@@ -72,7 +74,19 @@ export interface SessionTrustCommit {
     signedPreKeyId: number;
     baseKeyBytes: Uint8Array;
   };
-  receivedContent?: ReceivedContent;
+  /**
+   * The receive record of the decrypted message. The store writes it in the
+   * same transaction as the session state, so the ratchet step and the
+   * record roll back together.
+   */
+  receiveWork?: ReceiveWorkRecord;
+  /**
+   * The device whose sender-key handoffs this commit invalidates. The store
+   * deletes the rows of that device in every group in the same transaction.
+   * The session layer sets it for an inbound PreKey session and for an
+   * outbound bundle session that archives a current session.
+   */
+  senderKeyHandoffInvalidation?: SenderKeyHandoffDevice;
 }
 
 export interface RetainedKyberPreKey {
@@ -80,7 +94,11 @@ export interface RetainedKyberPreKey {
   instanceId: string;
 }
 
-/** Recoverable plaintext, encrypted at rest with the device-local store. */
+/**
+ * The legacy row of recoverable plaintext that SDK 11 stored. A store that
+ * opens such a row converts it to a receive record with
+ * `awaitingEnvelope: true`. No store writes this shape any more.
+ */
 export interface ReceivedContent {
   id: string;
   plaintext: string;
@@ -88,9 +106,128 @@ export interface ReceivedContent {
   groupId?: string;
 }
 
+/**
+ * The stage of one receive record.
+ *
+ * - `decrypted`: the ratchet step and the plaintext are committed, and the
+ *   application has not got the content yet.
+ * - `receipt-due`: the application got the content, and a delivery receipt
+ *   is owed. The record holds no plaintext.
+ * - `awaiting-completion`: the helper returned the content, and the
+ *   application has not called `completeReceive` yet.
+ */
+export type ReceiveWorkStage = 'decrypted' | 'receipt-due' | 'awaiting-completion';
+
+/**
+ * One received message that the device decrypted and has not finished.
+ * The record is protocol state: the store keeps it with the same protection
+ * as its sessions.
+ */
+export interface ReceiveWorkRecord {
+  /** The delivered fingerprint of the envelope. */
+  workId: string;
+  /** Increases by one on each write. A write names the revision that it replaces. */
+  revision: number;
+  stage: ReceiveWorkStage;
+  /** `relay` for a Relay delivery, `caller` for an envelope that the application passed. */
+  origin: 'relay' | 'caller';
+  /** The local arrival order. */
+  arrivalSeq: number;
+  /**
+   * The time of the first durable local admission. No later write changes
+   * it. It is the expiry base and the fallback receipt timestamp.
+   */
+  receivedAt: number;
+  /** The record is not processed before this time. */
+  dueAt: number;
+  /** The UTF-8 size of the record. */
+  sizeBytes: number;
+  /** The decrypted content. Absent in `receipt-due`. */
+  plaintext?: string;
+  /** The message ID that the application sees. Absent on a converted legacy row. */
+  messageId?: string;
+  envelopeId?: string;
+  senderUserId?: string;
+  senderDeviceId?: number;
+  messageType?: 'prekey_bundle' | 'ciphertext' | 'sender_key';
+  serverTimestamp?: number;
+  arrivedSealed?: boolean;
+  /**
+   * The timestamp of the sender.
+   *
+   * - `decrypted`: the timestamp of the Relay envelope. The restore of the
+   *   record checks that the content carries the same timestamp. A caller
+   *   envelope has none.
+   * - `receipt-due`: the timestamp of the content, which the delivery
+   *   receipt names. Without it, the receipt names `receivedAt`.
+   */
+  senderTimestamp?: number;
+  /**
+   * The raw group of the content. A sender-key record sets it at commit.
+   * A record that waits for its group sets it when it blocks, or when it
+   * waits behind an earlier record of its group.
+   */
+  groupId?: string;
+  /** The record waits for an update of the state of `groupId`. */
+  blockedOn?: 'group-update';
+  /** The acknowledgment of the envelope, written in the commit. */
+  ackIntent?: { at: number; hasReceiptJoin: boolean };
+  /** The join decision of the Relay: true when the Relay sends the receipt. */
+  relayOwnsReceipt?: boolean;
+  /**
+   * The number of `onMessageDecrypted` attempts that started for the
+   * content. The count is written before each attempt, so an attempt that
+   * ends the process counts. After 10, the record no longer holds back the
+   * later records of its conversation. Absent before the first attempt.
+   */
+  hookAttempts?: number;
+  /** The failed envelope that this record resends. */
+  failedEnvelopeId?: string;
+  /** A converted legacy row. The next delivery of its envelope gives the sender fields. */
+  awaitingEnvelope?: true;
+}
+
+/**
+ * Builds the receive record of decrypted content. The decrypt calls it in
+ * its commit, with the plaintext and, for a sender-key message, the raw
+ * group.
+ */
+export type ReceiveWorkSeed = (content: {
+  plaintext: string;
+  groupId?: string;
+}) => ReceiveWorkRecord;
+
+/** A query of the receive records, in arrival order. */
+export interface ReceiveWorkQuery {
+  stage?: ReceiveWorkStage;
+  /** Only records with `dueAt` at or before this time. */
+  dueBy?: number;
+  /**
+   * Only records after this position in arrival order: an `arrivalSeq`
+   * above it, or an equal `arrivalSeq` with a `workId` above it. Pass the
+   * last record of the page before.
+   */
+  after?: Pick<ReceiveWorkRecord, 'arrivalSeq' | 'workId'>;
+  /** The most records to return. */
+  limit?: number;
+}
+
+/** The number and the total size of receive records. */
+export interface ReceiveWorkUsage {
+  items: number;
+  bytes: number;
+}
+
+/** One metadata write in the atomic completion of a receive record. Null deletes. */
+export interface ReceiveWorkMetadataWrite {
+  key: string;
+  value: string | null;
+}
+
 /** Effects committed atomically with the sender-key record after successful decryption. */
 export interface SenderKeyReceiveCommit {
-  content?: ReceivedContent;
+  /** The receive record of the decrypted message. */
+  work?: ReceiveWorkRecord;
   consumedSkippedKey?: { senderKeyId: string; chainIndex: number };
   /**
    * Add keys in order. Before each addition, evict the lowest chain indexes for
@@ -142,6 +279,16 @@ export interface SignalProtocolClient {
    * This is the client-scoped logger used throughout the Signal Protocol runtime.
    */
   readonly logger: Required<Logger>;
+
+  /**
+   * Whether this client keeps resendable content to answer retry requests.
+   *
+   * The client decides at creation, from the `protection` that the local
+   * store declares and from `protocol.contentRecovery`. When `enabled` is
+   * false, `reason` says why, and the client deletes any resendable content
+   * that the store already holds.
+   */
+  readonly contentRecoveryStatus: ContentRecoveryStatus;
 
   // ============================================================================
   // LIFECYCLE METHODS
@@ -308,6 +455,34 @@ export interface SignalProtocolClient {
   ): Promise<import('../client/types').SendResult>;
 
   /**
+   * Delete the resendable content of one group send.
+   *
+   * The client keeps the content of a resendable group send to answer a
+   * retry request, until each recipient device confirms it with an E2EE
+   * delivery receipt or the retention ends. Call this method when the
+   * application deletes the message, so a later retry request gets no
+   * content. The method does not delete pairwise message records.
+   *
+   * @param clientMessageId - The `clientMessageId` of the send
+   * @returns True when the client held content for the send
+   */
+  forgetSentContent(clientMessageId: string): Promise<boolean>;
+
+  /**
+   * The recipient devices of a resendable group send that have not
+   * confirmed it with an E2EE delivery receipt.
+   *
+   * A device leaves the list when its E2EE delivery receipt arrives. A Relay
+   * delivery receipt does not remove it, because a device also acknowledges
+   * a copy that it could not decrypt. The list is empty after the retention
+   * ends, after `forgetSentContent`, and for a send that the client did not
+   * log.
+   *
+   * @param clientMessageId - The `clientMessageId` of the send
+   */
+  getPendingRecipients(clientMessageId: string): Promise<SendLogDevice[]>;
+
+  /**
    * Encrypt and upload an attachment without sending a standalone message.
    *
    * Used by higher-level content types that want to carry attachment metadata
@@ -363,74 +538,198 @@ export interface SignalProtocolClient {
   /**
    * Process an incoming encrypted message envelope.
    *
-   * Unified entry point for both foreground (relay) and background (HTTP) message processing.
-   * Handles decryption and automatically sends SESAME retry requests on retryable failures.
+   * The receive helper for an application that pulls envelopes itself. It
+   * decrypts the envelope and commits its content as a receive record with
+   * the ratchet step, then decides the group of the content. Handles
+   * decryption and automatically sends SESAME retry requests on retryable
+   * failures. The content stays recoverable until the application calls
+   * `completeReceive`, or until `onPersist` resolves.
    *
-   * This method:
-   * 1. Decodes base64 ciphertext
-   * 2. Decrypts message using Double Ratchet
-   * 3. On retryable error: sends retry request via relay or options callback
-   * 4. Re-throws error for caller to handle
+   * The outcome tells the caller what to do with the envelope:
    *
-   * A `retry_request` envelope holds no plaintext. This method rejects it
-   * before decryption and sends no retry request. Give it to
+   * - `processed`: give the content to the application, then acknowledge
+   *   the envelope. A redelivery of the envelope before `completeReceive`
+   *   returns the same outcome again with no second decrypt. A second
+   *   `completeReceive` is a no-op.
+   * - `pending`: the content is stored and the client resumes it, for
+   *   example when its group state must update first. Acknowledge the
+   *   envelope. When the group updates, the client decides the content
+   *   again, and `listPendingReceives({ ready: true })` then lists it.
+   * - `duplicate`: this client processed the envelope, or the application
+   *   already has the content of the failed envelope of a retry request.
+   *   The client acknowledged the envelope.
+   * - `null-message`: the envelope carries no content. The client consumes
+   *   a null message when the content adapter reports `nullMessage: true`,
+   *   and a custom adapter must report it for its own null encoding. The
+   *   client acknowledged it. A null message for a failed envelope marks
+   *   that envelope processed, so a redelivery of it is dropped, but a
+   *   content resend for it that comes later still gives its content.
+   * - `denied`: the client refused the content. The ratchet step is spent,
+   *   so no resend can repair it. `onDecryptionError` ran, except for a
+   *   group that the user blocked (reason `blocked`), which has no report.
+   *   The client acknowledged the envelope. Content from another account that carries
+   *   a sync message is denied in any envelope.
+   * - `refused`: the receive queue has no room. Nothing is decrypted or
+   *   stored. Do not acknowledge the envelope. Give it again later.
+   *
+   * The stored receives count toward `protocol.receiveQueue` and expire
+   * after 30 days, with `onReceiveExpired`.
+   *
+   * A group message that fails with a retryable error gets a retry request
+   * and is acknowledged, as a pairwise message is. A message with the
+   * Implicit content hint gets no request and is acknowledged.
+   *
+   * A retry request follows the sealed sender delivery mode. With a relay
+   * and the access key of the sender, the client posts it sealed. Otherwise
+   * the client posts it identified only when the mode permits it. In
+   * `'required'` mode a retry request that cannot be sealed is not posted:
+   * it stays pending until its deadline. The `sendRetryRequest` callback
+   * gets an identified envelope, so the client calls it only when the mode
+   * permits identified delivery.
+   *
+   * A `retry_request` envelope holds no plaintext. This method rejects it,
+   * identified or sealed, and sends no retry request. Give it to
    * `receiveIncomingEnvelopes`, which handles it.
    *
    * A failed envelope that this client asked a resend for, and each resend
-   * or null message for it, gives plaintext at most once on both receive
-   * paths. When this client processed the envelope, or the application
-   * already has that content, this method acknowledges the envelope and
-   * throws MESSAGE_DUPLICATE with no decrypt.
+   * or null message for it, gives content at most once on both receive
+   * paths.
    *
-   * A null message carries no content. The client consumes a null message
-   * when the content adapter reports `nullMessage: true`, and a custom
-   * adapter must report it for its own null encoding. This method never
-   * returns a null message. It marks the null message processed,
-   * acknowledges it and throws MESSAGE_DUPLICATE. A null message for a
-   * failed envelope marks that envelope processed, so a redelivery of it
-   * is dropped, but a content resend for it that comes later still gives
-   * its plaintext.
+   * A resend that brings only the sender key of a failed group message
+   * gives no content. It does not mark the failed envelope processed, so a
+   * redelivery of that envelope decrypts with the key. A resend that brings
+   * the content beside the key gives that content and marks the failed
+   * envelope processed.
    *
    * A resend or null message that fails to decrypt, or whose seal fails to
    * open, asks again for its failed envelope under the same retry ID. When
    * the processed record of the failed envelope fails to store after a
    * decrypt, the client writes a warning with the behavior
    * RETRY_FULFILL_WRITE_FAILED, as on every receive path, and this method
-   * returns the plaintext. A redelivery of the failed envelope or of
+   * still returns the outcome. A redelivery of the failed envelope or of
    * another family member can then give the content again. When a
    * processed record of a null message or of its failed envelope fails to
    * store, the client writes a warning with the behavior
    * RETRY_NULL_WRITE_FAILED, as on every receive path, and this method
-   * still throws MESSAGE_DUPLICATE. A redelivery of the failed envelope
-   * can then give the content.
+   * still returns `null-message`. A redelivery of the failed envelope can
+   * then give the content.
+   *
+   * This method never throws `GroupResendDeferredError`, because it
+   * rejects a retry request.
+   * `receiveIncomingEnvelopes` reports a deferred retry request in
+   * `failedMessageIds`, so the Relay keeps the request.
    *
    * @param envelope - The encrypted message envelope
-   * @param options - Transport callbacks for background (no relay) scenarios
-   * @returns Decrypted plaintext
+   * @param options - Transport callbacks for background (no relay)
+   *   scenarios, and `onPersist`
+   * @returns The receive outcome
    * @throws EncryptionError after sending retry request if decryption fails
-   * @throws EncryptionError INVALID_CIPHERTEXT for a `retry_request` envelope
-   * @throws EncryptionError MESSAGE_DUPLICATE when this client processed the
-   *   envelope, or the application already has the content of the failed
-   *   envelope of a retry request, or the envelope is a null message
+   * @throws EncryptionError INVALID_CIPHERTEXT for a `retry_request` envelope,
+   *   identified or sealed
    *
    * @example
    * ```typescript
-   * // Foreground (relay available)
-   * const plaintext = await signal.processIncomingEnvelope(envelope);
-   *
-   * // Background (the client has no relay)
-   * const plaintext = await signal.processIncomingEnvelope(envelope, {
+   * const outcome = await signal.processIncomingEnvelope(envelope, {
+   *   // Background (the client has no relay)
    *   sendRetryRequest: async (envelope) => {
    *     // Post the retry_request envelope like any other envelope.
    *     await backgroundRelay.send(envelope);
-   *   }
+   *   },
+   *   // The client completes the receive when the content is stored.
+   *   onPersist: (processed) => db.saveMessage(processed.messageId, processed.plaintext),
    * });
+   * if (outcome.kind !== 'refused') await backgroundRelay.acknowledge(envelope.id);
    * ```
    */
   processIncomingEnvelope(
     envelope: import('../client/types').IncomingEnvelope,
     options?: import('../client/types').ProcessEnvelopeOptions
-  ): Promise<string>;
+  ): Promise<import('../client/types').ReceiveOutcome>;
+
+  /**
+   * Complete a helper receive: delete its receive record and mark its
+   * envelope processed. Call it after the application stored the content
+   * of a `processed` outcome. An unknown or completed message ID is a no-op.
+   *
+   * @param messageId - The `messageId` of the `processed` outcome
+   */
+  completeReceive(messageId: string): Promise<void>;
+
+  /**
+   * List the stored receives in arrival order, one page at a time. A receive
+   * whose content the application has, and whose receipt waits, is not
+   * listed.
+   *
+   * @param query - `ready` lists only the helper receives whose content
+   *   waits for `completeReceive`. `after` is the `next` value of the page
+   *   before. `limit` is the page size, 100 by default.
+   * @returns The page, and `next` when a later page can follow
+   * @throws Error when `after` is not a `next` value or `limit` is not a
+   *   positive integer
+   */
+  listPendingReceives(query?: {
+    ready?: boolean;
+    after?: string;
+    limit?: number;
+  }): Promise<{ items: import('../client/types').PendingReceive[]; next?: string }>;
+
+  /**
+   * Remove one stored receive that the application gives up on, such as a
+   * receive whose `onMessageDecrypted` hook fails at each start. The client
+   * deletes the receive and marks its envelope processed, so a redelivery
+   * of the envelope is a duplicate. The call sends no receipt, calls no
+   * hook, and runs no `onReceiveExpired`. A hook call that already started
+   * for the receive still runs, and no receipt follows it.
+   *
+   * @param messageId - The `messageId` of a receive that
+   *   `listPendingReceives` lists
+   * @returns The removed receive, or null when the client removed nothing:
+   *   no listed receive has the ID, or another path wrote the receive during
+   *   the call and again after one read
+   */
+  discardPendingReceive(
+    messageId: string
+  ): Promise<import('../client/types').PendingReceive | null>;
+
+  /**
+   * Run one pass of the receive queue now, and stop between records at the
+   * deadline. A host that wakes for a push calls it after it acknowledged
+   * the pulled envelopes.
+   *
+   * @param options - `deadlineMs` bounds the pass. With no deadline, the
+   *   pass runs until each record is handled.
+   * @returns The receives that the pass handled, and the receives that
+   *   still wait
+   */
+  processPendingReceives(options?: {
+    deadlineMs?: number;
+  }): Promise<{ processed: number; remaining: number }>;
+
+  /**
+   * Decrypt one envelope with no receive record.
+   *
+   * The decrypt installs a sender key distribution that the content
+   * carries, and checks that a managed group context binds to the group of
+   * the transport. It stores no content, decides no group state, and sends
+   * no receipt.
+   *
+   * Warning: the decrypt spends the ratchet step. When the application
+   * loses the returned plaintext, no later decrypt of the envelope gives it
+   * again. Use `processIncomingEnvelope`, which keeps the content until the
+   * application completes the receive.
+   *
+   * @param envelope - The encrypted message envelope
+   * @returns The plaintext as its sender gave it, and the group context of
+   *   managed-group content
+   * @throws EncryptionError when the decrypt fails, and INVALID_CIPHERTEXT
+   *   for a `retry_request` envelope, identified or sealed
+   * @throws GroupReceiveRefusedError when the group context is malformed or
+   *   names another group than the transport
+   */
+  decryptEnvelope(envelope: import('../client/types').IncomingEnvelope): Promise<{
+    plaintext: string;
+    groupContext?: import('../client/content-adapter').GroupContentContext;
+  }>;
 
   /**
    * Encrypt file blob with two-layer encryption
@@ -543,11 +842,24 @@ export interface SignalProtocolClient {
   /**
    * Decrypt a group message from a sender
    *
+   * The message passes the group decision of `processIncomingEnvelope`.
+   * Content whose group state must update first stays stored, and a later
+   * call with the same message decides it with no second decrypt.
+   *
+   * @deprecated Use `processIncomingEnvelope`, which returns a receive
+   *   outcome and keeps the content until the application completes the
+   *   receive. This method completes the receive before it returns, so a
+   *   plaintext that the application loses is gone.
+   *
    * @param groupId - Group identifier
    * @param senderId - Sender's user ID
    * @param senderDeviceId - Sender's device ID
    * @param framedMessage - Framed SenderKeyMessage bytes
    * @returns Decrypted plaintext
+   * @throws GroupReceiveUnavailableError when the group state of the content
+   *   is not current. Its `messageId` names the stored receive. Call again
+   *   later with the same message.
+   * @throws GroupReceiveRefusedError when the client refuses the content
    */
   decryptGroupMessage(
     groupId: string,
@@ -821,8 +1133,14 @@ export interface SignalProtocolManager {
    *
    * @param remoteAddress - Remote party's protocol address (userId:deviceId)
    * @param ciphertext - Message to decrypt
+   * @param receiveWork - When set, the decrypt commits the receive record
+   *   that it builds in the same transaction as the session state
    */
-  decrypt(remoteAddress: ProtocolAddress, ciphertext: Ciphertext): Promise<string>;
+  decrypt(
+    remoteAddress: ProtocolAddress,
+    ciphertext: Ciphertext,
+    receiveWork?: ReceiveWorkSeed
+  ): Promise<string>;
 
   /**
    * Get the session record for a remote address.
@@ -1214,7 +1532,8 @@ export interface SessionStore {
   getSessionRecord(address: ProtocolAddress): Promise<SessionRecord | null>;
 
   /**
-   * Delete session record.
+   * Delete session record. The same write deletes the sender-key handoff
+   * rows of the device in every group.
    *
    * @param address - Protocol address
    */
@@ -1227,6 +1546,9 @@ export interface SessionStore {
    * - Identity key changes (possible MITM)
    * - Registration ID changes (app reinstall detected)
    * - Manual session reset
+   *
+   * The same write deletes the sender-key handoff rows of the device in every
+   * group.
    *
    * @param address - Protocol address
    * @param newSession - Optional new session to set as current
@@ -1287,11 +1609,20 @@ export interface SesameStore {
 
   /**
    * Store device record.
+   *
+   * @param options - With `senderKeyHandoffInvalidation`, the same write
+   *   deletes the sender-key handoff rows of that device in every group
    */
-  setDeviceRecord(userId: string, deviceId: number, record: DeviceRecord): Promise<void>;
+  setDeviceRecord(
+    userId: string,
+    deviceId: number,
+    record: DeviceRecord,
+    options?: SetDeviceRecordOptions
+  ): Promise<void>;
 
   /**
-   * Delete device record.
+   * Delete device record. The same write deletes the sender-key handoff rows
+   * of the device in every group.
    */
   deleteDeviceRecord(userId: string, deviceId: number): Promise<void>;
 
@@ -1308,7 +1639,10 @@ export interface SesameStore {
   setDeviceSession(userId: string, deviceId: number, session: SessionRecord): Promise<void>;
 
   /**
-   * Delete stale device records (orphaned sessions older than MAXLATENCY).
+   * Delete the stale device records with their sessions. A record is stale
+   * when it has no session and is older than `maxLatency`, or when it is
+   * marked removed and its removal is older than `maxLatency`
+   * (`isExpiredRemovedDevice`). A user record with no device left goes too.
    */
   deleteStaleRecords(maxLatency: number): Promise<number>;
 
@@ -1323,9 +1657,91 @@ export interface SesameStore {
   getAllUserIds(): Promise<string[]>;
 
   /**
-   * Get all device IDs for a specific user.
+   * Get all device IDs for a specific user. The list includes the devices
+   * whose record is marked removed. A caller that sends to the devices skips
+   * them with `isRemovedDevice`.
    */
   getSesameDeviceIds(userId: string): Promise<number[]>;
+}
+
+/** One device whose recorded sender-key handoffs an event invalidates. */
+export interface SenderKeyHandoffDevice {
+  userId: string;
+  deviceId: number;
+}
+
+/**
+ * The Relay accepted a distribution of the local device's own sender key for
+ * this recipient device. A row records a handoff. It is never proof that the
+ * recipient installed the key.
+ */
+export interface SenderKeyHandoffRecord {
+  groupId: string;
+  senderKeyId: string;
+  generation: number;
+  recipientUserId: string;
+  recipientDeviceId: number;
+  /** The registration ID of the recipient's current session when the Relay accepted the post. */
+  recipientRegistrationId: number;
+  acceptedAt: number;
+}
+
+/**
+ * The sender-key handoff ledger of the local device.
+ *
+ * A group send gives the current own sender key to each listed device that
+ * has no row for the current key. The store keeps the rows and deletes them.
+ * It never decides which device needs the key. Rows have no expiry. A row
+ * leaves the store only through an invalidation, a write that replaces or
+ * deletes the own key, a reset of the store, or the sweep at client start.
+ */
+export interface SenderKeyHandoffStore {
+  /**
+   * Insert or replace the row keyed by group, sender key ID, generation,
+   * recipient user, recipient device, and recipient registration ID.
+   */
+  recordSenderKeyHandoff(record: SenderKeyHandoffRecord): Promise<void>;
+
+  /** The rows of one group at one generation. */
+  listSenderKeyHandoffs(groupId: string, generation: number): Promise<SenderKeyHandoffRecord[]>;
+
+  /**
+   * Delete the rows of one device in one group.
+   *
+   * @returns True when at least one row was deleted
+   */
+  invalidateSenderKeyHandoff(groupId: string, device: SenderKeyHandoffDevice): Promise<boolean>;
+
+  /**
+   * Delete the rows of every device of one account in every group, as an
+   * identity rotation of the account does.
+   *
+   * @returns True when at least one row was deleted
+   */
+  invalidateAccountSenderKeyHandoffs(userId: string): Promise<boolean>;
+
+  /** The distinct group IDs that hold rows. For the sweep only. */
+  listSenderKeyHandoffGroupIds(): Promise<string[]>;
+
+  /**
+   * Delete the rows of a group whose sender key ID differs from the given one.
+   * Null deletes every row of the group.
+   *
+   * @returns The number of deleted rows
+   */
+  retainSenderKeyHandoffs(groupId: string, senderKeyId: string | null): Promise<number>;
+}
+
+/** Options for the own-key writes that replace or remove the key. */
+export interface SenderKeyRecordWriteOptions {
+  /** Delete every sender-key handoff row of the group in the same write. */
+  deleteSenderKeyHandoffs?: true;
+}
+
+/** Options for a device-record write that replaces the current session. */
+export interface SetDeviceRecordOptions {
+  /** Delete the sender-key handoff rows of this device in every group in the same write. */
+  senderKeyHandoffInvalidation?: SenderKeyHandoffDevice;
 }
 
 /**
@@ -1352,8 +1768,17 @@ export interface SenderKeyStore {
 
   /**
    * Delete sender key for a group member device.
+   *
+   * @param options - With `deleteSenderKeyHandoffs`, the same write deletes
+   *   every sender-key handoff row of the group. The manager sets it when it
+   *   deletes the local device's own key.
    */
-  deleteSenderKey(groupId: string, userId: string, deviceId: number): Promise<void>;
+  deleteSenderKey(
+    groupId: string,
+    userId: string,
+    deviceId: number,
+    options?: SenderKeyRecordWriteOptions
+  ): Promise<void>;
 
   /**
    * Resolve the group a sender key belongs to, given only the identifier that
@@ -1387,8 +1812,9 @@ export interface SenderKeyStore {
   getAllSenderKeysForGroup(groupId: string): Promise<SenderKeyState[]>;
 
   /**
-   * Delete all sender keys and skipped sender message keys for a group (when the caller deletes
-   * the group). Returns the number of sender keys deleted.
+   * Delete all sender keys, skipped sender message keys, and sender-key
+   * handoff rows for a group (when the caller deletes the group), in one
+   * write. Returns the number of sender keys deleted.
    */
   deleteAllSenderKeysForGroup(groupId: string): Promise<number>;
 
@@ -1411,13 +1837,18 @@ export interface SenderKeyStore {
    * @param userId - User identifier
    * @param deviceId - Device identifier
    * @param states - Array of states (current first, then previous, capped at MAX_SENDER_KEY_STATES)
+   * @param receive - The receive effects to commit with the record
+   * @param options - With `deleteSenderKeyHandoffs`, the same write deletes
+   *   every sender-key handoff row of the group. The manager sets it when it
+   *   writes a new own key.
    */
   storeSenderKeyRecord(
     groupId: string,
     userId: string,
     deviceId: number,
     states: SenderKeyState[],
-    receive?: SenderKeyReceiveCommit
+    receive?: SenderKeyReceiveCommit,
+    options?: SenderKeyRecordWriteOptions
   ): Promise<void>;
 
   /**
@@ -1560,7 +1991,11 @@ export interface ProtocolStore
   /** Atomically pin/match trust, store the session, and consume referenced one-time prekeys. */
   commitSessionTrust(commit: SessionTrustCommit): Promise<void>;
 
-  /** Atomically rotate one per-user identity tuple and delete every bound device session. */
+  /**
+   * Atomically rotate one per-user identity tuple and delete every bound
+   * device session. The same write deletes the sender-key handoff rows of
+   * every device of the account.
+   */
   acceptContactIdentityRotationAndDeleteSessions(
     address: ProtocolAddress,
     identity: CompositeIdentityV1,
@@ -1582,10 +2017,60 @@ export interface ProtocolStore
  *
  */
 export interface SignalProtocolLocalStore
-  extends ProtocolStore, SesameStore, SenderKeyStore, MessageRecordStore {
-  getReceivedContent(id: string): Promise<ReceivedContent | null>;
-  deleteReceivedContent(id: string): Promise<void>;
-  deleteExpiredReceivedContent(before: number): Promise<number>;
+  extends
+    ProtocolStore,
+    SesameStore,
+    SenderKeyStore,
+    SenderKeyHandoffStore,
+    MessageRecordStore,
+    SendLogStore {
+  /**
+   * How this store protects its data at rest, and where its key is kept.
+   */
+  readonly protection: LocalStoreProtection;
+
+  /**
+   * The name of the stored data, the same in every tab, worker, and thread
+   * of the origin that opens that data. When it is set and
+   * `navigator.locks.request` exists, the client takes its session locks and
+   * group-send locks as Web Locks under this name, so those contexts do not
+   * change one session or one sender key at the same time. Without it, the
+   * locks order the clients of one store object in one JavaScript context
+   * only. The web SQLite store and the IndexedDB store give their database
+   * names.
+   */
+  readonly storeIdentity?: string;
+  /** Get one receive record, or null. */
+  getReceiveWork(workId: string): Promise<ReceiveWorkRecord | null>;
+  /**
+   * Write one receive record. With `expectedRevision` null, the write
+   * inserts and fails when a record exists. Otherwise it replaces the record
+   * with that revision. Return false without writing on a mismatch.
+   */
+  putReceiveWork(record: ReceiveWorkRecord, expectedRevision: number | null): Promise<boolean>;
+  /**
+   * List receive records in ascending `(arrivalSeq, workId)` order. The
+   * order compares `workId` values by UTF-16 code unit. With `after`, a
+   * record passes when its `arrivalSeq` is above the cursor `arrivalSeq`,
+   * or equal to it with a `workId` above the cursor `workId`. Return at
+   * most `limit` records, 100 when not set.
+   */
+  listReceiveWork(query?: ReceiveWorkQuery): Promise<ReceiveWorkRecord[]>;
+  /**
+   * Count receive records. With `groupId`, count only the records of that
+   * group that wait for a group update.
+   */
+  receiveWorkUsage(query?: { groupId?: string }): Promise<ReceiveWorkUsage>;
+  /**
+   * Delete one receive record and apply the metadata writes in one atomic
+   * write. Return false without writing when the stored revision is not
+   * `expectedRevision`.
+   */
+  completeReceiveWork(
+    workId: string,
+    expectedRevision: number,
+    metadata?: readonly ReceiveWorkMetadataWrite[]
+  ): Promise<boolean>;
   /**
    * Clear all encryption keys (use with caution!).
    *
@@ -1692,6 +2177,12 @@ export interface SignalProtocolLocalStore
  */
 export interface SignalProtocolLocalSecretVault {
   /**
+   * Where this vault keeps its secrets. A vault that does not declare it
+   * counts as `same-origin`.
+   */
+  readonly custody?: SecretVaultCustody;
+
+  /**
    * Read a named secret from local secure storage.
    */
   getSecret(name: string): Promise<Uint8Array | null>;
@@ -1730,7 +2221,11 @@ export interface SignalProtocolLocalSecretVault {
  * > session."
  *
  * The client timestamp assigned before encryption indexes a message.
- * Retry count enforces SESAME's bounded-resend requirement.
+ *
+ * The client keeps a record only when `protocol.contentRecovery` keeps
+ * content, and only for the content retention: 14 days from `createdAt` by
+ * default, at most 30. The record holds no retry count. The client answers
+ * at most `MAX_RETRY_RESPONSES_PER_MESSAGE` retry requests for one message.
  */
 export interface MessageRecord {
   /** Device address (userId:deviceId format) for the recipient device */
@@ -1752,7 +2247,10 @@ export interface MessageRecord {
   /** Original plaintext message (stored for resending) */
   plaintext: string;
 
-  /** Timestamp when the store created the record */
+  /**
+   * The store clock when the store first wrote the record. Retention reads
+   * this value, so the message timestamp never changes retention.
+   */
   createdAt: number;
 
   /**
@@ -1774,7 +2272,12 @@ export interface MessageRecord {
  * primary lookup method is getMessageRecord(sessionId, timestamp).
  */
 export interface MessageRecordStore {
-  /** Store a message record after encryption */
+  /**
+   * Store a message record after encryption. A record with the same
+   * `sessionId` and `timestamp` is replaced. The store sets `createdAt` from
+   * its clock on the first write and keeps that value on a replace, so the
+   * value in `record` is not stored and a resend does not extend retention.
+   */
   storeMessageRecord(record: MessageRecord): Promise<void>;
 
   /**
@@ -1787,7 +2290,9 @@ export interface MessageRecordStore {
   /**
    * Delete a message record by session and timestamp.
    *
-   * Called when processing delivery receipts to clean up confirmed messages.
+   * The client calls it after an E2EE delivery receipt from the recipient
+   * device, for an expired record at a retry request, and for a record that
+   * it must not resend: a null message, or a sender key distribution alone.
    */
   deleteMessageRecord(sessionId: string, timestamp: number): Promise<void>;
 
@@ -1799,6 +2304,227 @@ export interface MessageRecordStore {
 
   /** Delete all message records for a session */
   deleteMessageRecordsForSession(sessionId: string): Promise<number>;
+
+  /**
+   * Rewrite the plaintext of each record. `rewrite` returns the plaintext to
+   * keep: the same string leaves the record as it is, another string
+   * replaces the plaintext, and null deletes the record. A replaced record
+   * keeps its `createdAt` and every other field. A record that another
+   * write replaces between the read and the rewrite stays as that write
+   * left it.
+   *
+   * @returns The number of records replaced or deleted
+   */
+  rewriteMessageRecords(rewrite: (record: MessageRecord) => string | null): Promise<number>;
+}
+
+// ============================================================================
+// SEND LOG TYPES (resendable group content)
+// ============================================================================
+
+/**
+ * One device that a logged message was sent to. The device can request the
+ * content again with a retry request.
+ */
+export interface SendLogDevice {
+  userId: string;
+  deviceId: number;
+}
+
+/**
+ * The content of one group send, kept for a resend to a device that could
+ * not decrypt it. `clientMessageId` identifies the send. It is the Relay
+ * operation ID of the group post.
+ */
+export interface SendLogPayload {
+  clientMessageId: string;
+  groupId: string;
+  /** The client timestamp of the send, which a retry request names. */
+  clientTimestamp: number;
+  contentHint: ContentHint;
+  /** The plaintext content of the send. */
+  plaintext: Uint8Array;
+  /**
+   * The store clock when the store wrote the entry. Retention reads this
+   * value, so an application-supplied timestamp never changes retention.
+   */
+  createdAt: number;
+  /**
+   * True after the send finished. A payload with no remaining recipient is
+   * deleted only after the send finished, so a send in progress can still
+   * add recipients.
+   */
+  sendComplete: boolean;
+}
+
+/** The content of a new send log entry. The store sets the other fields. */
+export type NewSendLogPayload = Omit<SendLogPayload, 'createdAt' | 'sendComplete'>;
+
+/**
+ * One device that has not confirmed a logged send. The row authorizes a
+ * resend to this exact device.
+ */
+export interface SendLogRecipient extends SendLogDevice {
+  clientMessageId: string;
+  /** The client timestamp of the send. A copy of the payload value, for lookup. */
+  clientTimestamp: number;
+  /** The number of resends to this device. It survives a restart. */
+  responses: number;
+}
+
+/** A logged payload and the row of one recipient device. */
+export interface SendLogEntry {
+  payload: SendLogPayload;
+  recipient: SendLogRecipient;
+}
+
+/** The state of a resend job. Only a `pending` job runs. */
+export type SendLogResendJobState = 'pending' | 'posted' | 'abandoned';
+
+/**
+ * A persisted resend of logged content to one requesting device. A job
+ * holds no plaintext. It names the logged entry.
+ */
+export interface SendLogResendJob {
+  jobId: string;
+  clientMessageId: string;
+  requesterUserId: string;
+  requesterDeviceId: number;
+  /** The retry attempt ID of the request. */
+  retryId: string;
+  /** The Relay envelope ID of the retry request. */
+  requestEnvelopeId: string;
+  /**
+   * The envelope that the requester could not decrypt. Only the job whose
+   * resend answers the request attempt has it: when written, the job of
+   * the first logged entry that the request names, and at the post, the
+   * job of the first entry that the answer admits. Another job has none,
+   * and its resend posts under a new ID.
+   */
+  failedEnvelopeId?: string;
+  /** The store clock when the job was first written. */
+  createdAt: number;
+  attempts: number;
+  state: SendLogResendJobState;
+}
+
+/**
+ * Storage of resendable group content.
+ *
+ * The send log keeps the plaintext of each resendable group send with a row
+ * for each recipient device, until that device confirms the message or the
+ * entry expires. A recipient device that cannot decrypt the message asks
+ * for it again, and only a device with a row gets the content.
+ */
+export interface SendLogStore {
+  /**
+   * Store a send log entry and its recipient rows in one transaction. An
+   * entry with the same `clientMessageId` is replaced with its rows.
+   */
+  storeSendLogEntry(payload: NewSendLogPayload, recipients: readonly SendLogDevice[]): Promise<void>;
+
+  /**
+   * Add recipient rows to an entry. An existing row is kept unchanged. With
+   * no entry, nothing is written.
+   */
+  appendSendLogRecipients(clientMessageId: string, recipients: readonly SendLogDevice[]): Promise<void>;
+
+  /**
+   * Mark the send finished. When no recipient row remains, the payload is
+   * deleted.
+   */
+  markSendLogComplete(clientMessageId: string): Promise<void>;
+
+  /** The entry of one send for one device, or null when the device has no row. */
+  getSendLogEntry(clientMessageId: string, recipient: SendLogDevice): Promise<SendLogEntry | null>;
+
+  /** Every entry for one device at one client timestamp, ordered by `clientMessageId`. */
+  findSendLogEntries(recipient: SendLogDevice, clientTimestamp: number): Promise<SendLogEntry[]>;
+
+  /** The remaining recipient rows of one send, ordered by user and device. */
+  getSendLogRecipients(clientMessageId: string): Promise<SendLogRecipient[]>;
+
+  /**
+   * Delete the row of one device. When no row remains and the send is
+   * finished, the payload is deleted. Returns true when a row was deleted.
+   */
+  deleteSendLogRecipient(clientMessageId: string, recipient: SendLogDevice): Promise<boolean>;
+
+  /**
+   * Delete the rows of one device at each of the client timestamps, with the
+   * same payload rule as `deleteSendLogRecipient`. Returns the number of
+   * deleted rows.
+   */
+  deleteSendLogRecipientsByTimestamp(
+    recipient: SendLogDevice,
+    clientTimestamps: readonly number[]
+  ): Promise<number>;
+
+  /**
+   * Add one to the resend count of a row. Returns the new count, or null
+   * when the device has no row.
+   */
+  incrementSendLogResendCount(clientMessageId: string, recipient: SendLogDevice): Promise<number | null>;
+
+  /** Delete one entry and its rows. Returns true when an entry was deleted. */
+  deleteSendLogEntry(clientMessageId: string): Promise<boolean>;
+
+  /**
+   * Delete each entry, and each resend job, that the store wrote more than
+   * `maxAgeMs` ago. Returns the number of deleted entries.
+   */
+  deleteExpiredSendLog(maxAgeMs: number): Promise<number>;
+
+  /** Delete every entry and resend job. Returns the number of deleted entries. */
+  clearSendLog(): Promise<number>;
+
+  /**
+   * Store a resend job. A job with the same `jobId` is replaced. The store
+   * sets `createdAt` from its clock on the first write and keeps that value
+   * on a replace, so the value in `job` is not stored.
+   */
+  storeResendJob(job: SendLogResendJob): Promise<void>;
+
+  /** One resend job, or null. */
+  getResendJob(jobId: string): Promise<SendLogResendJob | null>;
+
+  /** Every `pending` resend job, ordered by `createdAt`, then `jobId`. */
+  getPendingResendJobs(): Promise<SendLogResendJob[]>;
+
+  /** Set the final state of a resend job. With no job, nothing is written. */
+  completeResendJob(jobId: string, state: Exclude<SendLogResendJobState, 'pending'>): Promise<void>;
+}
+
+// ============================================================================
+// STORAGE PROTECTION
+// ============================================================================
+
+/**
+ * How a local store encrypts its data at rest.
+ *
+ * - `file-cipher`: the database file is encrypted, as with SQLCipher.
+ * - `record-cipher`: each stored value is encrypted.
+ * - `none`: the data is stored in the clear.
+ */
+export type LocalStoreAtRest = 'file-cipher' | 'record-cipher' | 'none';
+
+/**
+ * Where the key of a secret vault is kept.
+ *
+ * - `os-keychain`: the operating system keychain or keystore.
+ * - `app-vault`: a vault that the application controls and declares.
+ * - `same-origin`: storage that the data shares, such as the same browser
+ *   origin.
+ */
+export type SecretVaultCustody = 'os-keychain' | 'app-vault' | 'same-origin';
+
+/** Where the key of a local store is kept. `none` means there is no key. */
+export type LocalStoreKeyCustody = SecretVaultCustody | 'none';
+
+/** The protection of the data in a local store. */
+export interface LocalStoreProtection {
+  readonly atRest: LocalStoreAtRest;
+  readonly keyCustody: LocalStoreKeyCustody;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

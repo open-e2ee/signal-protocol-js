@@ -117,3 +117,18 @@ export {
   type PresentedGroupMemberInput,
   type InvitedGroupMemberInput,
 } from './manager';
+
+export {
+  cloneGroupReceiveRecord,
+  groupFetchBackoffMs,
+  groupReceiveStatus,
+  newGroupReceiveRecord,
+  GROUP_FETCH_MAX_BACKOFF_MS,
+  GROUP_FETCH_WINDOW_MS,
+  type GroupReceiveRecord,
+  type GroupFetchState,
+  type GroupFetchDenial,
+  type GroupRecordSource,
+  type GroupUnverifiedOrigin,
+  type GroupReceiveStatus,
+} from './receive-record';

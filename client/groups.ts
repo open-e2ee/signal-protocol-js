@@ -7,6 +7,7 @@
 
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import type { SignalProtocolClientContext } from './types';
+import type { ReceiveWorkSeed } from '../types/api';
 import type {
   SenderKeyManager,
   SenderKeyDistributionMessage,
@@ -164,6 +165,7 @@ export async function encryptGroupMessage(
  * @param senderId - Sender's user ID
  * @param senderDeviceId - Sender's device ID
  * @param framedMessage - Framed SenderKeyMessage bytes
+ * @param seed - Builds the receive record that the sender key commit stores
  * @returns Decrypted plaintext
  */
 export async function decryptGroupMessage(
@@ -172,14 +174,16 @@ export async function decryptGroupMessage(
   groupId: string,
   senderId: string,
   senderDeviceId: number,
-  framedMessage: Uint8Array
+  framedMessage: Uint8Array,
+  seed?: ReceiveWorkSeed
 ): Promise<string> {
   try {
     const plaintext = await senderKeyManager.decryptGroupMessage(
       groupId,
       senderId,
       senderDeviceId,
-      framedMessage
+      framedMessage,
+      seed
     );
 
     ctx.logger.debug('Decrypted group message', {
@@ -240,11 +244,10 @@ export async function rotateGroupSenderKey(
   ctx: SignalProtocolClientContext,
   senderKeyManager: SenderKeyManager,
   groupId: string,
-  onRotated?: (groupId: string, generation: number) => void,
-  options?: { distributionPending?: boolean }
+  onRotated?: (groupId: string, generation: number) => void
 ): Promise<{ senderKeyId: string; distributionMessage: SenderKeyDistributionMessage }> {
   try {
-    const result = await senderKeyManager.rotateSenderKey(groupId, ctx.userId, ctx.deviceId, options);
+    const result = await senderKeyManager.rotateSenderKey(groupId, ctx.userId, ctx.deviceId);
 
     ctx.logger.debug('Rotated group sender key', {
       category: 'E2EE',
@@ -502,7 +505,7 @@ export async function getGroupState(
  */
 export async function syncGroup(
   ctx: SignalProtocolClientContext,
-  manager: GroupManager,
+  manager: Pick<GroupManager, 'syncGroup'>,
   groupId: GroupId
 ): Promise<DecryptedGroup> {
   return wrapGroupOp(

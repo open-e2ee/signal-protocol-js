@@ -403,12 +403,12 @@ export class DeviceLifecycleManager {
       } else if (matchedDeviceByFingerprint) {
         throw new Error(
           `Linked device ${matchedDeviceByFingerprint.deviceId} cannot self-register after reinstall. ` +
-            'Re-link this device from your primary device via QR provisioning.'
+            'Link this device again from a device that is already signed in.'
         );
       } else if (primaryDevice) {
         throw new Error(
-          'This account already has a primary device. Use QR linking to add this device, ' +
-            'or use makePrimary() to replace the existing device set.'
+          'This account already has a primary device. Link this device from a device ' +
+            'that is already signed in, or use makePrimary() to replace the existing device set.'
         );
       } else {
         throw new Error(
@@ -484,7 +484,8 @@ export class DeviceLifecycleManager {
    * Handle stale device: cleanup and re-register.
    *
    * Per SESAME spec: when device state is deleted, old sessions become invalid.
-   * Primary devices can self-recover. Linked devices must be re-linked via QR.
+   * Primary devices can self-recover. Linked devices must be linked again from an
+   * existing device.
    *
    * @param staleDeviceId - The stale device ID
    * @param options - Options for handling
@@ -508,7 +509,7 @@ export class DeviceLifecycleManager {
     if (staleDeviceId !== 1) {
       throw new Error(
         `Linked device ${staleDeviceId} is stale and cannot self-re-register. ` +
-          'Re-link this device from your primary device via QR provisioning.'
+          'Link this device again from a device that is already signed in.'
       );
     }
 
@@ -597,14 +598,15 @@ export class DeviceLifecycleManager {
   }
 
   /**
-   * Clear local crypto state (sessions and message records).
+   * Clear local crypto state (sessions, message records, and the send log).
    * Per SESAME spec: when device state is deleted, old sessions become invalid.
    */
   private async clearLocalCryptoState(): Promise<void> {
     try {
       await this.deps.keyStorage.clearAllSessions();
       await this.deps.keyStorage.clearAllMessageRecords();
-      this.deps.logger.debug('Cleared stale sessions and message records', {
+      await this.deps.keyStorage.clearSendLog();
+      this.deps.logger.debug('Cleared stale sessions, message records, and the send log', {
         category: 'Device',
       });
     } catch (error) {
@@ -907,7 +909,7 @@ export class DeviceLifecycleManager {
       // Linked devices cannot self-reclaim after reinstall because they must
       // receive the shared account identity from an existing device.
       if (!hasUsableLocalIdentity && !isPrimary) {
-        this.deps.logger.info('Linked device reinstall requires QR relink', {
+        this.deps.logger.info('Linked device reinstall requires a new device link', {
           category: 'Device',
           data: { deviceId },
         });
@@ -950,7 +952,7 @@ export class DeviceLifecycleManager {
       // This happens when device was registered but keys were never uploaded
       if (!serverIdentityKey) {
         if (!isPrimary) {
-          this.deps.logger.info('Linked device without server identity requires QR relink', {
+          this.deps.logger.info('Linked device without server identity requires a new device link', {
             category: 'Device',
             data: { deviceId, hasLocalKey: !!localIdentityKey },
           });
@@ -1253,9 +1255,9 @@ export class DeviceLifecycleManager {
    * Actions:
    * 1. Clear local device data
    * 2. Clear local crypto state
-   * 3. Return user_choice_required for QR code linking flow
+   * 3. Return user_choice_required for the device link flow
    *
-   * Note: This does not complete registration - user needs to scan QR code.
+   * Note: This does not complete registration. The user must link the device.
    */
   async handleOrphanedLinkedDevice(): Promise<ActionResult> {
     try {
@@ -1268,7 +1270,7 @@ export class DeviceLifecycleManager {
       // Return success but no deviceId - user needs to complete linking flow
       return {
         success: true,
-        // No deviceId - user must complete QR code flow
+        // No deviceId - the user must complete the device link
       };
     } catch (error) {
       this.deps.logger.error('Failed to handle orphaned linked device', {
@@ -1297,8 +1299,7 @@ export class DeviceLifecycleManager {
       {
         id: 'link_device',
         title: 'Link this device',
-        description: 'Scan a QR code on your primary device to securely link this device.',
-        requiresQR: true,
+        description: 'Link this device from a device that is already signed in.',
       },
     ];
   }
@@ -1333,8 +1334,7 @@ export class DeviceLifecycleManager {
       {
         id: 'link_device',
         title: 'Link as new device',
-        description: 'Scan a QR code on your primary device to link this as a new device instead.',
-        requiresQR: true,
+        description: 'Link this as a new device from a device that is already signed in.',
       },
     ];
   }

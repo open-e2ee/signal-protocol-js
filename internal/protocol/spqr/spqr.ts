@@ -143,7 +143,7 @@ import {
 } from '../version';
 
 // Validation functions (extracted for modularity)
-import { validateSPQRState, trimSkippedKeys } from './validate';
+import { validateSPQRState, trimEpochSkippedKeys, parseSkippedKeyName } from './validate';
 import { spqrBraidSend } from './braid';
 
 // SPQR wire format serialization (no circular dependency, pure encode/decode module)
@@ -446,9 +446,6 @@ export const SPQR_CONFIG = {
    */
   MAX_INDEX: 1000000,
 
-  /** Maximum age for skipped keys before cleanup (7 days) */
-  MAX_SKIPPED_KEY_AGE: 7 * 24 * 60 * 60 * 1000,
-
   // ===== ML-KEM-768 Sizes (NIST FIPS 203) =====
   // Note: SPQR uses ML-KEM-768 for bandwidth efficiency, and PQXDH uses
   // ML-KEM-1024 for maximum security (see crypto/kyber.ts).
@@ -512,7 +509,7 @@ export function isSpqrBootstrapComplete(spqrState: SPQRState): boolean {
 /**
  * Initialize SPQR state for a new session.
  *
- * Called during session establishment (X3DH/PQXDH) to set up the
+ * Called during session establishment (PQXDH) to set up the
  * Sparse Post-Quantum Ratchet state alongside the EC Double Ratchet.
  *
  * @param initialRootKey - Initial root key (from PQXDH)
@@ -1021,7 +1018,9 @@ export async function deriveSPQRSendKey(
     for (const epochStr of Object.keys(spqrState.kdfChains)) {
       const e = parseInt(epochStr, 10);
       if (e < oldestToKeep) {
-        // Delete epochs outside the retention window.
+        // Delete epochs outside the retention window. Their held skipped keys
+        // leave below, as the reference drops a pruned link with its key
+        // history. docs/DEVIATIONS.md section 4 cites the reference lines.
         delete spqrState.kdfChains[e];
       } else if (e < epoch) {
         // Clear send chain keys (forward secrecy) but keep receive chains
@@ -1029,6 +1028,10 @@ export async function deriveSPQRSendKey(
         spqrState.kdfChains[e].send.CK = ZEROED_CHAIN_KEY;
         spqrState.kdfChains[e].send.N = 0;
       }
+    }
+    for (const name of Object.keys(spqrState.MKSKIPPED)) {
+      const held = parseSkippedKeyName(name);
+      if (held && held.epoch < oldestToKeep) delete spqrState.MKSKIPPED[name];
     }
 
     logger.debug('SPQR send epoch advanced, old epochs pruned', {
@@ -1102,6 +1105,34 @@ export async function deriveSPQRSendKey(
 }
 
 /**
+ * Whether a key index is below the trim horizon of its epoch's receive chain:
+ * the index plus `maxOutOfOrderKeys` is below the receive counter. The
+ * reference refuses such a key as trimmed. An epoch with no chain, or an index
+ * that is not a non-negative integer, is left to the other checks.
+ */
+function isBelowTrimHorizon(spqrState: SPQRState, epoch: number, index: number): boolean {
+  const chains = spqrState.kdfChains[epoch];
+  if (!chains || !Number.isInteger(index) || index < 0) return false;
+  const maxOOOKeys = spqrState.limits?.maxOutOfOrderKeys ?? SPQR_CONFIG.MAX_OOO_KEYS;
+  return index + maxOOOKeys < chains.receive.N;
+}
+
+function assertNotTrimmed(spqrState: SPQRState, epoch: number, index: number): void {
+  if (!isBelowTrimHorizon(spqrState, epoch, index)) return;
+  throw new EncryptionError(
+    `SPQR key ${epoch}:${index} is below the trim horizon`,
+    EncryptionErrorCode.DECRYPTION_FAILED,
+    {
+      epoch,
+      index,
+      currentN: spqrState.kdfChains[epoch].receive.N,
+      reason: 'key-trimmed',
+      operation: 'deriveSPQRReceiveKey',
+    }
+  );
+}
+
+/**
  * Derive message key from SPQR receiving chain.
  *
  * Called when decrypting a message to derive the PQ message key
@@ -1153,6 +1184,10 @@ export async function deriveSPQRReceiveKey(
       index,
     },
   });
+
+  // A key too far behind the receive counter was trimmed, or would be, so it
+  // is refused before the held-key lookup, as the reference refuses it.
+  assertNotTrimmed(spqrState, epoch, index);
 
   // Check MKSKIPPED first. If this key was already derived and stored
   // (out-of-order), return it directly instead of re-advancing the chain,
@@ -1232,6 +1267,10 @@ export async function deriveSPQRReceiveKey(
     );
   }
 
+  const maxOOOKeys = spqrState.limits?.maxOutOfOrderKeys ?? SPQR_CONFIG.MAX_OOO_KEYS;
+  // A jump above maxOOOKeys makes every held key of this epoch fall below the
+  // trim horizon, so the commit clears them, as the reference does.
+  const clearsHeldKeys = index > receiveChain.N + maxOOOKeys;
   let currentChainKey = base64ToBytes(receiveChain.CK);
   let currentN = receiveChain.N;
 
@@ -1253,6 +1292,9 @@ export async function deriveSPQRReceiveKey(
 
       if (currentN === index) {
         messageKey = result.messageKey;
+      } else if (currentN + maxOOOKeys < index) {
+        // Below the trim horizon of this receive: not held, as in the reference.
+        secureZeroBytes(result.messageKey);
       } else {
         const skipKey = `${epoch}:${currentN}`;
         try {
@@ -1275,15 +1317,18 @@ export async function deriveSPQRReceiveKey(
     }
 
     const encodedChainKey = bytesToBase64(currentChainKey);
-    const maxOOOKeys = spqrState.limits?.maxOutOfOrderKeys ?? SPQR_CONFIG.MAX_OOO_KEYS;
-    if (Object.keys(spqrState.MKSKIPPED).length >= maxOOOKeys) {
-      trimSkippedKeys(spqrState);
+    if (clearsHeldKeys) {
+      for (const name of Object.keys(spqrState.MKSKIPPED)) {
+        if (parseSkippedKeyName(name)?.epoch === epoch) delete spqrState.MKSKIPPED[name];
+      }
     }
     for (const [skipKey, skipped] of pendingSkipped) {
       spqrState.MKSKIPPED[skipKey] = skipped;
     }
     receiveChain.CK = encodedChainKey;
     receiveChain.N = currentN;
+    // Collect the held keys of this epoch after the adds, as the reference does.
+    trimEpochSkippedKeys(spqrState, epoch);
     committed = true;
     return messageKey;
   } finally {
@@ -1309,7 +1354,8 @@ export async function tryGetSkippedSPQRKey(
 ): Promise<Uint8Array | null> {
   const skipKey = `${epoch}:${index}`;
 
-  if (spqrState.MKSKIPPED[skipKey]) {
+  // A key below the trim horizon is not served. deriveSPQRReceiveKey refuses it.
+  if (spqrState.MKSKIPPED[skipKey] && !isBelowTrimHorizon(spqrState, epoch, index)) {
     const mk = base64ToBytes(spqrState.MKSKIPPED[skipKey].key);
 
     // Delete used key (forward secrecy)
@@ -1332,31 +1378,6 @@ export async function tryGetSkippedSPQRKey(
 // Or use the re-exports from ./index.ts.
 //
 // ============================================================================
-
-// ============================================================================
-// SPQR Cleanup
-// ============================================================================
-
-/**
- * Clean up old SPQR skipped message keys (Section 8.4).
- *
- * Epoch pruning and send-chain clearing happen immediately in
- * deriveSPQRSendKey() when the epoch advances. This function only needs
- * to handle TTL-based cleanup of skipped message keys.
- *
- * @param spqrState - Current SPQR state
- * @param maxAge - Maximum age in milliseconds (default: from state.limits or 7 days)
- */
-export async function cleanupSPQRState(spqrState: SPQRState, maxAge?: number): Promise<void> {
-  const now = Date.now();
-  const resolvedMaxAge = maxAge ?? SPQR_CONFIG.MAX_SKIPPED_KEY_AGE;
-
-  for (const [key, value] of Object.entries(spqrState.MKSKIPPED)) {
-    if (now - value.timestamp > resolvedMaxAge) {
-      delete spqrState.MKSKIPPED[key];
-    }
-  }
-}
 
 // ============================================================================
 // Black-box SPQR API

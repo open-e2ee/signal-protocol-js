@@ -59,7 +59,9 @@ that user. The previous tuple becomes rollback history.
 
 > **acceptContactIdentityRotationAndDeleteSessions**(`address`, `identity`, `identityType?`, `suppliedCommitment?`): `Promise`\<[`ContactIdentityRecord`](../namespaces/keys/interfaces/ContactIdentityRecord.md)\>
 
-Atomically rotate one per-user identity tuple and delete every bound device session.
+Atomically rotate one per-user identity tuple and delete every bound
+device session. The same write deletes the sender-key handoff rows of
+every device of the account.
 
 #### Parameters
 
@@ -95,6 +97,9 @@ Used when:
 - Identity key changes (possible MITM)
 - Registration ID changes (app reinstall detected)
 - Manual session reset
+
+The same write deletes the sender-key handoff rows of the device in every
+group.
 
 #### Parameters
 
@@ -142,7 +147,8 @@ Atomically pin/match trust, store the session, and consume referenced one-time p
 
 > **deleteSessionRecord**(`address`): `Promise`\<`void`\>
 
-Delete session record.
+Delete session record. The same write deletes the sender-key handoff
+rows of the device in every group.
 
 #### Parameters
 

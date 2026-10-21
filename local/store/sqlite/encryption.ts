@@ -16,7 +16,9 @@
 import { EncryptionError, EncryptionErrorCode } from '../../../types/errors';
 import { resolveSignalProtocolLogger, type Logger } from '../../../logger';
 
-import type { SqliteConnection, SqliteDriver } from './driver';
+import type { LocalStoreAtRest } from '../../../types/api';
+
+import type { SqliteConnection, SqliteDriver, SqliteExecutor } from './driver';
 import {
   SqliteEncryptionUnavailableError,
   SqliteKeyMismatchError,
@@ -106,6 +108,18 @@ export async function enforceSqliteEncryption(
       { driver: driverName }
     );
   }
+}
+
+/**
+ * Read how an open database is encrypted at rest from the setting that the
+ * core recorded in `PRAGMA application_id`, not from an open option. A
+ * database that the core did not record counts as `none`.
+ */
+export async function readSqliteAtRest(
+  db: SqliteExecutor
+): Promise<Extract<LocalStoreAtRest, 'file-cipher' | 'none'>> {
+  const row = await db.first<{ application_id: number }>('PRAGMA application_id');
+  return row?.application_id === ENCRYPTED_DATABASE_ID ? 'file-cipher' : 'none';
 }
 
 /**

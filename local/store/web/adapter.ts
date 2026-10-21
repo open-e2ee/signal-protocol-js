@@ -20,14 +20,31 @@
  */
 
 import { utf8Decode } from '../../../internal/platform';
-import type { ReceivedContent, SenderKeyReceiveCommit } from '../../../types';
+import type {
+  ReceiveWorkMetadataWrite,
+  ReceiveWorkQuery,
+  ReceiveWorkRecord,
+  ReceiveWorkUsage,
+  SenderKeyReceiveCommit,
+} from '../../../types';
 import { openDB, IDBPDatabase, DBSchema } from 'idb';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 import type {
+  LocalStoreProtection,
   SignalProtocolLocalStore,
   MessageRecord,
+  NewSendLogPayload,
+  SendLogDevice,
+  SendLogEntry,
+  SendLogRecipient,
+  SendLogResendJob,
+  SendLogResendJobState,
   SkippedSenderMessageKey,
   SessionTrustCommit,
+  SenderKeyHandoffDevice,
+  SenderKeyHandoffRecord,
+  SenderKeyRecordWriteOptions,
+  SetDeviceRecordOptions,
 } from '../../../types';
 import { getErrorMessage } from '../../../utils/errors';
 import { generateRandomBytes } from '../../../internal/crypto/random';
@@ -52,13 +69,31 @@ import { ProtocolAddress } from '../../../types/address';
 import { IdentityKeyChange, StorageQuotaExceededError, TrustDirection } from '../../../types';
 import { assertCurrentSessionRecord, type SessionRecord } from '../../../types/session';
 import type { UserRecord, DeviceRecord } from '../../../types';
+import { isExpiredRemovedDevice } from '../../../internal/sesame/types';
 import { withDeviceRecordLocks } from '../../../internal/session/record-locks';
 import { withSession } from '../device-record';
 import { decodeUserRecord, encodeUserRecord } from './device-record';
+import {
+  IndexedDbSendLog,
+  SEND_LOG_STORE_NAMES,
+  type SendLogDBSchema,
+  upgradeSendLogStores,
+} from './send-log';
+import {
+  IndexedDbReceiveWork,
+  type ReceiveWorkDBSchema,
+  upgradeReceiveWorkStore,
+} from './receive-work';
+import {
+  IndexedDbSenderKeyHandoffs,
+  type SenderKeyHandoffDBSchema,
+  upgradeSenderKeyHandoffStore,
+} from './sender-key-handoff';
 import type { Base64 } from '../../../types/utils';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { deserializeSessionRecord, serializeSessionRecord } from '../session-codec';
-import { receivedContentKey, parseReceivedContent } from '../received-content';
+import { receivedContentKey } from '../received-content';
+import { convertLegacyReceivedContent, type LegacyReceivedContentSource } from '../receive-work';
 import {
   createKyberPreKeyState,
   createKyberPreKeyInstanceId,
@@ -77,6 +112,29 @@ function equalBytes(left: Uint8Array | undefined, right: Uint8Array | undefined)
   return left.every((value, index) => value === right[index]);
 }
 
+/**
+ * The first byte of an encrypted metadata value. The record cipher's output
+ * follows it. A metadata value stored as a string is a clear value that an
+ * older SDK wrote.
+ */
+const METADATA_CIPHER_VERSION = 1;
+
+/**
+ * Set after every clear metadata value is encrypted. A crash before it is set
+ * runs the migration again at the next open.
+ */
+const METADATA_CIPHER_MARKER_KEY = 'metadataCipherVersion';
+
+function metadataStorageKey(key: string): string {
+  return `meta:${key}`;
+}
+
+/** Compares two raw stored metadata values, clear or encrypted. */
+function sameStoredMetadata(left: unknown, right: unknown): boolean {
+  if (left instanceof Uint8Array && right instanceof Uint8Array) return equalBytes(left, right);
+  return left === right;
+}
+
 /** The IndexedDB key of the sender key record of one sender in one group. */
 type SenderKeyRecordId = [groupId: string, userId: string, deviceId: number];
 
@@ -90,7 +148,11 @@ type SkippedSenderKeyId = [...SkippedSenderKeySender, senderKeyId: string, chain
  * IndexedDB schema for Signal Protocol storage
  */
 export {};
-interface SignalProtocolDBSchema extends DBSchema {
+interface SignalProtocolDBSchema
+  extends DBSchema,
+    SendLogDBSchema,
+    ReceiveWorkDBSchema,
+    SenderKeyHandoffDBSchema {
   // Metadata store - contains database key and registration ID
   metadata: { key: string; value: Uint8Array | number | string };
 
@@ -216,6 +278,58 @@ interface SignalProtocolDBSchema extends DBSchema {
 }
 
 /**
+ * The database as the send log types it. The schema extends
+ * `SendLogDBSchema`, so the send log stores have the same types in both. The
+ * idb types do not let a database with more stores stand in for one with
+ * fewer.
+ */
+function sendLogView(db: IDBPDatabase<SignalProtocolDBSchema>): IDBPDatabase<SendLogDBSchema> {
+  return db as unknown as IDBPDatabase<SendLogDBSchema>;
+}
+
+/** The database as the receive records type it, for the same reason as `sendLogView`. */
+function receiveWorkView(
+  db: IDBPDatabase<SignalProtocolDBSchema>
+): IDBPDatabase<ReceiveWorkDBSchema> {
+  return db as unknown as IDBPDatabase<ReceiveWorkDBSchema>;
+}
+
+/** The database as the sender-key handoff rows type it, for the same reason as `sendLogView`. */
+function senderKeyHandoffView(
+  db: IDBPDatabase<SignalProtocolDBSchema>
+): IDBPDatabase<SenderKeyHandoffDBSchema> {
+  return db as unknown as IDBPDatabase<SenderKeyHandoffDBSchema>;
+}
+
+/**
+ * Run the reads and the mutations of one read-write transaction. `enter`
+ * reads what it needs, then pushes every mutation in one synchronous batch:
+ * a page that dies commits a transaction idle at an await, so an await
+ * between two mutations could land only some of them. A failure aborts the
+ * transaction, so no mutation of the batch commits.
+ */
+async function commitTransaction(
+  tx: { abort(): void; readonly done: Promise<void> },
+  enter: (writes: Promise<unknown>[]) => Promise<void> | void
+): Promise<void> {
+  const writes: Promise<unknown>[] = [];
+  const completed = tx.done;
+  void completed.catch(() => undefined);
+  try {
+    await enter(writes);
+    await Promise.all([...writes, completed]);
+  } catch (error) {
+    try {
+      tx.abort();
+    } catch {
+      /* The failed transaction can already be inactive. */
+    }
+    await Promise.allSettled([...writes, completed]);
+    throw error;
+  }
+}
+
+/**
  * Compares stored ciphertext, not secret material - corrupt-row cleanup only
  * deletes a row whose bytes are still the ones that failed to deserialize.
  */
@@ -330,10 +444,41 @@ function mapQuotaFailuresAtBoundary(store: IndexedDbSignalProtocolStore): void {
  * - TOFU (Trust On First Use) for contact verification
  */
 export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
+  /** Each value is encrypted with a key that this database holds in the same origin. */
+  readonly protection: LocalStoreProtection = Object.freeze({
+    atRest: 'record-cipher',
+    keyCustody: 'same-origin',
+  });
   private db: IDBPDatabase<SignalProtocolDBSchema> | null = null;
   private databaseKey: Uint8Array | null = null;
+  private readonly senderKeyHandoffs = new IndexedDbSenderKeyHandoffs(
+    () => senderKeyHandoffView(this.db!),
+    {
+      encrypt: (plaintext) => this.encrypt(plaintext),
+      decrypt: (encrypted) => this.decrypt(encrypted),
+      databaseKey: () => this.getDatabaseKey(),
+    }
+  );
   private readonly dbName = 'signal-protocol-storage';
-  private readonly dbVersion = 7; // v7 keys sender keys by arrays and indexes skipped keys by group
+  /** The database name. The tabs and workers of the origin share its locks. */
+  readonly storeIdentity: string = this.dbName;
+  // v10 adds the sender-key handoff store. v11 adds `removedAt` to the
+  // device record. The encrypted record holds the field, so v11 changes no
+  // object store. It keeps an older SDK, which does not skip a removed
+  // device, from opening the database.
+  private readonly dbVersion = 11;
+  private readonly sendLog = new IndexedDbSendLog(
+    () => sendLogView(this.db!),
+    {
+      encrypt: (plaintext) => this.encrypt(plaintext),
+      decrypt: (encrypted) => this.decrypt(encrypted),
+    }
+  );
+  private readonly receiveWork = new IndexedDbReceiveWork(() => receiveWorkView(this.db!), {
+    encrypt: (plaintext) => this.encrypt(plaintext),
+    decrypt: (encrypted) => this.decrypt(encrypted),
+    databaseKey: () => this.getDatabaseKey(),
+  });
 
   constructor() {
     mapQuotaFailuresAtBoundary(this);
@@ -438,6 +583,10 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
           messageStore.createIndex('by-session', 'sessionId');
           messageStore.createIndex('by-created', 'createdAt');
         }
+
+        upgradeSendLogStores(sendLogView(db));
+        upgradeReceiveWorkStore(receiveWorkView(db));
+        upgradeSenderKeyHandoffStore(senderKeyHandoffView(db));
       },
     });
 
@@ -465,6 +614,9 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
           'Ensure Content Security Policy (CSP) is configured to mitigate XSS risks.'
       );
     }
+
+    await this.encryptClearMetadata();
+    await this.convertLegacyReceivedRows();
   }
 
   /**
@@ -625,32 +777,36 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     const replacement = acceptRotation(existing, identity, Date.now(), suppliedCommitment);
     validateContactIdentityRecord(replacement);
     const encrypted = await this.encrypt(JSON.stringify(replacement));
+    const accountHash = (await this.senderKeyHandoffs.index()).account(address.userId);
 
-    const tx = this.db!.transaction(['contacts', 'sessions'], 'readwrite');
-    const contacts = tx.objectStore('contacts');
-    const current = await contacts.get(key);
-    if (!current || current.revision !== existing.revision) {
-      await tx.done;
-      throw new Error('Contact identity changed concurrently during rotation');
-    }
-    // Read the doomed session keys before mutating, then enter every
-    // mutation in one synchronous batch. A dying page closes its connection
-    // gracefully, and a transaction that is idle at an await boundary then
-    // commits the writes it already holds. A cursor walk that deletes as
-    // it goes leaves windows where the new pin commits with sessions still
-    // trusted under the old identity.
-    const sessions = tx.objectStore('sessions');
-    const doomedKeys = await sessions.index('by-user').getAllKeys(address.userId);
-    await Promise.all([
-      contacts.put({
-        key,
-        userId: address.userId,
-        data: encrypted,
-        revision: replacement.revision,
-      }),
-      ...doomedKeys.map((sessionKey) => sessions.delete(sessionKey)),
-      tx.done,
-    ]);
+    const tx = this.db!.transaction(['contacts', 'sessions', 'senderKeyHandoff'], 'readwrite');
+    await commitTransaction(tx, async (writes) => {
+      const contacts = tx.objectStore('contacts');
+      const current = await contacts.get(key);
+      if (!current || current.revision !== existing.revision) {
+        throw new Error('Contact identity changed concurrently during rotation');
+      }
+      // Read the doomed session and handoff keys before mutating, then enter
+      // every mutation in one synchronous batch. A cursor walk that deletes
+      // as it goes leaves windows where the new pin commits with sessions
+      // still trusted under the old identity.
+      const sessions = tx.objectStore('sessions');
+      const handoffs = tx.objectStore('senderKeyHandoff');
+      const doomedKeys = await sessions.index('by-user').getAllKeys(address.userId);
+      const doomedHandoffs = await handoffs.index('by-account').getAllKeys(accountHash);
+      writes.push(
+        contacts.put({
+          key,
+          userId: address.userId,
+          data: encrypted,
+          revision: replacement.revision,
+        })
+      );
+      // Push each request as it is created. A later synchronous throw must
+      // not leave an earlier request outside the settled set.
+      for (const sessionKey of doomedKeys) writes.push(sessions.delete(sessionKey));
+      for (const handoffKey of doomedHandoffs) writes.push(handoffs.delete(handoffKey));
+    });
     return replacement;
   }
 
@@ -1030,9 +1186,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
       ? await this.encrypt(JSON.stringify(newContact))
       : undefined;
     const encrypted = await this.encrypt(serializeSessionRecord(commit.record));
-    const content = commit.receivedContent
-      ? await this.encrypt(JSON.stringify(commit.receivedContent))
-      : undefined;
+    const work = commit.receiveWork ? await this.receiveWork.seal(commit.receiveWork) : undefined;
     const kyberStorageKey = `kyber:${commit.localIdentityType}`;
     const storedKyberState = commit.kyberPreKeyUse
       ? await this.db!.get('prekeys', kyberStorageKey)
@@ -1045,7 +1199,14 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
       recordKyberPreKeyUse(state, commit.localIdentityType, commit.kyberPreKeyUse);
       updatedKyberState = await this.encrypt(JSON.stringify(state));
     }
-    const tx = this.db!.transaction(['contacts', 'prekeys', 'sessions', 'metadata'], 'readwrite');
+    const invalidation = commit.senderKeyHandoffInvalidation;
+    const invalidatedHash = invalidation
+      ? (await this.senderKeyHandoffs.index()).recipient(invalidation)
+      : undefined;
+    const tx = this.db!.transaction(
+      ['contacts', 'prekeys', 'sessions', 'receiveWork', 'senderKeyHandoff'],
+      'readwrite'
+    );
     const contacts = tx.objectStore('contacts');
     const prekeys = tx.objectStore('prekeys');
     const currentContactRow = await contacts.get(contactKey);
@@ -1080,16 +1241,18 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
       await tx.done;
       throw new Error('Kyber prekey state changed during atomic session/trust commit');
     }
+    const handoffs = tx.objectStore('senderKeyHandoff');
+    const doomedHandoffs =
+      invalidatedHash === undefined
+        ? []
+        : await handoffs.index('by-recipient').getAllKeys(invalidatedHash);
     // Every mutation must enter the transaction in one synchronous batch.
     // A dying page closes its connection gracefully, and a transaction that
     // is idle at an await boundary then commits the writes it already holds.
     // An await between mutations is a window for a partial commit.
     const writes: Promise<unknown>[] = [];
     try {
-      if (content && commit.receivedContent)
-        writes.push(
-          tx.objectStore('metadata').put(content, receivedContentKey(commit.receivedContent.id))
-        );
+      if (work) writes.push(tx.objectStore('receiveWork').put(work));
       if (newContact && encryptedContact) {
         writes.push(
           contacts.put({
@@ -1114,6 +1277,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
       if (ecPreKeyStorageKey) writes.push(prekeys.delete(ecPreKeyStorageKey));
       if (kemPreKeyStorageKey) writes.push(prekeys.delete(kemPreKeyStorageKey));
       if (updatedKyberState) writes.push(prekeys.put(updatedKyberState, kyberStorageKey));
+      for (const handoffKey of doomedHandoffs) writes.push(handoffs.delete(handoffKey));
       await Promise.all([...writes, tx.done]);
     } catch (error) {
       try {
@@ -1128,8 +1292,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
 
   async deleteSessionRecord(address: ProtocolAddress): Promise<void> {
     this.ensureInitialized();
-    const addressKey = this.serializeAddress(address);
-    await this.db!.delete('sessions', addressKey);
+    await this.replaceSessionAndDeleteHandoffs(address, null);
   }
 
   async archiveCurrentSession(
@@ -1140,21 +1303,57 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
 
     // With SessionRecord, archiving is handled via SessionRecord.archiveCurrent()
     // This method updates or replaces the session state
-    if (newSession) {
-      const record = await this.getSessionRecord(address);
-
-      if (record) {
-        // Update existing session with new state
-        record.currentSession = newSession;
-        if (record.metadata) {
-          record.metadata.lastSentAt = Date.now();
-        }
-        await this.storeSessionRecord(address, record);
-      }
-    } else {
+    if (!newSession) {
       // If no new session, just delete the old one
-      await this.deleteSessionRecord(address);
+      await this.replaceSessionAndDeleteHandoffs(address, null);
+      return;
     }
+    const record = await this.getSessionRecord(address);
+    if (record) {
+      // Update existing session with new state
+      record.currentSession = newSession;
+      if (record.metadata) {
+        record.metadata.lastSentAt = Date.now();
+      }
+      assertCurrentSessionRecord(record);
+    }
+    await this.replaceSessionAndDeleteHandoffs(
+      address,
+      record ? await this.encrypt(serializeSessionRecord(record)) : undefined
+    );
+  }
+
+  /**
+   * Write or delete the session of one device and delete the handoff rows of
+   * that device in every group, in one transaction. `null` deletes the
+   * session, and `undefined` leaves it.
+   */
+  private async replaceSessionAndDeleteHandoffs(
+    address: ProtocolAddress,
+    encrypted: Uint8Array | null | undefined
+  ): Promise<void> {
+    const addressKey = this.serializeAddress(address);
+    const recipientHash = (await this.senderKeyHandoffs.index()).recipient(address);
+    const tx = this.db!.transaction(['sessions', 'senderKeyHandoff'], 'readwrite');
+    await commitTransaction(tx, async (writes) => {
+      const sessions = tx.objectStore('sessions');
+      const handoffs = tx.objectStore('senderKeyHandoff');
+      const doomedHandoffs = await handoffs.index('by-recipient').getAllKeys(recipientHash);
+      if (encrypted) {
+        writes.push(
+          sessions.put({
+            key: addressKey,
+            userId: address.userId,
+            deviceId: address.deviceId,
+            data: encrypted,
+            updatedAt: Date.now(),
+          })
+        );
+      } else if (encrypted === null) {
+        writes.push(sessions.delete(addressKey));
+      }
+      for (const handoffKey of doomedHandoffs) writes.push(handoffs.delete(handoffKey));
+    });
   }
 
   async getSessionsForUser(userId: string): Promise<SessionRecord[]> {
@@ -1230,6 +1429,9 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     await this.db!.clear('senderKeyRecords');
     await this.db!.clear('skippedSenderKeys');
     await this.db!.clear('messageRecords');
+    for (const name of SEND_LOG_STORE_NAMES) await this.db!.clear(name);
+    await this.db!.clear('receiveWork');
+    await this.db!.clear('senderKeyHandoff');
 
     // Generate new database encryption key after clearing
     this.databaseKey = await generateRandomBytes(32);
@@ -1242,18 +1444,18 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
 
   async getMetadata(key: string): Promise<string | null> {
     this.ensureInitialized();
-    const stored = await this.db!.get('metadata', `meta:${key}`);
-    return typeof stored === 'string' ? stored : null;
+    return await this.openMetadataValue(await this.db!.get('metadata', metadataStorageKey(key)));
   }
 
   async setMetadata(key: string, value: string): Promise<void> {
     this.ensureInitialized();
-    await this.db!.put('metadata', value, `meta:${key}`);
+    const sealed = await this.sealMetadataValue(value);
+    await this.db!.put('metadata', sealed, metadataStorageKey(key));
   }
 
   async deleteMetadata(key: string): Promise<void> {
     this.ensureInitialized();
-    await this.db!.delete('metadata', `meta:${key}`);
+    await this.db!.delete('metadata', metadataStorageKey(key));
   }
 
   async compareAndSetMetadata(
@@ -1262,20 +1464,81 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     value: string | null
   ): Promise<boolean> {
     this.ensureInitialized();
+    const storageKey = metadataStorageKey(key);
+    // The cipher is not an IndexedDB request, and an await on it would let
+    // the transaction commit. So the decrypt and the encrypt run first. The
+    // transaction then compares the raw value that was read, so a writer that
+    // changed the value since that read fails the check.
+    const observed = await this.db!.get('metadata', storageKey);
+    if ((await this.openMetadataValue(observed)) !== expected) return false;
+    const sealed = value === null ? null : await this.sealMetadataValue(value);
     const tx = this.db!.transaction('metadata', 'readwrite');
     try {
-      const stored = await tx.store.get(`meta:${key}`);
-      if ((typeof stored === 'string' ? stored : null) !== expected) {
+      if (!sameStoredMetadata(await tx.store.get(storageKey), observed)) {
         await tx.done;
         return false;
       }
-      if (value === null) await tx.store.delete(`meta:${key}`);
-      else await tx.store.put(value, `meta:${key}`);
+      if (sealed === null) await tx.store.delete(storageKey);
+      else await tx.store.put(sealed, storageKey);
       await tx.done;
       return true;
     } catch (error) {
       await tx.done.catch(() => undefined);
       throw error;
+    }
+  }
+
+  /** Encrypt one metadata value with the record cipher, behind its version byte. */
+  private async sealMetadataValue(value: string): Promise<Uint8Array> {
+    const encrypted = await this.encrypt(value);
+    const sealed = new Uint8Array(1 + encrypted.length);
+    sealed[0] = METADATA_CIPHER_VERSION;
+    sealed.set(encrypted, 1);
+    return sealed;
+  }
+
+  /** Read one stored metadata value, encrypted or clear. */
+  private async openMetadataValue(stored: unknown): Promise<string | null> {
+    if (typeof stored === 'string') return stored;
+    if (!(stored instanceof Uint8Array)) return null;
+    if (stored[0] !== METADATA_CIPHER_VERSION) {
+      throw new Error(`Unsupported metadata cipher version ${stored[0]}`);
+    }
+    return await this.decrypt(stored.subarray(1));
+  }
+
+  /**
+   * Encrypt every clear metadata value, then set the marker. The marker is
+   * set last, so a crash partway leaves it unset and the next open runs the
+   * migration again. Each value is replaced only while it still holds the
+   * clear value that was read, so a concurrent writer is never overwritten.
+   *
+   * A full origin stops the migration without the marker. The store still
+   * opens, because a reader accepts clear values, and the next open
+   * continues the migration.
+   */
+  private async encryptClearMetadata(): Promise<void> {
+    const db = this.db!;
+    if ((await db.get('metadata', METADATA_CIPHER_MARKER_KEY)) === METADATA_CIPHER_VERSION) return;
+    const prefix = metadataStorageKey('');
+    const keys = (await db.getAllKeys('metadata')).filter((key) => key.startsWith(prefix));
+    try {
+      for (const key of keys) {
+        const stored = await db.get('metadata', key);
+        if (typeof stored !== 'string') continue;
+        const sealed = await this.sealMetadataValue(stored);
+        const tx = db.transaction('metadata', 'readwrite');
+        try {
+          if ((await tx.store.get(key)) === stored) await tx.store.put(sealed, key);
+          await tx.done;
+        } catch (error) {
+          await tx.done.catch(() => undefined);
+          throw error;
+        }
+      }
+      await db.put('metadata', METADATA_CIPHER_VERSION, METADATA_CIPHER_MARKER_KEY);
+    } catch (error) {
+      if (!isQuotaExceededError(error)) throw error;
     }
   }
 
@@ -1395,7 +1658,12 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     return withSession(userId, deviceId, stored, session);
   }
 
-  async setDeviceRecord(userId: string, deviceId: number, record: DeviceRecord): Promise<void> {
+  async setDeviceRecord(
+    userId: string,
+    deviceId: number,
+    record: DeviceRecord,
+    options?: SetDeviceRecordOptions
+  ): Promise<void> {
     if (record.session) assertCurrentSessionRecord(record.session);
     const now = Date.now();
     const userRecord = (await this.getStoredUserRecord(userId)) ?? {
@@ -1413,22 +1681,31 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     const session = record.session
       ? await this.encrypt(serializeSessionRecord(record.session))
       : null;
-    const tx = this.db!.transaction(['sesameUsers', 'sessions'], 'readwrite');
-    const writes: Promise<unknown>[] = [
-      tx.objectStore('sesameUsers').put({ key: userId, data: user, updatedAt: now }),
-    ];
-    if (session) {
-      writes.push(
-        tx.objectStore('sessions').put({
-          key: this.serializeAddress(ProtocolAddress.create(userId, deviceId)),
-          userId,
-          deviceId,
-          data: session,
-          updatedAt: now,
-        })
-      );
-    }
-    await Promise.all([...writes, tx.done]);
+    const invalidation = options?.senderKeyHandoffInvalidation;
+    const invalidatedHash = invalidation
+      ? (await this.senderKeyHandoffs.index()).recipient(invalidation)
+      : undefined;
+    const tx = this.db!.transaction(['sesameUsers', 'sessions', 'senderKeyHandoff'], 'readwrite');
+    await commitTransaction(tx, async (writes) => {
+      const handoffs = tx.objectStore('senderKeyHandoff');
+      const doomedHandoffs =
+        invalidatedHash === undefined
+          ? []
+          : await handoffs.index('by-recipient').getAllKeys(invalidatedHash);
+      writes.push(tx.objectStore('sesameUsers').put({ key: userId, data: user, updatedAt: now }));
+      if (session) {
+        writes.push(
+          tx.objectStore('sessions').put({
+            key: this.serializeAddress(ProtocolAddress.create(userId, deviceId)),
+            userId,
+            deviceId,
+            data: session,
+            updatedAt: now,
+          })
+        );
+      }
+      for (const handoffKey of doomedHandoffs) writes.push(handoffs.delete(handoffKey));
+    });
   }
 
   async deleteDeviceRecord(userId: string, deviceId: number): Promise<void> {
@@ -1443,12 +1720,17 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     // A device can exist through its session alone, so the session goes even
     // when no stored user record names the device.
     const sessionKey = this.serializeAddress(ProtocolAddress.create(userId, deviceId));
-    const tx = this.db!.transaction(['sesameUsers', 'sessions'], 'readwrite');
-    const users = tx.objectStore('sesameUsers');
-    const writes: Promise<unknown>[] = [tx.objectStore('sessions').delete(sessionKey)];
-    if (user) writes.push(users.put({ key: userId, data: user, updatedAt: now }));
-    else if (userRecord) writes.push(users.delete(userId));
-    await Promise.all([...writes, tx.done]);
+    const recipientHash = (await this.senderKeyHandoffs.index()).recipient({ userId, deviceId });
+    const tx = this.db!.transaction(['sesameUsers', 'sessions', 'senderKeyHandoff'], 'readwrite');
+    await commitTransaction(tx, async (writes) => {
+      const users = tx.objectStore('sesameUsers');
+      const handoffs = tx.objectStore('senderKeyHandoff');
+      const doomedHandoffs = await handoffs.index('by-recipient').getAllKeys(recipientHash);
+      writes.push(tx.objectStore('sessions').delete(sessionKey));
+      if (user) writes.push(users.put({ key: userId, data: user, updatedAt: now }));
+      else if (userRecord) writes.push(users.delete(userId));
+      for (const handoffKey of doomedHandoffs) writes.push(handoffs.delete(handoffKey));
+    });
   }
 
   private async getStoredUserRecord(userId: string): Promise<UserRecord | null> {
@@ -1572,9 +1854,25 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     return record?.[0] ?? null;
   }
 
-  async deleteSenderKey(groupId: string, userId: string, deviceId: number): Promise<void> {
+  async deleteSenderKey(
+    groupId: string,
+    userId: string,
+    deviceId: number,
+    options?: SenderKeyRecordWriteOptions
+  ): Promise<void> {
     this.ensureInitialized();
-    await this.db!.delete('senderKeyRecords', [groupId, userId, deviceId]);
+    if (!options?.deleteSenderKeyHandoffs) {
+      await this.db!.delete('senderKeyRecords', [groupId, userId, deviceId]);
+      return;
+    }
+    const groupHash = (await this.senderKeyHandoffs.index()).group(groupId);
+    const tx = this.db!.transaction(['senderKeyRecords', 'senderKeyHandoff'], 'readwrite');
+    await commitTransaction(tx, async (writes) => {
+      const handoffs = tx.objectStore('senderKeyHandoff');
+      const doomedHandoffs = await handoffs.index('by-group').getAllKeys(groupHash);
+      writes.push(tx.objectStore('senderKeyRecords').delete([groupId, userId, deviceId]));
+      for (const handoffKey of doomedHandoffs) writes.push(handoffs.delete(handoffKey));
+    });
   }
 
   async resolveGroupForSenderKeyId(
@@ -1632,20 +1930,31 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     this.ensureInitialized();
 
     // Read the doomed keys before mutating, then enter every delete in one
-    // synchronous batch, so the sender keys and skipped keys go together.
-    const tx = this.db!.transaction(['senderKeyRecords', 'skippedSenderKeys'], 'readwrite');
-    const senderKeyRecords = tx.objectStore('senderKeyRecords');
-    const skippedSenderKeys = tx.objectStore('skippedSenderKeys');
-    const [recordKeys, skippedKeys] = await Promise.all([
-      senderKeyRecords.index('by-group').getAllKeys(groupId),
-      skippedSenderKeys.index('by-group').getAllKeys(groupId),
-    ]);
-    await Promise.all([
-      ...recordKeys.map((key) => senderKeyRecords.delete(key)),
-      ...skippedKeys.map((key) => skippedSenderKeys.delete(key)),
-      tx.done,
-    ]);
-    return recordKeys.length;
+    // synchronous batch, so the sender keys, the skipped keys, and the
+    // handoff rows go together.
+    const groupHash = (await this.senderKeyHandoffs.index()).group(groupId);
+    const tx = this.db!.transaction(
+      ['senderKeyRecords', 'skippedSenderKeys', 'senderKeyHandoff'],
+      'readwrite'
+    );
+    let deleted = 0;
+    await commitTransaction(tx, async (writes) => {
+      const senderKeyRecords = tx.objectStore('senderKeyRecords');
+      const skippedSenderKeys = tx.objectStore('skippedSenderKeys');
+      const handoffs = tx.objectStore('senderKeyHandoff');
+      const [recordKeys, skippedKeys, handoffKeys] = await Promise.all([
+        senderKeyRecords.index('by-group').getAllKeys(groupId),
+        skippedSenderKeys.index('by-group').getAllKeys(groupId),
+        handoffs.index('by-group').getAllKeys(groupHash),
+      ]);
+      deleted = recordKeys.length;
+      // Push each request as it is created. A later synchronous throw must
+      // not leave an earlier request outside the settled set.
+      for (const key of recordKeys) writes.push(senderKeyRecords.delete(key));
+      for (const key of skippedKeys) writes.push(skippedSenderKeys.delete(key));
+      for (const key of handoffKeys) writes.push(handoffs.delete(key));
+    });
+    return deleted;
   }
 
   async storeSenderKeyRecord(
@@ -1653,7 +1962,8 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     userId: string,
     deviceId: number,
     states: SenderKeyState[],
-    receive?: SenderKeyReceiveCommit
+    receive?: SenderKeyReceiveCommit,
+    options?: SenderKeyRecordWriteOptions
   ): Promise<void> {
     this.ensureInitialized();
     if (states.length === 0) {
@@ -1661,9 +1971,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     }
 
     const encrypted = await this.encrypt(JSON.stringify(states));
-    const content = receive?.content
-      ? await this.encrypt(JSON.stringify(receive.content))
-      : undefined;
+    const work = receive?.work ? await this.receiveWork.seal(receive.work) : undefined;
     // Finish encryption before opening the IDB transaction, which must not await crypto.
     const skippedKeys = await Promise.all(
       (receive?.skippedKeys?.keys ?? []).map(async (skipped) => ({
@@ -1681,8 +1989,11 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
         createdAt: Date.now(),
       }))
     );
+    const deletedGroupHash = options?.deleteSenderKeyHandoffs
+      ? (await this.senderKeyHandoffs.index()).group(groupId)
+      : undefined;
     const tx = this.db!.transaction(
-      ['senderKeyRecords', 'skippedSenderKeys', 'metadata'],
+      ['senderKeyRecords', 'skippedSenderKeys', 'receiveWork', 'senderKeyHandoff'],
       'readwrite'
     );
     // Observe aborts immediately, including while the skipped-key read is pending.
@@ -1703,6 +2014,11 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
                 .getAll(this.getSkippedSenderKeyPrefix(groupId, userId, deviceId))
             ).map(({ key, chainIndex }) => ({ key, chainIndex }))
           : [];
+      const handoffs = tx.objectStore('senderKeyHandoff');
+      const doomedHandoffs =
+        deletedGroupHash === undefined
+          ? []
+          : await handoffs.index('by-group').getAllKeys(deletedGroupHash);
       const sameKey = (a: SkippedSenderKeyId, b: SkippedSenderKeyId) =>
         a.every((part, index) => part === b[index]);
       const skippedWrites: Array<
@@ -1748,9 +2064,8 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
           'put' in write ? skippedStore.put(write.put) : skippedStore.delete(write.delete)
         );
       }
-      if (receive?.content && content) {
-        writes.push(tx.objectStore('metadata').put(content, receivedContentKey(receive.content.id)));
-      }
+      if (work) writes.push(tx.objectStore('receiveWork').put(work));
+      for (const handoffKey of doomedHandoffs) writes.push(handoffs.delete(handoffKey));
       await Promise.all([...writes, completed]);
     } catch (error) {
       try {
@@ -1763,33 +2078,151 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     }
   }
 
-  async getReceivedContent(id: string): Promise<ReceivedContent | null> {
+  // ============================================================================
+  // Sender-Key Handoff Ledger
+  // ============================================================================
+
+  async recordSenderKeyHandoff(record: SenderKeyHandoffRecord): Promise<void> {
     this.ensureInitialized();
-    const value = await this.db!.get('metadata', receivedContentKey(id));
-    if (value === undefined) return null;
-    if (!(value instanceof Uint8Array)) throw new Error('Invalid encrypted received content');
-    return parseReceivedContent(await this.decrypt(value), id);
+    await this.senderKeyHandoffs.record(record);
   }
 
-  async deleteReceivedContent(id: string): Promise<void> {
+  async listSenderKeyHandoffs(
+    groupId: string,
+    generation: number
+  ): Promise<SenderKeyHandoffRecord[]> {
     this.ensureInitialized();
-    await this.db!.delete('metadata', receivedContentKey(id));
+    return this.senderKeyHandoffs.list(groupId, generation);
   }
 
-  async deleteExpiredReceivedContent(before: number): Promise<number> {
+  async invalidateSenderKeyHandoff(
+    groupId: string,
+    device: SenderKeyHandoffDevice
+  ): Promise<boolean> {
     this.ensureInitialized();
+    return this.senderKeyHandoffs.deleteDeviceInGroup(groupId, device);
+  }
+
+  async invalidateAccountSenderKeyHandoffs(userId: string): Promise<boolean> {
+    this.ensureInitialized();
+    return this.senderKeyHandoffs.deleteAccount(userId);
+  }
+
+  async listSenderKeyHandoffGroupIds(): Promise<string[]> {
+    this.ensureInitialized();
+    return this.senderKeyHandoffs.groupIds();
+  }
+
+  async retainSenderKeyHandoffs(groupId: string, senderKeyId: string | null): Promise<number> {
+    this.ensureInitialized();
+    return this.senderKeyHandoffs.retain(groupId, senderKeyId);
+  }
+
+  // ============================================================================
+  // Receive records
+  // ============================================================================
+
+  async getReceiveWork(workId: string): Promise<ReceiveWorkRecord | null> {
+    this.ensureInitialized();
+    return await this.receiveWork.get(workId);
+  }
+
+  async putReceiveWork(
+    record: ReceiveWorkRecord,
+    expectedRevision: number | null
+  ): Promise<boolean> {
+    this.ensureInitialized();
+    return await this.receiveWork.put(record, expectedRevision);
+  }
+
+  async listReceiveWork(query?: ReceiveWorkQuery): Promise<ReceiveWorkRecord[]> {
+    this.ensureInitialized();
+    return await this.receiveWork.list(query);
+  }
+
+  async receiveWorkUsage(query?: { groupId?: string }): Promise<ReceiveWorkUsage> {
+    this.ensureInitialized();
+    return await this.receiveWork.usage(query);
+  }
+
+  async completeReceiveWork(
+    workId: string,
+    expectedRevision: number,
+    metadata: readonly ReceiveWorkMetadataWrite[] = []
+  ): Promise<boolean> {
+    this.ensureInitialized();
+    // Seal every metadata value first: the transaction must not await the cipher.
+    const metadataWrites = await Promise.all(
+      metadata.map(async ({ key, value }) => ({
+        storageKey: metadataStorageKey(key),
+        sealed: value === null ? null : await this.sealMetadataValue(value),
+      }))
+    );
+    const tx = this.db!.transaction(['receiveWork', 'metadata'], 'readwrite');
+    const completed = tx.done;
+    void completed.catch(() => undefined);
+    const writes: Promise<unknown>[] = [];
+    try {
+      const records = tx.objectStore('receiveWork');
+      const current = await records.get(workId);
+      if (current?.revision !== expectedRevision) {
+        await completed;
+        return false;
+      }
+      // Enter the delete and every metadata write in one synchronous batch.
+      const metadataStore = tx.objectStore('metadata');
+      writes.push(records.delete(workId));
+      for (const { storageKey, sealed } of metadataWrites) {
+        writes.push(
+          sealed === null ? metadataStore.delete(storageKey) : metadataStore.put(sealed, storageKey)
+        );
+      }
+      await Promise.all([...writes, completed]);
+      return true;
+    } catch (error) {
+      try {
+        tx.abort();
+      } catch {
+        /* The failed transaction can already be inactive. */
+      }
+      await Promise.allSettled([...writes, completed]);
+      throw error;
+    }
+  }
+
+  /**
+   * Convert the legacy received content rows to receive records. A full
+   * origin stops the conversion without its marker. The store still opens,
+   * and the next open continues the conversion.
+   */
+  private async convertLegacyReceivedRows(): Promise<void> {
+    try {
+      await convertLegacyReceivedContent(this, this.legacyReceivedContent());
+    } catch (error) {
+      if (!isQuotaExceededError(error) && !(error instanceof StorageQuotaExceededError)) {
+        throw error;
+      }
+    }
+  }
+
+  /** The legacy rows: raw metadata keys `received-content:<id>`, each value from the record cipher. */
+  private legacyReceivedContent(): LegacyReceivedContentSource {
     const prefix = receivedContentKey('');
-    const keys = (await this.db!.getAllKeys('metadata')).filter((key) => key.startsWith(prefix));
-    const expired: string[] = [];
-    for (const key of keys) {
-      const value = await this.getReceivedContent(key.slice(prefix.length));
-      if (value && value.receivedAt < before) expired.push(key);
-    }
-    if (expired.length) {
-      const tx = this.db!.transaction('metadata', 'readwrite');
-      await Promise.all([...expired.map((key) => tx.store.delete(key)), tx.done]);
-    }
-    return expired.length;
+    return {
+      listIds: async () =>
+        (await this.db!.getAllKeys('metadata'))
+          .filter((key) => key.startsWith(prefix))
+          .map((key) => key.slice(prefix.length)),
+      read: async (id) => {
+        const value = await this.db!.get('metadata', receivedContentKey(id));
+        if (value === undefined) return null;
+        if (!(value instanceof Uint8Array)) throw new Error('Invalid encrypted received content');
+        return await this.decrypt(value);
+      },
+      delete: async (id) => {
+        await this.db!.delete('metadata', receivedContentKey(id));
+      },
+    };
   }
 
   async getSenderKeyRecord(
@@ -1921,12 +2354,14 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
 
   async storeMessageRecord(record: MessageRecord): Promise<void> {
     this.ensureInitialized();
-    const encrypted = await this.encrypt(JSON.stringify(record));
+    const key = this.getMessageRecordStorageKey(record.sessionId, record.timestamp);
+    const createdAt = (await this.db!.get('messageRecords', key))?.createdAt ?? Date.now();
+    const encrypted = await this.encrypt(JSON.stringify({ ...record, createdAt }));
     await this.db!.put('messageRecords', {
-      key: this.getMessageRecordStorageKey(record.sessionId, record.timestamp),
+      key,
       sessionId: record.sessionId,
       timestamp: record.timestamp,
-      createdAt: record.createdAt,
+      createdAt,
       data: encrypted,
     });
   }
@@ -1986,6 +2421,151 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
 
     await Promise.all(matches.map((key) => this.db!.delete('messageRecords', key)));
     return matches.length;
+  }
+
+  /**
+   * The records decrypt and encrypt outside a transaction, because IndexedDB
+   * commits an idle transaction. The write transaction then changes a record
+   * only when its stored bytes still equal the bytes that `rewrite` read.
+   */
+  async rewriteMessageRecords(rewrite: (record: MessageRecord) => string | null): Promise<number> {
+    this.ensureInitialized();
+    const selected: Array<{ key: string; data: Uint8Array; replacement: Uint8Array | null }> = [];
+    for (const stored of await this.db!.getAll('messageRecords')) {
+      const record = JSON.parse(await this.decrypt(stored.data)) as MessageRecord;
+      const plaintext = rewrite(record);
+      if (plaintext === record.plaintext) continue;
+      const replacement =
+        plaintext === null ? null : await this.encrypt(JSON.stringify({ ...record, plaintext }));
+      selected.push({ key: stored.key, data: stored.data, replacement });
+    }
+    if (selected.length === 0) return 0;
+
+    const tx = this.db!.transaction('messageRecords', 'readwrite');
+    const store = tx.objectStore('messageRecords');
+    let changed = 0;
+    for (const { key, data, replacement } of selected) {
+      const current = await store.get(key);
+      if (!current || !encryptedBytesEqual(current.data, data)) continue;
+      if (replacement === null) {
+        await store.delete(key);
+      } else {
+        await store.put({ ...current, data: replacement });
+      }
+      changed++;
+    }
+    await tx.done;
+    return changed;
+  }
+
+  // ============================================================================
+  // Send Log (resendable group content)
+  // The send log concept lives in ./send-log.ts. This store implements the
+  // whole local store interface, so it keeps these delegates.
+  // ============================================================================
+
+  async storeSendLogEntry(
+    payload: NewSendLogPayload,
+    recipients: readonly SendLogDevice[]
+  ): Promise<void> {
+    this.ensureInitialized();
+    return this.sendLog.storeSendLogEntry(payload, recipients);
+  }
+
+  async appendSendLogRecipients(
+    clientMessageId: string,
+    recipients: readonly SendLogDevice[]
+  ): Promise<void> {
+    this.ensureInitialized();
+    return this.sendLog.appendSendLogRecipients(clientMessageId, recipients);
+  }
+
+  async markSendLogComplete(clientMessageId: string): Promise<void> {
+    this.ensureInitialized();
+    return this.sendLog.markSendLogComplete(clientMessageId);
+  }
+
+  async getSendLogEntry(
+    clientMessageId: string,
+    recipient: SendLogDevice
+  ): Promise<SendLogEntry | null> {
+    this.ensureInitialized();
+    return this.sendLog.getSendLogEntry(clientMessageId, recipient);
+  }
+
+  async findSendLogEntries(
+    recipient: SendLogDevice,
+    clientTimestamp: number
+  ): Promise<SendLogEntry[]> {
+    this.ensureInitialized();
+    return this.sendLog.findSendLogEntries(recipient, clientTimestamp);
+  }
+
+  async getSendLogRecipients(clientMessageId: string): Promise<SendLogRecipient[]> {
+    this.ensureInitialized();
+    return this.sendLog.getSendLogRecipients(clientMessageId);
+  }
+
+  async deleteSendLogRecipient(
+    clientMessageId: string,
+    recipient: SendLogDevice
+  ): Promise<boolean> {
+    this.ensureInitialized();
+    return this.sendLog.deleteSendLogRecipient(clientMessageId, recipient);
+  }
+
+  async deleteSendLogRecipientsByTimestamp(
+    recipient: SendLogDevice,
+    clientTimestamps: readonly number[]
+  ): Promise<number> {
+    this.ensureInitialized();
+    return this.sendLog.deleteSendLogRecipientsByTimestamp(recipient, clientTimestamps);
+  }
+
+  async incrementSendLogResendCount(
+    clientMessageId: string,
+    recipient: SendLogDevice
+  ): Promise<number | null> {
+    this.ensureInitialized();
+    return this.sendLog.incrementSendLogResendCount(clientMessageId, recipient);
+  }
+
+  async deleteSendLogEntry(clientMessageId: string): Promise<boolean> {
+    this.ensureInitialized();
+    return this.sendLog.deleteSendLogEntry(clientMessageId);
+  }
+
+  async deleteExpiredSendLog(maxAgeMs: number): Promise<number> {
+    this.ensureInitialized();
+    return this.sendLog.deleteExpiredSendLog(maxAgeMs);
+  }
+
+  async clearSendLog(): Promise<number> {
+    this.ensureInitialized();
+    return this.sendLog.clearSendLog();
+  }
+
+  async storeResendJob(job: SendLogResendJob): Promise<void> {
+    this.ensureInitialized();
+    return this.sendLog.storeResendJob(job);
+  }
+
+  async getResendJob(jobId: string): Promise<SendLogResendJob | null> {
+    this.ensureInitialized();
+    return this.sendLog.getResendJob(jobId);
+  }
+
+  async getPendingResendJobs(): Promise<SendLogResendJob[]> {
+    this.ensureInitialized();
+    return this.sendLog.getPendingResendJobs();
+  }
+
+  async completeResendJob(
+    jobId: string,
+    state: Exclude<SendLogResendJobState, 'pending'>
+  ): Promise<void> {
+    this.ensureInitialized();
+    return this.sendLog.completeResendJob(jobId, state);
   }
 
   // ============================================================================
@@ -2124,13 +2704,17 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
 
 /**
  * A device record is stale when it has no current session and no archived
- * session, and it has not been updated within `maxLatency`.
+ * session, and it has not been updated within `maxLatency`, or when its
+ * removal is older than `maxLatency`.
  */
 function isStaleDeviceRecord(record: DeviceRecord, now: number, maxLatency: number): boolean {
   const hasNoSessions =
     !record.session ||
     (!record.session.currentSession && Object.keys(record.session.archivedSessions).length === 0);
-  return hasNoSessions && now - record.updatedAt > maxLatency;
+  return (
+    (hasNoSessions && now - record.updatedAt > maxLatency) ||
+    isExpiredRemovedDevice(record, now, maxLatency)
+  );
 }
 
 /**

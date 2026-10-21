@@ -52,9 +52,20 @@ const client = await createSignalProtocolClient({
 ```
 
 The injected backend's `atomicWrite()` is a security boundary. It must evaluate
-compare-and-swap checks and commit all writes, removals, and exact per-user
-session deletion atomically and durably, including across process termination.
-Independent writes committed one after another are not sufficient.
+compare-and-swap checks and commit all writes, removals, exact per-user session
+deletion (`removeSessionsForUser`), skipped sender-key pruning
+(`pruneSkippedSenderKeys`), and sender-key handoff removal
+(`removeSenderKeyHandoffs`) atomically and durably, including across process
+termination. Independent writes committed one after another are not sufficient.
+
+The `removeSenderKeyHandoffs` operation enumerates keys under its exact
+`keyPrefix` inside the transaction. The part of a key after the prefix has five
+colon-separated segments: the group hash, the generation, the account hash, the
+recipient hash, and the entry hash. The operation removes every key whose group,
+account, and recipient segments equal each hash that it gives. A hash that it
+omits matches every value. A key of another shape stays. The operation observes
+earlier writes in the same batch, and `assertBackendConformance` checks that
+rule.
 
 ## Key custody
 

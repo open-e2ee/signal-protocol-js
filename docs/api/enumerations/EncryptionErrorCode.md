@@ -173,7 +173,7 @@ browsing context. Use the IndexedDB store in this runtime.
 PQXDH key exchange failed during handshake.
 
 The post-quantum key exchange encountered an error. The SDK aborts the
-session instead of a downgrade to classical X3DH.
+session setup. No classical key agreement exists.
 
 ***
 
@@ -434,8 +434,8 @@ Signal Protocol Section 8.4 recommends limiting skipped messages.
 
 Triple Ratchet applies, but the session did not use PQXDH.
 
-Triple Ratchet requires post-quantum material from PQXDH.
-Cannot enable Triple Ratchet with classical X3DH handshake.
+Triple Ratchet requires post-quantum material from PQXDH. The SDK
+refuses a session that has no PQXDH result.
 
 ***
 

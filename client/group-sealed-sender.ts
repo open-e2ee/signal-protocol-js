@@ -8,6 +8,7 @@ import {
 } from '../internal/protocol/sealed-sender';
 import { serializeSentMessage } from '../internal/protocol/sealed-sender/multi-recipient-message';
 import { SealedSenderContentType } from '../internal/protocol/sealed-sender/types';
+import type { ContentHint } from '../types/messages';
 
 export interface GroupSealedSenderKeys {
   senderCertificateBase64: string;
@@ -35,6 +36,8 @@ export async function prepareGroupSharedMessage(input: {
   senderKeys: GroupSealedSenderKeys;
   members: GroupMemberDevice[];
   encryptedMessageBase64: string;
+  /** The hint that each recipient reads from the seal. */
+  contentHint?: ContentHint;
 }): Promise<PreparedGroupSharedMessage | null> {
   const identityByUser = new Map<string, Uint8Array>();
   const uniqueUserIds = [...new Set(input.members.map((member) => member.userId))];
@@ -75,6 +78,7 @@ export async function prepareGroupSharedMessage(input: {
     recipients,
     signalProtocolMessage: base64ToBytes(input.encryptedMessageBase64 as Base64),
     contentType: SealedSenderContentType.SENDERKEY_MESSAGE,
+    ...(input.contentHint !== undefined && { contentHint: input.contentHint }),
   });
 
   const recipientsByUser = new Map<

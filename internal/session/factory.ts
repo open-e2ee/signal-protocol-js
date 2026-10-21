@@ -25,7 +25,7 @@ import type { SessionState } from '../../types';
 import { asBase64 } from '../../types/utils';
 
 /**
- * HKDF additional byte ranges (64 bytes total, after 32-byte root key from X3DH)
+ * HKDF additional byte ranges (64 bytes total, after 32-byte root key from PQXDH)
  *
  * Signal Protocol HKDF output layout:
  * - bytes 0-31: Chain key (CK) for initial receiving chain
@@ -55,7 +55,7 @@ export interface InitiatorSessionInput {
   remoteIdentity: CompositeIdentityV1;
   remoteRegistrationId: number;
   recipientIdentityType: IdentityType;
-  /** Ephemeral key pair generated during X3DH - publicKey becomes baseKey */
+  /** Ephemeral key pair generated during PQXDH - publicKey becomes baseKey */
   ephemeralKeyPair: { publicKey: string; privateKey: string };
   remoteSignedPreKey: { keyId: number; publicKey: string };
   /** Root key (after KDF_RK ratchet step for initiator) */
@@ -99,7 +99,7 @@ export interface ResponderSessionInput {
   remoteRegistrationId: number;
   localIdentityType: IdentityType;
   ecSignedPreKey: EcSignedPreKey;
-  /** Root key (SK from X3DH/PQXDH - NOT ratcheted for lazy init) */
+  /** Root key (SK from PQXDH - NOT ratcheted for lazy init) */
   rootKey: Uint8Array;
   /** Sending chain key - undefined for lazy init, derived during DHRatchet */
   sendingChainKey?: Uint8Array;
@@ -112,10 +112,10 @@ export interface ResponderSessionInput {
  * Create session state for initiator (Alice)
  *
  * Implements Signal Protocol Section 3.3 RatchetInitAlice.
- * Alice's session state after performing X3DH key agreement.
+ * Alice's session state after performing PQXDH key agreement.
  *
  * Key differences from responder:
- * - DHs = ephemeral key (generated during X3DH)
+ * - DHs = ephemeral key (generated during PQXDH)
  * - DHr = partner's signed prekey
  * - RK = result of KDF_RK(SK, DH(DHs, DHr)) - already ratcheted
  * - CKs = sending chain key (from KDF_RK ratchet step)
@@ -201,7 +201,7 @@ export function createInitiatorSession(input: InitiatorSessionInput): SessionSta
     // Skipped message keys
     receiverChains: [],
 
-    // X3DH prekey tracking
+    // PQXDH prekey tracking
     recipientIdentityType,
     usedSignedPreKeyId: remoteSignedPreKey.keyId,
     usedOneTimePreKeyId,
@@ -306,7 +306,7 @@ export function createResponderSession(input: ResponderSessionInput): SessionSta
     localIdentityType,
     remoteIdentityType: 'aci',
 
-    // Root key (NOT ratcheted - RK = SK from X3DH/PQXDH)
+    // Root key (NOT ratcheted - RK = SK from PQXDH)
     RK: asBase64(CryptoUtils.bytesToBase64(rootKey)),
 
     // DH ratchet keys

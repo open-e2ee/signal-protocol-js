@@ -1,13 +1,13 @@
 /**
- * Handshake - X3DH/PQXDH Key Agreement
+ * Handshake - PQXDH Key Agreement
  *
  * Handles the cryptographic key agreement phase of the Signal Protocol.
- * This module runs the X3DH (Extended Triple Diffie-Hellman) or PQXDH
- * (Post-Quantum Extended Diffie-Hellman) handshake to derive shared secrets.
+ * This module runs the PQXDH (Post-Quantum Extended Diffie-Hellman)
+ * handshake to derive shared secrets. Every new session requires PQXDH. A
+ * peer bundle or PreKeyMessage without ML-KEM material is refused.
  *
  * establish.ts calls this module for key agreement before it creates a session.
  *
- * @see https://signal.org/docs/specifications/x3dh/
  * @see https://signal.org/docs/specifications/pqxdh/
  */
 
@@ -17,11 +17,6 @@ import {
   performPQXDH as pqxdhKeyAgreement,
   performPQXDHResponder as pqxdhResponderKeyAgreement,
 } from '../protocol/pqxdh';
-import {
-  performX3DH as x3dhKeyAgreement,
-  performX3DHResponder as x3dhResponderKeyAgreement,
-  type X3DHResponderInput,
-} from '../protocol/x3dh';
 import type { PQXDHResponderInput } from '../protocol/pqxdh';
 import type {
   IdentityKeyPair,
@@ -63,19 +58,23 @@ export interface KeyAgreementOptions {
 }
 
 /**
- * Build X3DHResponderInput from PreKeyMessage.
+ * Build the PQXDH responder input from a PreKeyMessage.
  * Centralizes the construction to avoid duplication.
  */
-export function buildX3DHResponderInput(
+export function buildPqxdhResponderInput(
   prekeyMessage: PreKeyMessage,
   senderIdentityKey: PublicKey,
   senderEphemeralKey: PublicKey
-): X3DHResponderInput {
+): PQXDHResponderInput {
   return {
     senderIdentityKey,
     senderEphemeralKey,
     usedSignedPreKeyId: prekeyMessage.usedSignedPreKeyId!,
     usedOneTimePreKeyId: prekeyMessage.usedOneTimePreKeyId,
+    kyberCiphertext: prekeyMessage.kyberCiphertext,
+    usedKyberPreKeyId: prekeyMessage.usedKyberPreKeyId,
+    kemOneTimePreKeyCiphertext: prekeyMessage.kemOneTimePreKeyCiphertext,
+    usedKemOneTimePreKeyId: prekeyMessage.usedKemOneTimePreKeyId,
   };
 }
 
@@ -144,16 +143,15 @@ export function validatePreKeyBundle(prekeyBundle: PreKeyBundle): void {
 /**
  * Run the key agreement as initiator (Alice)
  *
- * ORCHESTRATION LAYER: Requires PQXDH by default for session establishment.
- *
- * Explicit `allowClassicalFallback` permits X3DH only when the peer bundle has
- * no KEM material at all. If any KEM material is present, PQXDH must succeed.
+ * ORCHESTRATION LAYER: Requires PQXDH for session establishment. A peer
+ * bundle without KEM material is refused, and a PQXDH failure aborts the
+ * session.
  *
  * @param identityKeyPair Our identity key pair
  * @param prekeyBundle Partner's prekey bundle
  * @param options Protocol strategy options
  * @returns Key agreement result with shared secret
- * @throws {PQXDHRequiredError} If PQXDH is required but unavailable
+ * @throws {PQXDHRequiredError} If the bundle has no KEM prekey or PQXDH fails
  */
 export async function performKeyAgreement(
   identityKeyPair: IdentityKeyPair,
@@ -165,43 +163,6 @@ export async function performKeyAgreement(
   validatePreKeyBundle(prekeyBundle);
 
   if (!bundleHasAnyKemMaterial(prekeyBundle)) {
-    if (protocolStrategy?.allowClassicalFallback) {
-      logger.warn('Partner lacks KEM prekeys; using explicit X3DH compatibility fallback', {
-        category: 'E2EE',
-        data: { remoteAddress },
-      });
-
-      const x3dhResult = await x3dhKeyAgreement(
-        identityKeyPair,
-        prekeyBundle,
-        infoStrings.x3dh,
-        logger
-      );
-
-      invokeProtocolCallback(
-        protocolStrategy,
-        {
-          usedPQXDH: false,
-          usedTripleRatchet: false,
-          usedClassicalFallback: true,
-          classicalFallbackReason: 'remote_lacks_kem',
-          remoteAddress,
-          timestamp: Date.now(),
-        },
-        logger
-      );
-
-      return {
-        sharedSecret: x3dhResult.sharedSecret,
-        additionalDerivedBytes: x3dhResult.additionalDerivedBytes,
-        ephemeralKeyPair: x3dhResult.ephemeralKeyPair,
-        usedSignedPreKeyId: x3dhResult.usedSignedPreKeyId,
-        usedOneTimePreKeyId: x3dhResult.usedOneTimePreKeyId,
-        usedPQXDH: false,
-        usedClassicalFallback: true,
-      };
-    }
-
     logger.error('Partner lacks KEM prekey required for PQXDH', {
       category: 'E2EE',
       data: { remoteAddress },
@@ -228,7 +189,6 @@ export async function performKeyAgreement(
       {
         usedPQXDH: true,
         usedTripleRatchet: true,
-        usedClassicalFallback: false,
         remoteAddress,
         timestamp: Date.now(),
       },
@@ -246,7 +206,6 @@ export async function performKeyAgreement(
       kemOneTimePreKeyCiphertext: pqxdhResult.kemOneTimePreKeyCiphertext,
       usedKemOneTimePreKeyId: pqxdhResult.usedKemOneTimePreKeyId,
       usedPQXDH: true,
-      usedClassicalFallback: false,
     };
   } catch (error) {
     const pqxdhError = error instanceof Error ? error : new Error(String(error));
@@ -283,9 +242,8 @@ function invokeProtocolCallback(
 /**
  * Run the key agreement as responder (Bob)
  *
- * Requires PQXDH metadata by default and rejects malformed PQXDH metadata.
- * Explicit `allowClassicalFallback` permits X3DH only for X3DH-only
- * PreKeyMessages with no KEM metadata at all.
+ * Requires PQXDH metadata and rejects malformed PQXDH metadata. A
+ * PreKeyMessage without KEM metadata is refused.
  *
  * @param identityKeyPair Our identity key pair
  * @param signedPreKey Our signed prekey that Alice used
@@ -296,7 +254,7 @@ function invokeProtocolCallback(
  * @param aliceEphemeralKey Alice's ephemeral key
  * @param options Protocol strategy options
  * @returns Key agreement result with shared secret
- * @throws {PQXDHRequiredError} If PQXDH is required but fails
+ * @throws {PQXDHRequiredError} If the KEM metadata or prekey is missing, or PQXDH fails
  */
 export async function performResponderKeyAgreement(
   identityKeyPair: IdentityKeyPair,
@@ -311,9 +269,6 @@ export async function performResponderKeyAgreement(
 ): Promise<ResponderKeyAgreementResult> {
   const { protocolStrategy, remoteAddress = 'unknown', logger = defaultSignalProtocolLogger } = options;
   const infoStrings = resolveKeyExchangeInfoStrings(protocolStrategy?.keyExchangeInfoString);
-
-  // Build base X3DH responder input
-  const x3dhInput = buildX3DHResponderInput(prekeyMessage, aliceIdentityKey, aliceEphemeralKey);
 
   // Try PQXDH when any KEM ciphertext is present.
   // Per PQXDH spec: exactly one KEM mode per session (one-time OR last-resort).
@@ -375,7 +330,6 @@ export async function performResponderKeyAgreement(
   const hasAnyKyberMetadata = hasLastResortMetadata || hasOneTimeMetadata;
 
   if (hasAnyKyberMetadata) {
-    // If PQ metadata is present, process as PQXDH only (no downgrade to X3DH).
     if (hasLastResortMetadata && !kyberPreKey) {
       logger.error('Kyber prekey not found for PQXDH message', {
         category: 'E2EE',
@@ -392,13 +346,11 @@ export async function performResponderKeyAgreement(
     }
 
     try {
-      const pqxdhInput: PQXDHResponderInput = {
-        ...x3dhInput,
-        kyberCiphertext: prekeyMessage.kyberCiphertext,
-        usedKyberPreKeyId: prekeyMessage.usedKyberPreKeyId,
-        kemOneTimePreKeyCiphertext: prekeyMessage.kemOneTimePreKeyCiphertext,
-        usedKemOneTimePreKeyId: prekeyMessage.usedKemOneTimePreKeyId,
-      };
+      const pqxdhInput = buildPqxdhResponderInput(
+        prekeyMessage,
+        aliceIdentityKey,
+        aliceEphemeralKey
+      );
 
       const pqxdhResult = await pqxdhResponderKeyAgreement(
         identityKeyPair,
@@ -423,7 +375,6 @@ export async function performResponderKeyAgreement(
         {
           usedPQXDH: true,
           usedTripleRatchet: true,
-          usedClassicalFallback: false,
           remoteAddress,
           timestamp: Date.now(),
         },
@@ -434,7 +385,6 @@ export async function performResponderKeyAgreement(
         sharedSecret: pqxdhResult.sharedSecret,
         additionalDerivedBytes: pqxdhResult.additionalDerivedBytes,
         usedPQXDH: pqxdhResult.usedPQXDH,
-        usedClassicalFallback: false,
       };
     } catch (error) {
       const pqxdhError = error instanceof Error ? error : new Error(String(error));
@@ -449,42 +399,6 @@ export async function performResponderKeyAgreement(
         originalError: pqxdhError,
       });
     }
-  }
-
-  if (protocolStrategy?.allowClassicalFallback) {
-    logger.warn('PreKeyMessage has no KEM metadata; using explicit X3DH compatibility fallback', {
-      category: 'E2EE',
-      data: { remoteAddress },
-    });
-
-    const x3dhResult = await x3dhResponderKeyAgreement(
-      identityKeyPair,
-      signedPreKey,
-      oneTimePreKey,
-      x3dhInput,
-      infoStrings.x3dh,
-      logger
-    );
-
-    invokeProtocolCallback(
-      protocolStrategy,
-      {
-        usedPQXDH: false,
-        usedTripleRatchet: false,
-        usedClassicalFallback: true,
-        classicalFallbackReason: 'remote_lacks_kem',
-        remoteAddress,
-        timestamp: Date.now(),
-      },
-      logger
-    );
-
-    return {
-      sharedSecret: x3dhResult.sharedSecret,
-      additionalDerivedBytes: x3dhResult.additionalDerivedBytes,
-      usedPQXDH: false,
-      usedClassicalFallback: true,
-    };
   }
 
   logger.error('PreKeyMessage missing KEM metadata required for PQXDH', {

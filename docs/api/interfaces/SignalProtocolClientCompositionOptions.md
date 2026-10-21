@@ -168,6 +168,25 @@ Exact issuer selection for transports with a verified rotation registry.
 
 Pre-constructed EndorsementManager for group send endorsement-based auth.
 
+#### isGroupBlocked?
+
+> `optional` **isGroupBlocked?**: (`groupId`) => `boolean` \| `Promise`\<`boolean`\>
+
+Report whether the user blocked a group. The client drops content of a
+blocked group before it fetches the group, and sends no report. The
+background fetch timer also skips a blocked group, and a hook that
+throws there counts as blocked.
+
+##### Parameters
+
+###### groupId
+
+[`GroupId`](../type-aliases/GroupId.md)
+
+##### Returns
+
+`boolean` \| `Promise`\<`boolean`\>
+
 #### issueCredential?
 
 > `optional` **issueCredential?**: () => `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>

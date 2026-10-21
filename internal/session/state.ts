@@ -12,7 +12,7 @@
  *         │ initialize()
  *         ▼
  * ┌───────────────┐
- * │    Pending    │ ← X3DH/PQXDH in progress
+ * │    Pending    │ ← PQXDH in progress
  * └───────┬───────┘
  *         │ receivePreKeyMessage() or sendFirstMessage()
  *         ▼
@@ -56,7 +56,7 @@ import type { ReceiverChain } from '../../types/session';
 export {};
 export type SessionPhase =
   | 'uninitialized' // No keys established
-  | 'pending' // X3DH/PQXDH in progress, waiting for first message
+  | 'pending' // PQXDH in progress, waiting for first message
   | 'active' // Session fully established, can encrypt/decrypt
   | 'rekeying' // Key rotation in progress
   | 'expired'; // Session timed out or explicitly closed
@@ -97,7 +97,7 @@ export interface UninitializedSession extends SessionMetadataBase {
 /**
  * Pending session state.
  *
- * X3DH/PQXDH key exchange is in progress.
+ * PQXDH key exchange is in progress.
  * Waiting for first message to complete session establishment.
  *
  * Valid operations: sendFirstMessage(), receivePreKeyMessage()

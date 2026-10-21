@@ -10,7 +10,7 @@
  * Layer 1: API               - client/ (SignalProtocolClient, SignalProtocolClient)
  * Layer 2: ORCHESTRATION     - manager/, sesame/, groups/ (SignalProtocolManager, SesameManager, GroupManager)
  * Layer 3: DOMAIN/SESSION    - session/, safety/ (establishment, cipher, handshake, safety numbers)
- * Layer 4: DOMAIN/ALGORITHMS - protocol/ (X3DH, PQXDH, Double Ratchet, SPQR, Sender Keys, Sealed Sender, ZK proofs)
+ * Layer 4: DOMAIN/ALGORITHMS - protocol/ (PQXDH, Double Ratchet, SPQR, Sender Keys, Sealed Sender, ZK proofs)
  * Layer 5: DOMAIN/KEYS       - keys/ (types, generation, branded types)
  * Layer 6: DOMAIN/CRYPTO     - crypto/ (X25519, Ed25519, Kyber, AES, HKDF)
  *
@@ -154,7 +154,7 @@ export const LAYER_DEFINITIONS: Record<Layer, LayerDefinition> = {
     dependsOn: [LAYERS.DOMAIN_KEYS, LAYERS.DOMAIN_CRYPTO],
     spec: 'X3DH §1-4, PQXDH §1-4, Double Ratchet §2-6, Sender Keys, Signal Private Group System (poksho, zkcredential, zkgroup)',
     description:
-      'Key agreement (X3DH, PQXDH), ratcheting (Double, SPQR, Triple), group messaging (Sender Keys), and Ristretto255 ZK proofs',
+      'Key agreement (PQXDH), ratcheting (Double, SPQR, Triple), group messaging (Sender Keys), and Ristretto255 ZK proofs',
   },
   [LAYERS.DOMAIN_KEYS]: {
     level: LAYERS.DOMAIN_KEYS,

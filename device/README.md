@@ -1,8 +1,8 @@
 # Device Lifecycle, Linking, and Transfer
 
 The device module contains the platform-bound workflows for device identity,
-registration, QR-based account linking, device-name encryption, and encrypted
-device-to-device state transfer.
+registration, device-name encryption, and encrypted device-to-device state
+transfer.
 
 ## Why it exists
 
@@ -10,13 +10,17 @@ Signal Protocol sessions address individual devices. The application therefore
 needs a lifecycle that coordinates a locally persisted device ID with the
 authenticated backend's device registry.
 
-The two onboarding operations are deliberately separate:
+A linked device needs the account identity before it joins the account. Two
+separate operations do that work:
 
-- **Provisioning** adds a linked device. It transfers account identity material
-  and optional account metadata, but not existing sessions or message history.
-- **Transfer** sends the same identity-only provisioning bundle over an
-  application-owned encrypted device-to-device channel. The receiving device
-  generates fresh prekeys and sessions after import.
+- **Transfer** sends an identity-only bundle over an application-owned
+  encrypted device-to-device channel. The receiving device generates fresh
+  prekeys and sessions after import. The application can also put the account
+  identity into the new device's store by a channel that it owns.
+- **The managed device link** is `linkHostedRelayDevice()` from the package
+  root. It joins a store that already holds the account identity to the Relay
+  account. It runs in one process that holds the active device's store and the
+  new device's store. It sends no private key to the Relay.
 
 The primary device uses ID `1`. The backend allocates linked device IDs from
 `2` through `5`. A client must not choose its own linked-device ID.
@@ -92,82 +96,31 @@ it only after preload or in code that can safely tolerate that fallback.
 
 ## Link a device
 
-The primary device creates a short-lived provisioning session:
+Put the account identity into the new device's store first, by device transfer
+or by a channel that the application owns. Then join the new device to the
+Relay account:
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import {
-  generateProvisioningQR,
-  provisionDevice,
-} from "@open-e2ee/signal-protocol-sdk/device/provisioning";
+import { linkHostedRelayDevice } from "@open-e2ee/signal-protocol-sdk";
 
-const {
-  sessionId,
-  qrCodeUrl,
-  ephemeralKeyPair,
-} = await generateProvisioningQR(relay, userId);
-
-await appQr.show(qrCodeUrl);
-
-const { newDeviceEphemeralPublicKey } =
-  await appProvisioning.waitForLinkedDevice(sessionId);
-
-await provisionDevice(
-  relay,
-  appProfile,
-  sessionId,
-  ephemeralKeyPair.privateKey,
-  newDeviceEphemeralPublicKey,
-  userId,
-  { identityStore, groupStateStore },
-);
+const client = await linkHostedRelayDevice({
+  adapters: { storage: linkedStorage },
+  activeDeviceStorage,
+  hosted: { relayUrl, adapter: managedLinkAdapter },
+});
 ```
 
-The new device parses the QR data, joins the session, and then receives,
-decrypts, and stores the provisioning message:
+`activeDeviceStorage` is the store of a device that is already signed in. Its
+account identity must match the identity in `linkedStorage`. The call reads
+the device-authentication private key from each store and signs the link
+challenge in the calling process. Thus that process must hold the active
+device's store, private keys included. The adapter's `linkDevice()` gets a
+challenge signer for each device and no private key.
 
-<!-- doc-snippet:skip requires-external-context -->
-```ts
-import {
-  connectToProvisioningSession,
-  parseProvisioningQR,
-  receiveProvisioningMessage,
-} from "@open-e2ee/signal-protocol-sdk/device/provisioning";
-// Reads the local platform, so it is imported separately from the protocol
-// itself. Use `./device/react-native` off Expo, or build the fields by hand.
-import { getDeviceMetadata } from "@open-e2ee/signal-protocol-sdk/device/expo";
-
-const {
-  sessionId,
-  primaryEphemeralPublicKey,
-} = parseProvisioningQR(scannedQrCode);
-
-const deviceMetadata = getDeviceMetadata("Alice's tablet");
-const linkedKeys = await connectToProvisioningSession(
-  relay,
-  sessionId,
-  deviceMetadata,
-);
-
-const provisioning = await receiveProvisioningMessage(
-  relay,
-  sessionId,
-  linkedKeys.privateKey,
-  primaryEphemeralPublicKey,
-  {
-    identityStore,
-    localStateStore,
-    groupStateStore,
-    usernameStateStore,
-    deviceMetadata,
-  },
-);
-
-console.log(provisioning.deviceId);
-```
-
-Provisioning requires an ACI identity. It includes PNI identity and
-group/username state only when the host application enables and supplies them.
+The link copies no protocol state and no group state. Sessions start fresh.
+For each group, the application brings the group master key to the new device,
+and the new device then calls `syncGroup()`.
 
 ## Transfer cryptographic state
 
@@ -198,16 +151,17 @@ durably restores the backup.
 
 ## Security boundaries
 
-- Provisioning sessions expire after five minutes.
-- Ephemeral ECDH keys derive the provisioning/transfer encryption keys.
+- Ephemeral ECDH keys derive the transfer encryption keys.
 - The SDK encrypts identity material before it reaches a relay or transport.
-- Linked-device bundles never contain signed prekeys, one-time prekeys,
-  ratchet sessions, sender-key state, message state, or retry outbox state.
-- The QR channel authenticates the session only to the extent that the
+- Transfer bundles never contain signed prekeys, one-time prekeys, ratchet
+  sessions, sender-key state, message state, or retry outbox state.
+- The transfer QR code authenticates the channel only to the extent that the
   application protects what the user scans or shares.
+- The managed device link sends no private key to the Relay. The process that
+  calls it must hold the active device's store.
 - The SDK encrypts device names for backend storage.
-- Backend authentication must bind registration, provisioning, unlink, and
-  removal to the owning account.
+- Backend authentication must bind registration, unlink, and removal to the
+  owning account.
 - Account reset must clear the device-ID cache, platform secret storage, and
   protocol store as one product-level lifecycle.
 

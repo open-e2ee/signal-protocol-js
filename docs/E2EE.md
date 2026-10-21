@@ -4,7 +4,7 @@
 > [Security Model](./SECURITY.md) | [Architecture](../ARCHITECTURE.md)
 
 `@open-e2ee/signal-protocol-sdk` provides end-to-end encryption based on the
-Signal Protocol: X3DH / PQXDH key agreement and the Double Ratchet, extended
+Signal Protocol: PQXDH key agreement and the Double Ratchet, extended
 with the Sparse Post-Quantum Ratchet (SPQR / ML-KEM Braid).
 
 End-to-end encryption means plaintext exists only on the sender's and

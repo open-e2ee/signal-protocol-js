@@ -8,7 +8,6 @@
 
 > `const` **MAX\_MESSAGE\_KEYS**: `2000` = `2000`
 
-Maximum total message keys to store across all receiver chains.
-
-This is a global limit, not per-chain. Past it, a FIFO strategy evicts the
-oldest keys.
+Maximum skipped message keys to store in one receiver chain, as the reference implementation
+keeps `MAX_MESSAGE_KEYS`. Past it, the key with the lowest index of that chain
+leaves. `MAX_RECEIVER_CHAINS` bounds the number of chains.

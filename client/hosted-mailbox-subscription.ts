@@ -93,8 +93,8 @@ const FAILED_MESSAGE_GONE_MILLISECONDS = 5_000;
  * for example on a frame that the client refuses on each connect, keeps the
  * ceiling growing, so a loop of short connections backs off to 30 s.
  */
-const FIRST_RECONNECT_MILLISECONDS = 1_000;
-const MAXIMUM_RECONNECT_MILLISECONDS = 30_000;
+export const FIRST_RECONNECT_MILLISECONDS = 1_000;
+export const MAXIMUM_RECONNECT_MILLISECONDS = 30_000;
 /** The Relay answers each `ping` text frame with `pong` without waking the mailbox. */
 const PING_MILLISECONDS = 30_000;
 /**
@@ -139,6 +139,11 @@ export type PresenceSocketEvent =
 export interface MailboxPage {
   readonly messages: readonly Envelope[];
   readonly receipts: readonly RelayDeliveryReceipt[];
+  /**
+   * The opaque Relay cursor after the last message of a page that is not
+   * empty. A pull with it starts after that message.
+   */
+  readonly nextCursor?: string;
 }
 
 /** The Relay's answer to one HTTP acknowledgment. */
@@ -166,8 +171,11 @@ interface MailboxSubscription {
   isConclusiveRefusal(error: unknown): boolean;
   /** Decodes the `message` of a `durable-message` frame. */
   decodeDurable(message: unknown): Envelope;
-  /** Recovers retained work over HTTP while no socket delivers it. */
-  pull(): Promise<MailboxPage>;
+  /**
+   * Recovers retained work over HTTP while no socket delivers it. With
+   * `cursor`, the page starts after the page that issued the cursor.
+   */
+  pull(cursor?: string): Promise<MailboxPage>;
   /**
    * Acknowledges messages and Relay receipts over HTTP when queued socket
    * acknowledgments lose their socket.
@@ -253,6 +261,15 @@ function notConnected(): HostedRelayPresenceError {
  * durable queue, so each one is handed off behind the messages that came
  * before it. HTTP pull recovers retained work only while the socket is down
  * or after a handler failure.
+ *
+ * Each page of durable frames ends with one `acknowledge` frame, with no ID
+ * when the page acknowledged nothing, so unacknowledged messages do not
+ * stall the pages behind them. An HTTP pull sends the Relay cursor of the
+ * page before it, so a full page of unacknowledged messages does not stall
+ * the pages behind it either. A page past the cursor that is empty clears
+ * the cursor, and the next pull starts at the head again. The recovery pull
+ * for failed work also starts at the head, so it offers the failed message
+ * again.
  */
 export function subscribeHostedMailbox(
   options: MailboxSubscription,
@@ -296,6 +313,21 @@ export function subscribeHostedMailbox(
   let outage = false;
   /** True while a failed pull waits for the next retry. */
   let pullOwed = false;
+  /**
+   * The Relay cursor from the last page that was not empty. A pull failure,
+   * an empty page, and a page without a cursor clear it.
+   */
+  let pullCursor: string | undefined;
+  /**
+   * True while the pending recovery pull is the one that failed work
+   * scheduled. A recovery pull that replaces it sets it to false.
+   */
+  let recoveryForFailedWork = false;
+  /**
+   * True from the start of a failed-work recovery pull until a pull starts.
+   * That pull ignores the cursor and starts at the head.
+   */
+  let headPullOwed = false;
   let failedWorkRecoveryDelay = RECOVERY_MILLISECONDS;
   /**
    * The id of each message whose work failed, with the `Date.now()` time of
@@ -322,6 +354,12 @@ export function subscribeHostedMailbox(
   let relayReceipts = false;
   /** The messages acknowledged on the live socket that wait for its reply. */
   const awaitingReply = new Set<string>();
+  /**
+   * True from a durable message frame of the live socket until the client
+   * sends an `acknowledge` frame. The Relay sends the next page of a backlog
+   * only on that frame.
+   */
+  let pageOwed = false;
   const presenceRequests = new Map<string, PendingPresence>();
   let presenceSequence = 0;
 
@@ -369,7 +407,14 @@ export function subscribeHostedMailbox(
     );
   };
 
-  const flushAcknowledgments = () => {
+  /**
+   * Sends the queued acknowledgments. `endOfPage` is true when a burst of
+   * durable frames is done: the socket then sends an `acknowledge` frame for
+   * the page, with no id when nothing was acknowledged. Messages that stay
+   * unacknowledged, as blocked group content and failed work do, would
+   * otherwise stall each page of the backlog behind them.
+   */
+  const flushAcknowledgments = (endOfPage = false) => {
     clearTimeout(acknowledgmentTimer);
     acknowledgmentTimer = undefined;
     const live = socket?.readyState === 1 ? socket : undefined;
@@ -384,7 +429,13 @@ export function subscribeHostedMailbox(
         for (const messageId of messageIds)
           if (relayReceipts) awaitingReply.add(messageId);
           else options.onAcknowledgmentReply(messageId, false);
+        // A page that arrives after this frame owes a frame of its own.
+        pageOwed = false;
         live.send(JSON.stringify({ type: "acknowledge", messageIds }));
+      }
+      if (endOfPage && pageOwed) {
+        pageOwed = false;
+        live.send(JSON.stringify({ type: "acknowledge", messageIds: [] }));
       }
       // A socket that did not advertise Relay receipts closes on an
       // `acknowledge-receipts` frame, so the receipts of a pull page go over
@@ -461,6 +512,9 @@ export function subscribeHostedMailbox(
     }
     if (recoveryDue !== undefined && recoveryDue <= due) {
       recoveryDue = undefined;
+      // The cursor can lie past the failed message, so this pull starts at
+      // the head.
+      if (recoveryForFailedWork) headPullOwed = true;
       requestPull();
     }
     armRetryTimer();
@@ -507,17 +561,24 @@ export function subscribeHostedMailbox(
     const due = Date.now() + wait;
     if (recoveryDue !== undefined && due >= recoveryDue) return false;
     recoveryDue = due;
+    recoveryForFailedWork = false;
     armRetryTimer();
     return true;
   };
 
-  /** Schedules the recovery pull for failed work, and doubles its next wait. */
+  /**
+   * Schedules the recovery pull for failed work, and doubles its next wait.
+   * That pull starts at the head of the mailbox, so it offers the failed
+   * message again.
+   */
   const recoverFailedWork = () => {
-    if (recoverLater(failedWorkRecoveryDelay))
+    if (recoverLater(failedWorkRecoveryDelay)) {
+      recoveryForFailedWork = true;
       failedWorkRecoveryDelay = Math.min(
         MAXIMUM_RECOVERY_MILLISECONDS,
         failedWorkRecoveryDelay * 2,
       );
+    }
   };
 
   /**
@@ -573,9 +634,9 @@ export function subscribeHostedMailbox(
   };
 
   /**
-   * Forgets each failed message that a recovery page shows to be gone. A page
-   * that is not full holds every retained message, except a message in the
-   * Relay's hot delivery window. Such a page shows a failed message gone when
+   * Forgets each failed message that a recovery page shows to be gone. A head
+   * page that is not full holds every retained message, except a message in
+   * the Relay's hot delivery window. Such a page shows a failed message gone when
    * the page does not hold it. The message must also have first failed more
    * than `FAILED_MESSAGE_GONE_MILLISECONDS` before `pulledAt`. `pulledAt` is
    * the `Date.now()` time at which the pull of the page started. Then the
@@ -620,15 +681,25 @@ export function subscribeHostedMailbox(
           const { failed } = await receiveBatch(durable.splice(0));
           if (failed) recoverFailedWork();
           // One frame acknowledges the whole burst once nothing is queued.
-          if (durable.length === 0) flushAcknowledgments();
+          if (durable.length === 0) flushAcknowledgments(true);
           continue;
         }
         pullRequested = false;
         flushAcknowledgments();
         const pulledAt = Date.now();
+        const cursor = headPullOwed ? undefined : pullCursor;
+        headPullOwed = false;
+        // A failed pull, including a Relay refusal of the cursor, leaves the
+        // cursor cleared, so the next pull starts at the head.
+        pullCursor = undefined;
         pulling = true;
-        const { messages, receipts } = await options.pull();
+        const { messages, receipts, nextCursor } = await options.pull(cursor);
         pulling = false;
+        // A Relay page without a `nextCursor` makes the next pull start from
+        // the head. This branch is removed in the first release after every
+        // Relay lane serves the cursor.
+        if (messages.length > 0 && nextCursor !== undefined)
+          pullCursor = nextCursor;
         // The Relay answered, so the HTTP outage ends. The reconnect ceiling
         // stays, because the socket can still fail.
         outage = false;
@@ -639,16 +710,20 @@ export function subscribeHostedMailbox(
         ]);
         flushAcknowledgments();
         // A failed message can be missing from the page while it waits in the
-        // Relay's hot delivery window, so a pull follows while one remains.
-        forgetGoneFailures(messages, pulledAt);
+        // Relay's hot delivery window, so a pull follows while one remains. A
+        // page past the cursor does not hold the messages before the cursor.
+        if (cursor === undefined) forgetGoneFailures(messages, pulledAt);
         if (failed || failedMessages.size > 0) recoverFailedWork();
         else failedWorkRecoveryDelay = RECOVERY_MILLISECONDS;
         // A full page can leave more retained work behind it. A full recovery
-        // page whose batch acknowledged a message pulls the next page after a
-        // random wait from 1 s to 3 s. A full page that acknowledged nothing
-        // pulls again only while a failed message remains, after the
-        // failed-work wait.
-        if (messages.length >= MAXIMUM_PENDING_FRAMES && acknowledged > 0)
+        // page whose batch acknowledged a message, or that issued a cursor,
+        // pulls the next page after a random wait from 1 s to 3 s. A full
+        // page that did neither pulls again only while a failed message
+        // remains, after the failed-work wait.
+        if (
+          messages.length >= MAXIMUM_PENDING_FRAMES &&
+          (acknowledged > 0 || pullCursor !== undefined)
+        )
           recoverLater();
       }
     } catch (error) {
@@ -689,6 +764,7 @@ export function subscribeHostedMailbox(
     connectionGeneration++;
     ephemeral.length = 0;
     durable.length = 0;
+    pageOwed = false;
     relayReceipts = false;
     // A reply can arrive only on the socket that carried the acknowledgment.
     const unanswered = [...awaitingReply];
@@ -761,6 +837,7 @@ export function subscribeHostedMailbox(
 
   const queueDurable = (candidate: WebSocket, message: unknown) => {
     const envelope = options.decodeDurable(message);
+    if (socket === candidate) pageOwed = true;
     if (durable.length >= MAXIMUM_PENDING_FRAMES) {
       // The frame stays retained in the mailbox; the recovery pull collects it.
       recoverLater();

@@ -1,7 +1,6 @@
 import { sha256, bytesToBase64 } from '../../internal/crypto';
 import type { Envelope } from '../../remote/relay/types';
-import type { SignalProtocolLocalStore, ReceivedContent } from '../../types/api';
-import { RELIABILITY_RECORD_TTL_MS } from './reliability';
+import type { ReceivedContent } from '../../types/api';
 
 /**
  * Bind recovery to the device that consumed an envelope, and to the
@@ -53,10 +52,12 @@ export async function deliveredEnvelopeFingerprint(
   });
 }
 
+/** The metadata key of one legacy row. */
 export function receivedContentKey(id: string): string {
   return `received-content:${id}`;
 }
 
+/** Parse one legacy row. Throws on a row that does not parse. */
 export function parseReceivedContent(value: string, id: string): ReceivedContent {
   const record = JSON.parse(value) as ReceivedContent;
   if (
@@ -70,15 +71,4 @@ export function parseReceivedContent(value: string, id: string): ReceivedContent
     throw new Error('Invalid received-content record');
   }
   return record;
-}
-
-const lastCleanup = new WeakMap<object, number>();
-
-/** Expired content follows the same thirty-day horizon as incoming retry evidence. */
-export async function pruneReceivedContent(store: SignalProtocolLocalStore): Promise<void> {
-  const now = Date.now();
-  const last = lastCleanup.get(store);
-  if (last !== undefined && now >= last && now - last < 60_000) return;
-  await store.deleteExpiredReceivedContent(now - RELIABILITY_RECORD_TTL_MS);
-  lastCleanup.set(store, now);
 }

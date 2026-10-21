@@ -7,17 +7,21 @@
  */
 
 import type { Logger } from '../../../logger';
-import type { SignalProtocolLocalSecretVault } from '../../../types/api';
+import type { LocalStoreProtection, SignalProtocolLocalSecretVault } from '../../../types/api';
 import { ReactNativeKeychainSignalProtocolSecretVault } from '../../vault/react-native-keychain';
 import type { SqliteOpenOptions } from '../sqlite/encryption';
 import type { SqliteRootExecutor } from '../sqlite/executor';
 import { createOpSqliteDriver } from '../sqlite/op-sqlite-driver';
 import {
   openSqliteStore,
+  readSqliteStoreProtection,
   resetSqliteStore,
   type SqliteStoreOpenOptions,
 } from '../sqlite/open-store';
-import { SqliteSignalProtocolStore } from '../sqlite/store';
+import {
+  SqliteSignalProtocolStore,
+  convertSqliteLegacyReceivedContent,
+} from '../sqlite/store';
 
 /** The database file name when the options name none. */
 const DEFAULT_DATABASE_NAME = 'open-e2ee-signal-protocol.db';
@@ -76,8 +80,12 @@ export function reactNativeStoreDatabase(
  * @see {@link SignalProtocolLocalStore} for interface documentation
  */
 export class ReactNativeSignalProtocolStore extends SqliteSignalProtocolStore {
-  private constructor(database: SqliteRootExecutor, logger: Logger | undefined) {
-    super(database, { logger });
+  private constructor(
+    database: SqliteRootExecutor,
+    protection: LocalStoreProtection,
+    logger: Logger | undefined
+  ) {
+    super(database, { logger, protection });
     databases.set(this, database);
   }
 
@@ -85,16 +93,23 @@ export class ReactNativeSignalProtocolStore extends SqliteSignalProtocolStore {
   static async open(
     options: ReactNativeSignalProtocolStoreOptions
   ): Promise<ReactNativeSignalProtocolStore> {
-    const database = await openSqliteStore(storeOptions(options));
-    return new ReactNativeSignalProtocolStore(database, options.logger);
+    const open = storeOptions(options);
+    const database = await openSqliteStore(open);
+    const protection = await readSqliteStoreProtection(database, open.vault);
+    return await convertSqliteLegacyReceivedContent(
+      new ReactNativeSignalProtocolStore(database, protection, options.logger),
+      database
+    );
   }
 
   /** @internal Use {@link resetReactNativeStore}. */
   static async reset(
     options: ReactNativeSignalProtocolStoreOptions
   ): Promise<ReactNativeSignalProtocolStore> {
-    const database = await resetSqliteStore(storeOptions(options));
-    return new ReactNativeSignalProtocolStore(database, options.logger);
+    const open = storeOptions(options);
+    const database = await resetSqliteStore(open);
+    const protection = await readSqliteStoreProtection(database, open.vault);
+    return new ReactNativeSignalProtocolStore(database, protection, options.logger);
   }
 
   /**

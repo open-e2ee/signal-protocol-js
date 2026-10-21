@@ -8,7 +8,7 @@
 
 > **isOutgoingMessageError**(`error`): `error is OutgoingMessageError`
 
-Return true when a send error exposes its durable logical-send identifier.
+Return true when a send error exposes its logical-send identifier.
 
 ## Parameters
 

@@ -7,6 +7,8 @@
  * scans a key prefix and reads the store's own session envelope for its
  * `userId`. `pruneSkippedSenderKeys` scans its exact sender prefix and evicts
  * the lowest numeric chain indexes inside that transaction.
+ * `removeSenderKeyHandoffs` scans its prefix and removes the handoff keys
+ * whose hash segments match.
  * A backend that copies these rules can get one of them wrong, and
  * a wrong copy can roll ratchet state back. So each backend the SDK ships
  * opens its engine's transaction and hands this function a handle over it.
@@ -68,6 +70,35 @@ function removeSessionsForUser(
   for (const key of doomed) transaction.delete(key);
 }
 
+/** The hash segments of a handoff key, or null for a key of another shape. */
+function handoffSegments(
+  key: string,
+  keyPrefix: string
+): { groupHash: string; accountHash: string; recipientHash: string } | null {
+  const segments = key.slice(keyPrefix.length).split(':');
+  if (segments.length !== 5) return null;
+  return { groupHash: segments[0], accountHash: segments[2], recipientHash: segments[3] };
+}
+
+function removeSenderKeyHandoffs(
+  transaction: KeyValueTransaction,
+  operation: Extract<KeyValueOperation, { type: 'removeSenderKeyHandoffs' }>
+): void {
+  const doomed: string[] = [];
+  for (const key of transaction.keysWithPrefix(operation.keyPrefix)) {
+    const segments = handoffSegments(key, operation.keyPrefix);
+    if (
+      segments !== null &&
+      (operation.groupHash === undefined || segments.groupHash === operation.groupHash) &&
+      (operation.accountHash === undefined || segments.accountHash === operation.accountHash) &&
+      (operation.recipientHash === undefined || segments.recipientHash === operation.recipientHash)
+    ) {
+      doomed.push(key);
+    }
+  }
+  for (const key of doomed) transaction.delete(key);
+}
+
 /**
  * Apply one `atomicWrite` batch inside an open transaction: every check
  * first, against the pre-batch state, then every write in order. A failed
@@ -92,6 +123,8 @@ export function applyKeyValueBatch(
       transaction.delete(operation.key);
     } else if (operation.type === 'removeSessionsForUser') {
       removeSessionsForUser(transaction, operation.keyPrefix, operation.userId);
+    } else if (operation.type === 'removeSenderKeyHandoffs') {
+      removeSenderKeyHandoffs(transaction, operation);
     } else if (operation.type === 'pruneSkippedSenderKeys') {
       const keys = [...transaction.keysWithPrefix(operation.keyPrefix)].sort(
         (a, b) => Number(a.slice(a.lastIndexOf(':') + 1)) - Number(b.slice(b.lastIndexOf(':') + 1))

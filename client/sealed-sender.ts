@@ -65,7 +65,7 @@ export interface SealedSenderResolutionContext {
 export async function serializeDirectSealedSenderMessage(
   msg: { recipientUserId: string; recipientDeviceId: number },
   ciphertextBase64: string,
-  messageType: 'prekey_bundle' | 'ciphertext' | 'sender_key',
+  messageType: 'prekey_bundle' | 'ciphertext' | 'sender_key' | 'retry_request',
   recipientRegistrationId: number | undefined,
   sealedSender: ResolvedSealedSenderContext,
   contentHint: ContentHint | undefined
@@ -92,7 +92,9 @@ export async function serializeDirectSealedSenderMessage(
         ? SealedSenderContentType.SENDERKEY_MESSAGE
         : messageType === 'prekey_bundle'
           ? SealedSenderContentType.PREKEY_MESSAGE
-          : SealedSenderContentType.MESSAGE,
+          : messageType === 'retry_request'
+            ? SealedSenderContentType.PLAINTEXT_CONTENT
+            : SealedSenderContentType.MESSAGE,
   });
   const recipient = sealed.recipients[0];
   if (!recipient) throw new Error('Sealed sender produced no direct recipient');
@@ -443,6 +445,25 @@ export function unsealedEnvelopeOf(error: unknown): Envelope | undefined {
 }
 
 /**
+ * The decrypt throws this for a seal that holds a retry request. A retry
+ * request has no ratchet ciphertext, so the decrypt gives no content for it.
+ * The relay subscription route gives `envelope` to the retry request handler,
+ * and never asks for a resend of it.
+ */
+export class SealedRetryRequestReceived extends Error {
+  override readonly name = 'SealedRetryRequestReceived';
+
+  /**
+   * @param envelope - The unsealed envelope: `messageType: 'retry_request'`,
+   *   the sender from the validated certificate, and the IDs of the
+   *   delivered envelope.
+   */
+  constructor(readonly envelope: Envelope) {
+    super('A sealed envelope holds a retry request');
+  }
+}
+
+/**
  * Map a sealed envelope's content type onto the envelope type the decrypt
  * path routes on.
  *
@@ -450,11 +471,12 @@ export function unsealedEnvelopeOf(error: unknown): Envelope | undefined {
  * via `reconstructEnvelope`, and `SignalProtocolClient.processIncomingEnvelope`
  * directly. Two copies of this mapping would drift.
  *
- * `SENDERKEY_MESSAGE` is the only case that matters here. It is what keeps
- * group routing working now that no group identifier travels on an envelope,
- * sealed or otherwise. Both `PREKEY_MESSAGE` and `MESSAGE` decrypt as pairwise
- * ratchet messages, and the ratchet distinguishes them from the payload
- * itself.
+ * `SENDERKEY_MESSAGE` keeps group routing working now that no group
+ * identifier travels on an envelope, sealed or otherwise. Both
+ * `PREKEY_MESSAGE` and `MESSAGE` decrypt as pairwise ratchet messages, and
+ * the ratchet distinguishes them from the payload itself.
+ * `PLAINTEXT_CONTENT` is a sealed retry request. It never goes to a ratchet
+ * decrypt.
  *
  * The default is unreachable: `isSealedSenderContentType` rejects every other
  * value at the parse, so nothing arrives here that this function cannot map.
@@ -470,6 +492,8 @@ export function envelopeTypeForContent(
     case SealedSenderContentType.PREKEY_MESSAGE:
     case SealedSenderContentType.MESSAGE:
       return 'ciphertext';
+    case SealedSenderContentType.PLAINTEXT_CONTENT:
+      return 'retry_request';
     default:
       throw new Error('Unsupported sealed sender content type');
   }

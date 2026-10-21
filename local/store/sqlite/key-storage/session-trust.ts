@@ -1,8 +1,8 @@
 /**
  * The atomic session and trust commit of an accepted session setup. One
  * transaction pins the contact identity, stores the session, consumes the
- * one-time prekeys, records the Kyber prekey use, and keeps the received
- * content, or does none of these.
+ * one-time prekeys, records the Kyber prekey use, and writes the receive
+ * record, or does none of these.
  */
 
 import { createUnverifiedContactIdentityRecord, evaluateContactIdentityCandidate } from '../../../../keys/identity';
@@ -19,7 +19,7 @@ import {
   serializeSessionRecord,
 } from '../models';
 import type { KeyStorageContext } from './context';
-import { setReceivedContent } from './metadata';
+import { writeReceiveWork } from './receive-work';
 
 export async function commitSessionTrust(
   ctx: KeyStorageContext,
@@ -125,6 +125,6 @@ export async function commitSessionTrust(
         [kyberParentRowId, commit.localIdentityType, commit.kyberPreKeyUse.signedPreKeyId, kyberBaseKey]
       );
     }
-    if (commit.receivedContent) await setReceivedContent(tx, commit.receivedContent);
+    if (commit.receiveWork) await writeReceiveWork(tx, commit.receiveWork);
   });
 }

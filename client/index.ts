@@ -93,11 +93,18 @@ export {
 } from "./relay-lifecycle";
 export { BraidPolicy, PostQuantumPolicy } from "./config";
 export type {
+  ContentRecoveryDisabledReason,
+  ContentRecoveryMode,
+  ContentRecoveryPolicy,
+  ContentRecoveryStatus,
+  GroupMembershipSource,
   HostedSealedSenderConfig,
+  ReceiveQueuePolicy,
   SealedSenderConfig,
   SelfHostedSealedSenderConfig,
   SignalProtocolConfig,
   SignalProtocolClientConfig,
+  StorageProtectionLevel,
 } from "./config";
 export type {
   AttachmentTransferOptions,
@@ -112,8 +119,28 @@ export type {
   SafetyNumberConfirmation,
 } from "./types";
 export { isOutgoingMessageError } from "./types";
+export {
+  DeviceSetReconciliationError,
+  RelayProtocolError,
+  type DeviceSetDevice,
+  type DeviceSetLastRefusal,
+  type DeviceSetPhase,
+  type DeviceSetRefusalAccount,
+  type DeviceSetUnresolved,
+  type DeviceSetUnresolvedReason,
+  type RelayProtocolErrorCode,
+  type RelayProtocolRoute,
+} from "./device-set-reconciliation";
+export {
+  GroupReceiveRefusedError,
+  type GroupReceiveDenial,
+  GroupReceiveUnavailableError,
+  type GroupReceiveUnavailability,
+  GroupResendDeferredError,
+} from "./group-receive-authorization";
 export type {
   BlockedRecipientsSyncInput,
+  GroupContentContext,
   InspectedSignalProtocolContent,
   MediaAttachmentDeleteSyncInput,
   ParsedReceiptContent,
@@ -133,9 +160,14 @@ export { createDefaultSignalProtocolContentAdapter } from "./content-adapter";
 export type {
   DecryptedEnvelope,
   DeliveredEvent,
+  DeliveryErrorCause,
+  DeliveryErrorEvent,
+  DeliveryRecoveredEvent,
   DeliverySource,
+  ReceiveExpiredEvent,
   RetryTerminalClass,
   RetryTerminalEvent,
+  RetryTerminalRecoveryEvent,
   SignalProtocolClientHooks,
 } from "./event-hooks";
 export type {

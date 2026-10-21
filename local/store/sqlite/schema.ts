@@ -24,6 +24,11 @@ export const SQLITE_STORE_TABLES = [
   'sender_keys',
   'skipped_sender_keys',
   'message_records',
+  'send_log_recipient',
+  'send_log_payload',
+  'send_log_resend_job',
+  'receive_work',
+  'sender_key_handoff',
   'metadata',
   'profile_keys',
   'group_master_keys',
@@ -149,6 +154,51 @@ export type MessageRecordRow = {
 export const MESSAGE_RECORD_COLUMNS = `session_id AS sessionId, timestamp,
   recipient_user_id AS recipientUserId, recipient_device_id AS recipientDeviceId,
   plaintext, created_at AS createdAt, session_state_id AS sessionStateId`;
+
+export type SendLogPayloadRow = {
+  clientMessageId: string;
+  groupId: string;
+  clientTimestamp: number;
+  contentHint: number;
+  /** Base64 of the plaintext bytes. */
+  plaintext: string;
+  createdAt: number;
+  /** 1 after the send finished, else 0. */
+  sendComplete: number;
+};
+
+export const SEND_LOG_PAYLOAD_COLUMNS = `client_message_id AS clientMessageId, group_id AS groupId,
+  client_timestamp AS clientTimestamp, content_hint AS contentHint, plaintext,
+  created_at AS createdAt, send_complete AS sendComplete`;
+
+export type SendLogRecipientRow = {
+  clientMessageId: string;
+  userId: string;
+  deviceId: number;
+  clientTimestamp: number;
+  responses: number;
+};
+
+export const SEND_LOG_RECIPIENT_COLUMNS = `client_message_id AS clientMessageId, user_id AS userId,
+  device_id AS deviceId, client_timestamp AS clientTimestamp, responses`;
+
+export type SendLogResendJobRow = {
+  jobId: string;
+  clientMessageId: string;
+  requesterUserId: string;
+  requesterDeviceId: number;
+  retryId: string;
+  requestEnvelopeId: string;
+  failedEnvelopeId: string | null;
+  createdAt: number;
+  attempts: number;
+  state: string;
+};
+
+export const SEND_LOG_RESEND_JOB_COLUMNS = `job_id AS jobId, client_message_id AS clientMessageId,
+  requester_user_id AS requesterUserId, requester_device_id AS requesterDeviceId,
+  retry_id AS retryId, request_envelope_id AS requestEnvelopeId,
+  failed_envelope_id AS failedEnvelopeId, created_at AS createdAt, attempts, state`;
 
 /** `?, ?, ?` for an `IN (...)` list of `count` values. */
 export function placeholders(count: number): string {

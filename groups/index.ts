@@ -44,4 +44,9 @@ export type {
   OnEndorsementsInvalidated,
   GroupActionContext,
   GroupTrustRoot,
+  GroupReceiveRecord,
+  GroupFetchState,
+  GroupFetchDenial,
+  GroupRecordSource,
+  GroupUnverifiedOrigin,
 } from '../internal/groups';

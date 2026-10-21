@@ -42,8 +42,12 @@ const FINGERPRINT_VERSION_PREFIX = new Uint8Array([0x00, 0x00]);
  */
 export const FINGERPRINT_VERSION = 2;
 
-/** Independent composite-identity QR/safety-number profile version. */
-export const COMPOSITE_FINGERPRINT_VERSION = 3;
+/**
+ * Independent composite-identity QR/safety-number profile version.
+ * Version 4 orders the two parties by their display digits. A version 3 code
+ * from an older SDK reports `version_mismatch`.
+ */
+export const COMPOSITE_FINGERPRINT_VERSION = 4;
 
 const COMPOSITE_FINGERPRINT_DOMAIN = new TextEncoder().encode(
   'signal-protocol-js composite safety number v1'
@@ -77,9 +81,14 @@ export interface FingerprintPair {
   localFingerprint: IndividualFingerprint;
   /** Remote user's fingerprint */
   remoteFingerprint: IndividualFingerprint;
-  /** 60-digit displayable number (sorted, combined) */
+  /**
+   * The fingerprint whose 30-digit display string comes first. Both parties
+   * select the same one.
+   */
+  firstFingerprint: IndividualFingerprint;
+  /** 60-digit displayable number: the first party's 30 digits, then the second's */
   displayable: string;
-  /** Hex representation of combined hash */
+  /** Hex of the first party's scannable bytes, then the second party's */
   hex: string;
 }
 
@@ -154,8 +163,8 @@ export function computeIndividualFingerprint(
  *
  * The displayable 60-digit number is created by:
  * 1. Computing individual fingerprints for both users
- * 2. Sorting by user identifier (lexicographical)
- * 3. Converting each to 30 digits and concatenating
+ * 2. Converting each to 30 digits
+ * 3. Concatenating the two digit strings in the order of `orderFingerprintPair`
  *
  * @param localKey - Local user's identity public key
  * @param remoteKey - Remote user's identity public key
@@ -169,30 +178,50 @@ export function computeFingerprintPair(
   localId: string,
   remoteId: string
 ): FingerprintPair {
-  // Compute individual fingerprints
   const localFingerprint = computeIndividualFingerprint(localKey, localId);
   const remoteFingerprint = computeIndividualFingerprint(remoteKey, remoteId);
+  return orderFingerprintPair(localFingerprint, remoteFingerprint);
+}
 
-  // Sort by identifier for deterministic ordering
-  const localFirst = localId.localeCompare(remoteId) <= 0;
+/** Unsigned byte comparison, the order that the reference uses for display strings. */
+function compareBytes(left: Uint8Array, right: Uint8Array): number {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return left.length - right.length;
+}
 
+/**
+ * Order the two parties as the reference `DisplayableFingerprint` does: the
+ * party whose 30-digit display string is lower by unsigned byte comparison
+ * comes first. Identifiers are not
+ * compared, so neither locale nor UTF-16 code-unit order can change the result.
+ * When the two display strings are equal, the 60 digits do not depend on the
+ * order, and the full hash bytes choose the first fingerprint, so both parties
+ * still produce the same hex and emoji.
+ */
+function orderFingerprintPair(
+  localFingerprint: IndividualFingerprint,
+  remoteFingerprint: IndividualFingerprint
+): FingerprintPair {
+  const localDigits = generateNumericFromFingerprint(localFingerprint.full, 30);
+  const remoteDigits = generateNumericFromFingerprint(remoteFingerprint.full, 30);
+  const encoder = new TextEncoder();
+  const order =
+    compareBytes(encoder.encode(localDigits), encoder.encode(remoteDigits)) ||
+    compareBytes(localFingerprint.full, remoteFingerprint.full);
+  const localFirst = order <= 0;
   const first = localFirst ? localFingerprint : remoteFingerprint;
   const second = localFirst ? remoteFingerprint : localFingerprint;
-
-  // Generate 30 digits from each fingerprint (60 total)
-  const firstDigits = generateNumericFromFingerprint(first.full, 30);
-  const secondDigits = generateNumericFromFingerprint(second.full, 30);
-  const displayable = formatNumeric(firstDigits + secondDigits);
-
-  // Combine for hex representation
-  // Use first 32 bytes from each fingerprint (64 bytes total = 128 hex chars)
-  const combinedHex = bytesToHex(first.scannable) + bytesToHex(second.scannable);
-
   return {
     localFingerprint,
     remoteFingerprint,
-    displayable,
-    hex: combinedHex, // 32 + 32 bytes = 128 hex chars
+    firstFingerprint: first,
+    displayable: formatNumeric(localFirst ? localDigits + remoteDigits : remoteDigits + localDigits),
+    // 32 + 32 scannable bytes = 128 hex chars
+    hex: bytesToHex(first.scannable) + bytesToHex(second.scannable),
   };
 }
 
@@ -253,19 +282,7 @@ export function computeCompositeFingerprintPair(
     identityType,
     iterations
   );
-  const localFirst = localId.localeCompare(remoteId) <= 0;
-  const first = localFirst ? localFingerprint : remoteFingerprint;
-  const second = localFirst ? remoteFingerprint : localFingerprint;
-  const displayable = formatNumeric(
-    generateNumericFromFingerprint(first.full, 30) +
-      generateNumericFromFingerprint(second.full, 30)
-  );
-  return {
-    localFingerprint,
-    remoteFingerprint,
-    displayable,
-    hex: bytesToHex(first.scannable) + bytesToHex(second.scannable),
-  };
+  return orderFingerprintPair(localFingerprint, remoteFingerprint);
 }
 
 /**

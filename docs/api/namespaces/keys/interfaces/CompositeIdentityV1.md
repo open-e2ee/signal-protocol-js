@@ -30,4 +30,4 @@ Canonical tuple version. Encoded as `0x01`.
 
 > `readonly` **x25519PublicKey**: [`PublicKey`](../../../type-aliases/PublicKey.md)
 
-Standard X25519 public key used by X3DH/PQXDH.
+Standard X25519 public key used by PQXDH.

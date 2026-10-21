@@ -35,16 +35,40 @@ on PreKeyMessage indicates stale/corrupted keys.
 
 > `optional` **markDelivered?**: (`messageId`) => `Promise`\<`void`\>
 
-Callback to mark message as delivered when no relay is available.
+Callback that acknowledges an envelope when no relay is available.
 
-Call this after sending a retry request, to prevent the failed message
-from being re-fetched indefinitely.
+The client calls it after it sends a retry request for a failed
+envelope, and after it discards an envelope that it does not process
+again, so the envelope is not fetched again.
 
 #### Parameters
 
 ##### messageId
 
 `string`
+
+#### Returns
+
+`Promise`\<`void`\>
+
+***
+
+### onPersist?
+
+> `optional` **onPersist?**: (`outcome`) => `Promise`\<`void`\>
+
+Save content that `processIncomingEnvelope` gives. The client calls it
+with the `processed` outcome before the method returns. When it
+resolves, the client completes the receive record, so you do not call
+`completeReceive`. When it rejects, the method still returns the
+`processed` outcome, and the record waits for `completeReceive` or for
+its expiry. A redelivery of the envelope calls it again.
+
+#### Parameters
+
+##### outcome
+
+[`ProcessedReceive`](ProcessedReceive.md)
 
 #### Returns
 
@@ -61,6 +85,9 @@ Callback to send retry requests when no relay is available.
 Required for background processing where there is no WebSocket relay.
 The callback receives a `retry_request` envelope for the device that sent
 the failed message. Deliver it to that device as any other envelope.
+The envelope is identified, and without a relay the client cannot seal
+it. The client calls the callback only when the sealed sender delivery
+mode permits identified delivery, so `'required'` never calls it.
 
 #### Parameters
 

@@ -9,10 +9,15 @@
  * tells that the device decrypted it. A second report of the same source
  * changes nothing.
  *
- * The status is durable. Each change is written before the client announces
- * it, and the write marks it announced, so a replayed receipt announces
- * nothing again. A receipt for a send that has not resolved is kept and
- * announced when the send resolves.
+ * The status is durable. A receipt writes its source before the client
+ * announces it. The client marks a source announced only after the
+ * `onDelivered` hook returns for it. A hook that throws, a stop during the
+ * hook, or a crash leaves the source unannounced, and the next receipt for
+ * the message announces it again: a replay of the same receipt, or a receipt
+ * of another source or device. So the announcement is at least once, and a
+ * replayed receipt announces nothing again only after the hook returned. A
+ * receipt for a send that has not resolved is kept and announced when the
+ * send resolves.
  *
  * A receipt names no message that has no outbox intent, such as a sync copy
  * or a retry resend. Such a receipt changes nothing.
@@ -27,10 +32,13 @@ import {
   type StoredDeliveryStatus,
   type StoredOutgoingMessageIntent,
 } from '../local/store/reliability';
-import type { DeliveredEvent, DeliverySource } from './event-hooks';
+import type { DeliveredEvent, DeliverySource, SignalProtocolClientHooks } from './event-hooks';
 import type { RelayDeliveryReceipt } from './relay-receipt-intake';
 
-type DeliveryStatusStore = Pick<SignalProtocolLocalStore, 'getMetadata' | 'setMetadata' | 'deleteMetadata'>;
+type DeliveryStatusStore = Pick<
+  SignalProtocolLocalStore,
+  'getMetadata' | 'setMetadata' | 'deleteMetadata' | 'deleteSendLogRecipientsByTimestamp'
+>;
 
 function addresses(intent: StoredOutgoingMessageIntent, recipientId: string): boolean {
   return intent.kind === 'group'
@@ -38,8 +46,12 @@ function addresses(intent: StoredOutgoingMessageIntent, recipientId: string): bo
     : intent.recipientId === recipientId;
 }
 
-/** Mark each unannounced source of each device announced, and return one event for each. */
-function announce(
+/**
+ * One event for each source of each device that the client has not
+ * announced, in the order of arrival. It changes nothing: `announce` marks
+ * an event announced after its hook returns.
+ */
+function unannounced(
   status: StoredDeliveryStatus,
   intent: StoredOutgoingMessageIntent
 ): DeliveredEvent[] {
@@ -60,7 +72,6 @@ function announce(
           ...(intent.kind === 'group' && { groupId: intent.recipientId }),
         });
       }
-      delivery.announced = delivery.sources.length;
     }
   }
   return events;
@@ -105,6 +116,11 @@ export class DeliveryStatusTracker {
    * Apply one E2EE delivery receipt from a recipient device. The receipt
    * names each message by its client timestamp. Resolves to the events to
    * announce.
+   *
+   * The device decrypted each message, so the receipt first deletes the send
+   * log row of that device at each timestamp. A Relay receipt deletes no
+   * row: a device also acknowledges a copy that it could not decrypt, and
+   * the row authorizes the resend of the content to it.
    */
   public async applyE2eeReceipt(
     recipientId: string,
@@ -112,8 +128,13 @@ export class DeliveryStatusTracker {
     timestamps: readonly number[],
     deliveredAt: number
   ): Promise<DeliveredEvent[]> {
+    const unique = [...new Set(timestamps)];
+    await this.store.deleteSendLogRecipientsByTimestamp(
+      { userId: recipientId, deviceId: recipientDeviceId },
+      unique
+    );
     const events: DeliveredEvent[] = [];
-    for (const timestamp of new Set(timestamps)) {
+    for (const timestamp of unique) {
       for (const clientMessageId of await getSentClientMessageIds(this.store, timestamp)) {
         events.push(
           ...(await this.apply(clientMessageId, 'e2ee', recipientId, recipientDeviceId, deliveredAt))
@@ -131,9 +152,43 @@ export class DeliveryStatusTracker {
     if (this.sending.has(clientMessageId)) return [];
     return (
       (await updateDeliveryStatus(this.store, clientMessageId, (status, intent) =>
-        intent.result && !this.sending.has(clientMessageId) ? announce(status, intent) : []
+        intent.result && !this.sending.has(clientMessageId) ? unannounced(status, intent) : []
       )) ?? []
     );
+  }
+
+  /**
+   * Run the `onDelivered` hook for each event in order, and mark each event
+   * announced after its hook returns. The hook is called directly, not
+   * through `callHook`, so an error from the hook, or the RelayWorkStopped of
+   * a stop, rejects the call. That event and each later event then stay
+   * unannounced, and the next receipt for the message announces them again.
+   * The caller lets the rejection fail the hand-off of the receipt, so the
+   * relay replays it.
+   */
+  public async announce(
+    hooks: SignalProtocolClientHooks | undefined,
+    events: readonly DeliveredEvent[]
+  ): Promise<void> {
+    const deliver = hooks?.onDelivered;
+    for (const event of events) {
+      if (deliver) await deliver(event);
+      await this.markAnnounced(event);
+    }
+  }
+
+  /**
+   * Mark the sources of this event announced. The announced count of a
+   * device only moves forward, so a late or repeated mark never announces a
+   * source again.
+   */
+  private async markAnnounced(event: DeliveredEvent): Promise<void> {
+    await updateDeliveryStatus(this.store, event.clientMessageId, (status) => {
+      const delivery = status.devices[event.recipientId]?.[String(event.recipientDeviceId)];
+      if (!delivery) return;
+      const announced = Math.min(event.sources.length, delivery.sources.length);
+      if (announced > delivery.announced) delivery.announced = announced;
+    });
   }
 
   private async apply(
@@ -152,10 +207,11 @@ export class DeliveryStatusTracker {
           deliveredAt,
           announced: 0,
         });
-        if (delivery.sources.includes(source)) return [];
-        delivery.sources.push(source);
+        // A replay of a source adds nothing. It still announces each source
+        // whose hook did not return.
+        if (!delivery.sources.includes(source)) delivery.sources.push(source);
         if (!intent.result || this.sending.has(clientMessageId)) return [];
-        return announce(status, intent);
+        return unannounced(status, intent);
       })) ?? []
     );
   }

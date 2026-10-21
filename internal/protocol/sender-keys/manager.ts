@@ -19,7 +19,12 @@
 
 import { utf8Decode } from '../../platform';
 import * as crypto from '../../crypto';
-import type { SenderKeyReceiveCommit, SignalProtocolLocalStore } from '../../../types/api';
+import type {
+  SenderKeyReceiveCommit,
+  SenderKeyRecordWriteOptions,
+  SenderKeyStore,
+  SignalProtocolLocalStore,
+} from '../../../types/api';
 import type { Signature, PublicKey, PrivateKey } from '../../../keys';
 import { SENDER_KEY_FORMAT, SENDER_KEY_MESSAGE_VERSION } from '../../../versions';
 import { defaultSignalProtocolLogger, type Logger } from '../../../logger';
@@ -32,6 +37,7 @@ import {
   MAX_SENDER_KEY_STATES,
 } from '../../../types/protocol-config';
 import { EncryptionError, EncryptionErrorCode } from '../../../types/errors';
+import type { ReceiveWorkSeed } from '../../../types/api';
 import {
   encodeSenderKeyMessage,
   decodeSenderKeyMessage,
@@ -90,16 +96,10 @@ export interface SenderKeyState {
    * decryption keys remain usable for delayed messages.
    */
   createdAt: number;
-
-  /**
-   * True while an automatic rotation still needs a durable distribution send.
-   *
-   * The exact-outbox path clears this only after every prepared distribution
-   * message reaches the Relay. If outbox persistence fails first, the next
-   * attempt can reconstruct a distribution from the current ratchet state.
-   */
-  distributionPending?: boolean;
 }
+
+/** Why a locally created sender key is past the age bound. */
+type OwnSenderKeyExpiry = { kind: 'no-creation-time' } | { kind: 'aged'; ageMs: number };
 
 export interface SenderKeyDistributionMessage {
   senderKeyVersion: string;
@@ -195,6 +195,33 @@ function resolveMaxSenderKeyAge(configured: number | undefined, logger: Required
   return configured;
 }
 
+/**
+ * Classify a sender key against the age bound. Only a locally created key
+ * expires: a received key has no private signature key, and it stays usable
+ * for delayed messages.
+ *
+ * A locally created key always records when it was created, at creation and
+ * again at every rotation. One that does not is damaged or predates the
+ * field, so its age cannot be established. Establishing the age is the single
+ * thing this bound exists for. Skipping the check would exempt the only keys
+ * whose life is genuinely unbounded. Such a key counts as expired instead.
+ * The caller answers that by rotating, which costs a redistribution and
+ * restores a key whose age is known.
+ *
+ * @returns Null when the key is within the bound.
+ */
+function ownSenderKeyExpiry(
+  state: SenderKeyState,
+  maxSenderKeyAge: number
+): OwnSenderKeyExpiry | null {
+  if (!state.signatureKey) return null;
+  if (!Number.isFinite(state.createdAt) || state.createdAt <= 0) {
+    return { kind: 'no-creation-time' };
+  }
+  const ageMs = Date.now() - state.createdAt;
+  return ageMs > maxSenderKeyAge ? { kind: 'aged', ageMs } : null;
+}
+
 /** Reject sender-key state or a distribution in an unsupported format. */
 export function assertSenderKeyVersion(state: { senderKeyVersion: string }): void {
   if (state.senderKeyVersion !== SENDER_KEY_FORMAT) {
@@ -204,6 +231,87 @@ export function assertSenderKeyVersion(state: { senderKeyVersion: string }): voi
   }
 }
 
+/**
+ * A sender key state with only the fields of `SenderKeyState`. A state that
+ * an earlier SDK version wrote can carry a retired field. The manager keeps
+ * only the current fields of each state that it loads, so no code path reads
+ * a retired field and the next write of the state omits it. The mapped type
+ * makes the compiler require each field of `SenderKeyState` here.
+ */
+function withoutRetiredFields(state: SenderKeyState): SenderKeyState {
+  const current: { [K in keyof Required<SenderKeyState>]: SenderKeyState[K] } = {
+    senderKeyId: state.senderKeyId,
+    senderKeyVersion: state.senderKeyVersion,
+    chainId: state.chainId,
+    generation: state.generation,
+    chainKey: state.chainKey,
+    signatureKey: state.signatureKey,
+    publicSignatureKey: state.publicSignatureKey,
+    chainIndex: state.chainIndex,
+    createdAt: state.createdAt,
+  };
+  return current;
+}
+
+/** The distribution of a sender key state at its current chain index. */
+function currentDistribution(state: SenderKeyState): SenderKeyDistributionMessage {
+  assertSenderKeyVersion(state);
+  return {
+    senderKeyVersion: SENDER_KEY_FORMAT,
+    senderKeyId: state.senderKeyId,
+    chainId: state.chainId,
+    generation: state.generation,
+    chainIndex: state.chainIndex,
+    chainKey: state.chainKey,
+    publicSignatureKey: state.publicSignatureKey,
+  };
+}
+
+/**
+ * Resolve the group a framed SenderKeyMessage belongs to.
+ *
+ * A group envelope names no group. It carries the sender's identity and an
+ * opaque distribution identifier inside the frame. The receiver maps that
+ * identifier back to a group through its own sender key store. The store is
+ * the only thing that knows the association, which is why the relay cannot
+ * learn it.
+ *
+ * Parsing here reads unauthenticated bytes: the signature is not checked
+ * until `decryptGroupMessage`. That is safe because the only thing taken
+ * from them is an identifier used as a lookup key. A forged identifier
+ * either matches no record, or matches one. Matching one is not an
+ * escalation. The caller's own state already binds that identifier to a
+ * public signature key, and the subsequent verification rejects the forgery
+ * against it.
+ *
+ * @param store - The sender key store of the receiving device
+ * @param framedMessage - Framed SenderKeyMessage bytes from the envelope
+ * @param senderId - Sender user identifier, from the envelope
+ * @param senderDeviceId - Sender device identifier, from the envelope
+ * @returns The group identifier, or null if no sender key matches
+ */
+export async function resolveGroupForFramedMessage(
+  store: Pick<SenderKeyStore, 'resolveGroupForSenderKeyId'>,
+  framedMessage: Uint8Array,
+  senderId: string,
+  senderDeviceId: number
+): Promise<string | null> {
+  let senderKeyId: string;
+  try {
+    const { protobufBytes } = parseSenderKeyMessage(framedMessage);
+    const decoded = decodeSenderKeyMessage(protobufBytes);
+    if (!decoded.distributionUuid) return null;
+    senderKeyId = utf8Decode(decoded.distributionUuid);
+  } catch {
+    // Not a well-formed frame, so it names no distribution and no group.
+    return null;
+  }
+
+  if (!senderKeyId) return null;
+
+  return store.resolveGroupForSenderKeyId(senderKeyId, senderId, senderDeviceId);
+}
+
 export class SenderKeyManager {
   /** Resolved configuration values */
   private readonly hkdfInfoString: string;
@@ -211,21 +319,6 @@ export class SenderKeyManager {
   private readonly maxSkippedKeys: number;
   private readonly maxSenderKeyAge: number;
 
-  /**
-   * In-memory cache of previous sender key states for rotation transitions.
-   *
-   * Keep up to MAX_SENDER_KEY_STATES per sender to decrypt in-flight
-   * messages encrypted with a previous key during the rotation window.
-   *
-   * This cache is backed by persistent storage via storeSenderKeyRecord/
-   * getSenderKeyRecord (when available). On cache miss, previous states
-   * are loaded from storage.
-   *
-   * Key format: JSON tuple [groupId, userId, deviceId].
-   * Value: Array of previous states (most recent first), capped at MAX_SENDER_KEY_STATES - 1
-   *        (the current state is in storage, previous states are here)
-   */
-  private readonly previousStates = new Map<string, SenderKeyState[]>();
   private readonly logger: Required<Logger>;
 
   constructor(
@@ -239,11 +332,6 @@ export class SenderKeyManager {
     this.maxChainAdvance = config?.maxChainAdvance ?? SENDER_KEYS_DEFAULTS.maxChainAdvance;
     this.maxSkippedKeys = config?.maxSkippedKeys ?? SENDER_KEYS_DEFAULTS.maxSkippedKeys;
     this.maxSenderKeyAge = resolveMaxSenderKeyAge(config?.maxSenderKeyAge, this.logger);
-  }
-
-  /** Encode each cache address component separately, including delimiters in names. */
-  private stateKey(groupId: string, userId: string, deviceId: number): string {
-    return JSON.stringify([groupId, userId, deviceId]);
   }
 
   /**
@@ -291,46 +379,38 @@ export class SenderKeyManager {
     userId: string,
     deviceId: number,
     currentState: SenderKeyState,
-    previousStatesList: SenderKeyState[]
+    previousStatesList: SenderKeyState[],
+    options?: SenderKeyRecordWriteOptions
   ): Promise<void> {
     const allStates = [currentState, ...previousStatesList];
-    await this.storage.storeSenderKeyRecord(groupId, userId, deviceId, allStates);
+    await this.storage.storeSenderKeyRecord(
+      groupId,
+      userId,
+      deviceId,
+      allStates,
+      undefined,
+      options
+    );
   }
 
   /**
-   * Load previous states from storage, populating the in-memory cache.
-   *
-   * Called on cache miss when trying to decrypt with previous states.
-   * Uses getSenderKeyRecord if available, otherwise returns empty array.
+   * Load the previous states of a sender from the stored record, most recent
+   * first. The manager keeps no copy: each call reads the store, so a
+   * rotation or a receive that another tab or manager wrote is kept.
    */
   private async loadPreviousStates(
     groupId: string,
     userId: string,
     deviceId: number
   ): Promise<SenderKeyState[]> {
-    const key = this.stateKey(groupId, userId, deviceId);
-
-    // Check cache first
-    const cached = this.previousStates.get(key);
-    if (cached !== undefined) {
-      return cached;
-    }
-
-    // Load from persistent storage
-    const record = await this.storage.getSenderKeyRecord(groupId, userId, deviceId);
+    const record = await this.loadSenderKeyRecord(groupId, userId, deviceId);
     if (record && record.length > 1) {
       // First element is current state (already in storage via getSenderKey),
       // remaining elements are previous states.
       // Cap at MAX_SENDER_KEY_STATES - 1 defensively (storage may have stale extras).
-      const prev = record.slice(1, MAX_SENDER_KEY_STATES);
-      this.previousStates.set(key, prev);
-      return prev;
+      return record.slice(1, MAX_SENDER_KEY_STATES);
     }
-
-    // No previous states available
-    const empty: SenderKeyState[] = [];
-    this.previousStates.set(key, empty);
-    return empty;
+    return [];
   }
 
   /**
@@ -371,9 +451,12 @@ export class SenderKeyManager {
       createdAt: now,
     };
 
-    // Store sender key (with empty previous states for a new key)
-    await this.persistSenderKeyRecord(groupId, userId, deviceId, state, []);
-    this.previousStates.set(this.stateKey(groupId, userId, deviceId), []);
+    // Store sender key (with empty previous states for a new key). The new
+    // senderKeyId replaces the old key, so the same write deletes the
+    // handoff rows of the group.
+    await this.persistSenderKeyRecord(groupId, userId, deviceId, state, [], {
+      deleteSenderKeyHandoffs: true,
+    });
 
     // Create distribution message (to send to other members)
     const distributionMessage: SenderKeyDistributionMessage = {
@@ -398,10 +481,22 @@ export class SenderKeyManager {
    * Process received sender key distribution message
    * Store sender key for another member
    *
-   * Validates against existing state per spec Section 3.4 -
-   * - Rejects if generation < existing (stale distribution)
-   * - Rejects if generation == existing AND chainIndex <= existing (replay)
-   * - Accepts if generation > existing (key rotation)
+   * The receiver matches a key by its identity, the senderKeyId, as
+   * Signal's published implementation matches a state by its chain ID and
+   * signing key. A sender that creates a key again starts at generation 1
+   * with a new senderKeyId, so the generation does not order two different
+   * keys.
+   * - The same key as the current state: the generation rules of spec
+   *   Section 3.4 apply. A lower generation changes nothing. The same
+   *   generation changes nothing at any chainIndex, because the existing
+   *   state can be ahead through decryption. A higher generation replaces
+   *   the current state in place, and the previous states do not change.
+   * - The key of a previous state: a late copy changes nothing, and the
+   *   state stays in its place.
+   * - Another key: it becomes the current state, and the existing state
+   *   moves to the front of the previous states, so a message in flight
+   *   under it still decrypts. When the record already holds
+   *   MAX_SENDER_KEY_STATES states, the oldest state goes.
    *
    * @param groupId - Group identifier
    * @param senderId - Sender user identifier
@@ -416,9 +511,21 @@ export class SenderKeyManager {
   ): Promise<void> {
     assertSenderKeyVersion(message);
     // Validate against existing state (Specification Section 3.4)
-    const existing = await this.storage.getSenderKey(groupId, senderId, senderDeviceId);
+    const existing = await this.loadSenderKey(groupId, senderId, senderDeviceId);
+    const sameKey = existing !== null && existing.senderKeyId === message.senderKeyId;
+    const previous =
+      existing !== null ? await this.loadPreviousStates(groupId, senderId, senderDeviceId) : [];
 
-    if (existing !== null) {
+    if (existing !== null && !sameKey) {
+      assertSenderKeyVersion(existing);
+      if (previous.some((state) => state.senderKeyId === message.senderKeyId)) {
+        this.logger.debug('Rejected late distribution of a previous sender key', {
+          category: 'E2EE',
+          data: { senderKeyId: message.senderKeyId },
+        });
+        return;
+      }
+    } else if (existing !== null) {
       assertSenderKeyVersion(existing);
       // Reject if generation is lower (stale distribution)
       if (message.generation < existing.generation) {
@@ -481,23 +588,35 @@ export class SenderKeyManager {
       createdAt: Date.now(), // Received keys track when we got them (not checked for expiration)
     };
 
-    // Build the candidate archive without changing the committed cache.
-    const key = this.stateKey(groupId, senderId, senderDeviceId);
+    // Build the archive from the stored record. A later generation of the
+    // same key replaces the current state in place, so the record never
+    // holds two states with one senderKeyId.
     const prev =
-      existing !== null
-        ? [existing, ...(await this.loadPreviousStates(groupId, senderId, senderDeviceId))].slice(
-            0,
-            MAX_SENDER_KEY_STATES - 1
-          )
-        : [];
+      existing === null
+        ? []
+        : sameKey
+          ? previous
+          : [existing, ...previous].slice(0, MAX_SENDER_KEY_STATES - 1);
 
     await this.persistSenderKeyRecord(groupId, senderId, senderDeviceId, state, prev);
-    this.previousStates.set(key, prev);
 
     this.logger.debug('Stored sender key', {
       category: 'E2EE',
       data: { senderKeyId: message.senderKeyId, senderId, senderDeviceId },
     });
+  }
+
+  /**
+   * Report whether the local sender key of a group is past the age bound,
+   * by the same rule that makes {@link encryptGroupMessage} refuse it with
+   * `SENDER_KEY_EXPIRED`. A send reads it before it distributes a pending
+   * key, so it rotates instead of distributing a key that it cannot use.
+   *
+   * @returns False when there is no sender key for the group.
+   */
+  async isOwnSenderKeyExpired(groupId: string, userId: string, deviceId: number): Promise<boolean> {
+    const state = await this.loadSenderKey(groupId, userId, deviceId);
+    return state !== null && ownSenderKeyExpiry(state, this.maxSenderKeyAge) !== null;
   }
 
   /**
@@ -517,49 +636,37 @@ export class SenderKeyManager {
     plaintextBytes: Uint8Array
   ): Promise<Uint8Array> {
     // Get sender key state
-    const state = await this.storage.getSenderKey(groupId, userId, deviceId);
+    const state = await this.loadSenderKey(groupId, userId, deviceId);
     if (!state) {
       throw new Error('SENDER_KEY_NOT_FOUND: No sender key for this group');
     }
 
     assertSenderKeyVersion(state);
 
-    // Received keys have no private signature key, so time-based expiration
-    // applies only to locally created encryption keys.
-    if (state.signatureKey) {
-      // A locally created key always records when it was created, at creation
-      // and again at every rotation. One that does not is damaged or predates
-      // the field, so its age cannot be established. Establishing the age is
-      // the single thing this bound exists for. Skipping the check would
-      // exempt the only keys whose life is genuinely unbounded. Treat such a
-      // key as expired instead. The caller answers that by rotating, which
-      // costs a redistribution and restores a key whose age is known.
-      if (!Number.isFinite(state.createdAt) || state.createdAt <= 0) {
-        throw new EncryptionError(
-          'Sender key has no usable creation time, so its age cannot be checked. Auto-rotation required.',
-          EncryptionErrorCode.SENDER_KEY_EXPIRED,
-          {
-            senderKeyId: state.senderKeyId,
-            groupId,
-            createdAt: state.createdAt,
-            maxAgeMs: this.maxSenderKeyAge,
-          }
-        );
-      }
-
-      const age = Date.now() - state.createdAt;
-      if (age > this.maxSenderKeyAge) {
-        throw new EncryptionError(
-          `Sender key expired after ${Math.floor(age / (24 * 60 * 60 * 1000))} days (max: ${Math.floor(this.maxSenderKeyAge / (24 * 60 * 60 * 1000))} days). Auto-rotation required.`,
-          EncryptionErrorCode.SENDER_KEY_EXPIRED,
-          {
-            senderKeyId: state.senderKeyId,
-            groupId,
-            ageMs: age,
-            maxAgeMs: this.maxSenderKeyAge,
-          }
-        );
-      }
+    const expiry = ownSenderKeyExpiry(state, this.maxSenderKeyAge);
+    if (expiry?.kind === 'no-creation-time') {
+      throw new EncryptionError(
+        'Sender key has no usable creation time, so its age cannot be checked. Auto-rotation required.',
+        EncryptionErrorCode.SENDER_KEY_EXPIRED,
+        {
+          senderKeyId: state.senderKeyId,
+          groupId,
+          createdAt: state.createdAt,
+          maxAgeMs: this.maxSenderKeyAge,
+        }
+      );
+    }
+    if (expiry?.kind === 'aged') {
+      throw new EncryptionError(
+        `Sender key expired after ${Math.floor(expiry.ageMs / (24 * 60 * 60 * 1000))} days (max: ${Math.floor(this.maxSenderKeyAge / (24 * 60 * 60 * 1000))} days). Auto-rotation required.`,
+        EncryptionErrorCode.SENDER_KEY_EXPIRED,
+        {
+          senderKeyId: state.senderKeyId,
+          groupId,
+          ageMs: expiry.ageMs,
+          maxAgeMs: this.maxSenderKeyAge,
+        }
+      );
     }
 
     // L6: Check for chain index overflow before encrypting
@@ -639,21 +746,8 @@ export class SenderKeyManager {
    * @returns Decrypted plaintext
    */
   /**
-   * Resolve the group a framed SenderKeyMessage belongs to.
-   *
-   * A group envelope names no group. It carries the sender's identity and an
-   * opaque distribution identifier inside the frame. The receiver maps that
-   * identifier back to a group through its own sender key store. The store is
-   * the only thing that knows the association, which is why the relay cannot
-   * learn it.
-   *
-   * Parsing here reads unauthenticated bytes: the signature is not checked
-   * until `decryptGroupMessage`. That is safe because the only thing taken
-   * from them is an identifier used as a lookup key. A forged identifier
-   * either matches no record, or matches one. Matching one is not an
-   * escalation. The caller's own state already binds that identifier to a
-   * public signature key, and the subsequent verification rejects the forgery
-   * against it.
+   * Resolve the group a framed SenderKeyMessage belongs to, from the store
+   * of this manager, as `resolveGroupForFramedMessage` tells.
    *
    * @param framedMessage - Framed SenderKeyMessage bytes from the envelope
    * @param senderId - Sender user identifier, from the envelope
@@ -665,20 +759,7 @@ export class SenderKeyManager {
     senderId: string,
     senderDeviceId: number
   ): Promise<string | null> {
-    let senderKeyId: string;
-    try {
-      const { protobufBytes } = parseSenderKeyMessage(framedMessage);
-      const decoded = decodeSenderKeyMessage(protobufBytes);
-      if (!decoded.distributionUuid) return null;
-      senderKeyId = utf8Decode(decoded.distributionUuid);
-    } catch {
-      // Not a well-formed frame, so it names no distribution and no group.
-      return null;
-    }
-
-    if (!senderKeyId) return null;
-
-    return this.storage.resolveGroupForSenderKeyId(senderKeyId, senderId, senderDeviceId);
+    return resolveGroupForFramedMessage(this.storage, framedMessage, senderId, senderDeviceId);
   }
 
   async decryptGroupMessage(
@@ -686,7 +767,7 @@ export class SenderKeyManager {
     senderId: string,
     senderDeviceId: number,
     framedMessage: Uint8Array,
-    receiveId?: string
+    receiveWork?: ReceiveWorkSeed
   ): Promise<string> {
     // Parse framed SenderKeyMessage: [version_byte(1)] [protobuf(N)] [signature(64)]
     const { protobufBytes, signature } = parseSenderKeyMessage(framedMessage);
@@ -704,7 +785,7 @@ export class SenderKeyManager {
     };
 
     // Get sender's key
-    const state = await this.storage.getSenderKey(groupId, senderId, senderDeviceId);
+    const state = await this.loadSenderKey(groupId, senderId, senderDeviceId);
 
     if (!state) {
       throw new Error(`SENDER_KEY_NOT_FOUND: No sender key for ${senderId}.${senderDeviceId}`);
@@ -720,7 +801,7 @@ export class SenderKeyManager {
         senderId,
         senderDeviceId,
         message,
-        receiveId
+        receiveWork
       );
 
       if (prevResult !== null) {
@@ -796,7 +877,7 @@ export class SenderKeyManager {
         senderId,
         senderDeviceId,
         message,
-        receiveId
+        receiveWork
       );
     }
 
@@ -830,9 +911,7 @@ export class SenderKeyManager {
       [state, ...previous],
       {
         skippedKeys,
-        content: receiveId
-          ? { id: receiveId, plaintext, receivedAt: Date.now(), groupId }
-          : undefined,
+        work: receiveWork?.({ plaintext, groupId }),
       }
     );
 
@@ -859,7 +938,7 @@ export class SenderKeyManager {
     senderId: string,
     senderDeviceId: number,
     message: EncryptedGroupMessage,
-    receiveId?: string
+    receiveWork?: ReceiveWorkSeed
   ): Promise<string> {
     const skippedKey = await this.storage.getSkippedSenderKey(
       groupId,
@@ -896,12 +975,10 @@ export class SenderKeyManager {
     }
     const plaintext = this.encodeLosslessPlaintext(plaintextBytes);
 
-    const states = await this.storage.getSenderKeyRecord(groupId, senderId, senderDeviceId);
+    const states = await this.loadSenderKeyRecord(groupId, senderId, senderDeviceId);
     if (!states?.length) throw new Error('Missing sender-key record during receive');
     await this.storage.storeSenderKeyRecord(groupId, senderId, senderDeviceId, states, {
-      content: receiveId
-        ? { id: receiveId, plaintext, receivedAt: Date.now(), groupId }
-        : undefined,
+      work: receiveWork?.({ plaintext, groupId }),
       consumedSkippedKey: {
         senderKeyId: message.senderKeyId,
         chainIndex: message.chainIndex,
@@ -939,9 +1016,9 @@ export class SenderKeyManager {
     senderId: string,
     senderDeviceId: number,
     message: EncryptedGroupMessage,
-    receiveId?: string
+    receiveWork?: ReceiveWorkSeed
   ): Promise<string | null> {
-    // Load previous states from storage (populates cache on miss)
+    // Load previous states from the stored record
     const prevStates = (await this.loadPreviousStates(groupId, senderId, senderDeviceId)).map(
       (state) => ({ ...state })
     );
@@ -1020,7 +1097,7 @@ export class SenderKeyManager {
         senderId,
         senderDeviceId,
         message,
-        receiveId
+        receiveWork
       );
     }
 
@@ -1041,9 +1118,8 @@ export class SenderKeyManager {
     prevState.chainIndex++;
 
     // Persist updated previous states to storage
-    const currentState = await this.storage.getSenderKey(groupId, senderId, senderDeviceId);
+    const currentState = await this.loadSenderKey(groupId, senderId, senderDeviceId);
     if (!currentState) throw new Error('Missing sender-key record during receive');
-    const key = this.stateKey(groupId, senderId, senderDeviceId);
     await this.storage.storeSenderKeyRecord(
       groupId,
       senderId,
@@ -1051,12 +1127,9 @@ export class SenderKeyManager {
       [currentState, ...prevStates],
       {
         skippedKeys,
-        content: receiveId
-          ? { id: receiveId, plaintext, receivedAt: Date.now(), groupId }
-          : undefined,
+        work: receiveWork?.({ plaintext, groupId }),
       }
     );
-    this.previousStates.set(key, prevStates);
 
     this.logger.debug('Decrypted message with previous sender key state', {
       category: 'E2EE',
@@ -1083,14 +1156,13 @@ export class SenderKeyManager {
   async rotateSenderKey(
     groupId: string,
     userId: string,
-    deviceId: number,
-    options?: { distributionPending?: boolean }
+    deviceId: number
   ): Promise<{
     senderKeyId: string;
     distributionMessage: SenderKeyDistributionMessage;
   }> {
     // Get old sender key state
-    const oldState = await this.storage.getSenderKey(groupId, userId, deviceId);
+    const oldState = await this.loadSenderKey(groupId, userId, deviceId);
     if (oldState) assertSenderKeyVersion(oldState);
 
     const senderKeyId = await crypto.generateUuidV4();
@@ -1111,11 +1183,9 @@ export class SenderKeyManager {
       publicSignatureKey: signatureKeyPair.publicKey, // Already Base64-encoded PublicKey
       chainIndex: 0,
       createdAt: Date.now(),
-      ...(options?.distributionPending && { distributionPending: true }),
     };
 
-    // Build the candidate archive without changing the committed cache.
-    const key = this.stateKey(groupId, userId, deviceId);
+    // Build the archive from the stored record.
     const prev = oldState
       ? [oldState, ...(await this.loadPreviousStates(groupId, userId, deviceId))].slice(
           0,
@@ -1123,8 +1193,11 @@ export class SenderKeyManager {
         )
       : [];
 
-    await this.persistSenderKeyRecord(groupId, userId, deviceId, newState, prev);
-    this.previousStates.set(key, prev);
+    // The same write deletes the handoff rows of the group, so the next send
+    // gives the new key to every listed device.
+    await this.persistSenderKeyRecord(groupId, userId, deviceId, newState, prev, {
+      deleteSenderKeyHandoffs: true,
+    });
 
     // Create distribution message
     const distributionMessage: SenderKeyDistributionMessage = {
@@ -1146,58 +1219,39 @@ export class SenderKeyManager {
   }
 
   /**
-   * Reconstruct the current distribution after an interrupted automatic
-   * rotation. The current chain index and key let a receiver begin at the
-   * first ciphertext that can still be sent.
+   * The distribution of the current sender key at its current chain index,
+   * or null when the device has no sender key for the group. A receiver that
+   * installs it decrypts the later group messages of the sender, but no
+   * earlier one.
    */
-  async getPendingSenderKeyDistribution(
+  async getCurrentSenderKeyDistribution(
     groupId: string,
     userId: string,
     deviceId: number
   ): Promise<SenderKeyDistributionMessage | null> {
-    const state = await this.storage.getSenderKey(groupId, userId, deviceId);
-    if (!state?.distributionPending) return null;
-    assertSenderKeyVersion(state);
-    return {
-      senderKeyVersion: SENDER_KEY_FORMAT,
-      senderKeyId: state.senderKeyId,
-      chainId: state.chainId,
-      generation: state.generation,
-      chainIndex: state.chainIndex,
-      chainKey: state.chainKey,
-      publicSignatureKey: state.publicSignatureKey,
-    };
-  }
-
-  /**
-   * Clear a pending automatic distribution only for the generation whose
-   * prepared messages have reached the Relay. A later rotation wins.
-   */
-  async confirmSenderKeyDistributionSent(
-    groupId: string,
-    userId: string,
-    deviceId: number,
-    senderKeyId: string
-  ): Promise<void> {
-    const state = await this.storage.getSenderKey(groupId, userId, deviceId);
-    if (!state?.distributionPending || state.senderKeyId !== senderKeyId) return;
-    delete state.distributionPending;
-    await this.storage.storeSenderKey(groupId, userId, deviceId, state);
+    const state = await this.loadSenderKey(groupId, userId, deviceId);
+    return state ? currentDistribution(state) : null;
   }
 
   /**
    * Delete sender key (when leaving group or revoking device)
+   *
+   * The delete of an own sender key, which holds a private signature key,
+   * also deletes the handoff rows of the group in the same write. The delete
+   * of a received key keeps them.
    *
    * @param groupId - Group identifier
    * @param userId - User identifier
    * @param deviceId - Device identifier
    */
   async deleteSenderKey(groupId: string, userId: string, deviceId: number): Promise<void> {
-    await this.storage.deleteSenderKey(groupId, userId, deviceId);
-
-    // M11: Also clear previous states
-    const key = this.stateKey(groupId, userId, deviceId);
-    this.previousStates.delete(key);
+    const state = await this.loadSenderKey(groupId, userId, deviceId);
+    await this.storage.deleteSenderKey(
+      groupId,
+      userId,
+      deviceId,
+      state?.signatureKey ? { deleteSenderKeyHandoffs: true } : undefined
+    );
 
     this.logger.debug('Deleted sender key', {
       category: 'E2EE',
@@ -1224,7 +1278,7 @@ export class SenderKeyManager {
     generation: number;
     skippedKeysCount: number;
   }> {
-    const state = await this.storage.getSenderKey(groupId, senderId, senderDeviceId);
+    const state = await this.loadSenderKey(groupId, senderId, senderDeviceId);
 
     if (!state) {
       return { chainIndex: 0, generation: 0, skippedKeysCount: 0 };
@@ -1246,6 +1300,26 @@ export class SenderKeyManager {
   // ==========================================================================
   // Private Helper Methods
   // ==========================================================================
+
+  /** Load the current sender key state, with no retired fields. */
+  private async loadSenderKey(
+    groupId: string,
+    userId: string,
+    deviceId: number
+  ): Promise<SenderKeyState | null> {
+    const state = await this.storage.getSenderKey(groupId, userId, deviceId);
+    return state ? withoutRetiredFields(state) : null;
+  }
+
+  /** Load every stored sender key state, with no retired fields. */
+  private async loadSenderKeyRecord(
+    groupId: string,
+    userId: string,
+    deviceId: number
+  ): Promise<SenderKeyState[] | null> {
+    const record = await this.storage.getSenderKeyRecord(groupId, userId, deviceId);
+    return record ? record.map(withoutRetiredFields) : null;
+  }
 
   /**
    * Derive a message key from the Sender Keys chain key.

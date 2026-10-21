@@ -18,7 +18,30 @@ This is the interface that local store adapters should implement.
 
 ## Extends
 
-- [`ProtocolStore`](ProtocolStore.md).[`SesameStore`](SesameStore.md).[`SenderKeyStore`](SenderKeyStore.md).`MessageRecordStore`
+- [`ProtocolStore`](ProtocolStore.md).[`SesameStore`](SesameStore.md).[`SenderKeyStore`](SenderKeyStore.md).[`SenderKeyHandoffStore`](SenderKeyHandoffStore.md).`MessageRecordStore`.`SendLogStore`
+
+## Properties
+
+### protection
+
+> `readonly` **protection**: `LocalStoreProtection`
+
+How this store protects its data at rest, and where its key is kept.
+
+***
+
+### storeIdentity?
+
+> `readonly` `optional` **storeIdentity?**: `string`
+
+The name of the stored data, the same in every tab, worker, and thread
+of the origin that opens that data. When it is set and
+`navigator.locks.request` exists, the client takes its session locks and
+group-send locks as Web Locks under this name, so those contexts do not
+change one session or one sender key at the same time. Without it, the
+locks order the clients of one store object in one JavaScript context
+only. The web SQLite store and the IndexedDB store give their database
+names.
 
 ## Methods
 
@@ -61,7 +84,9 @@ that user. The previous tuple becomes rollback history.
 
 > **acceptContactIdentityRotationAndDeleteSessions**(`address`, `identity`, `identityType?`, `suppliedCommitment?`): `Promise`\<[`ContactIdentityRecord`](../namespaces/keys/interfaces/ContactIdentityRecord.md)\>
 
-Atomically rotate one per-user identity tuple and delete every bound device session.
+Atomically rotate one per-user identity tuple and delete every bound
+device session. The same write deletes the sender-key handoff rows of
+every device of the account.
 
 #### Parameters
 
@@ -91,6 +116,33 @@ Atomically rotate one per-user identity tuple and delete every bound device sess
 
 ***
 
+### appendSendLogRecipients()
+
+> **appendSendLogRecipients**(`clientMessageId`, `recipients`): `Promise`\<`void`\>
+
+Add recipient rows to an entry. An existing row is kept unchanged. With
+no entry, nothing is written.
+
+#### Parameters
+
+##### clientMessageId
+
+`string`
+
+##### recipients
+
+readonly `SendLogDevice`[]
+
+#### Returns
+
+`Promise`\<`void`\>
+
+#### Inherited from
+
+`SendLogStore.appendSendLogRecipients`
+
+***
+
 ### archiveCurrentSession()
 
 > **archiveCurrentSession**(`address`, `newSession?`): `Promise`\<`void`\>
@@ -101,6 +153,9 @@ Used when:
 - Identity key changes (possible MITM)
 - Registration ID changes (app reinstall detected)
 - Manual session reset
+
+The same write deletes the sender-key handoff rows of the device in every
+group.
 
 #### Parameters
 
@@ -194,6 +249,22 @@ Used during force key reset.
 
 ***
 
+### clearSendLog()
+
+> **clearSendLog**(): `Promise`\<`number`\>
+
+Delete every entry and resend job. Returns the number of deleted entries.
+
+#### Returns
+
+`Promise`\<`number`\>
+
+#### Inherited from
+
+`SendLogStore.clearSendLog`
+
+***
+
 ### commitSessionTrust()
 
 > **commitSessionTrust**(`commit`): `Promise`\<`void`\>
@@ -241,6 +312,60 @@ Reads and comparisons must use current backing state, not an adapter cache.
 #### Returns
 
 `Promise`\<`boolean`\>
+
+***
+
+### completeReceiveWork()
+
+> **completeReceiveWork**(`workId`, `expectedRevision`, `metadata?`): `Promise`\<`boolean`\>
+
+Delete one receive record and apply the metadata writes in one atomic
+write. Return false without writing when the stored revision is not
+`expectedRevision`.
+
+#### Parameters
+
+##### workId
+
+`string`
+
+##### expectedRevision
+
+`number`
+
+##### metadata?
+
+readonly `ReceiveWorkMetadataWrite`[]
+
+#### Returns
+
+`Promise`\<`boolean`\>
+
+***
+
+### completeResendJob()
+
+> **completeResendJob**(`jobId`, `state`): `Promise`\<`void`\>
+
+Set the final state of a resend job. With no job, nothing is written.
+
+#### Parameters
+
+##### jobId
+
+`string`
+
+##### state
+
+`"abandoned"` \| `"posted"`
+
+#### Returns
+
+`Promise`\<`void`\>
+
+#### Inherited from
+
+`SendLogStore.completeResendJob`
 
 ***
 
@@ -309,8 +434,9 @@ Counts of deleted prekeys by type
 
 > **deleteAllSenderKeysForGroup**(`groupId`): `Promise`\<`number`\>
 
-Delete all sender keys and skipped sender message keys for a group (when the caller deletes
-the group). Returns the number of sender keys deleted.
+Delete all sender keys, skipped sender message keys, and sender-key
+handoff rows for a group (when the caller deletes the group), in one
+write. Returns the number of sender keys deleted.
 
 #### Parameters
 
@@ -332,7 +458,8 @@ the group). Returns the number of sender keys deleted.
 
 > **deleteDeviceRecord**(`userId`, `deviceId`): `Promise`\<`void`\>
 
-Delete device record.
+Delete device record. The same write deletes the sender-key handoff rows
+of the device in every group.
 
 #### Parameters
 
@@ -376,19 +503,26 @@ Delete all expired message records older than maxAgeMs
 
 ***
 
-### deleteExpiredReceivedContent()
+### deleteExpiredSendLog()
 
-> **deleteExpiredReceivedContent**(`before`): `Promise`\<`number`\>
+> **deleteExpiredSendLog**(`maxAgeMs`): `Promise`\<`number`\>
+
+Delete each entry, and each resend job, that the store wrote more than
+`maxAgeMs` ago. Returns the number of deleted entries.
 
 #### Parameters
 
-##### before
+##### maxAgeMs
 
 `number`
 
 #### Returns
 
 `Promise`\<`number`\>
+
+#### Inherited from
+
+`SendLogStore.deleteExpiredSendLog`
 
 ***
 
@@ -398,7 +532,9 @@ Delete all expired message records older than maxAgeMs
 
 Delete a message record by session and timestamp.
 
-Called when processing delivery receipts to clean up confirmed messages.
+The client calls it after an E2EE delivery receipt from the recipient
+device, for an expired record at a retry request, and for a record that
+it must not resend: a null message, or a sender key distribution alone.
 
 #### Parameters
 
@@ -506,25 +642,9 @@ Number of deleted keys
 
 ***
 
-### deleteReceivedContent()
-
-> **deleteReceivedContent**(`id`): `Promise`\<`void`\>
-
-#### Parameters
-
-##### id
-
-`string`
-
-#### Returns
-
-`Promise`\<`void`\>
-
-***
-
 ### deleteSenderKey()
 
-> **deleteSenderKey**(`groupId`, `userId`, `deviceId`): `Promise`\<`void`\>
+> **deleteSenderKey**(`groupId`, `userId`, `deviceId`, `options?`): `Promise`\<`void`\>
 
 Delete sender key for a group member device.
 
@@ -542,6 +662,14 @@ Delete sender key for a group member device.
 
 `number`
 
+##### options?
+
+[`SenderKeyRecordWriteOptions`](SenderKeyRecordWriteOptions.md)
+
+With `deleteSenderKeyHandoffs`, the same write deletes
+  every sender-key handoff row of the group. The manager sets it when it
+  deletes the local device's own key.
+
 #### Returns
 
 `Promise`\<`void`\>
@@ -552,11 +680,89 @@ Delete sender key for a group member device.
 
 ***
 
+### deleteSendLogEntry()
+
+> **deleteSendLogEntry**(`clientMessageId`): `Promise`\<`boolean`\>
+
+Delete one entry and its rows. Returns true when an entry was deleted.
+
+#### Parameters
+
+##### clientMessageId
+
+`string`
+
+#### Returns
+
+`Promise`\<`boolean`\>
+
+#### Inherited from
+
+`SendLogStore.deleteSendLogEntry`
+
+***
+
+### deleteSendLogRecipient()
+
+> **deleteSendLogRecipient**(`clientMessageId`, `recipient`): `Promise`\<`boolean`\>
+
+Delete the row of one device. When no row remains and the send is
+finished, the payload is deleted. Returns true when a row was deleted.
+
+#### Parameters
+
+##### clientMessageId
+
+`string`
+
+##### recipient
+
+`SendLogDevice`
+
+#### Returns
+
+`Promise`\<`boolean`\>
+
+#### Inherited from
+
+`SendLogStore.deleteSendLogRecipient`
+
+***
+
+### deleteSendLogRecipientsByTimestamp()
+
+> **deleteSendLogRecipientsByTimestamp**(`recipient`, `clientTimestamps`): `Promise`\<`number`\>
+
+Delete the rows of one device at each of the client timestamps, with the
+same payload rule as `deleteSendLogRecipient`. Returns the number of
+deleted rows.
+
+#### Parameters
+
+##### recipient
+
+`SendLogDevice`
+
+##### clientTimestamps
+
+readonly `number`[]
+
+#### Returns
+
+`Promise`\<`number`\>
+
+#### Inherited from
+
+`SendLogStore.deleteSendLogRecipientsByTimestamp`
+
+***
+
 ### deleteSessionRecord()
 
 > **deleteSessionRecord**(`address`): `Promise`\<`void`\>
 
-Delete session record.
+Delete session record. The same write deletes the sender-key handoff
+rows of the device in every group.
 
 #### Parameters
 
@@ -630,7 +836,10 @@ The message index to delete
 
 > **deleteStaleRecords**(`maxLatency`): `Promise`\<`number`\>
 
-Delete stale device records (orphaned sessions older than MAXLATENCY).
+Delete the stale device records with their sessions. A record is stale
+when it has no session and is older than `maxLatency`, or when it is
+marked removed and its removal is older than `maxLatency`
+(`isExpiredRemovedDevice`). A user record with no device left goes too.
 
 #### Parameters
 
@@ -645,6 +854,32 @@ Delete stale device records (orphaned sessions older than MAXLATENCY).
 #### Inherited from
 
 [`SesameStore`](SesameStore.md).[`deleteStaleRecords`](SesameStore.md#deletestalerecords)
+
+***
+
+### findSendLogEntries()
+
+> **findSendLogEntries**(`recipient`, `clientTimestamp`): `Promise`\<`SendLogEntry`[]\>
+
+Every entry for one device at one client timestamp, ordered by `clientMessageId`.
+
+#### Parameters
+
+##### recipient
+
+`SendLogDevice`
+
+##### clientTimestamp
+
+`number`
+
+#### Returns
+
+`Promise`\<`SendLogEntry`[]\>
+
+#### Inherited from
+
+`SendLogStore.findSendLogEntries`
 
 ***
 
@@ -1138,19 +1373,59 @@ Used for persisting operational timestamps (e.g., lastForcedPreKeyRotation).
 
 ***
 
-### getReceivedContent()
+### getPendingResendJobs()
 
-> **getReceivedContent**(`id`): `Promise`\<`ReceivedContent` \| `null`\>
+> **getPendingResendJobs**(): `Promise`\<`SendLogResendJob`[]\>
+
+Every `pending` resend job, ordered by `createdAt`, then `jobId`.
+
+#### Returns
+
+`Promise`\<`SendLogResendJob`[]\>
+
+#### Inherited from
+
+`SendLogStore.getPendingResendJobs`
+
+***
+
+### getReceiveWork()
+
+> **getReceiveWork**(`workId`): `Promise`\<`ReceiveWorkRecord` \| `null`\>
+
+Get one receive record, or null.
 
 #### Parameters
 
-##### id
+##### workId
 
 `string`
 
 #### Returns
 
-`Promise`\<`ReceivedContent` \| `null`\>
+`Promise`\<`ReceiveWorkRecord` \| `null`\>
+
+***
+
+### getResendJob()
+
+> **getResendJob**(`jobId`): `Promise`\<`SendLogResendJob` \| `null`\>
+
+One resend job, or null.
+
+#### Parameters
+
+##### jobId
+
+`string`
+
+#### Returns
+
+`Promise`\<`SendLogResendJob` \| `null`\>
+
+#### Inherited from
+
+`SendLogStore.getResendJob`
 
 ***
 
@@ -1224,11 +1499,61 @@ Array of states, or null if none exist
 
 ***
 
+### getSendLogEntry()
+
+> **getSendLogEntry**(`clientMessageId`, `recipient`): `Promise`\<`SendLogEntry` \| `null`\>
+
+The entry of one send for one device, or null when the device has no row.
+
+#### Parameters
+
+##### clientMessageId
+
+`string`
+
+##### recipient
+
+`SendLogDevice`
+
+#### Returns
+
+`Promise`\<`SendLogEntry` \| `null`\>
+
+#### Inherited from
+
+`SendLogStore.getSendLogEntry`
+
+***
+
+### getSendLogRecipients()
+
+> **getSendLogRecipients**(`clientMessageId`): `Promise`\<`SendLogRecipient`[]\>
+
+The remaining recipient rows of one send, ordered by user and device.
+
+#### Parameters
+
+##### clientMessageId
+
+`string`
+
+#### Returns
+
+`Promise`\<`SendLogRecipient`[]\>
+
+#### Inherited from
+
+`SendLogStore.getSendLogRecipients`
+
+***
+
 ### getSesameDeviceIds()
 
 > **getSesameDeviceIds**(`userId`): `Promise`\<`number`[]\>
 
-Get all device IDs for a specific user.
+Get all device IDs for a specific user. The list includes the devices
+whose record is marked removed. A caller that sends to the devices skips
+them with `isRemovedDevice`.
 
 #### Parameters
 
@@ -1440,6 +1765,86 @@ true if session exists
 
 ***
 
+### incrementSendLogResendCount()
+
+> **incrementSendLogResendCount**(`clientMessageId`, `recipient`): `Promise`\<`number` \| `null`\>
+
+Add one to the resend count of a row. Returns the new count, or null
+when the device has no row.
+
+#### Parameters
+
+##### clientMessageId
+
+`string`
+
+##### recipient
+
+`SendLogDevice`
+
+#### Returns
+
+`Promise`\<`number` \| `null`\>
+
+#### Inherited from
+
+`SendLogStore.incrementSendLogResendCount`
+
+***
+
+### invalidateAccountSenderKeyHandoffs()
+
+> **invalidateAccountSenderKeyHandoffs**(`userId`): `Promise`\<`boolean`\>
+
+Delete the rows of every device of one account in every group, as an
+identity rotation of the account does.
+
+#### Parameters
+
+##### userId
+
+`string`
+
+#### Returns
+
+`Promise`\<`boolean`\>
+
+True when at least one row was deleted
+
+#### Inherited from
+
+[`SenderKeyHandoffStore`](SenderKeyHandoffStore.md).[`invalidateAccountSenderKeyHandoffs`](SenderKeyHandoffStore.md#invalidateaccountsenderkeyhandoffs)
+
+***
+
+### invalidateSenderKeyHandoff()
+
+> **invalidateSenderKeyHandoff**(`groupId`, `device`): `Promise`\<`boolean`\>
+
+Delete the rows of one device in one group.
+
+#### Parameters
+
+##### groupId
+
+`string`
+
+##### device
+
+[`SenderKeyHandoffDevice`](SenderKeyHandoffDevice.md)
+
+#### Returns
+
+`Promise`\<`boolean`\>
+
+True when at least one row was deleted
+
+#### Inherited from
+
+[`SenderKeyHandoffStore`](SenderKeyHandoffStore.md).[`invalidateSenderKeyHandoff`](SenderKeyHandoffStore.md#invalidatesenderkeyhandoff)
+
+***
+
 ### isTrustedIdentity()
 
 > **isTrustedIdentity**(`address`, `identity`, `direction`, `identityType?`): `Promise`\<`boolean`\>
@@ -1491,6 +1896,70 @@ true if the store trusts the identity
 
 ***
 
+### listReceiveWork()
+
+> **listReceiveWork**(`query?`): `Promise`\<`ReceiveWorkRecord`[]\>
+
+List receive records in ascending `(arrivalSeq, workId)` order. The
+order compares `workId` values by UTF-16 code unit. With `after`, a
+record passes when its `arrivalSeq` is above the cursor `arrivalSeq`,
+or equal to it with a `workId` above the cursor `workId`. Return at
+most `limit` records, 100 when not set.
+
+#### Parameters
+
+##### query?
+
+`ReceiveWorkQuery`
+
+#### Returns
+
+`Promise`\<`ReceiveWorkRecord`[]\>
+
+***
+
+### listSenderKeyHandoffGroupIds()
+
+> **listSenderKeyHandoffGroupIds**(): `Promise`\<`string`[]\>
+
+The distinct group IDs that hold rows. For the sweep only.
+
+#### Returns
+
+`Promise`\<`string`[]\>
+
+#### Inherited from
+
+[`SenderKeyHandoffStore`](SenderKeyHandoffStore.md).[`listSenderKeyHandoffGroupIds`](SenderKeyHandoffStore.md#listsenderkeyhandoffgroupids)
+
+***
+
+### listSenderKeyHandoffs()
+
+> **listSenderKeyHandoffs**(`groupId`, `generation`): `Promise`\<[`SenderKeyHandoffRecord`](SenderKeyHandoffRecord.md)[]\>
+
+The rows of one group at one generation.
+
+#### Parameters
+
+##### groupId
+
+`string`
+
+##### generation
+
+`number`
+
+#### Returns
+
+`Promise`\<[`SenderKeyHandoffRecord`](SenderKeyHandoffRecord.md)[]\>
+
+#### Inherited from
+
+[`SenderKeyHandoffStore`](SenderKeyHandoffStore.md).[`listSenderKeyHandoffs`](SenderKeyHandoffStore.md#listsenderkeyhandoffs)
+
+***
+
 ### markKyberPreKeyUsed()
 
 > **markKyberPreKeyUsed**(`kyberPreKeyId`, `signedPreKeyId`, `baseKeyBytes`, `identityType?`): `Promise`\<`void`\>
@@ -1533,6 +2002,97 @@ Base key bytes for the session
 #### Inherited from
 
 [`ProtocolStore`](ProtocolStore.md).[`markKyberPreKeyUsed`](ProtocolStore.md#markkyberprekeyused)
+
+***
+
+### markSendLogComplete()
+
+> **markSendLogComplete**(`clientMessageId`): `Promise`\<`void`\>
+
+Mark the send finished. When no recipient row remains, the payload is
+deleted.
+
+#### Parameters
+
+##### clientMessageId
+
+`string`
+
+#### Returns
+
+`Promise`\<`void`\>
+
+#### Inherited from
+
+`SendLogStore.markSendLogComplete`
+
+***
+
+### putReceiveWork()
+
+> **putReceiveWork**(`record`, `expectedRevision`): `Promise`\<`boolean`\>
+
+Write one receive record. With `expectedRevision` null, the write
+inserts and fails when a record exists. Otherwise it replaces the record
+with that revision. Return false without writing on a mismatch.
+
+#### Parameters
+
+##### record
+
+`ReceiveWorkRecord`
+
+##### expectedRevision
+
+`number` \| `null`
+
+#### Returns
+
+`Promise`\<`boolean`\>
+
+***
+
+### receiveWorkUsage()
+
+> **receiveWorkUsage**(`query?`): `Promise`\<`ReceiveWorkUsage`\>
+
+Count receive records. With `groupId`, count only the records of that
+group that wait for a group update.
+
+#### Parameters
+
+##### query?
+
+###### groupId?
+
+`string`
+
+#### Returns
+
+`Promise`\<`ReceiveWorkUsage`\>
+
+***
+
+### recordSenderKeyHandoff()
+
+> **recordSenderKeyHandoff**(`record`): `Promise`\<`void`\>
+
+Insert or replace the row keyed by group, sender key ID, generation,
+recipient user, recipient device, and recipient registration ID.
+
+#### Parameters
+
+##### record
+
+[`SenderKeyHandoffRecord`](SenderKeyHandoffRecord.md)
+
+#### Returns
+
+`Promise`\<`void`\>
+
+#### Inherited from
+
+[`SenderKeyHandoffStore`](SenderKeyHandoffStore.md).[`recordSenderKeyHandoff`](SenderKeyHandoffStore.md#recordsenderkeyhandoff)
 
 ***
 
@@ -1682,6 +2242,64 @@ The group ID, or null if this device has no such sender key
 
 ***
 
+### retainSenderKeyHandoffs()
+
+> **retainSenderKeyHandoffs**(`groupId`, `senderKeyId`): `Promise`\<`number`\>
+
+Delete the rows of a group whose sender key ID differs from the given one.
+Null deletes every row of the group.
+
+#### Parameters
+
+##### groupId
+
+`string`
+
+##### senderKeyId
+
+`string` \| `null`
+
+#### Returns
+
+`Promise`\<`number`\>
+
+The number of deleted rows
+
+#### Inherited from
+
+[`SenderKeyHandoffStore`](SenderKeyHandoffStore.md).[`retainSenderKeyHandoffs`](SenderKeyHandoffStore.md#retainsenderkeyhandoffs)
+
+***
+
+### rewriteMessageRecords()
+
+> **rewriteMessageRecords**(`rewrite`): `Promise`\<`number`\>
+
+Rewrite the plaintext of each record. `rewrite` returns the plaintext to
+keep: the same string leaves the record as it is, another string
+replaces the plaintext, and null deletes the record. A replaced record
+keeps its `createdAt` and every other field. A record that another
+write replaces between the read and the rewrite stays as that write
+left it.
+
+#### Parameters
+
+##### rewrite
+
+(`record`) => `string` \| `null`
+
+#### Returns
+
+`Promise`\<`number`\>
+
+The number of records replaced or deleted
+
+#### Inherited from
+
+`MessageRecordStore.rewriteMessageRecords`
+
+***
+
 ### saveContactIdentity()
 
 > **saveContactIdentity**(`address`, `identity`, `identityType?`, `suppliedCommitment?`): `Promise`\<[`IdentityKeyChange`](../enumerations/IdentityKeyChange.md)\>
@@ -1731,7 +2349,7 @@ IdentityKeyChange indicating if key is new or changed
 
 ### setDeviceRecord()
 
-> **setDeviceRecord**(`userId`, `deviceId`, `record`): `Promise`\<`void`\>
+> **setDeviceRecord**(`userId`, `deviceId`, `record`, `options?`): `Promise`\<`void`\>
 
 Store device record.
 
@@ -1748,6 +2366,13 @@ Store device record.
 ##### record
 
 [`DeviceRecord`](DeviceRecord.md)
+
+##### options?
+
+[`SetDeviceRecordOptions`](SetDeviceRecordOptions.md)
+
+With `senderKeyHandoffInvalidation`, the same write
+  deletes the sender-key handoff rows of that device in every group
 
 #### Returns
 
@@ -2019,7 +2644,10 @@ Store Kyber prekey (post-quantum security).
 
 > **storeMessageRecord**(`record`): `Promise`\<`void`\>
 
-Store a message record after encryption
+Store a message record after encryption. A record with the same
+`sessionId` and `timestamp` is replaced. The store sets `createdAt` from
+its clock on the first write and keeps that value on a replace, so the
+value in `record` is not stored and a resend does not extend retention.
 
 #### Parameters
 
@@ -2034,6 +2662,30 @@ Store a message record after encryption
 #### Inherited from
 
 `MessageRecordStore.storeMessageRecord`
+
+***
+
+### storeResendJob()
+
+> **storeResendJob**(`job`): `Promise`\<`void`\>
+
+Store a resend job. A job with the same `jobId` is replaced. The store
+sets `createdAt` from its clock on the first write and keeps that value
+on a replace, so the value in `job` is not stored.
+
+#### Parameters
+
+##### job
+
+`SendLogResendJob`
+
+#### Returns
+
+`Promise`\<`void`\>
+
+#### Inherited from
+
+`SendLogStore.storeResendJob`
 
 ***
 
@@ -2073,7 +2725,7 @@ Store sender key state for a group member device.
 
 ### storeSenderKeyRecord()
 
-> **storeSenderKeyRecord**(`groupId`, `userId`, `deviceId`, `states`, `receive?`): `Promise`\<`void`\>
+> **storeSenderKeyRecord**(`groupId`, `userId`, `deviceId`, `states`, `receive?`, `options?`): `Promise`\<`void`\>
 
 Store all sender key states (current + previous) for a group member device.
 
@@ -2115,6 +2767,16 @@ Array of states (current first, then previous, capped at MAX_SENDER_KEY_STATES)
 
 `SenderKeyReceiveCommit`
 
+The receive effects to commit with the record
+
+##### options?
+
+[`SenderKeyRecordWriteOptions`](SenderKeyRecordWriteOptions.md)
+
+With `deleteSenderKeyHandoffs`, the same write deletes
+  every sender-key handoff row of the group. The manager sets it when it
+  writes a new own key.
+
 #### Returns
 
 `Promise`\<`void`\>
@@ -2122,6 +2784,33 @@ Array of states (current first, then previous, capped at MAX_SENDER_KEY_STATES)
 #### Inherited from
 
 [`SenderKeyStore`](SenderKeyStore.md).[`storeSenderKeyRecord`](SenderKeyStore.md#storesenderkeyrecord)
+
+***
+
+### storeSendLogEntry()
+
+> **storeSendLogEntry**(`payload`, `recipients`): `Promise`\<`void`\>
+
+Store a send log entry and its recipient rows in one transaction. An
+entry with the same `clientMessageId` is replaced with its rows.
+
+#### Parameters
+
+##### payload
+
+`NewSendLogPayload`
+
+##### recipients
+
+readonly `SendLogDevice`[]
+
+#### Returns
+
+`Promise`\<`void`\>
+
+#### Inherited from
+
+`SendLogStore.storeSendLogEntry`
 
 ***
 

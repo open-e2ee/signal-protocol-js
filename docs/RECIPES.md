@@ -89,21 +89,9 @@ without post-quantum material fail closed, and PQ sessions use the SDK's
 ML-KEM Braid SPQR profile. See the [protocol policy](./PROTOCOL_POLICY.md) for
 supported choices.
 
-<!-- doc-snippet:skip requires-external-context -->
-```ts
-await createSignalProtocolClient({
-  identity: { userId },
-  adapters: { storage, relay },
-  protocol: {
-    postQuantum: "compatible",
-    braid: "required",
-  },
-});
-```
-
-`postQuantum: 'compatible'` still uses post-quantum sessions whenever the peer
-supports them. It only allows classical compatibility for peers that advertise
-no post-quantum material at all.
+`'required'` is the only `postQuantum` value. The SDK has no classical key
+agreement, so a peer that advertises no post-quantum material fails with
+`PQXDH_REQUIRED`.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts

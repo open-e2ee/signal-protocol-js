@@ -30,8 +30,8 @@ import { withRetry } from '../utils/retry';
 /**
  * Establish a new session with a partner
  *
- * Performs X3DH key exchange using partner's prekey bundle to establish
- * a Double Ratchet session for end-to-end encrypted communication.
+ * Performs PQXDH key exchange using partner's prekey bundle to establish
+ * a Triple Ratchet session for end-to-end encrypted communication.
  *
  * @param ctx - Client context with dependencies
  * @param sesameManager - Sesame manager for multi-device support
@@ -388,7 +388,7 @@ export async function verify(
     identityType,
     trustState: trustRecord.trustState,
     confirmation: {
-      version: 1,
+      version: 2,
       userId,
       identityType,
       fingerprint: CryptoUtils.bytesToBase64(fingerprint),
@@ -404,7 +404,7 @@ export async function confirmSafetyNumber(
   ctx: SignalProtocolClientContext,
   confirmation: SafetyNumberConfirmation
 ): Promise<void> {
-  if (confirmation.version !== 1) {
+  if (confirmation.version !== 2) {
     throw new Error(`Unsupported safety-number confirmation version: ${String(confirmation.version)}`);
   }
   const { userId, identityType } = confirmation;

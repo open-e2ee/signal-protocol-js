@@ -2,7 +2,7 @@
  * Signal Protocol Key Types
  *
  * Consolidated key type definitions used across the Signal Protocol implementation.
- * These are protocol-agnostic - the same key types work in X3DH, PQXDH, and future protocols.
+ * These are protocol-agnostic - the same key types work in PQXDH and future protocols.
  *
  * @see https://signal.org/docs/specifications/x3dh/#keys
  * @see https://signal.org/docs/specifications/pqxdh/
@@ -18,7 +18,7 @@ export type IdentityType = 'aci' | 'pni';
 export interface CompositeIdentityV1 {
   /** Canonical tuple version. Encoded as `0x01`. */
   readonly version: 1;
-  /** Standard X25519 public key used by X3DH/PQXDH. */
+  /** Standard X25519 public key used by PQXDH. */
   readonly x25519PublicKey: PublicKey;
   /** Standard Ed25519 public key used to authenticate prekeys. */
   readonly ed25519PublicKey: PublicKey;
@@ -45,7 +45,7 @@ export type IdentityCandidateStatus = 'NEW' | 'MATCH' | 'CHANGED' | 'ROLLBACK';
  *
  * The SDK's independent composite profile deliberately uses separate standard
  * keys for DH and signatures:
- * - dhKey: Used for X3DH key exchange (DH1 operation)
+ * - dhKey: Used for PQXDH key exchange (DH1 operation)
  * - signingKey: Used for signing prekeys
  * - registrationId: Random ID generated once per app install
  */
@@ -121,7 +121,7 @@ export interface KemOneTimePreKey {
 /**
  * PreKey Bundle - Public keys for establishing an encrypted session
  *
- * Contains all public information needed for X3DH/PQXDH key exchange.
+ * Contains all public information needed for PQXDH key exchange.
  * Fetched from the server when initiating a session with a new device.
  *
  * ## Key Exchange Flow (PQXDH)
@@ -188,7 +188,7 @@ export interface PreKeyBundle {
    * EC Signed PreKey (X25519 + Ed25519 signature).
    *
    * Medium-term key that rotates weekly. Signed by identitySigningKey
-   * to prove authenticity. Used for DH1 and DH3 in X3DH.
+   * to prove authenticity. Used for DH1 and DH3 in PQXDH.
    *
    * The signature covers the composite identity commitment, algorithm tag, key
    * ID, and public key in the profile's domain-separated context.

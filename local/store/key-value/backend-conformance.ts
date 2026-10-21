@@ -67,6 +67,15 @@ export interface BackendConformanceResult {
 const SESSION_PREFIX = '@signal:sessions:';
 
 /**
+ * The sender-key handoff key prefix the store uses. The part of a key after
+ * it is `groupHash:generation:accountHash:recipientHash:entryHash`.
+ */
+const HANDOFF_PREFIX = '@signal:sk-handoff:';
+
+/** Handoff values are opaque ciphertext to the backend. */
+const HANDOFF_VALUE = 'b3BhcXVlLWhhbmRvZmY=';
+
+/**
  * Session values under the prefix are JSON envelopes whose plaintext routing
  * metadata carries the exact userId. `removeSessionsForUser` must match on
  * that field, never on the key. The `data` field is opaque to the backend.
@@ -326,6 +335,79 @@ const CASES: ConformanceCase[] = [
         await backend.getItem(SESSION_PREFIX + 'carol:1'),
         null,
         'session written earlier in the batch'
+      );
+    },
+  },
+  {
+    name: 'removeSenderKeyHandoffs removes only keys whose segments match under the prefix',
+    async run(backend) {
+      const removedByDevice: string[] = [
+        HANDOFF_PREFIX + 'g1:0:a1:r1:e1',
+        HANDOFF_PREFIX + 'g1:7:a2:r1:e2',
+      ];
+      const removedByAccount: string[] = [HANDOFF_PREFIX + 'g4:0:a5:r4:e3'];
+      const kept: string[] = [
+        // 'g10' starts with 'g1' and 'a55' starts with 'a5'. A substring or
+        // startsWith match on a segment would delete another place's rows.
+        HANDOFF_PREFIX + 'g10:0:a1:r1:e4',
+        HANDOFF_PREFIX + 'g4:0:a55:r4:e5',
+        // Every given hash must match: same group, another recipient.
+        HANDOFF_PREFIX + 'g1:0:a1:r2:e6',
+        // Same recipient, another group.
+        HANDOFF_PREFIX + 'g2:0:a1:r1:e7',
+        // A hash in another segment position must not match.
+        HANDOFF_PREFIX + 'g1:0:a9:r9:r1',
+        HANDOFF_PREFIX + 'g4:0:a4:a5:e8',
+        // Keys of another shape stay.
+        HANDOFF_PREFIX + 'g1:0:a1:r1',
+        HANDOFF_PREFIX + 'g1:0:a5:r1:e9:extra',
+        // A matching key outside the exact prefix stays.
+        '@signal:sk-handoffs:g1:0:a5:r1:e10',
+      ];
+      for (const key of removedByDevice.concat(removedByAccount, kept)) {
+        await backend.setItem(key, HANDOFF_VALUE);
+      }
+
+      await backend.atomicWrite([
+        {
+          type: 'removeSenderKeyHandoffs',
+          keyPrefix: HANDOFF_PREFIX,
+          groupHash: 'g1',
+          recipientHash: 'r1',
+        },
+      ]);
+      await backend.atomicWrite([
+        { type: 'removeSenderKeyHandoffs', keyPrefix: HANDOFF_PREFIX, accountHash: 'a5' },
+      ]);
+
+      for (const key of removedByDevice) {
+        assertEqual(await backend.getItem(key), null, 'group and recipient match ' + key);
+      }
+      for (const key of removedByAccount) {
+        assertEqual(await backend.getItem(key), null, 'account match ' + key);
+      }
+      for (const key of kept) {
+        assertEqual(await backend.getItem(key), HANDOFF_VALUE, 'kept ' + key);
+      }
+    },
+  },
+  {
+    name: 'removeSenderKeyHandoffs observes writes earlier in its batch',
+    async run(backend) {
+      // A row recorded inside the same transaction that invalidates its
+      // device must be visible to the removal, or it survives the change.
+      await backend.atomicWrite([
+        { type: 'set', key: HANDOFF_PREFIX + 'g3:0:a3:r3:e1', value: HANDOFF_VALUE },
+        {
+          type: 'removeSenderKeyHandoffs',
+          keyPrefix: HANDOFF_PREFIX,
+          recipientHash: 'r3',
+        },
+      ]);
+      assertEqual(
+        await backend.getItem(HANDOFF_PREFIX + 'g3:0:a3:r3:e1'),
+        null,
+        'handoff row written earlier in the batch'
       );
     },
   },

@@ -26,8 +26,6 @@ export {
   tryGetSkippedKey,
   // Receiver chain management (v3 protobuf-compatible)
   getOrCreateReceiverChain,
-  countTotalMessageKeys,
-  evictOldestMessageKey,
   storeMessageKeyInChain,
   consumeMessageKeyFromChain,
 } from './chains';

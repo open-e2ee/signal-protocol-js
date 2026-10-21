@@ -7,11 +7,14 @@
 
 import type { Envelope } from '../remote/relay/types';
 import { EncryptionError, EncryptionErrorCode, type Base64 } from '../types';
-import { determineRetryReason, isRetryableDecryptionError } from './retry-utils';
+import {
+  determineRetryReason,
+  isRetryableDecryptionError,
+  retryFailedEnvelope,
+} from './retry-utils';
 import { checkRetryRateLimit, RETRY_REQUEST_WINDOW_MS, type RetryRequestAttempt } from './retry';
-import type { DecryptedEnvelope } from './event-hooks';
+import { receiveRefusal, reportReceiveRefusal } from './delivery-error';
 import type {
-  InspectedSignalProtocolContent,
   ParsedReceiptContent,
   ParsedTypingContent,
 } from './content-adapter';
@@ -23,18 +26,22 @@ import {
   retryFamilyMember,
   storeProcessedEnvelope,
 } from '../local/store/reliability';
-import {
-  deliveredEnvelopeFingerprint,
-  pruneReceivedContent,
-} from '../local/store/received-content';
+import { deliveredEnvelopeFingerprint } from '../local/store/received-content';
 import { isImplicitContentType } from './constants';
-import type { SignalProtocolServiceCipher } from './signal-service-cipher';
+import type {
+  CommittedContent,
+  EnvelopeCommit,
+  SignalProtocolServiceCipher,
+} from './signal-service-cipher';
 import { rethrowRelayWorkStopped } from './relay-work';
-import { readRetryRequestEnvelope } from './retry-request-envelope';
+import { readRetryRequestEnvelope, retryRequestPost } from './retry-request-envelope';
 import { acknowledgesRetryRequest, requestRetryInFamily } from './retry-request-lifecycle';
 import { receiveInRetryFamily, type RetryFamilyReceive } from './retry-family';
-import { unsealedEnvelopeOf } from './sealed-sender';
+import { SealedRetryRequestReceived, unsealedEnvelopeOf } from './sealed-sender';
+import { failedGroupOf } from './retry-terminal-recovery';
 import { relayReceiptJoinOf } from './relay-receipt-join';
+import { createReceiveCommit } from './receive-work-seed';
+import { completeReceiveWork, denyReceiveWork, type ReceiveQueue } from './receive-queue';
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -46,14 +53,19 @@ import { relayReceiptJoinOf } from './relay-receipt-join';
 export {};
 export interface RelaySubscriptionContext extends SignalProtocolClientContext {
   cipher: SignalProtocolServiceCipher;
+  /** The processor of the committed receive records. */
+  receiveQueue: ReceiveQueue;
   /** Ends lock waits when the tracked receive work stops. */
   stopSignal?: AbortSignal;
 }
 
 /** Accumulates delivery receipt timestamps per sender for batching */
 export interface ReceiptAccumulator {
-  /** senderUserId → the waiting timestamps, and when the first of them arrived */
-  pending: Map<string, { timestamps: number[]; firstArrivalAt: number }>;
+  /**
+   * senderUserId → the waiting timestamps, when the first of them arrived,
+   * and the settle callback of each timestamp
+   */
+  pending: Map<string, ReceiptBatch>;
   timers: Map<string, ReturnType<typeof setTimeout>>; // senderUserId → flush timer
   /**
    * True from the first receipt flush of stop() to the end of the step that
@@ -64,6 +76,14 @@ export interface ReceiptAccumulator {
    * made during the hold after its last flush.
    */
   held: boolean;
+}
+
+/** The waiting delivery receipts of one sender. */
+export interface ReceiptBatch {
+  timestamps: number[];
+  firstArrivalAt: number;
+  /** One callback per timestamp. It gets the error of a failed send. */
+  settles: Array<(error?: unknown) => void>;
 }
 
 /** A batch flushes this long after its last arrival. */
@@ -158,9 +178,11 @@ async function markDeliveredSilently(
 /**
  * Handle incoming relay message - main subscription callback
  *
- * This is the core logic extracted from SignalProtocolClient.startRelaySubscription().
- * Handles decryption, success paths (hooks, delivery receipts), and error paths
- * (ContentHint classification, retry requests, stale prekey handling).
+ * The handler commits the envelope and acknowledges it once its content is
+ * stored (`processRelayMessage`). The receive queue then decides on its
+ * group, gives it to the application, and sends its delivery receipt. The
+ * handler also runs the error paths: ContentHint classification, retry
+ * requests, and stale prekey handling.
  *
  * MESSAGE ROUTING ARCHITECTURE (profile):
  *
@@ -169,13 +191,14 @@ async function markDeliveredSilently(
  * │ All messages arrive as 'ciphertext' envelopes (or 'prekey_bundle')
  * │ The relay contract carries only the outer ciphertext type.      │
  * │                                                                 │
- * │ After decryption, the Content proto is inspected:               │
+ * │ After the commit, the receive queue inspects the Content proto: │
  * │   → dataMessage: Content → onMessageDecrypted → ContentRouter   │
  * │   → receiptMessage: Receipt → handleDeliveryReceipt             │
  * │   → typingMessage: Typing → handleTypingIndicator               │
  * │                                                                 │
- * │ A 'retry_request' envelope is not encrypted. It skips           │
- * │ decryption and goes to handleRetryRequest.                      │
+ * │ A 'retry_request' envelope is not ratchet-encrypted. An         │
+ * │ identified one skips decryption. A sealed one is routed after   │
+ * │ the unseal. Both go to handleRetryRequest.                      │
  * └─────────────────────────────────────────────────────────────────┘
  * ```
  *
@@ -191,12 +214,32 @@ export async function handleRelayMessage(
   callbacks: RelaySubscriptionCallbacks,
   config: RelaySubscriptionConfig
 ): Promise<void> {
-  if (await processRelayMessage(ctx, envelope, state, callbacks, config)) {
-    await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+  // A queue pass skips the record until the transport has its acknowledgment.
+  const release = ctx.receiveQueue.hold(
+    await deliveredEnvelopeFingerprint(ctx.userId, ctx.deviceId, envelope)
+  );
+  try {
+    if (await processRelayMessage(ctx, envelope, state, callbacks, config)) {
+      await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
+    }
+  } finally {
+    release();
+    ctx.receiveQueue.wake();
   }
 }
 
-/** Process content before either foreground or background transport acknowledges it. */
+/**
+ * Commit one Relay envelope before either foreground or background
+ * transport acknowledges it.
+ *
+ * @returns True when the transport can acknowledge the envelope: its
+ *   content is committed as a receive record, its distribution is
+ *   installed when the record is a Relay record or there is no record (a
+ *   reused caller record leaves the distribution with its caller), and the
+ *   retry family recorded its arrival (outcome 1). Also
+ *   true for an envelope that the client drops or refuses. False when the
+ *   envelope must stay at the Relay.
+ */
 export async function processRelayMessage(
   ctx: RelaySubscriptionContext,
   envelope: Envelope,
@@ -204,7 +247,10 @@ export async function processRelayMessage(
   callbacks: RelaySubscriptionCallbacks,
   config: RelaySubscriptionConfig
 ): Promise<boolean> {
-  return receiveInRetryFamily(ctx.storage, ctx.logger, envelope, (family) =>
+  // The record sorts after the stored records once the resume ends. The
+  // wait comes before the retry family lock, which the resume also takes.
+  await ctx.receiveQueue.seeded();
+  return receiveInRetryFamily(ctx.storage, ctx.logger, ctx.hooks, envelope, (family) =>
     handleRelayMessageLocked(ctx, envelope, family, state, callbacks, config)
   );
 }
@@ -217,13 +263,11 @@ async function handleRelayMessageLocked(
   callbacks: RelaySubscriptionCallbacks,
   config: RelaySubscriptionConfig
 ): Promise<boolean> {
-  const receiveId = envelope.id
-    ? await deliveredEnvelopeFingerprint(ctx.userId, ctx.deviceId, envelope)
-    : undefined;
-  await pruneReceivedContent(ctx.storage);
+  const workId = await deliveredEnvelopeFingerprint(ctx.userId, ctx.deviceId, envelope);
+  // The processed record of an envelope with no ID has no key.
+  const receiveId = envelope.id ? workId : undefined;
   const processed = envelope.id ? await getProcessedEnvelope(ctx.storage, envelope.id) : null;
   if (processed) {
-    if (receiveId) await ctx.storage.deleteReceivedContent(receiveId);
     // After the Relay forgets a row, the same ID can carry a new encryption.
     // The local device processed that ID, so it drops the new bytes too.
     const identityChanged = receiveId !== undefined && receiveId !== processed.fingerprint;
@@ -239,6 +283,12 @@ async function handleRelayMessageLocked(
         },
       }
     );
+    // SDK 11 could stop between its processed write and the delete of its
+    // received content, and it deleted that row on the redelivery. The
+    // converted record of that row completes here. The application has its
+    // content, so no hook runs.
+    const converted = await ctx.storage.getReceiveWork(workId);
+    if (converted?.awaitingEnvelope) await completeReceiveWork(ctx, converted);
     return true;
   }
 
@@ -252,26 +302,77 @@ async function handleRelayMessageLocked(
 
   if (!(await family.admit())) {
     if (envelope.id) await storeProcessedEnvelope(ctx.storage, envelope.id, Date.now(), receiveId);
-    if (receiveId) await ctx.storage.deleteReceivedContent(receiveId);
     return true;
   }
 
-  if (!ctx.hooks?.onMessageDecrypted) {
-    throw new Error('Register onMessageDecrypted before receiving Relay messages');
-  }
-  let decryptedEnvelope: DecryptedEnvelope;
+  const receipts = ctx.config.deliveryReceipts ?? 'auto';
+  const join =
+    receipts === 'auto' && ctx.relay !== undefined ? relayReceiptJoinOf(ctx.relay) : undefined;
+  const handle = createReceiveCommit({
+    storage: ctx.storage,
+    policy: ctx.receiveQueue.policy,
+    logger: ctx.logger,
+    contentAdapter: ctx.contentAdapter,
+    family,
+    workId,
+    origin: 'relay',
+    receiptJoin: join !== undefined,
+  });
+  let commit: EnvelopeCommit;
   try {
-    // Delegate decryption to SignalProtocolServiceCipher
-    // Pass sealed sender config for unidentified_sender envelope handling
-    decryptedEnvelope = await ctx.cipher.decrypt(
-      envelope, ctx.config.sealedSender, receiveId, ctx.stopSignal
-    );
+    // The commit stores the decrypted content with the ratchet step.
+    commit = await ctx.cipher.commitEnvelope(envelope, {
+      sealedSender: ctx.config.sealedSender,
+      stopSignal: ctx.stopSignal,
+      work: handle.commit,
+    });
   } catch (error) {
     rethrowRelayWorkStopped(error);
+    // A seal that holds a retry request goes to the same handler as an
+    // identified one. It never asks for a resend of itself.
+    if (error instanceof SealedRetryRequestReceived) {
+      await handleRetryRequestEnvelope(ctx, error.envelope, callbacks);
+      if (envelope.id) {
+        await storeProcessedEnvelope(ctx.storage, envelope.id, Date.now(), receiveId);
+      }
+      return true;
+    }
+    // The decrypt succeeded and its store commit failed. The ratchet step
+    // rolled back, so the redelivery decrypts again. It asks for no resend.
+    // One Signal client also sends no acknowledgment when its commit fails.
+    if (handle.seeded()) {
+      ctx.logger.warn('The receive record of a decrypted envelope failed to commit', {
+        category: 'E2EE',
+        data: {
+          envelopeId: envelope.id,
+          behavior: 'RECEIVE_COMMIT_FAILED',
+          error: (error as Error).message,
+        },
+      });
+      return false;
+    }
     // A failure inside the seal names the unsealed sender, so the retry
     // request goes to that device. The unsealed envelope keeps the ID. A
     // member whose seal fails to open asks the device of its request.
     const failed = family.withRequestedSender(unsealedEnvelopeOf(error) ?? envelope);
+    // A failure that no resend can repair asks for nothing. The envelope
+    // is processed and acknowledged, on this path and on the other.
+    const refusal = receiveRefusal(error);
+    if (refusal !== null) {
+      ctx.logger.error('Error handling incoming envelope', {
+        category: 'E2EE',
+        error,
+        data: {
+          envelopeId: failed.id,
+          senderId: failed.senderUserId,
+          messageType: failed.messageType,
+          deliveryClass: failed.deliveryClass,
+          refusal,
+        },
+      });
+      await reportReceiveRefusal(ctx.storage, ctx.hooks, failed, error as Error, receiveId);
+      return true;
+    }
     await handleDecryptionError(
       ctx,
       failed,
@@ -285,33 +386,62 @@ async function handleRelayMessageLocked(
     return false;
   }
 
-  // Route by decrypted content type, not the outer relay-envelope type.
-  const inspectedContent = ctx.contentAdapter.inspectContent(decryptedEnvelope.content);
+  switch (commit.kind) {
+    // The queue has no room. The envelope stays at the Relay.
+    case 'refused':
+      return false;
+    // The application has the content. The queue owns the rest.
+    case 'settled':
+      return true;
+    // The ratchet step is spent, so a resend cannot repair the content.
+    case 'denied':
+      await denyReceiveWork(
+        ctx,
+        commit.record,
+        { ...commit, ...(envelope.id && { envelopeId: envelope.id, workId }) },
+        commit.error
+      );
+      return true;
+  }
+  const { content, record } = commit;
   // A null message carries no content, so the application never gets it
   // and it fulfills nothing. It is acknowledged as a duplicate is.
-  if (inspectedContent.nullMessage) {
+  if (content.inspected.nullMessage) {
     await family.consumeNull(receiveId);
-  } else {
-    await handleDecryptionSuccess(
-      ctx,
-      envelope,
-      decryptedEnvelope,
-      inspectedContent,
-      state,
-      callbacks
-    );
-    await family.fulfill();
-    if (envelope.id) {
-      await storeProcessedEnvelope(ctx.storage, envelope.id, Date.now(), receiveId);
-    }
+    if (record) await completeReceiveWork(ctx, record);
+    return true;
   }
-  if (receiveId) await ctx.storage.deleteReceivedContent(receiveId);
+  // Outcome 1: the arrival of a resend, before the acknowledgment.
+  await family.fulfill({
+    senderKeyDistribution: content.inspected.senderKeyDistribution !== undefined,
+    content:
+      content.inspected.senderKeyDistribution === undefined ||
+      content.inspected.senderKeyDistributionOnly === false,
+    ...groupOfFulfill(content),
+  });
+  // 'auto' leaves the receipt of an identified arrival to the Relay when
+  // the reply to its acknowledgment lists it. The record keeps the intent,
+  // and the queue keeps the decision.
+  if (join !== undefined && envelope.id && record?.ackIntent?.hasReceiptJoin) {
+    const queue = ctx.receiveQueue;
+    join.await(envelope.id, (relayOwnsReceipt) => queue.joinDecided(workId, relayOwnsReceipt));
+  }
   return true;
 }
 
+/** The raw group of committed content, for the request record of a resend. */
+export function groupOfFulfill(content: CommittedContent): { groupId?: string } {
+  const groupId =
+    content.transportGroupId ??
+    (content.inspected.senderKeyDistributionOnly === false ? content.distributionGroupId : null);
+  return groupId === null ? {} : { groupId };
+}
+
 /**
- * Handle a `retry_request` envelope. The payload is not encrypted, so the
- * envelope never reaches decryption.
+ * Handle a `retry_request` envelope: an identified one, or the unsealed
+ * envelope of a sealed one, whose sender comes from the validated sender
+ * certificate. The payload is not ratchet-encrypted, so the envelope never
+ * reaches a ratchet decrypt.
  *
  * The function returns normally when the request is handled, refused or
  * dropped, and the caller then acknowledges the envelope. It drops an
@@ -375,88 +505,6 @@ async function handleRetryRequestEnvelope(
   );
 }
 
-/**
- * Handle successful message decryption
- */
-async function handleDecryptionSuccess(
-  ctx: RelaySubscriptionContext,
-  envelope: Envelope,
-  decryptedEnvelope: DecryptedEnvelope,
-  inspectedContent: InspectedSignalProtocolContent,
-  state: RelaySubscriptionState,
-  callbacks: RelaySubscriptionCallbacks
-): Promise<void> {
-  // The inspected content tells a receipt, a typing indicator and a data
-  // message apart.
-  const { receipt, typing } = inspectedContent;
-  const authenticatedEnvelope = {
-    ...envelope,
-    senderUserId: decryptedEnvelope.senderId,
-    senderDeviceId: decryptedEnvelope.senderDeviceId,
-  };
-
-  // A peer's profile key in authenticated 1:1 content. The exchange never throws.
-  if (
-    inspectedContent.profileKey !== undefined &&
-    !decryptedEnvelope.isGroup &&
-    decryptedEnvelope.senderId !== ctx.userId
-  ) {
-    await ctx.profileKeys?.incoming(decryptedEnvelope.senderId, inspectedContent.profileKey);
-  }
-
-  if (inspectedContent.senderKeyDistribution) {
-    // The cipher installed this authenticated distribution before returning.
-    return;
-  } else if (inspectedContent.profileKeyUpdate) {
-    // A key-update DataMessage carries only the profile key, kept above.
-    return;
-  } else if (receipt) {
-    await callbacks.handleDeliveryReceipt(authenticatedEnvelope, receipt);
-  } else if (typing) {
-    // Typing indicators are transient - no storage, no delivery receipt
-    await callbacks.handleTypingIndicator(authenticatedEnvelope, typing);
-  } else {
-    // Call hook: message decrypted (ContentManager stores in encrypted DB)
-    const receive = ctx.hooks?.onMessageDecrypted;
-    if (!receive) throw new Error('Register onMessageDecrypted before receiving Relay messages');
-    await receive(decryptedEnvelope);
-
-    // Batch delivery receipts before sending
-    // Multi-device: sendDeliveryReceipt fans out to all sender's devices
-    const receipts = ctx.config.deliveryReceipts ?? 'auto';
-    if (decryptedEnvelope.timestamp && ctx.relay && receipts !== 'off') {
-      if (inspectedContent.shouldSendDeliveryReceipt) {
-        const { senderId, timestamp } = decryptedEnvelope;
-        const accumulate = () =>
-          accumulateDeliveryReceipt(
-            state.receiptAccumulator,
-            senderId,
-            timestamp,
-            callbacks.sendDeliveryReceipt,
-            ctx.logger
-          );
-        // 'auto' leaves the receipt of an identified or unknown arrival to
-        // the Relay when the reply to its acknowledgment lists it. A sealed
-        // arrival, an ephemeral one, and one through a relay without a
-        // receipt join always get the E2EE receipt.
-        const join = receipts === 'auto' ? relayReceiptJoinOf(ctx.relay) : undefined;
-        if (
-          join !== undefined &&
-          envelope.id !== undefined &&
-          decryptedEnvelope.arrivedSealed !== true &&
-          envelope.deliveryClass !== 'ephemeral'
-        ) {
-          join.await(envelope.id, (relayOwnsReceipt) => {
-            if (!relayOwnsReceipt) accumulate();
-          });
-        } else {
-          accumulate();
-        }
-      }
-    }
-  }
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // DELIVERY RECEIPT BATCHING
 // ════════════════════════════════════════════════════════════════════════════
@@ -469,23 +517,35 @@ async function handleDecryptionSuccess(
  * last arrival and RECEIPT_BATCH_MAX_AGE_MS after its first arrival. So steady
  * traffic delays a receipt by at most RECEIPT_BATCH_MAX_AGE_MS. While the
  * accumulator is held, the batch waits for stop() to flush it.
+ *
+ * @returns Resolves when the batch that holds the timestamp is sent, and
+ *   rejects with the error of a failed send. It never settles for a batch
+ *   that stop() drops: the receive queue sends that receipt again after
+ *   the next start.
  */
-function accumulateDeliveryReceipt(
+export function accumulateDeliveryReceipt(
   acc: ReceiptAccumulator,
   senderUserId: string,
   timestamp: number,
   flush: (userId: string, timestamps: number[]) => Promise<void>,
   logger: RelaySubscriptionContext['logger']
-): void {
+): Promise<void> {
   const now = Date.now();
-  const batch = acc.pending.get(senderUserId) ?? { timestamps: [], firstArrivalAt: now };
+  const batch = acc.pending.get(senderUserId) ?? {
+    timestamps: [],
+    firstArrivalAt: now,
+    settles: [],
+  };
+  const sent = new Promise<void>((resolve, reject) => {
+    batch.settles.push((error) => (error === undefined ? resolve() : reject(error)));
+  });
   batch.timestamps.push(timestamp);
   acc.pending.set(senderUserId, batch);
-  if (acc.held) return;
+  if (acc.held) return sent;
 
   if (batch.timestamps.length >= RECEIPT_BATCH_MAX) {
-    flushReceipts(acc, senderUserId, flush, logger);
-    return;
+    void flushReceipts(acc, senderUserId, flush, logger);
+    return sent;
   }
 
   const existingTimer = acc.timers.get(senderUserId);
@@ -498,9 +558,10 @@ function accumulateDeliveryReceipt(
   acc.timers.set(
     senderUserId,
     setTimeout(() => {
-      flushReceipts(acc, senderUserId, flush, logger);
+      void flushReceipts(acc, senderUserId, flush, logger);
     }, Math.max(0, flushAt - now))
   );
+  return sent;
 }
 
 /**
@@ -542,12 +603,20 @@ function flushReceipts(
   acc.pending.delete(senderUserId);
   if (!batch?.timestamps.length) return undefined;
 
-  // The batch timer does not wait for the send. stop() does.
-  return flush(senderUserId, batch.timestamps).catch((err) =>
-    logger.warn('Failed to flush delivery receipts', {
-      category: 'E2EE',
-      data: { senderUserId, error: (err as Error).message },
-    })
+  // The batch timer does not wait for the send. stop() does. Each
+  // timestamp learns the result, so the receive queue keeps a receipt that
+  // failed and sends it again.
+  return flush(senderUserId, batch.timestamps).then(
+    () => {
+      for (const settle of batch.settles) settle();
+    },
+    (err: unknown) => {
+      logger.warn('Failed to flush delivery receipts', {
+        category: 'E2EE',
+        data: { senderUserId, error: (err as Error).message },
+      });
+      for (const settle of batch.settles) settle(err ?? new Error('Receipt send failed'));
+    }
   );
 }
 
@@ -757,17 +826,26 @@ async function sendRetryRequest(
       hooks: ctx.hooks,
       local: { userId: ctx.userId, deviceId: ctx.deviceId },
       senderUserId: envelope.senderUserId,
+      senderDeviceId: envelope.senderDeviceId,
       // Receiver-side rate limiting. A failed envelope with a request record
       // spends nothing, as `requestRetryInFamily` tells.
       allow: () => checkRetryRateLimit(state, envelope.senderUserId),
       windowMs: RETRY_REQUEST_WINDOW_MS,
-      send: (request) => relay.send(request),
-      createRequest: async () => {
+      send: retryRequestPost(
+        ctx.sealRetryRequest,
+        relay,
+        (request) => relay.send(request),
+        ctx.recipientRegistrationId,
+        (userId, deviceId) => ctx.refreshStaleSession?.(ctx, userId, deviceId) ?? Promise.resolve(false)
+      ),
+      failedEnvelope: await retryFailedEnvelope(ctx.storage, envelope),
+      createRequest: async (senderKey) => {
         // Handle stale prekey indicators
         await handleStalePreKeyIndicator(ctx, envelope, error, state, callbacks, config);
         const retryRequest = await ctx.sesameManager.createRetryRequest(
           failedMessage,
-          retryReason
+          retryReason,
+          { senderKey }
         );
         ctx.logger.info('Retry request created for failed message', {
           category: 'E2EE',
@@ -782,6 +860,8 @@ async function sendRetryRequest(
         return retryRequest;
       },
       schedule: ctx.scheduleRetryRequest,
+      groupId: failedGroupOf(error),
+      reset: ctx.retryTerminalReset?.(ctx),
     });
     if (outcome === 'posted' || outcome === 'pending') {
       ctx.logger.info('Retry request sent to sender', {

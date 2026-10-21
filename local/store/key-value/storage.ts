@@ -42,4 +42,19 @@ export type KeyValueOperation =
       readonly type: 'removeSessionsForUser';
       readonly keyPrefix: string;
       readonly userId: string;
+    }
+  /**
+   * Remove the sender-key handoff rows under the prefix whose key segments
+   * equal every given hash, inside the same durable transaction. The part of
+   * a key after the prefix has five colon-separated segments: the group hash,
+   * the generation, the account hash, the recipient hash, and the entry hash.
+   * A key of another shape stays. The operation sees earlier writes in its
+   * batch.
+   */
+  | {
+      readonly type: 'removeSenderKeyHandoffs';
+      readonly keyPrefix: string;
+      readonly groupHash?: string;
+      readonly accountHash?: string;
+      readonly recipientHash?: string;
     };

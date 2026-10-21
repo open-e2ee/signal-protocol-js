@@ -3,7 +3,7 @@
  *
  * @module spqr/validate
  *
- * Provides validation and cleanup functions for SPQR state.
+ * Provides validation and skipped-key trimming for SPQR state.
  * Extracted from spqr.ts for modularity (target: 150 LOC).
  */
 
@@ -57,44 +57,67 @@ export function validateSPQRState(spqrState: SPQRState, operation: string): void
 }
 
 // ============================================================================
-// SPQR Automatic Trimming
+// SPQR Skipped-Key Trimming
 // ============================================================================
 
 /**
- * Trim oldest skipped keys when approaching limit.
+ * The count of held skipped keys in one epoch at which a receive trims the
+ * old keys of that epoch: `maxOutOfOrderKeys * 11 / 10 + 1`, 2201 by
+ * default, as `trim_size` in the reference chain. A stored epoch therefore
+ * holds at most one key less than this count.
+ */
+export function skippedKeyTrimSize(maxOutOfOrderKeys: number): number {
+  return Math.floor((maxOutOfOrderKeys * 11) / 10) + 1;
+}
+
+/** The epoch and index of a held skipped key name, `"epoch:index"`. */
+export function parseSkippedKeyName(name: string): { epoch: number; index: number } | null {
+  const match = /^(\d+):(\d+)$/.exec(name);
+  if (!match) return null;
+  return { epoch: Number(match[1]), index: Number(match[2]) };
+}
+
+/**
+ * Trim the held skipped keys of one epoch by index, as the reference chain
+ * collects its key history. When the epoch holds
+ * `skippedKeyTrimSize` keys or more, each key whose index is below the
+ * receive counter minus `maxOutOfOrderKeys` leaves, so at most
+ * `maxOutOfOrderKeys` keys stay. A key below that horizon is refused at
+ * receive, so a trimmed key is never one that could still decrypt. The
+ * clock is not read.
  *
- * Automatically trim when reaching threshold of max_ooo_keys.
- * This prevents memory exhaustion while preserving recent keys for
- * out-of-order message delivery.
+ * The reference collects before it steps its counter to the received index,
+ * so its horizon is one lower and it keeps one key that its refusal rule
+ * already refuses. This trim uses the stepped counter, so the kept set is the
+ * set that the refusal rule accepts.
  *
  * Uses limits from state if available, otherwise falls back to SPQR_LIMITS_DEFAULTS.
  *
  * @param spqrState - Current SPQR state to trim
+ * @param epoch - The epoch whose receive chain holds the keys
  * @returns Number of keys removed
  */
-export function trimSkippedKeys(spqrState: SPQRState): number {
-  const skippedEntries = Object.entries(spqrState.MKSKIPPED);
-  const currentCount = skippedEntries.length;
-
-  // Use state limits if available, otherwise fall back to defaults
+export function trimEpochSkippedKeys(spqrState: SPQRState, epoch: number): number {
+  const chains = spqrState.kdfChains[epoch];
+  if (!chains) return 0;
   const maxOOOKeys = spqrState.limits?.maxOutOfOrderKeys ?? SPQR_LIMITS_DEFAULTS.maxOutOfOrderKeys;
 
-  // No trimming needed if under limit
-  if (currentCount <= maxOOOKeys) {
+  const held: Array<[string, number]> = [];
+  for (const name of Object.keys(spqrState.MKSKIPPED)) {
+    const parsed = parseSkippedKeyName(name);
+    if (parsed && parsed.epoch === epoch) held.push([name, parsed.index]);
+  }
+  if (held.length < skippedKeyTrimSize(maxOOOKeys)) {
     return 0;
   }
 
-  // Sort by timestamp (oldest first)
-  const sorted = skippedEntries.sort((a, b) => a[1].timestamp - b[1].timestamp);
-
-  // Trim to 90% of max to create headroom for new keys
-  const targetCount = Math.floor(maxOOOKeys * 0.9);
-  const toRemove = currentCount - targetCount;
-
-  for (let i = 0; i < toRemove; i++) {
-    const [key] = sorted[i];
-    delete spqrState.MKSKIPPED[key];
+  const horizon = chains.receive.N - maxOOOKeys;
+  let removed = 0;
+  for (const [name, index] of held) {
+    if (index < horizon) {
+      delete spqrState.MKSKIPPED[name];
+      removed++;
+    }
   }
-
-  return toRemove;
+  return removed;
 }

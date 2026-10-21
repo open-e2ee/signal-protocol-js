@@ -22,6 +22,19 @@ const encrypted = await signal.encryptMessage(bob, 'Hello!');
 
 ## Properties
 
+### contentRecoveryStatus
+
+> `readonly` **contentRecoveryStatus**: [`ContentRecoveryStatus`](ContentRecoveryStatus.md)
+
+Whether this client keeps resendable content to answer retry requests.
+
+The client decides at creation, from the `protection` that the local
+store declares and from `protocol.contentRecovery`. When `enabled` is
+false, `reason` says why, and the client deletes any resendable content
+that the store already holds.
+
+***
+
 ### deviceId
 
 > `readonly` **deviceId**: `number`
@@ -60,6 +73,28 @@ User ID for this client instance
 
 ## Methods
 
+### completeReceive()
+
+> **completeReceive**(`messageId`): `Promise`\<`void`\>
+
+Complete a helper receive: delete its receive record and mark its
+envelope processed. Call it after the application stored the content
+of a `processed` outcome. An unknown or completed message ID is a no-op.
+
+#### Parameters
+
+##### messageId
+
+`string`
+
+The `messageId` of the `processed` outcome
+
+#### Returns
+
+`Promise`\<`void`\>
+
+***
+
 ### createGroupSenderKey()
 
 > **createGroupSenderKey**(`groupId`): `Promise`\<\{ `distributionMessage`: [`SenderKeyDistributionMessage`](SenderKeyDistributionMessage.md); `senderKeyId`: `string`; \}\>
@@ -79,6 +114,49 @@ Group identifier
 `Promise`\<\{ `distributionMessage`: [`SenderKeyDistributionMessage`](SenderKeyDistributionMessage.md); `senderKeyId`: `string`; \}\>
 
 Sender key ID and distribution message to share with group members
+
+***
+
+### decryptEnvelope()
+
+> **decryptEnvelope**(`envelope`): `Promise`\<\{ `groupContext?`: [`GroupContentContext`](GroupContentContext.md); `plaintext`: `string`; \}\>
+
+Decrypt one envelope with no receive record.
+
+The decrypt installs a sender key distribution that the content
+carries, and checks that a managed group context binds to the group of
+the transport. It stores no content, decides no group state, and sends
+no receipt.
+
+Warning: the decrypt spends the ratchet step. When the application
+loses the returned plaintext, no later decrypt of the envelope gives it
+again. Use `processIncomingEnvelope`, which keeps the content until the
+application completes the receive.
+
+#### Parameters
+
+##### envelope
+
+[`IncomingEnvelope`](IncomingEnvelope.md)
+
+The encrypted message envelope
+
+#### Returns
+
+`Promise`\<\{ `groupContext?`: [`GroupContentContext`](GroupContentContext.md); `plaintext`: `string`; \}\>
+
+The plaintext as its sender gave it, and the group context of
+  managed-group content
+
+#### Throws
+
+EncryptionError when the decrypt fails, and INVALID_CIPHERTEXT
+  for a `retry_request` envelope, identified or sealed
+
+#### Throws
+
+GroupReceiveRefusedError when the group context is malformed or
+  names another group than the transport
 
 ***
 
@@ -121,11 +199,15 @@ there.
 
 ***
 
-### decryptGroupMessage()
+### ~~decryptGroupMessage()~~
 
 > **decryptGroupMessage**(`groupId`, `senderId`, `senderDeviceId`, `framedMessage`): `Promise`\<`string`\>
 
 Decrypt a group message from a sender
+
+The message passes the group decision of `processIncomingEnvelope`.
+Content whose group state must update first stays stored, and a later
+call with the same message decides it with no second decrypt.
 
 #### Parameters
 
@@ -158,6 +240,23 @@ Framed SenderKeyMessage bytes
 `Promise`\<`string`\>
 
 Decrypted plaintext
+
+#### Deprecated
+
+Use `processIncomingEnvelope`, which returns a receive
+  outcome and keeps the content until the application completes the
+  receive. This method completes the receive before it returns, so a
+  plaintext that the application loses is gone.
+
+#### Throws
+
+GroupReceiveUnavailableError when the group state of the content
+  is not current. Its `messageId` names the stored receive. Call again
+  later with the same message.
+
+#### Throws
+
+GroupReceiveRefusedError when the client refuses the content
 
 ***
 
@@ -249,6 +348,36 @@ Remote party's protocol address (userId:deviceId)
 #### Returns
 
 `Promise`\<`void`\>
+
+***
+
+### discardPendingReceive()
+
+> **discardPendingReceive**(`messageId`): `Promise`\<[`PendingReceive`](PendingReceive.md) \| `null`\>
+
+Remove one stored receive that the application gives up on, such as a
+receive whose `onMessageDecrypted` hook fails at each start. The client
+deletes the receive and marks its envelope processed, so a redelivery
+of the envelope is a duplicate. The call sends no receipt, calls no
+hook, and runs no `onReceiveExpired`. A hook call that already started
+for the receive still runs, and no receipt follows it.
+
+#### Parameters
+
+##### messageId
+
+`string`
+
+The `messageId` of a receive that
+  `listPendingReceives` lists
+
+#### Returns
+
+`Promise`\<[`PendingReceive`](PendingReceive.md) \| `null`\>
+
+The removed receive, or null when the client removed nothing:
+  no listed receive has the ID, or another path wrote the receive during
+  the call and again after one read
 
 ***
 
@@ -448,6 +577,34 @@ Remote party's prekey bundle from server
 
 ***
 
+### forgetSentContent()
+
+> **forgetSentContent**(`clientMessageId`): `Promise`\<`boolean`\>
+
+Delete the resendable content of one group send.
+
+The client keeps the content of a resendable group send to answer a
+retry request, until each recipient device confirms it with an E2EE
+delivery receipt or the retention ends. Call this method when the
+application deletes the message, so a later retry request gets no
+content. The method does not delete pairwise message records.
+
+#### Parameters
+
+##### clientMessageId
+
+`string`
+
+The `clientMessageId` of the send
+
+#### Returns
+
+`Promise`\<`boolean`\>
+
+True when the client held content for the send
+
+***
+
 ### getGroupSenderKeyDistribution()
 
 > **getGroupSenderKeyDistribution**(`groupId`): `Promise`\<[`SenderKeyDistributionMessage`](SenderKeyDistributionMessage.md) \| `null`\>
@@ -467,6 +624,33 @@ Group identifier
 `Promise`\<[`SenderKeyDistributionMessage`](SenderKeyDistributionMessage.md) \| `null`\>
 
 Distribution message or null if no key exists
+
+***
+
+### getPendingRecipients()
+
+> **getPendingRecipients**(`clientMessageId`): `Promise`\<`SendLogDevice`[]\>
+
+The recipient devices of a resendable group send that have not
+confirmed it with an E2EE delivery receipt.
+
+A device leaves the list when its E2EE delivery receipt arrives. A Relay
+delivery receipt does not remove it, because a device also acknowledges
+a copy that it could not decrypt. The list is empty after the retention
+ends, after `forgetSentContent`, and for a send that the client did not
+log.
+
+#### Parameters
+
+##### clientMessageId
+
+`string`
+
+The `clientMessageId` of the send
+
+#### Returns
+
+`Promise`\<`SendLogDevice`[]\>
 
 ***
 
@@ -565,6 +749,47 @@ Remote party's protocol address (userId:deviceId)
 
 ***
 
+### listPendingReceives()
+
+> **listPendingReceives**(`query?`): `Promise`\<\{ `items`: [`PendingReceive`](PendingReceive.md)[]; `next?`: `string`; \}\>
+
+List the stored receives in arrival order, one page at a time. A receive
+whose content the application has, and whose receipt waits, is not
+listed.
+
+#### Parameters
+
+##### query?
+
+`ready` lists only the helper receives whose content
+  waits for `completeReceive`. `after` is the `next` value of the page
+  before. `limit` is the page size, 100 by default.
+
+###### after?
+
+`string`
+
+###### limit?
+
+`number`
+
+###### ready?
+
+`boolean`
+
+#### Returns
+
+`Promise`\<\{ `items`: [`PendingReceive`](PendingReceive.md)[]; `next?`: `string`; \}\>
+
+The page, and `next` when a later page can follow
+
+#### Throws
+
+Error when `after` is not a `next` value or `limit` is not a
+  positive integer
+
+***
+
 ### processGroupSenderKeyDistribution()
 
 > **processGroupSenderKeyDistribution**(`groupId`, `senderId`, `senderDeviceId`, `message`): `Promise`\<`void`\>
@@ -605,50 +830,90 @@ Distribution message containing the sender key
 
 ### processIncomingEnvelope()
 
-> **processIncomingEnvelope**(`envelope`, `options?`): `Promise`\<`string`\>
+> **processIncomingEnvelope**(`envelope`, `options?`): `Promise`\<[`ReceiveOutcome`](../type-aliases/ReceiveOutcome.md)\>
 
 Process an incoming encrypted message envelope.
 
-Unified entry point for both foreground (relay) and background (HTTP) message processing.
-Handles decryption and automatically sends SESAME retry requests on retryable failures.
+The receive helper for an application that pulls envelopes itself. It
+decrypts the envelope and commits its content as a receive record with
+the ratchet step, then decides the group of the content. Handles
+decryption and automatically sends SESAME retry requests on retryable
+failures. The content stays recoverable until the application calls
+`completeReceive`, or until `onPersist` resolves.
 
-This method:
-1. Decodes base64 ciphertext
-2. Decrypts message using Double Ratchet
-3. On retryable error: sends retry request via relay or options callback
-4. Re-throws error for caller to handle
+The outcome tells the caller what to do with the envelope:
 
-A `retry_request` envelope holds no plaintext. This method rejects it
-before decryption and sends no retry request. Give it to
+- `processed`: give the content to the application, then acknowledge
+  the envelope. A redelivery of the envelope before `completeReceive`
+  returns the same outcome again with no second decrypt. A second
+  `completeReceive` is a no-op.
+- `pending`: the content is stored and the client resumes it, for
+  example when its group state must update first. Acknowledge the
+  envelope. When the group updates, the client decides the content
+  again, and `listPendingReceives({ ready: true })` then lists it.
+- `duplicate`: this client processed the envelope, or the application
+  already has the content of the failed envelope of a retry request.
+  The client acknowledged the envelope.
+- `null-message`: the envelope carries no content. The client consumes
+  a null message when the content adapter reports `nullMessage: true`,
+  and a custom adapter must report it for its own null encoding. The
+  client acknowledged it. A null message for a failed envelope marks
+  that envelope processed, so a redelivery of it is dropped, but a
+  content resend for it that comes later still gives its content.
+- `denied`: the client refused the content. The ratchet step is spent,
+  so no resend can repair it. `onDecryptionError` ran, except for a
+  group that the user blocked (reason `blocked`), which has no report.
+  The client acknowledged the envelope. Content from another account that carries
+  a sync message is denied in any envelope.
+- `refused`: the receive queue has no room. Nothing is decrypted or
+  stored. Do not acknowledge the envelope. Give it again later.
+
+The stored receives count toward `protocol.receiveQueue` and expire
+after 30 days, with `onReceiveExpired`.
+
+A group message that fails with a retryable error gets a retry request
+and is acknowledged, as a pairwise message is. A message with the
+Implicit content hint gets no request and is acknowledged.
+
+A retry request follows the sealed sender delivery mode. With a relay
+and the access key of the sender, the client posts it sealed. Otherwise
+the client posts it identified only when the mode permits it. In
+`'required'` mode a retry request that cannot be sealed is not posted:
+it stays pending until its deadline. The `sendRetryRequest` callback
+gets an identified envelope, so the client calls it only when the mode
+permits identified delivery.
+
+A `retry_request` envelope holds no plaintext. This method rejects it,
+identified or sealed, and sends no retry request. Give it to
 `receiveIncomingEnvelopes`, which handles it.
 
 A failed envelope that this client asked a resend for, and each resend
-or null message for it, gives plaintext at most once on both receive
-paths. When this client processed the envelope, or the application
-already has that content, this method acknowledges the envelope and
-throws MESSAGE_DUPLICATE with no decrypt.
+or null message for it, gives content at most once on both receive
+paths.
 
-A null message carries no content. The client consumes a null message
-when the content adapter reports `nullMessage: true`, and a custom
-adapter must report it for its own null encoding. This method never
-returns a null message. It marks the null message processed,
-acknowledges it and throws MESSAGE_DUPLICATE. A null message for a
-failed envelope marks that envelope processed, so a redelivery of it
-is dropped, but a content resend for it that comes later still gives
-its plaintext.
+A resend that brings only the sender key of a failed group message
+gives no content. It does not mark the failed envelope processed, so a
+redelivery of that envelope decrypts with the key. A resend that brings
+the content beside the key gives that content and marks the failed
+envelope processed.
 
 A resend or null message that fails to decrypt, or whose seal fails to
 open, asks again for its failed envelope under the same retry ID. When
 the processed record of the failed envelope fails to store after a
 decrypt, the client writes a warning with the behavior
 RETRY_FULFILL_WRITE_FAILED, as on every receive path, and this method
-returns the plaintext. A redelivery of the failed envelope or of
+still returns the outcome. A redelivery of the failed envelope or of
 another family member can then give the content again. When a
 processed record of a null message or of its failed envelope fails to
 store, the client writes a warning with the behavior
 RETRY_NULL_WRITE_FAILED, as on every receive path, and this method
-still throws MESSAGE_DUPLICATE. A redelivery of the failed envelope
-can then give the content.
+still returns `null-message`. A redelivery of the failed envelope can
+then give the content.
+
+This method never throws `GroupResendDeferredError`, because it
+rejects a retry request.
+`receiveIncomingEnvelopes` reports a deferred retry request in
+`failedMessageIds`, so the Relay keeps the request.
 
 #### Parameters
 
@@ -662,13 +927,14 @@ The encrypted message envelope
 
 [`ProcessEnvelopeOptions`](ProcessEnvelopeOptions.md)
 
-Transport callbacks for background (no relay) scenarios
+Transport callbacks for background (no relay)
+  scenarios, and `onPersist`
 
 #### Returns
 
-`Promise`\<`string`\>
+`Promise`\<[`ReceiveOutcome`](../type-aliases/ReceiveOutcome.md)\>
 
-Decrypted plaintext
+The receive outcome
 
 #### Throws
 
@@ -676,28 +942,51 @@ EncryptionError after sending retry request if decryption fails
 
 #### Throws
 
-EncryptionError INVALID_CIPHERTEXT for a `retry_request` envelope
-
-#### Throws
-
-EncryptionError MESSAGE_DUPLICATE when this client processed the
-  envelope, or the application already has the content of the failed
-  envelope of a retry request, or the envelope is a null message
+EncryptionError INVALID_CIPHERTEXT for a `retry_request` envelope,
+  identified or sealed
 
 #### Example
 
 ```typescript
-// Foreground (relay available)
-const plaintext = await signal.processIncomingEnvelope(envelope);
-
-// Background (the client has no relay)
-const plaintext = await signal.processIncomingEnvelope(envelope, {
+const outcome = await signal.processIncomingEnvelope(envelope, {
+  // Background (the client has no relay)
   sendRetryRequest: async (envelope) => {
     // Post the retry_request envelope like any other envelope.
     await backgroundRelay.send(envelope);
-  }
+  },
+  // The client completes the receive when the content is stored.
+  onPersist: (processed) => db.saveMessage(processed.messageId, processed.plaintext),
 });
+if (outcome.kind !== 'refused') await backgroundRelay.acknowledge(envelope.id);
 ```
+
+***
+
+### processPendingReceives()
+
+> **processPendingReceives**(`options?`): `Promise`\<\{ `processed`: `number`; `remaining`: `number`; \}\>
+
+Run one pass of the receive queue now, and stop between records at the
+deadline. A host that wakes for a push calls it after it acknowledged
+the pulled envelopes.
+
+#### Parameters
+
+##### options?
+
+`deadlineMs` bounds the pass. With no deadline, the
+  pass runs until each record is handled.
+
+###### deadlineMs?
+
+`number`
+
+#### Returns
+
+`Promise`\<\{ `processed`: `number`; `remaining`: `number`; \}\>
+
+The receives that the pass handled, and the receives that
+  still wait
 
 ***
 

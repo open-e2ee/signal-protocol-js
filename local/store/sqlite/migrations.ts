@@ -201,6 +201,107 @@ export const SQLITE_STORE_MIGRATIONS: readonly SqliteMigration[] = [
       )`,
     ],
   },
+  {
+    version: 3,
+    statements: [
+      // The send log: resendable group content, one row per recipient device
+      // that has not confirmed it, and the persisted resend jobs.
+      `CREATE TABLE send_log_payload (
+        client_message_id text PRIMARY KEY NOT NULL,
+        group_id text NOT NULL,
+        client_timestamp integer NOT NULL,
+        content_hint integer NOT NULL,
+        plaintext text NOT NULL,
+        created_at integer NOT NULL,
+        send_complete integer DEFAULT 0 NOT NULL
+      )`,
+      `CREATE INDEX idx_send_log_payload_created ON send_log_payload (created_at)`,
+      `CREATE TABLE send_log_recipient (
+        client_message_id text NOT NULL,
+        user_id text NOT NULL,
+        device_id integer NOT NULL,
+        client_timestamp integer NOT NULL,
+        responses integer DEFAULT 0 NOT NULL,
+        PRIMARY KEY (client_message_id, user_id, device_id),
+        FOREIGN KEY (client_message_id) REFERENCES send_log_payload (client_message_id)
+          ON DELETE CASCADE
+      )`,
+      `CREATE INDEX idx_send_log_recipient_device
+        ON send_log_recipient (user_id, device_id, client_timestamp)`,
+      `CREATE TABLE send_log_resend_job (
+        job_id text PRIMARY KEY NOT NULL,
+        client_message_id text NOT NULL,
+        requester_user_id text NOT NULL,
+        requester_device_id integer NOT NULL,
+        retry_id text NOT NULL,
+        request_envelope_id text NOT NULL,
+        failed_envelope_id text,
+        created_at integer NOT NULL,
+        attempts integer NOT NULL,
+        state text NOT NULL
+      )`,
+      `CREATE INDEX idx_send_log_resend_job_state ON send_log_resend_job (state, created_at)`,
+      `CREATE INDEX idx_send_log_resend_job_created ON send_log_resend_job (created_at)`,
+    ],
+  },
+  {
+    version: 4,
+    statements: [
+      // The receive records: one row per received message that the device
+      // decrypted and has not finished. `record` holds the record JSON. The
+      // other columns index it. `blocked_group` is null unless the record
+      // waits for an update of its group.
+      `CREATE TABLE receive_work (
+        work_id text PRIMARY KEY NOT NULL,
+        revision integer NOT NULL,
+        record text NOT NULL,
+        arrival_seq integer NOT NULL,
+        stage text NOT NULL,
+        due_at integer NOT NULL,
+        size_bytes integer NOT NULL,
+        blocked_group text
+      )`,
+      `CREATE INDEX idx_receive_work_arrival ON receive_work (arrival_seq, work_id)`,
+      `CREATE INDEX idx_receive_work_blocked_group ON receive_work (blocked_group)`,
+    ],
+  },
+  {
+    version: 5,
+    statements: [
+      // The sender-key handoff rows: one row per own-key distribution that
+      // the Relay accepted for one device registration. The sender key ID is
+      // in the key, so the row of one key does not replace the row of
+      // another key at the same generation. The index serves the deletes of
+      // one device and of one account.
+      `CREATE TABLE sender_key_handoff (
+        group_id text NOT NULL,
+        generation integer NOT NULL,
+        recipient_user_id text NOT NULL,
+        recipient_device_id integer NOT NULL,
+        recipient_registration_id integer NOT NULL,
+        sender_key_id text NOT NULL,
+        accepted_at integer NOT NULL,
+        PRIMARY KEY (
+          group_id,
+          generation,
+          recipient_user_id,
+          recipient_device_id,
+          recipient_registration_id,
+          sender_key_id
+        )
+      )`,
+      `CREATE INDEX idx_sender_key_handoff_recipient
+        ON sender_key_handoff (recipient_user_id, recipient_device_id)`,
+    ],
+  },
+  {
+    version: 6,
+    // A device record can carry `removedAt`, the removed-device marker. The
+    // record JSON holds the field, so the step changes no table. The step
+    // keeps an older SDK, which does not skip a removed device, from opening
+    // the file.
+    statements: [],
+  },
 ];
 
 /**

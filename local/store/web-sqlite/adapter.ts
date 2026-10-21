@@ -7,16 +7,20 @@
  */
 
 import type { Logger } from '../../../logger';
-import type { SignalProtocolLocalSecretVault } from '../../../types/api';
+import type { LocalStoreProtection, SignalProtocolLocalSecretVault } from '../../../types/api';
 import { IndexedDbSignalProtocolSecretVault } from '../../vault/indexed-db';
 import type { SqliteOpenOptions } from '../sqlite/encryption';
 import type { SqliteRootExecutor } from '../sqlite/executor';
 import {
   openSqliteStore,
+  readSqliteStoreProtection,
   resetSqliteStore,
   type SqliteStoreOpenOptions,
 } from '../sqlite/open-store';
-import { SqliteSignalProtocolStore } from '../sqlite/store';
+import {
+  SqliteSignalProtocolStore,
+  convertSqliteLegacyReceivedContent,
+} from '../sqlite/store';
 import { createWebSqliteDriver, type WebSqliteDriver } from '../sqlite/web/driver';
 import { acquireSqliteStoreLock, withSqliteOpenLock } from './store-locks';
 
@@ -120,8 +124,14 @@ export function webSqliteStoreDatabase(store: WebSqliteSignalProtocolStore): Sql
  * @see {@link SignalProtocolLocalStore} for interface documentation
  */
 export class WebSqliteSignalProtocolStore extends SqliteSignalProtocolStore {
-  private constructor(database: SqliteRootExecutor, logger: Logger | undefined) {
-    super(database, { logger });
+  private constructor(
+    database: SqliteRootExecutor,
+    protection: LocalStoreProtection,
+    logger: Logger | undefined,
+    /** The database name. The tabs and workers of the origin share its locks. */
+    readonly storeIdentity: string
+  ) {
+    super(database, { logger, protection });
     databases.set(this, database);
   }
 
@@ -134,7 +144,11 @@ export class WebSqliteSignalProtocolStore extends SqliteSignalProtocolStore {
       const release = stopper(open.driver, await acquireSqliteStoreLock(open.name, 'shared', 'open'));
       return releasedOnClose(await openSqliteStore(open).catch(failed(release)), release);
     });
-    return new WebSqliteSignalProtocolStore(database, options.logger);
+    const protection = await readSqliteStoreProtection(database, open.vault);
+    return await convertSqliteLegacyReceivedContent(
+      new WebSqliteSignalProtocolStore(database, protection, options.logger, open.name),
+      database
+    );
   }
 
   /** @internal Use {@link resetWebSqliteStore}. */
@@ -153,7 +167,8 @@ export class WebSqliteSignalProtocolStore extends SqliteSignalProtocolStore {
       });
       return releasedOnClose(reset, stopper(open.driver, release));
     });
-    return new WebSqliteSignalProtocolStore(database, options.logger);
+    const protection = await readSqliteStoreProtection(database, open.vault);
+    return new WebSqliteSignalProtocolStore(database, protection, options.logger, open.name);
   }
 
   /**

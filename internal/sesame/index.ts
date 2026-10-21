@@ -49,6 +49,7 @@ export type {
   SesameManager,
   // Send options
   SesameSendOptions,
+  MessageRecordPlaintext,
   // Statistics
   SesameStats,
   // Storage interface

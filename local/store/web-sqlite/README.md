@@ -209,10 +209,13 @@ IPC sources to `connect-src`:
   WebView 133 on an Android API 36 emulator, and every check passes. The
   origin of the webview is `http://tauri.localhost`.
 - **Key custody.** The default vault keeps the key in IndexedDB in the same
-  origin as the database. An app that needs OS keychain custody passes its own
-  vault. See [Security boundary](#security-boundary).
+  origin as the database, so the store reports `same-origin` custody. An app
+  that needs other custody passes its own vault. See
+  [Security boundary](#security-boundary).
 
 ## Security boundary
+
+Reviewed: 2026-10-12.
 
 The default vault keeps the database key as raw bytes in IndexedDB, in the
 same origin as the database file. The key protects a copy of the database
@@ -225,6 +228,15 @@ origin-security controls that a deployment needs.
 
 An application with a different key custody passes its own
 `SignalProtocolLocalSecretVault` as `vault`.
+
+The store reports its `protection` from the database file and the vault:
+`file-cipher` with the custody of the vault, or `none` with
+`encryptionAtRest: false`. With the default vault, the level is
+`co-located`. The default content recovery mode, `require-protected`, then
+keeps no resendable content. Set `protocol.contentRecovery.mode` to
+`allow-co-located-key` only after a product review accepts that key
+custody, or pass a vault that declares `os-keychain` or `app-vault`. See
+[Content Recovery](../../../docs/PROTOCOL_POLICY.md#content-recovery).
 
 See the parent [storage guide](../README.md), [adapter guide](../../../ADAPTERS.md),
 and [security model](../../../docs/SECURITY.md).

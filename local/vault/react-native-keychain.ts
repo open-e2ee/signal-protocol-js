@@ -8,7 +8,7 @@ import {
   type BaseOptions,
   type SetOptions,
 } from 'react-native-keychain';
-import type { SignalProtocolLocalSecretVault } from '../../types/api';
+import type { SecretVaultCustody, SignalProtocolLocalSecretVault } from '../../types/api';
 import { EncryptionError, EncryptionErrorCode } from '../../types/errors';
 import { bytesToHex, hexToBytes } from '../../encoding/hex';
 
@@ -64,6 +64,9 @@ function assertName(name: string, operation: string): void {
 export class ReactNativeKeychainSignalProtocolSecretVault
   implements SignalProtocolLocalSecretVault
 {
+  /** react-native-keychain keeps the secrets in the Keychain or the Android Keystore. */
+  readonly custody: SecretVaultCustody = 'os-keychain';
+
   async getSecret(name: string): Promise<Uint8Array | null> {
     assertName(name, 'getSecret');
     const credentials = await getGenericPassword(lookupOptions(name));

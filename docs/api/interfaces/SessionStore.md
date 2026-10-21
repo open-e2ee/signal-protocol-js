@@ -28,6 +28,9 @@ Used when:
 - Registration ID changes (app reinstall detected)
 - Manual session reset
 
+The same write deletes the sender-key handoff rows of the device in every
+group.
+
 #### Parameters
 
 ##### address
@@ -52,7 +55,8 @@ Optional new session to set as current
 
 > **deleteSessionRecord**(`address`): `Promise`\<`void`\>
 
-Delete session record.
+Delete session record. The same write deletes the sender-key handoff
+rows of the device in every group.
 
 #### Parameters
 

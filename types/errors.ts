@@ -304,15 +304,15 @@ export enum EncryptionErrorCode {
    * PQXDH key exchange failed during handshake.
    *
    * The post-quantum key exchange encountered an error. The SDK aborts the
-   * session instead of a downgrade to classical X3DH.
+   * session setup. No classical key agreement exists.
    */
   PQXDH_FAILED = 'PQXDH_FAILED',
 
   /**
    * Triple Ratchet applies, but the session did not use PQXDH.
    *
-   * Triple Ratchet requires post-quantum material from PQXDH.
-   * Cannot enable Triple Ratchet with classical X3DH handshake.
+   * Triple Ratchet requires post-quantum material from PQXDH. The SDK
+   * refuses a session that has no PQXDH result.
    */
   TRIPLE_RATCHET_REQUIRED = 'TRIPLE_RATCHET_REQUIRED',
 
@@ -561,16 +561,6 @@ export function isSealedSenderAuthError(error: unknown): error is SealedSenderAu
 }
 
 /**
- * Fallback type categories for PQXDH errors.
- *
- * Distinguishes between different types of fallback scenarios:
- * - `missing_keys`: Partner does not have Kyber prekeys (expected compatibility issue)
- * - `crypto_failure`: Kyber operation failed (decapsulation, signature, etc.)
- * - `protocol_mismatch`: Version or format incompatibility
- */
-export type PQXDHFallbackType = 'missing_keys' | 'crypto_failure' | 'protocol_mismatch';
-
-/**
  * Options for PQXDHRequiredError constructor.
  */
 export interface PQXDHRequiredErrorOptions {
@@ -578,8 +568,6 @@ export interface PQXDHRequiredErrorOptions {
   retryable?: boolean;
   /** Suggested delay before retry in milliseconds */
   suggestedRetryDelay?: number;
-  /** Category of fallback for analytics and handling */
-  fallbackType?: PQXDHFallbackType;
   /** The underlying error that caused the failure */
   originalError?: Error;
 }
@@ -587,15 +575,16 @@ export interface PQXDHRequiredErrorOptions {
 /**
  * Error thrown when PQXDH applies, but the partner lacks Kyber keys.
  *
- * This is a recoverable error - applications can:
- * - Notify user that partner needs to update their app
- * - Queue the message for retry when partner uploads Kyber prekeys
- * - Fall back to classical encryption with user consent
+ * Every new session requires PQXDH. The SDK has no classical key agreement,
+ * so this error does not offer a downgrade. Applications can:
+ * - Notify the user that the partner must publish ML-KEM prekeys
+ * - Queue the message for retry when the partner uploads Kyber prekeys
  *
  * Recovery metadata:
+ * - `reason`: `no_kyber_prekey` when the partner bundle has no KEM material,
+ *   `pqxdh_failed` when the post-quantum key exchange failed
  * - `retryable`: Whether the caller can retry the operation
  * - `suggestedRetryDelay`: Recommended delay before retry (ms)
- * - `fallbackType`: Category of fallback for analytics
  *
  * @example Handling in application
  * ```typescript
@@ -604,18 +593,11 @@ export interface PQXDHRequiredErrorOptions {
  * } catch (error) {
  *   if (isPQXDHRequiredError(error)) {
  *     if (error.retryable) {
- *       // Schedule retry with suggested delay
- *       setTimeout(() => retryEncryption(), error.suggestedRetryDelay ?? 5000);
- *     } else if (error.fallbackType === 'missing_keys') {
- *       // Partner doesn't support post-quantum yet
- *       showDialog({
- *         title: 'Enhanced Security Unavailable',
- *         message: `${error.remoteAddress} needs to update their app.`,
- *         actions: [
- *           { label: 'Queue Message', action: () => queueForRetry(message) },
- *           { label: 'Send Anyway', action: () => sendWithClassical(message) }
- *         ]
- *       });
+ *       // The partner has not published ML-KEM prekeys yet. Retry later.
+ *       setTimeout(() => retryEncryption(), error.suggestedRetryDelay ?? 30000);
+ *     } else {
+ *       // The PQXDH exchange failed. Abort and inspect error.originalError.
+ *       reportFailure(error);
  *     }
  *   }
  * }
@@ -630,8 +612,6 @@ export class PQXDHRequiredError extends EncryptionError {
   public readonly retryable: boolean;
   /** Suggested delay before retry in milliseconds */
   public readonly suggestedRetryDelay?: number;
-  /** Category of fallback for analytics and handling */
-  public readonly fallbackType: PQXDHFallbackType;
 
   constructor(
     remoteAddress: string,
@@ -656,8 +636,6 @@ export class PQXDHRequiredError extends EncryptionError {
     this.reason = reason;
 
     // Set recovery metadata with sensible defaults
-    this.fallbackType =
-      opts.fallbackType ?? (reason === 'no_kyber_prekey' ? 'missing_keys' : 'crypto_failure');
     this.retryable = opts.retryable ?? reason === 'no_kyber_prekey'; // The caller can retry missing keys after partner updates
     this.suggestedRetryDelay = opts.suggestedRetryDelay ?? (this.retryable ? 30000 : undefined); // 30s default for retryable
   }

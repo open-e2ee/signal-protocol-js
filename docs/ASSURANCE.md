@@ -16,16 +16,16 @@ Private testing also exists in other open-source projects. [SQLite publishes som
 
 Engineering CI runs the default automated checks on pull requests that are ready for review and on changes to the main branch. Release preparation requires a passing run.
 
-Most recent full run on 2026-10-11:
+Most recent full run on 2026-10-20:
 
 | | |
 |---|---|
-| Test modules | 505 |
-| Test cases | 9,788 |
-| Passed | 9,784 |
+| Test modules | 564 |
+| Test cases | 11,467 |
+| Passed | 11,463 |
 | Skipped | 4 |
 | Failed | 0 |
-| Wall time | 236 s |
+| Wall time | 499 s |
 
 The total counts test cases. One test case can contain several assertions. Separate commands run the longer performance and endurance checks.
 
@@ -36,7 +36,7 @@ Release tooling generates this table from a completed run. It refuses results fr
 - **Known answers:** compare cryptographic outputs with published reference data for ML-KEM, hashes, authenticated encryption, and signatures.
 - **Protocol behavior:** check PQXDH, Double Ratchet, SPQR, and ML-KEM Braid state changes. Cover replay rejection, reordered messages, skipped-key limits, and required post-quantum operations.
 - **Generated inputs:** check protocol and encoding properties across randomized inputs.
-- **Messaging flows:** exercise device fanout, groups, device linking, provisioning, PNI-to-ACI changes, and relay delivery.
+- **Messaging flows:** exercise device fanout, groups, device linking, device transfer, PNI-to-ACI changes, and relay delivery.
 - **Storage contracts:** check persistence, concurrency, interruption, recovery, and storage pressure at adapter boundaries.
 - **Runtime behavior:** run the browser storage contracts in Chromium, Firefox, and WebKit. Run each public flow on the Hermes V1 command-line engine that React Native 0.86 uses, with only the globals of a bare React Native app. A committed list records each flow step that fails on that engine and its error. The job fails when a result differs from that list. Run release builds of the Expo example and the bare React Native example on an Android emulator. Both use Hermes V1. The Expo build uses Expo SDK 57 and React Native 0.86, and the bare build uses React Native 0.87.1.
 - **Public API:** check exported types, import paths, documented calls, and expected example output against the packed package.

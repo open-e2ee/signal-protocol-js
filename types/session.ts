@@ -65,7 +65,7 @@ export interface StoredMessageKey {
   seed: Base64;
 
   /**
-   * Storage timestamp for FIFO eviction.
+   * Storage timestamp for the 7-day expiry. The per-chain cap evicts by index, not by this field.
    *
    * Per Signal Protocol Section 8.4:
    * "A recommended policy is to delete message keys more than one week old"
@@ -130,9 +130,9 @@ export interface SessionState {
    * The initiator's ephemeral public key is the unique identifier for this
    * session state. This field takes the name "baseKey" because:
    * - "ephemeral" describes the key's LIFECYCLE (temporary, single-use)
-   * - "base" describes the key's ROLE (foundation for SK derivation in X3DH/PQXDH)
+   * - "base" describes the key's ROLE (foundation for SK derivation in PQXDH)
    *
-   * For initiator (Alice): Set to ephemeralKeyPair.publicKey from X3DH/PQXDH
+   * For initiator (Alice): Set to ephemeralKeyPair.publicKey from PQXDH
    * For responder (Bob): Set to senderEphemeralKey from PreKeyMessage
    *
    * CRITICAL: This is different from sessionId/ProtocolAddress lookup.
@@ -198,7 +198,7 @@ export interface SessionState {
    * This nested structure provides bounded skipped-key storage:
    * - Up to MAX_RECEIVER_CHAINS (5) chains stored
    * - Each chain indexed by sender's ratchet public key
-   * - Each chain contains up to MAX_MESSAGE_KEYS (2000 total) message keys
+   * - Each chain contains up to MAX_MESSAGE_KEYS (2000) message keys
    *
    * @see Signal Protocol Double Ratchet Section 3.1 (state.MKSKIPPED)
    */
@@ -218,11 +218,11 @@ export interface SessionState {
    */
   processedChains?: Record<string, { lastNr: number; timestamp: number }>;
 
-  // X3DH prekey tracking (for PreKeyMessage - only set for initiator).
+  // PQXDH prekey tracking (for PreKeyMessage - only set for initiator).
   /** Explicit remote identity namespace included in authenticated PreKeyMessages. */
   recipientIdentityType?: IdentityType;
-  usedSignedPreKeyId?: number; // ID of remote party's signed prekey used in X3DH.
-  usedOneTimePreKeyId?: number; // ID of remote party's one-time prekey used in X3DH (if available).
+  usedSignedPreKeyId?: number; // ID of remote party's signed prekey used in PQXDH.
+  usedOneTimePreKeyId?: number; // ID of remote party's one-time prekey used in PQXDH (if available).
   usedKyberPreKeyId?: number; // ID of remote party's Kyber prekey used in PQXDH (if available).
   usedKemOneTimePreKeyId?: number; // ID of remote party's one-time KEM prekey used in PQXDH (if available).
 
@@ -603,7 +603,7 @@ export interface SessionConfig {
  * Session Lookup Architecture:
  * 1. A ProtocolAddress (userId:deviceId) LOOKS UP a session
  * 2. Within a SessionRecord, a baseKey IDENTIFIES a session state
- * 3. The baseKey is the initiator's ephemeral public key from X3DH/PQXDH
+ * 3. The baseKey is the initiator's ephemeral public key from PQXDH
  *
  * @see https://signal.org/docs/specifications/sesame/
  */
@@ -814,14 +814,47 @@ export namespace SessionRecord {
   }
 
   /**
+   * Give a copy of a session without its unacknowledged prekey state.
+   *
+   * A session that moves to the archive never sends a PreKeyMessage again: if
+   * a later promotion makes it current, its next send is a SignalMessage. The
+   * prekey identifiers and the KEM ciphertexts go with the flag. The copy
+   * leaves the object of the caller unchanged.
+   */
+  function withoutPendingPreKey(session: SessionState): SessionState {
+    const archived = { ...session };
+    delete archived.unacknowledgedPreKeyMessage;
+    delete archived.usedSignedPreKeyId;
+    delete archived.usedOneTimePreKeyId;
+    delete archived.usedKyberPreKeyId;
+    delete archived.usedKemOneTimePreKeyId;
+    delete archived.kyberCiphertext;
+    delete archived.kemOneTimePreKeyCiphertext;
+    return archived;
+  }
+
+  /**
+   * Put a session at the newest end of the archive.
+   *
+   * The archive keeps insertion order. A base key is the base64 of a public
+   * key, never an array-index string, so the object and its JSON keep the
+   * order of insertion. A base key that is already archived leaves its old
+   * place and moves to the newest end.
+   */
+  function insertArchived(record: SessionRecord, session: SessionState): void {
+    delete record.archivedSessions[session.baseKey];
+    record.archivedSessions[session.baseKey] = session;
+  }
+
+  /**
    * Archive the current session and optionally set a new one.
    *
    * The function moves the current session to archivedSessions, keyed by its
-   * baseKey. It trims old archived sessions if we exceed maxArchived.
+   * baseKey, at the newest end. Over maxArchived, the oldest insertions leave.
    *
    * @param record - SessionRecord to modify
    * @param newSession - Optional new session to set as current
-   * @param maxArchived - Maximum number of archived sessions to keep (default: 5)
+   * @param maxArchived - Maximum number of archived sessions to keep (default: 40)
    * @returns Modified SessionRecord
    */
   export function archiveCurrent(
@@ -829,27 +862,14 @@ export namespace SessionRecord {
     newSession: SessionState | null = null,
     maxArchived: number = MAX_ARCHIVED_SESSIONS
   ): SessionRecord {
-    // Move current to archived using baseKey as key
     if (record.currentSession) {
-      const baseKey = record.currentSession.baseKey;
-      record.archivedSessions[baseKey] = record.currentSession;
+      insertArchived(record, withoutPendingPreKey(record.currentSession));
     }
 
-    // Trim old sessions if we exceed max (by lastUsedAt timestamp)
+    // Over the bound, the oldest insertions leave, whatever their last use.
     const archivedKeys = Object.keys(record.archivedSessions);
-    if (archivedKeys.length > maxArchived) {
-      // Sort by lastUsedAt (oldest first) and remove oldest
-      const sortedKeys = archivedKeys.sort((a, b) => {
-        const sessionA = record.archivedSessions[asBase64(a)];
-        const sessionB = record.archivedSessions[asBase64(b)];
-        return (sessionA?.lastUsedAt ?? 0) - (sessionB?.lastUsedAt ?? 0);
-      });
-
-      // Remove oldest sessions
-      const keysToRemove = sortedKeys.slice(0, archivedKeys.length - maxArchived);
-      for (const key of keysToRemove) {
-        delete record.archivedSessions[asBase64(key)];
-      }
+    for (const key of archivedKeys.slice(0, Math.max(0, archivedKeys.length - maxArchived))) {
+      delete record.archivedSessions[asBase64(key)];
     }
 
     // Set new current
@@ -918,10 +938,9 @@ export namespace SessionRecord {
       return false;
     }
 
-    // Archive current (if exists) using its baseKey
+    // Archive current (if exists) at the newest end
     if (record.currentSession) {
-      const currentBaseKey = record.currentSession.baseKey;
-      record.archivedSessions[currentBaseKey] = record.currentSession;
+      insertArchived(record, withoutPendingPreKey(record.currentSession));
     }
 
     // Promote archived to current

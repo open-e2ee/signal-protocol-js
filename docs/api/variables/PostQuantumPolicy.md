@@ -12,10 +12,6 @@ Developer-facing post-quantum policy values.
 
 ## Type Declaration
 
-### Compatible
-
-> `readonly` **Compatible**: `"compatible"` = `'compatible'`
-
 ### Required
 
 > `readonly` **Required**: `"required"` = `'required'`

@@ -20,7 +20,7 @@ From Signal Protocol:
 Session Lookup Architecture:
 1. A ProtocolAddress (userId:deviceId) LOOKS UP a session
 2. Within a SessionRecord, a baseKey IDENTIFIES a session state
-3. The baseKey is the initiator's ephemeral public key from X3DH/PQXDH
+3. The baseKey is the initiator's ephemeral public key from PQXDH
 
 ## See
 

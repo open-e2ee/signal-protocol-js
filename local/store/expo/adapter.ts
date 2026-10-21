@@ -7,17 +7,21 @@
  */
 
 import type { Logger } from '../../../logger';
-import type { SignalProtocolLocalSecretVault } from '../../../types/api';
+import type { LocalStoreProtection, SignalProtocolLocalSecretVault } from '../../../types/api';
 import { ExpoSecureStoreSignalProtocolSecretVault } from '../../vault/expo-secure-store';
 import type { SqliteOpenOptions } from '../sqlite/encryption';
 import type { SqliteRootExecutor } from '../sqlite/executor';
 import {
   openSqliteStore,
+  readSqliteStoreProtection,
   resetSqliteStore,
   type SqliteStoreOpenOptions,
 } from '../sqlite/open-store';
 import { SqliteEncryptionUnavailableError } from '../sqlite/errors';
-import { SqliteSignalProtocolStore } from '../sqlite/store';
+import {
+  SqliteSignalProtocolStore,
+  convertSqliteLegacyReceivedContent,
+} from '../sqlite/store';
 import { createExpoSqliteDriver, expoSqliteHasCipher } from './driver';
 
 /** The database file name when the options name none. */
@@ -83,23 +87,34 @@ export function expoStoreDatabase(store: ExpoSignalProtocolStore): SqliteRootExe
  * @see {@link SignalProtocolLocalStore} for interface documentation
  */
 export class ExpoSignalProtocolStore extends SqliteSignalProtocolStore {
-  private constructor(database: SqliteRootExecutor, logger: Logger | undefined) {
-    super(database, { logger });
+  private constructor(
+    database: SqliteRootExecutor,
+    protection: LocalStoreProtection,
+    logger: Logger | undefined
+  ) {
+    super(database, { logger, protection });
     databases.set(this, database);
   }
 
   /** @internal Use {@link expoStore}. */
   static async open(options: ExpoSignalProtocolStoreOptions): Promise<ExpoSignalProtocolStore> {
     await requireCipher(options);
-    const database = await openSqliteStore(storeOptions(options));
-    return new ExpoSignalProtocolStore(database, options.logger);
+    const open = storeOptions(options);
+    const database = await openSqliteStore(open);
+    const protection = await readSqliteStoreProtection(database, open.vault);
+    return await convertSqliteLegacyReceivedContent(
+      new ExpoSignalProtocolStore(database, protection, options.logger),
+      database
+    );
   }
 
   /** @internal Use {@link resetExpoStore}. */
   static async reset(options: ExpoSignalProtocolStoreOptions): Promise<ExpoSignalProtocolStore> {
     await requireCipher(options);
-    const database = await resetSqliteStore(storeOptions(options));
-    return new ExpoSignalProtocolStore(database, options.logger);
+    const open = storeOptions(options);
+    const database = await resetSqliteStore(open);
+    const protection = await readSqliteStoreProtection(database, open.vault);
+    return new ExpoSignalProtocolStore(database, protection, options.logger);
   }
 
   /**

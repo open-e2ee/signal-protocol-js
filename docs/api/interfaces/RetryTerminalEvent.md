@@ -27,3 +27,12 @@ Why the request ended.
 > **failedEnvelopeId**: `string`
 
 The Relay message ID of the envelope that the requester failed to decrypt.
+
+***
+
+### recovery?
+
+> `optional` **recovery?**: [`RetryTerminalRecoveryEvent`](RetryTerminalRecoveryEvent.md)
+
+The session reset of the requester. Only an `expired-content` end of a
+client with a Relay has it.

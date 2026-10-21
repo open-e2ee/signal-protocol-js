@@ -23,8 +23,8 @@ Default: 7 days (604800000 ms)
 
 > `optional` **maxMessageKeysStored?**: `number`
 
-Maximum number of skipped message keys to store
-Default: 1000
+Maximum number of skipped message keys to store per receiver chain
+Default: 2000
 
 ***
 

@@ -121,9 +121,10 @@ Device identifier for multi-device support
 - 1 = Primary device (default)
 - 2-5 = Linked devices
 
-Device 1 bootstraps identity locally. Devices 2-5 must already have a
-provisioned identity imported into the provided storage before the app
-calls `DefaultSignalProtocolClient.create()`.
+Device 1 bootstraps identity locally. Devices 2-5 must already have the
+account identity in the provided storage before the app calls
+`DefaultSignalProtocolClient.create()`. The application imports it by
+device transfer or by a channel that the application owns.
 
 Prekeys and sessions remain device-specific. Devices share account identity.
 Maximum 5 devices per user (1 primary + 4 linked).
@@ -143,9 +144,9 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
   deviceId: 1
 });
 
-// Linked device (from QR code provisioning)
+// Linked device (storage holds the account identity)
 const signal = await DefaultSignalProtocolClient.create(userId, {
-  storage: provisionedLinkedDeviceStorage,
+  storage: linkedDeviceStorage,
   deviceId: 2
 });
 ```
@@ -212,6 +213,25 @@ Exact issuer selection for transports with a verified rotation registry.
 > `optional` **endorsementManager?**: [`EndorsementManager`](../classes/EndorsementManager.md)
 
 Pre-constructed EndorsementManager for group send endorsement-based auth.
+
+#### isGroupBlocked?
+
+> `optional` **isGroupBlocked?**: (`groupId`) => `boolean` \| `Promise`\<`boolean`\>
+
+Report whether the user blocked a group. The client drops content of a
+blocked group before it fetches the group, and sends no report. The
+background fetch timer also skips a blocked group, and a hook that
+throws there counts as blocked.
+
+##### Parameters
+
+###### groupId
+
+[`GroupId`](../type-aliases/GroupId.md)
+
+##### Returns
+
+`boolean` \| `Promise`\<`boolean`\>
 
 #### issueCredential?
 
@@ -700,9 +720,9 @@ from the protocol-facing local store interface.
 Developer-facing protocol policy.
 
 The default is strict post-quantum behavior with the specification-defined
-ML-KEM Braid SPQR mode. Use `compatible` only when the product deliberately
-supports genuinely non-PQ peers. Use `braid: 'disabled'` only when a
-product-reviewed constraint requires the local direct SPQR mode.
+ML-KEM Braid SPQR mode. `postQuantum: 'required'` is the only value, and a
+peer without ML-KEM prekeys fails closed. Use `braid: 'disabled'` only when
+a product-reviewed constraint requires the local direct SPQR mode.
 
 #### Default
 
@@ -719,18 +739,6 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   protocol: {
     postQuantum: 'required',
-    braid: 'required'
-  }
-});
-```
-
-**Compatibility with non-PQ peers**
-
-```typescript
-const signal = await DefaultSignalProtocolClient.create(userId, {
-  storage: customStorage,
-  protocol: {
-    postQuantum: 'compatible',
     braid: 'required'
   }
 });
@@ -779,9 +787,7 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
     onProtocolSelected: (event) => {
       analytics.track('Protocol Selected', {
         pq: event.usedPQXDH,
-        tripleRatchet: event.usedTripleRatchet,
-        compatibilityFallback: event.usedClassicalFallback,
-        fallbackReason: event.classicalFallbackReason
+        tripleRatchet: event.usedTripleRatchet
       });
     }
   }

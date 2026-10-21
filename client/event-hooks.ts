@@ -37,7 +37,9 @@
  */
 
 import type { RetryTerminalClass } from '../local/store/reliability';
+import type { RelayProtocolError } from './device-set-reconciliation';
 export type { RetryTerminalClass };
+import { ReceiveHookTimeout } from './receive-hook-bound';
 import { rethrowRelayWorkStopped } from './relay-work';
 
 /**
@@ -92,6 +94,123 @@ export interface RetryTerminalEvent {
   class: RetryTerminalClass;
   /** The Relay message ID of the envelope that the requester failed to decrypt. */
   failedEnvelopeId: string;
+  /**
+   * The session reset of the requester. Only an `expired-content` end of a
+   * client with a Relay has it.
+   */
+  recovery?: RetryTerminalRecoveryEvent;
+}
+
+/**
+ * The session reset of the requester after a retry request ends as
+ * `expired-content`.
+ *
+ * The requester archived its session with the device that sent the failed
+ * envelope, after each decrypt from that device in progress ended. The next
+ * message to or from the device starts a new session.
+ */
+export interface RetryTerminalRecoveryEvent {
+  /** The user ID of the device whose session the requester archived. */
+  userId: string;
+  /** The device ID of the device whose session the requester archived. */
+  deviceId: number;
+  /**
+   * `applied`: the failed message is a group message, and the requester has
+   * a sender key for that group. The reset does not rotate the key. A key
+   * older than `maxSenderKeyAge` rotates at the next send, as at any send,
+   * and the new key goes to each member.
+   * `skipped`: a pairwise message, a group message whose group the receive
+   * did not resolve, or a group with no local sender key.
+   *
+   * With each outcome, the reset deletes the handoff rows of each device of
+   * that account in every group. The next send to each of those groups
+   * gives the current key to each of those devices.
+   */
+  senderKey: 'applied' | 'skipped';
+  /**
+   * `sent`: one null message went to the device and started the new session.
+   * `limited`: a null message went to the device in the last hour, so none
+   * was sent. `failed`: the send failed. With `limited` and `failed`, the
+   * next ordinary message starts the new session.
+   */
+  nullMessage: 'sent' | 'limited' | 'failed';
+}
+
+/**
+ * Why the client reports a delivery error for a failed envelope.
+ *
+ * - `content-hint`: the failed envelope has the `Default` content hint, or
+ *   no hint, so the error comes at the first failure.
+ * - `deadline`: the failed envelope has the `Resendable` content hint, and
+ *   its content did not come back within `RETRY_PLACEHOLDER_DEADLINE_MS`.
+ * - `rate-limit`: a rate limit refused the retry request of the envelope.
+ * - `request-ended`: the retry request ended with no resend, as
+ *   `onRetryTerminal` reports.
+ */
+export type DeliveryErrorCause = 'content-hint' | 'deadline' | 'rate-limit' | 'request-ended';
+
+/** The recovery of one failed incoming envelope that had a delivery error. */
+export interface DeliveryRecoveredEvent {
+  /** The Relay message ID of the envelope that the local device failed to decrypt. */
+  failedEnvelopeId: string;
+  /** The client message ID of the failed envelope, when its relay delivered one. */
+  clientMessageId?: string;
+  /** The user that sent the failed envelope. */
+  senderUserId: string;
+  /** The device that sent the failed envelope. */
+  senderDeviceId: number;
+  /** True when the failed envelope is a sender-key group message. */
+  groupMessage: boolean;
+  /**
+   * The group of a failed group message, in the form of
+   * `DecryptedEnvelope.conversationId`. A group envelope names no group, so
+   * the client knows it only when it holds the sender key that the message
+   * names. The error of a message that failed for a missing sender key has
+   * none. Its recovery has one when the decrypt that gave the content
+   * installed or used the sender key of the group. `processIncomingEnvelope`
+   * gives a resend's distribution to the caller and installs no key, so
+   * its recovery can have none.
+   */
+  groupId?: string;
+  /** The time of the first failure of the envelope, in epoch milliseconds. */
+  receivedAt: number;
+}
+
+/** The delivery error of one failed incoming envelope. */
+export interface DeliveryErrorEvent extends DeliveryRecoveredEvent {
+  /** Why the client reports the error now. */
+  cause: DeliveryErrorCause;
+}
+
+/**
+ * Received content that waited on this device for 30 days. The client
+ * drops it after the hook.
+ */
+export interface ReceiveExpiredEvent {
+  /** The receive record ID: the delivered fingerprint of the envelope. */
+  workId: string;
+  /** Why the content expired. */
+  reason: 'max-age';
+  /** When the device first admitted the content, in epoch milliseconds. */
+  receivedAt: number;
+  /**
+   * Where the content waited: `decrypted` for content that the client did
+   * not deliver yet, `awaiting-completion` for a helper receive that the
+   * application did not complete.
+   */
+  stage: 'decrypted' | 'awaiting-completion';
+  /** `relay` for a Relay message, `caller` for a helper receive. */
+  origin: 'relay' | 'caller';
+  /** The message ID. Absent for content stored before the receive queue. */
+  messageId?: string;
+  /** The sender. Absent for content stored before the receive queue. */
+  senderId?: string;
+  /** The sender device. Absent for content stored before the receive queue. */
+  senderDeviceId?: number;
+  /** The raw group of the content, when known. */
+  groupId?: string;
+  /** The failed envelope that the content resends, for a resend. */
+  failedEnvelopeId?: string;
 }
 
 export interface DecryptedEnvelope {
@@ -107,11 +226,17 @@ export interface DecryptedEnvelope {
   conversationId: string;
   /** Decrypted plaintext content (typically JSON) */
   content: string;
-  /** Message timestamp (from sender) */
+  /**
+   * The sender's timestamp from the content, which a receipt for the
+   * message names. Content with no timestamp gives `receivedAt`.
+   */
   timestamp: number;
   /** Relay server timestamp when available */
   serverTimestamp?: number;
-  /** When the device received the message locally */
+  /**
+   * When the device first admitted the message locally, in epoch
+   * milliseconds. A retry and a restart give the same time.
+   */
   receivedAt: number;
   /** Whether this is a group message */
   isGroup: boolean;
@@ -169,7 +294,11 @@ export interface SignalProtocolClientHooks {
    * Runs after the client archives a session (moved to inactive list)
    *
    * Stale-device recovery archives the session so delayed messages can still
-   * attempt decryption.
+   * attempt decryption. When the recovery refreshes the session of a receipt
+   * or a retry request, the new session archives the stale one in the same
+   * write, and the hook runs after that session start succeeds. A failure
+   * in the SESAME registration after that write keeps the new session and
+   * runs no hook.
    * Per SESAME §3.2: "previously active session is moved to the head of the inactive sessions list"
    *
    * @param sessionId - The identifier of the archived session
@@ -224,6 +353,15 @@ export interface SignalProtocolClientHooks {
    * This is the primary hook for ContentManager integration.
    * The hook receives the full decrypted envelope with all metadata
    * needed to store the message in the encrypted content database.
+   *
+   * Delivery is at least once. The client stores the content before it
+   * acknowledges the Relay message and runs the hook after that. A stop or
+   * a crash before the client records the delivery runs the hook again
+   * with the same `messageId`. Deduplicate on `messageId`.
+   *
+   * The hook must settle. The receive queue runs one hook call at a time,
+   * so a hook that never settles stops the queue and `processPendingReceives`
+   * until the process restarts.
    *
    * @param envelope - The decrypted message envelope
    *
@@ -314,11 +452,20 @@ export interface SignalProtocolClientHooks {
    * Runs when a recipient device gets one of this client's messages
    *
    * A message to one device goes from accepted (the send resolved) to
-   * delivered. The hook runs once for each source that reports the delivery:
+   * delivered. The hook runs for each source that reports the delivery:
    * `'relay'` when the Relay hands the message to the device, and `'e2ee'`
    * when the device decrypts it and sends an encrypted delivery receipt. A
-   * second report from the same source does not run the hook. A receipt that
-   * arrives before the send resolves runs the hook after the send resolves.
+   * receipt that arrives before the send resolves runs the hook after the
+   * send resolves.
+   *
+   * The hook runs at least once for each source. The client marks a source
+   * announced only after the hook returns. An error from the hook fails the
+   * receipt, so the relay delivers it again. A hook that throws, a client
+   * stop during the hook, or a crash leaves the source unannounced, and the
+   * hook runs again for it with the next receipt for the message. A second
+   * report from the same source after the hook returned does not run the
+   * hook. Make the hook idempotent for one `clientMessageId`,
+   * `recipientDeviceId`, and `source`.
    *
    * @param event - The delivery and its sources so far
    *
@@ -338,14 +485,25 @@ export interface SignalProtocolClientHooks {
    * Runs when a retry request ends with no resend
    *
    * A failed decrypt asks the sender device for a resend. The request ends
-   * when the Relay gives a conclusive answer to its post, when it gets no
-   * answer within 24 hours, when the sender used up its retry allowance, or
-   * when the sender device has no prekey bundle of the requester. The
-   * content of the failed envelope is then lost. The hook runs once for
-   * each request. A client stop during the hook can make it run again after
-   * the next start.
+   * when the Relay gives a conclusive answer to its post, when it does not
+   * get its content before its deadline, 14 days after the first failure,
+   * when the resend of the fifth attempt also fails, when the sender used up
+   * its retry allowance, when the sender device has no prekey bundle of the
+   * requester, or when the sender device refuses group content to a
+   * requester that is not a current member of the group. The content of the
+   * failed envelope is then lost. The hook runs at least once for each
+   * request. The SDK marks the end emitted only after the hook returns. A
+   * hook that throws, a client stop during the hook, or a crash leaves the
+   * end not emitted, and the hook runs again at the next retry request pass,
+   * start, or redelivery. Make the hook idempotent for one
+   * `failedEnvelopeId`.
    *
-   * @param event - The class of the end and the failed envelope
+   * Before the hook, an `expired-content` end resets the session with the
+   * device that sent the failed envelope, and `event.recovery` tells what
+   * the reset did. The other classes, and a post that fails and can be
+   * posted again, reset nothing. `onSessionArchived` runs for the archive.
+   *
+   * @param event - The class of the end, the failed envelope, and the reset
    *
    * @example
    * ```typescript
@@ -355,6 +513,124 @@ export interface SignalProtocolClientHooks {
    * ```
    */
   onRetryTerminal?: (event: RetryTerminalEvent) => void | Promise<void>;
+
+  /**
+   * Runs when an incoming message failed to decrypt and its content did not
+   * come back
+   *
+   * A failed decrypt asks the sender device for a resend and acknowledges
+   * the failed envelope. The content hint of the envelope sets when the
+   * hook runs. With the `Default` hint, or no hint, it runs at the first
+   * failure. With the `Resendable` hint, it runs when the content did not
+   * come back within `RETRY_PLACEHOLDER_DEADLINE_MS`, one hour, of the
+   * first failure. With the `Implicit` hint, it never runs. A rate limit
+   * that refuses the retry request, and the end of the request, make it run
+   * at once. The client checks the time at each redelivery of the envelope
+   * and at each retry family write. With a relay, it also checks at
+   * create() and, while the client runs, at the time when the error is due.
+   *
+   * The hook runs at least once for each failed envelope, also across a
+   * restart. The client marks the error shown only after the hook returns.
+   * A hook that throws, a client stop during the hook, or a crash leaves the
+   * error not shown, and the hook runs again at the next retry request
+   * pass, start, or redelivery. The receive path does not acknowledge a
+   * failed envelope whose hook threw. Make the hook idempotent for one
+   * `failedEnvelopeId`. The error deletes nothing: the retry request
+   * continues, and when the content comes back, `onDeliveryRecovered` runs.
+   *
+   * @param event - The failed envelope, its sender and the cause
+   *
+   * @example
+   * ```typescript
+   * onDeliveryError: async (event) => {
+   *   await messageStore.showUndelivered(event.failedEnvelopeId, event.senderUserId);
+   * }
+   * ```
+   */
+  onDeliveryError?: (event: DeliveryErrorEvent) => void | Promise<void>;
+
+  /**
+   * Runs when the content of a failed incoming message comes back after
+   * `onDeliveryError` ran for it
+   *
+   * The content comes back in a resend from the sender device, or in a
+   * redelivery of the failed envelope that now decrypts. The application
+   * gets the content as for any message, and then this hook runs. Its
+   * event carries the time of the first failure, so the application can put
+   * the message back in its first place.
+   *
+   * The hook runs at least once for each failed envelope, also across a
+   * restart. The client marks the recovery only after the hook returns. A
+   * hook that throws, a client stop during the hook, or a crash leaves the
+   * recovery not marked, and the hook runs again at the next retry request
+   * pass, start, or receive of an envelope of the same retry family. An
+   * error from the hook after the content does not fail that receive. Make
+   * the hook idempotent for one `failedEnvelopeId`.
+   *
+   * @param event - The failed envelope and its sender
+   *
+   * @example
+   * ```typescript
+   * onDeliveryRecovered: async (event) => {
+   *   await messageStore.clearUndelivered(event.failedEnvelopeId);
+   * }
+   * ```
+   */
+  onDeliveryRecovered?: (event: DeliveryRecoveredEvent) => void | Promise<void>;
+
+  /**
+   * Runs when received content waited on this device for 30 days, before
+   * the client drops it.
+   *
+   * Content waits when its group state is not current, or when a helper
+   * receive is not completed. The hook runs at least once: a stop or a
+   * crash before the client records the expiry runs it again for the same
+   * `workId`. The client sends no delivery receipt and no retry request for
+   * expired content.
+   *
+   * @param event - The expired content, without its plaintext
+   *
+   * @example
+   * ```typescript
+   * onReceiveExpired: async (event) => {
+   *   await messageStore.markLost(event.messageId ?? event.workId);
+   * }
+   * ```
+   */
+  onReceiveExpired?: (event: ReceiveExpiredEvent) => void | Promise<void>;
+
+  /**
+   * Runs once for a completed send whose Relay accepted a declared post
+   * without the `deviceSetChecked` mark. A declared post is a post to a
+   * recipient device or a sync copy to another device of the own account.
+   *
+   * The client declares the device set of each recipient account only to a
+   * Relay that compares device sets. Such a Relay marks each post that it
+   * compared. An accepted post without the mark is a Relay defect: the Relay
+   * did not check the declared devices. The send is delivered, so its result
+   * does not change and the client does not post it again. The error carries
+   * the code `DEVICE_SET_UNCHECKED`, the `clientMessageId` of the send, and
+   * the route of the post. The route is `identified-direct`,
+   * `anonymous-direct`, or `anonymous-group`. A sync copy is an
+   * `identified-direct` post. The client also logs one warning with the code
+   * and the route.
+   *
+   * The hook also runs once for a sync payload of a method such as
+   * `syncReadToLinkedDevices`. That error has no `clientMessageId`.
+   *
+   * The hook runs after the send completes. An error from the hook does not
+   * change the send result. The client logs the error.
+   *
+   * @param error - The protocol error of the send
+   *
+   * @example
+   * ```typescript
+   * onRelayProtocolError: (error) => {
+   *   monitoring.report('relay-protocol', { code: error.code, route: error.route });
+   * }
+   * ```
+   */
+  onRelayProtocolError?: (error: RelayProtocolError) => void | Promise<void>;
 
   /**
    * Runs when the client receives a read receipt
@@ -441,6 +717,10 @@ const HOOK_NAMES = {
   onKeysCleanedUp: true,
   onDelivered: true,
   onRetryTerminal: true,
+  onDeliveryError: true,
+  onDeliveryRecovered: true,
+  onReceiveExpired: true,
+  onRelayProtocolError: true,
   onReadReceiptReceived: true,
   onViewedReceiptReceived: true,
   onTypingIndicatorReceived: true,
@@ -482,6 +762,8 @@ export async function callHook<T extends HookName>(
     );
   } catch (error) {
     rethrowRelayWorkStopped(error);
+    // The receive hook bound logged its timeout.
+    if (error instanceof ReceiveHookTimeout) return;
     // Log hook error but do not let it break core functionality
     console.error(`Hook ${hookName} failed:`, error);
   }

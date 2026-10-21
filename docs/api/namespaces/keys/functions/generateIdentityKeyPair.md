@@ -11,7 +11,7 @@
 Generate identity key pair
 
 Creates the long-lived identity key pair consisting of:
-- DH key pair for X3DH/PQXDH key agreement
+- DH key pair for PQXDH key agreement
 - Signing key pair for prekey signatures
 - Registration ID for session reset detection
 

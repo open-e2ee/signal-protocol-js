@@ -151,7 +151,6 @@ const ENTRY_GUIDES = new Map([
   ['./device/device-id', 'device/README.md'],
   ['./device/expo', 'device/README.md'],
   ['./device/lifecycle', 'device/README.md'],
-  ['./device/provisioning', 'device/README.md'],
   ['./device/react-native', 'device/README.md'],
   ['./hooks', 'hooks/README.md'],
   ['./local/store', 'local/store/README.md'],

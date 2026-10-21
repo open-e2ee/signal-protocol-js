@@ -192,6 +192,8 @@ export {
   deleteExpiredMessageRecords,
   deleteAllMessageRecords,
   deleteMessageRecordsBySessionId,
+  getAllMessageRecords,
+  updateMessageRecordPlaintext,
   // Factory functions
   createMessageRecord,
 } from './message-record';
@@ -207,3 +209,27 @@ export {
   countSkippedSenderKeys,
   deleteOldestSkippedSenderKeys,
 } from './skipped-sender-key';
+
+// ============================================================================
+// Send Log (resendable group content)
+// ============================================================================
+export {
+  insertSendLogPayload,
+  getSendLogPayload,
+  insertSendLogRecipients,
+  setSendLogComplete,
+  deleteFinishedSendLogPayload,
+  deleteSendLogPayload,
+  getSendLogEntry,
+  findSendLogEntries,
+  getSendLogRecipients,
+  findSendLogMessageIds,
+  deleteSendLogRecipient,
+  incrementSendLogResendCount,
+  deleteSendLogBefore,
+  deleteAllSendLog,
+  saveSendLogResendJob,
+  getSendLogResendJob,
+  getPendingSendLogResendJobs,
+  setSendLogResendJobState,
+} from './send-log';

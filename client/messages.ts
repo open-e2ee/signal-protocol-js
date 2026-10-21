@@ -9,9 +9,12 @@ import type { Ciphertext } from '../keys';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { ProtocolAddress } from '../types/address';
 import type { Envelope } from '../remote/relay/types';
+import type { ReceiveWorkSeed } from '../types/api';
+import { isRemovedDevice } from '../internal/sesame/types';
 import { SealedSenderAuthError } from '../types/errors';
-import { callHook } from './event-hooks';
+import { callHook, type DeliveredEvent } from './event-hooks';
 import { rethrowRelayWorkStopped } from './relay-work';
+import { isStaleDeviceRefusal } from './relay-device-refusal';
 import {
   HostedRelayDeviceRevokedError,
   HostedRelayDeviceUnknownError,
@@ -128,16 +131,18 @@ export async function encryptMessage(
  * @param ctx - Client context with dependencies
  * @param remoteAddress - Remote party's protocol address (userId:deviceId)
  * @param ciphertext - Message to decrypt
+ * @param seed - Builds the receive record that the ratchet commit stores
  * @returns Decrypted plaintext
  */
 export async function decryptMessage(
   ctx: SignalProtocolClientContext,
   remoteAddress: ProtocolAddress,
-  ciphertext: Ciphertext
+  ciphertext: Ciphertext,
+  seed?: ReceiveWorkSeed
 ): Promise<string> {
   const sessionId = ProtocolAddress.toString(remoteAddress);
   try {
-    const plaintext = await ctx.manager.decrypt(remoteAddress, ciphertext);
+    const plaintext = await ctx.manager.decrypt(remoteAddress, ciphertext, seed);
 
     // Note: onMessageDecrypted hook is called from handleIncomingEnvelope
     // for relay subscription, where we have full envelope metadata.
@@ -479,12 +484,17 @@ export async function handleTypingIndicator(
  * @param recipientUserId - Recipient's user ID
  * @param timestamps - Message timestamps being acknowledged
  * @param type - Receipt type (DELIVERY or READ)
+ * @param options - With `report`, a failed send rejects and makes no
+ *   retry of its own: the caller retries. A send that the Relay refused for
+ *   each failed device rejects with ReceiptSendTerminalError. Without it,
+ *   a failed send makes one retry after five seconds and never rejects.
  */
 export async function sendReceipt(
   ctx: SignalProtocolClientContext,
   recipientUserId: string,
   timestamps: number[],
-  type: ReceiptType
+  type: ReceiptType,
+  options: { readonly report?: boolean } = {}
 ): Promise<void> {
   const receiptTypeName =
     type === ReceiptType.READ ? 'read' : type === ReceiptType.VIEWED ? 'viewed' : 'delivery';
@@ -504,37 +514,71 @@ export async function sendReceipt(
     return;
   }
 
-  // Look up all known devices for this user (SESAME multi-device)
-  let deviceIds = await ctx.storage.getSesameDeviceIds(recipientUserId);
-  if (deviceIds.length === 0) {
-    deviceIds = [1]; // Fallback: primary device
-  }
+  // Look up all known devices for this user (SESAME multi-device). A removed
+  // device gets no receipt. The fallback applies only to a user with no
+  // device record.
+  const userRecord = await ctx.storage.getUserRecord(recipientUserId);
+  const records = Array.from(userRecord?.devices ?? []);
+  const deviceIds =
+    records.length === 0
+      ? [1] // Fallback: primary device
+      : records.filter(([, record]) => !isRemovedDevice(record)).map(([deviceId]) => deviceId);
 
   // Fan out to all devices with sessions (parallel, fire-and-forget)
-  await Promise.all(
+  const sends = await Promise.allSettled(
     deviceIds.map((deviceId) =>
-      sendReceiptToDevice(ctx, recipientUserId, deviceId, type, timestamps)
+      sendReceiptToDevice(ctx, recipientUserId, deviceId, type, timestamps, options.report === true)
     )
   );
+  const failures = sends.flatMap((send) => (send.status === 'rejected' ? [send.reason] : []));
+  const retryable = failures.find((error) => !(error instanceof ReceiptSendTerminalError));
+  if (retryable !== undefined) throw retryable;
+  if (failures.length > 0) throw failures[0];
+}
+
+/**
+ * The Relay refused a delivery receipt for every device that failed, so the
+ * same send fails again. The receive queue completes the receive with no
+ * receipt.
+ */
+export class ReceiptSendTerminalError extends Error {
+  override readonly name = 'ReceiptSendTerminalError';
+
+  constructor(
+    readonly recipientUserId: string,
+    readonly deviceId: number,
+    readonly code: string
+  ) {
+    super(`The Relay refused the receipt for device ${deviceId}: ${code}`);
+  }
 }
 
 /**
  * Send receipt to a single device
  *
- * Shared by receipt fanout and retry processing.
+ * Shared by receipt fanout and retry processing. The receipt names the
+ * registration of the session. When the Relay refuses the device as stale,
+ * the session is archived and refreshed once, as one Signal client does, and
+ * the receipt is encrypted again under the new session and posted again.
+ * A refresh that finds no bundle of the device, or a second stale refusal,
+ * drops the receipt. A refresh that fails for another reason, for example a
+ * failed bundle fetch, fails the send as a transient error. The retry of
+ * the send then refreshes again.
  */
 async function sendReceiptToDevice(
   ctx: SignalProtocolClientContext,
   recipientUserId: string,
   deviceId: number,
   type: ReceiptType,
-  timestamps: number[]
+  timestamps: number[],
+  report: boolean
 ): Promise<void> {
   const address = ProtocolAddress.create(recipientUserId, deviceId);
   const hasSession = await SessionOps.hasSession(ctx, address);
   if (!hasSession) return;
 
   let prepared: PreparedReceipt | undefined;
+  let refreshed = false;
   const sendPrepared = async () => {
     prepared ??= await prepareReceiptToDevice(ctx, address, type, timestamps, recipientUserId, deviceId);
     const { envelope, sealed } = prepared;
@@ -560,13 +604,42 @@ async function sendReceiptToDevice(
     }
     await ctx.relay!.send(envelope);
   };
+  const sendOrRefresh = async () => {
+    try {
+      await sendPrepared();
+    } catch (error) {
+      if (refreshed || !isStaleDeviceRefusal(error) || !ctx.refreshStaleSession) throw error;
+      refreshed = true;
+      ctx.logger.warn('Receipt refused for a stale device, refreshing the session', {
+        category: 'E2EE',
+        data: { recipientUserId, deviceId },
+      });
+      let fresh: boolean;
+      try {
+        fresh = await ctx.refreshStaleSession(ctx, recipientUserId, deviceId);
+      } catch (refreshError) {
+        // A transient failure keeps the stale session. The retry posts the
+        // prepared receipt again, and its stale refusal refreshes again.
+        refreshed = false;
+        throw refreshError;
+      }
+      if (!fresh) throw error;
+      prepared = undefined;
+      await sendPrepared();
+    }
+  };
   try {
-    await sendPrepared();
+    await sendOrRefresh();
   } catch (error) {
     rethrowRelayWorkStopped(error);
-    // A stopped client sends nothing more, so it makes no retry.
-    if (ctx.stopSignal?.aborted) return;
     // The Relay refused this device, so the same send fails again.
+    if (isStaleDeviceRefusal(error)) {
+      ctx.logger.warn(`Receipt send refused for a stale device, no retry`, {
+        category: 'E2EE',
+        data: { recipientUserId, deviceId, code: 'STALE_DEVICE' },
+      });
+      return;
+    }
     if (
       error instanceof HostedRelayDeviceRevokedError ||
       error instanceof HostedRelayDeviceUnknownError
@@ -575,8 +648,13 @@ async function sendReceiptToDevice(
         category: 'E2EE',
         data: { recipientUserId, deviceId, code: error.code },
       });
+      if (report) throw new ReceiptSendTerminalError(recipientUserId, deviceId, error.code);
       return;
     }
+    // The receive queue owns the retry of a reported send.
+    if (report) throw error;
+    // A stopped client sends nothing more, so it makes no retry.
+    if (ctx.stopSignal?.aborted) return;
     ctx.logger.warn(`Receipt send failed, scheduling retry`, {
       category: 'E2EE',
       data: { recipientUserId, deviceId },
@@ -590,7 +668,7 @@ async function sendReceiptToDevice(
     const retry = setTimeout(async () => {
       stopSignal?.removeEventListener('abort', cancel);
       try {
-        await sendPrepared();
+        await sendOrRefresh();
       } catch {
         // Give up after one retry
       }
@@ -630,6 +708,9 @@ async function prepareReceiptToDevice(
 
   // Serialize like SESAME: JSON → bytes → base64
   const ciphertextBase64 = CryptoUtils.bytesToBase64(new TextEncoder().encode(encrypted));
+  // The registration of the session that encrypted the receipt. The sealed
+  // body names the same one.
+  const recipientRegistrationId = await ctx.recipientRegistrationId?.(recipientUserId, deviceId);
 
   // Send as ciphertext. Receipts are encrypted Content inside a ciphertext
   // envelope. The relay contract carries only the outer type.
@@ -648,6 +729,7 @@ async function prepareReceiptToDevice(
     // Receipts persist for convergence but never request a visible alert.
     deliveryClass: 'background-sync',
     contentKind: 'receipt',
+    ...(recipientRegistrationId !== undefined && { recipientRegistrationId }),
   };
   const sealed = await ctx.sealReceipt?.(recipientUserId, deviceId, ciphertextBase64);
   return sealed ? { envelope, sealed } : { envelope };
@@ -659,7 +741,9 @@ async function prepareReceiptToDevice(
  * A delivery receipt tells that the sender device decrypted the named
  * messages. It removes the outbound MessageRecords of that device, because
  * their retry payloads are no longer needed, and adds the `'e2ee'` source to
- * the delivery status of each named message.
+ * the delivery status of each named message. Then the `onDelivered` hook runs
+ * for each delivery that is not announced. An error from that hook
+ * propagates, so the relay delivers the receipt again.
  *
  * @param ctx - Client context with dependencies
  * @param envelope - The original envelope containing sender info
@@ -670,6 +754,7 @@ export async function handleDeliveryReceipt(
   envelope: Envelope,
   receiptMsg: ParsedReceiptContent | null
 ): Promise<void> {
+  let delivered: DeliveredEvent[] = [];
   try {
     if (!receiptMsg) {
       ctx.logger.warn('Invalid receipt Content format', {
@@ -758,14 +843,13 @@ export async function handleDeliveryReceipt(
       );
     } else {
       // Write the delivery status before any hook runs.
-      const events =
+      delivered =
         (await ctx.deliveries?.applyE2eeReceipt(
           envelope.senderUserId,
           envelope.senderDeviceId,
           receipt.timestamps,
           envelope.serverTimestamp ?? Date.now()
         )) ?? [];
-      for (const event of events) await callHook(ctx.hooks, 'onDelivered', event);
     }
   } catch (error) {
     rethrowRelayWorkStopped(error);
@@ -777,4 +861,8 @@ export async function handleDeliveryReceipt(
       },
     });
   }
+  // An error from the onDelivered hook propagates, so the relay delivers the
+  // receipt again, and the redelivery announces each delivery whose hook did
+  // not return.
+  await ctx.deliveries?.announce(ctx.hooks, delivered);
 }

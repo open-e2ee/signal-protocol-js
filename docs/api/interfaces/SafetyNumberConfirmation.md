@@ -11,6 +11,10 @@ Exact safety-number comparison evidence.
 This uses strings instead of mutable Uint8Array instances, so application code
 cannot accidentally change the value between display and confirmation.
 
+Version 2 carries the fingerprint in the byte order of the two display
+strings. A version 1 confirmation from an older SDK is refused as an
+unsupported version. Call `verify()` again to get a new one.
+
 ## Properties
 
 ### fingerprint
@@ -43,4 +47,4 @@ Canonical Base64 of the locally derived remote composite commitment.
 
 ### version
 
-> `readonly` **version**: `1`
+> `readonly` **version**: `2`

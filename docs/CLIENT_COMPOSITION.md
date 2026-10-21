@@ -124,8 +124,8 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
 - Keep product security policy in `protocol`.
 - Keep app logging, hooks, sealed sender, groups, and sender-key options at the
   top level so they match `DefaultSignalProtocolClient.create()`.
-- Use `protocol.postQuantum: 'compatible'` only when the product explicitly
-  supports peers with no post-quantum material.
+- Leave `protocol.postQuantum` unset or set it to `'required'`, its only
+  value. A peer with no post-quantum prekeys is refused.
 - Use `protocol.braid: 'disabled'` only when a product-reviewed constraint
   explicitly selects direct SPQR.
 

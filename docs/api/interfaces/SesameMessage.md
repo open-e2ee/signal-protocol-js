@@ -22,7 +22,7 @@ Encrypted message ciphertext (from Double Ratchet)
 
 > **initHeader**: `Uint8Array`\<`ArrayBufferLike`\> \| `null`
 
-X3DH/PQXDH header data for initiating messages
+PQXDH header data for initiating messages
 Null for non-initiating messages
 
 ***
@@ -31,7 +31,7 @@ Null for non-initiating messages
 
 > **isInitiating**: `boolean`
 
-Whether this is an initiating message (contains X3DH/PQXDH header)
+Whether this is an initiating message (contains PQXDH header)
 
 ***
 

@@ -35,14 +35,14 @@ compatibility shim when a boundary is wrong.
 | Shared types            | [types/](./types/)                                                                                                                                                     | Protocol addresses, records, API contracts, protocol configuration                                                         |
 | Session domain          | [internal/session/](./internal/session/)                                                                                                                               | Session establishment, session cipher, active/archive session resolution                                                   |
 | Orchestration           | [internal/manager/](./internal/manager/), [internal/sesame/](./internal/sesame/)                                                                                       | Protocol manager and multi-device SESAME workflows                                                                         |
-| Protocol algorithms     | [internal/protocol/](./internal/protocol/)                                                                                                                             | X3DH, PQXDH, Double Ratchet, Triple Ratchet, SPQR, sender keys, sealed sender, ZK helpers                                  |
+| Protocol algorithms     | [internal/protocol/](./internal/protocol/)                                                                                                                             | PQXDH, Double Ratchet, Triple Ratchet, SPQR, sender keys, sealed sender, ZK helpers                                        |
 | Crypto foundation       | [internal/crypto/](./internal/crypto/)                                                                                                                                 | X25519, Ed25519, ML-KEM, AES, HKDF, padding                                                                                |
 | Key model               | [keys/](./keys/)                                                                                                                                                       | Key generation, branded key types, identity type helpers                                                                   |
 | Public feature surfaces | [blocking/](./blocking/), [groups/](./groups/), [media/](./media/), [profile/](./profile/), [sealed-sender/](./sealed-sender/), [username/](./username/), [zk/](./zk/) | App-facing helpers that compose protocol, media, or account-state behavior without joining the inward dependency hierarchy |
 | Public utility surfaces | [encoding/](./encoding/), [files/](./files/), [hooks/](./hooks/), [utils/](./utils/), `logger.ts`, `server-clock.ts`, `versions.ts`                                    | Stable helpers, React hooks, logging, clock estimation, version metadata, and file/encoding utilities                      |
 | Local adapters          | [local/](./local/)                                                                                                                                                     | Local protocol stores and secret vault integrations                                                                        |
 | Remote adapters         | [remote/](./remote/)                                                                                                                                                   | Relay and object-store ports plus hosted, R2, and S3 client adapters                                                           |
-| Device features         | [device/](./device/)                                                                                                                                                   | Device IDs, provisioning, linked-device lifecycle and transfer                                                             |
+| Device features         | [device/](./device/)                                                                                                                                                   | Device IDs, linked-device lifecycle and transfer                                                                           |
 
 ## Documentation Ownership
 
@@ -109,7 +109,6 @@ Shared non-layer modules:
 
 | Protocol       | Implementation                                                           | Spec notes                                      |
 | -------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
-| X3DH           | [internal/protocol/x3dh/](./internal/protocol/x3dh/)                     | Classical initial key agreement                 |
 | PQXDH          | [internal/protocol/pqxdh/](./internal/protocol/pqxdh/)                   | Hybrid initial key agreement with ML-KEM-1024   |
 | Double Ratchet | [internal/protocol/double-ratchet/](./internal/protocol/double-ratchet/) | EC ratchet, skipped keys, header encryption     |
 | SPQR           | [internal/protocol/spqr/](./internal/protocol/spqr/)                     | Sparse post-quantum ratchet with ML-KEM-768     |
@@ -144,7 +143,6 @@ and contracts. Relay and object-store server implementations run separately.
 - `MAX_UNACKNOWLEDGED_SESSION_AGE_MS`
 - `ARCHIVED_STATES_MAX_LENGTH`
 - `PQXDH_INFO_DEFAULT`
-- `X3DH_INFO_DEFAULT`
 - SPQR limit and info-string resolvers
 
 This boundary prevents lower protocol/session layers from depending on the client package.
@@ -159,11 +157,11 @@ await createSignalProtocolClient({
 });
 ```
 
-Strict post-quantum sessions and ML-KEM Braid are the defaults, so application
+Every session uses PQXDH, and ML-KEM Braid is the default, so application
 code should leave `protocol` unset unless the product made an explicit
-compatibility decision. Advanced strategy fields remain available for
-diagnostics, telemetry, and algorithm tuning. To choose compatibility fallback,
-set `protocol.postQuantum: 'compatible'`. To choose direct SPQR, set
+decision. No classical key agreement exists: a peer without ML-KEM prekeys
+fails with `PQXDH_REQUIRED`. Advanced strategy fields remain available for
+diagnostics, telemetry, and algorithm tuning. To choose direct SPQR, set
 `protocol.braid: 'disabled'`.
 
 Two strategy hooks report protocol events. The hook `onProtocolSelected` fires

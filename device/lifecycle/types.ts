@@ -55,6 +55,8 @@ export interface KeyStorageOps {
   clearAllSessions(): Promise<void>;
   /** Clear all message records (orphaned after session clear) */
   clearAllMessageRecords(): Promise<number>;
+  /** Clear the send log: the resendable group content and its resend jobs */
+  clearSendLog(): Promise<number>;
   /** Get the local identity public key (base64-encoded) */
   getIdentityPublicKey?(): Promise<string | null>;
   /** Get the local identity key pair for decrypting encrypted device names */
@@ -315,8 +317,6 @@ export interface DeviceChoice {
   description: string;
   /** Whether this is a destructive action (will unlink other devices) */
   destructive?: boolean;
-  /** Whether this requires QR code scanning */
-  requiresQR?: boolean;
 }
 
 /**

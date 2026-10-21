@@ -16,6 +16,7 @@ import {
   type EncryptedGroupCreationSubmission,
   type EncryptedGroupChange,
   type EncryptedGroupJoinInfo,
+  type SerializedGroupChange,
 } from './types';
 import {
   isInviteLinkAccessRequirement,
@@ -217,6 +218,46 @@ export function serializeEncryptedGroupChange(change: EncryptedGroupChange): Uin
 
 export function deserializeEncryptedGroupChange(bytes: Uint8Array): EncryptedGroupChange {
   return deserializeGroupWire<EncryptedGroupChange>(bytes);
+}
+
+/**
+ * Serialize a signed group change as a message carries it in its group
+ * context, as Signal's `GroupContextV2.groupChange`.
+ */
+export function serializeSignedGroupChange(change: SerializedGroupChange): Uint8Array {
+  return serializeGroupWire({
+    actions: change.actions,
+    serverSignature: change.serverSignature,
+    changeEpoch: change.changeEpoch,
+  });
+}
+
+/**
+ * Read the signed group change that a message carries. It throws when the
+ * bytes are not exactly the form that `serializeSignedGroupChange` writes.
+ * The caller still verifies the signature and the change.
+ */
+export function deserializeSignedGroupChange(bytes: Uint8Array): SerializedGroupChange {
+  const value = deserializeGroupWire<Record<string, unknown>>(bytes);
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join(',') !== 'actions,changeEpoch,serverSignature' ||
+    !(value.actions instanceof Uint8Array) ||
+    !(value.serverSignature instanceof Uint8Array) ||
+    typeof value.changeEpoch !== 'number' ||
+    !Number.isInteger(value.changeEpoch) ||
+    value.changeEpoch < 0 ||
+    value.changeEpoch > 0xffffffff
+  ) {
+    throw new Error('INVALID_CHANGE: A carried group change is malformed');
+  }
+  return {
+    actions: value.actions,
+    serverSignature: value.serverSignature,
+    changeEpoch: value.changeEpoch,
+  };
 }
 
 /** Compute Revision 19's authoritative compatibility epoch from populated actions. */

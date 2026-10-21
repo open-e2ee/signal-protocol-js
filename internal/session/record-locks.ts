@@ -1,5 +1,5 @@
 /**
- * The in-process locks that order writes of one remote device's records.
+ * The locks that order writes of one remote device's records.
  *
  * The session lock orders every write of the session under one protocol
  * address. The user lock orders every read-modify-write of one user's SESAME
@@ -15,18 +15,33 @@
  * A session lock or a device-list sync lock that waits longer than its
  * timeout rejects.
  *
- * The locks order one JavaScript process only. They do not order two browser
- * tabs, two workers, or two processes that share one store.
+ * When `navigator.locks.request` exists and the store sets `storeIdentity`,
+ * each lock is the Web Lock `open-e2ee:session:<store identity>:<lock key>`.
+ * The tabs, workers, and threads of one origin that share the store then
+ * share the lock, and a wait has no bound on the number of waiting requests.
+ * Otherwise the locks are in-process locks keyed by the store object: they
+ * do not order two browser tabs, two workers, or two processes that share
+ * one store, and a session lock refuses a request when 1,000 wait.
  */
 
 import AsyncLock from 'async-lock';
 
 import { ProtocolAddress } from '../../types/address';
 import { createKeyedLocks, withKeyedLock } from '../../utils/keyed-lock';
+import { originLockScope, withOriginLock } from '../../utils/origin-lock';
 
 export {};
 
+/** The longest wait for a session lock or a device-list sync lock. */
+const RECORD_LOCK_TIMEOUT_MS = 5000;
+
+/** A lock keyed by a string. Operations with one key run one at a time. */
+export interface RecordLock {
+  acquire<T>(key: string, operation: () => Promise<T>): Promise<T>;
+}
+
 const sessionLocks = new WeakMap<object, AsyncLock>();
+const sessionRecordLocks = new WeakMap<object, RecordLock>();
 const userRecordLocks = createKeyedLocks();
 const deviceListSyncLocks = new WeakMap<object, AsyncLock>();
 
@@ -34,7 +49,7 @@ function asyncLockFor(locks: WeakMap<object, AsyncLock>, store: object): AsyncLo
   let lock = locks.get(store);
   if (!lock) {
     lock = new AsyncLock({
-      timeout: 5000, // 5 second timeout prevents deadlocks
+      timeout: RECORD_LOCK_TIMEOUT_MS, // prevents deadlocks
       maxPending: 1000, // Max 1000 queued operations per key
     });
     locks.set(store, lock);
@@ -42,9 +57,29 @@ function asyncLockFor(locks: WeakMap<object, AsyncLock>, store: object): AsyncLo
   return lock;
 }
 
-/** The session lock of `store`. Every caller with the same store gets one lock. */
-export function sessionLockFor(store: object): AsyncLock {
-  return asyncLockFor(sessionLocks, store);
+/** The Web Lock name of `key` in `store`, or null for the in-process lock. */
+function originLockName(store: object, key: string): string | null {
+  const scope = originLockScope(store);
+  return scope === null ? null : `open-e2ee:session:${scope}:${key}`;
+}
+
+/**
+ * The session lock of `store`. Every caller with the same store gets one
+ * lock. Each acquire chooses the Web Lock or the in-process lock again.
+ */
+export function sessionLockFor(store: object): RecordLock {
+  let lock = sessionRecordLocks.get(store);
+  if (!lock) {
+    lock = {
+      acquire: <T>(key: string, operation: () => Promise<T>): Promise<T> => {
+        const name = originLockName(store, key);
+        if (name === null) return asyncLockFor(sessionLocks, store).acquire(key, operation);
+        return withOriginLock(name, operation, { timeoutMs: RECORD_LOCK_TIMEOUT_MS });
+      },
+    };
+    sessionRecordLocks.set(store, lock);
+  }
+  return lock;
 }
 
 /** The session lock key of one protocol address. */
@@ -70,6 +105,8 @@ export function withUserRecordLock<T>(
   userId: string,
   operation: () => Promise<T>
 ): Promise<T> {
+  const name = originLockName(store, `user:${userId}`);
+  if (name !== null) return withOriginLock(name, operation);
   return withKeyedLock(userRecordLocks, store, userId, operation);
 }
 
@@ -98,5 +135,8 @@ export function withDeviceListSyncLock<T>(
   userId: string,
   operation: () => Promise<T>
 ): Promise<T> {
-  return asyncLockFor(deviceListSyncLocks, store).acquire(`device-list:${userId}`, operation);
+  const key = `device-list:${userId}`;
+  const name = originLockName(store, key);
+  if (name !== null) return withOriginLock(name, operation, { timeoutMs: RECORD_LOCK_TIMEOUT_MS });
+  return asyncLockFor(deviceListSyncLocks, store).acquire(key, operation);
 }

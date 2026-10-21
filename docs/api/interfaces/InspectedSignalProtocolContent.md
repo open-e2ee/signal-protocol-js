@@ -14,6 +14,17 @@
 
 ***
 
+### groupContext?
+
+> `optional` **groupContext?**: [`GroupContentContext`](GroupContentContext.md) \| `"malformed"`
+
+The managed group context of the content, or of the content inside a
+sent-sync transcript. `'malformed'` when a context is present but does
+not decode. Absent when the content has no context. A custom adapter
+must report it for its own context encoding.
+
+***
+
 ### nullMessage
 
 > **nullMessage**: `boolean`
@@ -51,6 +62,18 @@ True for a DataMessage with the Signal `PROFILE_KEY_UPDATE` flag.
 ### senderKeyDistribution?
 
 > `optional` **senderKeyDistribution?**: `ParsedSenderKeyDistribution`
+
+***
+
+### senderKeyDistributionOnly
+
+> **senderKeyDistributionOnly**: `boolean`
+
+True when the content carries a sender key distribution and nothing
+else. The client installs a distribution in either case. It consumes a
+distribution-only content. Content beside a distribution, such as a
+data message, continues to the receipt, typing or data handling. A
+custom adapter must report it for its own distribution encoding.
 
 ***
 

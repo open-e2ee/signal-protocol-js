@@ -35,4 +35,4 @@ planned token renewal on a live connection is not a transition.
 
 ### state
 
-> `readonly` **state**: `"connected"` \| `"stopped"` \| `"connecting"` \| `"reconnecting"`
+> `readonly` **state**: `"stopped"` \| `"connecting"` \| `"connected"` \| `"reconnecting"`

@@ -7,7 +7,7 @@
  * High-level orchestrator for Signal Protocol operations:
  * - Identity key management and initialization
  * - PreKey bundle generation and rotation
- * - Session establishment (X3DH/PQXDH)
+ * - Session establishment (PQXDH)
  * - Message encryption/decryption (via Double Ratchet)
  * - Triple Ratchet (SPQR) integration for post-quantum security
  */

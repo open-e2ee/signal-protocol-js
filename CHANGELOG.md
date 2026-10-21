@@ -1,5 +1,1320 @@
 # Changelog
 
+## 12.0.0
+
+- **Breaking: every new session uses PQXDH, and the SDK has no classical key
+  agreement.** A peer bundle without an ML-KEM prekey fails with
+  `PQXDH_REQUIRED`, and no setting allows a classical X3DH session.
+  `'required'` is the only `postQuantum` value. `PostQuantumPolicy.Compatible`
+  and the `'compatible'` value are removed, and `postQuantum: 'compatible'`
+  throws `Unsupported postQuantum policy` at client creation.
+  `ProtocolStrategyConfig.allowClassicalFallback` is removed, and the SDK
+  ignores the key from an untyped caller. `ClassicalFallbackReason` is removed
+  from `./client/config` and `./types`. `ProtocolSelectionEvent` no longer
+  carries `usedClassicalFallback` or `classicalFallbackReason`.
+  `X3DH_INFO_DEFAULT` is removed from `./client/config` and `./types`, and
+  `ResolvedKeyExchangeInfoStrings` carries only `pqxdh`. `PQXDHFallbackType`,
+  `PQXDHRequiredErrorOptions.fallbackType`, and `PQXDHRequiredError.fallbackType`
+  are removed; read `PQXDHRequiredError.reason` (`no_kyber_prekey` or
+  `pqxdh_failed`) instead. The X3DH module and its `performX3DH`,
+  `performX3DHResponder`, `calculateX3DHSharedSecret`, `EphemeralKeyPair`,
+  `X3DHResult`, `X3DHResponderInput`, and `X3DHResponderResult` exports are
+  removed. `validateProtocolStrategy` no
+  longer warns about a classical fallback. A stored 11.x classical session
+  continues as a Double Ratchet session.
+- **Breaking: the managed device link is the one link path.** The SDK no
+  longer ships the device provisioning protocol. `linkHostedRelayDevice()` is
+  the one way to link a device. A linked device gets the account identity by
+  device transfer or by an application-owned channel. The managed device link
+  runs in one process that holds the active device's store and the new
+  device's store. It sends no private key to the Relay. These public names
+  are removed: the `./device/provisioning` subpath and its exports
+  `DEFAULT_PROVISIONING_LINK_PREFIX`, `LocalDeviceMetadata`,
+  `ProvisioningGroupStateStore`, `ProvisioningIdentityStore`,
+  `ProvisioningKeyPair`, `ProvisioningLocalStateStore`, `ProvisioningMessage`,
+  `ProvisioningQRData`, `ProvisioningReceiveOptions`, `ProvisioningSendOptions`,
+  `ProvisioningUsernameStateStore`, `UserProfile`, `cancelProvisioning`,
+  `connectToProvisioningSession`, `generateProvisioningQR`,
+  `parseProvisioningQR`, `provisionDevice` and `receiveProvisioningMessage`,
+  with their `./device` re-exports; `PROVISIONING_SESSION_TTL_MS` from
+  `./device/constants`; `getDeviceMetadata` from `./device/expo` and
+  `./device/react-native`; `ProvisioningService` from `./remote/relay/types`;
+  the `SignalProtocolRelayServer` methods `createProvisioningSession`,
+  `connectNewDevice`, `sendProvisioningMessage`, `getProvisioningMessage`,
+  `completeProvisioning`, `acknowledgeProvisioning`, `rollbackProvisioning` and
+  `deleteProvisioningSession`, with their `HostedRelayHttpTransport` members;
+  and `DeviceChoice.requiresQR`. A relay adapter drops these methods.
+- **Fixed: a blocked head of the mailbox no longer stalls the HTTP pull.**
+  A mailbox pull, and so `pullHostedRelayAfterWake`, now sends the Relay
+  cursor of the page before it, so the pull moves past a full page of
+  unacknowledged envelopes and gives the messages and Relay receipts behind
+  it. Three kinds of envelope stay unacknowledged: an envelope that the
+  receive bounds refuse, a decrypt failure that no retry request owns, and
+  a retry request that waits for the next group fetch. The cursor lives in
+  memory only. An empty page, a page without a Relay cursor, a failed pull,
+  and a restart clear it, so the next pull starts at the head and offers
+  those envelopes again. The recovery pull after failed work also starts at
+  the head. Advancing
+  the cursor acknowledges nothing, so the Relay keeps each envelope. Before,
+  a full page of such envelopes came back on each pull, and the messages
+  behind it waited.
+- **Changed: hosted registration and recovery accept a native assertion with
+  no `jti`.** The transport binds the challenge to the exact assertion,
+  purpose, and operation ID. The Relay verifies the configured provider and
+  rejects an invalid token. An assertion with a valid `jti` keeps that
+  identifier.
+- **Breaking: a send declares its device sets, and the Relay compares
+  them.** Each post to an account declares the device IDs that the sender
+  holds records for. `Envelope.declaredDeviceIds` carries the declaration of
+  a direct post, and the hosted transport sends it as `deviceSets`.
+  `SignalProtocolRelayServer.sendMultiRecipientUnidentified` takes a 9th
+  argument, `deviceSets`, for a sealed post. The relay `send()` returns the
+  optional `deviceSetChecked` and `needsSync`.
+  `sendMultiRecipientUnidentified` returns the optional `deviceSetChecked`
+  and `refusals`. The Relay refuses a declaration that does not match with
+  409 `DEVICE_SET_MISMATCH`, which names the missing and the extra devices,
+  or with 410 `STALE_DEVICE`, which names the devices whose registration
+  changed. The SDK then removes each extra device record, starts a new
+  session with each missing or stale device, encrypts the message again only
+  for those devices, and posts again. The hosted transport finds each device
+  in the device directory before it posts, on the identified and on the
+  sealed route. A declared post to a device that the directory does not list
+  fails before the post with the 409 `DEVICE_SET_MISMATCH` refusal of the
+  Relay, which names the device as extra, so the SDK removes the device
+  record and posts again. A device that the Relay accepted keeps
+  its stored post. A send has a recipient phase and then a sync phase, and
+  each phase can restart 10 times. When the recipient phase does not match
+  after the 10th restart, or the Relay refuses a restart post with
+  `OPERATION_EXPIRED`, the send throws the new
+  `DeviceSetReconciliationError`. The outbox keeps the send as terminal, and
+  a call of `send()` with the same `clientMessageId` starts a new run at 0
+  restarts. A group restart keeps the group ciphertext, seals the shared body
+  again, and replaces it in one write. A device-specific resend, a receipt,
+  and a retry request declare nothing. A custom relay and a wrapper of a
+  relay do not compare, get no declaration, and keep the device list reads. `docs/DEVIATIONS.md` sections 5.5 and 5.6 compare this
+  loop with Signal's.
+- **Breaking: a send to a recipient with a session reads no device list on a
+  comparing relay.** The Relay refuses a declared post that misses a device
+  or names a removed one, so the 60 s freshness window applies only to a
+  relay that does not compare. A recipient with no session gets one list
+  read to start the sessions. A group send declares the devices of its
+  records, and reads the list of a member only when it holds no record for
+  that member. A replay reads no device list. One exception holds in a live
+  send and in a replay. A repair that leaves an account with no device
+  record reads the list of that account once.
+- **Breaking: the own device list is read only on `needsSync`.** On a
+  comparing relay, the recipient phase posts first. Its receipt sets
+  `needsSync` when the sender account has other devices. The sync phase then
+  declares the own devices that the sender holds records for. When the
+  sender holds no record of another own device, the send reads the own list
+  once. A failed read no longer fails the send. The recipient result is
+  stored first, and the result carries `syncPending: true` when the sync
+  phase does not complete or the own list cannot be read. Call `send()`
+  again with the same `clientMessageId` to post the pending copies. A replay
+  reads the own list again when the send could not read it. The SDK makes no
+  sync post without a destination.
+- **Breaking: a custom store keeps the device-set fields of an outgoing
+  intent.** An outgoing intent adds `deviceSetRestarts`,
+  `deviceSetUnresolved`, `deviceSetBundleMissing`, and `syncPending`. A
+  custom metadata store must keep each field of the stored intent value,
+  also a field that it does not know.
+  The fields need no schema step, because they live in the existing JSON
+  value of the intent.
+- **Breaking: a refused group-token destination is no longer inferred as
+  stale.** The group-token receipt names each refused destination with its
+  code in `refusals`. A `STALE_DEVICE` destination leaves the shared group
+  message and gets the device repair once. A `NOT_FOUND` destination of a
+  declared post settles a removed account: the SDK adds nothing for it, and
+  `uuids404` names the account only when the receipt is not a duplicate.
+  `SendResult.refusedDestinationCount` stays a count, and the SDK infers no
+  code from it.
+- **Breaking: a repair fails the send on a session error other than a
+  missing bundle.** When the start of a new session for a refused device
+  fails for another reason, such as an untrusted identity, the send fails
+  with that error. A listed device with no prekey bundle makes the send wait
+  and restart, and counts each restart. The repair write stores each such
+  device in the outbox. A replay after a process restart, a stop, or a
+  terminal end starts a session with each stored device before its first
+  post, so the device gets the message when it has a bundle again. When the
+  send holds no message for an account, a bundle fetch that the Relay
+  answers with `NOT_FOUND` removes the record of the device. The Relay gives
+  that answer for an unregistered device, and for a registered device with
+  no uploaded prekeys. Each other device that the account record holds gets
+  the message in the same repair when it has a session or a bundle. An
+  account left with no device record gets one list read, and a listed device
+  with no bundle waits again within the restart bound. Thus a replay reaches a device that the account linked
+  after an unlink. Before, a replay of a send whose recipient had no other
+  device failed with `SESSION_NOT_FOUND`, and a group replay completed
+  without the member.
+- **Added: `SendResult.syncPending`.** It is true when the Relay accepted
+  the send for every recipient device and the copies for the other devices
+  of the own account are not posted yet.
+- **Added: the `onRelayProtocolError` hook and `RelayProtocolError`.** The
+  Relay marks each accepted declared post with `deviceSetChecked`. When an
+  accepted declared post has no mark, the send is delivered and its result
+  does not change. The client reports a `RelayProtocolError` with the code
+  `DEVICE_SET_UNCHECKED` and the route of the post once for the send through
+  `onRelayProtocolError`. A sync copy to another own device is a declared
+  post too, on the `identified-direct` route. A sync payload of a method such
+  as `syncReadToLinkedDevices` reports its error once with no
+  `clientMessageId`. The new exported types are
+  `DeviceSetReconciliationError`, `RelayProtocolError`, `DeviceSetDevice`,
+  `DeviceSetLastRefusal`, `DeviceSetPhase`, `DeviceSetRefusalAccount`,
+  `DeviceSetUnresolved`, `DeviceSetUnresolvedReason`,
+  `RelayProtocolErrorCode`, and `RelayProtocolRoute`.
+- **Added: `HostedAnonymousDeliveryError.data`.** The error keeps the
+  `details` object of the Relay answer. For a refused declared post, it
+  names the missing, the extra, or the stale devices.
+- **Breaking: the skipped-key cap applies to each receiver chain.** A
+  receiver chain keeps at most `maxMessageKeysStored` skipped message keys,
+  2000 by default, as libsignal keeps `MAX_MESSAGE_KEYS` for each chain. When
+  a chain is at the cap, its key with the lowest index leaves. A store to one
+  chain never evicts a key of another chain. Before this change, the cap
+  applied to all five chains together, and the oldest key of any chain left.
+  A session now keeps up to 2000 keys in each of its five chains. The 7-day
+  `maxMessageKeyAge` limit does not change. `countTotalMessageKeys` and
+  `evictOldestMessageKey` are removed from the double-ratchet exports.
+- **Breaking: a receive pass waits for each hook for at most 2 minutes.**
+  The new `protocol.receiveQueue.receiveHookTimeoutMs` option sets the
+  bound. The default is 120000 ms. The value must be a positive integer of
+  at most 2147483647 ms, so `create()` refuses zero, a negative value, a
+  fraction, and `Infinity`. The bound applies to each hook that a receive
+  pass awaits. At the bound, the SDK logs a warning with the
+  `RECEIVE_HOOK_TIMEOUT` behavior and no longer waits for the hook. A
+  timeout of `onMessageDecrypted` or `onDelivered` counts as one failed hook
+  attempt, with the normal backoff and attempt cap, and it logs no
+  `RECEIVE_HOOK_FAILED` warning. A timeout of another hook ends that call,
+  and the pass continues. A hook that settles after its bound writes
+  nothing. An application whose hook can run longer than 2 minutes sets a
+  larger bound.
+- **Breaking: a delivery receipt stops its retries 1 day after it becomes
+  due.** One Signal client gives its delivery receipt job the same 1-day
+  lifespan.
+  When a receive record waits for its delivery receipt for 1 day,
+  the SDK completes the record. It sends no receipt, it does not call
+  `onMessageDecrypted` again, and it gives no `onReceiveExpired` report,
+  because the application already has the content. A resend record still
+  reports `onDeliveryRecovered`. The 30-day receive age still applies, so a
+  record whose age ends first completes at its age. Before this change, a
+  receipt retried until the receive age of 30 days.
+- **Breaking: SPQR skipped keys leave by index distance in each epoch, not
+  by age.** The SPQR receive path now keeps held skipped keys as the
+  SparsePostQuantumRatchet chain keeps its key history. Each epoch keeps at
+  most `maxOutOfOrderKeys` keys after a trim, 2000 by default. A key whose
+  index plus `maxOutOfOrderKeys` is below the receive counter of its epoch
+  is refused with `DECRYPTION_FAILED` and the reason `key-trimmed`. A
+  receive holds only the skipped keys at or above its own horizon. A jump
+  above `maxOutOfOrderKeys` clears the held keys of that epoch. When an epoch
+  holds 2201 keys, the keys behind the horizon leave. No eviction reads the
+  clock, and the `timestamp` field stays in the persisted shape. When the
+  send epoch prunes an old epoch, the held keys of that epoch leave with its
+  chains, so a key of a pruned epoch no longer decrypts. Before this change,
+  the trim ran only when all epochs together held 2000 keys, and one receive
+  then added every key of its gap, up to 24999 keys. The internal
+  `deserializeSPQRState` loader refused a state above 2000 keys. It now
+  keeps the highest 2200 indexes of each epoch, drops the keys of an epoch
+  with no chain, and logs one warning with the dropped count. The
+  `cleanupSPQRState` export and `SPQR_CONFIG.MAX_SKIPPED_KEY_AGE` are
+  removed from the SPQR module for the 12.0.0 cut, because no receive path
+  called them. `trimSkippedKeys` is replaced by
+  `trimEpochSkippedKeys(state, epoch)`.
+- **Breaking: safety numbers order the two parties as libsignal does.**
+  Each party gets its own 30-digit display string. The string that is lower
+  by byte comparison comes first, in the 60 digits, the emoji, and the hex.
+  The SDK no longer compares the two user identifiers, so no locale and no
+  identifier character can change the order. For some identifier pairs, the
+  displayed safety number of 12.0.0 differs from the one of 11.x. The 30
+  digits of each party do not change, and only their order changes. This
+  applies to `client.verify()` and `generateCompositeSafetyNumber`, and also
+  to `generateSingleKeyReferenceSafetyNumber`, `Fingerprint`, and
+  `createFingerprintData`. The composite QR profile version steps from 3 to
+  4 for the 12.0.0 cut. A QR code from an 11.x client then reports
+  `version_mismatch`, not `no_match`. The single-key QR profile stays at
+  version 2, because the new order makes its output equal to libsignal
+  version 2.
+- **Breaking: a safety-number confirmation from an earlier version is
+  refused.** `SafetyNumberConfirmation.version` steps from 1 to 2 with the
+  composite QR profile step. `confirmSafetyNumber` refuses a version 1
+  confirmation with the unsupported-version error, not with
+  `IDENTITY_MISMATCH`. The app calls `verify()` again and shows the new safety
+  number.
+- **Fixed: a cached safety number keeps the QR orientation of its caller.**
+  Before, the cache gave the swapped call for the other party the same cached
+  result. Its QR code then carried the first caller's orientation, so a scan
+  against the other party's QR code reported `no_match`. The cache now keeps
+  one entry for each orientation.
+- **Fixed: an archived session no longer sends a PreKeyMessage.** When a
+  session moves to the archive, the SDK now clears its unacknowledged prekey
+  state: the pending flag, the prekey IDs, and the Kyber and KEM one-time
+  ciphertexts, as libsignal does. Before, a session that was archived before
+  the peer replied kept that state, and a later promotion made its next send
+  a PreKeyMessage for prekeys that the peer could already have deleted. The
+  in-memory store archive now follows the same record rule, so it also keeps
+  at most 40 archived sessions.
+- **Changed: archived sessions are evicted by insertion order, not by last
+  use.** Over 40 archived sessions, the session that went into the archive
+  first leaves, as libsignal does. Before, the session with the oldest
+  `lastUsedAt` left. A session archived again under the same base key moves
+  to the newest end.
+- **Breaking: a removed device keeps its record and its archived sessions.**
+  `SesameManager.removeDevice` now archives the current session of the
+  device, keeps the record, and marks it removed with the new
+  `DeviceRecord.removedAt` field. Before, the removal deleted the record and
+  its sessions, so a message that the device sent before its removal did not
+  decrypt. Now that message decrypts on the archived session. A removed
+  device gets no fan-out: a send, a sync copy, a receipt, and a sender-key
+  distribution skip it. A send to a user whose devices are all removed fails
+  with `NO_DEVICES`. A second removal of the same device writes nothing and
+  emits no second `onDeviceRemoved` event.
+- **Changed: a device list that names a removed device again relists it.**
+  The removed marker clears, and the device returns to fan-out with no
+  current session. The archived sessions stay. The relist emits
+  `onDeviceAdded` once. A group send to a removed member device reads its
+  device list again before it gives the sender key. A device that is still
+  removed after that read gets no key. The new
+  `SesameManager.relistDevice` call relists one device.
+- **Changed: a declared send counts a removed device record as absent.**
+  On a comparing relay, a send declares only the devices whose records are
+  not marked removed. A repair that removes an extra device, or a device
+  whose bundle fetch the Relay answers with `NOT_FOUND`, marks its record.
+  A member or an own account whose every record is marked removed gets the
+  list read of an account with no record. A repair that starts a session
+  with a missing device relists its record, so the next post declares it.
+- **Changed: an identity change keeps the archived sessions.** When a device
+  list gives a new identity key for a device, the SDK archives the current
+  session, takes the new key, and marks the device pending verification.
+  Before, it deleted the record and its sessions and added the device again,
+  with an `onDeviceRemoved` and an `onDeviceAdded` event. Now a message under
+  the old session still decrypts, and the change emits no device event. A
+  removed device whose identity changes is relisted, with one
+  `onDeviceAdded` event.
+- **Changed: the client deletes stale device records at each start.** The
+  receive queue runs `cleanupStaleRecords` once in each run, after its
+  resume. A removed record goes when its removal is older than `maxLatency`,
+  30 days by default. The cleanup also deletes a record that has no session
+  and is older than `maxLatency`. Before, no SDK path ran the cleanup.
+- **Breaking: a custom store keeps and deletes removed device records.** A
+  `SesameStore` must keep the `removedAt` field of a device record.
+  `deleteStaleRecords` must also delete a record for which
+  `isExpiredRemovedDevice` is true. `getSesameDeviceIds` still returns the
+  removed devices, and a caller that sends to the devices skips them with
+  `isRemovedDevice`.
+- **Breaking: the SQLite schema moves to version 6 and the IndexedDB database
+  to version 11.** Neither step changes a table or an object store. The steps
+  keep an earlier SDK, which sends to a removed device, from opening the
+  store. An earlier SDK refuses the SQLite file with
+  `SqliteSchemaTooNewError`, and the browser refuses the IndexedDB open with
+  a `VersionError`. A downgrade is not supported.
+- **Added: `isRemovedDevice` and `isExpiredRemovedDevice`.** The two
+  predicates are exported from the `types` entry point. `isRemovedDevice`
+  tells whether a device record is marked removed. `isExpiredRemovedDevice`
+  tells whether the stale-record cleanup deletes a removed record.
+- **Changed: a waiting receive record holds back only its conversation.** A
+  record that waits for its group state, or for a hook retry below the
+  attempt cap, holds back the later records of its conversation, as one
+  Signal client queues its message jobs. Group content keys by its group,
+  a sent transcript of this account keys by its destination, and other
+  content keys by its sender account. Before this change, a waiting record
+  held back every later record of its sender device, in every group and in
+  direct chats. Now direct chats and other groups make progress, and a
+  blocked group holds back its later content from every sender. A record
+  that waits behind an earlier record of its group counts toward the share
+  of that group in the receive queue, so a stalled group reaches its share
+  sooner, and its new sender-key messages wait at the Relay. The order in
+  which the device commits its records stays per sender device.
+- **Added: `discardPendingReceive` removes a receive that the application
+  cannot process.** The call takes the `messageId` that
+  `listPendingReceives` gives. It removes a receive that has not reached its
+  delivery receipt, and returns the removed receive, or `null` when no
+  listed receive matches. It sends no receipt, it does not call
+  `onMessageDecrypted`, and it gives no `onReceiveExpired` report. A
+  redelivery of the envelope then gives `duplicate` and decrypts nothing.
+  A hook call that already started still runs. Each
+  `PendingReceive` now gives `hookAttempts`, the count of failed
+  `onMessageDecrypted` attempts. Its `messageId` is now always set: a
+  receive stored before the client kept message IDs gives its record ID, as
+  the `processed` outcome does.
+- **Changed: group sends and session locks order the tabs of one origin.**
+  When `navigator.locks.request` exists and the store has a
+  `storeIdentity`, a group Sender Key operation runs under the Web Lock
+  `open-e2ee:group-send:<store identity>:<lock key>`. The session lock, the
+  user lock, and the device-list sync lock run under
+  `open-e2ee:session:<store identity>:<lock key>`. Two tabs or workers of
+  one origin on one store then encrypt in turn, so two group messages never
+  carry one iteration and two direct messages never carry one counter.
+  Before this change, each tab had only its own in-process lock. A page or
+  engine with no Web Locks, and a store with no identity, keeps the
+  in-process locks. Two tabs on one store are then not ordered, and the
+  application must give one tab exclusive access to the store. The session
+  lock and the device-list sync lock still end a wait after 5 seconds. On
+  the Web Lock path the wait rejects with `ORIGIN_LOCK_TIMEOUT_MESSAGE`, and
+  on the in-process path with the message of the in-process lock. A stop of
+  the relay work still ends the wait of a group operation. A Web Lock has no limit on its waiting requests. The
+  in-process session lock still refuses a request when 1,000 requests wait.
+- **Added: `storeIdentity` on the local store contract.** The optional
+  member names the data of a store, so that each tab and worker of an
+  origin gives the same name for the same data. The IndexedDB store and the
+  web SQLite store give their database names. A
+  custom web store that shares its data across tabs sets it, so that its
+  sends take the Web Locks.
+- **Fixed: a sender-key rotation keeps the states that another client
+  wrote.** Each `SenderKeyManager` kept its own copy of the previous
+  states, and a rotation or a new distribution built the archive from that
+  copy. When two clients on one store rotated in turn, for example in two
+  tabs, the archive lost the states that the other client wrote, so the
+  earlier messages of those states no longer decrypted. The manager now
+  reads the archive from the stored record each time, and the record keeps
+  at most 5 states.
+- **Breaking: a group send gives its sender key to each device that has no
+  handoff row.** The SDK keeps a sender-key handoff row for each device of
+  another member when the Relay accepts a distribution of the own sender key
+  for that device. The row names the group, the sender key ID, the
+  generation, the recipient device, and the registration ID of the session.
+  A group send reads the device list of each member. It gives the current key
+  to each listed device that has no row for the current sender key ID,
+  generation, and registration. A row records a handoff. It is not proof
+  that the device installed the key. The SDK writes the row after the Relay
+  accepts the distribution and before the send marks the distribution sent.
+  A dropped distribution writes no row. A new own key, a rotation, and a
+  delete of the own key delete the rows of the group. A PreKey session from
+  the device, a bundle session that replaces a current session, a session
+  archive, a session delete, and a device-record delete delete the rows of
+  the device in every group. An identity rotation of a contact deletes the
+  rows of each device of that account. A retry request deletes the rows of
+  the requester in the group of the failed message only. A session reset
+  after an expired retry request deletes the rows of each device of the
+  sender account in every group. Client start
+  deletes each row that no current own key covers. `docs/DEVIATIONS.md`
+  section 7.5 compares this record with the record of the Signal apps and
+  gives the reason for each difference.
+  `SenderKeyState.distributionPending`,
+  `SenderKeyManager.getPendingSenderKeyDistribution`, and
+  `SenderKeyManager.confirmSenderKeyDistributionSent` are removed.
+  `SenderKeyManager.rotateSenderKey` and `rotateGroupSenderKey` do not take
+  `options.distributionPending`. The manager ignores a `distributionPending`
+  field in a stored state, and the next write of the state omits it.
+- **Breaking: a custom store keeps the sender-key handoff rows.**
+  `SignalProtocolLocalStore` extends the new `SenderKeyHandoffStore`. A
+  custom store must implement its six methods: `recordSenderKeyHandoff`,
+  `listSenderKeyHandoffs`, `invalidateSenderKeyHandoff`,
+  `invalidateAccountSenderKeyHandoffs`, `listSenderKeyHandoffGroupIds`, and
+  `retainSenderKeyHandoffs`. Each row delete must be in the same write as
+  the change that causes it.
+  `storeSenderKeyRecord` and `deleteSenderKey` take the new
+  `SenderKeyRecordWriteOptions`. With `deleteSenderKeyHandoffs`, the write
+  deletes the rows of the group. `setDeviceRecord` takes the new
+  `SetDeviceRecordOptions`, and `SessionTrustCommit` has the field
+  `senderKeyHandoffInvalidation`. With the device, the write deletes the
+  rows of that device in every group. `archiveCurrentSession`,
+  `deleteSessionRecord`, `deleteDeviceRecord`,
+  `deleteAllSenderKeysForGroup`, and
+  `acceptContactIdentityRotationAndDeleteSessions` always delete the rows
+  of their device, group, or account. The memory store keeps the rows in its
+  state. The IndexedDB, key-value, and SQLite stores keep the rows durably,
+  so a restart does not give the key to a listed device again. The SQLite
+  stores add the `sender_key_handoff` table in schema version 5, and the
+  IndexedDB store adds the `senderKeyHandoff` object store in database
+  version 10. The IndexedDB and key-value stores encrypt each row and find it
+  by keyed hashes, so they hold no group ID, account ID, or device in the
+  clear.
+- **Breaking: a custom key-value backend must apply
+  `removeSenderKeyHandoffs` inside `atomicWrite`.** `KeyValueOperation` has
+  the new variant. The part of a key after `keyPrefix` has five
+  colon-separated segments: the group hash, the generation, the account
+  hash, the recipient hash, and the entry hash. The backend removes each key
+  whose group, account, and recipient segments equal every given hash, and
+  keeps a key of another shape. It applies the operation in the same
+  transaction as the other operations of the batch, and the operation
+  observes the earlier writes of the batch. A backend built with
+  `createTransactionalKeyValueBackend` applies it already.
+  `assertBackendConformance` checks it.
+- **Breaking: the group outbox context and the sync send change.**
+  `GroupOutboxContext` does not have `confirmSenderKeyDistributionSent`.
+  It has the required members `recordSenderKeyHandoff`,
+  `prepareSenderKeyHandoffs`, `resolveOwnDevices`,
+  `isConclusiveDeviceRejection`, `repairStaleDevice`, and
+  `postSyncMessage`. `postSyncMessage` takes, as its third argument, a
+  function that encrypts the transcript again for one own device.
+  `prepareSyncMessages` takes the own devices of the send as its fifth
+  argument. `postPreMessage` resolves to the new
+  `PreMessagePostResult`. `appendOutgoingGroupDeviceMessages` is removed.
+  `reconcileOutgoingGroupDeviceSet` removes the messages of devices from an
+  intent and adds new messages in one write.
+  `DefaultSesameManager.sendToLocalOtherDevices` requires
+  `listedDeviceIds`, and it sends only to those own devices.
+- **Changed: each send gives a sync copy to exactly the listed own
+  devices.** On a relay that does not compare device sets, each direct or
+  group send, and each replay, reads the device list of the own account,
+  with no freshness window. A failed
+  read stops the recipient post and fails the send, also for an account
+  with no linked device, and the outbox retries a stored send. The first
+  attempt of a send that fails on this read throws before the SDK stores
+  it. The error carries the `clientMessageId`, but the outbox holds no
+  transmission for it. The application calls `send()` again, and the SDK
+  encrypts the content again. The send gives
+  a sync copy to each listed own device other than the sending device. Each
+  sync copy is keyed by its device. An own device gets the transcript and
+  never a sender-key handoff row. When the Relay refuses an own device as
+  stale, the SDK refreshes the session of that device once and encrypts the
+  copy again for it. For the transcript of a stored send, the SDK replaces
+  the copy in the intent and posts the new copy under a repair ID. The
+  device then gets the transcript of that send. When the Relay refuses the
+  new copy too, the SDK archives the session, removes the copy from the
+  intent, and completes the send. When the refresh fails, or the encryption
+  for the new session gives no copy, the send fails. The copy and the new
+  session stay, and the outbox retries the stored send. A sync copy of
+  account state, such as a read sync, gets the same refresh. The SDK posts
+  the new copy again with no operation ID and changes no intent.
+- **Changed: a group replay reads the device lists again.** On a relay that
+  does not compare device sets, before the replay of a stored group send, the
+  SDK reads the device lists of the members and of the own account. One intent write removes each message of
+  a device that the lists do not show. A listed device that the stored send
+  does not reach gets the current key of the send and the stored group
+  ciphertext. When the sender rotated the key after the send, the added
+  device gets only the stored group ciphertext, and the replay completes.
+  The device recovers the content through its retry request, and the next
+  send gives it the current key. The stored ciphertext does not change, because the Relay
+  refuses another operation under the same message ID. Thus a device that
+  the replay adds gets the content only through its retry request and the
+  resend of a `Resendable` send.
+
+- **Breaking: a group state store keeps a receive record for each group.**
+  `GroupStateStore` adds `getGroupReceiveRecord`,
+  `updateGroupReceiveRecord`, and `listGroupReceiveRecords`. A receive
+  record holds the group's required revision, which is the highest revision
+  that an authenticated group context has claimed, and the fetch backoff and
+  the last verified denial. A custom store must implement the three methods.
+  An update that returns null deletes the group's whole record. The SDK
+  store writes version 2 group records with an index. It migrates a version
+  1 record forward when it first reads or writes that group, and a crash at
+  any migration step reruns safely. A migrated group starts at required
+  revision 0 as a locally known group. A record that a context created
+  before the group's state was verified also names the sender device that
+  claimed it. `storeGroupState` and
+  `storeGroupStateWithSenderKeyRotationBarrier` must remove that origin in
+  the same write that stores the state. A custom store must do the same.
+- **Breaking: managed group content carries its group context.** Each
+  send to a managed group, its sync transcript, and its send log entry now
+  carry the group's master key and the revision of the sender's verified
+  state inside the encrypted content, as Signal's `GroupContextV2` does. A
+  resend therefore carries the context of the original send. The receiving
+  client removes the context before it gives the content to the
+  application, so the application gets the bytes that the sender sent. An
+  ad hoc group send carries no context. `SignalProtocolContentAdapter` adds
+  two required methods, `serializeContentWithGroupContext` and
+  `withoutGroupContext`, and `inspectContent` reports `groupContext`, or
+  `'malformed'` for a context that does not decode. A custom adapter must
+  implement both methods and report the context. The default adapter puts
+  the context in a `groupContext` member of a JSON object and wraps any
+  other content in a `groupContent` member.
+- **Breaking: a managed group receive follows Signal's order.** The
+  client decrypts, runs the replay check, and then installs a sender key
+  distribution with no group decision, as Signal does. Membership,
+  permission, and blocking no longer stop the install. After the install,
+  the client derives the group ID from the context's master key and
+  compares it with the group of the envelope and of the distribution. A
+  context that does not decode is refused as `malformed-context`, and a
+  context of another group as `context-mismatch`. Content that a sender
+  key decrypts, or that comes beside a distribution, is content of that
+  group in every shape. Sync content is content of this account. On the
+  Relay subscription, in `receiveIncomingEnvelopes`, and in
+  `processIncomingEnvelope` and `decryptGroupMessage`, content from
+  another account that carries a sync message is refused as
+  `sync-from-other-account` before the distribution install and before
+  any group decision, and the application gets no content. The raw
+  decrypt methods `receive`, `decryptMessage`, and `decryptMessages`
+  return the plaintext with no group classification and do not refuse
+  it. Sender-key content from another account is delivered under its
+  group, never under a conversation that its content names. When the
+  local state is
+  below the revision that the context claims, one fetcher brings the group
+  up to date before the client decides. The client decides each message
+  at the revision that its own context claims, so a false claim uses up
+  only its own fetch. The fetcher runs at most one fetch for each claimed
+  revision and at most 16 claims in a backoff window. A fetch that ends
+  below the claim is complete: the client decides that message at the
+  fetched state, the group's required revision becomes the server head,
+  or a higher claim that came while the fetch ran, and the backoff does
+  not grow. Only a fetch that fails or that the
+  server refuses backs off. A claim above the fetched state that the
+  window cannot fetch waits for the next window, so false claims hold an
+  honest claim for 30 s at most. When the trust
+  root has a server signing key, a context that carries the signed change
+  to the claimed revision applies that change with no fetch, also when
+  the window has fetched its 16 claims. Under
+  `allowUnauthenticatedGroupHistory`, the client never applies a carried
+  change. Content with no context is decided at the local state, and is
+  refused as `legacy-no-context` when the client has no state. While the
+  group cannot update, the content waits on the device in the receive
+  record that the decrypt committed with the ratchet state, and the receive
+  queue decides it when a fetch of its group completes. The client sends
+  no retry request and does not call `onDecryptionError`. The fetcher
+  tries again in the background and at start. `decryptGroupMessage` throws
+  `GroupReceiveUnavailableError` for such content, and the error carries
+  the `messageId` of the record. A second call with the same message
+  decides the stored content with no second decrypt, also after a restart.
+  Two concurrent calls with the same message give the content once. A sender
+  device can make at most 100 groups wait for verification. Past the cap,
+  a context for a new group is refused as `unverified-cap`. The new
+  `groups.isGroupBlocked` config drops the content of a blocked group with
+  no report and no fetch. The background fetcher also skips a blocked
+  group, at start and on its timer. A block hook that throws any value
+  skips only its own group. `decryptGroupMessage` now decrypts before it
+  decides, so a refused message uses its message key. `syncGroup` now runs
+  through the fetcher, so it joins a fetch in flight and records its
+  result. It returns that result only when the fetch called the group
+  server. After a fetch that only tried a carried change, it waits for the
+  next fetch, its own when no other caller starts one first. An ad hoc
+  distribution installs with no `groups` config. The
+  package root and the `client` entry export `GroupReceiveUnavailableError`,
+  `GroupReceiveRefusedError`, and `GroupResendDeferredError`.
+  `processIncomingEnvelope` returns `pending` for content that waits for
+  its group and `denied` for refused content, and the caller acknowledges
+  the envelope in both cases. A deferred resend leaves the retry request
+  with the Relay. See `docs/ERROR_HANDLING.md`.
+- **Breaking: `processIncomingEnvelope` returns a receive outcome.** The
+  method now returns a `ReceiveOutcome` in place of the plaintext. Its
+  `kind` is `processed`, `pending`, `duplicate`, `null-message`, `denied`,
+  or `refused`. Acknowledge the envelope for each kind except `refused`,
+  which means that the receive queue has no room: nothing is decrypted or
+  stored, so give the envelope again later. A `processed` receive keeps
+  its content on the device until the application calls the new
+  `completeReceive` with its `messageId`, or until the new `onPersist`
+  option resolves. A redelivery before then returns the same outcome with
+  no second decrypt. A Relay delivery of an envelope that
+  `processIncomingEnvelope` committed reuses that record and installs no
+  sender key distribution from it. The new `listPendingReceives` lists the stored
+  receives one page at a time, and `{ ready: true }` lists only the
+  receives that wait for `completeReceive`. The new
+  `processPendingReceives` runs one pass of the receive queue now, and its
+  `deadlineMs` option bounds the pass. `processIncomingEnvelopes` returns
+  `{ envelope, outcome }` or `{ envelope, error }` for each envelope.
+  Before, the method returned the plaintext and deleted the stored content
+  before the application saved it, so a crash between the two lost the
+  message.
+- **Breaking: a custom store commits a receive record with the ratchet
+  state.** `SessionTrustCommit.receiveWork` and
+  `SenderKeyReceiveCommit.work` replace `receivedContent` and `content`.
+  The store must write the `ReceiveWorkRecord` in the same transaction as
+  the session or sender key state, so the ratchet step and the record roll
+  back together. The store adds `getReceiveWork`,
+  `putReceiveWork`, `listReceiveWork`, `receiveWorkUsage`, and
+  `completeReceiveWork`, and removes `getReceivedContent`,
+  `deleteReceivedContent`, and `deleteExpiredReceivedContent`.
+  `listReceiveWork` returns records in arrival order, by `arrivalSeq` and
+  then `workId`, and its `after` query takes the last record of the page
+  before, so records with an equal `arrivalSeq` are never skipped.
+  `putReceiveWork` and `completeReceiveWork` compare the record revision
+  and write nothing on a mismatch. `completeReceiveWork` deletes the record
+  and writes its metadata in one transaction.
+  `SignalProtocolManager.decrypt` takes a `receiveWork` seed in place of
+  `receiveId`. The SQLite schema version 4 and the IndexedDB schema version
+  9 add only the `receive_work` table and object store. After the first
+  open, an SDK earlier than 12 cannot open the store. There is no
+  downgrade path. At open, each SDK
+  store converts the received content rows of SDK 11 to receive records
+  that wait for the redelivery of their envelope, and writes its completion
+  marker last, so a stop during the conversion is safe. A row that does not
+  parse stays in place, and the store reports it with no content: the
+  SQLite store through its logger, the other stores through
+  `console.error`. When the Relay subscription, `receiveIncomingEnvelopes`,
+  or `pullHostedRelayAfterWake` gets the redelivered envelope of a converted
+  record, and the client already processed that envelope, the client
+  completes the record with no hook call.
+- **Fixed: a receiver installs a sender key that the sender creates again.**
+  `processSenderKeyDistribution` matches a key by its sender key ID, as
+  Signal's published implementation matches a state by its chain ID and
+  signing key. The generation rules apply only to a distribution of the
+  current key, and a later generation of that key replaces it in place. A
+  distribution of a kept previous key changes nothing. A distribution of
+  another key becomes the current state, and the earlier current state
+  becomes a previous state, so a message in flight under it still decrypts.
+  Before, a receiver dropped each distribution whose generation was not
+  above the generation of its current state. `createGroupSenderKey` over an
+  existing key, and a delete followed by a create, start again at
+  generation 1, so each receiver that held the earlier key failed every
+  later group message of that sender device with `SENDER_KEY_MISMATCH`,
+  until a rotation took the sender's generation above the one the receiver
+  held.
+- **Fixed: every send error carries the logical-send identifier.**
+  `send()` chooses the `clientMessageId` before any other step, so
+  `isOutgoingMessageError` is true also for an error before the encryption,
+  such as a failed content serialization or a failed read of the own device
+  list. The application calls `send()` again with the same
+  `clientMessageId`. Before, only an error of the encryption carried the
+  identifier.
+- **Fixed: a group resend checks membership at the required revision.**
+  Before a sender gives group content again, it brings a managed group
+  up to the highest revision that an authenticated context claimed. The
+  check uses the same receive record, fetch window, and backoff as a
+  receive. A requester who is not a member at that revision gets no
+  content, and the answer ends as `membership-refused`. When the update
+  is fresh, the sender answers from the local state, also when a false
+  claim keeps the required revision above the server head, so a removed
+  member who claims a false revision is refused and not deferred. When
+  the update fails or waits for its backoff, the sender defers the resend
+  and does not refuse it. The resend job stays pending for the resend job
+  driver, and the retry request envelope stays unacknowledged for the next
+  Relay delivery. Before, the sender checked a stale local state, so it could
+  resend to a removed member or refuse an added member.
+- **Fixed: unacknowledged messages no longer stall the socket backlog.**
+  The mailbox socket now ends each page of durable frames with one
+  `acknowledge` frame, with no ID when the page acknowledged nothing. The
+  Relay sends the next page of a backlog only on that frame. Before, a page
+  of messages that all stayed unacknowledged stalled every page behind it
+  until the socket reconnected.
+- **Fixed: received content keeps the time of its first admission.**
+  `DecryptedEnvelope.receivedAt` is the time the device first committed
+  the content. A first pass, a retry, and a delivery after a restart give
+  the same value. Content with no timestamp of its own gives this time as
+  its `timestamp` for receipt matching, so each delivery gives the same
+  timestamp. The 30-day receive age of stored content
+  also counts from this time, through a retry, a redelivery, and a
+  restart. Before, the first pass read the clock again after it stored
+  the content.
+- **Changed: the client acknowledges a Relay message after its commit.**
+  On the Relay subscription and in `pullHostedRelayAfterWake`, the client
+  decrypts each envelope and commits its content as a receive record in
+  the same transaction as the ratchet step. It acknowledges the envelope
+  only after that commit, and sends no acknowledgment when the commit
+  fails, as Signal does. The receive queue then decides the group, gives
+  the content to `onMessageDecrypted`, and sends the E2EE delivery
+  receipt. That receipt is the only proof that the application processed
+  the content. A Relay delivery receipt marks only the handoff of the
+  content to the device. Content that waits for its group state stays on
+  the device, not at the Relay. A hook that throws is tried again after a
+  backoff. The device stores the count of each attempt before it calls the
+  hook, so a hook call that ends the process also counts as an attempt.
+  After 10 attempts, the content no longer holds back the
+  later content of its conversation. Each start then offers it to the hook
+  once: in the start pass, or at the registration of `onMessageDecrypted`
+  when the start pass had no hook. After that offer, only
+  `processPendingReceives` tries it again before the next start, until it
+  expires or the application discards it. A pass of those that ends before
+  the retry, at a deadline or at a failed page read, leaves the retry to
+  the next pass. That retry runs after the other content
+  of the device, so a hook call that ends the process on it does not stop
+  the later content of its conversation. `pullHostedRelayAfterWake` commits, acknowledges, then
+  runs `processPendingReceives`, and its new `deadlineMs` option bounds
+  that pass. It gives no content to the application before the
+  acknowledgment settles. `HostedRelayWakeClient` adds
+  `processPendingReceives`. `receiveIncomingEnvelopes` commits each
+  envelope and sends no acknowledgment. The content reaches
+  `onMessageDecrypted` in a later pass of the receive queue, after the
+  call returns. After `stop()`, the content waits for the next start of the
+  queue from `startRelaySubscription`, or for `processPendingReceives`. At
+  start, the client admits a new envelope only after its first read of the
+  stored content ends, so new content of a sender device comes after its stored
+  content, also when the clock stepped back across the restart. This order
+  holds only when that first read completes. It does not hold after a first
+  read that failed, after a `stop()` during the first read, or for an
+  envelope received before the first start. Two processes that share one
+  store, such as two browser tabs, each keep their own arrival order, so
+  content of one process can come before content that the other process
+  received earlier. Before, the client acknowledged only after the
+  application had the content, so group content that waited for its group
+  stayed at the Relay and came back on each delivery.
+- **Added: a bounded receive queue with an expiry hook.** The new
+  `protocol.receiveQueue` config sets how much the device holds. Stored
+  content may wait 30 days, counted from its first commit on this
+  device. The age is fixed. `protocol.receiveQueue` has no age field, and
+  a client created with `protocol.receiveQueue.maxAgeMs` is refused with
+  an error that names 12.0.0 and the fixed 30 days. Content expires when
+  its age is equal to or more than
+  30 days. The earlier prune deleted content only at an age of more
+  than 30 days, so the expiry now comes 1 ms sooner. `maxItems` is 3000 and `maxBytes` is 750 MiB by default. They are
+  provisional until a measurement sets them. `blockedGroupShare`, 0.25 by
+  default, is the part of each bound that the waiting records of one group
+  can fill. At a bound the client decrypts nothing more and does not
+  acknowledge the envelope, so the Relay keeps it. A refused envelope
+  expires at the Relay at the TTL of the Relay project, and no local hook
+  reports that expiry. While the mailbox of the device is full, the Relay
+  refuses a new message to it with `MAILBOX_FULL` to its sender. The new
+  `onReceiveExpired` hook gets a `ReceiveExpiredEvent` for content that
+  waited 30 days, before the client drops it. Before the hook, the
+  client reads the record again, so content that the client completed
+  before that read, such as at the redelivery of its envelope, gets no
+  report. Before, the client deleted stored content after 30 days with no
+  report.
+- **Added: `decryptEnvelope` decrypts one envelope with no receive
+  record.** It installs a sender key distribution that the content
+  carries and checks the group context against the transport. It stores
+  no content, decides no group state, and sends no receipt. The decrypt
+  spends the ratchet step, so a plaintext that the application loses is
+  gone. Use `processIncomingEnvelope` to keep the content until the
+  application completes the receive.
+- **Changed: `decryptGroupMessage` is deprecated.** Use
+  `processIncomingEnvelope`, which returns a receive outcome and keeps the
+  content until the application completes the receive.
+  `decryptGroupMessage` completes the receive before it returns, so a
+  plaintext that the application loses is gone. It throws
+  `EncryptionError` with `STORAGE_QUOTA_EXCEEDED` when the receive queue
+  has no room, and with `MESSAGE_DUPLICATE` for a message that this client
+  processed or that gives no content.
+- **Fixed: a retry deadline no longer resets a session whose resend
+  arrived.** The commit of a resend now records its failed envelope as
+  fulfilled before the client acknowledges the resend. At start, the
+  client records it again for each stored resend before the retry request
+  lifecycle starts. Before, a resend that waited for its group could reach
+  the retry deadline, and the deadline reset the session.
+- **Changed: metadata values rest encrypted on the IndexedDB and key-value
+  stores.** Each value that `setMetadata` and `compareAndSetMetadata` write
+  now goes through the store's record cipher, AES-256-GCM. These values
+  include group master keys, the hosted device authentication key, and
+  outbox intents. The first open after the upgrade encrypts each clear value
+  that the store holds. A stop during that step is safe, and the next open
+  continues it. A store that is full keeps its clear values and still opens.
+  Metadata key names stay in clear, and some of them hold identifiers. The
+  SQLite stores need no change, because the file cipher covers them. An
+  earlier SDK version cannot read the encrypted values, so do not open the
+  store with one after the upgrade.
+- **Fixed: a membership change no longer makes the next distribution
+  identified.** A member removal clears the group's endorsements. Before,
+  the next send resolved the sealed sender of each distribution pre-message
+  from the cache with no refresh. A pre-message to a member with no access
+  key then went identified in `preferred` mode, or failed the send in
+  `required` mode. A group send now refreshes the endorsements for all
+  recipients before it seals the pre-messages, at preparation and again at
+  dispatch. A pre-message goes identified only to a member that the refresh
+  does not endorse.
+- **Fixed: an expired sender key no longer blocks group sends.** When the
+  own sender key of a group is older than `maxSenderKeyAge`, a group send
+  rotates the key before it prepares the distribution pre-messages. The
+  rotation deletes the handoff rows of the group. The send then gives the
+  new key to each device that needs it, and encrypts with the new key. A
+  distribution that fails, for example after a Relay refusal or an offline
+  send, does not make a later send to the group fail with
+  `SENDER_KEY_EXPIRED`.
+- **Fixed: a retryable Relay refusal no longer ends a retry request.**
+  The retry request scheduler now reads the Relay's `retryable` flag before
+  the code and the HTTP status. A refusal with `retryable` true, for example
+  `AUTHORITY_DENIED` with HTTP 401 while a Relay binding is missing, is a
+  transport outage, or a rate refusal for `QUOTA_EXCEEDED`, `MAILBOX_FULL`,
+  and HTTP 429. The request waits and is posted again with the same bytes
+  and ID. Before, the request ended with `revoked-authority`. A refusal with
+  `retryable` false keeps its terminal class. A `TOKEN_INVALID` after the
+  one token refresh is `revoked-authority`.
+- **Fixed: a failed `onDelivered` hook no longer loses the delivery.** The
+  client now marks a delivery source announced only after the hook returns.
+  Before, the client stored the mark first, so a hook that threw, a
+  `stop()` during the hook, or a crash lost the event. The hook now runs at
+  least once for each source. An error from the hook fails the Relay
+  receipt or the encrypted delivery receipt, so the relay delivers it again
+  and the hook runs again. Make the hook idempotent for one
+  `clientMessageId`, `recipientDeviceId`, and `source`.
+- **Fixed: a failed `onRetryTerminal` hook no longer marks the end
+  emitted.** The SDK marks a retry end emitted only after the hook returns.
+  A hook that throws keeps the scheduler running. The next scheduler pass,
+  the next start, or the redelivery of the request runs the hook again.
+  The hook now runs at least once for each request.
+- **Added: a session reset when a retry request ends as
+  `expired-content`.** Before the SDK calls `onRetryTerminal`, the
+  requester waits for each decrypt from the device that sent the failed
+  envelope that is in progress. It then archives its session with that
+  device, and its next send to the user reads the device list again. The
+  archive deletes the sender-key handoff rows of that device in every group.
+  The requester then deletes the rows of each device of that account in
+  every group, for a group message and for a pairwise message, as one
+  Signal client does at an automatic session reset. The reset does not
+  rotate a sender key. The next send to each group gives the current key to
+  each device of the account. The requester then sends one
+  null message to the device, at most one in an hour for each device. The
+  next ordinary message starts the new session when no null message goes.
+  The retry request record stores each step, so a replay after a restart
+  or a stop does not archive a newer session. The other terminal classes,
+  and a post that fails and is posted again, reset nothing.
+  `onSessionArchived` runs for the archive. The event gets the optional
+  field `recovery` of the new type `RetryTerminalRecoveryEvent`, which is
+  exported from the main entry and from `/client`. It has the device, the
+  sender key outcome, and the null message outcome `sent`, `limited`, or
+  `failed`. The sender key outcome is `applied` when the failed envelope is
+  a group message and the requester has a sender key for that group.
+  Otherwise it is `skipped`. The rows of the account are deleted with each
+  outcome.
+- **Changed: a retry request is sealed when the client can seal it.** The
+  client seals a retry request when it holds the access key of the target,
+  and the Relay does not see the requester. The seal holds the payload of
+  the identified request as `PLAINTEXT_CONTENT` (8), and the sealed post
+  keeps the retry ID, the client message ID and the timestamp, so the Relay
+  deduplicates it as before. A group send endorsement never seals a retry
+  request. A retry request follows the `deliveryMode` of `sealedSender`, as
+  a delivery receipt does. In `'preferred'` mode the request goes identified
+  when the client has no access key or the Relay refuses it. In
+  `'required'` mode the request never goes identified: it stays pending, and
+  the scheduler posts it again until its deadline. In `'disabled'` mode it
+  is always identified. Before, each retry request was identified in every
+  mode, and an identified retry request does not have the privacy of a
+  sealed one. The `sendRetryRequest` callback of `processIncomingEnvelope`
+  gets an identified request, so `'required'` mode never calls it.
+- **Changed: the client accepts a sealed retry request.** A sealed envelope
+  with the content type `PLAINTEXT_CONTENT` goes to the retry request
+  handler, never to a ratchet decrypt. `processIncomingEnvelope` rejects a
+  sealed retry request with `INVALID_CIPHERTEXT`, as it rejects an
+  identified one. A `11.0.x` client rejects this content type, so it drops
+  a sealed retry request from a newer client, and that request ends as
+  `expired-content` for the requester. A sealed retry request gets a
+  resend only from a sender device that runs this release or a later one.
+- **Changed: the `deliveryMode` documentation names what each mode
+  covers.** The mode covers each message, resend, delivery receipt and
+  retry request to a device of another account. A typing indicator, and a
+  sync message to another device of the same account, are always
+  identified. `onIdentifiedFallback` reports only a message or a resend.
+- **Changed: a group send seals its sender-key distributions.** In
+  `required` and `preferred` sealed-sender mode, each distribution
+  pre-message goes through the sealed route to its one recipient. The
+  recipient's access key comes first, and the group endorsement serves a
+  member without one. When the relay rejects the access key, the SDK
+  restricts the cached access mode of the recipient and posts the
+  distribution again with the group endorsement. A `required` send checks
+  this authorization before it encrypts a distribution and before any
+  post. When it cannot seal a distribution, it throws
+  `SEALED_SENDER_REQUIRED` and posts nothing. A `preferred` send posts a
+  distribution identified only after the relay rejects each sealed
+  authorization, and then calls `onIdentifiedFallback`.
+  A saved send whose distributions have no sealed transport seals them
+  from the stored ciphertext at replay, with no new ratchet effect.
+- **Fixed: a refused distribution is repaired once.** When a device refuses
+  a distribution conclusively, for example after a reinstall with the same
+  device ID, the SDK refreshes the session of that device once and encrypts
+  the distribution again. It replaces the stored pre-message before the
+  post, so a replay never posts the refused ciphertext again. The repair
+  post has a new transport ID, `<id>:repair:<n>`. A replay after a restart
+  rebuilds a refused distribution from the current sender key with the same
+  `senderKeyId`. The repaired device then decrypts the later group messages
+  of the sender, but not the message of that send. When the sender key of
+  the send is no longer current, the replay refreshes the session, drops
+  the distribution, and continues. The next send gives the device the
+  current key.
+- **Fixed: a group send drops the distribution of a removed device.** When
+  the relay refuses a distribution with `NOT_FOUND`, the SDK reads the
+  recipient's device list. If the list no longer shows the device, the
+  send drops that distribution and continues, as a direct send drops a
+  removed device. The send then makes no device post to that device. This
+  applies to the repair of a refused device message and to a device that the
+  re-read of a skipped account adds. A refused device that the list still
+  shows fails the send.
+- **Fixed: all six post kinds name the registration of their device.** A
+  direct message, a sync copy, a sender-key distribution, a group device
+  message, a receipt, and a retry request send the registration ID of the
+  recipient session. This applies on the identified route, on the
+  access-key route, and on the group-token route. A post to a device with
+  no session names none. A sealed post names the registration of each device in its body,
+  and each hosted destination names the registration that the body gives
+  its device. A device with registration 0 names none. The Relay refuses a
+  device that was reinstalled with the same device ID. The refused post
+  then gets the one session repair, and the reinstalled device decrypts
+  the later messages. A group device post that the Relay refuses as a stale
+  device gets the same repair. The send gives the device the key of the
+  send and posts the device message again with the new registration. When
+  the repair of a refused distribution refreshes the session of a device,
+  that device leaves the shared group message of the send. The send posts
+  the device message to it on its own with the new registration, so the
+  device decrypts the message of that send. A device whose session changed
+  for another reason, such as a receipt that refreshed it, also leaves the
+  shared group message. When that device has no handoff row, it gets the key
+  of the send before its device post. On the attempt that prepared the send,
+  the device decrypts the message. On a replay, it gets the current key. It
+  recovers the message through its retry request only when the send was
+  Resendable and the send log kept it. For another send, the retry request
+  gets the current distribution alone, and the device does not get that
+  message. The group-token receipt names
+  each refused destination with its code. A destination that the Relay
+  refused as `STALE_DEVICE` leaves the shared group message. The send
+  repairs that device and posts the device message to it on its own. When the Relay refuses a receipt or a retry
+  request as a stale device, the SDK fetches a fresh bundle, starts a new
+  session once, and posts the receipt or the request again under the new
+  session. The session start archives the stale session in the same record
+  write, and the `onSessionArchived` hook runs after the start succeeds.
+  So a reinstalled device gets the retry request and resends the message.
+  A retry request ends with the terminal class `missing-sender` only when
+  the Relay has no bundle of the device or refuses the request again. When
+  the refresh fails for another reason, the receipt or the request is
+  posted again later. A failure before the session record write, such as a
+  failed bundle fetch, keeps the stale session, and the next stale refusal
+  refreshes again. A failure after that write, such as a failed SESAME
+  registration, leaves the new session, and the next post uses it. The sealed post sends
+  no sender identity. `sendMultiRecipientUnidentified` takes nine arguments.
+- **Changed: a one-device sealed post can use the group endorsement on the
+  direct route.** A sender-key distribution, a resend, or a group message
+  to one device whose only sealed authorization is the group endorsement
+  now posts to `/anonymous/delivery/send`. The Relay accepts the
+  endorsement there only when it is for the destination account alone.
+  The shared group message stays on `/anonymous/groups/send`, also for one
+  device. When the direct route answers the endorsement with 401
+  `ANONYMOUS_AUTH_REJECTED`, the SDK posts the same message once on the
+  group route for that device and writes one `info` log line with the
+  behavior `GROUP_ROUTE_FALLBACK`. A 401 `GROUP_CREDENTIAL_REJECTED` gets no
+  route fallback. A `required` send never falls back to identified
+  delivery.
+- **Fixed: a resend of a group send is sealed with the group endorsement.**
+  A resend to a member with no access key could not be sealed, because the
+  resend did not look up the group of the original send. It now uses the
+  group endorsement of that group for the one device. A `required`
+  resend with no sealed authorization fails with `SEALED_SENDER_REQUIRED`
+  and makes no identified post.
+- **Fixed: a resend with only the sender key keeps the failed group message
+  open.** When the sender logged no content for the device, it answers a
+  group retry request with the current sender-key distribution alone. That
+  resend gives the key but no content, so it no longer marks the failed
+  group message processed. A redelivery of that message now decrypts with
+  the key and gives its text. This applies, for example, when
+  `receiveIncomingEnvelopes` reports the message in `failedMessageIds` and
+  the application does not acknowledge it. A resend that carries content
+  still marks the failed envelope processed. The client writes a `debug`
+  log line with the behavior `RETRY_SENDER_KEY_RESEND`.
+- **Added: `SendResult.refusedDestinationCount`.** A group send through
+  the hosted group-token route reports the number of destinations that the
+  Relay refused when it accepted the shared post. A later fan-out refusal
+  is not counted. Other sends do not set the field.
+- **Added: send log and storage protection types.** `SendLogStore`
+  describes the storage of resendable group content: a payload for each
+  group send and a row for each recipient device, kept until that device
+  confirms the message or the entry expires. `LocalStoreProtection` names
+  how a local store encrypts its data and where its key is kept. A
+  `SignalProtocolLocalSecretVault` can declare `custody`. A vault that does
+  not declare it counts as `same-origin`.
+- **Added: recovery constants.** `RESENDABLE_CONTENT_RETENTION_MS` is 14
+  days, `RETRY_PLACEHOLDER_DEADLINE_MS` is one hour, and
+  `SEND_LOG_RESEND_JOB_TTL_MS` is one day. `MESSAGE_RECORD_TTL_MS` is now
+  deprecated. It keeps the same 14-day value as
+  `RESENDABLE_CONTENT_RETENTION_MS`.
+- **Breaking: every local store must declare its protection.**
+  `SignalProtocolLocalStore` now requires a `protection` member, so a store
+  that the application writes must add it. The SQLite stores report
+  `file-cipher` with the custody of their vault. They read the cipher from
+  the setting that the database records, so a store with
+  `encryptionAtRest: false` reports `none` and no key.
+  `KeyValueSignalProtocolStore` reports `record-cipher` with the custody of
+  its vault. `IndexedDbSignalProtocolStore` reports `record-cipher` with
+  `same-origin` custody. `InMemorySignalProtocolStore` reports `none`. The
+  Expo SecureStore, react-native-keychain, and Electron safeStorage vaults
+  declare `os-keychain` custody, and the IndexedDB vault declares
+  `same-origin`.
+- **Added: the SQLite stores keep a send log.** The Node, Expo, React
+  Native, and web SQLite stores implement `SendLogStore`. Schema version 3
+  adds three tables for the payloads, the recipient rows, and the resend
+  jobs. The store opens a version 2 file and adds the tables with no change
+  to the existing data. The store clock sets `createdAt`, so retention does
+  not read the client timestamp. `clearAllKeys` also clears the send log.
+- **Breaking: every local store keeps a send log.**
+  `SignalProtocolLocalStore` now extends `SendLogStore`, so a store that
+  the application writes must add the send log methods.
+  `KeyValueSignalProtocolStore`, `IndexedDbSignalProtocolStore`, and
+  `InMemorySignalProtocolStore` now implement them with the same behavior
+  as the SQLite stores. The key-value and IndexedDB stores encrypt the
+  group, the content hint, and the content of each payload. The recipient
+  rows and the resend jobs hold no content and stay in the clear. The
+  IndexedDB schema version 8 adds three object stores and keeps the data of
+  a version 7 database. `clearAllKeys` and the key-value reset
+  also clear the send log.
+- **Breaking: resendable content needs a protected store.** A sender
+  keeps the plaintext of a resendable message to answer a retry request.
+  `protocol.contentRecovery` now decides whether the local store may hold
+  it. The default mode, `require-protected`, keeps it only when the store
+  is encrypted and its key is in an operating system keychain or a
+  declared application vault. The mode `allow-co-located-key` also keeps
+  it when the key shares the storage of the data, as with
+  `IndexedDbSignalProtocolStore` and the IndexedDB vault. Those stores
+  encrypt each record, but a reader of the origin storage can also read
+  the key. The mode `off` keeps no content. A store with no encryption
+  never keeps it. When the policy refuses the store, the client keeps no
+  pairwise message record, and a retry request for a direct message resets
+  the session with no content. The client also deletes the message records
+  and the send log entries that the store already holds.
+  `contentRecoveryStatus` shows the decision and its reason, and the client
+  logs it once at creation. To keep content recovery on a web store, use a
+  keychain or application vault, or set `allow-co-located-key` after a
+  product review. `retentionMs` sets the retention, at most 30 days.
+- **Breaking: the client validates the store protection.** Creation fails
+  when the local store declares no `protection`, an unknown value, or a
+  cipher without a key. A declaration adds no encryption. It must state
+  what the store does.
+- **Corrected: storage protection and content hint documentation.** The
+  security model lists the protection that each built-in store declares,
+  and says that a deletion does not erase content. Received content is
+  outside `protocol.contentRecovery`: every store keeps it until the
+  application handles the envelope, and a later Relay receive deletes what
+  is older than 30 days. `MessageRecord` holds no retry count. The `contentHint` docs give the retry request and
+  `onDeliveryError` behavior of each hint.
+- **Added: `contentRecoveryStatus.groupMembershipSource`.** The sender
+  asks a group membership source before it gives group content to a device
+  again. A managed group is checked against its verified group state, from
+  `groups` with `resolveAciBytesByUserIds`. The hook
+  `protocol.contentRecovery.isCurrentMember` answers for an ad hoc group
+  and gets the prefixed group ID. The status field is `managed`, `hook`, or
+  `none`, with the type `GroupMembershipSource`. A client with no source
+  is still created and keeps content. It logs one warning at creation, a
+  direct message resend works, and the client refuses each group resend.
+- **Changed: a group message is resendable by default.** When
+  `protocol.contentRecovery` keeps content, a group send of a `DataMessage`
+  has the content hint `Resendable` unless the application sets another
+  hint. The client writes the content and the recipient devices to the
+  send log before it stores the outgoing intent, so a failed write stops
+  the send before any post. The client writes the entry once. A replay of
+  an unfinished send writes no row again, so a row that an E2EE delivery
+  receipt deleted stays deleted. Each recipient gets the hint in the identified
+  envelope, the sealed message for one device, and the shared sealed
+  message for the group. When the policy keeps no content, or the send is
+  a string or bytes with a `Resendable` hint, the send goes out as
+  `Default` and the client logs this once.
+- **Changed: an E2EE delivery receipt ends the content of its device.**
+  When a device confirms a message with an E2EE delivery receipt, the
+  client deletes the send log row of that device. The last row takes the
+  content with it. A Relay delivery receipt, a read receipt, and a viewed
+  receipt delete no row, because a device also acknowledges a copy that it
+  could not decrypt.
+- **Added: `forgetSentContent` and `getPendingRecipients`.**
+  `client.getPendingRecipients(clientMessageId)` lists the devices that
+  have not confirmed a group send with an E2EE delivery receipt.
+  `client.forgetSentContent(clientMessageId)` deletes the logged content of
+  one group send at once. It does not delete the pairwise message records.
+- **Changed: content retention follows `retentionMs`.** The client deletes
+  send log entries and pairwise message records past
+  `protocol.contentRecovery.retentionMs` at creation, at `stop()`, and
+  before the first resendable group send of each day. It also deletes
+  expired send log entries before each lookup. A retry request for a
+  pairwise message older than the retention gets no content. Before, the
+  client used the fixed 14-day value for the message records.
+- **Changed: the store clock sets the age of a pairwise message record.**
+  Each local store sets `createdAt` of a `MessageRecord` from its clock at
+  the first write, and keeps that value when a resend replaces the record.
+  It does not store the `createdAt` that the caller gives. Retention, the
+  sweep, and the sender refusal of an old retry request measure from this
+  value, so the message timestamp does not change retention. A retry
+  request for a message with no stored content takes its age from the
+  failed timestamp. Records written before this change keep their stored
+  `createdAt`. A custom `MessageRecordStore` must set `createdAt` the same
+  way.
+- **Breaking: `KeyStorageOps` needs `clearSendLog`.** A device lifecycle
+  reset now clears the send log with the other local crypto state. A
+  custom `KeyStorageOps` must add `clearSendLog(): Promise<number>`. The
+  built-in stores already implement it.
+- **Added: a retry request names the failed client message ID.**
+  `RetryRequest` has an optional `failedClientMessageId`. When the relay of
+  the requester delivers the client message ID of the failed envelope, the
+  retry request carries it, so a sender can find the message when the
+  relay assigns its own envelope ID. The payload stays at version 1, and a
+  decoder that does not know the key ignores it. Each later attempt of the
+  request carries the ID of the failed envelope, not the ID of a failed
+  resend.
+- **Changed: a retry request for a sender-key message has no ratchet key.**
+  The SDK no longer reads a ratchet key from the ciphertext of a failed
+  sender-key message. A retry request without `ratchetKey` names a
+  sender-key failure.
+- **Fixed: a pairwise retry request carries the ratchet key of the
+  sender.** The SDK reads the ratchet key from the stored wire form of the
+  failed message. A stale-session request now resets the session, and a
+  request for a current session resends only. Before, the SDK read the
+  wire form as a framed message, so no request carried a key. A sealed or
+  malformed message still gives no key.
+- **Fixed: a session reset for a retry request sends its null message.**
+  When the content of a failed pairwise message is gone, and the request
+  names the ratchet key of the current session, the sender archives that
+  session. The sender then starts a new session from a fresh prekey bundle
+  of the requesting device and sends the null message on it. Before, the
+  null message found no session, so the sender did not acknowledge the
+  request. A request with another ratchet key, for another device, or from
+  another sender does not change the session.
+- **Fixed: a new session from a prekey bundle keeps the earlier sessions.**
+  A session that the client starts from a prekey bundle archives the
+  current session and keeps the archived sessions. Before, it replaced the
+  session record, so a message that the peer encrypted on an earlier
+  session did not decrypt. After a session reset for a retry request, a
+  message that the requester sent on the archived session now decrypts.
+- **Changed: a sender answers a group retry request from the send log.**
+  The sender looks up the send log rows of the device that asked: by the
+  failed client message ID, then by the failed envelope ID, then by the
+  failed timestamp. Each logged entry that it finds goes again to that
+  device only, with its timestamp and content hint, and only when the
+  current membership source admits the requester to the group of the
+  entry. A row counts its resends, and the count survives a restart. A row
+  with 5 resends gets no more. A requester that is not a current member,
+  and a group with no membership source, get no content and no
+  distribution. The answer to the failed envelope then ends with the new
+  `RetryTerminalClass` value `membership-refused`. The sender stores the
+  end, calls `onRetryTerminal` once, and answers no later request for that
+  envelope from that device. The refusal is not a delivery error, and the
+  sender acknowledges the request envelope. A group with no membership
+  source also writes one `warn` log line for the group with the behavior
+  `RETRY_GROUP_RESEND_REFUSED`. This deviates from the recovery design,
+  which logged the refusal only. When no row names the
+  message, a sender-key failure gets the current sender-key distribution
+  of the group alone, so the device decrypts the later group messages of
+  the sender. A retry request without a ratchet key never resets the
+  pairwise session. A retry request that names another device of the
+  sender gets no answer, and the client writes a `warn` log line with the
+  behavior `RETRY_REQUEST_OTHER_DEVICE`.
+- **Changed: a resend of logged group content carries the current sender
+  key.** Each logged entry goes again with the current sender-key
+  distribution of its group beside the content, in one pairwise envelope.
+  The sender reads the distribution when it makes the resend, so the
+  device also decrypts the later group messages of the sender. With no
+  sender key for the group, the content goes alone. The `info` log line of
+  the resend says whether it carried a distribution.
+- **Breaking: a content adapter must put content beside a distribution.**
+  `SignalProtocolContentAdapter.serializeContentBesideSenderKeyDistribution(content, groupId, distribution)`
+  is a new required method. It returns one content with the logged content
+  and the distribution. The default adapter adds the distribution to the
+  JSON object of the content, in the form of
+  `serializeSenderKeyDistributionText`. It throws when the content is not
+  a JSON object.
+- **Added: a resend of logged content survives a restart.** Before the
+  membership check, the sender writes a pending resend job for each logged
+  entry that a retry request attempt names. The job of the entry that
+  answers the attempt names the failed envelope in the new field
+  `SendLogResendJob.failedEnvelopeId`. The SQLite send log keeps it in the
+  new column `failed_envelope_id` of `send_log_resend_job`. A job counts
+  each post attempt before the post and ends as `posted` after it. The job
+  of an entry that the membership or the resend limit refuses ends as
+  `abandoned`. The client runs the pending jobs at `create()`, at each
+  relay transition to connected, and after a failed job. The wait after a
+  failure is a full-jitter wait from 1 s that doubles up to 30 s, and a
+  failed job writes a `warn` log line with the behavior
+  `RESEND_JOB_RETRY`. A job checks the membership again when it runs, and
+  never resets a session: it makes one only when there is none. A job
+  ends as `abandoned`, with one `info` log line, when it is older than
+  `SEND_LOG_RESEND_JOB_TTL_MS`, when its logged entry is gone, when the
+  answer to its failed envelope ended, when the membership refuses the
+  requester, at the resend limit, or when no session can be made. A
+  request without a request attempt writes no job. This deviates from the
+  recovery design, which named a `send-log:resend-job` reliability record.
+  The job lives in the send log store, with its entry.
+- **Changed: a message record keeps no sender-key distribution.** The
+  message records of the pairwise sends keep no chain key. A send of a
+  distribution alone keeps no record. A record of a distribution beside
+  other content keeps only that content, so it stays resendable. A
+  sent-sync transcript to an own device follows the same rule. At
+  `create()`, the client removes each distribution from the records that
+  an earlier version wrote, once, and then writes the marker
+  `migration:skdm-records-removed`. It keeps the content and the
+  `createdAt` of a mixed record and deletes a record of a distribution
+  alone. When this sweep fails, `create()` fails, and the next start
+  sweeps again. The retry handler applies the same rule to each record
+  that it reads. A group timestamp whose record it deletes gets the
+  current sender-key distribution of the group, as a missing record does.
+- **Changed: a start with content recovery off clears content once.** When
+  content recovery is off, `create()` clears the message records and the
+  send log once, and then writes the marker `resendable-content:cleared`.
+  A later start with content recovery off clears nothing, until a start
+  with content recovery on keeps content again. The clear deletes no
+  sender-key state, so the next group send needs no new distribution.
+  When the clear fails, `create()` fails, and the next start clears again.
+- **Breaking: a content adapter must remove a distribution from a
+  record.** `SignalProtocolContentAdapter.withoutSenderKeyDistribution(plaintext)`
+  is a new required method. It returns the plaintext unchanged when it
+  carries no distribution, the other content when a distribution travels
+  beside it, and `null` for a distribution alone. It applies the same
+  rule to the content inside a sent-sync transcript of the adapter's
+  format. The default adapter implements it.
+- **Breaking: a custom message record store must rewrite its records.**
+  `MessageRecordStore.rewriteMessageRecords(rewrite)` is a new required
+  method. It calls `rewrite` for each record, replaces the plaintext of a
+  record when the result differs and keeps its `createdAt`, deletes the
+  record when the result is `null`, and returns the number of changed
+  records. The memory, key-value, web, and SQLite stores implement it.
+- **Fixed: content beside a sender-key distribution reaches the
+  application.** Before, the client installed a distribution and then
+  dropped the rest of its content. A data message in the same envelope
+  never reached `onMessageDecrypted`, and no delivery receipt went out for
+  it. Now the client installs the distribution, then routes the other
+  content as a receipt, a typing indicator, or a data message. This
+  applies on the relay subscription and on `receiveIncomingEnvelopes()`.
+  A distribution that comes alone still gives nothing to the application.
+- **Breaking: a content adapter must decide a distribution-only content.**
+  `InspectedSignalProtocolContent.senderKeyDistributionOnly` is a new
+  required `boolean`. A custom content adapter must set it on every
+  inspect result. It is `true` when the content carries a sender-key
+  distribution and nothing else. The default adapter sets it.
+- **Changed: content beside a sender-key distribution is group content.**
+  Before the client installs such a distribution, it checks that the
+  sender may send messages to the group of the distribution. When the
+  group refuses the sender, the client installs no key and gives no
+  content. `onMessageDecrypted` gets the content with `isGroup` set to
+  `true` and the group ID as `conversationId`. A retry resend can carry
+  the content of a failed group message beside the current sender key.
+  The application then gets that content under the `messageId` of the
+  failed message, on the relay subscription and on
+  `receiveIncomingEnvelopes()`. The resend marks the failed message
+  processed, so a later redelivery of that message is dropped. When the
+  failed message decrypts first, the later resend is dropped.
+- **Fixed: `processIncomingEnvelope()` asks for a failed group message
+  again.** A group message that fails with a retryable error, for example
+  after a lost sender-key distribution, now gets a retry request to its
+  sender, and the client acknowledges it, as on the relay subscription.
+  Before, the method threw with no request, so the message was lost. A
+  group message with the Implicit content hint gets no request and is
+  acknowledged. On every receive path, the stored request names the
+  message as a group message, so a resend that brings only the sender key
+  does not mark the message processed.
+- **Added: the `onDeliveryError` and `onDeliveryRecovered` hooks.** When a
+  received message fails to decrypt and the client asks the sender for it
+  again, `onDeliveryError` tells the application that the content did not
+  come. The content hint of the message sets the time. A message with the
+  Default hint, or with no hint, gets the error at once. A Resendable
+  message gets it one hour after the first failure,
+  `RETRY_PLACEHOLDER_DEADLINE_MS`, when its content has not come. An
+  Implicit message never gets it. A request that a rate limit refuses, or
+  a request that ends, gets the error at once. It deletes nothing, and the
+  retry request continues after it. When the content comes after the
+  error, `onDeliveryRecovered` runs with the receive time of the first
+  failure. Each hook runs at least once for each failed message, also
+  across a restart. The client marks the error shown, or the recovery,
+  only after the hook returns. A hook that throws, a client stop, or a
+  crash before that mark runs the hook again at the next retry request
+  pass, start, or redelivery. A hook that throws in a retry request pass
+  does not delay the next attempt or the end of the request. A receive
+  does not acknowledge a failed message whose error or recovery hook threw
+  before the content, but an error from the recovery hook after the
+  content does not fail the receive that gave it. Make each hook
+  idempotent for one `failedEnvelopeId`. The events are
+  `DeliveryErrorEvent` and `DeliveryRecoveredEvent`, with the cause type
+  `DeliveryErrorCause`. They are exported from the main entry and from
+  `/client`. For a failed group message, both events carry `groupId`, in
+  the form of `DecryptedEnvelope.conversationId`, when the client holds
+  the sender key that the message names. The error of a message with a
+  missing sender key has no `groupId`. Its recovery has one when the
+  decrypt that gave
+  the content installed or used the sender key of the group. The client checks the time at each redelivery of the failed message and at each retry
+  request write. With a relay, it also checks at `create()` and, while the
+  client runs, at the time when the error is due. A pairwise message has
+  no content hint by default, so its error comes at once.
+- **Changed: a receive failure that no resend can repair asks for
+  nothing.** Three failures are in this class: the group state refuses the
+  sender, the identity of the sender is not trusted (`UNTRUSTED_IDENTITY`),
+  and the envelope is malformed (`INVALID_CIPHERTEXT`). On the relay
+  subscription, on `receiveIncomingEnvelopes()`, and on
+  `processIncomingEnvelope()`, the client posts no retry request, stores
+  no request record, and acknowledges the envelope. `onDecryptionError`
+  runs once for the envelope, and a redelivery of it is dropped. The relay
+  subscription writes an `error` log line that names the refusal. A
+  ciphertext that does not decode or parse now fails with
+  `INVALID_CIPHERTEXT`. Before, it got a retry request. Before, the relay subscription also asked again for a
+  refused or untrusted envelope, and `processIncomingEnvelope()` did not
+  acknowledge it.
+- **Changed: a retry request ends 14 days after the first failure.** The
+  deadline of a request is the time of attempt 1 plus 14 days, the default
+  retention of resendable content, `RESENDABLE_CONTENT_RETENTION_MS`.
+  Each later attempt keeps it, and the timestamp of the
+  failed message does not change it. Before, the deadline was 24 hours
+  after attempt 1 and no later than 30 days after the failed message. A
+  request that a rate limit refuses waits for the end of the rate window
+  and keeps its deadline, also across a restart. At the deadline the
+  request ends as `expired-content`, also when its stored attempt is
+  answered. A request whose content came does not end. A stored request
+  keeps its stored deadline. At the deadline, a sender key that has not
+  rotated since the failure is older than the default `maxSenderKeyAge` of
+  14 days. After an `expired-content` end of a group message, the next
+  group send then rotates that key, as any send does, and distributes the
+  new key to each member.
+- **Added: the `attempts-exhausted` retry terminal class.** When the
+  resend that answers the fifth attempt of a request,
+  `MAX_RETRY_RESPONSES_PER_MESSAGE`, also fails, the request ends as
+  `attempts-exhausted` and posts no sixth attempt. `onRetryTerminal` runs
+  with the class, and `onDeliveryError` runs with the cause
+  `request-ended`. Only an `expired-content` end resets the session, so
+  this end resets nothing. A switch over `RetryTerminalClass` must handle
+  the new value.
+
 ## 11.0.0
 
 - **Added: the connection reason `authority-refused`.** The mailbox

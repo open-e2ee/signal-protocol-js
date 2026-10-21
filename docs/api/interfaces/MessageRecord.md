@@ -24,7 +24,11 @@ The SessionID detects orphaned sessions during resending:
 > session."
 
 The client timestamp assigned before encryption indexes a message.
-Retry count enforces SESAME's bounded-resend requirement.
+
+The client keeps a record only when `protocol.contentRecovery` keeps
+content, and only for the content retention: 14 days from `createdAt` by
+default, at most 30. The record holds no retry count. The client answers
+at most `MAX_RETRY_RESPONSES_PER_MESSAGE` retry requests for one message.
 
 ## Properties
 
@@ -32,7 +36,8 @@ Retry count enforces SESAME's bounded-resend requirement.
 
 > **createdAt**: `number`
 
-Timestamp when the store created the record
+The store clock when the store first wrote the record. Retention reads
+this value, so the message timestamp never changes retention.
 
 ***
 

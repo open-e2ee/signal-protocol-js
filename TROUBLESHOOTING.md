@@ -178,7 +178,7 @@ await signal.confirmSafetyNumber(safetyNumber.confirmation);
 | ------------------------- | ------------------- |
 | Key generation            | `internal/crypto/`  |
 | Key types, bundles        | `keys/`             |
-| Key exchange (X3DH/PQXDH) | `internal/protocol/` |
+| Key exchange (PQXDH)      | `internal/protocol/` |
 | Ratchet state             | `internal/protocol/` |
 | Session state             | `internal/session/` |
 | Multi-device              | `internal/sesame/`  |

@@ -49,7 +49,10 @@ implementation.
 5. Start the relay subscription.
 
 The hosted factory authenticates and registers the current device, then publishes
-its public prekeys. Linked devices use the provisioning flow in the
+its public prekeys. A linked device gets the account identity by device
+transfer or by a channel that the application owns, then joins the account
+with `linkHostedRelayDevice()`. That call runs in one process that holds the
+active device's store and the new device's store. See the
 [device guide](../device/README.md). The default policy requires post-quantum
 session establishment and Braid ratcheting.
 
@@ -458,9 +461,9 @@ protocol: {
 }
 ```
 
-Leave it unset unless your product has a specific compatibility decision. See
-[Protocol Policy](./PROTOCOL_POLICY.md) for the rare cases where you would set
-`postQuantum: 'compatible'` or `braid: 'disabled'`.
+Leave it unset. `'required'` is the only `postQuantum` value. See
+[Protocol Policy](./PROTOCOL_POLICY.md) for the rare case where you would set
+`braid: 'disabled'`.
 
 ## Where To Go Next
 

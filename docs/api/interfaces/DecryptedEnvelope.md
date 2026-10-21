@@ -61,7 +61,8 @@ Message type hint (if available from envelope) - apps define their own type unio
 
 > **receivedAt**: `number`
 
-When the device received the message locally
+When the device first admitted the message locally, in epoch
+milliseconds. A retry and a restart give the same time.
 
 ***
 
@@ -101,4 +102,5 @@ Session ID used for decryption (userId.deviceId format)
 
 > **timestamp**: `number`
 
-Message timestamp (from sender)
+The sender's timestamp from the content, which a receipt for the
+message names. Content with no timestamp gives `receivedAt`.

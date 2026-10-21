@@ -23,12 +23,17 @@ export type { Logger } from '../logger';
 export {};
 export type {
   BraidProgressEvent,
-  ClassicalFallbackReason,
+  ContentRecoveryDisabledReason,
+  ContentRecoveryMode,
+  ContentRecoveryPolicy,
+  ContentRecoveryStatus,
+  GroupMembershipSource,
   NetworkConstraints,
   ProtocolSelectionEvent,
   ProtocolStrategyConfig,
   ProtocolStrategyValidation,
   PreKeyMaintenanceStore,
+  ReceiveQueuePolicy,
   ReplacedOneTimePreKeyCullResult,
   ReplacedPreKeyCullResult,
   ResolvedKeyExchangeInfoStrings,
@@ -38,6 +43,7 @@ export type {
   SignalProtocolConfig,
   SPQRInfoStrings,
   SPQRLimits,
+  StorageProtectionLevel,
 } from '../types/protocol-config';
 export {
   applyProtocolStrategyDefaults,
@@ -58,7 +64,6 @@ export {
   SENDER_KEYS_DEFAULTS,
   SPQR_LIMITS_DEFAULTS,
   validateProtocolStrategy,
-  X3DH_INFO_DEFAULT,
 } from '../types/protocol-config';
 
 /**
@@ -121,18 +126,31 @@ interface SealedSenderConfigBase {
   accessMode?: SealedSenderAccessMode;
 
   /**
-   * Outbound delivery policy.
+   * Outbound delivery policy. It covers each message and resend, each
+   * delivery receipt, and each retry request that this client sends to a
+   * device of another account. A message can use a group send endorsement or
+   * the access key of the recipient. A delivery receipt and a retry request
+   * use only the access key. A typing indicator, and a sync message to
+   * another device of the local account, always go identified.
    *
-   * - `preferred`: use identified delivery only when anonymous capability is
-   *   absent before send or the relay rejects anonymous authorization.
-   * - `required`: fail closed when anonymous delivery is unavailable or rejected.
+   * - `preferred`: seal each covered envelope. Use identified delivery only
+   *   when anonymous capability or the credential of the recipient is absent
+   *   before send, or the relay rejects anonymous authorization.
+   * - `required`: never send a covered envelope identified. A send that
+   *   cannot be sealed, or whose anonymous authorization the relay rejects,
+   *   fails closed. A retry request that fails this way stays pending, and
+   *   the scheduler posts it again until its deadline.
    * - `disabled`: always use identified delivery and do not fetch a certificate.
    *
    * @default 'preferred'
    */
   deliveryMode?: SealedSenderDeliveryMode;
 
-  /** Reports the only post-send-attempt privacy downgrade allowed by `preferred`. */
+  /**
+   * Reports a message or a resend that `preferred` sends identified after
+   * the relay rejects its anonymous authorization. A delivery receipt and a retry
+   * request that fall back the same way are not reported.
+   */
   onIdentifiedFallback?: (event: SealedSenderIdentifiedFallbackEvent) => void | Promise<void>;
 
   /**
@@ -174,8 +192,8 @@ export interface DoubleRatchetConfig {
   maxSkip?: number;
 
   /**
-   * Maximum number of skipped message keys to store
-   * Default: 1000
+   * Maximum number of skipped message keys to store per receiver chain
+   * Default: 2000
    */
   maxMessageKeysStored?: number;
 
@@ -230,9 +248,10 @@ export interface SignalProtocolClientConfig {
    * - 1 = Primary device (default)
    * - 2-5 = Linked devices
    *
-   * Device 1 bootstraps identity locally. Devices 2-5 must already have a
-   * provisioned identity imported into the provided storage before the app
-   * calls `DefaultSignalProtocolClient.create()`.
+   * Device 1 bootstraps identity locally. Devices 2-5 must already have the
+   * account identity in the provided storage before the app calls
+   * `DefaultSignalProtocolClient.create()`. The application imports it by
+   * device transfer or by a channel that the application owns.
    *
    * Prekeys and sessions remain device-specific. Devices share account identity.
    * Maximum 5 devices per user (1 primary + 4 linked).
@@ -247,9 +266,9 @@ export interface SignalProtocolClientConfig {
    *   deviceId: 1
    * });
    *
-   * // Linked device (from QR code provisioning)
+   * // Linked device (storage holds the account identity)
    * const signal = await DefaultSignalProtocolClient.create(userId, {
-   *   storage: provisionedLinkedDeviceStorage,
+   *   storage: linkedDeviceStorage,
    *   deviceId: 2
    * });
    * ```
@@ -410,9 +429,9 @@ export interface SignalProtocolClientConfig {
    * Developer-facing protocol policy.
    *
    * The default is strict post-quantum behavior with the specification-defined
-   * ML-KEM Braid SPQR mode. Use `compatible` only when the product deliberately
-   * supports genuinely non-PQ peers. Use `braid: 'disabled'` only when a
-   * product-reviewed constraint requires the local direct SPQR mode.
+   * ML-KEM Braid SPQR mode. `postQuantum: 'required'` is the only value, and a
+   * peer without ML-KEM prekeys fails closed. Use `braid: 'disabled'` only when
+   * a product-reviewed constraint requires the local direct SPQR mode.
    *
    * @default { postQuantum: 'required', braid: 'required' }
    *
@@ -422,17 +441,6 @@ export interface SignalProtocolClientConfig {
    *   storage: customStorage,
    *   protocol: {
    *     postQuantum: 'required',
-   *     braid: 'required'
-   *   }
-   * });
-   * ```
-   *
-   * @example Compatibility with non-PQ peers
-   * ```typescript
-   * const signal = await DefaultSignalProtocolClient.create(userId, {
-   *   storage: customStorage,
-   *   protocol: {
-   *     postQuantum: 'compatible',
    *     braid: 'required'
    *   }
    * });
@@ -465,9 +473,7 @@ export interface SignalProtocolClientConfig {
    *     onProtocolSelected: (event) => {
    *       analytics.track('Protocol Selected', {
    *         pq: event.usedPQXDH,
-   *         tripleRatchet: event.usedTripleRatchet,
-   *         compatibilityFallback: event.usedClassicalFallback,
-   *         fallbackReason: event.classicalFallbackReason
+   *         tripleRatchet: event.usedTripleRatchet
    *       });
    *     }
    *   }
@@ -888,6 +894,15 @@ export interface SignalProtocolClientConfig {
     endorsementManager?: import('./endorsement-manager').EndorsementManager;
     /** Resolve member ACIs without importing app content models into the client. */
     resolveAciBytesByUserIds?: (userIds: string[]) => Promise<Map<string, Uint8Array>>;
+    /**
+     * Report whether the user blocked a group. The client drops content of a
+     * blocked group before it fetches the group, and sends no report. The
+     * background fetch timer also skips a blocked group, and a hook that
+     * throws there counts as blocked.
+     */
+    isGroupBlocked?: (
+      groupId: import('../internal/groups/group-id').GroupId
+    ) => boolean | Promise<boolean>;
   };
 }
 

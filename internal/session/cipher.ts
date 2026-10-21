@@ -26,7 +26,7 @@
  * 3. Encrypt plaintext with AES-CBC
  * 4. Compute identity-bound MAC: HMAC(auth_key, version || sender_id || receiver_id || header || ciphertext)
  * 5. Advance sending chain: CKs, Ns++
- * 6. First message? → Send as PreKeyMessage with X3DH info
+ * 6. First message? → Send as PreKeyMessage with PQXDH info
  * ```
  *
  * ### Decryption (RatchetDecrypt)
@@ -51,8 +51,9 @@
  *
  * ## Concurrency Safety
  *
- * All operations are protected by per-session AsyncLock to prevent race
- * conditions when multiple encrypt/decrypt operations occur simultaneously.
+ * All operations are protected by the per-session lock of the store to
+ * prevent race conditions when multiple encrypt/decrypt operations occur
+ * simultaneously.
  *
  * ## Specification References
  *
@@ -76,7 +77,6 @@
  * ```
  */
 
-import AsyncLock from 'async-lock';
 import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import {
   MAX_UNACKNOWLEDGED_SESSION_AGE_MS,
@@ -122,6 +122,7 @@ import { asBase64 } from '../../types/utils';
 // DH ratchet is purely classical. ALL PQ work happens inside spqrSend/spqrRecv
 import { spqrSend, spqrRecv } from '../protocol/spqr';
 import type { SessionEstablishmentCallback, SessionCipherConfig } from './types';
+import type { ReceiveWorkSeed } from '../../types/api';
 import {
   assertValidatedSession,
   performDHRatchetStep,
@@ -140,7 +141,7 @@ import {
   validateSessionStateIntegrity,
   getMaxSkipForSession,
 } from './validation';
-import { sessionLockKey } from './record-locks';
+import { sessionLockKey, type RecordLock } from './record-locks';
 import { SessionResolver } from './session-resolver';
 import type { DoubleRatchetState } from '../protocol/double-ratchet';
 import {
@@ -185,7 +186,7 @@ interface MatchingPreKeySession {
 
 /**
  * If a retried PreKeyMessage references an existing base key, decrypt with the
- * matching session. Re-running X3DH/PQXDH could require one-time prekeys that
+ * matching session. Re-running PQXDH could require one-time prekeys that
  * the first attempt already consumed.
  */
 function findMatchingPreKeySession(
@@ -223,7 +224,7 @@ function findMatchingPreKeySession(
  * - **Encryption**: Derive message keys, encrypt with AES-CBC, compute identity-bound MAC
  * - **Decryption**: Verify MAC, decrypt, handle out-of-order messages
  * - **Session Binding**: Include identity keys in MAC for cross-session attack prevention
- * - **PreKey Messages**: Create/process first messages with X3DH key agreement
+ * - **PreKey Messages**: Create/process first messages with PQXDH key agreement
  * - **Triple Ratchet**: Integrate SPQR for post-quantum forward secrecy
  *
  * ## Thread Safety
@@ -273,7 +274,7 @@ export class SessionCipher {
   private readonly establishSession: SessionEstablishmentCallback;
 
   /** Per-session lock for concurrency safety */
-  private readonly lock: AsyncLock;
+  private readonly lock: RecordLock;
 
   /** Maximum message keys to skip in one chain (DoS protection) */
   private readonly maxSkip: number;
@@ -287,8 +288,8 @@ export class SessionCipher {
    * @param keyStorage - Storage adapter for session state, identity keys, prekeys
    * @param establishSession - Callback invoked when a PreKeyMessage is received
    *   and a new session needs to be established. The callback should perform
-   *   X3DH key agreement and return initialized session state.
-   * @param lock - AsyncLock instance for per-session concurrency control.
+   *   PQXDH key agreement and return initialized session state.
+   * @param lock - The session lock of the store, for per-session concurrency control.
    *   Sessions are locked by ID to prevent race conditions.
    * @param config - Optional configuration
    * @param config.maxSkip - Maximum message keys to skip (default: 1000).
@@ -299,7 +300,7 @@ export class SessionCipher {
   constructor(
     keyStorage: SignalProtocolLocalStore,
     establishSession: SessionEstablishmentCallback,
-    lock: AsyncLock,
+    lock: RecordLock,
     config: SessionCipherConfig = {},
     logger: Required<Logger> = defaultSignalProtocolLogger
   ) {
@@ -353,7 +354,7 @@ export class SessionCipher {
    *
    * ## Message Types
    *
-   * - **PreKeyMessage**: First message from session initiator, includes X3DH info
+   * - **PreKeyMessage**: First message from session initiator, includes PQXDH info
    * - **RatchetMessage**: All subsequent messages with Double Ratchet header
    *
    * ## Concurrency
@@ -737,7 +738,7 @@ export class SessionCipher {
    *
    * If the session does not exist and the message is a PreKeyMessage, this
    * method establishes the session as the responder. It calls the
-   * establishSession callback to perform X3DH key agreement.
+   * establishSession callback to perform PQXDH key agreement.
    *
    * ## Out-of-Order Handling
    *
@@ -764,7 +765,7 @@ export class SessionCipher {
   async decrypt(
     remoteAddress: ProtocolAddress,
     ciphertext: Ciphertext,
-    receiveId?: string
+    receiveWork?: ReceiveWorkSeed
   ): Promise<string> {
     return await this.lock.acquire(sessionLockKey(remoteAddress), async () => {
       try {
@@ -774,7 +775,9 @@ export class SessionCipher {
         let protobufMacContext: ProtobufMacContext | undefined;
         let receivedPqRatchetBytes: Uint8Array | undefined;
 
-        {
+        // A message that does not decode or parse is malformed, so its
+        // failure is INVALID_CIPHERTEXT. No resend repairs it.
+        try {
           // Binary protobuf format (base64-encoded)
           const framedBytes = CryptoUtils.base64ToBytes(ciphertext as Base64);
 
@@ -889,6 +892,11 @@ export class SessionCipher {
             // Store raw pqRatchet bytes for opaque processing by spqrRecv
             receivedPqRatchetBytes = pqRatchetRaw;
           }
+        } catch (error) {
+          if (error instanceof EncryptionError) throw error;
+          throw new EncryptionError('Malformed message', EncryptionErrorCode.INVALID_CIPHERTEXT, {
+            originalError: error as Error,
+          });
         }
         const ratchetKeyFromMessage = message.ratchetKey;
         const previousCounterFromMessage = message.previousCounter;
@@ -1211,9 +1219,7 @@ export class SessionCipher {
                 await this.keyStorage.commitSessionTrust({
                   address: remoteAddress,
                   record: recordToStore,
-                  receivedContent: receiveId
-                    ? { id: receiveId, plaintext: skippedPlaintext, receivedAt: Date.now() }
-                    : undefined,
+                  receiveWork: receiveWork?.({ plaintext: skippedPlaintext }),
                   contactIdentity: session.remoteIdentity,
                   contactIdentityType: session.remoteIdentityType,
                   localIdentityType: pendingDeletion?.identityType ?? session.localIdentityType,
@@ -1225,14 +1231,20 @@ export class SessionCipher {
                         baseKeyBytes: Uint8Array.from(pendingDeletion.kyberPreKeyUse.baseKeyBytes),
                       }
                     : undefined,
+                  // A PreKey session can come from a new install of the device,
+                  // which holds no own sender key. The same commit deletes the
+                  // handoff rows of the device in every group, as the PreKey decrypt
+                  // of one Signal client does in a separate write.
+                  senderKeyHandoffInvalidation: {
+                    userId: remoteAddress.userId,
+                    deviceId: remoteAddress.deviceId,
+                  },
                 });
               } else {
                 await this.keyStorage.commitSessionTrust({
                   address: remoteAddress,
                   record: recordToStore,
-                  receivedContent: receiveId
-                    ? { id: receiveId, plaintext: skippedPlaintext, receivedAt: Date.now() }
-                    : undefined,
+                  receiveWork: receiveWork?.({ plaintext: skippedPlaintext }),
                   contactIdentity: session.remoteIdentity,
                   contactIdentityType: session.remoteIdentityType,
                   localIdentityType: session.localIdentityType,
@@ -1523,9 +1535,7 @@ export class SessionCipher {
               await this.keyStorage.commitSessionTrust({
                 address: remoteAddress,
                 record: recordToStore,
-                receivedContent: receiveId
-                  ? { id: receiveId, plaintext, receivedAt: Date.now() }
-                  : undefined,
+                receiveWork: receiveWork?.({ plaintext }),
                 contactIdentity: session.remoteIdentity,
                 contactIdentityType: session.remoteIdentityType,
                 localIdentityType: pendingDeletion?.identityType ?? session.localIdentityType,
@@ -1537,14 +1547,20 @@ export class SessionCipher {
                       baseKeyBytes: Uint8Array.from(pendingDeletion.kyberPreKeyUse.baseKeyBytes),
                     }
                   : undefined,
+                // A PreKey session can come from a new install of the device,
+                // which holds no own sender key. The same commit deletes the
+                // handoff rows of the device in every group, as the PreKey decrypt
+                // of one Signal client does in a separate write.
+                senderKeyHandoffInvalidation: {
+                  userId: remoteAddress.userId,
+                  deviceId: remoteAddress.deviceId,
+                },
               });
             } else {
               await this.keyStorage.commitSessionTrust({
                 address: remoteAddress,
                 record: recordToStore,
-                receivedContent: receiveId
-                  ? { id: receiveId, plaintext, receivedAt: Date.now() }
-                  : undefined,
+                receiveWork: receiveWork?.({ plaintext }),
                 contactIdentity: session.remoteIdentity,
                 contactIdentityType: session.remoteIdentityType,
                 localIdentityType: session.localIdentityType,

@@ -36,25 +36,15 @@ await createSignalProtocolClient({
 ```
 
 Required mode means post-quantum session establishment and the post-quantum
-message ratchet are mandatory. A peer that has no post-quantum material fails
-closed.
+message ratchet are mandatory. `'required'` is the only `postQuantum` value.
 
-## Compatible
+## No Classical Key Agreement
 
-<!-- doc-snippet:skip requires-external-context -->
-```ts
-await createSignalProtocolClient({
-  identity: { userId },
-  adapters: { storage, relay },
-  protocol: { postQuantum: 'compatible', braid: 'required' },
-});
-```
+The SDK has no classical key agreement. Every new session uses PQXDH with
+ML-KEM-1024. A peer that publishes no post-quantum prekeys fails closed with
+`PQXDHRequiredError` (`PQXDH_REQUIRED`), and no session is stored.
 
-Compatible mode still uses post-quantum behavior whenever the peer supports it.
-It only allows classical compatibility when the peer advertises no
-post-quantum material at all.
-
-Compatible mode does not allow downgrade recovery:
+No setting allows downgrade recovery:
 
 - malformed post-quantum metadata fails closed
 - cryptographic failure after post-quantum selection fails closed
@@ -113,14 +103,15 @@ await createSignalProtocolClient({
 });
 ```
 
-There is no public `postQuantum: 'disabled'` mode.
+`'required'` is the only `postQuantum` value. Any other value throws
+`Unsupported postQuantum policy` when the client is created.
 
 ## Advanced Telemetry
 
 The advanced `protocolStrategy.onProtocolSelected` callback remains available
-for diagnostics. It distinguishes post-quantum success from explicit classical
-compatibility fallback. Do not set `protocolStrategy.allowClassicalFallback`
-when `protocol.postQuantum` is present.
+for diagnostics. It fires once for each session that PQXDH establishes. A peer
+without post-quantum prekeys fails before selection, so the callback does not
+fire for it.
 
 The advanced `protocolStrategy.onBraidProgress` callback reports ML-KEM Braid
 chunk progress after every braid-mode send and receive:
@@ -132,5 +123,94 @@ chunk progress after every braid-mode send and receive:
 
 A direct-mode session never raises it.
 
-Do not set `protocolStrategy.sckaMode` when `protocol` is present. Use
-`protocol.braid` so the public product policy owns the direct-vs-Braid choice.
+Do not set `protocolStrategy.sckaMode` when `protocol` sets more than
+`contentRecovery`. Use `protocol.braid` so the public product policy owns the
+direct-vs-Braid choice.
+
+## Content Recovery
+
+A device that cannot decrypt a message asks the sender for it again with a
+retry request. To answer with the content, the sender keeps the plaintext of
+each resendable message in its local store. `protocol.contentRecovery`
+decides whether the store may hold that plaintext.
+
+<!-- doc-snippet:illustrative config-object-fragment -->
+```ts
+protocol: {
+  contentRecovery: {
+    mode: 'require-protected',
+    retentionMs: 14 * 24 * 60 * 60 * 1000,
+    isCurrentMember: async (groupId, userId) => true,
+  },
+}
+```
+
+The client reads the `protection` that the local store declares and derives
+a level:
+
+| Level | Store protection | Built-in stores |
+| --- | --- | --- |
+| `protected` | Encrypted, with the key in an operating system keychain or a declared application vault | SQLite and key-value stores with a keychain or application vault |
+| `co-located` | Encrypted, with the key in storage that the data shares | `IndexedDbSignalProtocolStore`, and the web SQLite store with the IndexedDB vault |
+| `none` | No encryption or no key | `InMemorySignalProtocolStore`, and a SQLite store with `encryptionAtRest: false` |
+
+The `co-located` stores encrypt their data. `IndexedDbSignalProtocolStore`
+encrypts each record and each metadata value with AES-256-GCM. Its key is in
+the same database. The web SQLite store encrypts its whole file. That is weaker
+key custody, not missing encryption. A reader of the origin storage can also
+read the key. Metadata key names stay in clear text in
+`IndexedDbSignalProtocolStore`.
+
+The modes:
+
+- `require-protected`, the default, keeps content only at the `protected`
+  level.
+- `allow-co-located-key` also keeps content at the `co-located` level. Use it
+  only after a product review accepts that key custody.
+- `off` keeps no content.
+
+A `none` level never keeps content. When the policy refuses the store, the
+client keeps no pairwise message record and no send log entry, and deletes
+the ones that the store already holds. A retry request for a direct message
+then resets the session with no content. The client shows the decision in
+`client.contentRecoveryStatus`, with `reason` when it is off, and logs it
+once at creation.
+
+The client keeps content for 14 days from the time that it first stored it.
+A retry does not extend that time. Signal uses the same default:
+`retryRespondMaxAge` on Android and `messageSendLogEntryLifetime` on iOS are
+both 14 days. `retentionMs` sets another value, at most 30 days. A message
+that the Relay delivers after the retention may have no resendable content.
+
+The client deletes expired content before each send log lookup, at creation,
+at `stop()`, and before the first resendable group send of each day. An E2EE
+delivery receipt from a device deletes the send log row of that device, and
+the last row takes the content with it. A Relay delivery receipt, a read
+receipt, and a viewed receipt delete no row. A device also acknowledges a
+copy that it could not decrypt, so the Relay receipt does not prove that the
+device has the content. `client.getPendingRecipients(clientMessageId)` lists
+the devices that still have a row. `client.forgetSentContent(clientMessageId)`
+deletes the content of one group send at once. It does not delete the
+pairwise message records. A device lifecycle reset clears the send log with
+the other local crypto state.
+
+Before the sender gives group content again, it checks a group membership
+source. Configure `groups` with `resolveAciBytesByUserIds` for managed
+groups, or set `isCurrentMember` for ad hoc groups. The client checks a
+managed group against its verified group state and never asks the hook
+about it. The hook gets the prefixed group ID that `createGroupId` makes.
+`contentRecoveryStatus.groupMembershipSource` is `managed`, `hook`, or
+`none`. A client with no source still keeps content and logs one warning
+at creation. With no source for a group, the sender gives no group content
+again. A direct message resend needs no source.
+
+A group send of a `DataMessage` has the content hint `Resendable` when the
+policy keeps content and the application sets no other hint. The client
+writes the content and the recipient devices to the send log before it
+stores the outgoing intent, so a failed write stops the send. When the
+policy keeps no content, the send goes out as `Default`.
+
+A custom store must declare its `protection` as `{ atRest, keyCustody }`.
+The client validates the declaration and fails creation on a missing or
+unknown value. A declaration adds no encryption. It must state what the
+store does.

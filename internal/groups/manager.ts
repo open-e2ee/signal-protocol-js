@@ -36,6 +36,7 @@ import {
   serverVerifySignature,
 } from '../protocol/zk/groups';
 import { isNilUuid } from '../protocol/zk/groups/uid-struct';
+import type { GroupReceiveRecord } from './receive-record';
 
 import { type DecryptedGroup, type DecryptedMember, type DecryptedAddMember, type DecryptedProfileKeyUpdate, type DecryptedPendingMemberPromotion, type DecryptedPniAciMemberPromotion, type DecryptedGroupChange, type DecryptedPendingMember, type DecryptedAddPendingMember, type DecryptedPendingMemberRemoval, type DecryptedAddRequestingMember, type DecryptedAddBannedMember, type DecryptedDeleteBannedMember, type DecryptedApproveMember, type DecryptedModifyMemberRole, type DecryptedModifyMemberLabel, type EncryptedGroupChange, type EncryptedChangeAddMember, type EncryptedChangeProfileKeyUpdate, type EncryptedChangePendingMemberPromotion, type EncryptedChangePniAciMemberPromotion, type EncryptedChangePendingMember, type EncryptedChangePendingMemberRemoval, type EncryptedChangeRequestingMember, type EncryptedChangeBannedMember, type EncryptedChangeBannedMemberRemoval, type EncryptedChangeApproveMember, type EncryptedChangeModifyMemberRole, type EncryptedChangeModifyMemberLabel, type AccessControl, MemberRole, AccessRequired, EnabledState, defaultAccessControl, emptyGroupChange } from './types';
 
@@ -95,6 +96,7 @@ import {
   deserializeEncryptedGroup,
   deserializeEncryptedGroupChange,
   deserializeEncryptedGroupJoinInfo,
+  deserializeSignedGroupChange,
   serializeEncryptedGroupCreationSubmission,
   serializeEncryptedGroupChange,
   serializeGroupBaseline,
@@ -134,11 +136,15 @@ export interface GroupStateStore {
   /** Delete a group master key. */
   deleteMasterKey(groupId: string): Promise<void>;
 
-  /** Store decrypted group state cache. */
+  /**
+   * Store decrypted group state cache. Verified state also clears the
+   * `unverified` origin of the group's receive record in the same write.
+   */
   storeGroupState(groupId: string, state: DecryptedGroup): Promise<void>;
   /**
    * Atomically store accepted group state and establish C7's sender-key
-   * rotation barrier at that state's revision.
+   * rotation barrier at that state's revision. It clears the `unverified`
+   * origin as `storeGroupState` does.
    */
   storeGroupStateWithSenderKeyRotationBarrier(
     groupId: string,
@@ -158,6 +164,22 @@ export interface GroupStateStore {
   ): Promise<void>;
   /** Delete cached group state. */
   deleteGroupState(groupId: string): Promise<void>;
+
+  /** Get the group's receive record, or null when the group has no record. */
+  getGroupReceiveRecord(groupId: string): Promise<GroupReceiveRecord | null>;
+  /**
+   * Atomically replace the group's receive record with `apply(current)`.
+   *
+   * `apply` is synchronous and may run more than once. A null result deletes
+   * the group's whole record, including its master key and cached state. The
+   * store returns the record that it wrote.
+   */
+  updateGroupReceiveRecord(
+    groupId: string,
+    apply: (current: GroupReceiveRecord | null) => GroupReceiveRecord | null
+  ): Promise<GroupReceiveRecord | null>;
+  /** List the IDs of the groups that have a receive record. */
+  listGroupReceiveRecords(): Promise<string[]>;
 }
 
 /**
@@ -971,6 +993,54 @@ export class GroupManager {
     const state = this.decryptVerifiedSnapshot(secretParams, result);
     await this.store.storeGroupState(rawId, state);
     return state;
+  }
+
+  /**
+   * Apply the signed group change that a message carries in its group
+   * context, as Signal applies a carried change that is exactly one
+   * revision up and whose signature verifies.
+   *
+   * The change never applies without a server signing key: a client with
+   * `allowUnauthenticatedGroupHistory` updates only from the group server.
+   * It also does not apply when the client has no state for the group, is
+   * not a member of it, or the change is not exactly one revision up. A
+   * change that fails verification does not apply either. In each case
+   * the result is null, and the caller fetches from the group server.
+   *
+   * @param groupId - The group identifier
+   * @param revision - The revision that the carrying context claims
+   * @param change - The bytes of the carried change
+   * @returns The new state, or null when the change does not apply
+   */
+  async applyCarriedGroupChange(
+    groupId: GroupId | string,
+    revision: number,
+    change: Uint8Array
+  ): Promise<DecryptedGroup | null> {
+    if (!this.serverSigningPublicKey) return null;
+    const rawId = extractGroupId(groupId);
+    const state = await this.store.getGroupState(rawId);
+    if (
+      !state ||
+      revision !== state.revision + 1 ||
+      !isMember(state, this.aci.uuid) ||
+      !this.isReadableBySelf(state)
+    ) {
+      return null;
+    }
+    try {
+      await this.retryPendingSenderKeyRotation(rawId);
+      const signed = deserializeSignedGroupChange(change);
+      return await this.applyVerifiedChange(rawId, state, {
+        version: revision,
+        actions: signed.actions,
+        serverSignature: signed.serverSignature,
+        changeEpoch: signed.changeEpoch,
+        timestamp: 0,
+      });
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -2082,8 +2152,10 @@ export class GroupManager {
    * Treating it as revocation would mistranslate a live membership into
    * "revoked". Anything else (bad presentation, malformed request) is not an
    * access answer at all.
+   *
+   * @internal The client's group fetcher reads the same answer.
    */
-  private static isNotReadableRejection(error: unknown): boolean {
+  static isNotReadableRejection(error: unknown): boolean {
     return GroupManager.forbiddenReason(error) === 'not_readable';
   }
 
