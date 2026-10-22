@@ -6,7 +6,9 @@
 
 # Interface: DoubleRatchetConfig
 
-Signal Protocol configuration options
+Double Ratchet options for one-to-one sessions.
+
+The client reads `maxSkip` only.
 
 ## Properties
 
@@ -14,8 +16,8 @@ Signal Protocol configuration options
 
 > `optional` **keyExpirationMs?**: `number`
 
-Key expiration time in milliseconds
-Default: 7 days (604800000 ms)
+The client does not read this field. The client deletes stored skipped
+message keys after 7 days (604800000 ms).
 
 ***
 
@@ -23,8 +25,9 @@ Default: 7 days (604800000 ms)
 
 > `optional` **maxMessageKeysStored?**: `number`
 
-Maximum number of skipped message keys to store per receiver chain
-Default: 2000
+The client does not read this field. Each receiver chain keeps at most
+2000 skipped message keys. When a chain is full, the key with the lowest
+index leaves first.
 
 ***
 
@@ -32,5 +35,9 @@ Default: 2000
 
 > `optional` **maxSkip?**: `number`
 
-Maximum number of messages to skip when receiving out-of-order messages
-Default: 1000 (Signal Protocol recommendation)
+Maximum number of message keys that the client skips in one receiving
+chain to decrypt an out-of-order message. A message after a larger gap
+fails with `TOO_MANY_SKIPPED_MESSAGES`. The value must be a positive
+integer. A session with a device that has the local identity always uses
+a limit of 100000.
+Default: 25000

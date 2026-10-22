@@ -106,6 +106,15 @@ export interface SqliteDriver {
    * key, a missing key, or a key on a plaintext file rejects the open at the
    * read, with the SQLite message text (`file is not a database`). The core
    * runs no second read.
+   *
+   * An open that its read rejects leaves the file as it was, so that the open
+   * with the other key state that follows reads the last commit. A driver
+   * that runs in rollback-journal mode plays a hot journal back before the
+   * read, and a playback through the wrong key state leaves the file corrupt.
+   * Such a driver classifies the file before the open, with no lock and no
+   * playback; the web driver does. A driver in WAL mode recovers the frames
+   * at the read and checkpoints them as raw bytes, which keeps the content;
+   * the Node driver does, and the React Native drivers run the same path.
    */
   open(file: string, key: Uint8Array | null): Promise<SqliteConnection>;
 

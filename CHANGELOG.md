@@ -1,5 +1,38 @@
 # Changelog
 
+## 12.0.1
+
+- **Fixed: a web SQLite store restores the last commit after a tab died inside a
+  commit.** The `opfs-sahpool` VFS of the vendored engine reported a reserved
+  lock on every check. SQLite then took the hot journal that a tab killed
+  inside a commit left for the journal of a live transaction and never played
+  it back, so the next open read the half-written commit. In 12.0.0 and
+  earlier, such a store could report `database disk image is malformed`. The
+  patched engine reports no reserved lock, and the next open of such a store
+  plays the journal back.
+
+- **Fixed: a web SQLite open with the wrong key state leaves the file as it was.**
+  The open reads the first page of the file through an immutable read-only
+  connection with no key before it opens the file. An open with no key of an
+  encrypted file, or an open with a key of a plaintext file, rejects with
+  `file is not a database` and plays no hot journal back. In 12.0.0 and
+  earlier, such an open of a file with a hot journal played the journal back
+  through the wrong key state and left the file corrupt.
+
+- **Fixed: `ratchetConfig.maxSkip` sets the skip limit.** The client passes
+  `SignalProtocolClientConfig.ratchetConfig.maxSkip` to the session cipher of
+  the protocol manager that it creates. In 12.0.0 and earlier, the client did
+  not read the option. A gap above the limit fails with
+  `TOO_MANY_SKIPPED_MESSAGES`. The default is 25000, which is the value that
+  the cipher used before. The API reference said 1000 and now says 25000. A
+  value that is not a positive integer fails at client creation with
+  `ratchetConfig.maxSkip must be a positive integer.` A `protocolManager` that
+  the caller supplies keeps its own limit. The client does not read
+  `maxMessageKeysStored` or `keyExpirationMs`. Their reference now states the
+  fixed values: 2000 skipped message keys per receiver chain, deleted after 7
+  days.
+
+
 ## 12.0.0
 
 - **Breaking: every new session uses PQXDH, and the SDK has no classical key

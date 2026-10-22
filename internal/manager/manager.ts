@@ -146,6 +146,9 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
   /** Protocol strategy configuration for PQXDH and SPQR. */
   private readonly protocolStrategy?: ProtocolStrategyConfig;
 
+  /** Skip limit for the SessionCipher. Undefined keeps the cipher default. */
+  private readonly maxSkip?: number;
+
   /**
    * Local user's ID, set during generatePreKeyBundle or initialization.
    * Used to create ProtocolAddress for session establishment as responder.
@@ -181,15 +184,20 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
    *
    * @param storage - Local protocol storage implementation.
    * @param protocolStrategy - Optional protocol strategy for PQXDH/SPQR behavior.
+   * @param logger - Logger for protocol diagnostics.
+   * @param maxSkip - Maximum message keys that the SessionCipher skips in one
+   *   receiving chain. Undefined keeps the cipher default of 25000.
    */
   constructor(
     storage: SignalProtocolLocalStore,
     protocolStrategy?: ProtocolStrategyConfig,
-    logger: Required<Logger> = defaultSignalProtocolLogger
+    logger: Required<Logger> = defaultSignalProtocolLogger,
+    maxSkip?: number
   ) {
     this.logger = logger;
     this.keyStorage = storage;
     this.protocolStrategy = protocolStrategy;
+    this.maxSkip = maxSkip;
     this.lock = sessionLockFor(storage);
   }
 
@@ -203,7 +211,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
         this.keyStorage,
         this.establishSessionFromPreKeyMessage.bind(this),
         this.lock,
-        { protocolStrategy: this.protocolStrategy },
+        { protocolStrategy: this.protocolStrategy, maxSkip: this.maxSkip },
         this.logger
       );
     }

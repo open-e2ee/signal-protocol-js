@@ -182,24 +182,31 @@ export type SealedSenderConfig = SelfHostedSealedSenderConfig | HostedSealedSend
 export const SEALED_SENDER_CERTIFICATE_MARGIN_MS = 60 * 60 * 1000;
 
 /**
- * Signal Protocol configuration options
+ * Double Ratchet options for one-to-one sessions.
+ *
+ * The client reads `maxSkip` only.
  */
 export interface DoubleRatchetConfig {
   /**
-   * Maximum number of messages to skip when receiving out-of-order messages
-   * Default: 1000 (Signal Protocol recommendation)
+   * Maximum number of message keys that the client skips in one receiving
+   * chain to decrypt an out-of-order message. A message after a larger gap
+   * fails with `TOO_MANY_SKIPPED_MESSAGES`. The value must be a positive
+   * integer. A session with a device that has the local identity always uses
+   * a limit of 100000.
+   * Default: 25000
    */
   maxSkip?: number;
 
   /**
-   * Maximum number of skipped message keys to store per receiver chain
-   * Default: 2000
+   * The client does not read this field. Each receiver chain keeps at most
+   * 2000 skipped message keys. When a chain is full, the key with the lowest
+   * index leaves first.
    */
   maxMessageKeysStored?: number;
 
   /**
-   * Key expiration time in milliseconds
-   * Default: 7 days (604800000 ms)
+   * The client does not read this field. The client deletes stored skipped
+   * message keys after 7 days (604800000 ms).
    */
   keyExpirationMs?: number;
 }
@@ -233,10 +240,7 @@ export interface DoubleRatchetConfig {
  *   storage,
  *   relay,
  *   onProgress,
- *   ratchetConfig: {
- *     maxSkip: 2000,
- *     keyExpirationMs: 14 * 24 * 60 * 60 * 1000 // 14 days
- *   },
+ *   ratchetConfig: { maxSkip: 2000 },
  *   enableDebugLogging: true
  * });
  * ```
@@ -421,7 +425,10 @@ export interface SignalProtocolClientConfig {
   protocolManager?: SignalProtocolManager;
 
   /**
-   * Double Ratchet algorithm configuration
+   * Double Ratchet algorithm configuration.
+   *
+   * `maxSkip` sets the skip limit of the protocol manager that the client
+   * creates. A `protocolManager` that the caller supplies keeps its own limit.
    */
   ratchetConfig?: DoubleRatchetConfig;
 

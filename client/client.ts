@@ -496,6 +496,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     ) {
       throw new Error("deliveryReceipts must be 'auto', 'always', or 'off'");
     }
+    const maxSkip = config.ratchetConfig?.maxSkip;
+    if (maxSkip !== undefined && (!Number.isSafeInteger(maxSkip) || maxSkip <= 0)) {
+      throw new Error('ratchetConfig.maxSkip must be a positive integer.');
+    }
     this._userId = userId;
     this.deviceId = deviceId;
     this.config = config;
@@ -566,10 +570,16 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       config: config.media,
     });
 
-    // Dependency injection: Use provided protocol manager or create new one with our storage and protocol strategy
+    // Dependency injection: Use provided protocol manager or create new one with our storage,
+    // protocol strategy, and skip limit. A provided manager keeps its own skip limit.
     this.manager =
       config.protocolManager ??
-      new DefaultSignalProtocolManager(this._storage, config.protocolStrategy, this.logger);
+      new DefaultSignalProtocolManager(
+        this._storage,
+        config.protocolStrategy,
+        this.logger,
+        config.ratchetConfig?.maxSkip
+      );
 
     // Validate manager was created successfully before initializing Sesame
     if (!this.manager) {

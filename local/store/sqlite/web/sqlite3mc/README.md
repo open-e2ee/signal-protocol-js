@@ -20,6 +20,10 @@ records, each with its reason:
   exceeds the storage quota, the release reports `SQLITE_IOERR`. The patched
   glue reports `SQLITE_FULL`, so the store rejects with
   `StorageQuotaExceededError`.
+- `report-no-reserved-lock`: the pool allows one connection, so no other
+  connection can hold a reserved lock, but the release reports one. SQLite
+  then never plays a hot journal back, so a commit that a closed tab left half
+  written stays half written. The patched glue reports no reserved lock.
 
 `pins.json` records the archive sha256, the signer of the release
 `SHA256SUMS`, and for each file the released sha256, its patches, and the

@@ -13499,7 +13499,8 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
       const pool = getPoolForPFile(pFile);
       pool.log('xCheckReservedLock');
       pool.storeErr();
-      wasm.poke32(pOut, 1);
+      // open-e2ee: the pool allows one connection, so nothing holds the lock.
+      wasm.poke32(pOut, 0);
       return 0;
     },
     xClose: function(pFile){
