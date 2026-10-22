@@ -5,6 +5,7 @@ import {
   generateIdentityKeyPair,
   generateKemOneTimePreKeys,
   generateKyberLastResortPreKey,
+  generateRegistrationId,
 } from '../keys';
 import type { CompositeIdentityV1 } from '../keys/types';
 import { createCompositeIdentityV1 } from '../keys/identity';
@@ -50,6 +51,19 @@ import {
   resolveHostedGroupOptions,
   type HostedGroupOptions,
 } from './hosted-group-authority';
+import { SignalProtocolGroupStateStore } from '../internal/groups/sdk-store';
+import type { GroupStateStore } from '../internal/groups/manager';
+import {
+  clearHostedDeviceLinkIntent,
+  copyHostedDeviceLinkGroups,
+  finishHostedDeviceLinkRollback,
+  HostedRelayDeviceLinkError,
+  isHostedDeviceLinkRefusal,
+  readHostedDeviceLinkMarker,
+  refuseLinkedGroupState,
+  writeHostedDeviceLinkMarker,
+  type HostedDeviceLinkMarker,
+} from './hosted-device-link';
 
 export {
   pullHostedRelayAfterWake,
@@ -65,6 +79,8 @@ export {
   HostedRelayDeviceRevokedError,
   HostedRelayDeviceUnknownError,
 } from './hosted-device-standing';
+export { HostedRelayDeviceLinkError } from './hosted-device-link';
+export { HostedRelayHttpError } from './hosted-http-error';
 export { HostedRelayUpgradeRequiredError } from './relay-protocol';
 export type {
   HostedRelayPresence,
@@ -152,7 +168,11 @@ export type HostedRelayIdentityProgress =
     }
   | {
       readonly operation: 'device-link';
-      readonly phase: 'preparing-linked-device' | 'submitting' | 'complete';
+      readonly phase:
+        | 'preparing-linked-device'
+        | 'copying'
+        | 'submitting'
+        | 'complete';
       readonly deviceId?: number;
     };
 
@@ -267,10 +287,9 @@ export interface HostedRelayManagedDeviceLinkResult extends HostedRelayBootstrap
  * Signal Protocol Relay certificate roots are compiled into the SDK and selected by the
  * exact connection origin. The adapter cannot supply or replace hosted trust.
  *
- * OpenE2EE has no customers. This is a clean prelaunch contract replacement.
- * Do not restore a certificateTrust compatibility property: accepting caller
- * trust would weaken the managed trust boundary. Self-hosted trust stays in its
- * separate explicit configuration.
+ * The adapter has no `certificateTrust` property. Trust that the caller
+ * supplies would weaken the managed trust boundary. Self-hosted trust stays in
+ * its separate explicit configuration.
  */
 export interface HostedRelayBootstrapAdapter {
   bootstrap(
@@ -370,6 +389,16 @@ export interface HostedRelayManagedDeviceLinkOptions extends Omit<
     'relay'
   >;
   readonly activeDeviceStorage: SignalProtocolLocalStore;
+  /**
+   * The group store of the active device. The link copies the master key of
+   * each group that it lists. Default: the SDK group store on
+   * `activeDeviceStorage`.
+   *
+   * The SDK group store serializes its writes per store instance. If a client
+   * runs on the active device during the link, pass that client's group
+   * store here, or stop that client before the link.
+   */
+  readonly activeGroupStore?: GroupStateStore;
   readonly hosted: {
     /** Public environment-scoped Signal Protocol Relay connection URL. */
     readonly relayUrl: string;
@@ -1188,6 +1217,83 @@ export async function advanceHostedRelayIdentityMigration(
 }
 
 /**
+ * Chooses the registration IDs of a link that has no marker.
+ *
+ * A registration snapshot under the stored ID shows a link that an earlier
+ * release began, so that link keeps its stored ID and its operation ID. Else
+ * a device-authentication key in the linked store refuses the link, because
+ * the Relay refuses a key that a device already holds. Else the ACI record
+ * gets a fresh ID that differs from the active device's ID. A held PNI record
+ * always gets its own fresh ID.
+ */
+async function chooseLinkRegistration(
+  storage: SignalProtocolLocalStore,
+  publishableKey: string,
+  signalIdentity: CompositeIdentityV1,
+  identity: StoredIdentityKeyPair,
+  activeIdentity: StoredIdentityKeyPair,
+): Promise<HostedDeviceLinkMarker> {
+  const snapshotKey = await registrationSnapshotMetadataKey(
+    REGISTRATION_SNAPSHOT_METADATA_PREFIX,
+    publishableKey,
+    signalIdentity,
+    identity.registrationId,
+  );
+  let registrationId: number;
+  if (await storage.getMetadata(snapshotKey)) {
+    registrationId = identity.registrationId;
+  } else {
+    if (
+      await storage.getMetadata(
+        await deviceAuthenticationMetadataKey(publishableKey),
+      )
+    ) {
+      throw new HostedRelayDeviceLinkError(
+        'Signal Protocol Relay linked device store already holds a device key',
+      );
+    }
+    do {
+      registrationId = await generateRegistrationId();
+    } while (registrationId === activeIdentity.registrationId);
+  }
+  if (!(await storage.getIdentityKey('pni'))) {
+    return { version: 1, phase: 'copying', registrationId, intent: [] };
+  }
+  let pniRegistrationId: number;
+  do {
+    pniRegistrationId = await generateRegistrationId();
+  } while (pniRegistrationId === registrationId);
+  return {
+    version: 1,
+    phase: 'copying',
+    registrationId,
+    pniRegistrationId,
+    intent: [],
+  };
+}
+
+/** Writes the marker IDs into the identity records of the linked store. */
+async function storeLinkedIdentityRegistration(
+  storage: SignalProtocolLocalStore,
+  identity: StoredIdentityKeyPair,
+  marker: HostedDeviceLinkMarker,
+): Promise<void> {
+  await storage.storeIdentityKey(
+    { ...identity, registrationId: marker.registrationId },
+    'aci',
+  );
+  await storage.setLocalRegistrationId(marker.registrationId, 'aci');
+  if (marker.pniRegistrationId === undefined) return;
+  const pni = await storage.getIdentityKey('pni');
+  if (!pni) return;
+  await storage.storeIdentityKey(
+    { ...pni, registrationId: marker.pniRegistrationId },
+    'pni',
+  );
+  await storage.setLocalRegistrationId(marker.pniRegistrationId, 'pni');
+}
+
+/**
  * Bind a linked-device store to the Relay-authoritative account.
  *
  * The linked store must already contain the account identity. The application
@@ -1199,11 +1305,52 @@ export async function advanceHostedRelayIdentityMigration(
  * process that calls it must hold the active device's store. The adapter gets
  * the public identity, fresh linked-device prekey material, and two challenge
  * signers. It gets no private key.
+ *
+ * The call copies the master key of each group that `activeGroupStore` lists
+ * into the linked device's group store: `groups.store`, or the SDK group store
+ * on the linked store. The copy runs in the calling process, so no master key
+ * crosses the Relay. It runs with no `groups` option too, and a later client
+ * with `groups` fetches each copied group. A group record that an earlier
+ * release wrote, and that the active device has not read since, is not listed
+ * and is not copied. Read each group once on the active device before the
+ * link to copy it. A linked group store that lists a group that the link did
+ * not write is refused with `HostedRelayDeviceLinkError` before any write.
+ * The copied keys live in the linked device's group store. The SDK does not
+ * move them again. A later move of that store is the application's store move.
+ *
+ * The linked device gets its own registration ID. The call writes it into the
+ * linked store's identity records before it registers, and a held PNI record
+ * gets a separate one. A link that an earlier release began keeps its stored
+ * registration ID. A linked store that holds a device-authentication key with
+ * no registration of this link is refused with `HostedRelayDeviceLinkError`
+ * before any write.
+ *
+ * The linked store keeps the state of the link. Call again with the same
+ * stores after any failure: the call sends the same registration, so the
+ * Relay answers with the same device. The call stops the client and rejects
+ * when the client's first sync fails, and the next call resumes the link.
+ *
+ * When the Relay refuses the link with `KEY_PROOF_INVALID` or `CONFLICT`, and
+ * the refusal is not retryable, no device holds the link. The call then
+ * removes the link state and the copied groups, and rethrows. It keeps the
+ * identity records and the registration, so the next call sends the same
+ * registration ID. Every other error keeps the link state and the copied
+ * groups. A completed link is never rolled back. A custom
+ * adapter throws `HostedRelayHttpError` with the Relay's `code` and
+ * `retryable` when the Relay refuses the link, so that the call can roll the
+ * link back.
  */
 export async function linkHostedRelayDevice(
   options: HostedRelayManagedDeviceLinkOptions,
 ): Promise<DefaultSignalProtocolClient> {
-  const { adapters, activeDeviceStorage, hosted, ...clientOptions } = options;
+  const {
+    adapters,
+    activeDeviceStorage,
+    activeGroupStore = new SignalProtocolGroupStateStore(activeDeviceStorage),
+    hosted,
+    ...clientOptions
+  } = options;
+  const storage = adapters.storage;
   const connection = await resolveHostedRelayConnection(hosted.relayUrl);
   const { protocolEndpoint, publishableKey } = connection;
   hosted.onProgress?.({
@@ -1211,7 +1358,7 @@ export async function linkHostedRelayDevice(
     phase: 'preparing-linked-device',
   });
   const [identity, activeIdentity] = await Promise.all([
-    adapters.storage.getIdentityKey('aci'),
+    storage.getIdentityKey('aci'),
     activeDeviceStorage.getIdentityKey('aci'),
   ]);
   if (!identity) {
@@ -1228,19 +1375,51 @@ export async function linkHostedRelayDevice(
       'Signal Protocol Relay linked device identity does not match the active account',
     );
   }
+  const groupStore =
+    clientOptions.groups?.store ?? new SignalProtocolGroupStateStore(storage);
   const signalIdentity = createCompositeIdentityV1(identity);
+  let marker = await readHostedDeviceLinkMarker(storage);
+  if (marker?.phase === 'rolling-back') {
+    await finishHostedDeviceLinkRollback(storage, groupStore, marker);
+    marker = null;
+  }
+  if (marker === null || marker.phase === 'copying') {
+    await refuseLinkedGroupState(groupStore, marker);
+    if (marker === null) {
+      marker = await chooseLinkRegistration(
+        storage,
+        publishableKey,
+        signalIdentity,
+        identity,
+        activeIdentity,
+      );
+    } else {
+      // A restart clears every group of the earlier intent before it writes
+      // the new intent, so the marker always names each linked group record.
+      await clearHostedDeviceLinkIntent(groupStore, marker.intent);
+    }
+    marker = {
+      ...marker,
+      intent: await activeGroupStore.listGroupReceiveRecords(),
+    };
+    await writeHostedDeviceLinkMarker(storage, marker);
+    await storeLinkedIdentityRegistration(storage, identity, marker);
+    hosted.onProgress?.({ operation: 'device-link', phase: 'copying' });
+    await copyHostedDeviceLinkGroups(activeGroupStore, groupStore, marker.intent);
+  }
+  const { registrationId } = marker;
   const { operationId, registrationPreKeys } =
     await getOrCreateRegistrationSnapshot(
-      adapters.storage,
+      storage,
       publishableKey,
       signalIdentity,
-      identity.registrationId,
-      identity,
+      registrationId,
+      { ...identity, registrationId },
     );
   const [activeDeviceAuthentication, newDeviceAuthentication] =
     await Promise.all([
       getExistingDeviceAuthentication(activeDeviceStorage, publishableKey),
-      getOrCreateDeviceAuthentication(adapters.storage, publishableKey),
+      getOrCreateDeviceAuthentication(storage, publishableKey),
     ]);
   if (
     equalBytes(
@@ -1251,17 +1430,31 @@ export async function linkHostedRelayDevice(
     throw new Error('Signal Protocol Relay device link requires a new device key');
   }
 
+  if (marker.phase !== 'complete') {
+    marker = { ...marker, phase: 'registering' };
+    await writeHostedDeviceLinkMarker(storage, marker);
+  }
   hosted.onProgress?.({ operation: 'device-link', phase: 'submitting' });
-  const result = await hosted.adapter.linkDevice({
-    protocolEndpoint,
-    publishableKey,
-    signalIdentity,
-    registrationId: identity.registrationId,
-    operationId,
-    registrationPreKeys,
-    activeDeviceAuthentication,
-    newDeviceAuthentication,
-  });
+  let result: HostedRelayManagedDeviceLinkResult;
+  try {
+    result = await hosted.adapter.linkDevice({
+      protocolEndpoint,
+      publishableKey,
+      signalIdentity,
+      registrationId,
+      operationId,
+      registrationPreKeys,
+      activeDeviceAuthentication,
+      newDeviceAuthentication,
+    });
+  } catch (error) {
+    if (marker.phase !== 'complete' && isHostedDeviceLinkRefusal(error)) {
+      marker = { ...marker, phase: 'rolling-back' };
+      await writeHostedDeviceLinkMarker(storage, marker);
+      await finishHostedDeviceLinkRollback(storage, groupStore, marker);
+    }
+    throw error;
+  }
   if (
     result.accountPreserved !== true ||
     result.protocolStateCopied !== false
@@ -1275,6 +1468,16 @@ export async function linkHostedRelayDevice(
     clientOptions,
     hosted.sealedSenderAccessMode,
   );
+  if (client.syncStatus === 'failed') {
+    await client.stop();
+    throw new Error('OpenE2EE Signal Protocol Relay initial synchronization failed');
+  }
+  if (marker.phase !== 'complete') {
+    await writeHostedDeviceLinkMarker(storage, {
+      ...marker,
+      phase: 'complete',
+    });
+  }
   hosted.onProgress?.({
     operation: 'device-link',
     phase: 'complete',
@@ -1290,8 +1493,8 @@ export async function linkHostedRelayDevice(
  * account, registered device, scope, and authenticated transport used by the client.
  *
  * In a Sandbox environment, {@link hostedRelaySandboxIdentity} supplies the
- * assertion. In production, `getIdentityAssertion` gets the assertion from
- * your identity provider.
+ * assertion. Production needs a callback for its configured application-bound
+ * or device-owned identity mode. The Sandbox helper cannot serve Production.
  *
  * @example
  * ```ts

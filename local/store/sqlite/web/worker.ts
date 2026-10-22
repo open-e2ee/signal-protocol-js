@@ -32,6 +32,11 @@
  * `STORAGE_QUOTA_EXCEEDED`, and the next attach adds slot files up to the
  * two that an open needs.
  *
+ * An existence check and a removal attach the pool as every request does,
+ * so a full quota fails them before the core writes a key. After the check
+ * or the removal, a pool that holds no file goes, with its directory. So a
+ * check for a file that does not exist leaves nothing in OPFS.
+ *
  * The logical connection that the driver returns stays pinned to its file
  * across these physical reopens.
  *
@@ -96,6 +101,14 @@ const MIN_POOL_CAPACITY = 2;
  */
 const HANDLE_WAIT_MS = 5_000;
 const HANDLE_RETRY_MS = 50;
+/**
+ * An attach of the pool that fails with a transient error runs again, up to
+ * this many attempts in total, with this delay between them. WebKit can
+ * reject an OPFS call with `UnknownError` under load and accept it again a
+ * moment later.
+ */
+const ATTACH_ATTEMPTS = 4;
+const ATTACH_RETRY_MS = 100;
 
 /** One logical connection. It outlives each physical reopen. */
 interface Connection {
@@ -174,6 +187,19 @@ function isQuotaExceededError(error: unknown): boolean {
     typeof error === 'object' &&
     error !== null &&
     (error as { name?: unknown }).name === 'QuotaExceededError'
+  );
+}
+
+/**
+ * An OPFS call that failed with `UnknownError` failed for a transient reason,
+ * such as memory pressure, and can pass when it runs again. Checked by name,
+ * as `isQuotaExceededError` is.
+ */
+function isTransientError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'UnknownError'
   );
 }
 
@@ -374,7 +400,8 @@ async function waitForFreeHandles(slot: Slot): Promise<void> {
     slotDirectory = await poolDirectory.getDirectoryHandle(POOL_SLOT_DIRECTORY);
   } catch (error) {
     if (error instanceof DOMException && error.name === 'NotFoundError') return;
-    throw fileBusy(detail(error));
+    // The caller maps this failure, and runs the attach again when it is transient.
+    throw error;
   }
   const deadline = Date.now() + HANDLE_WAIT_MS;
   // `FileSystemDirectoryHandle` is async iterable; the DOM library of this
@@ -402,31 +429,75 @@ async function waitForFreeHandles(slot: Slot): Promise<void> {
  * failed attach changes no database file and holds no access handle, so the
  * next call tries again. A full origin quota fails it with
  * `STORAGE_QUOTA_EXCEEDED`, and any other failure with `OPFS_FILE_BUSY`.
+ *
+ * A transient failure runs the attach again, up to `ATTACH_ATTEMPTS` in all.
+ * The retry is safe because the attach runs before the first statement of the
+ * request, so no database page and no journal has changed. A failed install
+ * or unpause releases every access handle, and a failed reservation pauses
+ * the pool here. So each attempt starts from the state that the request found.
  */
 async function attachPool(slot: Slot, sqlite3: Sqlite3Static): Promise<void> {
   if (slot.pool !== null && !slot.pool.isPaused()) return;
-  await waitForFreeHandles(slot);
-  try {
-    if (slot.pool === null) {
-      slot.pool = await sqlite3.installOpfsSAHPoolVfs({
-        name: slot.poolName,
-        directory: slot.poolDirectory,
-        verbosity: 1,
-        forceReinitIfPreviouslyFailed: true,
-      });
-    } else {
-      await slot.pool.unpauseVfs();
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await attachPoolOnce(slot, sqlite3);
+      break;
+    } catch (error) {
+      if (error instanceof EncryptionError) throw error;
+      if (isQuotaExceededError(error)) throw quotaExceeded(detail(error));
+      if (!isTransientError(error) || attempt === ATTACH_ATTEMPTS) throw fileBusy(detail(error));
     }
-    // A failure here leaves the pool attached, and the caller detaches it.
-    await slot.pool.reserveMinimumCapacity(MIN_POOL_CAPACITY);
-  } catch (error) {
-    throw isQuotaExceededError(error) ? quotaExceeded(detail(error)) : fileBusy(detail(error));
+    await delay(ATTACH_RETRY_MS);
   }
   if (!encryptingVfses.has(slot.poolName)) {
     const rc = sqlite3.capi.sqlite3mc_vfs_create(slot.poolName, 0);
     if (rc !== 0) throw new Error(`sqlite3mc_vfs_create: ${sqlite3.capi.sqlite3_js_rc_str(rc)}`);
     encryptingVfses.add(slot.poolName);
   }
+}
+
+/**
+ * One attempt of `attachPool`. A failure leaves the pool detached: either not
+ * installed, or paused with no access handle.
+ */
+async function attachPoolOnce(slot: Slot, sqlite3: Sqlite3Static): Promise<void> {
+  await waitForFreeHandles(slot);
+  if (slot.pool === null) {
+    slot.pool = await sqlite3.installOpfsSAHPoolVfs({
+      name: slot.poolName,
+      directory: slot.poolDirectory,
+      verbosity: 1,
+      forceReinitIfPreviouslyFailed: true,
+    });
+  } else {
+    await slot.pool.unpauseVfs();
+  }
+  try {
+    await slot.pool.reserveMinimumCapacity(MIN_POOL_CAPACITY);
+  } catch (error) {
+    // The pool is attached and opens no file, so the pause releases its handles.
+    slot.pool.pauseVfs();
+    throw error;
+  }
+}
+
+/**
+ * Removes the attached pool of the slot and its directory when the pool holds
+ * no file. The caller holds the lock. The Multiple Ciphers VFS points at
+ * the pool's VFS, so it goes first. The engine keeps that VFS while a file of
+ * it is open, and then the pool stays too. The engine logs a failed removal
+ * of the directory and keeps the rest of it. The pool is gone in both cases,
+ * and the next attach installs it again.
+ */
+async function removePool(slot: Slot, sqlite3: Sqlite3Static): Promise<void> {
+  if (slot.pool!.getFileNames().length > 0) return;
+  const { capi } = sqlite3;
+  capi.sqlite3mc_vfs_destroy(slot.vfsName);
+  if (capi.sqlite3_vfs_find(slot.vfsName) !== 0) return;
+  encryptingVfses.delete(slot.poolName);
+  const pool = slot.pool!;
+  slot.pool = null;
+  await pool.removeVfs();
 }
 
 // ===== Physical connection =====
@@ -610,7 +681,7 @@ function yieldIfRequested(slot: Slot, sqlite3: Sqlite3Static): void {
  */
 function withFile<T>(
   slot: Slot,
-  operation: (sqlite3: Sqlite3Static) => T
+  operation: (sqlite3: Sqlite3Static) => T | Promise<T>
 ): Promise<T> {
   return enqueue(slot, async () => {
     await assertOpfsUsable();
@@ -621,7 +692,7 @@ function withFile<T>(
       if (slot.connection !== null && slot.database === null) {
         reopen(slot, sqlite3, slot.connection);
       }
-      return operation(sqlite3);
+      return await operation(sqlite3);
     } finally {
       if (slot.connection === null || slot.database === null) {
         detach(slot);
@@ -714,14 +785,20 @@ async function handle(request: WorkerRequest): Promise<WorkerValue> {
   const slot = slotFor(request.file, request.type);
   switch (request.type) {
     case 'exists':
-      return withFile(slot, () => slot.pool!.getFileNames().includes(slot.path));
+      return withFile(slot, async (sqlite3) => {
+        if (slot.pool!.getFileNames().includes(slot.path)) return true;
+        await removePool(slot, sqlite3);
+        return false;
+      });
     case 'remove':
       if (slot.connection !== null) {
         throw invalidState('Close the SQLite connection before removing its file', 'remove');
       }
-      return withFile(slot, () => {
+      // Each file has its own pool, so an empty pool goes with its file.
+      return withFile(slot, async (sqlite3) => {
         slot.pool!.unlink(slot.path);
         slot.pool!.unlink(`${slot.path}-journal`);
+        await removePool(slot, sqlite3);
         return undefined;
       });
     case 'open': {

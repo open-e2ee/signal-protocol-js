@@ -325,6 +325,46 @@ A wake client has no socket. Use `hostedRelayWakePresence(client)` beside
 `pullHostedRelayAfterWake()`. It has the same members without `watch()`, and
 it sends each request as one authenticated HTTP request.
 
+### Group init status
+
+`getGroupInitStatus(groupId)` gives the init status of a group on this device.
+It gives null when the device has no record of the group.
+
+- `ready` means that the device holds the group key and the newest group state
+  that it knows.
+- `stale` means that a sender named a newer revision than the stored state.
+  The client fetches the newer state.
+- `pending` means that the device holds the group key and has no group state
+  yet. The client fetches the state.
+- `no-key` means that the device knows the group but holds no group key. The
+  client cannot fetch the group until the device gets the key.
+- `denied` means that the group server refused the newest revision that the
+  device knows.
+
+`onGroupInitStatus(groupId, status)` runs when a client write to the record of
+a group changes its status. It does not run when the status stays the same, or
+when a write deletes the record. It also does not run for a status that the
+store holds when the client starts, or for a write that the application makes
+to the group store. So read each status at start, and then use the hook.
+
+<!-- doc-snippet:skip requires-external-context -->
+```ts
+import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
+
+const client = await createSignalProtocolClient({
+  identity,
+  adapters: { storage, relay },
+  groups,
+  hooks: {
+    onGroupInitStatus: (groupId, status) => groupList.setInitStatus(groupId, status),
+  },
+});
+
+for (const groupId of groupList.groupIds()) {
+  groupList.setInitStatus(groupId, await client.getGroupInitStatus(groupId));
+}
+```
+
 ### Background key maintenance
 
 Use the dedicated headless entry point from a background task after restoring

@@ -33,10 +33,14 @@ with a key that it keeps in the device-local store, so the device gets the same
 account each time it registers. A device that loses its store loses that
 Sandbox account. The helper works only in a Sandbox environment.
 
-In production, the callback belongs to your authentication integration. It
-returns a short-lived assertion for the signed-in user from your identity
-provider. The SDK does not supply an identity provider or a relay server
-implementation.
+Production supports application-bound and explicitly configured device-owned
+accounts. For application-bound accounts, `getIdentityAssertion` returns a
+short-lived assertion for the signed-in user from your identity provider.
+Device-owned accounts prove possession of a persistent account key. They do
+not bind to an application login, and provider sign-in cannot recover a lost
+account key. The SDK does not supply an identity provider or a relay server
+implementation. See [identity and authentication](https://docs.open-e2ee.dev/relay/identity)
+for Production configuration.
 
 ## Setup Sequence
 
@@ -52,9 +56,12 @@ The hosted factory authenticates and registers the current device, then publishe
 its public prekeys. A linked device gets the account identity by device
 transfer or by a channel that the application owns, then joins the account
 with `linkHostedRelayDevice()`. That call runs in one process that holds the
-active device's store and the new device's store. See the
-[device guide](../device/README.md). The default policy requires post-quantum
-session establishment and Braid ratcheting.
+active device's store and the new device's store. It copies each group master
+key from the active device and gives the new device its own registration ID.
+It refuses a new device's store that already lists a group, with
+`HostedRelayDeviceLinkError`. See the [device guide](../device/README.md). The
+default policy requires post-quantum session establishment and Braid
+ratcheting.
 
 ## Expo Client
 
@@ -71,7 +78,7 @@ const signal = await createHostedSignalProtocolClient({
   adapters: { storage },
   hosted: {
     relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
-    // Sandbox only. In production, use your identity provider's callback.
+    // Sandbox only. Select the Production identity mode explicitly.
     getIdentityAssertion: hostedRelaySandboxIdentity(storage),
   },
 });

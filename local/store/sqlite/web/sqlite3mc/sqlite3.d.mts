@@ -35,6 +35,11 @@ export interface OpfsSahPoolUtil {
   unpauseVfs(): Promise<OpfsSahPoolUtil>;
   isPaused(): boolean;
   reserveMinimumCapacity(min: number): Promise<number>;
+  /**
+   * Unregisters the pool's VFS, releases its access handles, and removes its
+   * directory. A failed removal is logged and still returns `true`.
+   */
+  removeVfs(): Promise<boolean>;
 }
 
 export interface OpfsSahPoolOptions {
@@ -64,6 +69,9 @@ export interface Sqlite3Static {
     ): number;
     sqlite3_finalize(statement: WasmPointer): number;
     sqlite3mc_vfs_create(baseVfs: string, makeDefault: number): number;
+    /** Destroys the named Multiple Ciphers VFS only while no file of it is open. */
+    sqlite3mc_vfs_destroy(name: string): void;
+    sqlite3_vfs_find(name: string): WasmPointer;
     sqlite3_js_rc_str(rc: number): string;
   };
   readonly wasm: {

@@ -1305,8 +1305,9 @@ The highest Kyber prekey ID, or 0 if none exist
 
 Get our local registration ID.
 
-Registration ID is a random 16-bit integer generated once per install.
-Detects session resets when the user reinstalls the app.
+The registration ID is a random integer from 1 through 16383. Each
+install gets one, and a managed device link gives the linked device its
+own. A peer uses it to detect that a device was installed again.
 
 #### Parameters
 
@@ -2421,7 +2422,9 @@ This updates DeviceRecord.session.
 
 Set our local registration ID.
 
-Call this only once, during initialization.
+A call overwrites the stored ID of `identityType` and leaves the other
+identity type unchanged. Keep it equal to the `registrationId` of the
+stored key pair of the same type.
 
 #### Parameters
 
@@ -2558,7 +2561,19 @@ instead of deleting it, to handle in-flight messages.
 
 > **storeIdentityKey**(`keyPair`, `identityType?`): `Promise`\<`void`\>
 
-Store our identity key pair (only done once per install per identity type).
+Store our identity key pair and its registration ID for one identity type.
+
+A call for a type that already has a key pair overwrites the key pair and
+the registration ID of that type. The other identity type stays
+unchanged. A managed device link uses this overwrite to give the linked
+device its own registration ID with the same keys:
+
+```ts
+const identity = await store.getIdentityKey('aci');
+await store.storeIdentityKey({ ...identity!, registrationId: 4321 }, 'aci');
+await store.getLocalRegistrationId('aci'); // 4321
+(await store.getIdentityKey('aci'))!.registrationId; // 4321
+```
 
 #### Parameters
 

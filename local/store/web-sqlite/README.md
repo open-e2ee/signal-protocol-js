@@ -40,14 +40,18 @@ open (`INVALID_STATE`).
 Options:
 
 - `name`: the database name in OPFS. A letter or digit, then up to 63
-  letters, digits, `.`, `_`, and `-`. It also names the vault slot of the key.
-  Default: `open-e2ee-signal-protocol.db`.
+  letters, digits, `.`, `_`, and `-`, and no `.oe2e-convert` ending. It also
+  names the vault slot of the key. A conversion with `convertPlaintext` needs
+  a name of at most 51 characters. Default: `open-e2ee-signal-protocol.db`.
 - `vault`: the `SignalProtocolLocalSecretVault` that holds the database key.
   Default: the SDK's IndexedDB vault in the same origin.
 - `encryptionAtRest`: pass `false` to store the database without encryption.
   The store then does not use the vault, and it logs a warning at each open. A
-  database created with one setting does not open with the other. Default:
-  `true`.
+  database created with one setting does not open with the other, except
+  through `convertPlaintext`. Default: `true`.
+- `convertPlaintext`: pass `true` to convert a plaintext database to an
+  encrypted one at an encrypted open. See
+  [Convert a plaintext store](#convert-a-plaintext-store). Default: `false`.
 - `logger`: receives the warning of each open without encryption.
 - `workerUrl` and `wasmUrl`: see [Content Security Policy](#content-security-policy).
 
@@ -63,6 +67,69 @@ When the database file exists and the vault holds no key for it,
 key cannot read the old file. Restore the vault entry, or call
 `resetWebSqliteStore()`. The reset deletes the file, creates a new key, and
 returns the open, empty store.
+
+## Convert a plaintext store
+
+An encrypted open with `convertPlaintext: true` converts a database that was
+created with `encryptionAtRest: false`:
+
+<!-- doc-snippet:skip requires-external-context -->
+
+```ts
+import { webSqliteStore } from '@open-e2ee/signal-protocol-sdk/local/store/web-sqlite';
+
+const store = await webSqliteStore({ convertPlaintext: true });
+```
+
+The store keeps every row and its schema version, then applies the
+migrations of this SDK. The option does nothing on an encrypted database or
+when no database exists. With `encryptionAtRest: false`, the option fails with
+`INVALID_STATE`.
+
+A database created with `encryptionAtRest: false` fails an open without the
+option with `SqliteKeyMismatchError` (`KEY_STORAGE_ERROR`). Open it with the
+setting that created it, or convert it to keep its data in an encrypted store.
+
+The conversion writes a new key to a pending vault slot. It copies the
+database to the encrypted temporary database `<name>.oe2e-convert` in one
+transaction. Then it deletes the plaintext database and copies the temporary
+database back. The delete of the plaintext database is the commit point. The
+conversion needs storage quota for one more copy of the database.
+
+Each database file has its own OPFS directory, `.open-e2ee-sqlite-<name>`.
+When the store removes a database file, it also removes that directory if no
+other file of the store is in it. This applies to the conversion and to a
+reset. So a finished conversion leaves no directory for
+`<name>.oe2e-convert`. If the browser does not remove the directory, the
+directory stays, and the next use of the name uses it again. A check for a
+database that does not exist leaves no directory.
+
+The conversion needs the store of the name in no other tab or worker of the
+origin. While another context has it open, the conversion fails at once with
+`INVALID_STATE` and changes nothing. A name longer than 51 characters also
+fails with `INVALID_STATE` before any write.
+
+The conversion refuses, with `INVALID_STATE`, a database that holds an
+application table, a BLOB value, or an integer outside the safe JavaScript
+range. It also refuses a database with no SDK schema. A database from a newer
+SDK fails as at any open. A refusal changes nothing.
+
+A crash or an error before the copy commits leaves the plaintext database.
+The next open with the option starts again with a new key. A crash after the
+commit point leaves the encrypted copy. The next encrypted open finishes the
+conversion, with or without the option. While the temporary database exists,
+an open or a reset with `encryptionAtRest: false` fails with `INVALID_STATE`.
+
+The open fails with `INVALID_STATE` and names both databases when the
+plaintext database and a complete encrypted copy both exist. A crash between
+the end of the copy and the commit point leaves this state. So does an older
+SDK that opens the store after the commit point. The store has no call that
+deletes one database of the pair. An encrypted reset ends the state, and it
+deletes all data.
+
+Residual risk: an SDK older than this release does not know the temporary
+database. If it opens the store after the commit point, it creates a new
+empty store.
 
 ## Tabs
 
@@ -83,6 +150,8 @@ transaction. Each tab reads the writes of the other tabs.
 - `OPFS_FILE_BUSY` means that another tab or worker of the origin still holds
   the files, for example a tab that is closing. The file is unchanged. Retry
   the open later.
+  The store already retries a transient failure of the origin private file
+  system a few times before it rejects with this code.
 
 ## Full storage
 

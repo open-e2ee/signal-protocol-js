@@ -11,10 +11,9 @@ SDK or integration-owned Signal Protocol Relay transport.
 Signal Protocol Relay certificate roots are compiled into the SDK and selected by the
 exact connection origin. The adapter cannot supply or replace hosted trust.
 
-OpenE2EE has no customers. This is a clean prelaunch contract replacement.
-Do not restore a certificateTrust compatibility property: accepting caller
-trust would weaken the managed trust boundary. Self-hosted trust stays in its
-separate explicit configuration.
+The adapter has no `certificateTrust` property. Trust that the caller
+supplies would weaken the managed trust boundary. Self-hosted trust stays in
+its separate explicit configuration.
 
 ## Extended by
 

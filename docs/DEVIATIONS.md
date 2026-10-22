@@ -98,6 +98,8 @@ model and what is out of scope.
 | **Receive admission bounds** | Signal's Desktop client | **Extension.** Before a decrypt, the receive queue checks `maxItems`, `maxBytes`, and the group share `blockedGroupShare`. The defaults are provisional. Desktop decrypts each envelope as it arrives and bounds stored content only by age and attempts | The SDK shares a storage budget with the application in a browser and on mobile | A refused envelope is not acknowledged. It stays at the Relay and expires there with no local hook. The messages behind it still arrive (§8.5) |
 | **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation is structured as four labeled derivations rather than one seeded derivation | Server keys are the deploying operator's own trust root (each deployment generates its own seed), not Signal Messenger's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal Messenger's |
 | **Registration IDs** | `libsignal` `sealed_sender.rs` | **Faithful.** Generated in `[1, 16383]`, strictly inside the 14 bits the wire format reserves | — | — |
+| **Linked-device registration IDs** | Signal's device linking | **Faithful** for a new link: the linked device gets its own fresh registration ID. **Deviation:** a device that a 12.0.x release linked keeps the ID of its active device, and a link that a 12.0.x release began keeps its stored ID (§5.7) | A changed ID on a live device fails its next prekey sync. A fresh ID on a link already begun can reserve a second device | Two devices of one account can share a registration ID. The sender-key handoff ledger keys each row by the device, so they stay apart |
+| **Linked-device group keys** | Signal's device linking | **Deviation.** The link copies each group master key from the active device's group store in the calling process. A group record that a release before 12.0.0 wrote, and that the active device has not read since, is not copied (§5.8) | The SDK has no storage service, and no master key crosses the Relay | The process that links the device must hold the active device's store. Such an unread group initializes from its first group message |
 
 ---
 
@@ -323,9 +325,9 @@ Inheriting them would be wrong on both parameters:
    for an identifier of the application deriving the key. This SDK is not
    Signal Messenger.
 
-Choosing the SDK's own labels is a pre-1.0 format break against sessions
-established under `libsignal`'s. Those sessions derive a different `SK`, and
-neither side can continue them. Nothing else about the derivation changes.
+The SDK's labels are incompatible with sessions established under
+`libsignal`'s labels. Those sessions derive a different `SK`, and neither
+side can continue them. Nothing else about the derivation changes.
 
 An application that needs `libsignal`'s known-answer vectors can still get them
 by setting `protocolStrategy.keyExchangeInfoString` to the old label
@@ -927,6 +929,36 @@ Signal's Android client. The following details differ.
 | D12 | A declared post with no `recipientRegistrationId` skips the registration check | The field is optional on every Relay route | Signal's server compares the registration of each device of a post | A Relay test posts an unnamed registration |
 | D13 | A declaration that names the sender device gets 400 | The Relay refuses a malformed declaration before it compares | Signal's server answers 409 and names the sender device as an extra device | Relay tests on the direct and the group routes. The SDK does not declare the sender device |
 | D14 | The identified group route compares the declared device set, with the codes and the order of the direct route | The route serves Relay API customers | Signal has no identified group route | Relay tests. No SDK code calls the route |
+
+### 5.7 Registration IDs of linked devices
+
+Reviewed: 2026-10-21.
+
+A managed device link gives the linked device a fresh registration ID that
+differs from the ID of the active device. A held PNI record gets a separate
+fresh ID. The link writes the IDs into the linked store before it registers,
+and a restarted link sends the same IDs again. This follows Signal, where each
+device has its own registration ID. Two cases keep an ID.
+
+| ID | Deviation | Constraint | Why Signal's form does not fit | Guarantee test |
+|---|---|---|---|---|
+| R1 | A device that a 12.0.x release linked keeps a registration ID equal to that of its active device | The Relay and the peers hold the ID of the live device. A changed ID fails its next prekey sync or publication | Signal never gave two devices one ID, so it has no live device to migrate | Two devices of one account with an equal ID each keep their own handoff row. When the row of one device is removed, the next send gives the key to that device only, and both devices read the message |
+| R2 | A link that a 12.0.x release began, and that stopped before it completed, keeps its stored ID | The operation ID of the link derives from the ID. A fresh ID gives a new operation ID, and the Relay could then reserve a second device | Signal has no link that a release before the change began | A resumed link with a stored registration and no link state keeps the stored ID and the operation ID. A refusal of that link leaves the ID unchanged |
+
+### 5.8 Group keys of linked devices
+
+Reviewed: 2026-10-21.
+
+A managed device link copies the master key of each group that the active
+device's group store lists into the linked device's group store. The copy runs
+in the process that calls the link. A later client on the linked device fetches
+each copied group with no application step. In Signal, a linked device restores
+its groups from the storage service.
+
+| ID | Deviation | Constraint | Why Signal's form does not fit | Guarantee test |
+|---|---|---|---|---|
+| G1 | The link copies group master keys in the calling process | No master key crosses the Relay, and the adapter gets no private key | The SDK has no storage service | Each listed group arrives on the linked device with the master key of the active device and initializes with no application step. A link stopped at any write of the copy and restarted, also in a new browser tab, ends with the group set of the active device. A Relay refusal removes each copied group |
+| G2 | A group record that a release before 12.0.0 wrote, and that the active device has not read since, is not copied | The group store lists only migrated records. The link has no other source of the group IDs | Signal restores each group from the storage service | Such a group initializes on the linked device from its first group message. Read each group once on the active device before the link to copy it |
 
 ---
 

@@ -321,18 +321,20 @@ these errors occur.
 
 ## Relay Device Errors
 
-The Relay can refuse this device. Two errors name that refusal. Neither is an
-`EncryptionError`, and the SDK retries neither one.
+The Relay can refuse this device, and a managed device link can refuse its
+linked store. Three errors name these refusals. None is an `EncryptionError`,
+and the SDK retries none of them.
 
 | Error | Cause | Application response |
 |---|---|---|
 | [`HostedRelayDeviceRevokedError`](./api/classes/HostedRelayDeviceRevokedError.md) | An account recovery revoked this device. `code` is `DEVICE_REVOKED`, `status` is 403, and `retryable` is false. | Sign the user out of this device. The Relay refuses a registration with the revoked key, so a re-registration fails too. |
 | [`HostedRelayDeviceUnknownError`](./api/classes/HostedRelayDeviceUnknownError.md) | The Relay has no device for the stored session. `code` is `NOT_FOUND`, `status` is 404, and `retryable` is false. The message is the Relay's own message. | Ask the user to confirm a re-registration of this device. Do not re-register without that confirmation. |
+| [`HostedRelayDeviceLinkError`](./api/classes/HostedRelayDeviceLinkError.md) | `linkHostedRelayDevice` found state in the linked store that the link did not write: a group in the linked group store, or a device-authentication key for this Relay connection with no registration of this link. `code` is `DEVICE_LINK_STORE_NOT_EMPTY`, and `retryable` is false. The link wrote nothing. | Link the device again with a new, empty store. The same store is refused again. |
 
-`createHostedSignalProtocolClient` throws either error when the stored session
-cannot get a device token. It does not register a new device in their place. A
-running client throws them from its Relay calls. A client call can wrap them
-in an `EncryptionError`, as the `originalError`. The mailbox subscription
+`createHostedSignalProtocolClient` throws the first two errors when the stored
+session cannot get a device token. It does not register a new device in their
+place. A running client throws them from its Relay calls. A client call can
+wrap them in an `EncryptionError`, as the `originalError`. The mailbox subscription
 stops with the reason `device-revoked` or `device-unknown`. See
 [`RelayConnectionReason`](./api/type-aliases/RelayConnectionReason.md).
 

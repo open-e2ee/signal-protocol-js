@@ -18,6 +18,20 @@
 
 ***
 
+### activeGroupStore?
+
+> `readonly` `optional` **activeGroupStore?**: [`GroupStateStore`](GroupStateStore.md)
+
+The group store of the active device. The link copies the master key of
+each group that it lists. Default: the SDK group store on
+`activeDeviceStorage`.
+
+The SDK group store serializes its writes per store instance. If a client
+runs on the active device during the link, pass that client's group
+store here, or stop that client before the link.
+
+***
+
 ### adapters
 
 > `readonly` **adapters**: `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md)\[`"adapters"`\], `"relay"`\>

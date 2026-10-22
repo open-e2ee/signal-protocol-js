@@ -75,7 +75,8 @@ export class SqliteKeyMismatchError extends EncryptionError {
   constructor(driver: string, originalError?: unknown) {
     super(
       `The ${driver} database exists but cannot be read with this key and encryption setting. ` +
-        'Open it with the key and setting that created it, or reset the store.',
+        'Open it with the key and setting that created it, or reset the store. To keep the ' +
+        'data of a plaintext database in an encrypted store, open it with convertPlaintext: true.',
       EncryptionErrorCode.KEY_STORAGE_ERROR,
       { operation: 'open', originalError: originalError as Error | undefined }
     );

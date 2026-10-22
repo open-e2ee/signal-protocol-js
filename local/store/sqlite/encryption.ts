@@ -37,6 +37,27 @@ export interface SqliteEncryptionOptions {
    * Default: `true`. The open fails when the binding has no cipher.
    */
   readonly encryptionAtRest?: boolean;
+  /**
+   * Pass `true` to convert a plaintext database to an encrypted one at an
+   * encrypted open. The store keeps every row and its schema version. The
+   * open writes a new key to the vault, and it does not change the plaintext
+   * file until the encrypted copy is complete. An open that stops during a
+   * conversion leaves a state that the next encrypted open finishes or
+   * starts again.
+   *
+   * The conversion refuses a database that holds tables of the application,
+   * BLOB values, or integers outside the safe JavaScript range. The disk
+   * blocks of the removed plaintext file can keep its data until the file
+   * system reuses them.
+   *
+   * The option does nothing on an encrypted database or when no database
+   * exists. With `encryptionAtRest: false`, the open fails with
+   * `INVALID_STATE`.
+   *
+   * Default: `false`. An encrypted open of a plaintext database then fails
+   * with `SqliteKeyMismatchError`.
+   */
+  readonly convertPlaintext?: boolean;
 }
 
 export interface SqliteOpenOptions extends SqliteEncryptionOptions {

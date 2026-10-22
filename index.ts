@@ -77,8 +77,10 @@ export {
   GroupReceiveUnavailableError,
   type GroupReceiveUnavailability,
   GroupResendDeferredError,
+  HostedRelayDeviceLinkError,
   HostedRelayDeviceRevokedError,
   HostedRelayDeviceUnknownError,
+  HostedRelayHttpError,
   HostedRelayPresenceError,
   HostedRelayUpgradeRequiredError,
   advanceHostedRelayIdentityMigration,
@@ -674,6 +676,7 @@ export type {
   RetryTerminalEvent,
   RetryTerminalRecoveryEvent,
 } from "./client/event-hooks";
+export type { GroupInitStatus } from "./client/group-init-status";
 
 // Error types, message types, and enums
 export {

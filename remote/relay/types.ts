@@ -821,8 +821,10 @@ export interface Envelope {
 
   /**
    * Server-assigned envelope ID (set by server). A relay gives an envelope
-   * one `id` and keeps it on every redelivery of that envelope. The
-   * at-most-once rule of the client depends on it.
+   * one `id` and keeps it on every redelivery of that envelope. The client
+   * records each processed envelope by this `id`, so a redelivery decrypts
+   * no second time, and the content hook carries it as `messageId` for
+   * application deduplication. Hook delivery is at least once.
    */
   id?: string;
 

@@ -157,6 +157,7 @@ const ENTRY_GUIDES = new Map([
   ['./local/store/expo', 'local/store/expo/README.md'],
   ['./local/store/key-value', 'local/store/key-value/README.md'],
   ['./local/store/key-value/realm', 'local/store/key-value/README.md'],
+  ['./local/store/conformance', 'local/store/README.md'],
   ['./local/store/memory', 'local/store/memory/README.md'],
   ['./local/store/node', 'local/store/node/README.md'],
   ['./local/store/react-native', 'local/store/react-native/README.md'],

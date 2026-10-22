@@ -45,6 +45,8 @@ Use:
 - `InMemorySignalProtocolStore` from `@open-e2ee/signal-protocol-sdk/local/store/memory`
 - or a custom implementation
 
+A custom implementation can be any object that implements `SignalProtocolLocalStore`. The client does not check its class, and no client feature requires a store class. Managed groups work on a custom store, including group message reception on the Relay subscription and on a pull. A custom store must meet the [storage implementation](#storage-implementations) expectations and pass the local store conformance kit.
+
 On React Native and Expo, the SDK reads random bytes only from the global `crypto.getRandomValues`. Install `react-native-get-random-values` 2.x or `react-native-quick-crypto`, and load it before the first SDK call. Without a global source, the SDK throws `SecureRandomUnavailableError`.
 
 ### Local secret vault: `SignalProtocolLocalSecretVault`
@@ -176,6 +178,7 @@ See the [client guide](./client/README.md#with-relay).
 - Keep contact identity trust decisions stable and explicit.
 - Persist linked-device identity state atomically enough that startup verification cannot enter a half-linked state.
 - Preserve session record semantics. Do not treat sessions as opaque blobs without honoring update and archive behavior.
+- Run the local store conformance kit from `@open-e2ee/signal-protocol-sdk/local/store/conformance` against a custom `SignalProtocolLocalStore`. Use `assertLocalStoreConformance` in the automated checks, and give it the `armWriteFailure` hook, so that the rollback of each atomic commit runs. The kit reads the `protection` declaration, so declare it truthfully. The kit does not cover `SenderKeyHandoffStore`, `MessageRecordStore`, or `SendLogStore`. See the [storage guide](./local/store/README.md#conformance-kit-for-a-custom-store).
 
 ## Choosing a Shape
 

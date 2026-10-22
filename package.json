@@ -1,6 +1,6 @@
 {
   "name": "@open-e2ee/signal-protocol-sdk",
-  "version": "12.0.1",
+  "version": "13.0.0",
   "description": "Pure TypeScript Signal Protocol SDK for encrypted chat in Expo, React Native, browsers, and Node. Post-quantum by default.",
   "keywords": [
     "open-e2ee",
@@ -190,6 +190,10 @@
     "./local/store/key-value/realm": {
       "types": "./dist/local/store/key-value/realm/index.d.ts",
       "default": "./dist/local/store/key-value/realm/index.js"
+    },
+    "./local/store/conformance": {
+      "types": "./dist/local/store/conformance/index.d.ts",
+      "default": "./dist/local/store/conformance/index.js"
     },
     "./local/store/memory": {
       "types": "./dist/local/store/memory/index.d.ts",

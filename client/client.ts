@@ -110,6 +110,11 @@ import {
 } from './content-adapter';
 // Note: group utilities (isGroupId, extractGroupId, createGroupId) are used by SignalProtocolServiceCipher
 import { createGroupId, extractGroupId, isGroupId } from '../internal/groups';
+import {
+  observeGroupInitStatus,
+  readGroupInitStatus,
+  type GroupInitStatus,
+} from './group-init-status';
 import { removeDistributionsFromMessageRecords } from './distribution-records';
 import { GroupSenderKeyOperations } from './group-sender-key-operations';
 import {
@@ -615,7 +620,16 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     // Initialize the group manager if configured
     if (config?.groups) {
       const groupConfig = config.groups;
-      this.groupStore = config.groups.store ?? new SignalProtocolGroupStateStore(this._storage);
+      // Each client write to a group record reports a changed init status.
+      this.groupStore = observeGroupInitStatus(
+        config.groups.store ?? new SignalProtocolGroupStateStore(this._storage),
+        {
+          isObserved: () => typeof this.hooks.onGroupInitStatus === 'function',
+          report: (groupId, status) =>
+            callHook(this.hooks, 'onGroupInitStatus', createGroupId(groupId), status),
+          logger: this.logger,
+        }
+      );
       const sessions = new WeakMap<GroupAuthority, { manager: GroupManager; endorsementManager?: GroupAuthority['endorsementManager'] }>();
       this.groupSessionFor = (authority) => {
         const cached = sessions.get(authority);
@@ -4696,6 +4710,22 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    */
   async getGroupState(groupId: GroupId): Promise<DecryptedGroup> {
     return GroupOps.getGroupState(this.ctx, await this.groups, groupId);
+  }
+
+  /**
+   * Get the init status of a group on this device.
+   *
+   * @returns The status, or null when this device has no record of the group
+   * @throws {EncryptionError} When the client has no groups config
+   */
+  async getGroupInitStatus(groupId: GroupId): Promise<GroupInitStatus | null> {
+    if (!this.groupStore) {
+      throw new EncryptionError(
+        'Groups not configured. Provide groups config to DefaultSignalProtocolClient.create().',
+        EncryptionErrorCode.INITIALIZATION_FAILED
+      );
+    }
+    return readGroupInitStatus(this.groupStore, extractGroupId(groupId));
   }
 
   /**

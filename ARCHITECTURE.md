@@ -16,8 +16,8 @@ The `@open-e2ee` scope is the umbrella namespace. Package and primary-client
 names identify the protocol they implement so future protocol packages do not
 share an ambiguous client identity.
 
-This package is pre-1.0. Prefer a clear, versioned correction over a
-compatibility shim when a boundary is wrong.
+For the current package version and release notes, see
+[package.json](./package.json) and [CHANGELOG](./CHANGELOG.md).
 
 ## Review Posture
 
@@ -35,7 +35,7 @@ compatibility shim when a boundary is wrong.
 | Shared types            | [types/](./types/)                                                                                                                                                     | Protocol addresses, records, API contracts, protocol configuration                                                         |
 | Session domain          | [internal/session/](./internal/session/)                                                                                                                               | Session establishment, session cipher, active/archive session resolution                                                   |
 | Orchestration           | [internal/manager/](./internal/manager/), [internal/sesame/](./internal/sesame/)                                                                                       | Protocol manager and multi-device SESAME workflows                                                                         |
-| Protocol algorithms     | [internal/protocol/](./internal/protocol/)                                                                                                                             | PQXDH, Double Ratchet, Triple Ratchet, SPQR, sender keys, sealed sender, ZK helpers                                        |
+| Protocol algorithms     | [internal/protocol/](./internal/protocol/)                                                                                                                             | PQXDH, Double Ratchet, SPQR, sender keys, sealed sender, ZK helpers                                        |
 | Crypto foundation       | [internal/crypto/](./internal/crypto/)                                                                                                                                 | X25519, Ed25519, ML-KEM, AES, HKDF, padding                                                                                |
 | Key model               | [keys/](./keys/)                                                                                                                                                       | Key generation, branded key types, identity type helpers                                                                   |
 | Public feature surfaces | [blocking/](./blocking/), [groups/](./groups/), [media/](./media/), [profile/](./profile/), [sealed-sender/](./sealed-sender/), [username/](./username/), [zk/](./zk/) | App-facing helpers that compose protocol, media, or account-state behavior without joining the inward dependency hierarchy |
@@ -112,7 +112,7 @@ Shared non-layer modules:
 | PQXDH          | [internal/protocol/pqxdh/](./internal/protocol/pqxdh/)                   | Hybrid initial key agreement with ML-KEM-1024   |
 | Double Ratchet | [internal/protocol/double-ratchet/](./internal/protocol/double-ratchet/) | EC ratchet, skipped keys, header encryption     |
 | SPQR           | [internal/protocol/spqr/](./internal/protocol/spqr/)                     | Sparse post-quantum ratchet with ML-KEM-768     |
-| Triple Ratchet | [internal/protocol/triple-ratchet/](./internal/protocol/triple-ratchet/) | Double Ratchet plus SPQR hybrid message keys    |
+| Triple Ratchet | [internal/session/cipher.ts](./internal/session/cipher.ts) | Double Ratchet plus SPQR hybrid message keys    |
 | SESAME         | [internal/sesame/](./internal/sesame/)                                   | Multi-device session management and convergence |
 | Sender Keys    | [internal/protocol/sender-keys/](./internal/protocol/sender-keys/)       | Group message sender-key state                  |
 | Sealed Sender  | [internal/protocol/sealed-sender/](./internal/protocol/sealed-sender/)   | Sender certificate and envelope privacy helpers |

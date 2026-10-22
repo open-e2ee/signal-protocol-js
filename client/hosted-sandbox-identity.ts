@@ -155,9 +155,9 @@ function encodeSegment(value: unknown): string {
  * Sandbox account. Another device of the account joins through device linking.
  *
  * The callback rejects a request for a production environment, for recovery,
- * for provider migration, or for recent or step-up assurance. A production
- * environment needs a `getIdentityAssertion` that your identity provider
- * supplies.
+ * for provider migration, or for recent or step-up assurance. Production needs
+ * a `getIdentityAssertion` callback for its configured application-bound or
+ * device-owned identity mode.
  *
  * @example
  * ```ts

@@ -1,4 +1,5 @@
 import { hostedAssertionIdentifier } from "./hosted-assertion-id";
+import { HostedRelayHttpError } from "./hosted-http-error";
 import { utf8Decode, websocketUrl } from "../internal/platform";
 import type {
   AccountIdentityProvisioning,
@@ -219,31 +220,6 @@ export interface HostedRelayTransportResult {
   readonly relayScopeId: Uint8Array;
   readonly remoteObjectStore: SignalProtocolRemoteObjectStore;
   readonly transport: HostedRelayHttpTransport;
-}
-
-export class HostedRelayHttpError extends Error {
-  public readonly code: string;
-  public readonly data?: Readonly<Record<string, unknown>>;
-  public readonly status: number;
-  /** The Relay's own hint that the same operation can be sent again. */
-  public readonly retryable: boolean;
-
-  public constructor(
-    status: number,
-    code: string,
-    message: string,
-    options?: {
-      readonly data?: Readonly<Record<string, unknown>>;
-      readonly retryable?: boolean;
-    },
-  ) {
-    super(message);
-    this.name = "HostedRelayHttpError";
-    this.status = status;
-    this.code = code;
-    this.data = options?.data;
-    this.retryable = options?.retryable ?? false;
-  }
 }
 
 /**
