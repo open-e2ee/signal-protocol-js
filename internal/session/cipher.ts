@@ -252,7 +252,7 @@ function findMatchingPreKeySession(
  * @example With configuration
  * ```typescript
  * const cipher = new SessionCipher(keyStorage, establishSession, lock, {
- *   maxSkip: 500,  // Limit skipped message keys (default: 1000)
+ *   maxSkip: 500,  // Limit skipped message keys (default: 25000)
  * });
  * ```
  *
@@ -292,7 +292,7 @@ export class SessionCipher {
    * @param lock - The session lock of the store, for per-session concurrency control.
    *   Sessions are locked by ID to prevent race conditions.
    * @param config - Optional configuration
-   * @param config.maxSkip - Maximum message keys to skip (default: 1000).
+   * @param config.maxSkip - Maximum message keys to skip (default: 25000).
    *   Higher values allow more out-of-order messages but increase memory/CPU.
    * @param config.protocolStrategy - Protocol strategy, for the SPQR
    *   per-message diagnostic hooks.

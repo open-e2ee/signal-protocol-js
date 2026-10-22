@@ -34,6 +34,14 @@
  *
  * The logical connection that the driver returns stays pinned to its file
  * across these physical reopens.
+ *
+ * The core keeps the default rollback journal. An open plays a hot journal
+ * back before its first read, so a tab killed inside a commit leaves a store
+ * that the next open restores to the last commit. The patched engine reports
+ * no reserved lock, so that the playback runs; see `./sqlite3mc/README.md`.
+ * A playback through the wrong key state would leave the file corrupt, so an
+ * open reads the state of the file first, through an immutable read-only
+ * connection with no key, and rejects a key state that does not match.
  */
 
 import sqlite3InitModule, {
@@ -441,18 +449,70 @@ function applyKey(sqlite3: Sqlite3Static, database: Sqlite3Database, key: Uint8A
   }
 }
 
+/** The SQLite message for a read of a file that is not a database. */
+const NOT_A_DATABASE = /SQLITE_NOTADB|file is not a database/;
+
+/** The SQLite message for a read of a database whose header passed its magic check. */
+const CORRUPT_DATABASE = /SQLITE_CORRUPT|database disk image is malformed/;
+
+/**
+ * The SQLite result of a read of an existing file with no key: `plaintext`
+ * for a plaintext database, `encrypted` for a file that is not one, and
+ * `empty` for a file with no page. `missing` when the pool has no such file.
+ *
+ * The read runs on an immutable read-only connection, so it takes no lock,
+ * plays no hot journal back, and writes nothing. A normal open plays a hot
+ * journal back before its first read. With the wrong key state, that playback
+ * runs the journal of an encrypted database through no cipher, or the journal
+ * of a plaintext database through the cipher, and leaves the file corrupt.
+ *
+ * SQLite checks the magic of page 1 before anything else, and a file that
+ * fails it reads as `not a database`. A plaintext header passes the magic, and
+ * a torn commit can leave it with a page count above the file size, which
+ * reads as `malformed`. That result is therefore a plaintext database too.
+ *
+ * The read sees page 1 as the last commit left it. A commit that died inside
+ * the write of page 1 of a plaintext database can leave a header that reads
+ * as `encrypted`. The open with no key that follows then plays the journal
+ * back and reports the same result, so that file is not lost.
+ */
+function readFileState(slot: Slot, sqlite3: Sqlite3Static): 'plaintext' | 'encrypted' | 'empty' | 'missing' {
+  if (!slot.pool!.getFileNames().includes(slot.path)) return 'missing';
+  const database = new sqlite3.oo1.DB({
+    filename: `file:${slot.path}?immutable=1`,
+    flags: 'r',
+    vfs: slot.vfsName,
+  });
+  try {
+    return readInteger(database, 'page_count') > 0 ? 'plaintext' : 'empty';
+  } catch (error) {
+    if (error instanceof Error && NOT_A_DATABASE.test(error.message)) return 'encrypted';
+    if (error instanceof Error && CORRUPT_DATABASE.test(error.message)) return 'plaintext';
+    throw error;
+  } finally {
+    database.close();
+  }
+}
+
 function openPhysical(
   slot: Slot,
   sqlite3: Sqlite3Static,
   flags: 'c' | 'w',
   key: Uint8Array | null
 ): Sqlite3Database {
+  // The open plays a hot journal back before its first read, so the key state
+  // of the open has to match the file before the file is touched. A mismatch
+  // rejects with the message of the read that the open would have failed.
+  const state = readFileState(slot, sqlite3);
+  if (state === (key === null ? 'encrypted' : 'plaintext')) {
+    throw new Error('SQLITE_NOTADB: sqlite3 result code 26: file is not a database');
+  }
   const database = new sqlite3.oo1.DB({ filename: slot.path, flags, vfs: slot.vfsName });
   try {
     if (key !== null) applyKey(sqlite3, database, key);
     // The cipher accepts any key and fails only at the first read. This read
-    // rejects a wrong key, a missing key, or a key on a plaintext file with
-    // `file is not a database`, before any other setting.
+    // rejects a wrong key with `file is not a database`, before any other
+    // setting.
     readValue(database, 'SELECT count(*) FROM sqlite_schema');
   } catch (error) {
     database.close();

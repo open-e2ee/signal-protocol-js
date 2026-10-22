@@ -553,7 +553,10 @@ from the protocol-facing local store interface.
 
 > `optional` **ratchetConfig?**: [`DoubleRatchetConfig`](DoubleRatchetConfig.md)
 
-Double Ratchet algorithm configuration
+Double Ratchet algorithm configuration.
+
+`maxSkip` sets the skip limit of the protocol manager that the client
+creates. A `protocolManager` that the caller supplies keeps its own limit.
 
 #### Inherited from
 

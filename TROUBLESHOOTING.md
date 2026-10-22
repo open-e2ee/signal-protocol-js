@@ -110,7 +110,7 @@ await signal.encryptMessage('bob:2', 'Hello'); // Secondary device
 The protocol handles out-of-order messages automatically via MKSKIPPED. For failures:
 
 1. Check that both parties established sessions
-2. Verify message counters are not too far apart (maxSkip limit: 1000)
+2. Verify message counters are not too far apart (default `maxSkip` limit: 25000)
 3. Check that no sender or transport duplicates messages
 4. Check that skipped keys did not expire (7-day default)
 
@@ -118,12 +118,12 @@ The protocol handles out-of-order messages automatically via MKSKIPPED. For fail
 
 **"Failed to decrypt" or "MAC verification failed"**
 
-| Symptom     | Cause                   | Solution                                         |
-| ----------- | ----------------------- | ------------------------------------------------ |
-| MAC failed  | Data corrupted          | Check network, verify no modification in transit |
-| Wrong key   | Session mismatch        | Verify sessionId matches sender                  |
-| Key expired | Message > 7 days old    | Cannot recover; re-send message                  |
-| Counter gap | > 1000 messages skipped | Increase `maxSkip` or re-establish session       |
+| Symptom     | Cause                    | Solution                                         |
+| ----------- | ------------------------ | ------------------------------------------------ |
+| MAC failed  | Data corrupted           | Check network, verify no modification in transit |
+| Wrong key   | Session mismatch         | Verify sessionId matches sender                  |
+| Key expired | Message > 7 days old     | Cannot recover; re-send message                  |
+| Counter gap | > 25000 messages skipped | Increase `maxSkip` or re-establish session       |
 
 ---
 

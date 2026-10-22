@@ -22,9 +22,10 @@
       "patches": [
         "keep-pool-on-failed-install",
         "settle-handles-before-release",
-        "report-quota-as-full"
+        "report-quota-as-full",
+        "report-no-reserved-lock"
       ],
-      "sha256": "e04bde7a1eef5ef51d5b4aaba7bb50fcb19071b9c472717432e40353e8d3a415"
+      "sha256": "e665f579796955e9f69a3e89d999ea28f49ad16c37f277208abc2f3936146384"
     },
     "sqlite3.wasm": {
       "archivePath": "sqlite3mc-wasm-3530400/jswasm/sqlite3.wasm",

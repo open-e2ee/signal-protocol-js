@@ -132,6 +132,22 @@ const PATCHES = [
         if(code && 'QuotaExceededError'===e.name) code = capi.SQLITE_FULL;
         e.sqlite3Rc = code || capi.SQLITE_IOERR;`,
   },
+  {
+    id: 'report-no-reserved-lock',
+    file: 'sqlite3.mjs',
+    reason:
+      'The opfs-sahpool VFS allows one connection, so no other connection can hold a reserved ' +
+      'lock, but the release reports one. SQLite then takes every hot journal for the journal of ' +
+      'a live transaction and never plays it back, so a commit that a closed tab left half ' +
+      'written stays half written. The patch reports no reserved lock.',
+    find: `      pool.log('xCheckReservedLock');
+      pool.storeErr();
+      wasm.poke32(pOut, 1);`,
+    replace: `      pool.log('xCheckReservedLock');
+      pool.storeErr();
+      // open-e2ee: the pool allows one connection, so nothing holds the lock.
+      wasm.poke32(pOut, 0);`,
+  },
 ];
 
 function readPins(root = repoRoot) {

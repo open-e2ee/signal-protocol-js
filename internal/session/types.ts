@@ -211,7 +211,7 @@ export interface SessionCipherConfig {
   /**
    * Maximum number of message keys to skip in a single receiving chain.
    * Per Signal Protocol specification - prevents DoS attacks.
-   * @default 1000
+   * @default 25000
    */
   maxSkip?: number;
 

@@ -35,10 +35,7 @@ const advancedSignalProtocol = await DefaultSignalProtocolClient.create(userId, 
   storage,
   relay,
   onProgress,
-  ratchetConfig: {
-    maxSkip: 2000,
-    keyExpirationMs: 14 * 24 * 60 * 60 * 1000 // 14 days
-  },
+  ratchetConfig: { maxSkip: 2000 },
   enableDebugLogging: true
 });
 ```
@@ -817,7 +814,10 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
 
 > `optional` **ratchetConfig?**: [`DoubleRatchetConfig`](DoubleRatchetConfig.md)
 
-Double Ratchet algorithm configuration
+Double Ratchet algorithm configuration.
+
+`maxSkip` sets the skip limit of the protocol manager that the client
+creates. A `protocolManager` that the caller supplies keeps its own limit.
 
 ***
 
