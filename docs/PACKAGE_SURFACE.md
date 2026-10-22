@@ -106,6 +106,7 @@ implementations are outside the published SDK.
 - `@open-e2ee/signal-protocol-sdk/local/store/expo`
 - `@open-e2ee/signal-protocol-sdk/local/store/key-value`
 - `@open-e2ee/signal-protocol-sdk/local/store/key-value/realm`
+- `@open-e2ee/signal-protocol-sdk/local/store/conformance`
 - `@open-e2ee/signal-protocol-sdk/local/store/memory`
 - `@open-e2ee/signal-protocol-sdk/local/store/node`
 - `@open-e2ee/signal-protocol-sdk/local/store/react-native`

@@ -184,18 +184,27 @@ environment an adapter must honor its promises in, not the subject of a test.
       application-supplied `storage` backend. Instead it ships the contract
       suite the application runs against its own backend. The kit exports
       `runBackendConformance` and `assertBackendConformance`, which execute
-      thirteen cases against any `KeyValueStorage`:
+      sixteen cases against any `KeyValueStorage`:
 
-      - round-trips
-      - key listing
-      - batch removal
-      - in-order atomic application
-      - checks evaluated against pre-batch state
-      - null-guarded creation
-      - all-or-nothing failure
-      - exact-userId session removal with in-batch visibility
-      - one winner between concurrent guarded batches
-      - durability across reopen
+      - `getItem` returns null for a missing key
+      - `setItem` stores, overwrites, and round-trips values
+      - `removeItem` deletes a key and tolerates a missing key
+      - `getAllKeys` lists exactly the stored keys
+      - `removeMany` removes the listed keys and tolerates missing ones
+      - `pruneSkippedSenderKeys` uses numeric indexes, exact prefixes, and
+        earlier writes in its batch
+      - `atomicWrite` applies operations in order
+      - `atomicWrite` evaluates checks against the state before the batch
+      - `atomicWrite` guards a creation with an `expectedValue` of null
+      - a failed check applies none of the batch
+      - `removeSessionsForUser` removes only exact userId matches under the
+        prefix
+      - `removeSessionsForUser` sees earlier writes in its batch
+      - `removeSenderKeyHandoffs` removes only keys whose segments match
+        under the prefix
+      - `removeSenderKeyHandoffs` sees earlier writes in its batch
+      - concurrent guarded batches have exactly one winner
+      - committed writes survive a reopen
 
       A jest gate proves the kit catches a non-atomic backend, a
       prefix-matching session removal, and an unserialized backend, on every
@@ -246,6 +255,77 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
 The [Expo guide](./expo/README.md) covers the native build and the database key.
 The [React Native SQLite guide](./react-native/README.md) covers the same for
 bare React Native.
+
+## Conformance kit for a custom store
+
+- `runLocalStoreConformance` and `assertLocalStoreConformance` from `@open-e2ee/signal-protocol-sdk/local/store/conformance`
+
+An application that implements `SignalProtocolLocalStore` itself runs this
+kit against its store. The kit has no framework or platform dependencies. It
+runs unchanged under jest, Node, a browser, or Hermes, and it loads no
+optional peer. The kit gets a fresh, empty store from `createStore` for each
+case. The other options are hooks for the cases that need them:
+
+- `reopen` closes the store and opens the same data again. The two reopen
+  cases skip without it.
+- `armWriteFailure` makes the next atomic commit fail after its first write.
+  Each atomic commit that the kit arms holds a receive record, so a failure
+  on that write works when the store writes it after another record. The
+  two rollback cases skip without it.
+- `readRawBytes` returns the bytes that the store keeps. The ciphertext case
+  skips without it.
+- `closeStore` releases a store after its case.
+
+The kit has these cases:
+
+- identity overwrite: a key pair and its registration ID for `'aci'` and
+  `'pni'`, and an overwrite of each with a new registration ID. The write of
+  one type does not change the other type.
+- identity overwrite after reopen
+- session trust commit: a commit of a session, its contact identity, and its
+  receive record, and a refused commit that writes nothing
+- session trust commit rollback
+- sender key receive commit: a sender key record with its receive record,
+  the consumed skipped key, and skipped key eviction
+- sender key receive commit rollback
+- metadata compare-and-set: a match, a mismatch, an absent value, and one
+  winner among concurrent calls
+- receive record insert and compare-and-set
+- receive record listing: arrival order, then work ID order, an exclusive
+  `after` cursor, the default page size, and the filters
+- receive record completion and usage
+- durability after reopen: each kind of write survives a reopen
+- no plaintext at rest: the stored bytes hold no known plaintext. It runs
+  only when the store declares a cipher.
+- protection declaration: `store.protection` is a valid declaration
+
+`runLocalStoreConformance` reports each case as passed, skipped, or failed,
+and it does not throw. A skipped case is a name with no reason. The result
+also carries the `protection` declaration of the store, or null when the
+declaration case fails. `assertLocalStoreConformance` throws with every
+problem listed. A failed case is a problem. A skipped rollback case is also a
+problem, because a store must prove that its atomic commits roll back. Use
+the assert form in the automated checks of the application.
+
+<!-- doc-snippet:skip requires-external-context -->
+```ts
+import { assertLocalStoreConformance } from '@open-e2ee/signal-protocol-sdk/local/store/conformance';
+
+await assertLocalStoreConformance({
+  createStore: () => openMyStore({ name: freshName() }),
+  reopen: (store) => reopenMyStore(store),
+  armWriteFailure: (store) => failNextReceiveRecordWrite(store),
+  readRawBytes: (store) => readMyStoreFiles(store),
+  closeStore: (store) => closeMyStore(store),
+});
+```
+
+The kit does not cover `SenderKeyHandoffStore`, `MessageRecordStore`, or
+`SendLogStore`. A store that implements those interfaces needs its own
+checks for them. On every change to the source repository, each shipped
+store runs the kit under jest. The key-value store and the React Native
+SQLite store also run it under Hermes. The web stores also run it in a real
+browser.
 
 ## Storage Responsibilities
 

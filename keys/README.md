@@ -47,7 +47,9 @@ interface CompositeIdentityV1 {
 
 The SDK provisions one tuple per `(userId, identityType)` across linked devices.
 ACI and PNI are independent identity types. Device registration IDs, prekeys,
-and sessions remain device-specific.
+and sessions remain device-specific. A managed device link keeps the tuple and
+writes a fresh registration ID for each identity type that the linked store
+holds.
 
 The tuple encodes to exactly 67 bytes:
 

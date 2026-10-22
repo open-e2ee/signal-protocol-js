@@ -31,7 +31,8 @@ export interface ExpoSignalProtocolStoreOptions extends SqliteOpenOptions {
   /**
    * The database file name in the expo-sqlite default directory. It also
    * names the vault slot of the database key. Letters, digits, `.`, `_`, and
-   * `-` only. Default: `open-e2ee-signal-protocol.db`.
+   * `-` only, and no `.oe2e-convert` ending. Default:
+   * `open-e2ee-signal-protocol.db`.
    */
   readonly name?: string;
   /**

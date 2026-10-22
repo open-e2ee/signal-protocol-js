@@ -38,6 +38,8 @@
 
 import type { RetryTerminalClass } from '../local/store/reliability';
 import type { RelayProtocolError } from './device-set-reconciliation';
+import type { GroupInitStatus } from './group-init-status';
+import type { GroupId } from '../internal/groups/group-id';
 export type { RetryTerminalClass };
 import { ReceiveHookTimeout } from './receive-hook-bound';
 import { rethrowRelayWorkStopped } from './relay-work';
@@ -600,6 +602,33 @@ export interface SignalProtocolClientHooks {
   onReceiveExpired?: (event: ReceiveExpiredEvent) => void | Promise<void>;
 
   /**
+   * Runs when a client write to the record of a group changes the init
+   * status of the group.
+   *
+   * The hook gets the status after the write. It does not run when a write
+   * keeps the same status, or when a write deletes the record. When two
+   * writes to one group run at the same time, the hook can miss the status
+   * between them. The hook calls run in order, and no write waits for a hook
+   * call. So the hook can call a client method for the same group.
+   *
+   * The hook does not run for the statuses that the store holds when the
+   * client starts, or for a write that the application makes to the group
+   * store. Read each status with `getGroupInitStatus` when the application
+   * starts.
+   *
+   * @param groupId - The group whose status changed
+   * @param status - The status after the change
+   *
+   * @example
+   * ```typescript
+   * onGroupInitStatus: (groupId, status) => {
+   *   groupList.setInitStatus(groupId, status);
+   * }
+   * ```
+   */
+  onGroupInitStatus?: (groupId: GroupId, status: GroupInitStatus) => void | Promise<void>;
+
+  /**
    * Runs once for a completed send whose Relay accepted a declared post
    * without the `deviceSetChecked` mark. A declared post is a post to a
    * recipient device or a sync copy to another device of the own account.
@@ -720,6 +749,7 @@ const HOOK_NAMES = {
   onDeliveryError: true,
   onDeliveryRecovered: true,
   onReceiveExpired: true,
+  onGroupInitStatus: true,
   onRelayProtocolError: true,
   onReadReceiptReceived: true,
   onViewedReceiptReceived: true,

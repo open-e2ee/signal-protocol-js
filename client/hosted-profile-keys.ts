@@ -31,7 +31,7 @@ import {
   hostedRelayPresence,
   type HostedRelayPresenceRuntime,
 } from "./hosted-presence";
-import { HostedRelayHttpError } from "./hosted-transport";
+import { HostedRelayHttpError } from "./hosted-http-error";
 import {
   PROFILE_KEY_UPDATE_FLAG,
   bindProfileKeyExchange,

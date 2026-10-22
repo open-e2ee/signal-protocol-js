@@ -35,8 +35,8 @@ export interface NodeSignalProtocolStoreOptions extends SqliteOpenOptions {
   readonly directory: string;
   /**
    * The database file name in `directory`. Letters, digits, `.`, `_`, and
-   * `-` only, and no `.lock`, `-wal`, `-shm`, or `-journal` ending. Default:
-   * `open-e2ee-signal-protocol.db`.
+   * `-` only, and no `.lock`, `-wal`, `-shm`, `-journal`, or `.oe2e-convert`
+   * ending. Default: `open-e2ee-signal-protocol.db`.
    */
   readonly name?: string;
   /**

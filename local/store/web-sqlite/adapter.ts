@@ -31,8 +31,9 @@ export interface WebSqliteSignalProtocolStoreOptions extends SqliteOpenOptions {
   /**
    * The database name in the origin private file system. It also names the
    * vault slot of the database key. A letter or digit, then up to 63
-   * letters, digits, `.`, `_`, and `-`. Default:
-   * `open-e2ee-signal-protocol.db`.
+   * letters, digits, `.`, `_`, and `-`, and no `.oe2e-convert` ending. A
+   * conversion with `convertPlaintext` needs a name of at most 51
+   * characters. Default: `open-e2ee-signal-protocol.db`.
    */
   readonly name?: string;
   /**
@@ -141,8 +142,18 @@ export class WebSqliteSignalProtocolStore extends SqliteSignalProtocolStore {
   ): Promise<WebSqliteSignalProtocolStore> {
     const open = storeOptions(options);
     const database = await withSqliteOpenLock(open.name, 'open', async () => {
-      const release = stopper(open.driver, await acquireSqliteStoreLock(open.name, 'shared', 'open'));
-      return releasedOnClose(await openSqliteStore(open).catch(failed(release)), release);
+      // A conversion holds the store lock in exclusive mode, so it fails at
+      // once while another context has the store open. The open lock keeps
+      // every other open and reset out until this one holds the shared lock.
+      const opened = await openSqliteStore({
+        ...open,
+        lockConversion: () => acquireSqliteStoreLock(open.name, 'exclusive', 'open'),
+      }).catch(failed(() => open.driver.terminate()));
+      const release = await acquireSqliteStoreLock(open.name, 'shared', 'open').catch(async (error) => {
+        await opened.close().finally(() => open.driver.terminate());
+        throw error;
+      });
+      return releasedOnClose(opened, stopper(open.driver, release));
     });
     const protection = await readSqliteStoreProtection(database, open.vault);
     return await convertSqliteLegacyReceivedContent(

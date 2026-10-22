@@ -14,8 +14,8 @@ The Relay verifies the assertion and device proof, then returns the canonical
 account, registered device, scope, and authenticated transport used by the client.
 
 In a Sandbox environment, [hostedRelaySandboxIdentity](hostedRelaySandboxIdentity.md) supplies the
-assertion. In production, `getIdentityAssertion` gets the assertion from
-your identity provider.
+assertion. Production needs a callback for its configured application-bound
+or device-owned identity mode. The Sandbox helper cannot serve Production.
 
 ## Parameters
 

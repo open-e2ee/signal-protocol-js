@@ -233,6 +233,52 @@ onEncryptionError: (sessionId, error) => {
 
 ***
 
+### onGroupInitStatus?
+
+> `optional` **onGroupInitStatus?**: (`groupId`, `status`) => `void` \| `Promise`\<`void`\>
+
+Runs when a client write to the record of a group changes the init
+status of the group.
+
+The hook gets the status after the write. It does not run when a write
+keeps the same status, or when a write deletes the record. When two
+writes to one group run at the same time, the hook can miss the status
+between them. The hook calls run in order, and no write waits for a hook
+call. So the hook can call a client method for the same group.
+
+The hook does not run for the statuses that the store holds when the
+client starts, or for a write that the application makes to the group
+store. Read each status with `getGroupInitStatus` when the application
+starts.
+
+#### Parameters
+
+##### groupId
+
+[`GroupId`](../type-aliases/GroupId.md)
+
+The group whose status changed
+
+##### status
+
+[`GroupInitStatus`](../type-aliases/GroupInitStatus.md)
+
+The status after the change
+
+#### Returns
+
+`void` \| `Promise`\<`void`\>
+
+#### Example
+
+```typescript
+onGroupInitStatus: (groupId, status) => {
+  groupList.setInitStatus(groupId, status);
+}
+```
+
+***
+
 ### onKeyRotated?
 
 > `optional` **onKeyRotated?**: (`keyType`) => `void` \| `Promise`\<`void`\>

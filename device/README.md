@@ -118,9 +118,35 @@ challenge in the calling process. Thus that process must hold the active
 device's store, private keys included. The adapter's `linkDevice()` gets a
 challenge signer for each device and no private key.
 
-The link copies no protocol state and no group state. Sessions start fresh.
-For each group, the application brings the group master key to the new device,
-and the new device then calls `syncGroup()`.
+The link copies the master key of each group that the active device's group
+store lists into the new device's group store. The copy runs in the calling
+process, so no master key crosses the Relay. A client with `groups` on the new
+device then fetches each copied group. The application calls no group method
+for this. The link copies no protocol state, so sessions start fresh.
+
+A group record that a release before 12.0.0 wrote, and that the active device
+has not read since, is not listed and is not copied. Read each group once on
+the active device before the link to copy it. Otherwise the group initializes
+on the new device from its first group message.
+
+If a client runs on the active device during the link, pass its group store as
+`activeGroupStore`, or stop that client first. The new device's store must hold
+no group state. The link refuses a store that lists a group with
+`HostedRelayDeviceLinkError`.
+
+The copied keys live in the new device's group store. The SDK does not move
+them again. A later move of that store is the application's store move.
+
+The new device gets its own registration ID. The link writes it into the new
+device's store before it registers. A device that a 12.0.x release linked
+keeps the ID that it has.
+
+The application calls no sender-key method for the new device. A group send
+gives the sender key to the listed devices of other members that have no
+handoff row. A handoff row records that the Relay accepted a distribution of
+the sender's key for one device. So the next group send of each other member
+that lists the new device gives it that member's key. The sender's own other
+devices get the sent transcript and no distribution.
 
 ## Transfer cryptographic state
 

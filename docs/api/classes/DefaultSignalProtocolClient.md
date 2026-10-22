@@ -1348,6 +1348,30 @@ SignalProtocolClient.forgetSentContent
 
 ***
 
+### getGroupInitStatus()
+
+> **getGroupInitStatus**(`groupId`): `Promise`\<[`GroupInitStatus`](../type-aliases/GroupInitStatus.md) \| `null`\>
+
+Get the init status of a group on this device.
+
+#### Parameters
+
+##### groupId
+
+[`GroupId`](../type-aliases/GroupId.md)
+
+#### Returns
+
+`Promise`\<[`GroupInitStatus`](../type-aliases/GroupInitStatus.md) \| `null`\>
+
+The status, or null when this device has no record of the group
+
+#### Throws
+
+When the client has no groups config
+
+***
+
 ### getGroupSenderKeyDistribution()
 
 > **getGroupSenderKeyDistribution**(`groupId`): `Promise`\<[`SenderKeyDistributionMessage`](../interfaces/SenderKeyDistributionMessage.md) \| `null`\>

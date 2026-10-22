@@ -28,6 +28,9 @@ compatibility boundary.
 - The SDK selects SESAME's per-user identity-key model and provisions that tuple
   unchanged across linked devices. Registration IDs, prekeys, and sessions are
   device-specific. Generic SESAME still supports both identity-key models.
+- A managed device link gives the linked device a fresh registration ID that
+  differs from the active device's ID, and a fresh ID for a held PNI record.
+  A device that a 12.0.x release linked keeps the ID that it has.
 - Trust storage persists the tuple and trust metadata. The SDK derives
   commitments locally, and a redundant supplied commitment must match before
   mutation.
@@ -204,6 +207,11 @@ writes over it. Flash storage, backups, and the browser storage can also
 keep earlier copies. A reader who has an earlier copy and its key can read
 content that the store deleted. The SDK does not promise erasure.
 
+A conversion with `convertPlaintext` does not erase the plaintext either.
+After it, the old plaintext file can stay in free disk blocks, backups, and
+file system snapshots. A reader of such a copy needs no key. The SDK cannot
+erase these copies.
+
 The store also keeps receive records: the plaintext of each envelope that
 the client decrypted on the Relay subscription path, in
 `receiveIncomingEnvelopes`, or in `processIncomingEnvelope`. A record is
@@ -236,11 +244,21 @@ table shows how the built-in configurations combine them:
 | Custom store | As declared | As declared | From the declaration | As declared | The SDK cannot check the stored bytes |
 
 The client checks only the shape of a `protection` declaration. It cannot
-check that the bytes on disk are encrypted or where the key is. A custom store
-must commit the ratchet state and the receive record in one transaction. It
-must declare `protection` truthfully, and keep the key outside the data store
-when it declares `protected`. Do not restore a store from a backup while the
-client runs. An earlier ratchet state makes later messages fail to decrypt.
+check that the bytes on disk are encrypted or where the key is. The client does
+not check the class of a store, and managed groups work on a custom store. The
+application that supplies a custom store is responsible for these properties:
+
+- `commitSessionTrust` writes the ratchet state and the receive record in one
+  transaction. `storeSenderKeyRecord` writes the sender key record and its
+  receive effects in one transaction. A failed commit rolls back every write
+  in it.
+- The store declares `protection` truthfully. When it declares `protected`,
+  the key is outside the data store.
+- The application does not restore a store from a backup while the client
+  runs. An earlier ratchet state makes later messages fail to decrypt.
+- The store passes the local store conformance kit from
+  `@open-e2ee/signal-protocol-sdk/local/store/conformance`. Give the kit the
+  `armWriteFailure` hook, so that the rollback of each atomic commit runs.
 
 Group sender key state never leaves the device. A sender key record holds the
 chain key that every message key on that chain derives from, and the sender's

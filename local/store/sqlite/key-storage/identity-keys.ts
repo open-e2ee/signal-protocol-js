@@ -12,7 +12,9 @@ import {
 import { keyStorageError, type KeyStorageContext } from './context';
 
 /**
- * Store identity key pair (only done once per device per identity type)
+ * Store the identity key pair of one identity type. A call for a type that
+ * already has a key pair overwrites the key pair and the registration ID of
+ * that type, and leaves the other type unchanged.
  *
  * IdentityKeyPair has nested structure:
  * - dhKey: { publicKey, privateKey } (X25519 for DH)

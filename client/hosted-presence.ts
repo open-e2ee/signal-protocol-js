@@ -23,7 +23,7 @@ import type {
   PresenceSocketEvent,
 } from "./hosted-mailbox-subscription";
 import type { HostedRelayWakeClient } from "./hosted-push";
-import { HostedRelayHttpError } from "./hosted-transport";
+import { HostedRelayHttpError } from "./hosted-http-error";
 import {
   HostedRelayPresenceError,
   PRESENCE_READ_LIMIT,

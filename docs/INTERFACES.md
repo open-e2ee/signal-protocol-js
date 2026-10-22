@@ -106,7 +106,9 @@ The application backend must:
 - allocate linked-device identifiers
 - apply retention and abuse controls
 - give an envelope one `id`, and keep that `id` on every redelivery of the
-  envelope, because the client delivers content at most once by that `id`
+  envelope. The client delivers each message to the application hook at least
+  once, with that `id` as its `messageId`, and the application deduplicates on
+  that `id`
 
 A client-supplied user identifier is a routing input, not proof of identity.
 

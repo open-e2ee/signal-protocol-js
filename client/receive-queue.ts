@@ -178,8 +178,10 @@
  *   comes in the reply to the acknowledgment, so the record keeps the
  *   receipt and the decision across a restart, and stays in flight until its
  *   completion is written. Tests: V7, V8,
- *   "a ReceiptSendTerminalError completes with no receipt", "keeps a Relay
- *   receipt decision that arrives while the record waits, across a restart".
+ *   "a ReceiptSendTerminalError completes with no receipt", "a pass that
+ *   listed a receipt-due record before its completion sends no second
+ *   receipt", "keeps a Relay receipt decision that arrives while the record
+ *   waits, across a restart".
  * - Receipt lifetime. The Signal client with the stored job stops its receipt
  *   retries 1 day after it creates the job, after the message is processed.
  *   The queue sends a receipt only until `RECEIPT_LIFESPAN_MS`, 1 day,
@@ -1568,25 +1570,27 @@ export class ReceiveQueue {
     }
     // The receipt went out, or the Relay refused it for good. The record
     // stays in flight until its completion is written, so a pass before that
-    // write does not send its receipt again. A completion that a client stop
-    // stops leaves the record, and its receipt goes out again after the next
-    // start.
-    let retryAt: number | undefined;
-    void this.relayWork
-      .run(async (work) => {
-        const { ctx } = this.pass(work);
-        const record = await ctx.storage.getReceiveWork(workId);
-        work.proceed();
-        if (record?.stage !== 'receipt-due') return;
-        if (await completeReceiveWork(ctx, record)) this.forget(workId);
-        else retryAt = Date.now();
-      })
-      .catch(() => {
-        retryAt = Date.now() + RECEIVE_RETRY_BACKOFF_MS;
-      })
-      .then(() => {
-        this.receiptsInFlight.delete(workId);
-        if (retryAt !== undefined) this.schedule(retryAt);
-      });
+    // write does not send its receipt again. The completion runs between
+    // passes, so no pass that listed the record before the completion
+    // visits it after the in-flight mark ends. A completion that a client
+    // stop stops leaves the record, and its receipt goes out again after the
+    // next start.
+    void this.exclusive(async () => {
+      let retryAt: number | undefined;
+      await this.relayWork
+        .run(async (work) => {
+          const { ctx } = this.pass(work);
+          const record = await ctx.storage.getReceiveWork(workId);
+          work.proceed();
+          if (record?.stage !== 'receipt-due') return;
+          if (await completeReceiveWork(ctx, record)) this.forget(workId);
+          else retryAt = Date.now();
+        })
+        .catch(() => {
+          retryAt = Date.now() + RECEIVE_RETRY_BACKOFF_MS;
+        });
+      this.receiptsInFlight.delete(workId);
+      if (retryAt !== undefined) this.schedule(retryAt);
+    });
   }
 }

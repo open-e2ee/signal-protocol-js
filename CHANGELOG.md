@@ -1,5 +1,137 @@
 # Changelog
 
+## 13.0.0
+
+### Breaking
+
+- **A linked store that holds group state is refused.**
+  `linkHostedRelayDevice` lists the linked device's group store before any
+  write. When the store lists a group that the link did not write, the call
+  throws `HostedRelayDeviceLinkError` with code `DEVICE_LINK_STORE_NOT_EMPTY`.
+  The linked device's group store is `groups.store`, or the SDK group store on
+  the linked store. Link the device again with a new, empty store.
+- **A custom identity store must accept an overwrite of its own identity
+  record.** `linkHostedRelayDevice` gives the linked device its own
+  registration ID with the same identity keys. It calls `storeIdentityKey` and
+  then `setLocalRegistrationId` for an identity type that the linked store
+  already holds. After both calls, both reads of that type must give the new
+  ID, and the other identity type must stay unchanged. Every store that the SDK
+  ships does this. A custom `SignalProtocolLocalStore` must pass this check:
+
+  <!-- doc-snippet:skip requires-external-context -->
+  ```ts
+  const identity = await store.getIdentityKey('aci');
+  await store.storeIdentityKey({ ...identity!, registrationId: 4321 }, 'aci');
+  await store.setLocalRegistrationId(4321, 'aci');
+  (await store.getIdentityKey('aci'))!.registrationId; // 4321
+  await store.getLocalRegistrationId('aci'); // 4321
+  ```
+
+- **A SQLite store name that ends in `.oe2e-convert` is refused.** The
+  conversion uses that name for its temporary file. `nodeStore`, `expoStore`,
+  `reactNativeStore`, `webSqliteStore`, and their resets fail with
+  `INVALID_STATE` for such a name.
+
+### Added
+
+- **`getGroupInitStatus` and the `onGroupInitStatus` hook.**
+  `DefaultSignalProtocolClient.getGroupInitStatus(groupId)` gives the
+  `GroupInitStatus` of a group on this device: `'ready'`, `'stale'`,
+  `'pending'`, `'no-key'`, or `'denied'`. It gives null when the device has no
+  record of the group. `'no-key'` means that the device knows the group but
+  holds no group key. `onGroupInitStatus(groupId, status)` runs when a client
+  write to the record of a group changes its status. It does not run when the
+  status stays the same.
+- **`activeGroupStore` in `HostedRelayManagedDeviceLinkOptions`.** It is the
+  group store that the link copies from. The default is the SDK group store on
+  `activeDeviceStorage`. If a client runs on the active device during the
+  link, pass that client's group store, or stop that client first.
+- **Progress phase `'copying'` for `'device-link'`.** `linkHostedRelayDevice`
+  reports it before it copies the group master keys.
+
+- **SQLite stores accept `convertPlaintext: true`.** An encrypted open then
+  converts a database that `encryptionAtRest: false` created, and keeps every
+  row and its schema version. The removal of the plaintext file is the commit
+  point. A crash before it keeps the plaintext file, and a crash after it
+  leaves a store that the next encrypted open finishes. Each store guide has a
+  "Convert a plaintext store" section.
+
+- **`HostedRelayHttpError` is exported from the root entry and the `client`
+  entry.** A custom `HostedRelayManagedDeviceLinkAdapter` can throw it when
+  the Relay refuses the link. Give it the Relay's status, `code`, message,
+  and `retryable`. A refusal with `retryable` false and the code
+  `KEY_PROOF_INVALID` or `CONFLICT` then rolls the link back. The
+  `linkHostedRelayDevice` call keeps the link state for an error of any other
+  class, also when the error has the same `code`.
+
+- **Added: the local/store/conformance subpath exports runLocalStoreConformance and assertLocalStoreConformance.** A custom local store can check identity overwrite, atomic commits, compare-and-set, receive work, durability, and its protection declaration.
+
+### Changed
+
+- **The link copies each group master key.** `linkHostedRelayDevice` copies
+  the master key of each group that the active device's group store lists into
+  the linked device's group store, in the calling process. No master key
+  crosses the Relay. A client with `groups` on the linked device then fetches
+  each copied group, so the application no longer brings each master key and
+  calls `syncGroup()`. A group record that a release before 12.0.0 wrote, and
+  that the active device has not read since, is not copied. Read each group
+  once on the active device before the link to copy it. A link that stops
+  during the copy copies again on the next call. A link that the Relay refuses
+  removes its copied groups.
+
+- **The SQLite key mismatch error names `convertPlaintext`.** An encrypted open
+  of a plaintext file fails with `SqliteKeyMismatchError`, and its message
+  gives the option as a way to keep the data.
+- **An open or a reset with `encryptionAtRest: false` refuses an incomplete
+  conversion.** While the temporary file of a conversion exists, it fails with
+  `INVALID_STATE` and changes nothing.
+- **Each linked device gets its own registration ID.** `linkHostedRelayDevice`
+  writes a fresh registration ID into the linked store before it registers.
+  The ID differs from the ID of the active device. A held PNI record gets a
+  separate fresh ID. A device that a 12.0.x release linked keeps the ID that it
+  has. A link that a 12.0.x release began and that stopped before it completed
+  keeps its stored ID, so it registers the same device.
+- **A linked store with a device-authentication key and no registration of the
+  link is refused.** `linkHostedRelayDevice` throws
+  `HostedRelayDeviceLinkError` with code `DEVICE_LINK_STORE_NOT_EMPTY` before
+  any write. Link the device again with a new, empty store.
+- **A refused link rolls back.** When the Relay refuses a link with
+  `KEY_PROOF_INVALID` or `CONFLICT` and the refusal is not retryable, the call
+  removes the link state and rethrows. It keeps the identity records and the
+  registration, so the next call sends the same registration ID. Every other
+  error keeps the link state, and the next call resumes the link.
+
+### Fixed
+
+- **Hosted identity docs.** The quickstart and API reference describe both
+  Production modes: application-bound and device-owned.
+  `hostedRelaySandboxIdentity` remains limited to Sandbox. The key-label note
+  states the session interoperability limit.
+
+- **A link whose first sync fails rejects and can resume.**
+  `linkHostedRelayDevice` stops the client and rejects with
+  `OpenE2EE Signal Protocol Relay initial synchronization failed` when the
+  client's first sync fails. In 12.0.1 and earlier, it returned the client with
+  `syncStatus` `'failed'`. The next call with the same stores resumes the link
+  and gets the same device.
+
+- **Fixed: removing a web SQLite file also removes its OPFS pool directory.**
+
+- **A received message gets one delivery receipt.** When the Relay accepted
+  or refused a delivery receipt, the receive queue completed its record
+  outside the queue's passes. A pass that read the record before that
+  completion could put the receipt in the batch again after it. In 12.0.1
+  and earlier, the sender could then get a second delivery receipt for the
+  same message. The completion now runs between passes.
+
+- **Fixed: the web SQLite store retries a transient OPFS failure of its
+  open.** WebKit can reject an access handle with `UnknownError` under load,
+  and the store then rejected the open with `OPFS_FILE_BUSY`. Now the store
+  attaches the pool of the file again, up to four attempts, 100 ms apart. It
+  retries only before the first statement of the request, so the file stays
+  unchanged. It does not retry a full quota or any other error. After the
+  fourth attempt the store rejects with `OPFS_FILE_BUSY` as before.
+
 ## 12.0.1
 
 - **Fixed: a web SQLite store restores the last commit after a tab died inside a
