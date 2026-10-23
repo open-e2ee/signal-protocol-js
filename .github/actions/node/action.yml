@@ -20,7 +20,7 @@ inputs:
       release-export pipeline, which regenerates package-lock.json for the
       transformed manifest; a different npm major computes a different tree
       and `npm ci` fails.
-    default: '26'
+    default: '26.12.1'
 
 outputs:
   node-modules-key:
@@ -34,6 +34,10 @@ runs:
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: ${{ inputs.node-version }}
+
+    - name: Report Node.js version
+      shell: bash
+      run: node --version
 
     - id: key
       shell: bash

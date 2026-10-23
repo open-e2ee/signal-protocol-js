@@ -32,8 +32,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # Use the qualified publication runtime.
-          node-version: 26.8.2
+          node-version: 26.12.1
           registry-url: https://registry.npmjs.org
+
+      - name: Report Node.js version
+        run: node --version
 
       - name: Install from the committed lockfile
         run: npm ci --ignore-scripts
@@ -129,7 +132,10 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 26.8.2
+          node-version: 26.12.1
+
+      - name: Report Node.js version
+        run: node --version
 
       - name: Install from the committed lockfile
         run: npm ci --ignore-scripts
