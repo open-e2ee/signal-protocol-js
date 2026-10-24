@@ -1,5 +1,59 @@
 # Changelog
 
+## 13.2.0
+
+### Added
+
+- `HostedRelayWakeResult` has an optional `retainedWork` field. It copies the
+  Relay report of the wake pull. True means that the Relay keeps a message
+  after the page, or a Relay receipt that the page did not carry, so run
+  another `pullHostedRelayAfterWake()` pass. False means that the page carried
+  all retained work. A Relay that does not report it gives no field. Then the
+  retained work is unknown, so do not read an absent field as false.
+
+### Fixed
+
+- A hosted mailbox subscription now acknowledges each recovery pull page in
+  one HTTP request, also while the socket is live, and waits for the response.
+  When the page was full, with 100 messages or 32 Relay receipts, and the
+  Relay removed work or issued a cursor, the next page follows at once. It
+  does not wait for a timer. So a backlog of Relay receipts drains on the same
+  socket, with no reconnect. A socket frame never starts a pull.
+- A lost acknowledgment request or a lost acknowledgment response now starts
+  one pull from the mailbox head after a wait. The wait starts at 2 seconds
+  and doubles after each further loss, up to 64 seconds. An acknowledgment
+  whose requests all succeed starts it at 2 seconds again. A pull that is
+  requested while the acknowledgment fails waits for that head pull. So a
+  lasting acknowledgment failure backs off. A replayed Relay receipt is not
+  handed off again.
+- A subscription now keeps at most 132 Relay receipts in memory while a
+  receipt listener is slow. One batch takes at most 32 receipts. When the
+  queue of 100 items is full, the rest stay in the Relay, and the subscription
+  pulls them when the queue is empty, with no wait.
+- A pull page now decodes the optional `failedEntries` list of the Relay. It
+  holds each retained message that the Relay read and could not serve. The
+  subscription never acknowledges such a message. It pulls again from the
+  mailbox head after the failed-work wait, which starts at 2 seconds and
+  doubles up to 64 seconds. A page pulled with a cursor does not start that
+  wait again, so a long backlog does not cut the wait short. A page with a
+  `failedEntries` value that is not a list of entries is refused. A page that
+  holds only failed entries keeps its `nextCursor`, so the subscription and
+  `pullHostedRelayAfterWake()` continue past it with the cursor. The
+  subscription pulls such cursor pages to their end before the pull from the
+  head. It does not continue on a `nextCursor` that equals the cursor of the
+  pull.
+- A recovery pull page whose `retainedWork` is true now continues at once
+  when the Relay removed work or issued a cursor, also when the page is not
+  full. A page without `retainedWork` uses the full-page rule.
+- A subscription now keeps at most one HTTP acknowledgment in flight, and a
+  pull waits for its response. When a socket burst ends and a pull follows,
+  the Relay receipts of the burst are acknowledged over HTTP before the pull.
+  So the pull page does not offer those receipts again, and the next pages
+  follow.
+- A pull that a subscription requests while a pull fails now waits for the
+  retry schedule of the failed pull. It does not run at once after the
+  failure.
+
 ## 13.1.0
 
 ### Added

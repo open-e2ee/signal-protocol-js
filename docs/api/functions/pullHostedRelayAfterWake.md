@@ -24,6 +24,9 @@ wake whose page past the cursor is empty clears the cursor, so the wake
 after it pulls from the head and offers those envelopes again. A failed
 wake also clears the cursor.
 
+One call makes one pull. The result copies `retainedWork` from the Relay
+page. When it is true, the caller runs the next pass.
+
 ## Parameters
 
 ### options

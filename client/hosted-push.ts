@@ -54,6 +54,21 @@ export interface HostedMailboxPage {
    * empty. A pull with it starts after that message.
    */
   readonly nextCursor?: string;
+  /**
+   * True when the Relay keeps a message after the page, or a Relay receipt
+   * that the page does not carry. Absent when the Relay does not report it.
+   */
+  readonly retainedWork?: boolean;
+  /**
+   * Each retained message that the page read and the Relay could not serve,
+   * with the reason, such as `body-missing` or `body-integrity`. The page
+   * omits it from `messages`, and it stays in the mailbox. Absent when the
+   * Relay does not report it.
+   */
+  readonly failedEntries?: readonly {
+    readonly messageId: string;
+    readonly reason: string;
+  }[];
 }
 
 /** @internal SDK-owned transport for one authenticated hosted client. */
@@ -93,6 +108,14 @@ export interface HostedRelayWakeResult {
   readonly acknowledgedMessageIds: readonly string[];
   readonly failedMessageIds: readonly string[];
   readonly pulled: number;
+  /**
+   * True when the Relay keeps work after the page of this pass: a message
+   * after the page, or a Relay receipt that the page does not carry. Run
+   * another pass to get it. False when the page carried all retained work.
+   * Absent when the Relay does not report it. Then the retained work is
+   * unknown, so do not read an absent value as false.
+   */
+  readonly retainedWork?: boolean;
 }
 
 const hostedRuntimes = new WeakMap<object, HostedRelayPushRuntime>();
@@ -253,6 +276,9 @@ async function commitHeld(
  * wake whose page past the cursor is empty clears the cursor, so the wake
  * after it pulls from the head and offers those envelopes again. A failed
  * wake also clears the cursor.
+ *
+ * One call makes one pull. The result copies `retainedWork` from the Relay
+ * page. When it is true, the caller runs the next pass.
  */
 export async function pullHostedRelayAfterWake(
   options: HostedRelayWakeOptions,
@@ -266,6 +292,8 @@ export async function pullHostedRelayAfterWake(
     messages: envelopes,
     receipts,
     nextCursor,
+    retainedWork,
+    failedEntries,
   } = await runtime.pullMailbox(cursor);
   const inputIds = new Set(envelopes.map((envelope) => envelope.id));
   if (
@@ -309,10 +337,16 @@ export async function pullHostedRelayAfterWake(
     // too, and the redelivery finds its record. The release wakes the queue.
     results.release();
   }
-  // An empty page keeps the cursor cleared. A Relay page without a
-  // `nextCursor` makes the next pull start from the head. This branch is
+  // A page that holds an envelope or a failed entry keeps its `nextCursor`,
+  // so the next wake pulls past that page. A page that holds neither keeps
+  // the cursor cleared, so the next wake pulls from the head. A Relay page
+  // without a `nextCursor` keeps the cursor cleared too. That branch is
   // removed in the first release after every Relay lane serves the cursor.
-  if (envelopes.length > 0 && nextCursor !== undefined) {
+  if (
+    (envelopes.length > 0 ||
+      (failedEntries !== undefined && failedEntries.length > 0)) &&
+    nextCursor !== undefined
+  ) {
     pullCursors.set(runtime, nextCursor);
   }
   // The committed receives are durable, so they run after the acknowledgment
@@ -324,5 +358,6 @@ export async function pullHostedRelayAfterWake(
     acknowledgedMessageIds,
     failedMessageIds,
     pulled: envelopes.length,
+    ...(retainedWork === undefined ? {} : { retainedWork }),
   };
 }
