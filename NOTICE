@@ -1,6 +1,6 @@
 OpenE2EE (`@open-e2ee/signal-protocol-sdk`)
 
-Copyright (c) 2026 OpenE2EE LLC and contributors
+Copyright (c) 2026 OpenE2EE, Inc. and contributors
 
 This is an independently maintained OpenE2EE project. It implements its own
 versioned messaging profile using public Signal Protocol specifications,
