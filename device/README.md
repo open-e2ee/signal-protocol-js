@@ -107,7 +107,7 @@ import { linkHostedRelayDevice } from "@open-e2ee/signal-protocol-sdk";
 const client = await linkHostedRelayDevice({
   adapters: { storage: linkedStorage },
   activeDeviceStorage,
-  hosted: { relayUrl, adapter: managedLinkAdapter },
+  hosted: { relayUrl },
 });
 ```
 
@@ -117,6 +117,16 @@ the device-authentication private key from each store and signs the link
 challenge in the calling process. Thus that process must hold the active
 device's store, private keys included. The adapter's `linkDevice()` gets a
 challenge signer for each device and no private key.
+
+Without `hosted.adapter`, the SDK uses the active device's stored Relay session
+to submit both proofs and persists the linked device's session before synchronization.
+It requests no second identity-provider assertion. Pass `hosted.adapter` to keep
+an application-owned transport. That adapter needs no stored Relay session.
+
+Retry with the same stores after an uncertain result. The SDK retains the
+operation and registration material. Token renewal rebuilds both proofs without
+replacing that operation. An expired replay response renews through the linked
+device's key. Existing custom-adapter refusal and rollback rules still apply.
 
 The link copies the master key of each group that the active device's group
 store lists into the new device's group store. The copy runs in the calling

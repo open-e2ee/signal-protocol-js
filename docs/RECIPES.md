@@ -15,6 +15,50 @@ and device-local storage. Use a Sandbox environment for development, where
 `hostedRelaySandboxIdentity(storage)` supplies the callback. The
 [getting-started guide](./GETTING_STARTED.md) describes these inputs.
 
+## Application-bound identity callback
+
+Your backend verifies the current application session and member eligibility.
+It signs the Relay-specific ES256 assertion. The browser callback only requests
+that assertion. Keep provider credentials and signing keys on the backend.
+
+<!-- doc-snippet:skip requires-external-context -->
+```ts
+import type { GetIdentityAssertion } from "@open-e2ee/signal-protocol-sdk";
+
+const getIdentityAssertion: GetIdentityAssertion = async (request) => {
+  const response = await fetch("https://application.example/api/relay-identity", {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error("Application authentication is required.");
+  const result: unknown = await response.json();
+  if (!result || typeof result !== "object" || !("assertion" in result) ||
+      typeof result.assertion !== "string") {
+    throw new Error("Identity assertion missing.");
+  }
+  return result.assertion;
+};
+
+void getIdentityAssertion;
+```
+
+Replace the example application origin with your authenticated backend.
+Configure its CSRF controls and cookie policy. Do not send a member ID or
+provider token from this callback as proof of membership.
+
+The [Better Auth recipe](https://docs.open-e2ee.dev/relay/better-auth) uses a
+real server session with the cookie cache disabled. The
+[backend contract](https://docs.open-e2ee.dev/relay/backend-identity) lists
+other provider paths and their evidence levels. Those paths issue custom-token
+assertions. They are not native provider adapters in this package.
+
+Application logout and assertion refusal do not revoke existing device proofs.
+The customer suspension/resume recipe awaits the supported backend and CLI
+surface. Anonymous capabilities retain their separate limits.
+
 ## Production composition with Expo on the Signal Protocol Relay
 
 <!-- doc-snippet:skip requires-external-context -->

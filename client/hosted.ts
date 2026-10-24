@@ -35,6 +35,7 @@ import {
 } from './hosted-connection';
 import {
   bootstrapHostedRelayTransport,
+  linkHostedRelayTransport,
   resumeHostedRelayTransport,
   type HostedRelayTransportResult,
 } from './hosted-transport';
@@ -402,7 +403,8 @@ export interface HostedRelayManagedDeviceLinkOptions extends Omit<
   readonly hosted: {
     /** Public environment-scoped Signal Protocol Relay connection URL. */
     readonly relayUrl: string;
-    readonly adapter: HostedRelayManagedDeviceLinkAdapter;
+    /** Override the default authenticated device-link transport. */
+    readonly adapter?: HostedRelayManagedDeviceLinkAdapter;
     readonly onProgress?: HostedRelayIdentityProgressCallback;
     readonly sealedSenderAccessMode?: SealedSenderAccessMode;
   };
@@ -1298,6 +1300,8 @@ async function storeLinkedIdentityRegistration(
  *
  * The linked store must already contain the account identity. The application
  * puts it there by device transfer or by a channel that the application owns.
+ * Omit `hosted.adapter` to use the authenticated Signal Protocol Relay transport.
+ * An explicit adapter retains application-owned transport composition.
  *
  * The call reads both stores in the calling process. It signs the link
  * challenge with the device-authentication private key from
@@ -1436,8 +1440,9 @@ export async function linkHostedRelayDevice(
   }
   hosted.onProgress?.({ operation: 'device-link', phase: 'submitting' });
   let result: HostedRelayManagedDeviceLinkResult;
+  let transportResult: HostedRelayTransportResult | undefined;
   try {
-    result = await hosted.adapter.linkDevice({
+    const request: HostedRelayManagedDeviceLinkRequest = {
       protocolEndpoint,
       publishableKey,
       signalIdentity,
@@ -1446,7 +1451,13 @@ export async function linkHostedRelayDevice(
       registrationPreKeys,
       activeDeviceAuthentication,
       newDeviceAuthentication,
-    });
+    };
+    if (hosted.adapter !== undefined) result = await hosted.adapter.linkDevice(request);
+    else {
+      const linked = await linkHostedRelayTransport({ connection, activeStorage: activeDeviceStorage, storage, request });
+      result = linked;
+      transportResult = linked;
+    }
   } catch (error) {
     if (marker.phase !== 'complete' && isHostedDeviceLinkRefusal(error)) {
       marker = { ...marker, phase: 'rolling-back' };
@@ -1467,6 +1478,8 @@ export async function linkHostedRelayDevice(
     adapters,
     clientOptions,
     hosted.sealedSenderAccessMode,
+    transportResult === undefined ? undefined : adapters.remoteObjectStore ?? transportResult.remoteObjectStore,
+    transportResult?.transport,
   );
   if (client.syncStatus === 'failed') {
     await client.stop();

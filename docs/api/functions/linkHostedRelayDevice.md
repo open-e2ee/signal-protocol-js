@@ -12,6 +12,8 @@ Bind a linked-device store to the Relay-authoritative account.
 
 The linked store must already contain the account identity. The application
 puts it there by device transfer or by a channel that the application owns.
+Omit `hosted.adapter` to use the authenticated Signal Protocol Relay transport.
+An explicit adapter retains application-owned transport composition.
 
 The call reads both stores in the calling process. It signs the link
 challenge with the device-authentication private key from
