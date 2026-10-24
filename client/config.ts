@@ -200,13 +200,17 @@ export interface DoubleRatchetConfig {
   /**
    * The client does not read this field. Each receiver chain keeps at most
    * 2000 skipped message keys. When a chain is full, the key with the lowest
-   * index leaves first.
+   * index leaves first. A key older than 7 days also leaves, at the next
+   * expiry cleanup. See `keyExpirationMs`.
    */
   maxMessageKeysStored?: number;
 
   /**
    * The client does not read this field. The client deletes stored skipped
-   * message keys after 7 days (604800000 ms).
+   * message keys that are older than 7 days (604800000 ms). The deletion is
+   * lazy. It runs before the client encrypts or decrypts a message in the
+   * session, and in `DefaultSignalProtocolClient.cleanupExpiredKeys()`. No
+   * timer runs it, so an old key stays stored until the next such call.
    */
   keyExpirationMs?: number;
 }

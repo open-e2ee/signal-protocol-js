@@ -1,5 +1,6 @@
 import { hostedAssertionIdentifier } from "./hosted-assertion-id";
 import { HostedRelayHttpError } from "./hosted-http-error";
+import { submitHostedRelayDeviceLink } from "./hosted-device-link-transport";
 import { utf8Decode, websocketUrl } from "../internal/platform";
 import type {
   AccountIdentityProvisioning,
@@ -49,6 +50,8 @@ import type {
   HostedRelayDeviceAuthentication,
   HostedRelayRegistrationPreKey,
   HostedRelayRegistrationPreKeys,
+  HostedRelayManagedDeviceLinkRequest,
+  HostedRelayManagedDeviceLinkResult,
 } from "./hosted";
 import type {
   RemoteObjectDownload,
@@ -594,6 +597,22 @@ function tokenExpiration(
   }
 }
 
+function assertLinkToken(session: StoredHostedRelaySession): void {
+  const parts = session.deviceToken.split('.');
+  if (parts.length !== 3) throw new Error('Signal Protocol Relay returned an invalid link token');
+  const header: unknown = JSON.parse(utf8Decode(decodeBase64Url(parts[0]!, 'Device token header')));
+  const claims: unknown = JSON.parse(utf8Decode(decodeBase64Url(parts[1]!, 'Device token claims')));
+  if (!record(header) || Object.keys(header).sort().join(',') !== 'alg,kid,typ' ||
+      header.alg !== 'EdDSA' || header.typ !== 'JWT' || typeof header.kid !== 'string' || !header.kid ||
+      decodeBase64Url(parts[2]!, 'Device token signature').length !== 64 ||
+      !record(claims) || typeof claims.jti !== 'string' || !claims.jti ||
+      claims.iss !== 'open-e2ee-relay' || claims.aud !== 'open-e2ee-relay-device' || claims.token_use !== 'device' ||
+      typeof claims.account_state_id !== 'string' || !claims.account_state_id ||
+      !Number.isSafeInteger(claims.iat) || (claims.iat as number) < 0 ||
+      tokenExpiration(session.deviceToken, session) <= (claims.iat as number))
+    throw new Error('Signal Protocol Relay returned an invalid link token');
+}
+
 function requiredNumber(object: JsonRecord, key: string): number {
   const value = object[key];
   if (!Number.isSafeInteger(value))
@@ -696,6 +715,7 @@ export class HostedRelayHttpTransport
     private readonly storage: SignalProtocolLocalStore,
     private readonly deviceAuthentication: HostedRelayDeviceAuthentication,
     private session: StoredHostedRelaySession,
+    private readonly persistRefreshedToken = true,
   ) {
     // The Relay refuses a removed device's mailbox on every send path before
     // its device list shows the removal, so a direct send may post first.
@@ -907,7 +927,7 @@ export class HostedRelayHttpTransport
     ) {
       throw new Error("Signal Protocol Relay returned an invalid device token");
     }
-    await this.persistSession();
+    if (this.persistRefreshedToken) await this.persistSession();
   }
 
   private async token(force = false): Promise<string> {
@@ -929,6 +949,89 @@ export class HostedRelayHttpTransport
   /** Verify that the stored device authority can get a current token. */
   public async ensureAuthenticated(force = false): Promise<void> {
     await this.token(force);
+  }
+
+  /** Private-package link capability. Detached active authority never persists. */
+  public async linkDevice(
+    request: HostedRelayManagedDeviceLinkRequest,
+    storage: SignalProtocolLocalStore,
+  ): Promise<HostedRelayTransportResult & HostedRelayManagedDeviceLinkResult> {
+    const materialFingerprint = await registrationMaterialFingerprint(
+      request.signalIdentity, request.registrationId, request.registrationPreKeys,
+    );
+    const bodyFor = async (body: (tokenId: string) => Promise<JsonRecord>, token: string) => {
+      const claims: unknown = JSON.parse(utf8Decode(decodeBase64Url(token.split('.')[1]!, 'Device token')));
+      if (!record(claims) || typeof claims.jti !== 'string' || !claims.jti)
+        throw new Error('Signal Protocol Relay returned an invalid device token');
+      return body(claims.jti);
+    };
+    const value = await submitHostedRelayDeviceLink(request, {
+      relayScopeId: this.session.relayScopeId,
+      materialFingerprint,
+      signalRegistration: signalRegistration(request.signalIdentity, request.registrationId, request.registrationPreKeys),
+      post: async (body) => {
+        let token = await this.token();
+        try {
+          return await postJson(this.connection, '/identity/devices/link', await bodyFor(body, token), token);
+        } catch (error) {
+          if (!(error instanceof HostedRelayHttpError) || error.code !== 'TOKEN_INVALID') throw error;
+          token = await this.token(true);
+          return postJson(this.connection, '/identity/devices/link', await bodyFor(body, token), token);
+        }
+      },
+    });
+    if (!record(value) || value.accountPreserved !== true || value.protocolStateCopied !== false)
+      throw new Error('Signal Protocol Relay returned an invalid managed device link');
+    const generation = requiredNumber(value, 'deviceAuthorizationGeneration');
+    let session: StoredHostedRelaySession = {
+      canonicalAccountId: requiredString(value, 'canonicalAccountId'),
+      deviceId: requiredNumber(value, 'deviceId'),
+      deviceToken: requiredString(value, 'deviceToken'),
+      generation,
+      mailboxGeneration: requiredNumber(value, 'mailboxGeneration'),
+      pendingPreKeyPublication: null,
+      preKeyPublication: storedPublication(generation, materialFingerprint, request.operationId, 0, request.registrationPreKeys),
+      relayScopeId: requiredString(value, 'relayScopeId'),
+    };
+    if (session.canonicalAccountId !== this.session.canonicalAccountId ||
+        session.relayScopeId !== this.session.relayScopeId || session.deviceId < 1 ||
+        session.deviceId === this.session.deviceId || generation < 0 || session.mailboxGeneration < 0 ||
+        tokenExpiration(session.deviceToken, session) <= 0)
+      throw new Error('Signal Protocol Relay returned an invalid managed device link');
+    assertLinkToken(session);
+    const key = await sessionMetadataKey(this.connection);
+    const stored = await storage.getMetadata(key);
+    if (stored !== null) {
+      const existing = parseSession(stored, this.connection);
+      assertLinkToken(existing);
+      if (existing.canonicalAccountId !== session.canonicalAccountId || existing.deviceId !== session.deviceId ||
+          existing.generation !== generation || existing.mailboxGeneration !== session.mailboxGeneration ||
+          tokenExpiration(existing.deviceToken, existing) <= 0 ||
+          existing.preKeyPublication.authorityGeneration !== generation ||
+          (existing.preKeyPublication.revision === 0 &&
+            (existing.preKeyPublication.operationId !== request.operationId ||
+             existing.preKeyPublication.materialFingerprint !== materialFingerprint)))
+        throw new Error('Stored Signal Protocol Relay link session conflicts with the retained attempt');
+      session = existing;
+    }
+    const transport = new HostedRelayHttpTransport(this.connection, storage, request.newDeviceAuthentication, session);
+    // Persist the complete shape before synchronization or token renewal can fail.
+    try {
+      await storage.setMetadata(key, JSON.stringify(session));
+      await transport.ensureAuthenticated();
+    } catch (error) {
+      // A renewal refusal cannot prove that the accepted link had no effect.
+      if (error instanceof HostedRelayHttpError && !error.retryable &&
+          (error.code === 'KEY_PROOF_INVALID' || error.code === 'CONFLICT'))
+        throw new Error('Signal Protocol Relay accepted the link but session adoption failed', { cause: error });
+      throw error;
+    }
+    return {
+      canonicalAccountId: session.canonicalAccountId, deviceId: session.deviceId,
+      relayScopeId: this.connection.relayScopeId.slice(), relay: transport,
+      remoteObjectStore: transport.objectStore, transport,
+      accountPreserved: true, protocolStateCopied: false,
+    };
   }
 
   private async authenticatedPost(
@@ -2364,4 +2467,20 @@ export async function resumeHostedRelayTransport(options: {
     remoteObjectStore: transport.objectStore,
     transport,
   };
+}
+
+/** Compose a link using a detached active session without publication writes. */
+export async function linkHostedRelayTransport(options: {
+  readonly connection: HostedRelayConnection;
+  readonly activeStorage: SignalProtocolLocalStore;
+  readonly storage: SignalProtocolLocalStore;
+  readonly request: HostedRelayManagedDeviceLinkRequest;
+}): Promise<HostedRelayTransportResult & HostedRelayManagedDeviceLinkResult> {
+  const stored = await options.activeStorage.getMetadata(await sessionMetadataKey(options.connection));
+  if (!stored) throw new Error('Signal Protocol Relay device link requires an active hosted session');
+  const active = new HostedRelayHttpTransport(
+    options.connection, options.activeStorage, options.request.activeDeviceAuthentication,
+    parseSession(stored, options.connection), false,
+  );
+  return active.linkDevice(options.request, options.storage);
 }

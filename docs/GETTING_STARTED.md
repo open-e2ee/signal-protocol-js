@@ -35,12 +35,16 @@ Sandbox account. The helper works only in a Sandbox environment.
 
 Production supports application-bound and explicitly configured device-owned
 accounts. For application-bound accounts, `getIdentityAssertion` returns a
-short-lived assertion for the signed-in user from your identity provider.
+short-lived Relay-specific assertion from your backend after it verifies the
+server session and current application membership.
 Device-owned accounts prove possession of a persistent account key. They do
 not bind to an application login, and provider sign-in cannot recover a lost
 account key. The SDK does not supply an identity provider or a relay server
 implementation. See [identity and authentication](https://docs.open-e2ee.dev/relay/identity)
 for Production configuration.
+
+For a tested backend path, see the [Better Auth recipe](https://docs.open-e2ee.dev/relay/better-auth)
+and the [application callback recipe](./RECIPES.md#application-bound-identity-callback).
 
 ## Setup Sequence
 
@@ -62,6 +66,12 @@ It refuses a new device's store that already lists a group, with
 `HostedRelayDeviceLinkError`. See the [device guide](../device/README.md). The
 default policy requires post-quantum session establishment and Braid
 ratcheting.
+
+Omit `hosted.adapter` when linking through the OpenE2EE Signal Protocol Relay.
+The SDK uses the active device's stored session and persists the linked session
+before synchronization. It does not register another account or request another
+provider assertion. An explicit adapter keeps application-owned composition.
+Retry with the same stores to retain the original operation and prekeys.
 
 ## Expo Client
 

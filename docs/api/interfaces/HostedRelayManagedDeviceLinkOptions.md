@@ -187,9 +187,11 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
 
 > `readonly` **hosted**: `object`
 
-#### adapter
+#### adapter?
 
-> `readonly` **adapter**: [`HostedRelayManagedDeviceLinkAdapter`](HostedRelayManagedDeviceLinkAdapter.md)
+> `readonly` `optional` **adapter?**: [`HostedRelayManagedDeviceLinkAdapter`](HostedRelayManagedDeviceLinkAdapter.md)
+
+Override the default authenticated device-link transport.
 
 #### onProgress?
 

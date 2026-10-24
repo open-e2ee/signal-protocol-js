@@ -68,6 +68,34 @@ key cannot read the old file. Restore the vault entry, or call
 `resetWebSqliteStore()`. The reset deletes the file, creates a new key, and
 returns the open, empty store.
 
+## Damaged database file
+
+The store does not repair a damaged database file. This includes a file that
+SDK 12.0.0 or earlier damaged when a tab closed inside a commit, or when an
+open used the wrong key state. The open reads only some pages of the file. It
+does not check every page. Thus the result depends on the damaged pages:
+
+- When the open cannot read the file header with its key and setting, it
+  rejects with `SqliteKeyMismatchError` (`KEY_STORAGE_ERROR`). Its message
+  starts with `The sqlite3mc-wasm database exists but cannot be read with this
+  key and encryption setting`. The store cannot tell a damaged file from a
+  wrong key or from the other `encryptionAtRest` setting.
+- When a read of the open fails with `database disk image is malformed`, the
+  open rejects with an `Error` whose message holds that SQLite text.
+- When the open reads no damaged page, the open succeeds. A later call can
+  then fail on the damaged data.
+
+To recover, delete the file and link the device again:
+
+1. Close the store of the name in every tab and worker of the origin.
+2. Call `resetWebSqliteStore()` with the same options. The reset deletes the
+   file, creates a new key, and returns the open, empty store. The identity
+   and the sessions of the device go with the file.
+3. Put the account identity into the new store, then call
+   `linkHostedRelayDevice()` with it. This needs another device that holds the
+   account identity. See
+   [Link a device](../../../device/README.md#link-a-device).
+
 ## Convert a plaintext store
 
 An encrypted open with `convertPlaintext: true` converts a database that was

@@ -1,5 +1,14 @@
 # Changelog
 
+## 13.1.0
+
+### Added
+
+- `linkHostedRelayDevice` now supplies the authenticated Signal Protocol Relay
+  transport when `hosted.adapter` is absent. Custom adapters keep their path.
+  Exact retries preserve registration material and linked prekey state. Token
+  renewal rebuilds both device proofs without another provider assertion.
+
 ## 13.0.0
 
 ### Breaking
