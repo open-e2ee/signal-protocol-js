@@ -67,9 +67,15 @@ const RECOVERY_MILLISECONDS = 2_000;
 /**
  * The recovery pull after failed work starts at `RECOVERY_MILLISECONDS` and
  * doubles each time it schedules a pull for failed work, from a socket batch,
- * a recovery page, or a socket open, up to this value. A recovery page that
- * leaves no failed message, and a new socket, start it again at
- * `RECOVERY_MILLISECONDS`. The same random factor applies.
+ * a recovery page, or a socket open, up to this value. A page pulled from
+ * the head that leaves no failed work, and a new socket, start it again at
+ * `RECOVERY_MILLISECONDS`. A page pulled with a cursor does not, because it
+ * cannot show that a failed entry before the cursor is gone. The same random
+ * factor applies. The recovery pull
+ * after a lost page acknowledgment has its own wait on this schedule. A
+ * page acknowledgment whose requests all resolve starts that wait again. A
+ * new socket does not, because the socket does not show that an HTTP
+ * acknowledgment succeeds.
  */
 const MAXIMUM_RECOVERY_MILLISECONDS = 64_000;
 /**
@@ -144,12 +150,30 @@ export interface MailboxPage {
    * empty. A pull with it starts after that message.
    */
   readonly nextCursor?: string;
+  /**
+   * True when the Relay keeps work after the page. Absent when the Relay does
+   * not report it, so the retained work after the page is unknown.
+   */
+  readonly retainedWork?: boolean;
+  /**
+   * Each retained message that the page read and the Relay could not serve.
+   * The page omits it, and it stays in the mailbox. Absent when the Relay does
+   * not report it.
+   */
+  readonly failedEntries?: readonly {
+    readonly messageId: string;
+    readonly reason: string;
+  }[];
 }
 
 /** The Relay's answer to one HTTP acknowledgment. */
 export interface MailboxAcknowledgment {
   /** The acknowledged message ids whose delivery receipt the Relay owns. */
   readonly receipted: readonly string[];
+  /** The number of messages that the Relay removed for this request. */
+  readonly acknowledged: number;
+  /** The number of Relay receipts that the Relay removed for this request. */
+  readonly receiptsAcknowledged: number;
 }
 
 interface MailboxSubscription {
@@ -177,8 +201,8 @@ interface MailboxSubscription {
    */
   pull(cursor?: string): Promise<MailboxPage>;
   /**
-   * Acknowledges messages and Relay receipts over HTTP when queued socket
-   * acknowledgments lose their socket.
+   * Acknowledges messages and Relay receipts over HTTP: the work of a pull
+   * page, and queued socket acknowledgments that lose their socket.
    */
   acknowledge(
     messageIds: readonly string[],
@@ -223,10 +247,18 @@ interface MailboxSubscription {
 export interface MailboxSubscriptionHandle {
   readonly unsubscribe: Unsubscribe;
   /**
-   * Queues a socket acknowledgment and returns true while a socket is live.
-   * Queued ids leave in one frame when the delivered frames are drained.
+   * Queues an acknowledgment and returns true while a socket is live or the
+   * batch of a pull page runs. Queued socket ids leave in one frame when the
+   * delivered frames are drained. The ids of a pull page leave in the HTTP
+   * acknowledgment of the page.
    */
   acknowledge(messageId: string): boolean;
+  /**
+   * Runs `send`, one HTTP acknowledgment for this subscription, after the
+   * HTTP acknowledgment in flight settles. So at most one is in flight.
+   * Resolves or rejects as `send` does.
+   */
+  acknowledgeOverHttp<T>(send: () => Promise<T>): Promise<T>;
   /**
    * Sends one presence request frame on the live socket and resolves with the
    * `result` of its answer. It rejects with a `HostedRelayPresenceError`: the
@@ -240,6 +272,12 @@ export interface MailboxSubscriptionHandle {
 type DurableWork =
   | { readonly message: Envelope }
   | { readonly receipt: RelayDeliveryReceipt };
+
+/** The ids that the batch of one pull page acknowledged. */
+interface PageAcknowledgment {
+  readonly messageIds: string[];
+  readonly receiptIds: string[];
+}
 
 interface PendingPresence {
   readonly resolve: (result: unknown) => void;
@@ -270,6 +308,12 @@ function notConnected(): HostedRelayPresenceError {
  * the cursor, and the next pull starts at the head again. The recovery pull
  * for failed work also starts at the head, so it offers the failed message
  * again.
+ *
+ * A pull page is acknowledged in one HTTP request after its batch, also while
+ * a socket is live. A full page pulls the next page at once after that
+ * response, when the Relay removed work or the page issued a cursor. A socket
+ * frame never starts a pull. One batch holds at most one frame of Relay
+ * receipts, so the batch and the queue hold at most 132 receipts.
  */
 export function subscribeHostedMailbox(
   options: MailboxSubscription,
@@ -324,19 +368,31 @@ export function subscribeHostedMailbox(
    */
   let recoveryForFailedWork = false;
   /**
-   * True from the start of a failed-work recovery pull until a pull starts.
-   * That pull ignores the cursor and starts at the head.
+   * True from the start of a failed-work recovery pull until a pull that is
+   * not a cursor continuation starts. That pull ignores the cursor and starts
+   * at the head.
    */
   let headPullOwed = false;
+  /**
+   * True while the requested pull continues a page on its new cursor alone,
+   * because the Relay removed no work for the page. Such a chain keeps its
+   * progress only in the cursor, so an owed head pull waits until the chain
+   * ends.
+   */
+  let cursorContinuation = false;
   let failedWorkRecoveryDelay = RECOVERY_MILLISECONDS;
+  let lostAcknowledgmentRecoveryDelay = RECOVERY_MILLISECONDS;
   /**
    * The id of each message whose work failed, with the `Date.now()` time of
    * its first failure. An id leaves when its work succeeds or when a recovery
    * page shows that the message is gone.
    */
   const failedMessages = new Map<string, number>();
-  /** The acknowledgments that `handle.acknowledge` received. */
-  let acknowledgmentCount = 0;
+  /**
+   * The acknowledgments of the pull page whose batch runs. Undefined while no
+   * pull page runs its batch.
+   */
+  let pageAcknowledgment: PageAcknowledgment | undefined;
   let pingTimer: ReturnType<typeof setTimeout> | undefined;
   let unansweredPings = 0;
   let acknowledgmentTimer: ReturnType<typeof setTimeout> | undefined;
@@ -362,6 +418,22 @@ export function subscribeHostedMailbox(
   let pageOwed = false;
   const presenceRequests = new Map<string, PendingPresence>();
   let presenceSequence = 0;
+  /**
+   * Settles when the last HTTP acknowledgment of this subscription settles.
+   * It never rejects.
+   */
+  let httpAcknowledgments: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Runs `send` after the HTTP acknowledgment in flight settles, so at most
+   * one is in flight. A pull waits for it too, so the page cannot hold work
+   * that an acknowledgment in flight removes.
+   */
+  const acknowledgeOverHttp = <T>(send: () => Promise<T>): Promise<T> => {
+    const request = httpAcknowledgments.then(send);
+    httpAcknowledgments = request.catch(() => undefined);
+    return request;
+  };
 
   const liveSocket = () =>
     active && socket?.readyState === 1 ? socket : undefined;
@@ -412,9 +484,13 @@ export function subscribeHostedMailbox(
    * durable frames is done: the socket then sends an `acknowledge` frame for
    * the page, with no id when nothing was acknowledged. Messages that stay
    * unacknowledged, as blocked group content and failed work do, would
-   * otherwise stall each page of the backlog behind them.
+   * otherwise stall each page of the backlog behind them. `beforePull` is
+   * true when a pull follows. The Relay sends no reply to an
+   * `acknowledge-receipts` frame, so the receipts then go over HTTP, and the
+   * pull waits for the response. The page then holds no receipt that the
+   * acknowledgment removes.
    */
-  const flushAcknowledgments = (endOfPage = false) => {
+  const flushAcknowledgments = (endOfPage = false, beforePull = false) => {
     clearTimeout(acknowledgmentTimer);
     acknowledgmentTimer = undefined;
     const live = socket?.readyState === 1 ? socket : undefined;
@@ -445,11 +521,14 @@ export function subscribeHostedMailbox(
           0,
           MAXIMUM_ACKNOWLEDGMENT_IDS,
         );
-        if (relayReceipts)
+        if (relayReceipts && !beforePull)
           live.send(
             JSON.stringify({ type: "acknowledge-receipts", receiptIds }),
           );
-        else options.acknowledge([], receiptIds).catch(() => undefined);
+        else
+          acknowledgeOverHttp(() => options.acknowledge([], receiptIds)).catch(
+            () => undefined,
+          );
       }
       return;
     }
@@ -463,7 +542,7 @@ export function subscribeHostedMailbox(
       );
       answerHttpAcknowledgment(
         messageIds,
-        options.acknowledge(messageIds, receiptIds),
+        acknowledgeOverHttp(() => options.acknowledge(messageIds, receiptIds)),
       );
     }
   };
@@ -539,11 +618,14 @@ export function subscribeHostedMailbox(
 
   /**
    * Owes a failed pull to the retry schedule. The pending recovery pull
-   * ends, so the failed pull does not run twice.
+   * ends, so the failed pull does not run twice. A pull that was requested
+   * while the failed pull ran is the owed pull too, so it waits for the
+   * retry and does not run at once.
    */
   const retryPull = () => {
     outage = true;
     pullOwed = true;
+    pullRequested = false;
     recoveryDue = undefined;
     armRetryTimer();
     scheduleRetry();
@@ -569,16 +651,18 @@ export function subscribeHostedMailbox(
   /**
    * Schedules the recovery pull for failed work, and doubles its next wait.
    * That pull starts at the head of the mailbox, so it offers the failed
-   * message again.
+   * message again. A lost page acknowledgment uses its own wait, so the wait
+   * of failed work does not lengthen the first wait after a loss.
    */
-  const recoverFailedWork = () => {
-    if (recoverLater(failedWorkRecoveryDelay)) {
-      recoveryForFailedWork = true;
-      failedWorkRecoveryDelay = Math.min(
-        MAXIMUM_RECOVERY_MILLISECONDS,
-        failedWorkRecoveryDelay * 2,
-      );
-    }
+  const recoverFailedWork = (lostAcknowledgment = false) => {
+    const delay = lostAcknowledgment
+      ? lostAcknowledgmentRecoveryDelay
+      : failedWorkRecoveryDelay;
+    if (!recoverLater(delay)) return;
+    recoveryForFailedWork = true;
+    const next = Math.min(MAXIMUM_RECOVERY_MILLISECONDS, delay * 2);
+    if (lostAcknowledgment) lostAcknowledgmentRecoveryDelay = next;
+    else failedWorkRecoveryDelay = next;
   };
 
   /**
@@ -587,16 +671,11 @@ export function subscribeHostedMailbox(
    * pull or socket replay gives it again. A receipt whose hand-off fails is
    * not acknowledged, so it stays too. The batch continues with the next item
    * at once, whatever its sender, so the order is not kept across a failed
-   * item. Resolves with `failed` true when the work of an item failed, and
-   * with the number of message acknowledgments made during the batch. A
-   * message that resolves without an acknowledgment, as an unhandled
-   * duplicate or a failed retry-request send does, is not counted.
+   * item. Resolves with `failed` true when the work of an item failed.
    */
   const receiveBatch = async (batch: readonly DurableWork[]) => {
-    if (!active || batch.length === 0)
-      return { failed: false, acknowledged: 0 };
+    if (!active || batch.length === 0) return { failed: false };
     let failed = false;
-    const acknowledgmentsBefore = acknowledgmentCount;
     options.onBatchStart?.();
     try {
       for (const work of batch) {
@@ -608,7 +687,9 @@ export function subscribeHostedMailbox(
             // acknowledged, because the Relay refuses the acknowledgment. The
             // Relay keeps the receipt.
             if (!refused)
-              receiptAcknowledgments.push(work.receipt.receiptId);
+              (pageAcknowledgment?.receiptIds ?? receiptAcknowledgments).push(
+                work.receipt.receiptId,
+              );
           } catch {
             failed = true;
           }
@@ -627,10 +708,67 @@ export function subscribeHostedMailbox(
     } finally {
       options.onBatchEnd?.();
     }
-    return {
-      failed,
-      acknowledged: acknowledgmentCount - acknowledgmentsBefore,
-    };
+    return { failed };
+  };
+
+  /**
+   * The number of queued items that the next batch takes: the whole queue up
+   * to the first receipt past one frame. So a batch holds at most
+   * `MAXIMUM_RECEIPTS_PER_FRAME` receipts, and the batch and the queue hold
+   * at most 132.
+   */
+  const nextBatchLength = () => {
+    let receipts = 0;
+    for (let index = 0; index < durable.length; index++)
+      if (
+        "receipt" in durable[index]! &&
+        ++receipts > MAXIMUM_RECEIPTS_PER_FRAME
+      )
+        return index;
+    return durable.length;
+  };
+
+  /**
+   * Acknowledges the work of one pull page over HTTP, at most 100 ids of each
+   * kind in each request, and resolves with the number of messages and
+   * receipts that the Relay removed. Each message gets the reply of its
+   * request. A request that fails rejects, and each message that it and the
+   * later requests carry gets the reply `receipted` false. After a refusal
+   * stop, nothing is sent, because the Relay refuses it. When each request
+   * resolves, the wait after a lost acknowledgment starts again. A request
+   * that resolves before a later request fails does not start it again.
+   */
+  const acknowledgePage = async (work: PageAcknowledgment) => {
+    let removed = 0;
+    let answered = false;
+    while (work.messageIds.length > 0 || work.receiptIds.length > 0) {
+      if (refused) {
+        for (const messageId of work.messageIds.splice(0))
+          options.onAcknowledgmentReply(messageId, false);
+        break;
+      }
+      const messageIds = work.messageIds.splice(0, MAXIMUM_ACKNOWLEDGMENT_IDS);
+      const receiptIds = work.receiptIds.splice(0, MAXIMUM_ACKNOWLEDGMENT_IDS);
+      let answer: MailboxAcknowledgment;
+      try {
+        answer = await acknowledgeOverHttp(() =>
+          options.acknowledge(messageIds, receiptIds),
+        );
+      } catch (error) {
+        for (const messageId of [...messageIds, ...work.messageIds.splice(0)])
+          options.onAcknowledgmentReply(messageId, false);
+        throw error;
+      }
+      answered = true;
+      for (const messageId of messageIds)
+        options.onAcknowledgmentReply(
+          messageId,
+          answer.receipted.includes(messageId),
+        );
+      removed += answer.acknowledged + answer.receiptsAcknowledged;
+    }
+    if (answered) lostAcknowledgmentRecoveryDelay = RECOVERY_MILLISECONDS;
+    return removed;
   };
 
   /**
@@ -657,6 +795,8 @@ export function subscribeHostedMailbox(
     draining = true;
     /** True while `options.pull` runs, so the catch knows what failed. */
     let pulling = false;
+    /** True while the page acknowledgment runs, for the same reason. */
+    let acknowledging = false;
     try {
       while (
         active &&
@@ -678,64 +818,128 @@ export function subscribeHostedMailbox(
           continue;
         }
         if (durable.length > 0) {
-          const { failed } = await receiveBatch(durable.splice(0));
+          const { failed } = await receiveBatch(
+            durable.splice(0, nextBatchLength()),
+          );
           if (failed) recoverFailedWork();
           // One frame acknowledges the whole burst once nothing is queued.
-          if (durable.length === 0) flushAcknowledgments(true);
+          if (durable.length === 0) flushAcknowledgments(true, pullRequested);
           continue;
         }
         pullRequested = false;
         flushAcknowledgments();
+        // The page of the pull starts after the work that each HTTP
+        // acknowledgment in flight removes.
+        await httpAcknowledgments;
+        if (!active) break;
         const pulledAt = Date.now();
-        const cursor = headPullOwed ? undefined : pullCursor;
-        headPullOwed = false;
+        // A cursor continuation runs before an owed head pull. A head pull in
+        // the chain would start the chain again from the head.
+        const continuing = cursorContinuation;
+        cursorContinuation = false;
+        const cursor = headPullOwed && !continuing ? undefined : pullCursor;
+        if (!continuing) headPullOwed = false;
         // A failed pull, including a Relay refusal of the cursor, leaves the
         // cursor cleared, so the next pull starts at the head.
         pullCursor = undefined;
         pulling = true;
-        const { messages, receipts, nextCursor } = await options.pull(cursor);
+        const { messages, receipts, nextCursor, retainedWork, failedEntries } =
+          await options.pull(cursor);
         pulling = false;
-        // A Relay page without a `nextCursor` makes the next pull start from
-        // the head. This branch is removed in the first release after every
-        // Relay lane serves the cursor.
-        if (messages.length > 0 && nextCursor !== undefined)
-          pullCursor = nextCursor;
         // The Relay answered, so the HTTP outage ends. The reconnect ceiling
         // stays, because the socket can still fail.
         outage = false;
         pullOwed = false;
-        const { failed, acknowledged } = await receiveBatch([
-          ...messages.map((message) => ({ message })),
-          ...receipts.map((receipt) => ({ receipt })),
-        ]);
-        flushAcknowledgments();
+        const work: PageAcknowledgment = { messageIds: [], receiptIds: [] };
+        pageAcknowledgment = work;
+        let failed: boolean;
+        try {
+          ({ failed } = await receiveBatch([
+            ...messages.map((message) => ({ message })),
+            ...receipts.map((receipt) => ({ receipt })),
+          ]));
+        } catch (error) {
+          for (const messageId of work.messageIds)
+            options.onAcknowledgmentReply(messageId, false);
+          throw error;
+        } finally {
+          pageAcknowledgment = undefined;
+        }
+        // The response of the page acknowledgment completes the page. A lost
+        // request or a lost response rejects, and the cursor stays cleared,
+        // so the recovery pull starts at the head.
+        acknowledging = true;
+        const removed = await acknowledgePage(work);
+        acknowledging = false;
+        // A page that holds a message or a failed entry keeps its
+        // `nextCursor`, so a pull with the cursor reads past that page. A
+        // page that holds neither makes the next pull start from the head. A
+        // Relay page without a `nextCursor` makes the next pull start from
+        // the head too. That branch is removed in the first release after
+        // every Relay lane serves the cursor.
+        if (
+          (messages.length > 0 ||
+            (failedEntries !== undefined && failedEntries.length > 0)) &&
+          nextCursor !== undefined
+        )
+          pullCursor = nextCursor;
         // A failed message can be missing from the page while it waits in the
         // Relay's hot delivery window, so a pull follows while one remains. A
         // page past the cursor does not hold the messages before the cursor.
         if (cursor === undefined) forgetGoneFailures(messages, pulledAt);
-        if (failed || failedMessages.size > 0) recoverFailedWork();
-        else failedWorkRecoveryDelay = RECOVERY_MILLISECONDS;
-        // A full page can leave more retained work behind it. A full recovery
-        // page whose batch acknowledged a message, or that issued a cursor,
-        // pulls the next page after a random wait from 1 s to 3 s. A full
-        // page that did neither pulls again only while a failed message
-        // remains, after the failed-work wait.
+        // An entry that the Relay could not serve stays in the mailbox and is
+        // never acknowledged. It is failed work, so a head pull follows on
+        // the failed-work wait. A failed entry before the cursor is not on a
+        // page pulled with the cursor, so only a head page starts the wait
+        // again.
         if (
-          messages.length >= MAXIMUM_PENDING_FRAMES &&
-          (acknowledged > 0 || pullCursor !== undefined)
+          failed ||
+          failedMessages.size > 0 ||
+          (failedEntries !== undefined && failedEntries.length > 0)
         )
-          recoverLater();
+          recoverFailedWork();
+        else if (cursor === undefined)
+          failedWorkRecoveryDelay = RECOVERY_MILLISECONDS;
+        // A full page, or a page after which the Relay reports retained work,
+        // can leave more retained work behind it. Such a page of messages or
+        // of receipts pulls the next page at once, with no wait, when the
+        // Relay removed work for it or it issued a new cursor. So each pull
+        // after a success starts past work that the Relay confirmed gone, or
+        // at a new cursor. A cursor equal to the cursor of the request is not
+        // new. A page that did neither pulls again only while failed work
+        // remains, after the failed-work wait. An absent `retainedWork` is
+        // unknown, so only the full-page rule applies.
+        if (
+          (messages.length >= MAXIMUM_PENDING_FRAMES ||
+            receipts.length >= MAXIMUM_RECEIPTS_PER_FRAME ||
+            retainedWork === true) &&
+          (removed > 0 || (pullCursor !== undefined && pullCursor !== cursor))
+        ) {
+          pullRequested = true;
+          cursorContinuation = removed === 0;
+        }
+        // The head pull that a cursor continuation held runs after the
+        // chain.
+        if (headPullOwed) pullRequested = true;
       }
     } catch (error) {
-      // A pull, an ephemeral message, or a batch callback failed. Retained
-      // durable work stays in the mailbox. Ephemeral work can be lost. A pull
-      // that the Relay refuses for this SDK or this device, or refuses
-      // conclusively, fails the same way each time, so it ends the
-      // subscription. Each other failed pull goes to the retry schedule. A
-      // callback error is the application's, so it only schedules a pull.
+      // A pull, an ephemeral message, a batch callback, or the acknowledgment
+      // of a pull page failed. Retained durable work stays in the mailbox.
+      // Ephemeral work can be lost. A pull that the Relay refuses for this SDK
+      // or this device, or refuses conclusively, fails the same way each time,
+      // so it ends the subscription. Each other failed pull goes to the retry
+      // schedule. A callback error is the application's, so it only
+      // schedules a pull. A failed page acknowledgment can be a lost request
+      // or a lost response. It schedules a head pull on the doubling wait
+      // after a lost acknowledgment, so a lasting failure backs off. A pull
+      // that was requested while the acknowledgment ran waits for that head
+      // pull and does not run at once.
       const refusal = relayRefusalReason(error);
       if (refusal !== undefined) stop(refusal);
-      else if (!pulling) recoverLater();
+      else if (acknowledging) {
+        recoverFailedWork(true);
+        pullRequested = false;
+      } else if (!pulling) recoverLater();
       else if (options.isConclusiveRefusal(error)) stop("authority-refused");
       else retryPull();
     } finally {
@@ -839,8 +1043,10 @@ export function subscribeHostedMailbox(
     const envelope = options.decodeDurable(message);
     if (socket === candidate) pageOwed = true;
     if (durable.length >= MAXIMUM_PENDING_FRAMES) {
-      // The frame stays retained in the mailbox; the recovery pull collects it.
-      recoverLater();
+      // The frame stays retained in the mailbox. The drain pulls it when the
+      // queue is empty, with no wait.
+      pullRequested = true;
+      void drain();
       return;
     }
     if (socket === candidate) durable.push({ message: envelope });
@@ -854,9 +1060,9 @@ export function subscribeHostedMailbox(
     );
     for (const receipt of receipts) {
       if (durable.length >= MAXIMUM_PENDING_FRAMES) {
-        // The receipt stays retained until it is acknowledged; the recovery
-        // pull collects it.
-        recoverLater();
+        // The rest of the frame stays retained until it is acknowledged. The
+        // drain pulls it when the queue is empty, with no wait.
+        pullRequested = true;
         break;
       }
       if (socket === candidate) durable.push({ receipt });
@@ -1042,9 +1248,12 @@ export function subscribeHostedMailbox(
   void connect();
   return {
     acknowledge: (messageId) => {
-      // The transport acknowledges over HTTP when this returns false, so the
-      // count includes that acknowledgment too.
-      acknowledgmentCount++;
+      // The batch of a pull page acknowledges in the HTTP request of its page.
+      if (active && pageAcknowledgment !== undefined) {
+        pageAcknowledgment.messageIds.push(messageId);
+        return true;
+      }
+      // The transport acknowledges over HTTP when this returns false.
       if (liveSocket() === undefined) return false;
       acknowledgments.push(messageId);
       if (acknowledgments.length >= MAXIMUM_ACKNOWLEDGMENT_IDS)
@@ -1054,6 +1263,7 @@ export function subscribeHostedMailbox(
         acknowledgmentTimer = setTimeout(flushAcknowledgments, 0);
       return true;
     },
+    acknowledgeOverHttp,
     presence: (request) => {
       const live = liveSocket();
       if (live === undefined) return Promise.reject(notConnected());

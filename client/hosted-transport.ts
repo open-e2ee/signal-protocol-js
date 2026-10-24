@@ -1370,6 +1370,10 @@ export class HostedRelayHttpTransport
    * One mailbox page. Its `relayReceipts` holds for this pull only: a page
    * carries `receipts` only when it is true. With `cursor`, the page starts
    * after the last message of the page that issued it. The cursor is opaque.
+   * A page without `retainedWork` comes from a Relay that does not report
+   * it, so the retained work after the page is unknown. A page without
+   * `failedEntries` comes from a Relay that does not report the messages that
+   * it could not serve.
    */
   private async pullIncoming(cursor?: string): Promise<HostedMailboxPage> {
     const value = await this.authenticatedPost("/mailbox/pull", {
@@ -1383,7 +1387,18 @@ export class HostedRelayHttpTransport
         typeof value.relayReceipts !== "boolean") ||
       (value.receipts !== undefined && value.relayReceipts !== true) ||
       (value.nextCursor !== undefined &&
-        (typeof value.nextCursor !== "string" || value.nextCursor === ""))
+        (typeof value.nextCursor !== "string" || value.nextCursor === "")) ||
+      (value.retainedWork !== undefined &&
+        typeof value.retainedWork !== "boolean") ||
+      (value.failedEntries !== undefined &&
+        (!Array.isArray(value.failedEntries) ||
+          !value.failedEntries.every(
+            (entry) =>
+              record(entry) &&
+              typeof entry.messageId === "string" &&
+              entry.messageId !== "" &&
+              typeof entry.reason === "string",
+          )))
     ) {
       throw new Error("Signal Protocol Relay returned an invalid mailbox page");
     }
@@ -1398,6 +1413,19 @@ export class HostedRelayHttpTransport
       ...(value.nextCursor === undefined
         ? {}
         : { nextCursor: value.nextCursor }),
+      ...(value.retainedWork === undefined
+        ? {}
+        : { retainedWork: value.retainedWork }),
+      ...(value.failedEntries === undefined
+        ? {}
+        : {
+            failedEntries: (value.failedEntries as Record<string, unknown>[]).map(
+              ({ messageId, reason }) => ({
+                messageId: messageId as string,
+                reason: reason as string,
+              }),
+            ),
+          }),
     };
   }
 
@@ -1600,7 +1628,7 @@ export class HostedRelayHttpTransport
   private async acknowledge(
     messageIds: readonly string[],
     receiptIds: readonly string[] = [],
-  ): Promise<MailboxAcknowledgment & { readonly receiptsAcknowledged: number }> {
+  ): Promise<MailboxAcknowledgment> {
     const value = await this.authenticatedPost("/mailbox/acknowledge", {
       messageIds: [...messageIds],
       ...(receiptIds.length === 0 ? {} : { receiptIds: [...receiptIds] }),
@@ -1618,6 +1646,7 @@ export class HostedRelayHttpTransport
     }
     return {
       receipted: (value.receipted as string[] | undefined) ?? [],
+      acknowledged: value.acknowledged as number,
       receiptsAcknowledged: (value.receiptsAcknowledged as number | undefined) ?? 0,
     };
   }
@@ -1971,12 +2000,14 @@ export class HostedRelayHttpTransport
       isConclusiveRefusal,
       decodeDurable: (message) => this.incomingEnvelope(message) as Envelope,
       pull: async (cursor) => {
-        const { messages, receipts, nextCursor } =
+        const { messages, receipts, nextCursor, retainedWork, failedEntries } =
           await this.pullIncoming(cursor);
         return {
           messages: messages as readonly Envelope[],
           receipts,
           ...(nextCursor === undefined ? {} : { nextCursor }),
+          ...(retainedWork === undefined ? {} : { retainedWork }),
+          ...(failedEntries === undefined ? {} : { failedEntries }),
         };
       },
       acknowledge: (messageIds, receiptIds) =>
@@ -2031,8 +2062,12 @@ export class HostedRelayHttpTransport
    */
   public async markDelivered(envelopeId: string): Promise<void> {
     if (this.ephemeralAcknowledgments.has(envelopeId)) return;
-    if (this.subscription?.acknowledge(envelopeId) === true) return;
-    await this.acknowledgeAndAnswer([envelopeId]);
+    const subscription = this.subscription;
+    if (subscription?.acknowledge(envelopeId) === true) return;
+    const send = () => this.acknowledgeAndAnswer([envelopeId]);
+    await (subscription === undefined
+      ? send()
+      : subscription.acknowledgeOverHttp(send));
   }
 
   public async getDevices(userId: string): Promise<DeviceInfo[]> {
