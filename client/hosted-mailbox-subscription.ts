@@ -312,8 +312,10 @@ function notConnected(): HostedRelayPresenceError {
  * A pull page is acknowledged in one HTTP request after its batch, also while
  * a socket is live. A full page pulls the next page at once after that
  * response, when the Relay removed work or the page issued a cursor. A socket
- * frame never starts a pull. One batch holds at most one frame of Relay
- * receipts, so the batch and the queue hold at most 132 receipts.
+ * frame starts a pull only when it arrives past a full queue. Then the frame
+ * stays in the mailbox, and the drain pulls it when the queue is empty. One
+ * batch holds at most one frame of Relay receipts, so the batch and the queue
+ * hold at most 132 receipts.
  */
 export function subscribeHostedMailbox(
   options: MailboxSubscription,

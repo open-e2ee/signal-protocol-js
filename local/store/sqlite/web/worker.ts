@@ -56,6 +56,7 @@ import sqlite3InitModule, {
 } from './sqlite3mc/sqlite3.mjs';
 import { generateRandomBytesSync } from '../../../../internal/crypto/random';
 import { EncryptionError, EncryptionErrorCode } from '../../../../types/errors';
+import { assertWebSqliteFileName, webSqliteFileIdentity } from './file-name';
 import type { SqliteRow, SqliteStatementResult, SqliteValue } from '../driver';
 import type {
   WireError,
@@ -73,8 +74,6 @@ interface WorkerScope {
   ): void;
 }
 
-/** A file name is one path segment, so it cannot name another pool. */
-const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const KEY_LENGTH = 32;
 /** Multiple Ciphers reads `raw:` and 32 bytes as a raw key, with no key derivation. */
 const RAW_KEY_PREFIX = new Uint8Array([0x72, 0x61, 0x77, 0x3a]);
@@ -294,23 +293,14 @@ function assertStorageApis(): void {
 }
 
 function slotFor(file: string, operation: string): Slot {
-  if (!FILE_NAME.test(file)) {
-    throw invalidState(
-      'A SQLite file name must be 1 to 64 letters, digits, dots, dashes, or underscores, and start with a letter or digit',
-      operation
-    );
-  }
+  assertWebSqliteFileName(file, operation);
   const existing = slots.get(file);
   if (existing !== undefined) return existing;
   assertStorageApis();
-  const poolName = `open-e2ee-sqlite-${file}`;
+  const identity = webSqliteFileIdentity(file);
   const slot: Slot = {
-    path: `/${file}`,
-    lockName: `open-e2ee:sqlite:${file}`,
-    poolName,
-    poolDirectory: `.${poolName}`,
-    vfsName: `multipleciphers-${poolName}`,
-    channel: new BroadcastChannel(`open-e2ee:sqlite:${file}`),
+    ...identity,
+    channel: new BroadcastChannel(identity.lockName),
     pool: null,
     release: null,
     requested: false,

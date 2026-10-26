@@ -194,6 +194,9 @@ Base64-encoded preview thumbnail stored inside encrypted attachment metadata
 
 Client timestamp for receipt matching.
 Store the same timestamp locally for delivery receipt lookup.
+A new send accepts a safe positive integer at most 5 minutes ahead of the
+SDK clock and at most 24 hours behind it, and throws
+`InvalidSendTimestampError` for any other value.
 
 ***
 

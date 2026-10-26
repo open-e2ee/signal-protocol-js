@@ -169,14 +169,21 @@ environment an adapter must honor its promises in, not the subject of a test.
       in turn, so that the file moves to the other tab at each write. Each
       write is read back, and `PRAGMA integrity_check` returns `ok` after
       each phase and after each open. A closed store leaves no worker in the
-      tab and no lock of the store in the origin. The gate fails if the
-      late-run median of latency, of the page heap, or of the worker heap
-      grows beyond a small tolerance over the early-run median, if the Wasm
-      memory of the worker grows after the first third of the churn, or if
-      the database file grows by more than 10% and 64 KiB over the churn.
-      Runs in Chromium on each change to the main branch and on each pull
-      request that is ready for review. `npm run soak:web-sqlite` also runs
-      it in Firefox and WebKit on demand, without the memory checks.
+      tab and no lock of the store in the origin. After the cycles, the tab
+      holds no IndexedDB connection, the OPFS root holds no new entry, and
+      the database file has not grown since the first third. Each cycle and
+      each two-tab read is timed next to a control that does the same
+      platform work with no store state. The gate fails if the late-run
+      median of that ratio grows by more than half over the early-run
+      median, or if the page heap grows by more than 1.5 KiB a cycle. It
+      also fails if the late-run median of the churn latency, of the page
+      heap, or of the worker heap grows beyond a small tolerance over the
+      early-run median, if the Wasm memory of the worker grows after the
+      first third of the churn, or if the database file grows by more than
+      10% and 64 KiB over the churn. Runs in Chromium on each change to the
+      main branch and on each pull request that is ready for review.
+      `npm run soak:web-sqlite` also runs it in Firefox and WebKit on
+      demand, without the memory and IndexedDB connection checks.
 
 `KeyValueSignalProtocolStore` (graduated, and the gates keep running):
 
@@ -402,7 +409,7 @@ with `assertBackendConformance`.
 
 ## Design Notes
 
-Reviewed: 2026-10-20.
+Reviewed: 2026-10-24.
 
 Receive records use the same encryption and transaction boundary as protocol state.
 

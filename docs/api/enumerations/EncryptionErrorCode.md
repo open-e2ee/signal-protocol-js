@@ -99,6 +99,20 @@ PreKey bundle is invalid or malformed
 
 ***
 
+### INVALID\_SEND\_TIMESTAMP
+
+> **INVALID\_SEND\_TIMESTAMP**: `"INVALID_SEND_TIMESTAMP"`
+
+A new send carries an application-supplied `timestamp` that the SDK
+refuses, or a sync to linked devices carries an application-supplied time
+that the SDK refuses.
+
+The SDK accepts a safe positive integer at most 5 minutes ahead of its
+clock and at most 24 hours behind it. It throws `InvalidSendTimestampError`
+before it stores or posts anything for the send.
+
+***
+
 ### INVALID\_STATE
 
 > **INVALID\_STATE**: `"INVALID_STATE"`

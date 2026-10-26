@@ -39,6 +39,7 @@ import {
   type DeclaredSyncOutcome,
 } from './device-set-reconciliation';
 import { isStaleDeviceRefusal } from './relay-device-refusal';
+import { newSendClientTimestamp, type SendTimestampOrigin } from './send-timestamp';
 import type { SendOptions, SendResult } from './types';
 import {
   groupDeviceKey,
@@ -1721,7 +1722,7 @@ export async function sendGroupWithExactOutbox(
   context: GroupOutboxContext,
   groupId: string,
   plaintextBytes: Uint8Array,
-  options: SendOptions & { clientMessageId: string }
+  options: SendOptions & SendTimestampOrigin & { clientMessageId: string }
 ): Promise<SendResult> {
   return withOutgoingMessageIntentLock(context.storage, options.clientMessageId, async () => {
     const plaintextDigest = CryptoUtils.bytesToBase64(await CryptoUtils.sha256(plaintextBytes));
@@ -1752,7 +1753,9 @@ export async function sendGroupWithExactOutbox(
       );
     }
 
-    const clientTimestamp = options.timestamp ?? Date.now();
+    // A new send checks the timestamp before it prepares or posts anything.
+    // The replays above keep the stored timestamp.
+    const clientTimestamp = newSendClientTimestamp(options);
     // The digest above covers the caller's content, so a replay compares
     // like with like. The group gets the content with its context.
     const contentBytes = await context.prepareContent(groupId, plaintextBytes);

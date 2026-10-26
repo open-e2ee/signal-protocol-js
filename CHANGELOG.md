@@ -1,5 +1,78 @@
 # Changelog
 
+## 13.3.0
+
+### Added
+
+- `InvalidSendTimestampError`, with the code `INVALID_SEND_TIMESTAMP`, from
+  `@open-e2ee/signal-protocol-sdk/types`. A new send now checks a `timestamp`
+  that the application supplies, in `SendOptions` or in `DataMessageInput`,
+  against the SDK clock. The value must be a safe positive integer, at most
+  5 minutes ahead of the clock and at most 24 hours behind it. From the Relay
+  release that follows v2026.10.25, the Relay admits a mailbox delivery epoch
+  and a new group fan-out operation in the same window. Earlier Relay
+  releases admit a new operation only within 5 minutes of its epoch. On an
+  earlier Relay release, a time 5 minutes to 24 hours old passes the SDK check
+  but gets `OPERATION_EXPIRED`. The SDK check uses the same bounds, so the SDK
+  refuses an application-supplied time before any post. Before, a value
+  outside the window made every post of the send fail at the Relay. Now the
+  send throws the error
+  before the profile key work of a hosted client, before the daily send-log
+  sweep, and before it stores the send intent or posts anything. An
+  attachment send checks its timestamp once, so a slow upload does not make
+  a later check refuse it. `syncMediaAttachmentDeleteToLinkedDevices`,
+  `syncRecipientUsernameToLinkedDevices`,
+  `syncVerificationStateToLinkedDevices`,
+  `syncTaskNotificationAckToLinkedDevices`, and
+  `syncBlockedRecipientsToLinkedDevices` use their `deletedAt`, `learnedAt`,
+  `changedAt`, `acknowledgedAt`, and `syncedAt` time as the epoch of the
+  sync, and now check it in the same window before they post. The error
+  gives the refused `timestamp`, the `reason`, and the `earliest` and `latest`
+  accepted values. A send that repeats a stored `clientMessageId` with its
+  stored timestamp keeps that timestamp, and the SDK does not check it again.
+  With another timestamp, the check applies. A send without a `timestamp`
+  uses the SDK clock, as before. The SDK test model of the Relay now admits
+  an epoch at most 5 minutes ahead and at most 24 hours behind its clock, and
+  replays an accepted operation for 24 hours, as the Relay does from the
+  release that follows v2026.10.25.
+
+### Fixed
+
+- Web SQLite database names now permit up to 224 UTF-8 bytes with the same
+  ASCII syntax. The budget reserves the directory prefix and conversion
+  ending within a 255-byte directory component and fits the engine's path
+  header. Before, the worker imposed a 64-character limit and plaintext
+  conversion needed at most 51 characters. Open and reset now reject invalid
+  names before any lock, vault, worker, or OPFS access. Oversized inputs fail
+  before encoding, and other inputs use a fixed-size encoding buffer.
+
+  Existing accepted names keep the same storage and key locations.
+- A resend or a null message now answers a retry request only when it comes
+  from the account and the device that the request asked. The retry ID of the
+  request does not prove the sender, because the Relay sees it. So a message
+  from another device of the sender, or from another account, that carries
+  the retry ID is now an ordinary message. It does not mark the request
+  answered, and it does not end the request. Before, such a message could end
+  the request with `onDeliveryRecovered`, so the lost content was not
+  reported. Now the request stays open until its real answer arrives, or
+  until its deadline ends it with `onRetryTerminal`. For a sealed message, the sender inside the
+  seal is the sender that counts.
+- A message that arrives under the ID of a message that failed to decrypt now
+  ends the retry request of that ID only when it is the same envelope from the
+  same sender: the bytes that the request recorded, and the device that sent
+  the failed message. The Relay names the envelope ID, so it can give that ID
+  to another message. Before, any message under that ID that decrypted ended
+  the request, also with the retry ID of a resend on it, and
+  `onDeliveryRecovered` named the failed message. Now such a message is an
+  ordinary message, and the request stays open until its real answer arrives,
+  or until its deadline ends it with `onRetryTerminal`.
+- `IndexedDbSignalProtocolSecretVault` now opens an IndexedDB connection for
+  each request and closes it when the request settles. Before, each vault
+  kept its connection open for the life of the page, and `webSqliteStore()`
+  makes a new default vault for each open. So a page that opened the store
+  again, such as after a sign-out or an `OPFS_FILE_BUSY` retry, kept one more
+  connection alive for each open. The vault API does not change.
+
 ## 13.2.0
 
 ### Added

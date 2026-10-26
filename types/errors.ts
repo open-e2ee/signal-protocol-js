@@ -15,7 +15,8 @@
  *         ├── SealedSenderAuthError     the rejected sealed-sender credential
  *         ├── PQXDHRequiredError        which post-quantum key the peer is missing
  *         ├── StorageQuotaExceededError the store that ran out of room
- *         └── SecureRandomUnavailableError the runtime has no secure random source
+ *         ├── SecureRandomUnavailableError the runtime has no secure random source
+ *         └── InvalidSendTimestampError the refused send timestamp and the accepted window
  * ```
  *
  * A code or a subclass belongs here only if production code can produce it. An
@@ -148,6 +149,17 @@ export enum EncryptionErrorCode {
 
   /** Message encryption failed */
   ENCRYPTION_FAILED = 'ENCRYPTION_FAILED',
+
+  /**
+   * A new send carries an application-supplied `timestamp` that the SDK
+   * refuses, or a sync to linked devices carries an application-supplied time
+   * that the SDK refuses.
+   *
+   * The SDK accepts a safe positive integer at most 5 minutes ahead of its
+   * clock and at most 24 hours behind it. It throws `InvalidSendTimestampError`
+   * before it stores or posts anything for the send.
+   */
+  INVALID_SEND_TIMESTAMP = 'INVALID_SEND_TIMESTAMP',
 
   /**
    * Duplicate message detected (replay attack).
@@ -698,6 +710,87 @@ export class SecureRandomUnavailableError extends EncryptionError {
       operation: 'generateRandomBytes',
     });
   }
+}
+
+/** Why the SDK refused an application-supplied send timestamp. */
+export type InvalidSendTimestampReason = 'not_safe_positive_integer' | 'too_far_ahead' | 'too_old';
+
+/**
+ * Error thrown when a new send carries an application-supplied `timestamp`
+ * that the SDK refuses.
+ *
+ * The timestamp of a send is its operation epoch, and each retry of the send
+ * keeps it. The SDK accepts a safe positive integer at most 5 minutes ahead
+ * of its clock and at most 24 hours behind it. From the Relay release that
+ * follows v2026.10.25, the Relay admits a mailbox delivery epoch and a new
+ * group fan-out operation in the same window. Earlier Relay releases admit a
+ * new operation only within 5 minutes of its epoch. On an earlier Relay
+ * release, a time 5 minutes to 24 hours old passes the SDK check but gets
+ * `OPERATION_EXPIRED`. The SDK check uses the same bounds, so the SDK refuses
+ * an application-supplied time before it stores the send or posts anything.
+ * A sync to linked devices whose epoch is an application-supplied time, such
+ * as `deletedAt`, gets the same check before it posts.
+ *
+ * The SDK stored nothing for the refused send. The application can send the
+ * content again with a timestamp in the window, or with no timestamp, and the
+ * SDK then uses its clock. A send that repeats a stored `clientMessageId`
+ * with its stored timestamp keeps that timestamp, and the SDK does not check
+ * it again. With another timestamp, the check applies.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await signal.send(recipientId, { body, timestamp });
+ * } catch (error) {
+ *   if (isInvalidSendTimestampError(error)) {
+ *     await signal.send(recipientId, { body });
+ *   }
+ * }
+ * ```
+ */
+export class InvalidSendTimestampError extends EncryptionError {
+  override readonly name = 'InvalidSendTimestampError';
+
+  /** The refused timestamp. */
+  public readonly timestamp: number;
+  /** Why the SDK refused the timestamp. */
+  public readonly reason: InvalidSendTimestampReason;
+  /** The earliest timestamp that the check accepted, in milliseconds since the epoch. */
+  public readonly earliest: number;
+  /** The latest timestamp that the check accepted, in milliseconds since the epoch. */
+  public readonly latest: number;
+
+  constructor(
+    timestamp: number,
+    reason: InvalidSendTimestampReason,
+    window: { earliest: number; latest: number }
+  ) {
+    const problem =
+      reason === 'not_safe_positive_integer'
+        ? 'is not a safe positive integer'
+        : reason === 'too_far_ahead'
+          ? 'is more than 5 minutes ahead of the SDK clock'
+          : 'is more than 24 hours behind the SDK clock';
+    super(
+      `The send timestamp ${String(timestamp)} ${problem}. A new send accepts ${window.earliest} through ${window.latest}`,
+      EncryptionErrorCode.INVALID_SEND_TIMESTAMP,
+      { operation: 'send', timestamp, reason, earliest: window.earliest, latest: window.latest }
+    );
+    this.timestamp = timestamp;
+    this.reason = reason;
+    this.earliest = window.earliest;
+    this.latest = window.latest;
+  }
+}
+
+/**
+ * Type guard to check if an error is an InvalidSendTimestampError.
+ *
+ * @param error - Error to check
+ * @returns true if error is InvalidSendTimestampError
+ */
+export function isInvalidSendTimestampError(error: unknown): error is InvalidSendTimestampError {
+  return error instanceof InvalidSendTimestampError;
 }
 
 /**

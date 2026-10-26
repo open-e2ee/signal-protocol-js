@@ -39,7 +39,8 @@ export interface RetryFamilyReceive {
   /**
    * The resend or the null message that the envelope is, when the family
    * index of the local device holds its retry ID. Undefined for any other
-   * envelope.
+   * envelope, and after `bindSender` names a sender that is not the
+   * requested sender: the envelope is then an ordinary envelope.
    */
   readonly member: ResolvedRetryFamilyMember | undefined;
   /**
@@ -48,17 +49,49 @@ export interface RetryFamilyReceive {
    * content of its failed envelope: the caller then acknowledges the
    * envelope and drops it, with no decrypt and no retry request. This
    * applies to the failed envelope and to each member. The check writes a
-   * debug log line for a dropped envelope. A member that goes to the decrypt
+   * debug log line for a dropped envelope.
+   *
+   * An identified envelope names its sender, so `admit` binds the envelope
+   * to that sender first. A member from another sender is then an ordinary
+   * envelope. A member from the requested sender that goes to the decrypt
    * marks the stored request attempt answered when the member has its
-   * attempt number.
+   * attempt number. A sealed member names its sender only inside the seal,
+   * so its mark waits for `bindSender`.
+   *
+   * @param fingerprint - The fingerprint of the received envelope. An
+   *   envelope under the ID of a failed envelope fulfills the request of
+   *   that ID only when this is the fingerprint that the record stores.
    */
-  admit(): Promise<boolean>;
+  admit(fingerprint: string | undefined): Promise<boolean>;
+  /**
+   * Bind the envelope to the sender that the decrypt authenticates: the
+   * sender of an identified envelope, or the sender inside a seal. The
+   * receive commit calls it before the decrypt. A member answers its
+   * request only when this sender is the account and the device that the
+   * request record names. Any other sender makes the member an ordinary
+   * envelope: it does not mark the request answered, and it does not
+   * fulfill or process the failed envelope. One warn line with the behavior
+   * RETRY_ANSWER_SENDER_MISMATCH records it.
+   *
+   * An envelope that is not a member fulfills the request record of its
+   * own ID only when this sender is the sender of the failed envelope that
+   * the record names.
+   */
+  bindSender(sender: { readonly senderUserId?: string; readonly senderDeviceId?: number }): void;
   /**
    * Tell which failed envelope a decrypt with this content fulfills: the
-   * failed envelope of a member, or of a failed envelope with a request
-   * record. Undefined when `fulfill` writes nothing for it. The receive
-   * record of the content names the result as its `failedEnvelopeId`.
-   * Call it after `admit`.
+   * failed envelope of a member, or the envelope itself when it is the
+   * failed envelope of the request record of its ID. Undefined when
+   * `fulfill` writes nothing for it. The receive record of the content
+   * names the result as its `failedEnvelopeId`. A member with no bound
+   * sender fulfills nothing. Call it after `admit` and `bindSender`.
+   *
+   * The Relay names the envelope ID, so an ID does not prove that the
+   * envelope is the failed envelope. An envelope under the ID of a failed
+   * envelope is that envelope only when its fingerprint is the fingerprint
+   * of the record and its bound sender is the sender of the failed envelope
+   * that the record names. Any other envelope under that ID, also a member
+   * from another sender, is an ordinary envelope and fulfills nothing.
    */
   fulfills(decrypted?: {
     readonly senderKeyDistribution: boolean;
@@ -93,6 +126,10 @@ export interface RetryFamilyReceive {
    * that brings content beside the distribution fulfills the failed
    * envelope, as any other member does.
    *
+   * A member with no bound sender writes nothing, as an ordinary envelope
+   * with no request record. An envelope that `fulfills` does not name as
+   * the failed envelope of the record of its ID also writes nothing.
+   *
    * @param decrypted - The decrypted content. `senderKeyDistribution` is
    *   true when the content carries a sender-key distribution. `content` is
    *   true when it carries content other than a distribution. `groupId` is
@@ -107,8 +144,8 @@ export interface RetryFamilyReceive {
   /**
    * Record a decrypted null message, in place of `fulfill`. A null
    * message carries no content, so the caller never gives it to the
-   * application. The null message is processed. For a member, the failed
-   * envelope is processed and not fulfilled: a redelivery of the failed
+   * application. The null message is processed. For a member with a bound
+   * sender, the failed envelope is processed and not fulfilled: a redelivery of the failed
    * envelope is dropped, the client asks for it no more, and a content
    * resend that comes later is still admitted. When a processed write
    * fails, it writes one warning with the behavior
@@ -125,6 +162,9 @@ export interface RetryFamilyReceive {
    * device that the request went to. The result is that envelope with the
    * sender of the record. Any other envelope, and a member with an
    * identified sender or with no request envelope, is returned as it is.
+   *
+   * The name serves only the routing of the next retry request. It does not
+   * bind the sender, so the member never fulfills the request.
    */
   withRequestedSender<E extends { senderUserId: string; senderDeviceId: number }>(
     envelope: E
@@ -134,7 +174,9 @@ export interface RetryFamilyReceive {
    * record is keyed by the failed envelope of the family. A member never
    * starts a family of its own: it asks again for its failed envelope,
    * under the retry ID of the record, and the fingerprint check of the
-   * failed envelope does not apply to it.
+   * failed envelope does not apply to it. A member whose seal failed to
+   * open marks the stored attempt answered here, so the post asks for the
+   * next attempt.
    *
    * @param fingerprint - The fingerprint of the received envelope.
    * @param post - Posts the request for the given failure, and gives what
@@ -176,18 +218,20 @@ export interface RetryFamilyReceive {
  * @param hooks - The client hooks, for `onDeliveryRecovered`.
  * @param envelope - The IDs of the received envelope: the delivered
  *   envelope ID, and the client message ID when the relay delivers one.
+ *   The sender and the message type that the relay delivered bind a member
+ *   of an identified envelope to its sender.
  * @param receive - The receive path. It runs under the lock.
  */
 export async function receiveInRetryFamily<T>(
   storage: RetryFamilyStore,
   logger: Required<Logger>,
   hooks: SignalProtocolClientHooks | undefined,
-  envelope: { readonly id?: string; readonly clientMessageId?: string },
+  envelope: Parameters<typeof retryFamilyReceive>[2],
   receive: (family: RetryFamilyReceive) => Promise<T>
 ): Promise<T> {
   const envelopeId = envelope.id;
   if (!envelopeId) {
-    return receive(retryFamilyReceive(storage, logger, undefined, undefined));
+    return receive(retryFamilyReceive(storage, logger, envelope, undefined, undefined, undefined));
   }
   const member = await resolveRetryFamilyMember(
     storage,
@@ -198,23 +242,120 @@ export async function receiveInRetryFamily<T>(
     // A recovery whose hook did not return runs again. An error from the
     // hook fails the receive, so the envelope is delivered again.
     await reportDeliveryRecovered(storage, hooks, failedEnvelopeId);
-    return receive(retryFamilyReceive(storage, logger, envelopeId, member));
+    const requested = member
+      ? requestedSenderOf(await getRetryRequest(storage, member.failedEnvelopeId))
+      : undefined;
+    return receive(retryFamilyReceive(storage, logger, envelope, envelopeId, member, requested));
   });
+}
+
+/** The account and the device that a request record asked for a resend. */
+interface RequestedSender {
+  readonly userId: string;
+  readonly deviceId: number;
+}
+
+/** The target of the request envelope of a record. A record with none names no sender. */
+function requestedSenderOf(request: StoredRetryRequest | null): RequestedSender | undefined {
+  if (!request?.envelope) return undefined;
+  return { userId: request.envelope.targetUserId, deviceId: request.envelope.targetDeviceId };
 }
 
 function retryFamilyReceive(
   storage: RetryFamilyStore,
   logger: Required<Logger>,
+  delivered: {
+    readonly id?: string;
+    readonly clientMessageId?: string;
+    readonly senderUserId?: string;
+    readonly senderDeviceId?: number;
+    readonly messageType?: string;
+  },
   envelopeId: string | undefined,
-  member: ResolvedRetryFamilyMember | undefined
+  resolved: ResolvedRetryFamilyMember | undefined,
+  requested: RequestedSender | undefined
 ): RetryFamilyReceive {
-  const failedEnvelopeId = member?.failedEnvelopeId ?? envelopeId;
+  // A member from a sender that the request did not name becomes an
+  // ordinary envelope, keyed by its own ID.
+  let member = resolved;
+  let failedEnvelopeId = member?.failedEnvelopeId ?? envelopeId;
   // The read comes before the decrypt, so only writes follow the commit.
   let request: StoredRetryRequest | null = null;
+  // The request record of the envelope ID of a sealed member, for the case
+  // that its seal names another sender.
+  let ownRequest: StoredRetryRequest | null = null;
+  // True when `bindSender` named the requested sender.
+  let senderBound = false;
+  // The sender that `bindSender` named last, for the record of the own ID.
+  let boundSender: { readonly userId?: string; readonly deviceId?: number } | undefined;
+  // The fingerprint of the received envelope, from `admit`.
+  let receivedFingerprint: string | undefined;
+  // True when the answered mark of a sealed member waits for its sender.
+  let answerDue = false;
+
+  function bindSender(sender: {
+    readonly senderUserId?: string;
+    readonly senderDeviceId?: number;
+  }): void {
+    boundSender = { userId: sender.senderUserId, deviceId: sender.senderDeviceId };
+    if (!member) return;
+    if (
+      requested !== undefined &&
+      sender.senderUserId === requested.userId &&
+      sender.senderDeviceId === requested.deviceId
+    ) {
+      senderBound = true;
+      return;
+    }
+    logger.warn('A retry answer came from a sender that its request did not name', {
+      category: 'E2EE',
+      data: { envelopeId, behavior: 'RETRY_ANSWER_SENDER_MISMATCH' },
+    });
+    member = undefined;
+    failedEnvelopeId = envelopeId;
+    request = ownRequest;
+    senderBound = false;
+    answerDue = false;
+  }
+
+  /**
+   * Tell whether the envelope is the failed envelope of `request`, the
+   * record of its own ID: the Relay delivered the envelope that the record
+   * fingerprints, and the decrypt authenticated the sender of the failed
+   * envelope. A record that names no such sender names no failed envelope.
+   */
+  function isFailedEnvelope(): boolean {
+    if (!request || !boundSender) return false;
+    if (request.fingerprint === undefined || request.fingerprint !== receivedFingerprint) {
+      return false;
+    }
+    const sender = request.failedSender ?? requestedSenderOf(request);
+    return (
+      sender !== undefined &&
+      boundSender.userId === sender.userId &&
+      boundSender.deviceId === sender.deviceId
+    );
+  }
+
+  /** Mark the stored attempt answered for a member whose mark waited. */
+  async function markAnswered(): Promise<void> {
+    if (!answerDue || !member || failedEnvelopeId === undefined) return;
+    answerDue = false;
+    await markRetryRequestAnswered(storage, failedEnvelopeId, member.retryId, member.attempt);
+  }
+
   return {
-    member,
-    async admit() {
+    get member() {
+      return member;
+    },
+    async admit(fingerprint) {
       if (failedEnvelopeId === undefined) return true;
+      receivedFingerprint = fingerprint;
+      // The relay names the sender of an identified envelope, and its decrypt
+      // uses the session of that sender, so the binding comes first.
+      if (delivered.messageType !== 'unidentified_sender' && delivered.senderUserId) {
+        bindSender(delivered);
+      }
       // A member that posted a request is processed, so its redelivery asks
       // for nothing again.
       if (envelopeId && (await getProcessedEnvelope(storage, envelopeId))) {
@@ -236,19 +377,25 @@ function retryFamilyReceive(
       }
       // A member of attempt n answers attempt n, so a member failure then
       // posts the next attempt. A member of an earlier attempt answers
-      // nothing, so its failure posts the stored attempt again.
-      if (member) {
+      // nothing, so its failure posts the stored attempt again. A sealed
+      // member marks it once its sender is known.
+      if (member && senderBound) {
         await markRetryRequestAnswered(
           storage,
           failedEnvelopeId,
           member.retryId,
           member.attempt
         );
+      } else if (member && envelopeId) {
+        answerDue = true;
+        ownRequest = await getRetryRequest(storage, envelopeId);
       }
       request = await getRetryRequest(storage, failedEnvelopeId);
       return true;
     },
+    bindSender,
     fulfills(decrypted) {
+      if (member && !senderBound) return undefined;
       if (
         member &&
         request?.groupMessage &&
@@ -257,10 +404,12 @@ function retryFamilyReceive(
       ) {
         return undefined;
       }
-      if (failedEnvelopeId === undefined || !(member || request)) return undefined;
+      if (failedEnvelopeId === undefined || !(member || isFailedEnvelope())) return undefined;
       return failedEnvelopeId;
     },
     async fulfill(decrypted) {
+      if (member && !senderBound) return;
+      await markAnswered();
       if (
         member &&
         request?.groupMessage &&
@@ -273,7 +422,7 @@ function retryFamilyReceive(
         });
         return;
       }
-      if (failedEnvelopeId === undefined || !(member || request)) return;
+      if (failedEnvelopeId === undefined || !(member || isFailedEnvelope())) return;
       try {
         const groupId = decrypted?.groupId;
         if (request && request.groupId === undefined && groupId !== undefined) {
@@ -302,7 +451,10 @@ function retryFamilyReceive(
     },
     async consumeNull(fingerprint) {
       try {
-        if (member) await storeProcessedEnvelope(storage, member.failedEnvelopeId);
+        if (member && senderBound) {
+          await markAnswered();
+          await storeProcessedEnvelope(storage, member.failedEnvelopeId);
+        }
         if (envelopeId) {
           await storeProcessedEnvelope(storage, envelopeId, Date.now(), fingerprint);
         }
@@ -347,6 +499,9 @@ function retryFamilyReceive(
           stored,
         });
       }
+      // A member whose seal failed to open names no sender. Its failure
+      // still answers the stored attempt, so the post asks for the next one.
+      await markAnswered();
       // A member has its own content, so its fingerprint is not the
       // fingerprint of the failed envelope.
       const stored = await getRetryRequest(storage, failedEnvelopeId);

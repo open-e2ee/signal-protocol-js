@@ -198,6 +198,12 @@ export interface SealedReceipt {
  * Any object with a `timestamp` field (and no Blob/Uint8Array prototype) qualifies.
  */
 export interface DataMessageInput {
+  /**
+   * The send timestamp, in milliseconds since the epoch. Default: the SDK
+   * clock. A new send accepts a safe positive integer at most 5 minutes ahead
+   * of the SDK clock and at most 24 hours behind it, and throws
+   * `InvalidSendTimestampError` for any other value.
+   */
   timestamp?: number;
   [key: string]: unknown;
 }
@@ -278,6 +284,9 @@ export interface SendOptions {
   /**
    * Client timestamp for receipt matching.
    * Store the same timestamp locally for delivery receipt lookup.
+   * A new send accepts a safe positive integer at most 5 minutes ahead of the
+   * SDK clock and at most 24 hours behind it, and throws
+   * `InvalidSendTimestampError` for any other value.
    */
   timestamp?: number;
 

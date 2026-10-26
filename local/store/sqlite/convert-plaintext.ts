@@ -21,17 +21,7 @@ import { SqliteSchemaTooNewError, SqliteStoreInUseError, classifySqliteError } f
 import { createSqliteExecutor, type SqliteRootExecutor } from './executor';
 import { SQLITE_STORE_MIGRATIONS } from './migrations';
 import { SQLITE_STORE_TABLES } from './schema';
-
-/**
- * The name ending of the temporary file of a conversion. The core refuses a
- * store name with this ending, so no store shares the file.
- */
-export const SQLITE_CONVERT_SUFFIX = '.oe2e-convert';
-
-/** The temporary file of the conversion of the store `name`. */
-export function sqliteConvertTempName(name: string): string {
-  return `${name}${SQLITE_CONVERT_SUFFIX}`;
-}
+export { SQLITE_CONVERT_SUFFIX, sqliteConvertTempName } from './file-name';
 
 /** The rows that one read of the copy returns. */
 const PAGE_SIZE = 256;

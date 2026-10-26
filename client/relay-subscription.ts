@@ -300,7 +300,7 @@ async function handleRelayMessageLocked(
     return true;
   }
 
-  if (!(await family.admit())) {
+  if (!(await family.admit(receiveId))) {
     if (envelope.id) await storeProcessedEnvelope(ctx.storage, envelope.id, Date.now(), receiveId);
     return true;
   }

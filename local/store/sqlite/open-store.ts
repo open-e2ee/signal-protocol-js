@@ -41,12 +41,11 @@ import { EncryptionError, EncryptionErrorCode } from '../../../types/errors';
 import type { SqliteDriver } from './driver';
 import { secretVaultCustody } from '../../vault/custody';
 import {
-  SQLITE_CONVERT_SUFFIX,
   copySqliteDatabase,
   openSqliteConversionSource,
   readSqliteUserVersion,
-  sqliteConvertTempName,
 } from './convert-plaintext';
+import { SQLITE_CONVERT_SUFFIX, sqliteConvertTempName } from './file-name';
 import { openSqliteDatabase } from './database';
 import { isPlaintextSqliteDatabase, readSqliteAtRest, type SqliteOpenOptions } from './encryption';
 import { SqliteKeyMismatchError } from './errors';
