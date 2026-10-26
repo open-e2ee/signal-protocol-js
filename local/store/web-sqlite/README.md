@@ -39,10 +39,10 @@ open (`INVALID_STATE`).
 
 Options:
 
-- `name`: the database name in OPFS. A letter or digit, then up to 63
-  letters, digits, `.`, `_`, and `-`, and no `.oe2e-convert` ending. It also
-  names the vault slot of the key. A conversion with `convertPlaintext` needs
-  a name of at most 51 characters. Default: `open-e2ee-signal-protocol.db`.
+- `name`: the database name in OPFS, at most 224 UTF-8 bytes. It starts with
+  an ASCII letter or digit and contains only ASCII letters, digits, `.`, `_`,
+  and `-`. The `.oe2e-convert` ending is reserved. The name also identifies
+  the vault slot of the key. Default: `open-e2ee-signal-protocol.db`.
 - `vault`: the `SignalProtocolLocalSecretVault` that holds the database key.
   Default: the SDK's IndexedDB vault in the same origin.
 - `encryptionAtRest`: pass `false` to store the database without encryption.
@@ -54,6 +54,21 @@ Options:
   [Convert a plaintext store](#convert-a-plaintext-store). Default: `false`.
 - `logger`: receives the warning of each open without encryption.
 - `workerUrl` and `wasmUrl`: see [Content Security Policy](#content-security-policy).
+
+The name budget reserves 18 bytes for `.open-e2ee-sqlite-` and 13 bytes for
+the conversion ending. Thus the longest generated directory component is
+255 bytes. This is a conservative portability contract.
+[Filesystem documentation](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation)
+reports 255 as a common component limit.
+OPFS does not specify a universal 255-byte limit.
+
+The budget also fits the engine's 512-byte path header, including the root
+slash, SQLite's auxiliary ending, and the terminator reserve.
+[SQLite permits an auxiliary ending of at most 12 ASCII bytes](https://sqlite.org/c3ref/vfs.html).
+The store checks the name before any lock, vault, worker, or OPFS access.
+It rejects oversized inputs before encoding and uses a fixed-size encoding
+buffer for the remaining inputs. Existing accepted names keep their file,
+directory, lock, and vault identities.
 
 Each store runs its own worker. Close the store with `close()`: it closes the
 database and stops the worker. A failed open also stops its worker. Keep
@@ -134,8 +149,9 @@ database that does not exist leaves no directory.
 
 The conversion needs the store of the name in no other tab or worker of the
 origin. While another context has it open, the conversion fails at once with
-`INVALID_STATE` and changes nothing. A name longer than 51 characters also
-fails with `INVALID_STATE` before any write.
+`INVALID_STATE` and changes nothing. Every accepted database name fits its
+conversion temporary name. A name over 224 UTF-8 bytes fails with
+`INVALID_STATE` before any storage access.
 
 The conversion refuses, with `INVALID_STATE`, a database that holds an
 application table, a BLOB value, or an integer outside the safe JavaScript

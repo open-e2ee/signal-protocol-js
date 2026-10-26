@@ -83,6 +83,7 @@ holds each member to a production construction site.
 | `INVALID_CIPHERTEXT` | The ciphertext format is invalid. | Reject the message. |
 | `DECRYPTION_FAILED` | Available session state could not decrypt the message. | Let the retry flow recover, or inspect the session state. |
 | `ENCRYPTION_FAILED` | The SDK could not encrypt the message. | Inspect the session state and `originalError`. |
+| `INVALID_SEND_TIMESTAMP` | A new send carries a `timestamp`, or a sync to linked devices carries an application time, that is not a safe positive integer, or that is more than 5 minutes ahead of or more than 24 hours behind the SDK clock. The SDK throws `InvalidSendTimestampError` from `@open-e2ee/signal-protocol-sdk/types` and stores or posts nothing for the send. | Send again with a timestamp in the window, or with no timestamp. |
 | `MESSAGE_DUPLICATE` | The session processed this message before. | Discard the duplicate. |
 | `TOO_MANY_SKIPPED_MESSAGES` | The message exceeded the skipped-key bound. | Reset the affected session. |
 | `REPLAY_DETECTED` | Envelope and encrypted-content timestamps differ. | Reject the message as a replay. |

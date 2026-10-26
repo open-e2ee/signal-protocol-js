@@ -60,8 +60,12 @@ export interface ReceiveCommitOptions {
   readonly policy: ResolvedReceiveQueuePolicy;
   readonly logger: Required<Logger>;
   readonly contentAdapter: Pick<SignalProtocolContentAdapter, 'inspectContent'>;
-  /** The retry family of the envelope. It names the failed envelope of a resend. */
-  readonly family: Pick<RetryFamilyReceive, 'fulfills'> | undefined;
+  /**
+   * The retry family of the envelope. It names the failed envelope of a
+   * resend, and binds a resend to the sender of the envelope that the seed
+   * gets.
+   */
+  readonly family: Pick<RetryFamilyReceive, 'bindSender' | 'fulfills'> | undefined;
   /** The delivered fingerprint of the envelope. */
   readonly workId: string;
   /** `relay` for a Relay delivery, `caller` for an envelope that the application passed. */
@@ -91,6 +95,10 @@ export function createReceiveCommit(options: ReceiveCommitOptions): ReceiveCommi
   const commit: ReceiveCommit = {
     workId,
     seed(envelope: Envelope, arrivedSealed: boolean) {
+      // The seed gets the envelope that the decrypt opens: for a sealed
+      // envelope, the envelope inside the seal. Its sender is the sender
+      // that the decrypt authenticates.
+      options.family?.bindSender(envelope);
       const now = Date.now();
       const relay = origin === 'relay';
       const base = {

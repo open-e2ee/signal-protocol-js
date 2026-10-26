@@ -175,7 +175,13 @@ import { RetryRequestScheduler } from './retry-request-lifecycle';
 import { ResendJobDriver } from './recovery-driver';
 import { retryRequestPost } from './retry-request-envelope';
 import type { RetryTerminalResetSteps } from './retry-terminal-recovery';
-import { migrateRetryRequestRecords } from '../local/store/reliability';
+import { getOutgoingMessageIntent, migrateRetryRequestRecords } from '../local/store/reliability';
+import {
+  checkNewSendTimestamp,
+  SEND_TIMESTAMP_ORIGIN,
+  type SendTimestampOrigin,
+  type SendTimestampOriginKind,
+} from './send-timestamp';
 import { deliveredEnvelopeFingerprint } from '../local/store/received-content';
 import { RECEIVE_WORK_DEFAULT_LIMIT, sizedReceiveWork } from '../local/store/receive-work';
 import {
@@ -2509,7 +2515,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         record = await this.fillAwaitingRecord(record, family, workId, opened);
       }
     } else {
-      if (!(await family.admit())) {
+      if (!(await family.admit(receiveId))) {
         await this.markMessageDeliveredSilently(envelope.id, options);
         return { outcome: { kind: 'duplicate' } };
       }
@@ -2526,6 +2532,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       record = decrypted.record;
     }
 
+    // The record names the sender that its decrypt authenticated. A
+    // redelivery of a committed record runs no seed, so it binds here.
+    family.bindSender(record);
     const restored = await this.cipher.restoreCommitted(record);
     // The ratchet step is spent, so a resend cannot repair the content.
     if (restored.kind === 'denied') {
@@ -3212,6 +3221,27 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     // Normalize all inputs to Uint8Array before calling cipher.encrypt()
     let plaintextBytes: Uint8Array;
     let clientTimestamp: number | undefined;
+    // A new send checks an application-supplied timestamp once, here, before
+    // the profile key work, the sweep, the intent write and any post. A send
+    // that repeats a stored intent keeps the stored timestamp, which can be
+    // outside the window, so a refused value passes only when a stored intent
+    // for this identifier holds the same timestamp. The mark stops the inner
+    // checks of this send.
+    const applicationTimestamp = isDataMessage(content)
+      ? (content.timestamp as number | undefined)
+      : options?.timestamp;
+    let timestampOrigin: SendTimestampOriginKind | undefined;
+    if (applicationTimestamp == null) {
+      if (isDataMessage(content)) timestampOrigin = 'sdk-clock';
+    } else {
+      try {
+        checkNewSendTimestamp({ timestamp: applicationTimestamp });
+        timestampOrigin = 'checked';
+      } catch (error) {
+        const existing = await getOutgoingMessageIntent(this._storage, clientMessageId);
+        if (existing?.clientTimestamp !== applicationTimestamp) throw error;
+      }
+    }
     // A 1:1 send to a contact carries this account's profile key when an exchange is bound.
     const profileKeys =
       isGroupId(recipientId) || recipientId === this.userId ? undefined : profileKeyExchange(this);
@@ -3238,16 +3268,20 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     if (isGroupId(recipientId) && contentHint === ContentHint.Resendable) {
       await this.sweepResendableContentDaily();
     }
+    // The public options type of the cipher has no mark, so the marked
+    // options go in as a value of that type.
+    const sendOptions: SendOptions & SendTimestampOrigin = {
+      ...options,
+      clientMessageId,
+      ...(clientTimestamp !== undefined && { timestamp: clientTimestamp }),
+      [SEND_TIMESTAMP_ORIGIN]: timestampOrigin,
+      ...(contentHint !== undefined && { contentHint }),
+    };
     const encrypt = (sendContext: SignalProtocolClientContext) =>
       this.cipher.encrypt(
         recipientId,
         plaintextBytes,
-        {
-          ...options,
-          clientMessageId,
-          ...(clientTimestamp !== undefined && { timestamp: clientTimestamp }),
-          ...(contentHint !== undefined && { contentHint }),
-        },
+        sendOptions,
         this.sendSessionCallbacks(() => sendContext, stopSignal),
         stopSignal
       );

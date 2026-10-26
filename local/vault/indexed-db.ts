@@ -67,7 +67,6 @@ export class IndexedDbSignalProtocolSecretVault implements SignalProtocolLocalSe
   readonly custody: SecretVaultCustody = 'same-origin';
 
   private readonly databaseName: string;
-  private database: Promise<IDBPDatabase<SecretVaultSchema>> | null = null;
 
   constructor(options: IndexedDbSignalProtocolSecretVaultOptions = {}) {
     this.databaseName = options.databaseName ?? DEFAULT_DATABASE_NAME;
@@ -96,7 +95,12 @@ export class IndexedDbSignalProtocolSecretVault implements SignalProtocolLocalSe
     await this.request('deleteSecret', (database) => database.delete(STORE_NAME, name));
   }
 
-  /** Runs one request, and reports its failure as `KEY_STORAGE_ERROR`. */
+  /**
+   * Runs one request on its own connection, and reports its failure as
+   * `KEY_STORAGE_ERROR`. The connection closes when the request settles. So
+   * the vault holds no connection between requests, and a page that opens a
+   * store many times keeps no connection for each open.
+   */
   private async request<T>(
     operation: string,
     run: (database: IDBPDatabase<SecretVaultSchema>) => Promise<T>
@@ -106,28 +110,26 @@ export class IndexedDbSignalProtocolSecretVault implements SignalProtocolLocalSe
       return await run(database);
     } catch (error) {
       throw keyStorageError(`IndexedDB secret vault ${operation} failed: ${detail(error)}`, operation, error);
+    } finally {
+      database.close();
     }
   }
 
-  /** Opens the database once. A failed open is not kept: the next call tries again. */
-  private open(): Promise<IDBPDatabase<SecretVaultSchema>> {
-    this.database ??= openDB<SecretVaultSchema>(this.databaseName, 1, {
-      upgrade(database) {
-        database.createObjectStore(STORE_NAME);
-      },
-      // Another context deletes or upgrades the database: let it proceed.
-      blocking: () => {
-        const current = this.database;
-        this.database = null;
-        void current?.then((database) => database.close());
-      },
-      terminated: () => {
-        this.database = null;
-      },
-    }).catch((error: unknown) => {
-      this.database = null;
+  /** Opens a connection for one request. */
+  private async open(): Promise<IDBPDatabase<SecretVaultSchema>> {
+    try {
+      return await openDB<SecretVaultSchema>(this.databaseName, 1, {
+        upgrade(database) {
+          database.createObjectStore(STORE_NAME);
+        },
+        // Another context deletes or upgrades the database during a request:
+        // let it proceed.
+        blocking: (_currentVersion, _blockedVersion, event) => {
+          (event.target as IDBDatabase).close();
+        },
+      });
+    } catch (error) {
       throw keyStorageError(`IndexedDB secret vault did not open: ${detail(error)}`, 'open', error);
-    });
-    return this.database;
+    }
   }
 }

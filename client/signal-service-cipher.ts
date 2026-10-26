@@ -68,6 +68,11 @@ import { sizedReceiveWork } from '../local/store/receive-work';
 import { envelopeCiphertextBytes } from './delivery-error';
 import { GroupSenderKeyOperations } from './group-sender-key-operations';
 import type { PreparedAttachmentUpload, SealedReceipt, SendOptions, SendResult } from './types';
+import {
+  checkNewSendTimestamp,
+  type SendTimestampOrigin,
+  withCheckedSendTimestamp,
+} from './send-timestamp';
 import { ContentHint } from '../types/messages';
 
 import {
@@ -1006,6 +1011,11 @@ export class SignalProtocolServiceCipher {
     return this.fanOut.request(post, control.stopSignal);
   }
 
+  /**
+   * Post a sync payload to this account's other devices. The timestamp is the
+   * epoch of the sync. A caller that passes an application-supplied time
+   * checks it first, as a new send checks its timestamp.
+   */
   private async sendSyncPayloadToLocalOtherDevices(
     payloadBytes: Uint8Array,
     timestamp: number
@@ -1046,6 +1056,7 @@ export class SignalProtocolServiceCipher {
   async sendMediaAttachmentDeleteSyncToLocalOtherDevices(
     entry: MediaAttachmentDeleteSyncInput
   ): Promise<void> {
+    checkNewSendTimestamp({ timestamp: entry.deletedAt });
     const payloadBytes = this.getResolvedContentAdapter().serializeMediaAttachmentDeleteSync(entry);
     await this.sendSyncPayloadToLocalOtherDevices(payloadBytes, entry.deletedAt);
   }
@@ -1069,6 +1080,7 @@ export class SignalProtocolServiceCipher {
   async sendRecipientUsernameSyncToLocalOtherDevices(
     recipientUsername: RecipientUsernameSyncInput
   ): Promise<void> {
+    checkNewSendTimestamp({ timestamp: recipientUsername.learnedAt });
     const payloadBytes =
       this.getResolvedContentAdapter().serializeRecipientUsernameSync(recipientUsername);
     await this.sendSyncPayloadToLocalOtherDevices(payloadBytes, recipientUsername.learnedAt);
@@ -1077,6 +1089,7 @@ export class SignalProtocolServiceCipher {
   async sendVerificationStateSyncToLocalOtherDevices(
     verificationState: VerificationStateSyncInput
   ): Promise<void> {
+    checkNewSendTimestamp({ timestamp: verificationState.changedAt });
     const payloadBytes =
       this.getResolvedContentAdapter().serializeVerificationStateSync(verificationState);
     await this.sendSyncPayloadToLocalOtherDevices(payloadBytes, verificationState.changedAt);
@@ -1085,6 +1098,7 @@ export class SignalProtocolServiceCipher {
   async sendTaskNotificationAckSyncToLocalOtherDevices(
     ack: TaskNotificationAckSyncInput
   ): Promise<void> {
+    checkNewSendTimestamp({ timestamp: ack.acknowledgedAt });
     const payloadBytes = this.getResolvedContentAdapter().serializeTaskNotificationAckSync(ack);
     await this.sendSyncPayloadToLocalOtherDevices(payloadBytes, ack.acknowledgedAt);
   }
@@ -1092,6 +1106,7 @@ export class SignalProtocolServiceCipher {
   async sendBlockedRecipientsSyncToLocalOtherDevices(
     blocked: BlockedRecipientsSyncInput
   ): Promise<void> {
+    checkNewSendTimestamp({ timestamp: blocked.syncedAt });
     const payloadBytes = this.getResolvedContentAdapter().serializeBlockedRecipientsSync(blocked);
     await this.sendSyncPayloadToLocalOtherDevices(payloadBytes, blocked.syncedAt);
   }
@@ -1861,7 +1876,12 @@ export class SignalProtocolServiceCipher {
     stopSignal?: AbortSignal
   ): Promise<SendResult> {
     const clientMessageId = options?.clientMessageId ?? (await CryptoUtils.generateUuidV4());
-    const durableOptions = { ...options, clientMessageId };
+    // The client entry can mark the origin of the timestamp. The public type
+    // of the options leaves the mark out, and the spread keeps its symbol key.
+    const durableOptions: SendOptions & SendTimestampOrigin & { clientMessageId: string } = {
+      ...(options as (SendOptions & SendTimestampOrigin) | undefined),
+      clientMessageId,
+    };
     const encrypt = async () => {
       if (durableOptions.isBinary) {
         return this.encryptBinaryAttachment(
@@ -2700,7 +2720,7 @@ export class SignalProtocolServiceCipher {
   private async encryptToUser(
     recipientUserId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & { clientMessageId: string },
+    options: SendOptions & SendTimestampOrigin & { clientMessageId: string },
     sessions: SendSessionCallbacks | undefined,
     stopSignal?: AbortSignal
   ): Promise<SendResult> {
@@ -2715,7 +2735,7 @@ export class SignalProtocolServiceCipher {
   private async encryptToUserWithOutbox(
     recipientUserId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & { clientMessageId: string },
+    options: SendOptions & SendTimestampOrigin & { clientMessageId: string },
     sessions: SendSessionCallbacks | undefined,
     stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
@@ -2733,7 +2753,7 @@ export class SignalProtocolServiceCipher {
   private async encryptToUserWithOutboxLocked(
     recipientUserId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & { clientMessageId: string },
+    options: SendOptions & SendTimestampOrigin & { clientMessageId: string },
     sessions: SendSessionCallbacks | undefined,
     stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
@@ -2766,6 +2786,9 @@ export class SignalProtocolServiceCipher {
       );
     }
 
+    // A new send checks the timestamp before the session setup, which can
+    // post to the Relay. The replays above keep the stored timestamp.
+    checkNewSendTimestamp(options);
     const sendFirst = await this.ensureSessionsForUser(recipientUserId, sessions, true);
     const sealedSender = this.relay ? await this.resolveSealedSenderContext(recipientUserId) : null;
     const directSealedSender =
@@ -3960,7 +3983,7 @@ export class SignalProtocolServiceCipher {
   private async encryptToGroupWithOutbox(
     actualGroupId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & { clientMessageId: string },
+    options: SendOptions & SendTimestampOrigin & { clientMessageId: string },
     sessions: SendSessionCallbacks | undefined,
     stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
@@ -5549,7 +5572,7 @@ export class SignalProtocolServiceCipher {
   private async encryptToGroup(
     groupId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & { clientMessageId: string },
+    options: SendOptions & SendTimestampOrigin & { clientMessageId: string },
     sessions: SendSessionCallbacks | undefined,
     stopSignal?: AbortSignal
   ): Promise<SendResult> {
@@ -5589,7 +5612,7 @@ export class SignalProtocolServiceCipher {
   private async encryptBinaryAttachment(
     recipientId: string,
     data: Uint8Array,
-    options: SendOptions & { clientMessageId: string },
+    options: SendOptions & SendTimestampOrigin & { clientMessageId: string },
     sessions: SendSessionCallbacks | undefined,
     stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
@@ -5600,11 +5623,18 @@ export class SignalProtocolServiceCipher {
       );
     }
 
-    const uploaded = await this.prepareAttachmentUpload(data, options);
+    // The upload posts the file, so a new send checks its timestamp first,
+    // once, against one clock reading. The mark stops the checks of the send
+    // after the upload, which would read a later clock. A send that repeats a
+    // stored intent keeps the stored timestamp.
+    const sendOptions = (await getOutgoingMessageIntent(this.storage, options.clientMessageId))
+      ? options
+      : withCheckedSendTimestamp(options);
+    const uploaded = await this.prepareAttachmentUpload(data, sendOptions);
 
     const attachmentPayload = serializeMediaAttachmentMessage({
       attachment: uploaded,
-      timestamp: options.timestamp ?? Date.now(),
+      timestamp: sendOptions.timestamp ?? Date.now(),
     });
     const attachmentBytes = new TextEncoder().encode(attachmentPayload);
     let result: SendResult;
@@ -5612,12 +5642,12 @@ export class SignalProtocolServiceCipher {
       result = await this.encryptToGroup(
         recipientId,
         attachmentBytes,
-        options,
+        sendOptions,
         sessions,
         stopSignal
       );
     } else {
-      result = await this.encryptToUser(recipientId, attachmentBytes, options, sessions);
+      result = await this.encryptToUser(recipientId, attachmentBytes, sendOptions, sessions);
     }
 
     return {

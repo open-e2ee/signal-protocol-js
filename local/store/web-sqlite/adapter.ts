@@ -22,6 +22,7 @@ import {
   convertSqliteLegacyReceivedContent,
 } from '../sqlite/store';
 import { createWebSqliteDriver, type WebSqliteDriver } from '../sqlite/web/driver';
+import { assertWebSqliteDatabaseName } from '../sqlite/web/file-name';
 import { acquireSqliteStoreLock, withSqliteOpenLock } from './store-locks';
 
 /** The database name when the options name none. */
@@ -30,10 +31,11 @@ const DEFAULT_DATABASE_NAME = 'open-e2ee-signal-protocol.db';
 export interface WebSqliteSignalProtocolStoreOptions extends SqliteOpenOptions {
   /**
    * The database name in the origin private file system. It also names the
-   * vault slot of the database key. A letter or digit, then up to 63
-   * letters, digits, `.`, `_`, and `-`, and no `.oe2e-convert` ending. A
-   * conversion with `convertPlaintext` needs a name of at most 51
-   * characters. Default: `open-e2ee-signal-protocol.db`.
+   * vault slot of the database key. A letter or digit, then letters,
+   * digits, `.`, `_`, and `-`, with no `.oe2e-convert` ending. The UTF-8
+   * name budget is 224 bytes. It reserves the SDK's directory prefix and
+   * conversion ending within a 255-byte directory component. Default:
+   * `open-e2ee-signal-protocol.db`.
    */
   readonly name?: string;
   /**
@@ -59,12 +61,17 @@ interface WebSqliteStoreOpenOptions extends SqliteStoreOpenOptions {
   readonly driver: WebSqliteDriver;
 }
 
-function storeOptions(options: WebSqliteSignalProtocolStoreOptions): WebSqliteStoreOpenOptions {
+function storeOptions(
+  options: WebSqliteSignalProtocolStoreOptions,
+  operation: 'open' | 'reset'
+): WebSqliteStoreOpenOptions {
+  const name = options.name ?? DEFAULT_DATABASE_NAME;
+  assertWebSqliteDatabaseName(name, operation);
   const { workerUrl, wasmUrl, ...open } = options;
   return {
     ...open,
     driver: createWebSqliteDriver({ workerUrl, wasmUrl }),
-    name: options.name ?? DEFAULT_DATABASE_NAME,
+    name,
     vault: options.vault ?? new IndexedDbSignalProtocolSecretVault(),
   };
 }
@@ -140,7 +147,7 @@ export class WebSqliteSignalProtocolStore extends SqliteSignalProtocolStore {
   static async open(
     options: WebSqliteSignalProtocolStoreOptions
   ): Promise<WebSqliteSignalProtocolStore> {
-    const open = storeOptions(options);
+    const open = storeOptions(options, 'open');
     const database = await withSqliteOpenLock(open.name, 'open', async () => {
       // A conversion holds the store lock in exclusive mode, so it fails at
       // once while another context has the store open. The open lock keeps
@@ -166,7 +173,7 @@ export class WebSqliteSignalProtocolStore extends SqliteSignalProtocolStore {
   static async reset(
     options: WebSqliteSignalProtocolStoreOptions
   ): Promise<WebSqliteSignalProtocolStore> {
-    const open = storeOptions(options);
+    const open = storeOptions(options, 'reset');
     const database = await withSqliteOpenLock(open.name, 'reset', async () => {
       const releaseExclusive = await acquireSqliteStoreLock(open.name, 'exclusive', 'reset');
       const reset = await resetSqliteStore(open)

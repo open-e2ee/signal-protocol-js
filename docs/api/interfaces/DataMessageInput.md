@@ -19,3 +19,8 @@ Any object with a `timestamp` field (and no Blob/Uint8Array prototype) qualifies
 ### timestamp?
 
 > `optional` **timestamp?**: `number`
+
+The send timestamp, in milliseconds since the epoch. Default: the SDK
+clock. A new send accepts a safe positive integer at most 5 minutes ahead
+of the SDK clock and at most 24 hours behind it, and throws
+`InvalidSendTimestampError` for any other value.

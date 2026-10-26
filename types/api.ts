@@ -985,6 +985,11 @@ export interface SignalProtocolClient {
    *
    * This is account-local device state, not a sender-facing receipt. The app
    * remains responsible for applying the delete to its local media cache.
+   *
+   * The `deletedAt` time is the epoch of the sync. The SDK accepts a safe positive
+   * integer at most 5 minutes ahead of the SDK clock and at most 24 hours
+   * behind it, and throws `InvalidSendTimestampError` for any other value
+   * before it posts.
    */
   syncMediaAttachmentDeleteToLinkedDevices(
     entry: import('../client/content-adapter').MediaAttachmentDeleteSyncInput
@@ -1014,6 +1019,11 @@ export interface SignalProtocolClient {
    *
    * Remote usernames are transient lookup data, but once learned on one device
    * they should be available on the account's other linked devices.
+   *
+   * The `learnedAt` time is the epoch of the sync. The SDK accepts a safe positive
+   * integer at most 5 minutes ahead of the SDK clock and at most 24 hours
+   * behind it, and throws `InvalidSendTimestampError` for any other value
+   * before it posts.
    */
   syncRecipientUsernameToLinkedDevices(
     recipientUsername: import('../client/content-adapter').RecipientUsernameSyncInput
@@ -1024,6 +1034,11 @@ export interface SignalProtocolClient {
    *
    * Only explicit `verified` and cleared-to-`default` states belong here.
    * Conflict and untrusted state is still derived locally from identity-key changes.
+   *
+   * The `changedAt` time is the epoch of the sync. The SDK accepts a safe positive
+   * integer at most 5 minutes ahead of the SDK clock and at most 24 hours
+   * behind it, and throws `InvalidSendTimestampError` for any other value
+   * before it posts.
    */
   syncVerificationStateToLinkedDevices(
     verificationState: import('../client/content-adapter').VerificationStateSyncInput
@@ -1033,6 +1048,11 @@ export interface SignalProtocolClient {
    * Sync task-notification acknowledgment state to the account's other linked devices.
    *
    * This is app-level linked-device notification state, not sender-facing content.
+   *
+   * The `acknowledgedAt` time is the epoch of the sync. The SDK accepts a safe positive
+   * integer at most 5 minutes ahead of the SDK clock and at most 24 hours
+   * behind it, and throws `InvalidSendTimestampError` for any other value
+   * before it posts.
    */
   syncTaskNotificationAckToLinkedDevices(
     input: Omit<
@@ -1046,6 +1066,11 @@ export interface SignalProtocolClient {
    *
    * The full current snapshot replaces the local linked-device projection
    * instead of applying deltas.
+   *
+   * The `syncedAt` time is the epoch of the sync. The SDK accepts a safe positive
+   * integer at most 5 minutes ahead of the SDK clock and at most 24 hours
+   * behind it, and throws `InvalidSendTimestampError` for any other value
+   * before it posts.
    */
   syncBlockedRecipientsToLinkedDevices(
     blocked: import('../client/content-adapter').BlockedRecipientsSyncInput

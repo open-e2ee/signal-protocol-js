@@ -1377,9 +1377,12 @@ export async function getRetryFamily(
  * the family index of the local device holds its retry ID. Any other ID
  * gives undefined, and the envelope is an ordinary envelope.
  *
- * The sender of a member is not bound to the target of the request. The
- * retry ID is a random UUID that only the requester, the Relay and the
- * requested sender see, so another sender cannot name it.
+ * The retry ID does not authenticate a member. The Relay sees it, so the
+ * Relay, or a device that works with it, can put it on an envelope from any
+ * sender. A resolved member answers its request only when the sender that
+ * its decrypt authenticates is the account and the device that the request
+ * envelope targets. The receive path binds that sender, and a member from
+ * any other sender is an ordinary envelope.
  */
 export async function resolveRetryFamilyMember(
   store: ReliabilityMetadataStore,

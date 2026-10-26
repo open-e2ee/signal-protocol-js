@@ -150,6 +150,16 @@ await signal.send("bob", {
 });
 ```
 
+A new send accepts a `timestamp` at most 5 minutes ahead of the SDK clock and
+at most 24 hours behind it. For any other value, `send()` throws
+`InvalidSendTimestampError` and stores or posts nothing. Omit `timestamp`, and
+the SDK uses its clock. From the Relay release that follows v2026.10.25, the
+Relay admits a mailbox delivery epoch and a new group fan-out operation in the
+same window. Earlier Relay releases admit a new operation only within 5
+minutes of its epoch. On an earlier Relay release, a time 5 minutes to 24 hours
+old passes the SDK check but gets `OPERATION_EXPIRED`. The SDK check uses the
+same bounds, so the SDK refuses an application-supplied time before any post.
+
 A hosted client sends a sealed 1:1 message only when you pass
 `hosted.profileKeys`, and only to a contact whose profile key `contacts` holds.
 Each other 1:1 message is identified, so the Relay sees its sender. Until the
