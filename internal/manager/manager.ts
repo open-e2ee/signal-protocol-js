@@ -57,6 +57,7 @@
  * ```
  */
 
+import { assertRetainedIdentity, type RetainedIdentities } from './retained-identity';
 import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import type {
   Ciphertext,
@@ -111,6 +112,20 @@ import { PREKEY_ALGORITHM_X25519, verifyPreKeySignature } from '../../keys/preke
 import { SessionBuilder, SessionCipher } from '../session';
 import { sessionLockFor, sessionLockKey, type RecordLock } from '../session/record-locks';
 
+/** @internal Invoke only the existing-identity initialization at this owner. */
+export function initializeManagerFromRetainedIdentities(
+  manager: DefaultSignalProtocolManager,
+  types: readonly IdentityType[],
+  identities: RetainedIdentities,
+): Promise<void> {
+  return initializeRetainedManager(manager, types, identities);
+}
+let initializeRetainedManager: (
+  manager: DefaultSignalProtocolManager,
+  types: readonly IdentityType[],
+  identities: RetainedIdentities,
+) => Promise<void>;
+
 /**
  * Signal Protocol Manager implementation
  *
@@ -139,6 +154,9 @@ import { sessionLockFor, sessionLockKey, type RecordLock } from '../session/reco
  */
 export {};
 export class DefaultSignalProtocolManager implements SignalProtocolManager {
+  static #retainedInitializer = (initializeRetainedManager = (manager, types, identities) =>
+    manager.#initializeOwned(types, identities));
+
   private keyStorage: SignalProtocolLocalStore;
   private initialized = false;
   private readonly logger: Required<Logger>;
@@ -288,10 +306,18 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
    *
    */
   async initialize(identityTypes: readonly IdentityType[] = ['aci', 'pni']): Promise<void> {
+    return this.#initializeOwned(identityTypes);
+  }
+
+  async #initializeOwned(
+    identityTypes: readonly IdentityType[],
+    retained?: RetainedIdentities,
+  ): Promise<void> {
     try {
-      // Generate identity keys for active identity types (Signal Protocol dual-identity architecture)
+      // Ordinary startup generates missing keys. Retained startup only checks them.
       for (const type of identityTypes) {
-        await this.initializeIdentity(type);
+        if (retained) await assertRetainedIdentity(this.keyStorage, type, retained);
+        else await this.initializeIdentity(type);
       }
 
       this.initialized = true;
@@ -300,6 +326,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
         { category: 'E2EE', level: 'info' }
       );
     } catch (error) {
+      if (retained) throw error;
       throw new EncryptionError(
         'Failed to initialize Signal Protocol',
         EncryptionErrorCode.INITIALIZATION_FAILED,

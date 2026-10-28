@@ -1,5 +1,24 @@
 # Changelog
 
+## 13.4.0
+
+### Added
+
+- `resumeHostedSignalProtocolClient()` from the root and `client` exports.
+  It requires the permanent identity keys, device key and scoped session already
+  held by the open store. It renews the device token and runs normal prekey
+  maintenance and client startup. It never requests an assertion or falls back
+  to registration, recovery or linking.
+- `HostedRelayResumeError` reports a strict resume refusal with a code and phase.
+  When startup cleanup has not completed, `cleanupPending` keeps the actual
+  client stop handle. `retryCleanup()` retries that stop, without retrying resume
+  or closing the caller's store. The original failure remains the cause.
+
+### Documentation
+
+- The hosted identity recipe now links to the supported account suspension
+  procedure.
+
 ## 13.3.0
 
 ### Added

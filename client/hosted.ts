@@ -1,3 +1,4 @@
+import { HostedRelayResumeError } from './hosted-resume-error';
 import type { PrivateKey } from '../keys';
 import {
   generateEcOneTimePreKeys,
@@ -893,22 +894,39 @@ async function getOrCreateDeviceAuthentication(
   return deviceAuthenticationSigner(keyPair, publishableKey);
 }
 
-async function getExistingDeviceAuthentication(
+/** @internal Existing authority reader shared with strict hosted resume. */
+export async function getExistingDeviceAuthentication(
   storage: SignalProtocolLocalStore,
   publishableKey: string,
+  strict = false,
 ): Promise<HostedRelayDeviceAuthentication> {
-  const stored = await storage.getMetadata(
-    await deviceAuthenticationMetadataKey(publishableKey),
-  );
-  if (!stored) {
-    throw new Error(
-      'Signal Protocol Relay active device authentication key is not registered',
-    );
+  let stored: string | null;
+  try {
+    stored = await storage.getMetadata(await deviceAuthenticationMetadataKey(publishableKey));
+  } catch (cause) {
+    if (strict) {
+      throw new HostedRelayResumeError(
+        'RETAINED_STATE_UNREADABLE', 'reading-local-state', { cause }
+      );
+    }
+    throw cause;
   }
-  return deviceAuthenticationSigner(
-    decodeStoredDeviceAuthentication(stored),
-    publishableKey,
-  );
+  if (!stored) {
+    if (strict) {
+      throw new HostedRelayResumeError('RETAINED_DEVICE_AUTHENTICATION_UNAVAILABLE', 'reading-local-state');
+    }
+    throw new Error('Signal Protocol Relay active device authentication key is not registered');
+  }
+  try {
+    return deviceAuthenticationSigner(decodeStoredDeviceAuthentication(stored), publishableKey);
+  } catch (cause) {
+    if (strict) {
+      throw new HostedRelayResumeError(
+        'RETAINED_DEVICE_AUTHENTICATION_UNAVAILABLE', 'reading-local-state', { cause }
+      );
+    }
+    throw cause;
+  }
 }
 
 async function deviceAuthenticationMetadataKey(
@@ -1038,7 +1056,8 @@ function hostedAccountAci(accountId: string) {
   return { kind: 0 as const, uuid };
 }
 
-async function createClientFromHostedResult(
+/** @internal Shared hosted composition; caller retains failure cleanup custody. */
+export async function createClientFromHostedResult(
   result: HostedRelayBootstrapResult,
   connection: HostedRelayConnection,
   adapters: Omit<
@@ -1053,6 +1072,7 @@ async function createClientFromHostedResult(
   remoteObjectStore?: SignalProtocolRemoteObjectStore,
   hostedTransport?: HostedRelayTransportResult['transport'],
   profileKeys?: HostedRelayProfileKeys,
+  createClient: typeof DefaultSignalProtocolClient.create = DefaultSignalProtocolClient.create,
 ): Promise<DefaultSignalProtocolClient> {
   const { certificateTrust } = connection;
   assertHostedBootstrapResult(result, certificateTrust);
@@ -1104,10 +1124,7 @@ async function createClientFromHostedResult(
         : { contactStateStore: hostedSealedSenderContacts(profileKeys.contacts) }),
     },
   });
-  const client = await DefaultSignalProtocolClient.create(
-    result.canonicalAccountId,
-    config,
-  );
+  const client = await createClient(result.canonicalAccountId, config);
   if (hostedTransport !== undefined) {
     bindHostedRelayPushRuntime(client, hostedTransport);
     bindHostedRelayPresenceRuntime(client, hostedTransport);

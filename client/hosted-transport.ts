@@ -1,3 +1,4 @@
+import { HostedRelayResumeError } from './hosted-resume-error';
 import { hostedAssertionIdentifier } from "./hosted-assertion-id";
 import { HostedRelayHttpError } from "./hosted-http-error";
 import { submitHostedRelayDeviceLink } from "./hosted-device-link-transport";
@@ -2481,18 +2482,46 @@ export async function resumeHostedRelayTransport(options: {
   readonly connection: HostedRelayConnection;
   readonly deviceAuthentication: HostedRelayDeviceAuthentication;
   readonly storage: SignalProtocolLocalStore;
+  /** @internal Strict resume refuses absence before any authentication. */
+  readonly requireExisting?: boolean;
+  /** @internal Reports actual entry into authentication, after local validation. */
+  readonly onAuthenticating?: () => void;
 }): Promise<HostedRelayTransportResult | undefined> {
-  const stored = await options.storage.getMetadata(
-    await sessionMetadataKey(options.connection),
-  );
-  if (!stored) return undefined;
-  const session = parseSession(stored, options.connection);
+  let stored: string | null;
+  try {
+    stored = await options.storage.getMetadata(await sessionMetadataKey(options.connection));
+  } catch (cause) {
+    if (options.requireExisting) {
+      throw new HostedRelayResumeError(
+        'RETAINED_STATE_UNREADABLE', 'reading-local-state', { cause }
+      );
+    }
+    throw cause;
+  }
+  if (!stored) {
+    if (options.requireExisting) {
+      throw new HostedRelayResumeError('RETAINED_SESSION_UNAVAILABLE', 'reading-local-state');
+    }
+    return undefined;
+  }
+  let session: StoredHostedRelaySession;
+  try {
+    session = parseSession(stored, options.connection);
+  } catch (cause) {
+    if (options.requireExisting) {
+      throw new HostedRelayResumeError(
+        'RETAINED_SESSION_UNAVAILABLE', 'reading-local-state', { cause }
+      );
+    }
+    throw cause;
+  }
   const transport = new HostedRelayHttpTransport(
     options.connection,
     options.storage,
     options.deviceAuthentication,
     session,
   );
+  options.onAuthenticating?.();
   await transport.ensureAuthenticated(true);
   return {
     canonicalAccountId: session.canonicalAccountId,

@@ -41,6 +41,9 @@
  * ```
  */
 
+import { initializeManagerFromRetainedIdentities } from '../internal/manager/manager';
+import type { RetainedIdentities } from '../internal/manager/retained-identity';
+import { ClientStartupCleanupError } from './startup-cleanup';
 import { utf8Decode } from '../internal/platform';
 import AsyncLock from 'async-lock';
 import type { GroupAuthority } from './group-authority';
@@ -267,6 +270,23 @@ function isDataMessage(
   );
 }
 
+/** @internal Same client lifecycle with an owner-enforced existing identity. */
+export function createClientWithRetainedIdentities(
+  userId: string,
+  config: SignalProtocolClientConfig,
+  identities: RetainedIdentities,
+): Promise<DefaultSignalProtocolClient> {
+  if (config.protocolManager !== undefined) {
+    throw new TypeError('Retained startup requires the SDK protocol manager.');
+  }
+  return createRetainedClient(userId, config, identities);
+}
+let createRetainedClient: (
+  userId: string,
+  config: SignalProtocolClientConfig,
+  identities: RetainedIdentities,
+) => Promise<DefaultSignalProtocolClient>;
+
 /**
  * Modern Signal Protocol Client
  *
@@ -284,6 +304,9 @@ function isDataMessage(
  * @category Primary API
  */
 export class DefaultSignalProtocolClient implements SignalProtocolClient {
+  static #retainedFactory = (createRetainedClient = (userId, config, identities) =>
+    DefaultSignalProtocolClient.#createOwned(userId, config, identities));
+
   private readonly manager: SignalProtocolManager;
   private readonly _storage: SignalProtocolLocalStore;
   private readonly relay?: SignalProtocolRelayServer;
@@ -1558,6 +1581,14 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     userId: string,
     config: SignalProtocolClientConfig
   ): Promise<DefaultSignalProtocolClient> {
+    return DefaultSignalProtocolClient.#createOwned(userId, config);
+  }
+
+  static async #createOwned(
+    userId: string,
+    config: SignalProtocolClientConfig,
+    retained?: RetainedIdentities,
+  ): Promise<DefaultSignalProtocolClient> {
     const deviceId = config?.deviceId ?? 1; // Default to primary device
 
     // Use locking to prevent race conditions when multiple create() calls happen concurrently.
@@ -1584,7 +1615,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       };
       const activeIdentityTypes = getActiveIdentityTypes(finalConfig);
 
-      if (deviceId > 1) {
+      if (deviceId > 1 && !retained) {
         for (const identityType of activeIdentityTypes) {
           const hasIdentityKey = await finalConfig.storage.hasIdentityKey(identityType);
           if (!hasIdentityKey) {
@@ -1598,92 +1629,105 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       }
 
       const client = new DefaultSignalProtocolClient(userId, deviceId, finalConfig);
-      await client.initialize();
-      await client.hydratePersistedState();
-      await migrateRetryRequestRecords(client._storage);
-      await client.applyContentRecoveryDecision();
-      // A failed sweep fails the start and runs again at the next start.
-      await removeDistributionsFromMessageRecords(
-        client._storage,
-        client.contentAdapter,
-        client.logger
-      );
-      // Delete the handoff rows that a crash or a key write outside the
-      // sender-key manager left behind. A failed sweep does not fail the start,
-      // because a row with an old senderKeyId never matches the current key.
       try {
-        await client.cipher.sweepSenderKeyHandoffs();
-      } catch (sweepError) {
-        client.logger.warn('Startup sender-key handoff sweep failed', {
-          category: 'E2EE',
-          data: { error: (sweepError as Error).message },
-        });
-      }
-
-      // Cleanup expired sessions and resendable content on startup.
-      // The reference implementation relies on event-driven cleanup (identity change, retry, end-session).
-      // We also enforce our maxRecv TTL here to prevent unbounded session growth.
-      try {
-        await client.sesameManager.cleanupExpiredSessions();
-        await client.resendableContent.sweep();
-      } catch (cleanupError) {
-        // Non-fatal: cleanup failures should not prevent client creation
-        client.logger.debug('Startup session/record cleanup failed', {
-          category: 'E2EE',
-          data: { error: (cleanupError as Error).message },
-        });
-      }
-
-      // Auto-sync to server if relay provided
-      let syncFailed = false;
-      if (finalConfig?.relay) {
+        await client.initialize(retained);
+        await client.hydratePersistedState();
+        await migrateRetryRequestRecords(client._storage);
+        await client.applyContentRecoveryDecision();
+        // A failed sweep fails the start and runs again at the next start.
+        await removeDistributionsFromMessageRecords(
+          client._storage,
+          client.contentAdapter,
+          client.logger
+        );
+        // Delete the handoff rows that a crash or a key write outside the
+        // sender-key manager left behind. A failed sweep does not fail the start,
+        // because a row with an old senderKeyId never matches the current key.
         try {
-          await client.syncToServer(finalConfig.onProgress);
-        } catch (e) {
-          client.logger.warn('Initial sync failed, client created in offline mode', {
+          await client.cipher.sweepSenderKeyHandoffs();
+        } catch (sweepError) {
+          client.logger.warn('Startup sender-key handoff sweep failed', {
             category: 'E2EE',
-            data: { error: e },
+            data: { error: (sweepError as Error).message },
           });
-          syncFailed = true;
         }
-      }
-      client._syncStatus = finalConfig?.relay ? (syncFailed ? 'failed' : 'synced') : 'none';
 
-      // Start relay subscription if relay is configured with onMessageDecrypted hook
-      // Only subscribe if sync succeeded - subscriptions require a valid server session
-      if (!syncFailed && finalConfig?.relay && finalConfig?.hooks?.onMessageDecrypted) {
-        client.startRelaySubscription();
-      }
+        // Cleanup expired sessions and resendable content on startup.
+        // The reference implementation relies on event-driven cleanup (identity change, retry, end-session).
+        // We also enforce our maxRecv TTL here to prevent unbounded session growth.
+        try {
+          await client.sesameManager.cleanupExpiredSessions();
+          await client.resendableContent.sweep();
+        } catch (cleanupError) {
+          // Non-fatal: cleanup failures should not prevent client creation
+          client.logger.debug('Startup session/record cleanup failed', {
+            category: 'E2EE',
+            data: { error: (cleanupError as Error).message },
+          });
+        }
 
-      // Post the stored retry requests whose next attempt time has come, and
-      // end the requests past their deadlines. Run the pending resend jobs.
-      // The passes run in the background.
-      // The receive queue resumes the stored receive records first. With no
-      // relay, it serves the helper receives alone.
-      if (finalConfig?.relay) client.startRetryRequests();
-      else void client.receiveQueue.start();
-
-      // Validate sender keys config and warn on extreme values
-      if (finalConfig?.senderKeys) {
-        const sk = finalConfig.senderKeys;
-        if (sk.maxChainAdvance !== undefined && sk.maxChainAdvance < 100) {
-          client.logger.warn(
-            'senderKeys.maxChainAdvance < 100 may reject legitimate delayed messages',
-            {
+        // Auto-sync to server if relay provided
+        let syncFailed = false;
+        if (finalConfig?.relay) {
+          try {
+            await client.syncToServer(finalConfig.onProgress);
+          } catch (e) {
+            client.logger.warn('Initial sync failed, client created in offline mode', {
               category: 'E2EE',
-              data: { value: sk.maxChainAdvance },
-            }
-          );
+              data: { error: e },
+            });
+            syncFailed = true;
+          }
         }
-        if (sk.maxSkippedKeys !== undefined && sk.maxSkippedKeys > 10000) {
-          client.logger.warn('senderKeys.maxSkippedKeys > 10000 may cause memory issues', {
-            category: 'E2EE',
-            data: { value: sk.maxSkippedKeys },
-          });
-        }
-      }
+        client._syncStatus = finalConfig?.relay ? (syncFailed ? 'failed' : 'synced') : 'none';
 
-      return client;
+        // Start relay subscription if relay is configured with onMessageDecrypted hook
+        // Only subscribe if sync succeeded - subscriptions require a valid server session
+        if (!syncFailed && finalConfig?.relay && finalConfig?.hooks?.onMessageDecrypted) {
+          client.startRelaySubscription();
+        }
+
+        // Post the stored retry requests whose next attempt time has come, and
+        // end the requests past their deadlines. Run the pending resend jobs.
+        // The passes run in the background.
+        // The receive queue resumes the stored receive records first. With no
+        // relay, it serves the helper receives alone.
+        if (finalConfig?.relay) client.startRetryRequests();
+        else void client.receiveQueue.start();
+
+        // Validate sender keys config and warn on extreme values
+        if (finalConfig?.senderKeys) {
+          const sk = finalConfig.senderKeys;
+          if (sk.maxChainAdvance !== undefined && sk.maxChainAdvance < 100) {
+            client.logger.warn(
+              'senderKeys.maxChainAdvance < 100 may reject legitimate delayed messages',
+              {
+                category: 'E2EE',
+                data: { value: sk.maxChainAdvance },
+              }
+            );
+          }
+          if (sk.maxSkippedKeys !== undefined && sk.maxSkippedKeys > 10000) {
+            client.logger.warn('senderKeys.maxSkippedKeys > 10000 may cause memory issues', {
+              category: 'E2EE',
+              data: { value: sk.maxSkippedKeys },
+            });
+          }
+        }
+
+        return client;
+      } catch (failure) {
+        if (retained) {
+          try {
+            await client.stop();
+          } catch (cleanupFailure) {
+            throw new ClientStartupCleanupError(
+              failure, cleanupFailure, () => client.stop()
+            );
+          }
+        }
+        throw failure;
+      }
     });
   }
 
@@ -1696,9 +1740,15 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    *
    * Generates identity keys if they do not exist and prepares the client for use.
    */
-  private async initialize(): Promise<void> {
+  private async initialize(retained?: RetainedIdentities): Promise<void> {
     try {
-      await this.manager.initialize(getActiveIdentityTypes(this.config));
+      const types = getActiveIdentityTypes(this.config);
+      if (retained) {
+        if (!(this.manager instanceof DefaultSignalProtocolManager)) {
+          throw new TypeError('Retained startup requires the SDK protocol manager.');
+        }
+        await initializeManagerFromRetainedIdentities(this.manager, types, retained);
+      } else await this.manager.initialize(types);
 
       // Set local identity so manager knows who we are for session operations
       // This is needed even without server sync (local-only mode)
@@ -1711,6 +1761,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         data: { userId: this.userId, deviceId: this.deviceId },
       });
     } catch (error) {
+      if (retained) throw error;
       throw new EncryptionError(
         'Failed to initialize Signal Protocol',
         EncryptionErrorCode.INITIALIZATION_FAILED,
