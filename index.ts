@@ -755,3 +755,7 @@ export {
 
 // Sender-key type re-export for boundary-safe composition
 export type { SenderKeyDistributionMessage } from "./internal/protocol/sender-keys";
+
+export { resumeHostedSignalProtocolClient, HostedRelayResumeError } from './client';
+export type { HostedSignalProtocolResumeOptions, HostedRelayResumeErrorCode, HostedRelayResumePhase,
+  HostedRelayResumeProgress, HostedRelayResumeProgressCallback } from './client';

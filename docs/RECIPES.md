@@ -56,8 +56,9 @@ other provider paths and their evidence levels. Those paths issue custom-token
 assertions. They are not native provider adapters in this package.
 
 Application logout and assertion refusal do not revoke existing device proofs.
-The customer suspension/resume recipe awaits the supported backend and CLI
-surface. Anonymous capabilities retain their separate limits.
+To stop identified access on existing devices, follow the
+[suspension procedure](https://docs.open-e2ee.dev/relay/backend-identity#suspend-an-identified-account).
+Anonymous capabilities retain their separate limits.
 
 ## Production composition with Expo on the Signal Protocol Relay
 

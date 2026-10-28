@@ -208,3 +208,7 @@ export type { ProtocolAddress as ProtocolAddressType } from "../types/address";
 
 // Group messaging types (Sender Keys)
 export type { SenderKeyDistributionMessage } from "../internal/protocol/sender-keys";
+
+export { resumeHostedSignalProtocolClient, type HostedSignalProtocolResumeOptions } from './hosted-resume';
+export { HostedRelayResumeError, type HostedRelayResumeErrorCode, type HostedRelayResumePhase,
+  type HostedRelayResumeProgress, type HostedRelayResumeProgressCallback } from './hosted-resume-error';

@@ -12,6 +12,7 @@ It also defines the vocabulary the rest of the documentation assumes.
 ## Core model
 
 - `createHostedSignalProtocolClient()` connects to the OpenE2EE Signal Protocol Relay.
+- `resumeHostedSignalProtocolClient()` requires existing permanent Signal identity keys, device-authentication authority and a hosted session. It never requests a provider assertion or registers a replacement.
 - `createSignalProtocolClient()` composes an application-owned client transport.
 - `DefaultSignalProtocolClient` is the class the factory returns. `SignalProtocolClient` is its interface.
 - Every client requires `storage`, which owns local encryption state for one
@@ -256,3 +257,23 @@ implement the same `MediaAttachmentTransfer` seam.
 - [Public types](../types/README.md)
 - [Zero-knowledge credentials and groups](../zk/README.md)
 - [Documentation and comment standards](./DOCUMENTATION_STANDARDS.md)
+
+## Resume an existing hosted device
+
+Use `resumeHostedSignalProtocolClient({ adapters: { storage }, hosted: { relayUrl } })`
+when the application must preserve the device already held by its open store.
+The SDK refuses missing, unreadable or changed required identity state. It never
+falls back to registration, recovery or device linking. The default
+`createHostedSignalProtocolClient()` behavior stays the same.
+
+A successful resume renews and persists the authenticated device token. Normal
+prekey maintenance and client startup, including automatic subscription when
+the application configures receive hooks, still run. This API does not promise an unchanged
+store or prove that the store contains every historical message/key.
+
+The application owns the store and must not use it concurrently. A
+`HostedRelayResumeError` with `cleanupPending` retains a client that has not
+completed `stop()`. Keep that error and call `retryCleanup()` only when cleanup is
+selected. This retries the held stop, never resume or registration, and never
+closes the application store. Preserve unresolved application operation state.
+Do not display raw error causes or key material in a public error report.
