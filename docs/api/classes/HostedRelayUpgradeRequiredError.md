@@ -19,13 +19,22 @@ does not retry it. The mailbox subscription stops with the reason
 
 ### Constructor
 
-> **new HostedRelayUpgradeRequiredError**(`status`): `HostedRelayUpgradeRequiredError`
+> **new HostedRelayUpgradeRequiredError**(`status`, `version?`): `HostedRelayUpgradeRequiredError`
 
 #### Parameters
 
 ##### status
 
 `number`
+
+The HTTP status of the refusal.
+
+##### version?
+
+`number`
+
+The Relay protocol version that the client sent. The
+message names it. Without it, the message names version 1.
 
 #### Returns
 

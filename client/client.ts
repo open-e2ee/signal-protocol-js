@@ -178,7 +178,20 @@ import { RetryRequestScheduler } from './retry-request-lifecycle';
 import { ResendJobDriver } from './recovery-driver';
 import { retryRequestPost } from './retry-request-envelope';
 import type { RetryTerminalResetSteps } from './retry-terminal-recovery';
-import { getOutgoingMessageIntent, migrateRetryRequestRecords } from '../local/store/reliability';
+import {
+  getOutgoingMessageIntent,
+  migrateOutgoingIntentRecords,
+  migrateRetryRequestRecords,
+  type OutgoingIntentEndReport,
+} from '../local/store/reliability';
+import {
+  manualResendOutcomeEvent,
+  SEND_END_REPORT,
+  sendOutcomeEvent,
+  type ManualResendEndReport,
+  type SendEndReportMark,
+} from './send-deadline';
+import { intentContent, SendIntentDriver } from './send-intent-driver';
 import {
   checkNewSendTimestamp,
   SEND_TIMESTAMP_ORIGIN,
@@ -500,6 +513,19 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   private resendJobsOnConnect: (() => void) | undefined;
 
   /**
+   * Replays the open sends of the outbox, and ends each at its posting
+   * deadline. It starts with the retry request scheduler, at each relay
+   * transition to connected, and at the earliest deadline of an open send,
+   * and stop() stops it. Each pass is relay work, so its hooks run through
+   * that work. A replay runs the send path of an application call, so it
+   * takes the intent lock of the send.
+   */
+  private readonly sendIntents: SendIntentDriver;
+
+  /** Ends the subscription of the send driver to relay connection states. */
+  private sendDriverOnConnect: (() => void) | undefined;
+
+  /**
    * The stop() in progress. It is set before a step of stop() runs, so a
    * stop() call that overlaps it, also from a step, waits for it, and a
    * subscription start is refused.
@@ -555,6 +581,41 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       throw new Error('Storage must be provided by DefaultSignalProtocolClient.create() callers');
     }
     this._storage = config.storage;
+    this.sendIntents = new SendIntentDriver(
+      this.state.relayWork,
+      this._storage,
+      this.logger,
+      (work) => {
+        const context = this.relayWorkContext(work);
+        return {
+          end: (clientMessageId, report) =>
+            this.cipher.endPastDeadlineIntent(clientMessageId, report),
+          replay: async (intent, content, report) => {
+            await this.sendWithContext(
+              intent.kind === 'group' ? createGroupId(intent.recipientId) : intent.recipientId,
+              content,
+              {
+                clientMessageId: intent.clientMessageId,
+                timestamp: intent.clientTimestamp,
+                ...(intent.contentHint !== undefined && { contentHint: intent.contentHint }),
+                ...(intent.kind === 'group' && { groupMemberUserIds: intent.groupMemberUserIds }),
+              },
+              context,
+              work.stopSignal,
+              report
+            );
+          },
+          resend: (clientMessageId, report) =>
+            this.cipher.replayManualResend(clientMessageId, {
+              ...(work.stopSignal && { stopSignal: work.stopSignal }),
+              report,
+            }),
+          endResend: (clientMessageId, manualMessageId) =>
+            this.cipher.endPastDeadlineManualResend(clientMessageId, manualMessageId),
+          report: (event) => callHook(context.hooks, 'onSendOutcome', event),
+        };
+      }
+    );
     // The store declares its protection. The policy decides from it whether
     // the client keeps resendable content.
     this.contentRecoveryPolicy = resolveContentRecoveryPolicy(config.protocol?.contentRecovery);
@@ -1277,9 +1338,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
   /**
    * The session reset steps of a retry request that ended as
-   * `expired-content`. Their session hooks run through the given context,
-   * and its stop signal stops their lock waits and relay requests. There are
-   * none without a relay.
+   * `expired-content` or `posting-deadline`. Their session hooks run through
+   * the given context, and its stop signal stops their lock waits and relay
+   * requests. There are none without a relay.
    */
   private retryTerminalReset(
     context: SignalProtocolClientContext
@@ -1633,6 +1694,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         await client.initialize(retained);
         await client.hydratePersistedState();
         await migrateRetryRequestRecords(client._storage);
+        await migrateOutgoingIntentRecords(client._storage);
         await client.applyContentRecoveryDecision();
         // A failed sweep fails the start and runs again at the next start.
         await removeDistributionsFromMessageRecords(
@@ -3202,6 +3264,25 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    *
    * The client normalizes all inputs to Uint8Array before they reach the cipher layer.
    *
+   * A direct or group send has a posting deadline: the earlier of 24 hours
+   * after the SDK first stores the send and 24 hours after its timestamp. A
+   * replay with the same `clientMessageId` or a restart never moves it. At or
+   * after the deadline, the SDK starts no relay request for the send. A
+   * request that started before it still counts when its answer arrives
+   * later. When the deadline ends with a device of unknown acceptance, the
+   * send throws `SendAcceptanceUnknownError`. Otherwise the send ends failed:
+   * when the call raised a refusal (a thrown refusal or a refusal in the
+   * receipt of a shared body), it throws the first such refusal. Otherwise it
+   * throws an `Error` with the stored code of the first refused device that
+   * has one, in the order of the destinations. Otherwise it throws
+   * `SendNeverAcceptedByRelayError` with code `SEND_NEVER_ACCEPTED`. A send
+   * error before the deadline gives `deadlineAt`, and `retryable` is true
+   * when a replay can still post the send.
+   *
+   * A backdated `timestamp` shortens the deadline. A send with a timestamp
+   * 23 hours old has at most 1 hour to post. A send with a timestamp 24 hours
+   * old posts nothing and throws `SendNeverAcceptedByRelayError`.
+   *
    * @param recipientId - User ID or group ID (groups use the package group ID prefix)
    * @param content - DataMessageInput, string, or Uint8Array to encrypt and send
    * @param options - Optional send options (isBinary for blob encryption, etc.)
@@ -3235,13 +3316,20 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   /**
    * Send with session callbacks whose hooks run through the given context.
    * The stop signal of relay work ends a wait for the recipient's lock.
+   *
+   * The send driver gives a driven `report`: the end write of the send then
+   * marks the intent, and the driver reports the end. For an application
+   * call, the end write or the completion write of this call records the end
+   * in memory, and `onSendOutcome` runs once before the call returns or
+   * throws.
    */
   private async sendWithContext(
     recipientId: string,
     content: DataMessageInput | string | Uint8Array,
     options: SendOptions | undefined,
     context: SignalProtocolClientContext,
-    stopSignal: AbortSignal | undefined
+    stopSignal: AbortSignal | undefined,
+    report: OutgoingIntentEndReport = { driven: false }
   ): Promise<SendResult> {
     // Every send error carries the logical-send identifier, also an error
     // before the encryption, such as a failed content serialization.
@@ -3253,10 +3341,16 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         options,
         context,
         stopSignal,
-        clientMessageId
+        clientMessageId,
+        report
       );
     } catch (error) {
       throw attachClientMessageId(error, clientMessageId);
+    } finally {
+      // An internal send, such as a sender key distribution, is never reported.
+      if (!report.driven && !report.internal && report.ended && !report.ended.internal) {
+        await callHook(context.hooks, 'onSendOutcome', sendOutcomeEvent(report.ended));
+      }
     }
   }
 
@@ -3267,7 +3361,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     options: SendOptions | undefined,
     context: SignalProtocolClientContext,
     stopSignal: AbortSignal | undefined,
-    clientMessageId: string
+    clientMessageId: string,
+    report: OutgoingIntentEndReport
   ): Promise<SendResult> {
     // Normalize all inputs to Uint8Array before calling cipher.encrypt()
     let plaintextBytes: Uint8Array;
@@ -3281,65 +3376,82 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     const applicationTimestamp = isDataMessage(content)
       ? (content.timestamp as number | undefined)
       : options?.timestamp;
-    let timestampOrigin: SendTimestampOriginKind | undefined;
-    if (applicationTimestamp == null) {
-      if (isDataMessage(content)) timestampOrigin = 'sdk-clock';
-    } else {
-      try {
-        checkNewSendTimestamp({ timestamp: applicationTimestamp });
-        timestampOrigin = 'checked';
-      } catch (error) {
-        const existing = await getOutgoingMessageIntent(this._storage, clientMessageId);
-        if (existing?.clientTimestamp !== applicationTimestamp) throw error;
-      }
-    }
-    // A 1:1 send to a contact carries this account's profile key when an exchange is bound.
+    // A 1:1 send to a contact carries this account's profile key when an
+    // exchange is bound. A replay of the send driver sends the stored
+    // content, so it does no profile key work.
     const profileKeys =
-      isGroupId(recipientId) || recipientId === this.userId ? undefined : profileKeyExchange(this);
+      report.driven || isGroupId(recipientId) || recipientId === this.userId
+        ? undefined
+        : profileKeyExchange(this);
     let profileKey: string | undefined;
-
-    if (isDataMessage(content)) {
-      // DataMessage path: build Content, set timestamp, serialize to protobuf (application send-pipeline ordering)
-      const timestamp = (content.timestamp as number | undefined) ?? Date.now();
-      clientTimestamp = timestamp;
-      profileKey = await profileKeys?.outgoing();
-      const dm: DataMessageInput = { ...content, timestamp, ...(profileKey && { profileKey }) };
-      plaintextBytes = this.contentAdapter.serializeDataMessage(dm);
-    } else if (typeof content === 'string') {
-      await profileKeys?.offer(recipientId);
-      plaintextBytes = new TextEncoder().encode(content);
-    } else {
-      await profileKeys?.offer(recipientId);
-      plaintextBytes = content; // already Uint8Array
-    }
-
-    const contentHint = isGroupId(recipientId)
-      ? this.groupContentHint(options?.contentHint, clientTimestamp !== undefined)
-      : options?.contentHint;
-    if (isGroupId(recipientId) && contentHint === ContentHint.Resendable) {
-      await this.sweepResendableContentDaily();
-    }
-    // The public options type of the cipher has no mark, so the marked
-    // options go in as a value of that type.
-    const sendOptions: SendOptions & SendTimestampOrigin = {
-      ...options,
-      clientMessageId,
-      ...(clientTimestamp !== undefined && { timestamp: clientTimestamp }),
-      [SEND_TIMESTAMP_ORIGIN]: timestampOrigin,
-      ...(contentHint !== undefined && { contentHint }),
-    };
-    const encrypt = (sendContext: SignalProtocolClientContext) =>
-      this.cipher.encrypt(
-        recipientId,
-        plaintextBytes,
-        sendOptions,
-        this.sendSessionCallbacks(() => sendContext, stopSignal),
-        stopSignal
-      );
-    // A receipt for this send waits until the send resolves.
-    this.deliveries.beginSend(clientMessageId);
+    let timestampOrigin: SendTimestampOriginKind | undefined;
     let result: SendResult;
+    // A receipt for this send waits until the send resolves. The hold starts
+    // before the stored-intent read, so a receipt for a replay of a sent
+    // message also waits.
+    this.deliveries.beginSend(clientMessageId);
     try {
+      // A send that names its identifier can repeat a stored intent. A
+      // DataMessage replay then takes the stored timestamp, so it serializes
+      // the same plaintext. The read is outside the intent lock: the locked
+      // send reads the intent again and compares the plaintext digest.
+      const stored =
+        options?.clientMessageId !== undefined
+          ? await getOutgoingMessageIntent(this._storage, clientMessageId)
+          : null;
+      if (applicationTimestamp == null) {
+        if (isDataMessage(content)) timestampOrigin = stored ? 'checked' : 'sdk-clock';
+      } else {
+        try {
+          checkNewSendTimestamp({ timestamp: applicationTimestamp });
+          timestampOrigin = 'checked';
+        } catch (error) {
+          if (stored?.clientTimestamp !== applicationTimestamp) throw error;
+        }
+      }
+
+      if (isDataMessage(content)) {
+        // DataMessage path: build Content, set timestamp, serialize to protobuf (application send-pipeline ordering)
+        const timestamp =
+          (content.timestamp as number | undefined) ?? stored?.clientTimestamp ?? Date.now();
+        clientTimestamp = timestamp;
+        profileKey = await profileKeys?.outgoing();
+        const dm: DataMessageInput = { ...content, timestamp, ...(profileKey && { profileKey }) };
+        plaintextBytes = this.contentAdapter.serializeDataMessage(dm);
+      } else if (typeof content === 'string') {
+        await profileKeys?.offer(recipientId);
+        plaintextBytes = new TextEncoder().encode(content);
+      } else {
+        await profileKeys?.offer(recipientId);
+        plaintextBytes = content; // already Uint8Array
+      }
+
+      // A replay of the send driver gives the stored content hint.
+      const contentHint =
+        isGroupId(recipientId) && !report.driven
+          ? this.groupContentHint(options?.contentHint, clientTimestamp !== undefined)
+          : options?.contentHint;
+      if (isGroupId(recipientId) && !report.driven && contentHint === ContentHint.Resendable) {
+        await this.sweepResendableContentDaily();
+      }
+      // The public options type of the cipher has no marks, so the marked
+      // options go in as a value of that type.
+      const sendOptions: SendOptions & SendTimestampOrigin & SendEndReportMark = {
+        ...options,
+        clientMessageId,
+        ...(clientTimestamp !== undefined && { timestamp: clientTimestamp }),
+        [SEND_TIMESTAMP_ORIGIN]: timestampOrigin,
+        [SEND_END_REPORT]: report,
+        ...(contentHint !== undefined && { contentHint }),
+      };
+      const encrypt = (sendContext: SignalProtocolClientContext) =>
+        this.cipher.encrypt(
+          recipientId,
+          plaintextBytes,
+          sendOptions,
+          this.sendSessionCallbacks(() => sendContext, stopSignal),
+          stopSignal
+        );
       // A group send sets up sessions while it holds the group's Sender Key lock.
       result = await (isGroupId(recipientId)
         ? this.withDeferredHooks(context, encrypt)
@@ -3354,6 +3466,30 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     if (profileKey) await profileKeys?.delivered(recipientId, profileKey);
     if (protocolError) await callHook(context.hooks, 'onRelayProtocolError', protocolError);
     return clientTimestamp !== undefined ? { ...result, clientTimestamp } : result;
+  }
+
+  /** @see SignalProtocolClient.resendMessage */
+  async resendMessage(clientMessageId: string): Promise<SendResult> {
+    const report: ManualResendEndReport = {};
+    try {
+      const intent = await getOutgoingMessageIntent(this._storage, clientMessageId);
+      if (!intent) throw new Error('No stored send has this clientMessageId');
+      // An open resend posts its stored bytes, so only a new one reads the content.
+      const content = await intentContent(this._storage, intent, (plaintext) =>
+        this.cipher.withoutGroupContext(plaintext)
+      );
+      return await this.cipher.resendOutgoingMessage(clientMessageId, content, { report });
+    } catch (error) {
+      throw attachClientMessageId(error, clientMessageId);
+    } finally {
+      if (report.ended) {
+        await callHook(
+          this.ctx.hooks,
+          'onSendOutcome',
+          manualResendOutcomeEvent(report.ended.intent, report.ended.resend)
+        );
+      }
+    }
   }
 
   /** @see SignalProtocolClient.forgetSentContent */
@@ -3653,9 +3789,11 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   }
 
   /**
-   * Start the retry request scheduler and the resend job driver, each with a
-   * pass in the background. Each relay transition to connected runs the
-   * resend jobs again until stop().
+   * Start the retry request scheduler, the resend job driver and the send
+   * driver, each with a pass in the background. Each relay transition to
+   * connected runs the resend jobs and the send driver again until stop().
+   * On a store with no `listMetadataKeys`, the send driver logs one line and
+   * stays disabled, with no subscription.
    */
   private startRetryLifecycle(): void {
     void this.retryRequests.start();
@@ -3670,6 +3808,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     if (this.resendJobsOnConnect === undefined && relay) {
       this.resendJobsOnConnect = relay.subscribeRelayConnectionState((connection) => {
         if (connection.state === 'connected') void this.resendJobs.start();
+      });
+    }
+    void this.sendIntents.start();
+    if (this.sendDriverOnConnect === undefined && relay && this.sendIntents.enabled) {
+      this.sendDriverOnConnect = relay.subscribeRelayConnectionState((connection) => {
+        if (connection.state === 'connected') void this.sendIntents.start();
       });
     }
   }
@@ -4005,15 +4149,18 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     // from a step is refused
     await Promise.resolve();
 
-    // 0. Stop the retry request scheduler, the resend job driver, the group
-    // fetcher, and the receive queue, so no pass starts. Step 4 waits for a
-    // pass in progress, as for other relay work
+    // 0. Stop the retry request scheduler, the resend job driver, the send
+    // driver, the group fetcher, and the receive queue, so no pass starts.
+    // Step 4 waits for a pass in progress, as for other relay work
     this.retryRequests.stop();
     this.resendJobs.stop();
+    this.sendIntents.stop();
     this.groupFetcher?.stop();
     this.receiveQueue.stop();
     this.resendJobsOnConnect?.();
     this.resendJobsOnConnect = undefined;
+    this.sendDriverOnConnect?.();
+    this.sendDriverOnConnect = undefined;
 
     // 1. Start the receipt deadline, 5 s from now. Take the receipt sends in
     // progress, except a send that an earlier stop() stopped, and start the
@@ -4541,7 +4688,11 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     context: SignalProtocolClientContext
   ): Promise<void> {
     const payload = this.contentAdapter.serializeSenderKeyDistributionText(groupId, distribution);
-    await this.sendWithContext(recipientUserId, payload, undefined, context, undefined);
+    // An internal send: its intent stores `internal`, so no end reaches onSendOutcome.
+    await this.sendWithContext(recipientUserId, payload, undefined, context, undefined, {
+      driven: false,
+      internal: true,
+    });
     this.logger.debug('Distributed sender key to user', {
       category: 'E2EE',
       data: { groupId, recipientUserId, generation: distribution.generation },

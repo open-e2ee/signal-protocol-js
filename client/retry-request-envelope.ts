@@ -40,8 +40,10 @@ import type { ContentHint } from '../types/messages';
 import {
   isRetryId,
   RETRY_REQUEST_DEADLINE_MS,
+  RETRY_REQUEST_POSTING_WINDOW_MS,
   retryAttemptClientMessageId,
   retryRequestClientMessageId,
+  retryRequestPostingDeadlineAt,
   storeRetryRequest,
   updateRetryRequest,
   type RetryRequestIds,
@@ -49,6 +51,7 @@ import {
 } from '../local/store/reliability';
 import {
   classifyRetryRequestPostFailure,
+  relayHoldsMessageId,
   relayOperationRefusal,
   type RetryRequestPostFailure,
 } from './relay-acceptance';
@@ -287,6 +290,8 @@ export function retryRequestPost(
 export type RetryPostOutcome =
   /** The Relay holds the request attempt. */
   | 'posted'
+  /** The request attempt stays as stored and nothing was posted. */
+  | 'waiting'
   /** The post failed with a retryable class. The record holds the next attempt time. */
   | 'pending'
   /** The request ended. The record holds the terminal state. */
@@ -318,10 +323,16 @@ const MAX_RETRY_REQUEST_BACKOFF_MS = 60 * 60_000;
  * record that ended posts nothing. At the deadline of the record, the
  * request ends as `expired-content` and posts nothing. When a member
  * failed and the stored attempt is answered, it creates the next attempt
- * under the same retry ID, with the same deadline, and posts it. When that
+ * under the same retry ID, with the same deadlines, and posts it. When that
  * answered attempt is the last one, as `answeredLastRetryAttempt` tells,
- * the request ends as `attempts-exhausted` and posts nothing. Otherwise it
- * posts the stored attempt, as `postStoredRetryRequest` does.
+ * the request ends as `attempts-exhausted` and posts nothing. At or after
+ * the posting deadline, `retryRequestPostingDeadlineAt`, an answered
+ * attempt gets no next attempt and gives `waiting`: the Relay accepted the
+ * request, so it waits, and its deadline ends it as `expired-content`. The
+ * Relay also holds a stored attempt with no next attempt time, so after
+ * the posting deadline that attempt is not posted again and gives
+ * `waiting`. Otherwise it posts the stored attempt, as
+ * `postStoredRetryRequest` does.
  *
  * Each new attempt carries the failed client message ID, the content hint,
  * the sender, the receive time and the delivery error state of the stored
@@ -372,19 +383,27 @@ export async function postRetryRequest(
   if (Date.now() >= stored.deadlineAt) return attempts.end(stored, 'expired-content');
   if (failed.member !== undefined && stored.answered) {
     if (answeredLastRetryAttempt(stored)) return attempts.end(stored, 'attempts-exhausted');
+    // The answer proves that the Relay accepted the request, so it waits
+    // for its deadline.
+    if (Date.now() >= retryRequestPostingDeadlineAt(stored)) return 'waiting';
     return attempts.postNew(await attempts.next(stored));
+  }
+  if (stored.nextAttemptAt === undefined && Date.now() >= retryRequestPostingDeadlineAt(stored)) {
+    return 'waiting';
   }
   return attempts.postStored(stored);
 }
 
 /**
  * Post the stored attempt of a retry request again, with its stored bytes
- * and ID. When the Relay refuses it with OPERATION_EXPIRED, it creates the
- * next attempt under the same retry ID, with the same deadline, replaces
- * the record in one write, and posts it.
+ * and ID. At or after its posting deadline, `retryRequestPostingDeadlineAt`,
+ * the request ends as `posting-deadline` and posts nothing. When the Relay
+ * refuses the post with OPERATION_EXPIRED, the request ends as
+ * `posting-deadline` with acceptance unknown, and posts no replacement.
  *
- * Each post classifies its failure. A RETRY_CONFLICT answer completes the
- * attempt, because the Relay holds an earlier encryption of it. A
+ * Each post classifies its failure. A RETRY_CONFLICT answer, or a
+ * DELIVERY_ALREADY_ACCEPTED answer under protocol version 2, completes the
+ * attempt, because the Relay holds an earlier post of it. A
  * conclusive class stores the terminal state, with `emitted` false, and
  * gives 'terminal'. A retryable class stores the class and the next
  * attempt time, the age of the attempt from 1 minute to 1 hour from now,
@@ -421,9 +440,10 @@ function retryRequestAttempts(
 
   /**
    * Create and store a new attempt. Attempt 1 sets the deadline from its
-   * own time, the first failure. The attempt is due at its own time until
-   * its post settles, so the scheduler posts it again when a stop or a
-   * crash ends the post.
+   * own time, and the posting deadline from the first failure,
+   * `receivedAt`. The attempt is due at its own time until its post
+   * settles, so the scheduler posts it again when a stop or a crash ends
+   * the post.
    */
   const create = async (
     attempt: Pick<
@@ -440,7 +460,7 @@ function retryRequestAttempts(
       | 'failedSender'
       | 'errorShown'
       | 'recoveredEmitted'
-    > & { deadlineAt?: number }
+    > & { deadlineAt?: number; postingDeadlineAt?: number }
   ): Promise<StoredRetryRequest> => {
     const request = withFailedClientMessageId(
       await createRequest(),
@@ -466,6 +486,9 @@ function retryRequestAttempts(
       ...(attempt.errorShown && { errorShown: true }),
       ...(attempt.recoveredEmitted && { recoveredEmitted: true }),
       deadlineAt: attempt.deadlineAt ?? envelope.timestamp + RETRY_REQUEST_DEADLINE_MS,
+      postingDeadlineAt:
+        attempt.postingDeadlineAt ??
+        (attempt.receivedAt ?? envelope.timestamp) + RETRY_REQUEST_POSTING_WINDOW_MS,
       nextAttemptAt: envelope.timestamp,
       envelope,
     };
@@ -473,7 +496,7 @@ function retryRequestAttempts(
     return record;
   };
 
-  /** Create the attempt after the stored one, with the same retry ID and deadline. */
+  /** Create the attempt after the stored one, with the same retry ID and deadlines. */
   const next = (stored: StoredRetryRequest): Promise<StoredRetryRequest> =>
     create({
       failedEnvelopeId: stored.failedEnvelopeId,
@@ -489,40 +512,48 @@ function retryRequestAttempts(
       errorShown: stored.errorShown,
       recoveredEmitted: stored.recoveredEmitted,
       deadlineAt: stored.deadlineAt,
+      postingDeadlineAt: retryRequestPostingDeadlineAt(stored),
     });
 
   const end = async (
     stored: StoredRetryRequest,
-    terminal: 'expired-content' | 'attempts-exhausted'
+    terminal: 'expired-content' | 'posting-deadline' | 'attempts-exhausted'
   ): Promise<RetryPostOutcome> => {
     await update(stored, {
       terminal: { class: terminal, at: Date.now(), emitted: false },
       nextAttemptAt: undefined,
+      lastFailureClass: undefined,
     });
     return 'terminal';
   };
 
   /**
-   * Post one attempt. `fresh` is true for an attempt that this call
-   * created: OPERATION_EXPIRED then means a clock outside the admission
-   * window, and counts as a transport outage.
+   * Post one attempt. At or after its posting deadline, the request ends as
+   * `posting-deadline` and posts nothing.
+   *
+   * OPERATION_EXPIRED ends the request as `posting-deadline` with
+   * acceptance unknown, and no replacement posts. The Relay may have
+   * accepted an earlier post of the attempt and since dropped it.
+   *
+   * DELIVERY_ALREADY_ACCEPTED under protocol version 2 means that the
+   * Relay already holds an accepted post, or a delivered row, under the
+   * message ID of the attempt. Each attempt has its own message ID, so the
+   * attempt is at the Relay or was delivered. The call reads the code as
+   * it reads RETRY_CONFLICT: the request is posted, and no replacement
+   * posts. Attempts advance only when a member answers the stored attempt.
    */
-  const post = async (record: StoredRetryRequest, fresh: boolean): Promise<RetryPostOutcome> => {
+  const post = async (record: StoredRetryRequest): Promise<RetryPostOutcome> => {
+    if (Date.now() >= retryRequestPostingDeadlineAt(record)) {
+      return end(record, 'posting-deadline');
+    }
     try {
       await send(record.envelope!);
     } catch (error) {
       rethrowRelayWorkStopped(error);
       const refusal = relayOperationRefusal(error);
-      if (refusal === 'OPERATION_EXPIRED' && !fresh) {
-        // The Relay no longer admits or replays the stored operation. The
-        // new attempt replaces the record before its post.
-        return post(await next(record), true);
-      }
-      if (refusal !== 'RETRY_CONFLICT') {
-        const failure: RetryRequestPostFailure =
-          refusal === 'OPERATION_EXPIRED'
-            ? { retry: 'transport-outage' }
-            : classifyRetryRequestPostFailure(error);
+      if (refusal === 'OPERATION_EXPIRED') return end(record, 'posting-deadline');
+      if (!relayHoldsMessageId(error)) {
+        const failure: RetryRequestPostFailure = classifyRetryRequestPostFailure(error);
         if ('terminal' in failure) {
           await update(record, {
             terminal: { class: failure.terminal, at: Date.now(), emitted: false },
@@ -550,8 +581,8 @@ function retryRequestAttempts(
     create,
     next,
     end,
-    postNew: (record: StoredRetryRequest) => post(record, true),
-    postStored: (stored: StoredRetryRequest) => post(stored, false),
+    postNew: (record: StoredRetryRequest) => post(record),
+    postStored: (stored: StoredRetryRequest) => post(stored),
   };
 }
 

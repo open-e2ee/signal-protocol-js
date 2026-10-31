@@ -2,8 +2,13 @@ import {
   deviceSetRefusal,
   type DeviceSetRefusal,
 } from '../remote/relay/device-set';
-import { relayOperationRefusal, type RelayPostAcceptance } from './relay-acceptance';
+import {
+  isConflictAcceptance,
+  relayOperationRefusal,
+  type RelayPostAcceptance,
+} from './relay-acceptance';
 import { RelayWorkStopped } from './relay-work';
+import { isPostingDeadlineReached } from './send-deadline';
 
 /**
  * The device-set reconciliation of a declared send.
@@ -77,9 +82,11 @@ export interface DeviceSetUnresolved {
 
 /**
  * A declared send that ended without the acceptance of every device. The
- * devices in `acceptedDevices` stay accepted. The outbox keeps the send as
- * terminal, and the SDK does not post it again. A call of `send()` with the
- * same `clientMessageId` starts a new run at 0 restarts.
+ * devices in `acceptedDevices` stay accepted. After a recipient-phase end,
+ * the outbox keeps the send as terminal with its `outcome`, and the SDK does
+ * not post it again. A later `send()` with the same `clientMessageId` throws
+ * the stored-end class of its outcome, `SendAcceptanceUnknownError` or
+ * `SendNeverAcceptedByRelayError`, and posts nothing.
  *
  * `isOutgoingMessageError` is true for this error.
  */
@@ -92,6 +99,13 @@ export class DeviceSetReconciliationError extends Error {
   readonly acceptedDevices: readonly DeviceSetDevice[];
   readonly unresolvedDevices: readonly DeviceSetDevice[];
   readonly clientMessageId: string;
+  /**
+   * The stored end of the send after a recipient-phase end: `failed` or
+   * `acceptance-unknown`. With `acceptance-unknown`, the message might have
+   * arrived. Undefined after a sync-phase end, which keeps the result of
+   * the send.
+   */
+  readonly outcome: 'failed' | 'acceptance-unknown' | undefined;
 
   constructor(
     unresolved: DeviceSetUnresolved,
@@ -99,7 +113,8 @@ export class DeviceSetReconciliationError extends Error {
       readonly acceptedDevices: readonly DeviceSetDevice[];
       readonly unresolvedDevices: readonly DeviceSetDevice[];
     },
-    clientMessageId: string
+    clientMessageId: string,
+    outcome?: 'failed' | 'acceptance-unknown'
   ) {
     super(
       unresolved.reason === 'exhausted'
@@ -113,6 +128,7 @@ export class DeviceSetReconciliationError extends Error {
     this.acceptedDevices = devices.acceptedDevices;
     this.unresolvedDevices = devices.unresolvedDevices;
     this.clientMessageId = clientMessageId;
+    this.outcome = outcome;
   }
 }
 
@@ -182,13 +198,17 @@ export function syncPostReceipts(
 
 /**
  * The protocol error of the first receipt that has no `deviceSetChecked`
- * mark, or undefined when the Relay marked each receipt.
+ * mark, or undefined when the Relay marked each receipt. An acceptance from
+ * RETRY_CONFLICT, or from a version 2 DELIVERY_ALREADY_ACCEPTED, has no
+ * receipt, so it is not unchecked.
  */
 export function uncheckedDeclaredPost(
   receipts: readonly DeclaredPostReceipt[],
   clientMessageId: string | undefined
 ): RelayProtocolError | undefined {
-  const unchecked = receipts.find(([acceptance]) => acceptance.deviceSetChecked !== true);
+  const unchecked = receipts.find(
+    ([acceptance]) => acceptance.deviceSetChecked !== true && !isConflictAcceptance(acceptance)
+  );
   return unchecked
     ? new RelayProtocolError('DEVICE_SET_UNCHECKED', clientMessageId, unchecked[1])
     : undefined;
@@ -288,8 +308,11 @@ export interface DeviceSetPhaseRun<T> {
    * the new restart count in one write.
    */
   repair(repairs: readonly DeviceSetAccountRepair[], restarts: number): Promise<DeviceSetRepairOutcome>;
-  /** Record the terminal state of the phase. */
-  unresolve(unresolved: DeviceSetUnresolved): Promise<void>;
+  /**
+   * Record the terminal state of the phase. Resolves to the stored outcome
+   * of the send after a recipient-phase end, else to undefined.
+   */
+  unresolve(unresolved: DeviceSetUnresolved): Promise<DeviceSetReconciliationError['outcome']>;
   /** Wait before the next pass. Rejects when the send stops. */
   wait(milliseconds: number): Promise<void>;
   /** Log a failure of a pass that does not decide the phase. */
@@ -304,7 +327,8 @@ function deviceKey(device: DeviceSetDevice): string {
  * Run one phase of a declared send until every device post is accepted.
  *
  * After a pass, the first rule that applies decides:
- * 1. A stopped send throws `RelayWorkStopped`.
+ * 1. A stopped send throws `RelayWorkStopped`, and a send at its posting
+ *    deadline throws the deadline error.
  * 2. A restart post that the Relay refused with `OPERATION_EXPIRED` ends the
  *    phase with `expired`. The restart count does not change.
  * 3. A device-set refusal repairs every device that the refusals of the pass
@@ -333,7 +357,7 @@ export async function runDeviceSetPhase<T>(
       restarts,
       ...(lastRefusal && { lastRefusal }),
     };
-    await run.unresolve(unresolved);
+    const outcome = await run.unresolve(unresolved);
     const unresolvedDevices = new Map<string, DeviceSetDevice>();
     for (const post of posts) {
       if (!post.outcome.ok && !accepted.has(deviceKey(post.device))) {
@@ -349,7 +373,8 @@ export async function runDeviceSetPhase<T>(
         acceptedDevices: [...accepted.values()],
         unresolvedDevices: [...unresolvedDevices.values()],
       },
-      run.clientMessageId
+      run.clientMessageId,
+      outcome
     );
   };
 
@@ -363,7 +388,10 @@ export async function runDeviceSetPhase<T>(
     );
     if (failures.length === 0) return posts;
 
-    const stopped = failures.find((failure) => failure.error instanceof RelayWorkStopped);
+    const stopped = failures.find(
+      (failure) =>
+        failure.error instanceof RelayWorkStopped || isPostingDeadlineReached(failure.error)
+    );
     if (stopped) throw stopped.error;
     if (
       restarts > 0 &&

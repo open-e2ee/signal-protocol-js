@@ -7,8 +7,8 @@ backports.
 
 | Version  | Supported          |
 | -------- | ------------------ |
-| 13.4.x   | :white_check_mark: |
-| < 13.4.0 | :x:                |
+| 13.5.x   | :white_check_mark: |
+| < 13.5.0 | :x:                |
 
 ## Reporting a Vulnerability
 

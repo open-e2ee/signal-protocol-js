@@ -170,6 +170,7 @@ export type {
   RetryTerminalClass,
   RetryTerminalEvent,
   RetryTerminalRecoveryEvent,
+  SendOutcomeEvent,
   SignalProtocolClientHooks,
 } from "./event-hooks";
 export type { GroupInitStatus } from "./group-init-status";

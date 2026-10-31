@@ -7,9 +7,11 @@
 # Class: DeviceSetReconciliationError
 
 A declared send that ended without the acceptance of every device. The
-devices in `acceptedDevices` stay accepted. The outbox keeps the send as
-terminal, and the SDK does not post it again. A call of `send()` with the
-same `clientMessageId` starts a new run at 0 restarts.
+devices in `acceptedDevices` stay accepted. After a recipient-phase end,
+the outbox keeps the send as terminal with its `outcome`, and the SDK does
+not post it again. A later `send()` with the same `clientMessageId` throws
+the stored-end class of its outcome, `SendAcceptanceUnknownError` or
+`SendNeverAcceptedByRelayError`, and posts nothing.
 
 `isOutgoingMessageError` is true for this error.
 
@@ -21,7 +23,7 @@ same `clientMessageId` starts a new run at 0 restarts.
 
 ### Constructor
 
-> **new DeviceSetReconciliationError**(`unresolved`, `devices`, `clientMessageId`): `DeviceSetReconciliationError`
+> **new DeviceSetReconciliationError**(`unresolved`, `devices`, `clientMessageId`, `outcome?`): `DeviceSetReconciliationError`
 
 #### Parameters
 
@@ -42,6 +44,10 @@ readonly [`DeviceSetDevice`](../interfaces/DeviceSetDevice.md)[]
 ##### clientMessageId
 
 `string`
+
+##### outcome?
+
+`"failed"` \| `"acceptance-unknown"`
 
 #### Returns
 
@@ -78,6 +84,17 @@ readonly [`DeviceSetDevice`](../interfaces/DeviceSetDevice.md)[]
 #### Overrides
 
 `Error.name`
+
+***
+
+### outcome
+
+> `readonly` **outcome**: `"failed"` \| `"acceptance-unknown"` \| `undefined`
+
+The stored end of the send after a recipient-phase end: `failed` or
+`acceptance-unknown`. With `acceptance-unknown`, the message might have
+arrived. Undefined after a sync-phase end, which keeps the result of
+the send.
 
 ***
 

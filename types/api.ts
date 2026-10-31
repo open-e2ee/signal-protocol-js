@@ -24,6 +24,7 @@ import type { Logger } from '../logger';
 import type { ContentHint } from './messages';
 import type { ContentRecoveryStatus } from './protocol-config';
 import type { RelayConnectionState, Unsubscribe } from '../remote/relay/types';
+import type { ReceivedMessageKey } from '../local/store/reliability';
 
 // Re-export IdentityType for consumers
 export {};
@@ -98,6 +99,11 @@ export interface RetainedKyberPreKey {
  * The legacy row of recoverable plaintext that SDK 11 stored. A store that
  * opens such a row converts it to a receive record with
  * `awaitingEnvelope: true`. No store writes this shape any more.
+ *
+ * @deprecated Use `ReceiveWorkRecord` and the receive-work store methods.
+ *   The next major SDK version removes this type and the conversion of
+ *   these rows at the first open of a durable store. Open each durable
+ *   store once on SDK 13.x before that version.
  */
 export interface ReceivedContent {
   id: string;
@@ -185,6 +191,12 @@ export interface ReceiveWorkRecord {
   failedEnvelopeId?: string;
   /** A converted legacy row. The next delivery of its envelope gives the sender fields. */
   awaitingEnvelope?: true;
+  /**
+   * `receipt-due`: the key of the content that the application got. The
+   * completion of the record records the key again, so a later copy with
+   * the key is dropped.
+   */
+  received?: ReceivedMessageKey;
 }
 
 /**
@@ -209,6 +221,16 @@ export interface ReceiveWorkQuery {
    */
   after?: Pick<ReceiveWorkRecord, 'arrivalSeq' | 'workId'>;
   /** The most records to return. */
+  limit?: number;
+}
+
+/** A query of the metadata keys that start with one prefix. */
+export interface MetadataKeyQuery {
+  /** Only keys that start with this prefix. */
+  prefix: string;
+  /** Only keys above this key, in UTF-16 code unit order. Pass the last key of the page before. */
+  after?: string;
+  /** The most keys to return. */
   limit?: number;
 }
 
@@ -453,6 +475,54 @@ export interface SignalProtocolClient {
     content: import('../client/types').DataMessageInput | string | Uint8Array,
     options?: import('../client/types').SendOptions
   ): Promise<import('../client/types').SendResult>;
+
+  /**
+   * Post a send again, as a new message, after it ended at its posting
+   * deadline without acceptance.
+   *
+   * Call it only for a send whose `send()` threw `SendAcceptanceUnknownError`
+   * or `SendNeverAcceptedByRelayError`, or whose `onSendOutcome` event gave
+   * `failed` or `acceptance-unknown`. The resend keeps the `clientMessageId`,
+   * the client timestamp and the content of the send. It encrypts the
+   * content again for each recipient device that the Relay did not accept,
+   * and posts each copy under the message ID `<clientMessageId>:manual:N`,
+   * N from 1. The receive queue of a recipient device that already holds
+   * the message drops the copy by its sender device, its client timestamp
+   * and its content. The drop needs the timestamp that the content adapter
+   * reads from the message. Content with no timestamp, such as raw string or
+   * byte content, takes no drop key, and a recipient that holds it receives
+   * the copy again. The recipient records the message with the completion
+   * of its receive record, or, when a receipt is due, right after the
+   * receipt-due write and again with the completion of the receipt. The
+   * record expires after 60 days. The caller-origin receive path gives every
+   * decrypted message to the caller, and a caller that keeps its own records
+   * removes a copy itself.
+   *
+   * Only a send younger than 30 days takes a new resend. An open resend of
+   * an older send still posts until its own deadline.
+   *
+   * The resend is a new Relay operation with its own operation epoch, so the
+   * Relay can charge a resend as a new message. It has its own posting
+   * deadline, 24 hours after the call. Until that deadline, a later call
+   * posts the same resend again, and the SDK send driver posts it again
+   * after a restart. At the deadline it ends: `onSendOutcome` reports its end
+   * once, with `manualResend` set. With `acceptance-unknown`, the resend
+   * might have arrived.
+   *
+   * The content must still be stored: the message record of the send, or
+   * its send log entry for a resendable group send. A resend of a group send
+   * posts the content of its send log entry, so each copy carries the group
+   * context of the original send, not the current one.
+   *
+   * @param clientMessageId - The `clientMessageId` of the send
+   * @returns The result of the resend when the Relay accepted each device
+   * @throws SendAcceptanceUnknownError or SendNeverAcceptedByRelayError when
+   *   the resend ends at its posting deadline
+   * @throws Error when the send is unknown, still open or completed, when
+   *   the Relay accepted each recipient device, when the content is gone, or
+   *   when the send is 30 days old or older and has no open resend
+   */
+  resendMessage(clientMessageId: string): Promise<import('../client/types').SendResult>;
 
   /**
    * Delete the resendable content of one group send.
@@ -2207,6 +2277,16 @@ export interface SignalProtocolLocalStore
 
   /** Delete one metadata value. */
   deleteMetadata(key: string): Promise<void>;
+
+  /**
+   * List the metadata keys that start with `prefix`, in ascending UTF-16
+   * code unit order. With `after`, return only keys above it. Return at most
+   * `limit` keys, 100 when not set.
+   *
+   * This method is optional. Without it, the SDK does not replay open sends
+   * by itself.
+   */
+  listMetadataKeys?(query: MetadataKeyQuery): Promise<string[]>;
 }
 
 /**

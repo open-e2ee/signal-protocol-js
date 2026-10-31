@@ -18,6 +18,7 @@ import type {
 } from '../../../../keys';
 import type {
   MessageRecord,
+  MetadataKeyQuery,
   NewSendLogPayload,
   ReceiveWorkMetadataWrite,
   ReceiveWorkQuery,
@@ -297,6 +298,10 @@ export class SqliteKeyStorage {
 
   deleteMetadata(key: string): Promise<void> {
     return metadata.deleteMetadata(this.context.db, key);
+  }
+
+  listMetadataKeys(query: MetadataKeyQuery): Promise<string[]> {
+    return metadata.listMetadataKeys(this.context.db, query);
   }
 
   compareAndSetMetadata(key: string, expected: string | null, value: string | null): Promise<boolean> {

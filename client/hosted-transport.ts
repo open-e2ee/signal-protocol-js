@@ -81,7 +81,12 @@ import {
   type PresenceSocketEvent,
 } from "./hosted-mailbox-subscription";
 import { HostedGroupServer } from "./hosted-groups";
-import { relayProtocolHeaders, throwIfUpgradeRequired } from "./relay-protocol";
+import {
+  RELAY_PROTOCOL_VERSION,
+  markRelayAnswerVersion,
+  relayProtocolHeadersFor,
+  throwIfUpgradeRequired,
+} from "./relay-protocol";
 import {
   HostedRelayDeviceUnknownError,
   throwIfDeviceRevoked,
@@ -119,6 +124,11 @@ import {
   parseDeviceSetRefusal,
   type DeviceSetRefusal,
 } from "../remote/relay/device-set";
+import {
+  admitRepeatRequest,
+  markAfterRepeatedRequest,
+  type RepeatRequest,
+} from "../remote/relay/request-admission";
 import {
   RelayReceiptInbox,
   declareRelayReceiptIntake,
@@ -255,11 +265,13 @@ function isConclusiveRefusal(error: unknown): boolean {
  * answers 503 `DELIVERY_UNCERTAIN`. The operation identifier makes a repeat
  * exact, so the transport sends the same request once more before it
  * surfaces the error. An ephemeral delivery is best-effort, so an uncertain
- * answer on that class is not repeated.
+ * answer on that class is not repeated. When `beforeRepeat` rejects, no repeat
+ * starts and the first `DELIVERY_UNCERTAIN` error is thrown.
  */
 async function withOneUncertainRetry<T>(
   deliveryClass: DeliveryClass,
   post: () => Promise<T>,
+  beforeRepeat?: () => Promise<void>,
 ): Promise<T> {
   try {
     return await post();
@@ -269,6 +281,11 @@ async function withOneUncertainRetry<T>(
       !(error instanceof HostedRelayHttpError) ||
       error.code !== "DELIVERY_UNCERTAIN"
     ) {
+      throw error;
+    }
+    try {
+      await beforeRepeat?.();
+    } catch {
       throw error;
     }
     return post();
@@ -341,7 +358,15 @@ function identifiedEndpoint(connection: HostedRelayConnection): string {
   return connection.protocolEndpoint.replace(/\/$/u, "");
 }
 
-async function parseResponse(response: Response): Promise<unknown> {
+/**
+ * Read the body of a Relay answer. An error answer throws, and the error
+ * records `relayProtocolVersion`, the protocol version of the request that
+ * it answers.
+ */
+async function parseResponse(
+  response: Response,
+  relayProtocolVersion: number,
+): Promise<unknown> {
   const body = await response.text();
   if (body.length > MAXIMUM_RESPONSE_BYTES) {
     throw new Error("Signal Protocol Relay response is too large");
@@ -365,7 +390,7 @@ async function parseResponse(response: Response): Promise<unknown> {
     // stays a `HostedRelayHttpError` whose `retryable` is true: the Relay
     // sends it for a version above the newest one that it serves, which
     // happens only after a Relay rollback.
-    throwIfUpgradeRequired(response.status, parsed);
+    throwIfUpgradeRequired(response.status, parsed, relayProtocolVersion);
     throwIfDeviceRevoked(response.status, parsed);
     const error = record(parsed) && record(parsed.error) ? parsed.error : {};
     const code = typeof error.code === "string" ? error.code : "UNKNOWN";
@@ -375,10 +400,13 @@ async function parseResponse(response: Response): Promise<unknown> {
         : "Signal Protocol Relay request failed";
     // A refused declared post names the devices of each account in
     // `details`. The error keeps them for the device-set reconciliation.
-    throw new HostedRelayHttpError(response.status, code, message, {
-      ...(record(error.details) ? { data: { details: error.details } } : {}),
-      retryable: error.retryable === true,
-    });
+    throw markRelayAnswerVersion(
+      new HostedRelayHttpError(response.status, code, message, {
+        ...(record(error.details) ? { data: { details: error.details } } : {}),
+        retryable: error.retryable === true,
+      }),
+      relayProtocolVersion,
+    );
   }
   return parsed;
 }
@@ -396,6 +424,7 @@ function missingDestination(userId: string, deviceId: number): Error {
 
 async function postJson(
   connection: HostedRelayConnection,
+  relayProtocolVersion: number,
   path: string,
   body: JsonRecord,
   token?: string,
@@ -403,7 +432,7 @@ async function postJson(
   const headers = new Headers({
     accept: "application/json",
     "content-type": "application/json",
-    ...relayProtocolHeaders(),
+    ...relayProtocolHeadersFor(relayProtocolVersion),
   });
   if (token !== undefined) headers.set("authorization", `Bearer ${token}`);
   return withRelayRequestDeadline(async (signal) => {
@@ -420,7 +449,7 @@ async function postJson(
     } catch (cause) {
       throw new Error("Signal Protocol Relay request could not be completed", { cause });
     }
-    return parseResponse(response);
+    return parseResponse(response, relayProtocolVersion);
   });
 }
 
@@ -717,6 +746,11 @@ export class HostedRelayHttpTransport
     private readonly deviceAuthentication: HostedRelayDeviceAuthentication,
     private session: StoredHostedRelaySession,
     private readonly persistRefreshedToken = true,
+    /**
+     * @internal The Relay protocol version of the client that owns this
+     * transport. Every carrier of the client sends it.
+     */
+    public readonly relayProtocolVersion: number = RELAY_PROTOCOL_VERSION,
   ) {
     // The Relay refuses a removed device's mailbox on every send path before
     // its device list shows the removal, so a direct send may post first.
@@ -729,7 +763,7 @@ export class HostedRelayHttpTransport
     // each acknowledgment with the messages whose receipt it owns.
     declareRelayReceiptIntake(this, this.receiptInbox);
     declareRelayReceiptJoin(this, this.receiptJoin);
-    this.groups = new HostedGroupServer(connection);
+    this.groups = new HostedGroupServer(connection, relayProtocolVersion);
     this.groupServer = {
       server: this.groups,
       issueAuthCredential: (userId, authorityKeyId) => this.issueAuthCredential(userId, authorityKeyId),
@@ -756,6 +790,9 @@ export class HostedRelayHttpTransport
           throw missingDestination(accountAddress, deviceId);
         return { accountAddress, deviceId, generation };
       },
+      (clientMessageId, request) =>
+        admitRepeatRequest(this, clientMessageId, request),
+      relayProtocolVersion,
     );
   }
 
@@ -898,7 +935,7 @@ export class HostedRelayHttpTransport
     const proof = await this.deviceAuthentication.signChallenge(challenge);
     let value: unknown;
     try {
-      value = await postJson(this.connection, "/identity/token", {
+      value = await postJson(this.connection, this.relayProtocolVersion, "/identity/token", {
         accountAddress: this.session.canonicalAccountId,
         // The Relay checks this key against the keys that a recovery revoked.
         deviceAuthenticationPublicKey: bytesToBase64(
@@ -973,11 +1010,11 @@ export class HostedRelayHttpTransport
       post: async (body) => {
         let token = await this.token();
         try {
-          return await postJson(this.connection, '/identity/devices/link', await bodyFor(body, token), token);
+          return await postJson(this.connection, this.relayProtocolVersion, '/identity/devices/link', await bodyFor(body, token), token);
         } catch (error) {
           if (!(error instanceof HostedRelayHttpError) || error.code !== 'TOKEN_INVALID') throw error;
           token = await this.token(true);
-          return postJson(this.connection, '/identity/devices/link', await bodyFor(body, token), token);
+          return postJson(this.connection, this.relayProtocolVersion, '/identity/devices/link', await bodyFor(body, token), token);
         }
       },
     });
@@ -1015,7 +1052,7 @@ export class HostedRelayHttpTransport
         throw new Error('Stored Signal Protocol Relay link session conflicts with the retained attempt');
       session = existing;
     }
-    const transport = new HostedRelayHttpTransport(this.connection, storage, request.newDeviceAuthentication, session);
+    const transport = new HostedRelayHttpTransport(this.connection, storage, request.newDeviceAuthentication, session, true, this.relayProtocolVersion);
     // Persist the complete shape before synchronization or token renewal can fail.
     try {
       await storage.setMetadata(key, JSON.stringify(session));
@@ -1035,13 +1072,19 @@ export class HostedRelayHttpTransport
     };
   }
 
+  /**
+   * Post with the device token. On TOKEN_INVALID, get a new token and post
+   * once more. When `beforeRepeat` rejects, no repeat starts and the
+   * TOKEN_INVALID error is thrown.
+   */
   private async authenticatedPost(
     path: string,
     body: JsonRecord,
+    beforeRepeat?: () => Promise<void>,
   ): Promise<unknown> {
     let token = await this.token();
     try {
-      return await postJson(this.connection, path, body, token);
+      return await postJson(this.connection, this.relayProtocolVersion, path, body, token);
     } catch (error) {
       if (
         !(error instanceof HostedRelayHttpError) ||
@@ -1050,7 +1093,12 @@ export class HostedRelayHttpTransport
         throw error;
       }
       token = await this.token(true);
-      return postJson(this.connection, path, body, token);
+      try {
+        await beforeRepeat?.();
+      } catch {
+        throw error;
+      }
+      return postJson(this.connection, this.relayProtocolVersion, path, body, token);
     }
   }
 
@@ -1498,6 +1546,7 @@ export class HostedRelayHttpTransport
       try {
         const result = await postJson(
           this.connection,
+          this.relayProtocolVersion,
           "/certificates/issue",
           {
             publishableKey: this.connection.publishableKey,
@@ -1808,7 +1857,7 @@ export class HostedRelayHttpTransport
       expiresAt: tokenExpiration(token, this.session) * 1_000,
       headers: {
         authorization: `Bearer ${token}`,
-        ...relayProtocolHeaders(),
+        ...relayProtocolHeadersFor(this.relayProtocolVersion),
         "x-open-e2ee-publishable-key": this.connection.publishableKey,
         "x-open-e2ee-object-id": input.objectId,
         "x-open-e2ee-attachment-capability": input.readCapability,
@@ -1861,6 +1910,15 @@ export class HostedRelayHttpTransport
           ];
     let value: unknown;
     let attempts = 0;
+    // Each repeat request meets the checks that the owner of the post
+    // registered under its message ID, and names its device and the answer
+    // that it follows.
+    const beforeRepeat = (after: RepeatRequest["after"]) => () =>
+      admitRepeatRequest(this, messageId, {
+        userId: envelope.targetUserId,
+        deviceId: envelope.targetDeviceId,
+        after,
+      });
     try {
       value = await withOneUncertainRetry(envelope.deliveryClass, () => {
         attempts++;
@@ -1881,9 +1939,13 @@ export class HostedRelayHttpTransport
             ? {}
             : { recipientRegistrationId: envelope.recipientRegistrationId }),
           ...(deviceSets === undefined ? {} : { deviceSets }),
-        });
-      });
+        }, beforeRepeat("token"));
+      }, beforeRepeat("uncertain"));
     } catch (error) {
+      // After an uncertain answer, the first request can have stored the
+      // copy, so the answer to the repeat tells nothing about the post.
+      const answer = <T>(failure: T): T =>
+        attempts > 1 ? markAfterRepeatedRequest(failure) : failure;
       const device = {
         userId: envelope.targetUserId,
         deviceId: envelope.targetDeviceId,
@@ -1892,31 +1954,35 @@ export class HostedRelayHttpTransport
         const refusal = parseDeviceSetRefusal(error.code, error.data?.details);
         if (refusal !== undefined) {
           this.forgetDestinationGenerations(refusal.accounts);
-          throw markDeviceSetRefusal(error, refusal);
+          throw answer(markDeviceSetRefusal(error, refusal));
         }
       }
       if (
         error instanceof HostedRelayHttpError &&
         error.code === "STALE_DEVICE"
       ) {
-        throw markRelayDeviceRefusal(
-          new HostedRelayHttpError(error.status, error.code, error.message, {
-            data: {
-              code: "STALE_DEVICE",
-              message: error.message,
-              reason: "device_reinstalled",
-              staleDevices: [envelope.targetDeviceId],
-            },
-            retryable: error.retryable,
-          }),
-          { code: "STALE_DEVICE", ...device },
+        throw answer(
+          markRelayDeviceRefusal(
+            new HostedRelayHttpError(error.status, error.code, error.message, {
+              data: {
+                code: "STALE_DEVICE",
+                message: error.message,
+                reason: "device_reinstalled",
+                staleDevices: [envelope.targetDeviceId],
+              },
+              retryable: error.retryable,
+            }),
+            { code: "STALE_DEVICE", ...device },
+          ),
         );
       }
       // Only the Relay's own error body names NOT_FOUND. A 404 without it
       // fails to parse or carries no code, so it is not a device refusal.
       if (error instanceof HostedRelayHttpError && error.code === "NOT_FOUND")
-        throw markRelayDeviceRefusal(error, { code: "NOT_FOUND", ...device });
-      throw error;
+        throw answer(
+          markRelayDeviceRefusal(error, { code: "NOT_FOUND", ...device }),
+        );
+      throw answer(error);
     }
     if (
       !record(value) ||
@@ -1964,6 +2030,7 @@ export class HostedRelayHttpTransport
     const generation = ++this.subscriptionGeneration;
     const subscription = subscribeHostedMailbox({
       ...options,
+      relayProtocolVersion: this.relayProtocolVersion,
       onConnectionState: (state, reason) => {
         if (generation === this.subscriptionGeneration)
           this.connectionState.move(state, reason);
@@ -2398,8 +2465,11 @@ export async function bootstrapHostedRelayTransport(
   const proof = await request.deviceAuthentication.signChallenge(
     await registrationChallenge(request),
   );
+  // A new client starts at the default version, which the transport built
+  // below also takes.
   const value = await postJson(
     request.connection,
+    RELAY_PROTOCOL_VERSION,
     request.assertionPurpose === "recover"
       ? "/identity/recover"
       : "/identity/register",

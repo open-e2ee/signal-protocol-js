@@ -198,6 +198,11 @@ A new send accepts a safe positive integer at most 5 minutes ahead of the
 SDK clock and at most 24 hours behind it, and throws
 `InvalidSendTimestampError` for any other value.
 
+The next major SDK version makes each send timestamp unique per sender
+device. A new send with a timestamp that a different send of the device
+used then throws `InvalidSendTimestampError`. Give each send its own
+timestamp. A retry with the same `clientMessageId` keeps its timestamp.
+
 ***
 
 ### waveform?

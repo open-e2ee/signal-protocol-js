@@ -19,7 +19,16 @@ const MASTER_KEY_LEN = 32;
 /** How long a receive waits before it tries an unresolved sender again. */
 const SENDER_RESOLUTION_RETRY_MS = 30_000;
 
-/** Why the client delivers no group content and never will. */
+/**
+ * Why the client delivers no group content and never will.
+ *
+ * `legacy-no-context`: the content of a managed group carries no group
+ * context, and the client has no state of the group. SDK 12.0.0 and later
+ * put the group context in group content. The next major SDK version no
+ * longer decides group content that has no group context, so content from
+ * an SDK 11 sender is not delivered. Move every sender to SDK 12.0.0 or
+ * later before that version.
+ */
 export type GroupReceiveDenial =
   | 'malformed-context'
   | 'context-mismatch'

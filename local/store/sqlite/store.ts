@@ -7,6 +7,7 @@
  */
 
 import type {
+  MetadataKeyQuery,
   ReceiveWorkMetadataWrite,
   ReceiveWorkQuery,
   ReceiveWorkRecord,
@@ -435,6 +436,10 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
 
   async deleteMetadata(key: string): Promise<void> {
     return this.storage.deleteMetadata(key);
+  }
+
+  async listMetadataKeys(query: MetadataKeyQuery): Promise<string[]> {
+    return this.storage.listMetadataKeys(query);
   }
 
   async compareAndSetMetadata(

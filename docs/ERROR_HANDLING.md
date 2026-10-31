@@ -84,6 +84,8 @@ holds each member to a production construction site.
 | `DECRYPTION_FAILED` | Available session state could not decrypt the message. | Let the retry flow recover, or inspect the session state. |
 | `ENCRYPTION_FAILED` | The SDK could not encrypt the message. | Inspect the session state and `originalError`. |
 | `INVALID_SEND_TIMESTAMP` | A new send carries a `timestamp`, or a sync to linked devices carries an application time, that is not a safe positive integer, or that is more than 5 minutes ahead of or more than 24 hours behind the SDK clock. The SDK throws `InvalidSendTimestampError` from `@open-e2ee/signal-protocol-sdk/types` and stores or posts nothing for the send. | Send again with a timestamp in the window, or with no timestamp. |
+| `SEND_ACCEPTANCE_UNKNOWN` | The posting deadline of a direct or group send ended, and the Relay acceptance of a device is not known. The SDK throws `SendAcceptanceUnknownError` from `@open-e2ee/signal-protocol-sdk/types`. The message might have arrived. | Tell the user that the message might already have arrived. Do not replay the send. |
+| `SEND_NEVER_ACCEPTED` | The posting deadline of a direct or group send ended, the call raised no refusal (a thrown refusal or a refusal in the receipt of a shared body), and no refused device has a stored refusal code. The SDK throws `SendNeverAcceptedByRelayError` from `@open-e2ee/signal-protocol-sdk/types`. | Tell the user which devices did not get the message. |
 | `MESSAGE_DUPLICATE` | The session processed this message before. | Discard the duplicate. |
 | `TOO_MANY_SKIPPED_MESSAGES` | The message exceeded the skipped-key bound. | Reset the affected session. |
 | `REPLAY_DETECTED` | Envelope and encrypted-content timestamps differ. | Reject the message as a replay. |
@@ -154,12 +156,31 @@ holds each member to a production construction site.
 ## Relay Protocol Errors
 
 The Relay serves a set of Relay protocol versions. This SDK speaks
-protocol version 1. Two errors come from that set. Neither is an `EncryptionError`.
+protocol version 2. It does not fall back to version 1. Two errors come from
+that set. Neither is an `EncryptionError`.
 
 | Error | Cause | Application response |
 |---|---|---|
-| `HostedRelayUpgradeRequiredError` | The Relay no longer serves version 1. `code` is `UPGRADE_REQUIRED`, `status` is the HTTP status (426), and `retryable` is false. | Ship a newer SDK. The same request fails again, so do not retry it. |
-| `PROTOCOL_UNSUPPORTED` | The Relay does not serve version 1. The request fails with status 400, the `code` `PROTOCOL_UNSUPPORTED`, and `retryable` true. | Retry later. The Relay never rolls back below a version that a published SDK sends, so this is a transient fault, not a planned state. |
+| `HostedRelayUpgradeRequiredError` | The Relay no longer serves the version that the client sent. The message names that version. `code` is `UPGRADE_REQUIRED`, `status` is the HTTP status (426), and `retryable` is false. | Ship a newer SDK. The same request fails again, so do not retry it. |
+| `PROTOCOL_UNSUPPORTED` | The Relay does not serve version 2. The request fails with status 400, the `code` `PROTOCOL_UNSUPPORTED`, and `retryable` true. A send keeps the device open until its posting deadline. | Retry later. The Relay never rolls back below a version that a published SDK sends, so this is a transient fault, not a planned state. |
+
+Version 2 adds one Relay code, `DELIVERY_ALREADY_ACCEPTED`. The Relay gives it
+with HTTP status 409, `retryable` false and the `details` reason
+`message-id-held`, when it already holds an accepted post under the message
+ID of the post. The Relay stored nothing for this post.
+A Relay gives `RETRY_CONFLICT` for the same case to a version 1 request. The
+SDK reads the two answers in the same way:
+
+- A direct post, a sealed direct post, a pre-message and a group shared body
+  count the answer as an earlier acceptance, under the rules of
+  `RETRY_CONFLICT`. A device whose session the SDK replaced stays unknown.
+  The answer has no receipt.
+- A retry request that gets `DELIVERY_ALREADY_ACCEPTED` from a version 2
+  Relay reads it as the acceptance of its stored attempt, as it reads
+  `RETRY_CONFLICT`. No replacement attempt posts.
+
+A send error can carry the code `DELIVERY_ALREADY_ACCEPTED` when the SDK
+cannot count the answer as an acceptance. Handle it as `RETRY_CONFLICT`.
 
 The SDK does not retry an HTTP request that `UPGRADE_REQUIRED` refuses. Each
 Relay route that answers with a JSON body throws
@@ -297,14 +318,118 @@ restart post with `OPERATION_EXPIRED`, the send throws
 | `acceptedDevices` | The devices that the Relay accepted. They stay accepted |
 | `unresolvedDevices` | The devices that did not get the message |
 | `clientMessageId` | The ID of the send |
+| `outcome` | `failed` or `acceptance-unknown`. With `acceptance-unknown`, the message might have arrived. Treat it like `SendAcceptanceUnknownError` |
 
-The outbox keeps the send as terminal and does not post it again. A call of
-`send()` with the same `clientMessageId` starts a new run at 0 restarts.
+After a recipient-phase end, the outbox keeps the send as terminal with its
+`outcome`, and the SDK does not post it again. A replay with the same
+`clientMessageId` throws the stored-end class of its outcome,
+`SendAcceptanceUnknownError` or the failed-end error below, and posts
+nothing. `expired` gives `acceptance-unknown`, because the Relay can have
+accepted an earlier post. A sync-phase end has no `outcome`. The send keeps
+its result with `syncPending`, and a later `send()` with the same
+`clientMessageId` posts the sync phase again.
+
+A direct or group send has a posting deadline, `deadlineAt`. It is the earlier of 24
+hours after the SDK first stores the send and 24 hours after its timestamp. A
+replay or a restart never moves it. At or after `deadlineAt`, the SDK starts
+no Relay request for the send. A request that started before it still counts
+when its answer arrives later. Before `deadlineAt`, a send error that leaves a
+device open has `retryable: true`, and `relayRetryable` keeps the hint of the
+Relay. With a store that implements `listMetadataKeys`, as every built-in
+store does, the SDK replays the send at start and on reconnect until
+`deadlineAt`. It reports the end once through `onSendOutcome`. An internal
+send of the SDK, such as a sender key distribution, never reaches
+`onSendOutcome`. The SDK keeps no content of a sender key distribution at
+rest, so it does not replay one. With the listing method, it ends an open
+distribution at its deadline and reports nothing, and a retry request of the
+receiver recovers a lost distribution, as in Signal. An open sender key
+distribution that an earlier SDK version stored carries no marker, so the SDK
+reports `content-required` for it once for each client run before its
+deadline, and reports its end through `onSendOutcome` once, at its deadline.
+With a custom store that does not implement `listMetadataKeys`, replay with
+the same `clientMessageId` before `deadlineAt`. A call of `send()` with the same `clientMessageId` before
+`deadlineAt` is always safe. A replay posts only devices that the Relay did
+not accept. The send also ends before
+`deadlineAt` when each open device got `OPERATION_EXPIRED` as the last answer
+in the call or has a stored refusal that the SDK cannot recover. That early
+end has `retryable: false` and follows the rule below. A Relay answer
+`UPGRADE_REQUIRED` or `DEVICE_REVOKED` ends the send at once by the same
+rule: with no device of unknown acceptance, the answer is the error of the
+failed end. When another device of the call has an unknown acceptance, the
+send ends as acceptance-unknown instead, because that device can hold the
+post. When the deadline
+ends, the send throws `SendAcceptanceUnknownError` or the failed-end error of
+the rule below. The two deadline classes come from
+`@open-e2ee/signal-protocol-sdk/types`:
+
+| Error | Cause | Application response |
+|---|---|---|
+| `SendAcceptanceUnknownError` | The Relay acceptance of a device is not known. An answer was lost, or it followed an uncertain request | Tell the user that the message might already have arrived. Do not replay the send |
+| `SendNeverAcceptedByRelayError` | The Relay accepted no request for an open device, the call raised no refusal, and no refused device has a stored refusal code. No request started before the deadline, or each answer was a refusal for now, such as `QUOTA_EXCEEDED` | Tell the user which devices did not get the message |
+
+When no device has an unknown acceptance, the send ends failed, and one rule
+gives its error:
+
+1. When the call that ends the send raised a refusal, the first such refusal
+   is the error. A raised refusal is a thrown refusal or a refusal in the
+   receipt of a shared body. A thrown refusal keeps its class. A refusal in a
+   receipt is an `Error` with the `code` of that refusal.
+2. Otherwise, the error is an `Error` with the stored `code` of the first
+   refused device that has one, in the order of the destinations.
+3. Otherwise, the error is `SendNeverAcceptedByRelayError` with code
+   `SEND_NEVER_ACCEPTED`.
+
+A replay of the ended send raises no refusal, so its error comes from case 2
+or case 3. Each of these errors has `deadlineAt`, `acceptedDevices`,
+`refusedDevices` and `retryable: false`. A replay of the ended send posts
+nothing.
+
+A replay or a resend after `SendAcceptanceUnknownError` can add one charged
+unit within 24 hours, when the Relay no longer holds its record of the first
+acceptance. The SDK does not promise that such a retry has no cost.
+
+To post an ended send again, call `resendMessage(clientMessageId)`. The
+resend keeps the `clientMessageId`, the timestamp and the content of the
+send. It encrypts the content again for each recipient device that the
+Relay did not accept, and posts each copy under the message ID
+`<clientMessageId>:manual:N`, N from 1. A resend of a group send posts the
+content of its send log entry, so each copy carries the group context of the
+original send, not the current one. It is a new Relay operation, so the
+Relay can charge a resend as a new message. It has its own posting deadline,
+24 hours after the call, and its end has the same classes as the end of a
+send. `onSendOutcome` reports the end of a resend once, with `manualResend`
+set to N. Only a send younger than 30 days takes a new resend. At or after
+30 days from the send, `resendMessage` throws `Only a send younger than 30
+days takes a manual resend` and posts nothing. An open resend of an older
+send still posts until its own deadline.
+
+The receive queue of a recipient device drops a copy whose sender device,
+timestamp and content match a message that it already processed, for 60
+days. Two different messages of one sender device with the same timestamp
+both deliver. This rule holds in SDK 13.x and ends in the next major SDK
+version, which drops a later message of the same sender with the same
+timestamp. The drop needs the timestamp that the content adapter reads
+from the message. Content with no timestamp, such as raw string or byte
+content, takes no drop key, and a recipient that holds it receives the copy
+again. The recipient records the message with the completion of its
+receive record. When a delivery receipt is due, it records the message right
+after the receipt-due write and again with the completion of the receipt.
+When no receipt is owed, a stop before the completion of the receive record
+runs `onMessageDecrypted` again. When a receipt is owed, only a stop before
+the receipt-due write runs it again. The caller-origin receive path gives
+every decrypted message to the caller, and a caller that keeps its own
+records removes a copy itself. A recipient device on an SDK
+version without that check can show the message twice.
 
 The sync phase does not fail the send. The recipient result is stored first.
 When the sync phase does not complete, or the own device list cannot be read,
 the result carries `syncPending: true`. Call `send()` again with the same
-`clientMessageId` to post the pending copies.
+`clientMessageId` before `deadlineAt` to post the pending copies. At or after
+`deadlineAt`, a replay posts nothing. It returns the stored result with
+`syncPending`, with one exception. When the send has no sync messages, the
+replay reads the own device list again. If that read finds no other own
+device, the replay completes the send and returns the result without
+`syncPending`.
 
 The Relay marks each accepted declared post with `deviceSetChecked`. When an
 accepted post has no mark, the Relay did not compare its device set. The send
@@ -314,7 +439,9 @@ is delivered and its result does not change. The client reports a
 hook. Its `route` names the post route. A sync copy to another own device is
 an `identified-direct` post. A sync payload of a method such as
 `syncReadToLinkedDevices` reports the error once, with no `clientMessageId`.
-Report it to the Relay operator.
+Report it to the Relay operator. A device that the SDK counts as accepted from
+a `RETRY_CONFLICT` or `DELIVERY_ALREADY_ACCEPTED` answer has no receipt, so
+the SDK reports no `DEVICE_SET_UNCHECKED` error for it.
 
 A relay that does not compare device sets gets no declaration. The Convex
 relay is one. With it, the SDK reads the device lists as before, and none of

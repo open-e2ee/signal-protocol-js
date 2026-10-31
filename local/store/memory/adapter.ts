@@ -9,6 +9,7 @@
  */
 
 import type {
+  MetadataKeyQuery,
   ReceiveWorkMetadataWrite,
   ReceiveWorkQuery,
   ReceiveWorkRecord,
@@ -66,6 +67,7 @@ import { StoreFailureController, type StoreFailureOptions } from './failures';
 import { MemorySendLog } from './send-log';
 import { SenderKeyHandoffTable } from '../sender-key-handoff-table';
 import { assertReceiveWork, isBlockedInGroup, selectReceiveWork } from '../receive-work';
+import { selectMetadataKeys } from '../metadata-keys';
 import {
   assertUnambiguousKyberPreKeyStore,
   assertKyberPreKeyUse,
@@ -1528,6 +1530,10 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
   async deleteMetadata(key: string): Promise<void> {
     this.failures.beforeWrite('deleteMetadata');
     this._metadata.delete(key);
+  }
+
+  async listMetadataKeys(query: MetadataKeyQuery): Promise<string[]> {
+    return selectMetadataKeys(this._metadata.keys(), query);
   }
 
   async compareAndSetMetadata(

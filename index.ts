@@ -675,6 +675,7 @@ export type {
   RetryTerminalClass,
   RetryTerminalEvent,
   RetryTerminalRecoveryEvent,
+  SendOutcomeEvent,
 } from "./client/event-hooks";
 export type { GroupInitStatus } from "./client/group-init-status";
 

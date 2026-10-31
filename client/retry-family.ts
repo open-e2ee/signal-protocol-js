@@ -181,9 +181,9 @@ export interface RetryFamilyReceive {
    * @param fingerprint - The fingerprint of the received envelope.
    * @param post - Posts the request for the given failure, and gives what
    *   it did.
-   * @returns The outcome of `post`. After a `posted` or `terminal` outcome,
-   *   a member is processed, so a redelivery of it on either path posts
-   *   nothing. Any other outcome leaves it unprocessed. `skipped` with no
+   * @returns The outcome of `post`. After a `posted`, `waiting` or
+   *   `terminal` outcome, a member is processed, so a redelivery of it on
+   *   either path posts nothing. Any other outcome leaves it unprocessed. `skipped` with no
    *   post, and one warn line with the behavior
    *   RETRY_REQUEST_ENVELOPE_CHANGED, when the relay changed the failed
    *   envelope after its retry request.
@@ -511,7 +511,7 @@ function retryFamilyReceive(
         stored,
         ...(envelopeId !== undefined && { member: envelopeId }),
       });
-      if ((outcome === 'posted' || outcome === 'terminal') && envelopeId) {
+      if ((outcome === 'posted' || outcome === 'waiting' || outcome === 'terminal') && envelopeId) {
         await storeProcessedEnvelope(storage, envelopeId, Date.now(), fingerprint);
       }
       return outcome;

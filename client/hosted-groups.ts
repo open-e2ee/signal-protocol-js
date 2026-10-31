@@ -10,7 +10,11 @@ import { base64ToBytes, bytesToBase64 } from '../internal/crypto';
 import type { Base64 } from '../types';
 import type { HostedRelayConnection } from './hosted-connection';
 import { withRelayRequestDeadline } from './relay-request-deadline';
-import { relayProtocolHeaders, throwIfUpgradeRequired } from './relay-protocol';
+import {
+  RELAY_PROTOCOL_VERSION,
+  relayProtocolHeadersFor,
+  throwIfUpgradeRequired,
+} from './relay-protocol';
 import {
   isGroupErrorDetail,
   type GroupErrorDetail,
@@ -135,7 +139,11 @@ export class HostedGroupError extends Error {
 
 /** Presentation-authorized group state. Device credentials never enter this transport. */
 export class HostedGroupServer implements GroupServer {
-  constructor(private readonly connection: HostedRelayConnection) {}
+  constructor(
+    private readonly connection: HostedRelayConnection,
+    /** The Relay protocol version of the client that owns this server. */
+    private readonly relayProtocolVersion: number = RELAY_PROTOCOL_VERSION,
+  ) {}
 
   private async request(
     operation: 'create' | 'state' | 'join-info' | 'changes' | 'change' | 'endorsements',
@@ -155,7 +163,7 @@ export class HostedGroupServer implements GroupServer {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            ...relayProtocolHeaders(),
+            ...relayProtocolHeadersFor(this.relayProtocolVersion),
           },
           body: JSON.stringify({
             publishableKey: this.connection.publishableKey,
@@ -170,7 +178,7 @@ export class HostedGroupServer implements GroupServer {
       );
       const value = await readResponse(response);
       if (!response.ok) {
-        throwIfUpgradeRequired(response.status, value);
+        throwIfUpgradeRequired(response.status, value, this.relayProtocolVersion);
         throw new HostedGroupError(response.status, value);
       }
       return value;
