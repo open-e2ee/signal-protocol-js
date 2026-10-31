@@ -1,5 +1,422 @@
 # Changelog
 
+## 13.5.0
+
+### Added
+
+- `SendAcceptanceUnknownError`, code `SEND_ACCEPTANCE_UNKNOWN`, from
+  `@open-e2ee/signal-protocol-sdk/types`. A direct or group send throws it
+  when its posting deadline ends and the Relay acceptance of a device is not
+  known. The message might have arrived. It gives `deadlineAt`,
+  `acceptedDevices`, `unknownDevices` and `refusedDevices`, and its
+  `retryable` is false.
+- `SendNeverAcceptedByRelayError`, code `SEND_NEVER_ACCEPTED`, from the same
+  subpath. A direct or group send throws it when the deadline ends and the
+  Relay accepted no request for an open device. The call and each replay throw
+  it only when the call raised no refusal (a thrown refusal or a refusal in the
+  receipt of a shared body) and no refused device has a stored refusal code.
+- `deadlineAt`, `relayRetryable`, `acceptedDevices` and `refusedDevices` on
+  send errors.
+- With a store that lists its metadata keys, the SDK now replays each open
+  send at start and when the Relay connection returns. It ends each send at
+  its posting deadline, or at the next start or connect after it. It posts
+  nothing for a send past its deadline.
+- `onSendOutcome` on the client hooks, with `SendOutcomeEvent`. The SDK calls
+  it once for each end of a send, from its own replay or from your call. It
+  reports `content-required` when the plaintext of an open send is gone. An
+  internal send of the SDK, such as a sender key distribution, never reaches
+  it. The SDK keeps no content of a sender key distribution, so it does not
+  replay one. It ends an open distribution at its deadline, and a retry
+  request of the receiver recovers a lost distribution. One exception: an
+  open sender key distribution that an earlier SDK version stored carries no
+  marker, so the hook gets `content-required` for it once for each client
+  run before its deadline, and its end once at its deadline. Ignore an ID
+  that your application never sent.
+- The optional method `listMetadataKeys` on `SignalProtocolLocalStore`, with
+  `MetadataKeyQuery`. Every built-in store implements it.
+- `resendMessage(clientMessageId)` on the client. After a send ends with
+  `SendAcceptanceUnknownError` or `SendNeverAcceptedByRelayError`, it posts
+  the message again to each recipient device that the Relay did not accept.
+  The resend is a new operation with a fresh operation time and the message
+  ID `<clientMessageId>:manual:N`. Its content keeps the original timestamp.
+  A resend of a group send posts the content of its send log entry, so each
+  copy carries the group context of the original send, not the current one.
+  It has its own posting deadline 24 hours after the call, and the SDK replays
+  it until then. The Relay can charge the resend as a new message, and the
+  message might already have arrived. `onSendOutcome` reports the end of each
+  resend once, with `manualResend`. Only a send younger than 30 days takes a
+  new resend.
+- `outcome` on `DeviceSetReconciliationError`: `failed` or
+  `acceptance-unknown`. With `acceptance-unknown`, the message might have
+  arrived. Treat it like `SendAcceptanceUnknownError`.
+- Relay protocol version 2, and its Relay code `DELIVERY_ALREADY_ACCEPTED`.
+  The Relay gives the code to a version 2 request, with HTTP status 409,
+  `retryable` false and the `details` reason `message-id-held`, when it
+  already holds an accepted post under the message ID. It stored nothing
+  for the post. A version 1 request gets `RETRY_CONFLICT` for the same case.
+  The SDK reads the code as it reads `RETRY_CONFLICT`: on a direct post, a
+  sealed direct post, a pre-message and a group shared body, it is an earlier
+  acceptance with no receipt, under the same rules. The sealed path keeps the
+  code on its error. In the answer to a version 1 request, the code is an
+  unknown Relay code.
+
+### Changed
+
+- A direct send now has a posting deadline: the earlier of 24 hours after the
+  SDK first stores it and 24 hours after its timestamp. A replay or a restart
+  never moves it. SDK 13.4 had no posting deadline.
+- At or after the deadline, the SDK starts no request for the send. This
+  includes a transport repeat and the identified fallback. A request that
+  started before the deadline still counts when its answer arrives later.
+- SDK 13.4 posted a direct send whose timestamp was exactly 24 hours old. The
+  SDK now stores it, posts nothing and throws `SendNeverAcceptedByRelayError`.
+- SDK 13.4 posted an attachment send whose upload finished after its
+  timestamp plus 24 hours. The SDK now posts nothing and throws.
+- SDK 13.4 replayed a stored direct send after 24 hours and posted it again.
+  The SDK now posts nothing at or after the deadline, and the replay ends
+  with `SendAcceptanceUnknownError` or the failed-end error of the next entry.
+- When a send ends failed and the call that ends it raised a refusal, the
+  first such refusal is the error. A thrown refusal keeps its SDK 13.4 class,
+  and a refusal in the receipt of a shared body is an `Error` with its `code`.
+  Otherwise, the end throws an `Error` with the `code` of the first refused
+  device that has a stored code, in the order of the destinations. With no
+  such device, it throws `SendNeverAcceptedByRelayError`. A replay of the
+  ended send raises no refusal. Each of these errors has `acceptedDevices`,
+  `refusedDevices` and `deadlineAt`.
+- Before the deadline, a send error that leaves a device open now has
+  `retryable` set to true. In SDK 13.4 that field held only the Relay's hint.
+  `relayRetryable` now keeps that hint.
+- SDK 13.4 threw `RETRY_CONFLICT` from a direct send or a sealed direct send
+  when the Relay already held bytes under its ID. The SDK now counts that
+  answer as an earlier acceptance, and the send goes on. This applies when the
+  SDK stored the send from its first post, and no repair replaced the session
+  of that device.
+- In other cases, the acceptance of that device is unknown. Before the
+  deadline, the send still throws `RETRY_CONFLICT`, now with `retryable` true
+  and `deadlineAt`. At the deadline, it throws `SendAcceptanceUnknownError`.
+- Such an answer has no Relay receipt. The send result takes its `messageId`
+  from a Relay receipt of another device when one exists. When every accepted
+  device gave that answer, `messageId` is the `clientMessageId`.
+- Such an answer raises no `DEVICE_SET_UNCHECKED` report through
+  `onRelayProtocolError`, because it has no receipt to check.
+- SDK 13.4 threw `RETRY_CONFLICT` from a group send when a pre-message got it.
+  The group send now goes on. A pre-message that counts it as an acceptance
+  records the sender-key handoff, as for any acceptance.
+- A pre-message whose session the SDK replaced records no handoff when it
+  gets that answer, and the acceptance of its device is unknown. The next
+  group send gives the key again. This also holds on a replay.
+- SDK 13.4 threw from an undeclared send when a sync copy failed. When the
+  deadline stops a sync copy, the send now returns `syncPending`. A replay of
+  that send returns the same result and posts nothing. Other sync failures
+  still throw.
+- A replay of a send with `syncPending` posts the pending sync copies only
+  before `deadlineAt`. At or after it, the replay posts nothing and returns
+  the stored result with `syncPending`.
+- One case differs. When the send has no sync copies yet, the replay reads
+  the own device list again. If it finds no other own device, the send
+  completes without `syncPending`.
+- A replay of an ended send with the same content throws the stored result
+  again and posts nothing. A DataMessage replay takes the stored timestamp.
+- A replay of a direct send now posts only the devices that the Relay did not
+  accept. SDK 13.4 posted every device again. A replay also skips the sync
+  copies that the Relay accepted.
+- A replay of a DataMessage send now keeps its stored timestamp. SDK 13.4 read
+  a new timestamp and refused the replay as a different message.
+- A `RETRY_CONFLICT` answer counts as an earlier acceptance unless the SDK
+  replaced the session of that device. A repair that adds a missing device
+  after `DEVICE_SET_MISMATCH` replaces nothing, so the added device counts as
+  accepted. A device whose session the SDK replaced after `STALE_DEVICE`
+  stays unknown, because the Relay can hold a message sealed to the old
+  session. This now also holds on a replay of a send that this SDK version
+  stored. On a replay of a send that SDK 13.4 stored, a `RETRY_CONFLICT`
+  answer stays uncertain.
+- A send or its replay now ends at once, before the deadline, and posts
+  nothing, when every open device got `OPERATION_EXPIRED` as the last answer
+  in the call or has a refusal that the SDK cannot recover, and throws an `Error` with the stored
+  code of the first refused device that has one, in the order of the
+  destinations.
+  A `STALE_DEVICE` refusal counts only after the SDK repaired the session and
+  the Relay refused the repaired post too. A request with no answer, an
+  uncertain answer, or a send stored by SDK 13.4 still gives
+  `SendAcceptanceUnknownError`.
+- A send that an earlier SDK stored gets its deadline from its stored times.
+  The SDK stores that deadline at its next change of the send.
+- A group send now has the same posting deadline as a direct send. SDK 13.4
+  posted a group send whose timestamp was exactly 24 hours old, and it
+  replayed a stored group send after 24 hours. Both now post nothing at the
+  deadline, and the send ends with `SendAcceptanceUnknownError` or the
+  failed-end error of the direct send rule. The deadline also stops a pre-message, its
+  identified fallback, the shared body and a sync copy.
+- A group send now records the Relay answer of each device: of each
+  pre-message, of each device post, and of the shared body for each of its
+  destinations. A replay posts only the devices that the Relay did not
+  accept. A device that the receipt of the shared body refuses counts as
+  refused, as a thrown refusal does, and the end error follows the rule of a
+  direct send. A replay of the ended send gives the stored code of the first
+  refused device that has one, in the order of the destinations. That code
+  can differ from the code of the call.
+- A `RETRY_CONFLICT` answer to the shared body of a group send counts as an
+  earlier acceptance of each of its destinations. It raises no
+  `DEVICE_SET_UNCHECKED` report through `onRelayProtocolError`. The answer
+  has no receipt that can ask for a sync phase, so the send reads the own
+  device list once to find the devices that need a sync copy.
+- A `RETRY_CONFLICT` answer to a group device post or pre-message whose
+  session the SDK replaced after `STALE_DEVICE` gives acceptance-unknown for
+  that device. On a device that a repair only added, or that no repair
+  changed, it counts as an earlier acceptance. The call and a replay after a
+  restart give the device the same class.
+- SDK 13.4 started a send that ended with `DeviceSetReconciliationError`
+  again at 0 restarts when the application called `send()` with the same
+  `clientMessageId`. After an end in the recipient phase, the SDK now stores
+  the send outcome. That call throws `SendAcceptanceUnknownError` or
+  `SendNeverAcceptedByRelayError` and posts nothing. After an end in the sync
+  phase, the send keeps its result, and that call posts the sync phase again.
+- An `UPGRADE_REQUIRED` or `DEVICE_REVOKED` answer now ends a send at once as
+  failed, or as acceptance-unknown when the acceptance of a device is not
+  known. SDK 13.4 threw the answer and left the send open.
+- A recipient now drops a message that carries the same sender device, the
+  same content timestamp and the same content as a message it already
+  received. The drop also covers a copy under a new message ID, such as a
+  manual resend. Two different messages of one sender device in one
+  millisecond both deliver. The drop needs the timestamp that the content
+  adapter reads from the message. Content with no timestamp, such as raw
+  string or byte content, takes no drop key, and a recipient that holds it
+  receives the copy again. The recipient records the message with the
+  completion of its receive record. When a delivery receipt is due, it
+  records the message right after the receipt-due write and again with the
+  completion of the receipt. When no receipt is owed, a stop before the
+  completion of the receive record runs `onMessageDecrypted` again. When a
+  receipt is owed, only a stop before the receipt-due write runs it again.
+  The record expires after 60 days.
+- A retry resend no longer encrypts again under the same ID after the Relay
+  answers `OPERATION_EXPIRED` to its stored bytes. SDK 13.4 encrypted the
+  content again with a fresh operation epoch and posted the new bytes. The SDK
+  now posts nothing more under that ID. It records that the acceptance of the
+  attempt is unknown.
+- The same applies to a stored null-message answer and to the current
+  sender-key distribution that answers a group retry request. SDK 13.4
+  encrypted both again under the same ID. For the distribution, the SDK still
+  deletes the sender-key handoff of the requester, as SDK 13.4 does, so the
+  next group send gives the key again.
+- When the plaintext of that message is gone, the SDK still posts the
+  null-message session reset under its own ID, as SDK 13.4 does.
+- The SDK still counts such an answer toward the response limit, and it still
+  completes a group resend job as posted, as SDK 13.4 does after its post.
+- A later retry request from the same device has a new attempt and a new ID,
+  so it gets a new encryption, as in SDK 13.4.
+- A hosted group fan-out post now repeats once when the Relay answers 503
+  `DELIVERY_UNCERTAIN`. The repeat sends the identical request with the same
+  `logicalSendId`, as a direct post does. SDK 13.4 threw that error after the
+  first answer. A second uncertain answer reaches the caller. No other error
+  code starts a repeat.
+- After such a repeat, the group send result has no `duplicate` field,
+  because the first request can have stored the fan-out.
+- A send can be stored without its timestamp lookup when a write fails
+  between the two. Without the lookup, an E2EE delivery receipt for the
+  message gives no delivery event, and a retry request for a group message
+  does not find its group. When the SDK stores the same send again, it now
+  also stores a missing lookup and changes nothing else in the stored send.
+  SDK 13.4 did not. A replay of a stored send does not store it again in this
+  release, so a replay does not restore the lookup.
+- Each hosted client now holds its Relay protocol version internally, and
+  every Relay request and the mailbox socket of that client send it. SDK 13.4
+  read one fixed version for the whole SDK. No option changes it.
+- The default Relay protocol version is now version 2. Each Relay request
+  sends `x-open-e2ee-relay-protocol: 2`, and the mailbox socket offers
+  `open-e2ee-relay.v2`. SDK 13.4 sent version 1. A Relay that does not serve
+  version 2 answers `PROTOCOL_UNSUPPORTED`, and a send keeps the device open
+  and retryable until its posting deadline. The SDK does not fall back to
+  version 1. The Relay serves version 1 for at least 180 days after the
+  publish of this release, and the earliest end date is 2027-04-30.
+  See step 19.
+- `HostedRelayUpgradeRequiredError` names the protocol version that the
+  client sent, and its constructor takes an optional `version`. Without it,
+  the message names version 1, as in SDK 13.4.
+- A retry request now has a posting deadline 24 hours after the first
+  failure of its message, and no post of it starts at or after that time. A
+  request whose post is due then ends with the new terminal class
+  `posting-deadline`. SDK 13.4 posted a replacement request after
+  `OPERATION_EXPIRED`. The SDK now ends that request as `posting-deadline`
+  with acceptance unknown, because the request might have arrived, and posts
+  no replacement. Each `posting-deadline` end resets the session and reports
+  one `onRetryTerminal` event. After its posting deadline, a request whose
+  post the Relay accepted posts nothing more and waits for its content until
+  its 14-day deadline. A request that SDK 13.4 stored gets a posting deadline
+  from its first failure, and at most its deadline. SDK 13.4 reads a stored
+  `posting-deadline` record as corrupt, so do not downgrade after one exists.
+- A retry request that gets `DELIVERY_ALREADY_ACCEPTED` from a version 2
+  Relay reads it as the acceptance of its stored attempt, as it reads
+  `RETRY_CONFLICT`. No replacement attempt posts.
+- SDK 13.4 never replayed a send by itself. The application had to call
+  `send()` again with the same `clientMessageId`. That call is still safe, and
+  the SDK runs it after its own replay of the same send.
+
+### Deprecated
+
+Each entry names a change in the next major SDK version. Nothing in this
+release changes for these items. The upgrade steps below say what to do now.
+
+- Group content with no group context. The next major no longer decides it,
+  so content from an SDK 11 sender is not delivered. The denial reason
+  `legacy-no-context` then applies to all such content. See step 13.
+- `ReceivedContent`. The next major removes the type and the first-open
+  conversion of SDK 11 received-content rows. See step 14.
+- `SignalProtocolContentAdapter`. The next major adds the required method
+  `serializeGroupKeySync`, and `ParsedSyncContent.type` gets `groupKeySync`.
+  See step 15.
+- The retry terminal class `expired-content`. The next major renames it to
+  `request-expired`. See step 16.
+- A repeated send timestamp of one device. The next major makes each send
+  timestamp unique per sender device, and refuses a new send that repeats the
+  timestamp of a different send of the device with `InvalidSendTimestampError`.
+  A retry with the same `clientMessageId` keeps its timestamp. See step 17.
+- `ReceiveWorkRecord.received.contentDigest` and
+  `ReceiveWorkRecord.received.senderDeviceId`, the fields of the received
+  message key, and the rule that two different messages of one sender device
+  with one timestamp both deliver. The next major keys a received message by its
+  sender and timestamp only, and drops a later message with the same key.
+  See step 18.
+
+### Fixed
+
+- The SDK reports a Signal Protocol Relay environment mismatch only for HTTP403
+  with the `SCOPE_MISMATCH` error code. Other403 responses use the generic
+  connection error.
+- When a request envelope comes again, the SDK now gives `storeResendJob`
+  the first `createdAt` of the group resend job. SDK 13.4 gave it the time
+  of the new delivery. The built-in stores keep the first value, as the
+  store contract states, so their one-day end of the job did not move. A
+  custom store that stored the given value restarted that day on each
+  repeated request, so the job could stay alive past one day.
+- A binary send now has one upload and one serialized attachment message for
+  each `clientMessageId`, across lost Relay replies and restarts. This
+  applies to direct and group sends. The stored intent keeps the message and
+  the digest of the file. A repeat sends the stored message under the stored
+  timestamp and uploads nothing. A repeat of a completed send returns the
+  stored result, with `storageId`, `aesKey`, `segmentSize`, `digest` and
+  `contentType`. SDK 13.4 uploaded the file again on each repeat, and the
+  repeat then failed with `A clientMessageId cannot identify two different
+  logical sends`.
+- A binary repeat with another file, other pointer metadata, another
+  recipient or another explicit `timestamp` now throws that error before any
+  upload. The pointer metadata comes from the send options: `mimeType`,
+  `caption`, `fileName`, `isViewOnce`, `flags`, `blurHash`, `thumbnail`,
+  `width`, `height`, `durationMs`, `waveform`, `clientUuid` and `cdnNumber`.
+  A repeat that omits `clientUuid` keeps the stored one. A group recipient in
+  place of a direct recipient, or the reverse, is another recipient. A repeat
+  of an intent that has no stored attachment message also throws it before
+  any upload. This includes a text send and a binary send that SDK 13.4
+  stored.
+- A binary send without a caller `timestamp` now reads the SDK clock once,
+  before the upload. The attachment message and the stored intent get the
+  same timestamp. SDK 13.4 read the clock after the upload, once for the
+  message and again for the intent, so the two timestamps could differ.
+
+### Limits
+
+- A replay or a resend after `SendAcceptanceUnknownError` can add one charged
+  unit within 24 hours, when the Relay no longer holds its record of the first
+  acceptance.
+
+#### Upgrade steps
+
+1. Catch `SendAcceptanceUnknownError`. Tell the user that the message might
+   already have arrived, and do not replay the send.
+2. Catch `SendNeverAcceptedByRelayError`, and also any send error with
+   `refusedDevices`. Tell the user which devices did not get the message.
+3. For another send error, read `deadlineAt`. With a store that implements
+   `listMetadataKeys`, the SDK replays the send until then and reports its end
+   once through `onSendOutcome`. Do not build your own replay loop. Without
+   that method, replay with the same `clientMessageId` before `deadlineAt`, as
+   step 11 says. A call of `send()` with the same `clientMessageId` is safe.
+4. Code written for SDK 13.4 compiles unchanged. Check any code that reads
+   `retryable` on a send error, and any code that sends with a timestamp
+   close to 24 hours old.
+5. A custom metadata store needs no change to keep working. The new record and
+   intent fields travel inside the stored JSON value. A store that also
+   implements the optional `listMetadataKeys` gets the automatic send driver.
+   See step 11.
+6. A direct send that first stores a message now resolves on `RETRY_CONFLICT`
+   when no repair changed it. Other `RETRY_CONFLICT` errors now carry
+   `retryable` and `deadlineAt`, so follow step 3 for them.
+7. Code that reads `messageId` from a send result must accept the
+   `clientMessageId` in that field. That occurs only when every accepted
+   device answered `RETRY_CONFLICT`.
+8. A device that downgrades to SDK 13.4 ignores the new record fields. It
+   can then encrypt one expired retry-resend attempt again, as SDK 13.4 does.
+9. Handle the new `posting-deadline` class in `onRetryTerminal`. The session
+   resets, and the request might have arrived. Do not downgrade below this
+   release after it ends a retry request as `posting-deadline`: an older SDK
+   reads that record as corrupt. A 13.4 record that is due, already past
+   its derived posting deadline, and not yet past its deadline ends right
+   after the upgrade as `posting-deadline`, with a session reset.
+10. Handle `SendAcceptanceUnknownError` and `SendNeverAcceptedByRelayError` on
+    group sends too.
+11. A custom metadata store can implement the optional `listMetadataKeys` to
+    get the automatic send driver. Run the store conformance suite to check it.
+    The suite skips its listing cases on a store without the method. Without
+    the method, the SDK does not replay open sends by itself, and it logs one
+    line at each client start. Replay with the same `clientMessageId` before
+    `deadlineAt`. `onSendOutcome` still reports each end of a send that your
+    application posts.
+12. Read `outcome` on `DeviceSetReconciliationError`. When it is set, a call
+    of `send()` with the same `clientMessageId` posts nothing and throws the
+    error of the stored end. To post a message again after a send end, call
+    `resendMessage`. The Relay can charge the resend as a new message. Only a
+    send younger than 30 days takes a new resend. At or after 30 days,
+    `resendMessage` throws `Only a send younger than 30 days takes a manual
+    resend` and posts nothing. The receive queue drops the copy when the
+    content adapter reads a timestamp from the content. The
+    recipient records the message with the completion of its receive record,
+    or, when a receipt is due, right after the receipt-due write and again
+    with the completion of the receipt. The caller-origin receive path gives
+    every decrypted message to the caller, and a caller that keeps its own
+    records removes a copy itself. A recipient on an SDK version before this
+    release does not drop the resend copy, so it can show the message twice.
+13. Move every client that sends to a managed group to SDK 12.0.0 or later
+    before the next major. SDK 12.0.0 and later put the group context in group
+    content. The next major no longer decides group content that has no group
+    context, so content from an SDK 11 sender is not delivered.
+14. Open each durable store once on SDK 13.x before the next major. The open
+    converts the SDK 11 received-content rows to receive records. The next
+    major does not read or convert them. Stop using the `ReceivedContent` type,
+    and use `ReceiveWorkRecord`.
+15. If you implement `SignalProtocolContentAdapter` yourself, plan to add the
+    method `serializeGroupKeySync` in the next major. If you switch on
+    `ParsedSyncContent.type`, plan to handle `'groupKeySync'`. An adapter that
+    spreads the result of `createDefaultSignalProtocolContentAdapter()` into
+    itself gets the default method. Upgrade every own device of one account in
+    one release. An own device on an older SDK version gives the raw group key
+    sync to `onMessageDecrypted`.
+16. Prepare `onRetryTerminal` for the rename of `expired-content` to
+    `request-expired` in the next major. On 13.x, `RetryTerminalClass` does not
+    hold `request-expired`, so a `case 'request-expired':` does not compile.
+    Keep the `expired-content` branch, and give every exhaustive switch on the
+    class a default branch that does not throw. Add the `request-expired` case
+    when you upgrade to the major. Do not confuse it with the delivery error
+    cause `request-ended`.
+17. Give each send of one device its own timestamp. The next major makes the
+    timestamp unique per sender device. A new send with a timestamp that a
+    different send of the device used throws `InvalidSendTimestampError`. A
+    retry with the same `clientMessageId` keeps its timestamp. For a
+    `DataMessage` send, match delivery receipts with the returned
+    `SendResult.clientTimestamp`. For other content, keep the
+    `SendOptions.timestamp` that you supply.
+18. Do not rely on two messages of one sender with one timestamp both
+    delivering. Two different messages of one sender device with one timestamp
+    both deliver in 13.x. In the next major, a recipient keeps the first such
+    message and drops a later one with no notice, also when another device of
+    the sender sent it. A custom store that checks or stores
+    `ReceiveWorkRecord.received` must accept a key with no `contentDigest` and
+    no `senderDeviceId`.
+19. This release sends Relay protocol version 2. The Relay serves version 1
+    for at least 180 days after the publish of this release, and the earliest
+    end date is 2027-04-30. After that date, the Relay can stop
+    serving version 1, and SDK 13.4 and earlier stop. From SDK 10.1.0, an
+    HTTP call then throws `HostedRelayUpgradeRequiredError`, and the mailbox
+    subscription stops with the connection reason `upgrade-required`. Move
+    every client to this release or later before that date.
+
 ## 13.4.0
 
 ### Added

@@ -1,9 +1,10 @@
 /**
  * The session reset of the requester after a retry request ends as
- * `expired-content`.
+ * `expired-content` or `posting-deadline`.
  *
- * The request got no answer before its deadline, so the session with the
- * device that sent the failed envelope can be out of step. The requester
+ * The request got no content before its deadline, or it can post no more
+ * before its posting deadline, so the session with the device that sent
+ * the failed envelope can be out of step. The requester
  * archives that session, deletes its sender-key handoff rows for each device
  * of that account in every group, and sends one null message to the
  * device, at most once an hour for each device. The null message, or else
@@ -75,9 +76,9 @@ export interface RetryTerminalResetContext {
 }
 
 /**
- * Reset the session with the sender device of an `expired-content` request
- * whose terminal state is not emitted. Another class, an emitted state, and
- * a context with no reset steps do nothing.
+ * Reset the session with the sender device of an `expired-content` or
+ * `posting-deadline` request whose terminal state is not emitted. Another
+ * class, an emitted state, and a context with no reset steps do nothing.
  *
  * The steps run in this order. A step that a stored marker shows as done
  * does not run again.
@@ -101,7 +102,8 @@ export interface RetryTerminalResetContext {
  * archives again at the replay. A failed null message is stored as
  * `failed`.
  *
- * @returns The stored record after the reset.
+ * @returns The stored record after the reset of an `expired-content` or
+ *   `posting-deadline` end, else the stored record.
  */
 export async function resetRetryTerminalSession(
   context: RetryTerminalResetContext,
@@ -110,11 +112,16 @@ export async function resetRetryTerminalSession(
   const { storage, reset } = context;
   let record = await getRetryRequest(storage, failedEnvelopeId);
   const terminal = record?.terminal;
-  if (!record || !terminal || terminal.emitted || terminal.class !== 'expired-content') {
+  if (
+    !record ||
+    !terminal ||
+    terminal.emitted ||
+    (terminal.class !== 'expired-content' && terminal.class !== 'posting-deadline')
+  ) {
     return record;
   }
-  // An expired request always has its stored envelope. Its target is the
-  // device that sent the failed envelope.
+  // An expired or posting-deadline request always has its stored envelope.
+  // Its target is the device that sent the failed envelope.
   if (!reset || !record.envelope) return record;
   const device: RetryTerminalDevice = {
     userId: record.envelope.targetUserId,
@@ -135,7 +142,7 @@ export async function resetRetryTerminalSession(
       recovery,
     });
     if (!record) return null;
-    context.logger.info('Archived the session with the sender of an expired retry request', {
+    context.logger.info('Archived the session with the sender of an ended retry request', {
       category: 'E2EE',
       data: {
         failedEnvelopeId,
@@ -225,7 +232,8 @@ const failedGroups = new WeakMap<object, string>();
 /**
  * Attach the raw group ID of a group message to an error that its decrypt
  * threw. The retry request record of the failed envelope then keeps the
- * group, so an `expired-content` end marks the sender key of that group.
+ * group, so an `expired-content` or `posting-deadline` end marks the sender
+ * key of that group.
  */
 export function attachFailedGroup(error: unknown, groupId: string): void {
   if (typeof error === 'object' && error !== null) failedGroups.set(error, groupId);

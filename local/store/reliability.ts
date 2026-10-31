@@ -2,6 +2,7 @@ import type { Envelope } from '../../remote/relay/types';
 import type { SignalProtocolLocalStore } from '../../types';
 import type { ContentHint } from '../../types/messages';
 import { createKeyedLocks, withKeyedLock } from '../../utils/keyed-lock';
+import { originLockScope, withOriginLock } from '../../utils/origin-lock';
 
 const OUTBOX_PREFIX = 'reliability:exact-ciphertext-outbox:v2';
 const INCOMING_PREFIX = 'reliability:processed-envelopes:v2';
@@ -10,9 +11,16 @@ const RETRY_RESEND_PREFIX = 'reliability:retry-resend:v1';
 const RETRY_FAMILY_PREFIX = 'reliability:retry-family:v1';
 const SENT_TIMESTAMP_PREFIX = 'reliability:sent-timestamps:v1';
 const DELIVERY_STATUS_PREFIX = 'reliability:delivery-status:v1';
+const RECEIVED_TIMESTAMP_PREFIX = 'reliability:received-timestamps:v1';
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
 export const RELIABILITY_RECORD_TTL_MS = 30 * DAY_MS;
+
+/**
+ * The posting window of an outgoing intent. No request of the intent starts
+ * at or after `outgoingMessageDeadlineAt`.
+ */
+export const OUTGOING_POSTING_WINDOW_MS = DAY_MS;
 
 /**
  * The lifetime of the retry-request and retry-family records of the
@@ -32,6 +40,13 @@ export const RETRY_REQUESTER_RECORD_TTL_MS = 2 * RELIABILITY_RECORD_TTL_MS;
  * at this time ends as `expired-content`.
  */
 export const RETRY_REQUEST_DEADLINE_MS = 14 * DAY_MS;
+
+/**
+ * The posting window of a retry request: 24 hours from the first failure,
+ * `receivedAt`. No post of the request starts at or after
+ * `retryRequestPostingDeadlineAt`.
+ */
+export const RETRY_REQUEST_POSTING_WINDOW_MS = DAY_MS;
 
 export interface StoredOutgoingDeviceMessage {
   recipientUserId: string;
@@ -70,6 +85,14 @@ export interface StoredOutgoingMessageIntent {
   transportMode: 'identified' | 'sealed_sender_preferred' | 'sealed_sender_required';
   sealedSenderAuth?: { type: 'accessKey'; unidentifiedAccessKey: string };
   contentHint?: ContentHint;
+  /**
+   * The attachment of a binary send. `message` is the exact serialized
+   * attachment message that the intent encrypts, and `fileDigest` is the
+   * base64 SHA-256 digest of the source file. A repeat of the send with the
+   * same file sends `message` again and uploads nothing. The record keeps it
+   * for its life, also after completion.
+   */
+  binaryAttachment?: { fileDigest: string; message: string };
   preMessages?: StoredOutgoingDeviceMessage[];
   deviceMessages: StoredOutgoingDeviceMessage[];
   syncMessages: StoredOutgoingDeviceMessage[];
@@ -95,18 +118,73 @@ export interface StoredOutgoingMessageIntent {
    * bundle at the last repair of the phase. They have no message in the
    * intent. A replay starts a session with each of them before its first
    * post, so a device that uploaded a bundle after the repair gets the
-   * message. A new run after a terminal end keeps them.
+   * message. A terminal end keeps them, and no later replay posts to them.
    */
   deviceSetBundleMissing?: {
     recipient?: OutgoingGroupDevice[];
     sync?: OutgoingGroupDevice[];
   };
   /**
-   * The recipient phase completed and the sync phase did not. The intent
-   * keeps its sync messages, and a replay posts only them. With no sync
-   * messages, the read of the own device list failed, and a replay reads it.
+   * On a declared intent, the recipient phase completed and the sync phase
+   * did not. The intent keeps its sync messages, and a replay before
+   * `deadlineAt` posts only them. At or after `deadlineAt`, a replay posts
+   * nothing and returns the stored result with `syncPending`. With no sync
+   * messages, the read of the own device list failed, and a replay reads it
+   * again. When that read finds no other own device, the replay completes the
+   * sync phase with no post and returns the result without `syncPending`.
+   *
+   * On an undeclared intent, the posting deadline stopped the sync posts. A
+   * replay returns the stored result with `syncPending` and posts nothing.
    */
   syncPending?: true;
+  /**
+   * The posting deadline: the earlier of `createdAt` and `clientTimestamp`,
+   * plus `OUTGOING_POSTING_WINDOW_MS`. The first write stores it. An intent
+   * that an earlier SDK stored gets it at its next mutation write, from the
+   * same terms. No request of the intent starts at or after it.
+   */
+  deadlineAt?: number;
+  /**
+   * The end of an open intent at its posting deadline. Its absence means
+   * that the intent is open. `result` takes precedence over it.
+   */
+  outcome?: 'failed' | 'acceptance-unknown';
+  /**
+   * The SDK send driver ended or completed this intent and has not yet
+   * reported the end through `onSendOutcome`. The end write or the completion
+   * write sets it. The driver clears it before it calls the hook, so a crash
+   * before the clear reports the end at the next start. An application send
+   * never sets it: its end is reported in memory.
+   */
+  outcomeReportPending?: true;
+  /** The time at which the driver cleared `outcomeReportPending`. */
+  outcomeReportedAt?: number;
+  /**
+   * The SDK made this send for itself, as a sender key distribution. Its
+   * end never reaches `onSendOutcome`, from an application call or from the
+   * driver, so no end write sets `outcomeReportPending` on it.
+   */
+  internal?: true;
+  /**
+   * The progress of each destination device, keyed by
+   * `outgoingDestinationProgressKey`. A send writes the entry of a device
+   * before each request and after each answer, and the end write merges the
+   * class of each recipient device. The completion keeps it.
+   */
+  destinationProgress?: Record<string, StoredDestinationProgress>;
+  /**
+   * The intent wrote the progress of each destination before each of its
+   * requests, from its first write. Without it, an earlier SDK can have
+   * posted a destination with no progress written, so a new entry starts
+   * uncertain.
+   */
+  progressFromStart?: true;
+  /**
+   * The manual resends of an ended intent, in the order of their start. An
+   * intent with no resend has no field, and `outgoingManualResends` reads it
+   * as an empty list.
+   */
+  manualResends?: StoredManualResend[];
   result?: {
     clientMessageId: string;
     messageId: string;
@@ -117,6 +195,104 @@ export interface StoredOutgoingMessageIntent {
     refusedDestinationCount?: number;
     groupId?: string;
   };
+}
+
+/**
+ * One manual resend of an ended intent. It is a new operation: its posts
+ * carry `manualMessageId` and its own operation epoch, and its posting
+ * deadline is its own. The content of each message keeps the client
+ * timestamp of the intent. The intent keeps its own epoch, `deadlineAt` and
+ * `outcome`.
+ */
+export interface StoredManualResend {
+  /** The client message ID of each post of the resend: `<clientMessageId>:manual:N`, N from 1. */
+  manualMessageId: string;
+  /** The time of the first write of the resend. One clock read gives it and the epoch. */
+  createdAt: number;
+  /** The operation epoch of each post of the resend. */
+  operationEpochMilliseconds: number;
+  /** The posting deadline of the resend: `createdAt` plus `OUTGOING_POSTING_WINDOW_MS`. */
+  deadlineAt: number;
+  /** The encrypted message of each destination device, which each post of the resend sends again. */
+  messages: StoredManualResendMessage[];
+  /** The progress of each destination of the resend, keyed by `outgoingDestinationProgressKey`. */
+  destinationProgress?: Record<string, StoredDestinationProgress>;
+  /** The Relay result, when the Relay accepted each destination of the resend. */
+  result?: StoredOutgoingMessageIntent['result'];
+  /** The end of the resend at its posting deadline. `result` takes precedence over it. */
+  outcome?: NonNullable<StoredOutgoingMessageIntent['outcome']>;
+  /** The time of the end write of the resend, which also gives its report. */
+  outcomeReportedAt?: number;
+}
+
+/** The encrypted message of one destination device of a manual resend. */
+export interface StoredManualResendMessage {
+  transportMode: StoredOutgoingMessageIntent['transportMode'];
+  /**
+   * The sealed authorization of the post. A group endorsement is stored by
+   * its group, and the endorsement of the device's account resolves again
+   * at each post.
+   */
+  sealedSenderAuth?:
+    | { type: 'accessKey'; unidentifiedAccessKey: string }
+    | { type: 'groupSendToken'; groupId: string };
+  contentHint?: ContentHint;
+  message: StoredOutgoingDeviceMessage;
+}
+
+/** The progress of one destination device of an outgoing intent. */
+export interface StoredDestinationProgress {
+  phase: 'recipient' | 'sync';
+  userId: string;
+  deviceId: number;
+  /** The client message ID that the posts to this device carry. */
+  postMessageId: string;
+  state: 'pending' | 'posted' | 'accepted' | 'refused' | 'unknown';
+  /** The number of requests that started for this device. */
+  requests: number;
+  /**
+   * A request for this device can have reached the Relay with no answer
+   * that proves its outcome. Once set, it stays set.
+   */
+  uncertain?: true;
+  /**
+   * A repair replaced the message of this device after a stale
+   * registration: a stale-device repair, or a device-set repair that
+   * removed this device. The Relay can hold the replaced message under the
+   * message ID, sealed to the old session, so a `RETRY_CONFLICT` answer to
+   * the repost does not prove acceptance. A repair that only adds a missing
+   * device sets `repairedFor` and not this mark: the Relay stores nothing
+   * under the message ID for a device-set refusal, so a `RETRY_CONFLICT`
+   * answer for an added device names a copy that another writer posted
+   * while the device was registered. No released SDK version wrote
+   * `repaired` or `repairedFor` (13.3.0 is the last release), so no
+   * migration reads an earlier meaning.
+   */
+  repaired?: true;
+  /**
+   * The recovery that the last repair of this device ran, and the client
+   * message ID of the message that it stored. Each repair sets it, with or
+   * without `repaired`. An entry that has `repaired` without this field
+   * counts each refusal as a refusal of its repair.
+   */
+  repairedFor?: {
+    recovery: 'stale-device' | 'device-set';
+    postMessageId: string;
+  };
+  /**
+   * The Relay code of the last answer when that answer is a refusal, or the
+   * kind of a refusal with no Relay code: `device-set`, `sealed-sender-auth`
+   * or `device-rejection`. A later request or a later answer of another
+   * class clears it.
+   */
+  refusalCode?: string;
+  /** The recovery for the refusal ran, and the Relay refused the repost too. */
+  repairSpent?: true;
+  generation?: number;
+  messageId?: string;
+  enqueuedAt?: number;
+  expiresAt?: number;
+  duplicate?: true;
 }
 
 /** The terminal record of a declared send phase that ended without reconciliation. */
@@ -138,7 +314,8 @@ export interface StoredDeviceSetUnresolved {
 type ReliabilityMetadataStore = Pick<
   SignalProtocolLocalStore,
   'getMetadata' | 'setMetadata' | 'deleteMetadata'
->;
+> &
+  Partial<Pick<SignalProtocolLocalStore, 'listMetadataKeys'>>;
 type LedgerKind =
   | 'outbox'
   | 'incoming'
@@ -146,10 +323,12 @@ type LedgerKind =
   | 'retry-family'
   | 'retry-resend'
   | 'sent-timestamp'
-  | 'delivery-status';
+  | 'delivery-status'
+  | 'received-timestamp';
 
 const mutationTails = new WeakMap<object, Promise<void>>();
 const outgoingIntentLocks = createKeyedLocks();
+const outgoingIntentEndReports = new WeakMap<object, Map<string, OutgoingIntentEndReport>>();
 const incomingEnvelopeLocks = createKeyedLocks();
 
 const LEDGER_PREFIXES: Record<LedgerKind, string> = {
@@ -160,6 +339,7 @@ const LEDGER_PREFIXES: Record<LedgerKind, string> = {
   'retry-resend': RETRY_RESEND_PREFIX,
   'sent-timestamp': SENT_TIMESTAMP_PREFIX,
   'delivery-status': DELIVERY_STATUS_PREFIX,
+  'received-timestamp': RECEIVED_TIMESTAMP_PREFIX,
 };
 
 const LEDGER_TTL_MS: Record<LedgerKind, number> = {
@@ -170,6 +350,10 @@ const LEDGER_TTL_MS: Record<LedgerKind, number> = {
   'retry-resend': RELIABILITY_RECORD_TTL_MS,
   'sent-timestamp': RELIABILITY_RECORD_TTL_MS,
   'delivery-status': RELIABILITY_RECORD_TTL_MS,
+  // Two bounds: the last manual resend of a sender posts at most
+  // RELIABILITY_RECORD_TTL_MS after its intent, and the Relay keeps a post
+  // for at most RELIABILITY_RECORD_TTL_MS.
+  'received-timestamp': RETRY_REQUESTER_RECORD_TTL_MS,
 };
 
 function prefix(kind: LedgerKind): string {
@@ -218,12 +402,68 @@ async function serializeMutation<T>(
   return current;
 }
 
+/**
+ * The end of one send call, as the end write or the completion write of its
+ * intent records it. The send call that holds the intent lock gives it.
+ */
+export interface OutgoingIntentEndReport {
+  /** The SDK send driver made the call. Its end write then sets `outcomeReportPending`. */
+  readonly driven: boolean;
+  /**
+   * The SDK made the send for itself. A new intent of the call stores
+   * `internal`, and its end is never reported.
+   */
+  readonly internal?: true;
+  /**
+   * The intent as the call ended or completed it. Only a write that ends an
+   * open intent sets it: a replay of an ended or completed intent does not.
+   */
+  ended?: StoredOutgoingMessageIntent;
+}
+
+/** The end report of the send call that holds the lock of this intent. */
+function outgoingIntentEndReport(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string
+): OutgoingIntentEndReport | undefined {
+  return outgoingIntentEndReports.get(store as object)?.get(clientMessageId);
+}
+
+/**
+ * Run `operation` under the lock of one outgoing intent. When
+ * `navigator.locks.request` exists and the store sets `storeIdentity`, the
+ * lock is the Web Lock `open-e2ee:outbox:<store identity>:<clientMessageId>`,
+ * so the tabs, workers and threads of one origin that share the store share
+ * it. Otherwise it is an in-process lock keyed by the store object. The lock
+ * is not reentrant. With `report`, an end write or a completion write of the
+ * intent during `operation` records the end in it.
+ */
 export async function withOutgoingMessageIntentLock<T>(
   store: ReliabilityMetadataStore,
   clientMessageId: string,
-  operation: () => Promise<T>
+  operation: () => Promise<T>,
+  report?: OutgoingIntentEndReport
 ): Promise<T> {
-  return withKeyedLock(outgoingIntentLocks, store, clientMessageId, operation);
+  const reported = report
+    ? async () => {
+        let reports = outgoingIntentEndReports.get(store as object);
+        if (!reports) {
+          reports = new Map();
+          outgoingIntentEndReports.set(store as object, reports);
+        }
+        reports.set(clientMessageId, report);
+        try {
+          return await operation();
+        } finally {
+          reports.delete(clientMessageId);
+        }
+      }
+    : operation;
+  const scope = originLockScope(store);
+  if (scope !== null) {
+    return withOriginLock(`open-e2ee:outbox:${scope}:${clientMessageId}`, reported);
+  }
+  return withKeyedLock(outgoingIntentLocks, store, clientMessageId, reported);
 }
 
 export async function withProcessedEnvelopeLock<T>(
@@ -241,17 +481,55 @@ async function pruneExpiredBuckets(
 ): Promise<number[]> {
   const days = parseJson<number[]>(await store.getMetadata(manifestKey(kind)), []);
   const firstRetainedDay = dayFor(now - LEDGER_TTL_MS[kind]);
-  const retained: number[] = [];
+  const manifest = new Set(days);
   for (const day of days) {
-    if (day >= firstRetainedDay) {
-      retained.push(day);
-      continue;
-    }
+    if (day >= firstRetainedDay) continue;
     const ids = parseJson<string[]>(await store.getMetadata(bucketKey(kind, day)), []);
-    for (const id of ids) await store.deleteMetadata(recordKey(kind, id));
+    for (const id of ids) {
+      if (kind === 'outbox' && (await keepOutgoingIntent(store, id, now, manifest))) continue;
+      await store.deleteMetadata(recordKey(kind, id));
+    }
     await store.deleteMetadata(bucketKey(kind, day));
   }
-  return retained;
+  return [...manifest].filter((day) => day >= firstRetainedDay).sort((a, b) => a - b);
+}
+
+/**
+ * Keep an intent of an expired outbox bucket that a manual resend retains,
+ * and index it under the day of `outgoingIntentRetainedFrom`. The bucket and
+ * the manifest are written before the expired bucket is deleted, so a stop
+ * leaves the intent in a bucket.
+ *
+ * @returns True when the intent is kept.
+ */
+async function keepOutgoingIntent(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string,
+  now: number,
+  manifest: Set<number>
+): Promise<boolean> {
+  const record = parseJson<StoredOutgoingMessageIntent | null>(
+    await store.getMetadata(recordKey('outbox', clientMessageId)),
+    null
+  );
+  if (!record) return false;
+  const retainedFrom = outgoingIntentRetainedFrom(record);
+  if (retainedFrom < now - RELIABILITY_RECORD_TTL_MS) return false;
+  const day = dayFor(retainedFrom);
+  const dayKey = bucketKey('outbox', day);
+  const ids = parseJson<string[]>(await store.getMetadata(dayKey), []);
+  if (!ids.includes(clientMessageId)) {
+    ids.push(clientMessageId);
+    await store.setMetadata(dayKey, JSON.stringify(ids));
+  }
+  if (!manifest.has(day)) {
+    manifest.add(day);
+    await store.setMetadata(
+      manifestKey('outbox'),
+      JSON.stringify([...manifest].sort((a, b) => a - b))
+    );
+  }
+  return true;
 }
 
 async function indexRecord(
@@ -349,6 +627,11 @@ export interface OutgoingGroupDeviceSetChange {
  * appended to its list. A new message for a device that still has a message
  * in the same list must be equal to it, and is not appended again. The same
  * write replaces or removes the shared body when the change names one.
+ *
+ * A device whose pre-message or device message the change appends after it
+ * removed that device gets `repaired` and `repairedFor` on its progress
+ * entry. The write creates the entry when none exists. A device that the
+ * change appends without a removal gets no mark.
  */
 export async function reconcileOutgoingGroupDeviceSet(
   store: ReliabilityMetadataStore,
@@ -383,7 +666,13 @@ export async function reconcileOutgoingGroupDeviceSet(
     if (preMessages.length > 0) existing.preMessages = preMessages;
     else delete existing.preMessages;
     applyGroupSharedMessage(existing, change.groupSharedMessage);
+    for (const message of [...change.preMessages, ...change.deviceMessages]) {
+      if (removed.has(outgoingMessageDeviceKey(message))) {
+        markOutgoingDestinationRepaired(existing, 'recipient', message, 'stale-device', true);
+      }
+    }
 
+    stampOutgoingDeadline(existing);
     await store.setMetadata(key, JSON.stringify(existing));
     return cloneReliabilityValue(existing);
   });
@@ -428,8 +717,13 @@ export interface OutgoingDeviceSetRepair {
 /**
  * Commit the repair of a declared send phase and its restart count in one
  * write. Each removed device first loses all of its messages. Then each new
- * message is appended to its list. A completed intent takes a repair only of
- * its pending sync phase, and a terminal intent takes none.
+ * message is appended to its list, and the progress entry of its device
+ * gets `repairedFor`. The entry of a device that the repair also removed
+ * gets `repaired`, because the repair replaced its message. The entry of an
+ * added device does not. A completed intent takes a repair only of its
+ * pending sync phase, and a terminal intent takes none.
+ *
+ * @returns The stored intent, with the progress entry of each appended device
  */
 export async function repairOutgoingDeviceSet(
   store: ReliabilityMetadataStore,
@@ -471,6 +765,14 @@ export async function repairOutgoingDeviceSet(
     );
     if (preMessages.length > 0) existing.preMessages = preMessages;
     else delete existing.preMessages;
+    const replaced = (message: StoredOutgoingDeviceMessage) =>
+      removed.has(outgoingMessageDeviceKey(message));
+    for (const message of [...(repair.preMessages ?? []), ...(repair.deviceMessages ?? [])]) {
+      markOutgoingDestinationRepaired(existing, 'recipient', message, 'device-set', replaced(message));
+    }
+    for (const message of repair.syncMessages ?? []) {
+      markOutgoingDestinationRepaired(existing, 'sync', message, 'device-set', replaced(message));
+    }
     applyGroupSharedMessage(existing, repair.groupSharedMessage);
     existing.deviceSetRestarts = { ...existing.deviceSetRestarts, [repair.phase]: repair.restarts };
     const bundleMissing = (repair.bundleMissing ?? []).map((device) => ({
@@ -487,6 +789,7 @@ export async function repairOutgoingDeviceSet(
       };
     }
 
+    stampOutgoingDeadline(existing);
     await store.setMetadata(key, JSON.stringify(existing));
     return cloneReliabilityValue(existing);
   });
@@ -494,13 +797,24 @@ export async function repairOutgoingDeviceSet(
 
 /**
  * Record that a phase of a declared send ended without reconciliation. The
- * restart counts stay. The SDK does not post the phase again until the
- * application calls `send()` with the same `clientMessageId`.
+ * restart counts stay. A recipient-phase end stores the send outcome. A
+ * later `send()` with the same `clientMessageId` then throws the stored-end
+ * class and posts nothing. A sync-phase end keeps the result, and a later
+ * `send()` posts the sync phase again. `resendMessage` posts a new
+ * operation.
+ *
+ * `end` is the class of the recipient phase at the end: its outcome and the
+ * progress of each recipient destination, which replaces the stored entry
+ * under its key. Only a recipient-phase end of an open intent writes it.
  */
 export async function markOutgoingDeviceSetUnresolved(
   store: ReliabilityMetadataStore,
   clientMessageId: string,
-  unresolved: StoredDeviceSetUnresolved
+  unresolved: StoredDeviceSetUnresolved,
+  end?: {
+    outcome: NonNullable<StoredOutgoingMessageIntent['outcome']>;
+    destinationProgress: Record<string, StoredDestinationProgress>;
+  }
 ): Promise<StoredOutgoingMessageIntent> {
   return serializeMutation(store, async () => {
     const key = recordKey('outbox', clientMessageId);
@@ -512,32 +826,25 @@ export async function markOutgoingDeviceSetUnresolved(
       throw new Error('Cannot end the device set of a missing or completed outbox intent');
     }
     existing.deviceSetUnresolved = cloneReliabilityValue(unresolved);
-    await store.setMetadata(key, JSON.stringify(existing));
-    return cloneReliabilityValue(existing);
-  });
-}
-
-/**
- * Start a new run of a terminal declared send at 0 restarts: remove the
- * terminal record and the restart counts in one write. An intent that is not
- * terminal keeps its counts.
- */
-export async function restartOutgoingDeviceSet(
-  store: ReliabilityMetadataStore,
-  clientMessageId: string
-): Promise<StoredOutgoingMessageIntent> {
-  return serializeMutation(store, async () => {
-    const key = recordKey('outbox', clientMessageId);
-    const existing = parseJson<StoredOutgoingMessageIntent | null>(
-      await store.getMetadata(key),
-      null
-    );
-    if (!existing) throw new Error('Cannot restart a missing outbox intent');
-    if (existing.deviceSetUnresolved) {
-      delete existing.deviceSetUnresolved;
-      delete existing.deviceSetRestarts;
-      await store.setMetadata(key, JSON.stringify(existing));
+    // A sync-phase end keeps the result of the recipient phase, so it
+    // writes no outcome beside it.
+    const ends =
+      unresolved.phase === 'recipient' &&
+      end !== undefined &&
+      !existing.result &&
+      existing.outcome === undefined;
+    const report = ends ? outgoingIntentEndReport(store, clientMessageId) : undefined;
+    if (ends) {
+      if (report?.driven && !existing.internal) existing.outcomeReportPending = true;
+      existing.outcome = end.outcome;
+      existing.destinationProgress = {
+        ...existing.destinationProgress,
+        ...cloneReliabilityValue(end.destinationProgress),
+      };
     }
+    stampOutgoingDeadline(existing);
+    await store.setMetadata(key, JSON.stringify(existing));
+    if (report) report.ended = cloneReliabilityValue(existing);
     return cloneReliabilityValue(existing);
   });
 }
@@ -582,6 +889,378 @@ export function outgoingMessageIntentResult(
 
 function outgoingDeviceKey({ userId, deviceId }: OutgoingGroupDevice): string {
   return `${userId}\u0000${String(deviceId)}`;
+}
+
+/**
+ * The posting deadline of an intent: the stored `deadlineAt`, else the
+ * earlier of `createdAt` and `clientTimestamp`, plus
+ * `OUTGOING_POSTING_WINDOW_MS`. An intent that an earlier SDK stored has no
+ * `deadlineAt`, and it gets the same value from its stored times.
+ */
+export function outgoingMessageDeadlineAt(
+  intent: Pick<StoredOutgoingMessageIntent, 'createdAt' | 'clientTimestamp' | 'deadlineAt'>
+): number {
+  return (
+    intent.deadlineAt ??
+    Math.min(intent.createdAt, intent.clientTimestamp) + OUTGOING_POSTING_WINDOW_MS
+  );
+}
+
+/** Store the posting deadline on an open intent that has none. */
+function stampOutgoingDeadline(existing: StoredOutgoingMessageIntent): void {
+  if (existing.result || existing.deadlineAt !== undefined) return;
+  existing.deadlineAt = outgoingMessageDeadlineAt(existing);
+}
+
+/** The `destinationProgress` key of one device of one post. */
+export function outgoingDestinationProgressKey(
+  postMessageId: string,
+  device: OutgoingGroupDevice
+): string {
+  return `${postMessageId}\u0000${outgoingDeviceKey(device)}`;
+}
+
+/**
+ * The stored progress entry under this key, or a new `pending` entry with no
+ * request. A new entry of an intent without `progressFromStart` starts
+ * uncertain, because an earlier SDK can have posted the device.
+ */
+function outgoingDestinationProgressEntry(
+  existing: StoredOutgoingMessageIntent,
+  key: string,
+  destination: Pick<StoredDestinationProgress, 'phase' | 'userId' | 'deviceId' | 'postMessageId'>
+): StoredDestinationProgress {
+  const progress = (existing.destinationProgress ??= {});
+  const entry = (progress[key] ??= {
+    phase: destination.phase,
+    userId: destination.userId,
+    deviceId: destination.deviceId,
+    postMessageId: destination.postMessageId,
+    state: 'pending',
+    requests: 0,
+    ...(!existing.progressFromStart && { uncertain: true as const }),
+  });
+  entry.postMessageId = destination.postMessageId;
+  return entry;
+}
+
+/**
+ * Mark the progress entry of a device that a repair gave a new message,
+ * with the recovery that the repair ran and the ID of the new message. When
+ * `replaced` is true, the repair replaced the message of the device, and the
+ * entry also gets `repaired`. An earlier `repaired` mark stays.
+ */
+function markOutgoingDestinationRepaired(
+  existing: StoredOutgoingMessageIntent,
+  phase: StoredDestinationProgress['phase'],
+  message: StoredOutgoingDeviceMessage,
+  recovery: NonNullable<StoredDestinationProgress['repairedFor']>['recovery'],
+  replaced: boolean
+): void {
+  const device = { userId: message.recipientUserId, deviceId: message.recipientDeviceId };
+  const postMessageId = message.clientMessageId ?? existing.clientMessageId;
+  const entry = outgoingDestinationProgressEntry(
+    existing,
+    outgoingDestinationProgressKey(postMessageId, device),
+    { phase, ...device, postMessageId }
+  );
+  if (replaced) entry.repaired = true;
+  entry.repairedFor = { recovery, postMessageId };
+}
+
+/**
+ * True when a refusal of `entry` refuses its repair: the refused post is
+ * the repaired message, and the kind of the refusal is the one that the
+ * recovery of the repair answers. A stale-device repair answers
+ * `STALE_DEVICE` and `device-rejection`, and a device-set repair answers
+ * `device-set`. An entry with `repaired` and no stored recovery counts each
+ * refusal. An entry with a stored recovery and no `repaired` mark (an added
+ * device) reads the same rule.
+ */
+function refusesRepair(
+  entry: StoredDestinationProgress,
+  postMessageId: string,
+  refusalCode: string | undefined
+): boolean {
+  const repair = entry.repairedFor;
+  if (!repair) return entry.repaired === true;
+  if (repair.postMessageId !== postMessageId) return false;
+  return repair.recovery === 'device-set'
+    ? refusalCode === 'device-set'
+    : refusalCode === 'STALE_DEVICE' || refusalCode === 'device-rejection';
+}
+
+/** One request or one answer of one destination, as a progress write stores it. */
+export type OutgoingDestinationProgressUpdate = Pick<
+  StoredDestinationProgress,
+  'phase' | 'userId' | 'deviceId' | 'postMessageId'
+> &
+  (
+    | { readonly request: true }
+    | ({
+        readonly answer: 'accepted' | 'refused' | 'pending' | 'unknown';
+        readonly repairSpent?: true;
+      } & Pick<
+        StoredDestinationProgress,
+        'refusalCode' | 'messageId' | 'enqueuedAt' | 'expiresAt' | 'duplicate'
+      >)
+  );
+
+/**
+ * Merge one request or one answer into a progress entry, by the rules of
+ * `recordOutgoingDestinationProgress`.
+ */
+function applyDestinationUpdate(
+  entry: StoredDestinationProgress,
+  update: OutgoingDestinationProgressUpdate
+): void {
+  if ('request' in update) {
+    if (entry.state === 'posted') entry.uncertain = true;
+    if (entry.state !== 'accepted') {
+      entry.state = 'posted';
+      delete entry.refusalCode;
+    }
+    entry.requests += 1;
+    return;
+  }
+  if (entry.state === 'accepted') return;
+  entry.state = update.answer;
+  if (update.answer === 'unknown') entry.uncertain = true;
+  if (update.answer !== 'refused') delete entry.refusalCode;
+  if (update.answer === 'refused') {
+    if (update.refusalCode === undefined) delete entry.refusalCode;
+    else entry.refusalCode = update.refusalCode;
+    if (update.repairSpent || refusesRepair(entry, update.postMessageId, update.refusalCode)) {
+      entry.repairSpent = true;
+    }
+  }
+  if (update.answer === 'accepted') {
+    if (update.messageId !== undefined) entry.messageId = update.messageId;
+    if (update.enqueuedAt !== undefined) entry.enqueuedAt = update.enqueuedAt;
+    if (update.expiresAt !== undefined) entry.expiresAt = update.expiresAt;
+    if (update.duplicate) entry.duplicate = true;
+  }
+}
+
+/**
+ * Record one request or one answer of one destination of an open intent,
+ * and merge it into the entry under `key`.
+ *
+ * - Before each request, the entry becomes `posted` and its `requests` count
+ *   grows by one. When the entry is already `posted`, an earlier request
+ *   has no answer, so the entry becomes uncertain.
+ * - After an answer, the entry takes the class of the answer. An uncertain
+ *   answer sets `uncertain`. A refusal stores its code. A refusal that
+ *   refuses the repair of the entry (`refusesRepair`) stores `repairSpent`.
+ *   An `accepted` entry stays accepted.
+ * - The refusal code belongs to the last answer, so a later request or a
+ *   later answer that is not a refusal clears it. `repairSpent` stays: the
+ *   refusal spent the repair, and a later answer does not give it back.
+ *
+ * The `uncertain` flag is never cleared. A completed or ended intent takes
+ * no write, except a sync entry of a completed intent with `syncPending`.
+ * The caller holds the intent lock, so this takes only the store mutation
+ * order.
+ *
+ * @returns The stored entry, or undefined when nothing was written
+ */
+export async function recordOutgoingDestinationProgress(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string,
+  key: string,
+  update: OutgoingDestinationProgressUpdate
+): Promise<StoredDestinationProgress | undefined> {
+  return serializeMutation(store, async () => {
+    const intentKey = recordKey('outbox', clientMessageId);
+    const existing = parseJson<StoredOutgoingMessageIntent | null>(
+      await store.getMetadata(intentKey),
+      null
+    );
+    if (!existing) {
+      throw new Error('Cannot record the progress of a missing outgoing message intent');
+    }
+    const pendingSync = update.phase === 'sync' && existing.result && existing.syncPending;
+    if ((existing.result || existing.outcome !== undefined) && !pendingSync) return undefined;
+
+    const entry = outgoingDestinationProgressEntry(existing, key, update);
+    applyDestinationUpdate(entry, update);
+    stampOutgoingDeadline(existing);
+    await store.setMetadata(intentKey, JSON.stringify(existing));
+    return cloneReliabilityValue(entry);
+  });
+}
+
+/**
+ * The manual resends of an intent. An intent that an earlier SDK stored, or
+ * that has no resend, has no `manualResends` field and reads as an empty
+ * list.
+ */
+export function outgoingManualResends(
+  intent: Pick<StoredOutgoingMessageIntent, 'manualResends'>
+): StoredManualResend[] {
+  return intent.manualResends ?? [];
+}
+
+/**
+ * The time that the retention of an intent counts from: its `createdAt`, or
+ * the `createdAt` of its latest manual resend. The ledger indexes the intent
+ * at this time, so a manual resend keeps the intent, and its listing, for
+ * `RELIABILITY_RECORD_TTL_MS` after the resend. That is past the posting
+ * deadline of the resend.
+ */
+export function outgoingIntentRetainedFrom(
+  intent: Pick<StoredOutgoingMessageIntent, 'createdAt' | 'manualResends'>
+): number {
+  return Math.max(
+    intent.createdAt,
+    ...outgoingManualResends(intent).map((resend) => resend.createdAt)
+  );
+}
+
+/** True when a manual resend has neither a result nor an outcome. */
+export function isOpenManualResend(resend: StoredManualResend): boolean {
+  return resend.result === undefined && resend.outcome === undefined;
+}
+
+/**
+ * The client message ID of manual resend number `n` of an intent, from 1.
+ */
+export function manualResendMessageId(clientMessageId: string, n: number): string {
+  return `${clientMessageId}:manual:${String(n)}`;
+}
+
+/**
+ * Store a new manual resend on an ended intent. The caller holds the intent
+ * lock. Only an intent with `outcome` and no `result` takes one, and only
+ * when no earlier resend of it is open. The intent keeps its own fields. The
+ * ledger indexes the intent again at the `createdAt` of the resend, as
+ * `outgoingIntentRetainedFrom` gives it. The new bucket is written before
+ * the intent leaves its old bucket, so a stop leaves it in a bucket, and a
+ * prune of the old bucket keeps an intent that the resend retains.
+ */
+export async function addOutgoingManualResend(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string,
+  resend: StoredManualResend,
+  now = Date.now()
+): Promise<StoredOutgoingMessageIntent> {
+  return serializeMutation(store, async () => {
+    const key = recordKey('outbox', clientMessageId);
+    const existing = parseJson<StoredOutgoingMessageIntent | null>(
+      await store.getMetadata(key),
+      null
+    );
+    if (!existing || existing.result || existing.outcome === undefined) {
+      throw new Error('Only an ended outgoing message intent takes a manual resend');
+    }
+    const resends = outgoingManualResends(existing);
+    if (resends.some(isOpenManualResend)) {
+      throw new Error('An outgoing message intent has an open manual resend');
+    }
+    if (resend.manualMessageId !== manualResendMessageId(clientMessageId, resends.length + 1)) {
+      throw new Error('A manual resend has the wrong message ID');
+    }
+    const retainedFrom = outgoingIntentRetainedFrom(existing);
+    existing.manualResends = [...resends, cloneReliabilityValue(resend)];
+    await store.setMetadata(key, JSON.stringify(existing));
+    const indexTime = outgoingIntentRetainedFrom(existing);
+    const retainedDays = await pruneExpiredBuckets(store, 'outbox', now);
+    await indexRecord(store, 'outbox', clientMessageId, indexTime, retainedDays);
+    if (dayFor(indexTime) !== dayFor(retainedFrom)) {
+      await unindexRecord(store, 'outbox', clientMessageId, retainedFrom);
+    }
+    return cloneReliabilityValue(existing);
+  });
+}
+
+/** The stored intent and the index of its manual resend, for a write under the store order. */
+async function readManualResend(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string,
+  manualMessageId: string
+): Promise<{ key: string; existing: StoredOutgoingMessageIntent; resend: StoredManualResend }> {
+  const key = recordKey('outbox', clientMessageId);
+  const existing = parseJson<StoredOutgoingMessageIntent | null>(await store.getMetadata(key), null);
+  const resend = existing?.manualResends?.find(
+    (candidate) => candidate.manualMessageId === manualMessageId
+  );
+  if (!existing || !resend) throw new Error('Cannot write a missing manual resend');
+  return { key, existing, resend };
+}
+
+/**
+ * Record one request or one answer of one destination of an open manual
+ * resend, by the rules of `recordOutgoingDestinationProgress`. The resend
+ * writes progress before each of its requests from its first write, so a
+ * new entry starts with no uncertain request. An ended resend takes no
+ * write.
+ *
+ * @returns The stored entry, or undefined when nothing was written
+ */
+export async function recordOutgoingManualResendProgress(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string,
+  manualMessageId: string,
+  key: string,
+  update: OutgoingDestinationProgressUpdate
+): Promise<StoredDestinationProgress | undefined> {
+  return serializeMutation(store, async () => {
+    const read = await readManualResend(store, clientMessageId, manualMessageId);
+    const { resend } = read;
+    if (!isOpenManualResend(resend)) return undefined;
+    const progress = (resend.destinationProgress ??= {});
+    const entry = (progress[key] ??= {
+      phase: update.phase,
+      userId: update.userId,
+      deviceId: update.deviceId,
+      postMessageId: update.postMessageId,
+      state: 'pending',
+      requests: 0,
+    });
+    entry.postMessageId = update.postMessageId;
+    applyDestinationUpdate(entry, update);
+    await store.setMetadata(read.key, JSON.stringify(read.existing));
+    return cloneReliabilityValue(entry);
+  });
+}
+
+/**
+ * End an open manual resend: with its Relay result when the Relay accepted
+ * each of its destinations, else with its outcome. One write stores the end
+ * and `outcomeReportedAt`, so the end is reported at most once. Each entry
+ * of `destinationProgress` replaces the stored entry under its key.
+ *
+ * @returns The ended resend, or undefined when it had already ended
+ */
+export async function endOutgoingManualResend(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string,
+  manualMessageId: string,
+  end:
+    | { result: NonNullable<StoredOutgoingMessageIntent['result']> }
+    | {
+        outcome: NonNullable<StoredOutgoingMessageIntent['outcome']>;
+        destinationProgress: Record<string, StoredDestinationProgress>;
+      },
+  at = Date.now()
+): Promise<StoredManualResend | undefined> {
+  return serializeMutation(store, async () => {
+    const read = await readManualResend(store, clientMessageId, manualMessageId);
+    const { resend } = read;
+    if (!isOpenManualResend(resend)) return undefined;
+    if ('result' in end) {
+      resend.result = cloneReliabilityValue(end.result);
+    } else {
+      resend.outcome = end.outcome;
+      resend.destinationProgress = {
+        ...resend.destinationProgress,
+        ...cloneReliabilityValue(end.destinationProgress),
+      };
+    }
+    resend.outcomeReportedAt = at;
+    await store.setMetadata(read.key, JSON.stringify(read.existing));
+    return cloneReliabilityValue(resend);
+  });
 }
 
 function outgoingMessageDeviceKey(message: StoredOutgoingDeviceMessage): string {
@@ -649,6 +1328,7 @@ export async function confirmOutgoingPreMessages(
     if (remaining.length > 0) existing.preMessages = remaining;
     else delete existing.preMessages;
 
+    stampOutgoingDeadline(existing);
     await store.setMetadata(key, JSON.stringify(existing));
     return cloneReliabilityValue(existing);
   });
@@ -657,7 +1337,11 @@ export async function confirmOutgoingPreMessages(
 /**
  * Replace stored pre-messages of a group intent in one write. Each
  * replacement keeps the target and the timestamp of the pre-message that it
- * replaces, and the stored pre-message must still equal the expected one.
+ * replaces, and the stored pre-message must still equal the expected one. A
+ * replacement under a new client message ID is a repair: its progress entry
+ * gets `repaired`, and the write creates the entry when none exists. A
+ * replacement under the same ID, such as the sealed form of the stored
+ * pre-message, gets no mark.
  */
 export async function replaceOutgoingGroupPreMessages(
   store: ReliabilityMetadataStore,
@@ -694,9 +1378,13 @@ export async function replaceOutgoingGroupPreMessages(
       ) {
         throw new Error('A group pre-message replacement cannot change its target or timestamp');
       }
+      if (replacement.clientMessageId !== expected.clientMessageId) {
+        markOutgoingDestinationRepaired(existing, 'recipient', replacement, 'stale-device', true);
+      }
       preMessages[index] = cloneReliabilityValue(replacement);
     }
 
+    stampOutgoingDeadline(existing);
     await store.setMetadata(key, JSON.stringify(existing));
     return cloneReliabilityValue(existing);
   });
@@ -743,6 +1431,7 @@ export async function reconcileOutgoingDirectDeviceMessages(
     }
     delete existing.reconcilePending;
 
+    stampOutgoingDeadline(existing);
     await store.setMetadata(key, JSON.stringify(existing));
     return cloneReliabilityValue(existing);
   });
@@ -778,11 +1467,18 @@ export async function reconcileOutgoingSyncMessages(
       additions,
       'Cannot replace a persisted sync transmission'
     );
+    stampOutgoingDeadline(existing);
     await store.setMetadata(key, JSON.stringify(existing));
     return cloneReliabilityValue(existing);
   });
 }
 
+/**
+ * Replace the stored message of one device of an open direct intent after a
+ * session repair. The progress entry of the device gets the repair mark.
+ *
+ * @returns The stored intent, with the progress entry of the device
+ */
 export async function replaceOutgoingDirectDeviceMessage(
   store: ReliabilityMetadataStore,
   clientMessageId: string,
@@ -816,6 +1512,8 @@ export async function replaceOutgoingDirectDeviceMessage(
     }
 
     existing.deviceMessages[index] = cloneReliabilityValue(replacement);
+    markOutgoingDestinationRepaired(existing, 'recipient', replacement, 'stale-device', true);
+    stampOutgoingDeadline(existing);
     await store.setMetadata(key, JSON.stringify(existing));
     return cloneReliabilityValue(existing);
   });
@@ -830,7 +1528,7 @@ export async function getOutgoingMessageIntent(
     await store.getMetadata(recordKey('outbox', clientMessageId)),
     null
   );
-  if (!record || record.createdAt < now - RELIABILITY_RECORD_TTL_MS) return null;
+  if (!record || outgoingIntentRetainedFrom(record) < now - RELIABILITY_RECORD_TTL_MS) return null;
   return cloneReliabilityValue(record);
 }
 
@@ -847,22 +1545,35 @@ export async function storeOutgoingMessageIntent(
       null
     );
     const retainedExisting =
-      existing && existing.createdAt >= now - RELIABILITY_RECORD_TTL_MS ? existing : null;
+      existing && outgoingIntentRetainedFrom(existing) >= now - RELIABILITY_RECORD_TTL_MS
+        ? existing
+        : null;
     if (retainedExisting && !sameIntent(retainedExisting, intent)) {
       throw new Error('A clientMessageId cannot identify two different encrypted sends');
     }
     if (!retainedExisting) {
       await store.setMetadata(key, JSON.stringify(intent));
       await indexSentTimestamp(store, intent, now);
+    } else {
+      // A failed index write after the intent write leaves the retained
+      // intent without its timestamp lookup. The same intent repairs only
+      // that index, under the retained creation time.
+      await indexSentTimestamp(store, retainedExisting, now);
     }
-    await indexRecord(store, 'outbox', intent.clientMessageId, intent.createdAt, retainedDays);
+    await indexRecord(
+      store,
+      'outbox',
+      intent.clientMessageId,
+      outgoingIntentRetainedFrom(retainedExisting ?? intent),
+      retainedDays
+    );
   });
 }
 
 /**
- * Index the client message ID of a new intent under its client timestamp,
+ * Index the client message ID of an intent under its client timestamp,
  * the value by which an E2EE receipt names the message. The index expires
- * with the intent.
+ * with the intent. A second call for the same intent changes no entry.
  */
 async function indexSentTimestamp(
   store: ReliabilityMetadataStore,
@@ -893,6 +1604,87 @@ export async function getSentClientMessageIds(
     await store.getMetadata(recordKey('sent-timestamp', String(clientTimestamp))),
     []
   );
+}
+
+/**
+ * The key of one received message: its sender device, its content timestamp
+ * and the digest of its content. A manual resend of a sender has a new
+ * envelope ID and keeps the content timestamp and the content, so the key
+ * finds a copy that the envelope ID does not. The digest keeps two messages
+ * that one sender device sent in the same millisecond apart. The record of
+ * a key expires after `RETRY_REQUESTER_RECORD_TTL_MS`: a sender posts its
+ * last manual resend at most `RELIABILITY_RECORD_TTL_MS` after the intent,
+ * and the Relay keeps a post for at most `RELIABILITY_RECORD_TTL_MS`.
+ */
+export interface ReceivedMessageKey {
+  readonly senderUserId: string;
+  /**
+   * The device ID of the sender.
+   *
+   * @deprecated The next major SDK version removes the sender device from
+   *   the key. A key then holds only the sender user and the timestamp, so
+   *   the recipient also drops a later message from another device of the
+   *   sender with the same timestamp. A custom store that checks or stores
+   *   `ReceiveWorkRecord.received` must accept a key with no
+   *   `senderDeviceId`.
+   */
+  readonly senderDeviceId: number;
+  /** The content timestamp of the message. */
+  readonly timestamp: number;
+  /**
+   * The base64 SHA-256 of the UTF-8 bytes of the content that the
+   * application gets, with no group context in it.
+   *
+   * @deprecated The next major SDK version removes the digest from the key.
+   *   In SDK 13.x, two different messages of one sender device with one
+   *   timestamp both deliver. In the next major SDK version, the recipient
+   *   keeps the first such message and drops a later one with no notice. A
+   *   custom store that checks or stores `ReceiveWorkRecord.received` must
+   *   accept a key with no `contentDigest`.
+   */
+  readonly contentDigest: string;
+}
+
+/** The record ID of one received message. */
+function receivedMessageId(key: ReceivedMessageKey): string {
+  return JSON.stringify([key.senderUserId, key.senderDeviceId, key.timestamp, key.contentDigest]);
+}
+
+/**
+ * True when the local device processed a message with this key. The record
+ * expires after `RETRY_REQUESTER_RECORD_TTL_MS`.
+ */
+export async function hasReceivedTimestamp(
+  store: ReliabilityMetadataStore,
+  key: ReceivedMessageKey
+): Promise<boolean> {
+  const value = await store.getMetadata(recordKey('received-timestamp', receivedMessageId(key)));
+  return value !== null;
+}
+
+/** Write the record of one received message. The caller serializes the write. */
+async function writeReceivedTimestamp(
+  store: ReliabilityMetadataStore,
+  key: ReceivedMessageKey,
+  now: number
+): Promise<void> {
+  const retainedDays = await pruneExpiredBuckets(store, 'received-timestamp', now);
+  const id = receivedMessageId(key);
+  await store.setMetadata(recordKey('received-timestamp', id), JSON.stringify({ receivedAt: now }));
+  await indexRecord(store, 'received-timestamp', id, now, retainedDays);
+}
+
+/**
+ * Record that the local device processed a message with this key. The
+ * record expires after `RETRY_REQUESTER_RECORD_TTL_MS`. A receive that completes
+ * its record writes the key with `completeReceiveRecord` instead.
+ */
+export async function recordReceivedTimestamp(
+  store: ReliabilityMetadataStore,
+  key: ReceivedMessageKey,
+  now = Date.now()
+): Promise<void> {
+  await serializeMutation(store, () => writeReceivedTimestamp(store, key, now));
 }
 
 /** A source that tells that a recipient device has a message. */
@@ -955,7 +1747,8 @@ export async function updateDeliveryStatus<T>(
  * the recipient phase completed and the sync phase did not: the intent keeps
  * its sync messages and the restart count of its sync phase, so a replay
  * posts only the sync messages. With `syncPending` and no sync messages, the
- * read of the own device list failed, and a replay reads it.
+ * read of the own device list failed, and a replay reads it. The intent
+ * keeps `destinationProgress`.
  */
 export async function completeOutgoingMessageIntent(
   store: ReliabilityMetadataStore,
@@ -973,6 +1766,8 @@ export async function completeOutgoingMessageIntent(
     if (existing.result && JSON.stringify(existing.result) !== JSON.stringify(result)) {
       throw new Error('Cannot replace an outgoing message intent with a different Relay result');
     }
+    const report = existing.result ? undefined : outgoingIntentEndReport(store, clientMessageId);
+    if (report?.driven && !existing.internal) existing.outcomeReportPending = true;
     existing.result = cloneReliabilityValue(result);
     delete existing.reconcilePending;
     delete existing.preMessages;
@@ -998,6 +1793,204 @@ export async function completeOutgoingMessageIntent(
     delete existing.groupSenderKeyDistributionId;
     delete existing.groupSharedMessage;
     await store.setMetadata(key, JSON.stringify(existing));
+    if (report) report.ended = cloneReliabilityValue(existing);
+  });
+}
+
+/**
+ * End an open intent at its posting deadline. It keeps the device messages
+ * and every other field, and it stores the posting deadline. Each entry of
+ * `destinationProgress` replaces the stored entry under its key, and each
+ * other stored entry stays. A completed
+ * intent keeps its `result`, which takes precedence, and this writes nothing.
+ * An intent that ended with another outcome is refused.
+ */
+export async function endOutgoingMessageIntent(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string,
+  end: {
+    outcome: NonNullable<StoredOutgoingMessageIntent['outcome']>;
+    destinationProgress: Record<string, StoredDestinationProgress>;
+  }
+): Promise<void> {
+  await serializeMutation(store, async () => {
+    const key = recordKey('outbox', clientMessageId);
+    const existing = parseJson<StoredOutgoingMessageIntent | null>(
+      await store.getMetadata(key),
+      null
+    );
+    if (!existing) throw new Error('Cannot end a missing outgoing message intent');
+    if (existing.result) return;
+    if (existing.outcome !== undefined && existing.outcome !== end.outcome) {
+      throw new Error('Cannot end an outgoing message intent with a different outcome');
+    }
+    const report =
+      existing.outcome === undefined ? outgoingIntentEndReport(store, clientMessageId) : undefined;
+    if (report?.driven && !existing.internal) existing.outcomeReportPending = true;
+    existing.outcome = end.outcome;
+    existing.destinationProgress = {
+      ...existing.destinationProgress,
+      ...cloneReliabilityValue(end.destinationProgress),
+    };
+    stampOutgoingDeadline(existing);
+    await store.setMetadata(key, JSON.stringify(existing));
+    if (report) report.ended = cloneReliabilityValue(existing);
+  });
+}
+
+/** The key prefix of the outgoing intent records. */
+const OUTGOING_INTENT_RECORD_PREFIX = `${OUTBOX_PREFIX}:record:`;
+
+/** The keys of one listing page of the outgoing intent records. */
+const OUTGOING_INTENT_PAGE_SIZE = 100;
+
+/** The intent of the record under `key`, or null for a value that is not an intent. */
+function parseOutgoingIntentRecord(
+  key: string,
+  value: string | null
+): StoredOutgoingMessageIntent | null {
+  try {
+    const clientMessageId = decodeURIComponent(key.slice(OUTGOING_INTENT_RECORD_PREFIX.length));
+    const record = parseJson<Partial<StoredOutgoingMessageIntent> | null>(value, null);
+    if (
+      record === null ||
+      typeof record !== 'object' ||
+      (record.kind !== 'direct' && record.kind !== 'group') ||
+      record.clientMessageId !== clientMessageId ||
+      typeof record.recipientId !== 'string' ||
+      typeof record.plaintextDigest !== 'string' ||
+      !Number.isFinite(record.clientTimestamp) ||
+      !Number.isFinite(record.createdAt) ||
+      !Array.isArray(record.deviceMessages) ||
+      !Array.isArray(record.syncMessages)
+    ) {
+      return null;
+    }
+    return record as StoredOutgoingMessageIntent;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every stored outgoing intent, in the key order of the store, or undefined
+ * when the store does not implement `listMetadataKeys`. It skips a value
+ * that is not an intent. It lists exactly the record prefix of the outbox,
+ * so the bucket and manifest rows of the outbox stay out.
+ */
+async function scanOutgoingIntentRecords(
+  store: ReliabilityMetadataStore
+): Promise<StoredOutgoingMessageIntent[] | undefined> {
+  if (typeof store.listMetadataKeys !== 'function') return undefined;
+  const intents: StoredOutgoingMessageIntent[] = [];
+  let after: string | undefined;
+  for (;;) {
+    const keys = await store.listMetadataKeys({
+      prefix: OUTGOING_INTENT_RECORD_PREFIX,
+      ...(after !== undefined && { after }),
+      limit: OUTGOING_INTENT_PAGE_SIZE,
+    });
+    for (const key of keys) {
+      if (!key.startsWith(OUTGOING_INTENT_RECORD_PREFIX)) continue;
+      if (after !== undefined && key <= after) continue;
+      const intent = parseOutgoingIntentRecord(key, await store.getMetadata(key));
+      if (intent) intents.push(intent);
+    }
+    const last = keys[keys.length - 1];
+    // A page that ends at or below `after` would list the same keys again.
+    if (keys.length < OUTGOING_INTENT_PAGE_SIZE || (after !== undefined && last <= after)) {
+      return intents;
+    }
+    after = last;
+  }
+}
+
+/**
+ * The outgoing intents that the SDK send driver acts on, or undefined when
+ * the store does not implement `listMetadataKeys`. It returns each intent
+ * whose `outgoingIntentRetainedFrom` is not older than
+ * `RELIABILITY_RECORD_TTL_MS` and that is open (no
+ * `result` and no `outcome`), holds `outcomeReportPending`, or holds a
+ * manual resend with no `result` and no `outcome` of its own.
+ */
+export async function listOpenOutgoingIntents(
+  store: ReliabilityMetadataStore,
+  now = Date.now()
+): Promise<StoredOutgoingMessageIntent[] | undefined> {
+  const intents = await scanOutgoingIntentRecords(store);
+  if (intents === undefined) return undefined;
+  return intents.filter(
+    (intent) =>
+      outgoingIntentRetainedFrom(intent) >= now - RELIABILITY_RECORD_TTL_MS &&
+      ((!intent.result && intent.outcome === undefined) ||
+        intent.outcomeReportPending === true ||
+        outgoingManualResends(intent).some(isOpenManualResend))
+  );
+}
+
+/**
+ * Clear `outcomeReportPending` on an intent and record the time of the
+ * report. The SDK send driver calls it before it calls `onSendOutcome`, and
+ * calls the hook only when it returns true. It reads the record again under
+ * the intent lock, so of two drivers on one store, only one clears the mark.
+ * It returns false, and writes nothing, for an intent without the field.
+ */
+export async function markOutgoingIntentReported(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string,
+  at = Date.now()
+): Promise<boolean> {
+  return withOutgoingMessageIntentLock(store, clientMessageId, () =>
+    serializeMutation(store, async () => {
+      const key = recordKey('outbox', clientMessageId);
+      const existing = parseJson<StoredOutgoingMessageIntent | null>(
+        await store.getMetadata(key),
+        null
+      );
+      if (!existing?.outcomeReportPending) return false;
+      delete existing.outcomeReportPending;
+      existing.outcomeReportedAt = at;
+      await store.setMetadata(key, JSON.stringify(existing));
+      return true;
+    })
+  );
+}
+
+/**
+ * Store the posting deadline on each open outgoing intent that an earlier
+ * SDK stored without one. The deadline comes from the stored times, as
+ * `outgoingMessageDeadlineAt` computes it, so the moved deadline is the one
+ * that the intent already had. It writes no report field, so the SDK send
+ * driver reports no end that an earlier SDK wrote. With a store that does
+ * not implement `listMetadataKeys`, or with no open intent without a
+ * deadline, it writes nothing. Such an intent then gets its deadline at its
+ * next mutation write.
+ */
+export async function migrateOutgoingIntentRecords(
+  store: ReliabilityMetadataStore,
+  now = Date.now()
+): Promise<void> {
+  const intents = await listOpenOutgoingIntents(store, now);
+  const unstamped = (intents ?? []).filter(
+    (intent) => !intent.result && intent.outcome === undefined && intent.deadlineAt === undefined
+  );
+  if (unstamped.length === 0) return;
+  await serializeMutation(store, async () => {
+    for (const intent of unstamped) {
+      const key = recordKey('outbox', intent.clientMessageId);
+      const existing = parseOutgoingIntentRecord(key, await store.getMetadata(key));
+      if (
+        !existing ||
+        existing.result ||
+        existing.outcome !== undefined ||
+        existing.deadlineAt !== undefined
+      ) {
+        continue;
+      }
+      stampOutgoingDeadline(existing);
+      if (existing.deadlineAt === undefined) continue;
+      await store.setMetadata(key, JSON.stringify(existing));
+    }
   });
 }
 
@@ -1038,6 +2031,14 @@ export interface ProcessedEnvelopeWrite {
   completed?: true;
   outcome?: ProcessedEnvelopeOutcome;
 }
+
+/** The record of one received message, written with the completion of its receive. */
+export interface ReceivedTimestampWrite {
+  receivedMessage: ReceivedMessageKey;
+}
+
+/** One write of a receive completion. */
+export type ReceiveCompletionWrite = ProcessedEnvelopeWrite | ReceivedTimestampWrite;
 
 /** The lifetime of one processed-envelope record. */
 function processedEnvelopeTtl(record: ProcessedEnvelope): number {
@@ -1184,9 +2185,9 @@ async function writeProcessedEnvelope(
 
 /**
  * Complete one receive record: delete it and write its processed-envelope
- * records in one atomic store write. The writes run against a buffer over
- * the store, so the ledger index and the records commit with the delete or
- * not at all.
+ * records and the record of its received message in one atomic store write.
+ * The writes run against a buffer over the store, so the ledger index and the
+ * records commit with the delete or not at all.
  *
  * @returns False, with nothing written, when the stored revision of the
  *   receive record is not `expectedRevision`.
@@ -1195,7 +2196,7 @@ export async function completeReceiveRecord(
   store: ReliabilityMetadataStore & Pick<SignalProtocolLocalStore, 'completeReceiveWork'>,
   workId: string,
   expectedRevision: number,
-  writes: readonly ProcessedEnvelopeWrite[],
+  writes: readonly ReceiveCompletionWrite[],
   processedAt = Date.now()
 ): Promise<boolean> {
   return serializeMutation(store, async () => {
@@ -1209,7 +2210,13 @@ export async function completeReceiveRecord(
         buffer.set(key, null);
       },
     };
-    for (const write of writes) await writeProcessedEnvelope(buffered, processedAt, write);
+    for (const write of writes) {
+      if ('receivedMessage' in write) {
+        await writeReceivedTimestamp(buffered, write.receivedMessage, processedAt);
+      } else {
+        await writeProcessedEnvelope(buffered, processedAt, write);
+      }
+    }
     return store.completeReceiveWork(
       workId,
       expectedRevision,
@@ -1269,9 +2276,9 @@ export function retryNullMessageClientMessageId(retryId: string): string {
  * The client message ID of one attempt of a retry request or a retry resend.
  * Attempt 1 posts under the given ID, and attempt `n` posts under
  * `<id>:<n>`. A resend takes the attempt number of the request that it
- * answers. A new encryption for the same request attempt posts the same
- * ID, and the processed ledger of the requester and the RETRY_CONFLICT
- * answer of the Relay cover the new bytes.
+ * answers. Each attempt ID gets one encryption. When the Relay refuses the
+ * stored bytes of an attempt with OPERATION_EXPIRED, the attempt is marked
+ * acceptance-unknown, and nothing more posts under its ID.
  */
 export function retryAttemptClientMessageId(id: string, attempt: number): string {
   if (!Number.isSafeInteger(attempt) || attempt < 1) {
@@ -1475,6 +2482,16 @@ export interface StoredRetryRequest {
    */
   deadlineAt: number;
   /**
+   * The end of the posts: the first failure, `receivedAt`, plus
+   * `RETRY_REQUEST_POSTING_WINDOW_MS`. Each later attempt keeps it. No post
+   * starts at or after it. A request whose stored attempt is due at this
+   * time ends as `posting-deadline`. A request whose attempt the Relay
+   * accepted posts nothing more and waits for its deadline. A record that
+   * an earlier SDK stored has none, and `retryRequestPostingDeadlineAt`
+   * derives it.
+   */
+  postingDeadlineAt?: number;
+  /**
    * The earliest time of the next post of the stored attempt. A new attempt
    * stores its own time, so an attempt whose post a stop or a crash ended
    * stays due. A post that failed with a retryable class sets a later time.
@@ -1493,11 +2510,28 @@ export interface StoredRetryRequest {
    */
   envelope?: Envelope;
   /**
-   * The session reset of an `expired-content` end. Each step is stored when
-   * it ends, so a replay does not do a step again. Only a record whose
-   * terminal class is `expired-content` has it.
+   * The session reset of an `expired-content` or `posting-deadline` end.
+   * Each step is stored when it ends, so a replay does not do a step again.
+   * Only a record whose terminal class is `expired-content` or
+   * `posting-deadline` has it.
    */
   recovery?: RetryTerminalRecovery;
+}
+
+/**
+ * The posting deadline of a retry request: the stored `postingDeadlineAt`.
+ * A record that an earlier SDK stored has none. Its deadline is then the
+ * first failure, `receivedAt`, else the time of the stored attempt, plus
+ * `RETRY_REQUEST_POSTING_WINDOW_MS`, and at most `deadlineAt`. An earlier
+ * SDK can store a `deadlineAt` one day after the first failure, so
+ * `deadlineAt` does not give the time of the first failure.
+ */
+export function retryRequestPostingDeadlineAt(
+  record: Pick<StoredRetryRequest, 'deadlineAt' | 'postingDeadlineAt' | 'receivedAt' | 'requestedAt'>
+): number {
+  if (record.postingDeadlineAt !== undefined) return record.postingDeadlineAt;
+  const firstFailureAt = record.receivedAt ?? record.requestedAt;
+  return Math.min(record.deadlineAt, firstFailureAt + RETRY_REQUEST_POSTING_WINDOW_MS);
 }
 
 /**
@@ -1509,7 +2543,11 @@ export interface StoredRetryRequest {
  *   sender of the resend cannot start a new session.
  * - `revoked-authority`: the Relay revoked the authority of the post.
  * - `expired-content`: the content of the request did not come before its
- *   deadline.
+ *   deadline. The next major SDK version renames this class to
+ *   `request-expired`.
+ * - `posting-deadline`: a post of the request was due at or after its
+ *   posting deadline, or the Relay refused a post with OPERATION_EXPIRED;
+ *   the session resets.
  * - `attempts-exhausted`: the resend that answered the fifth attempt of the
  *   request, `MAX_RETRY_RESPONSES_PER_MESSAGE`, also failed. The sender
  *   answers no later attempt.
@@ -1524,6 +2562,7 @@ export type RetryTerminalClass =
   | 'missing-prekey'
   | 'revoked-authority'
   | 'expired-content'
+  | 'posting-deadline'
   | 'attempts-exhausted'
   | 'deletion'
   | 'abuse-allowance-exhausted'
@@ -1548,7 +2587,7 @@ export interface RetryTerminal {
 
 /**
  * The session reset that the requester did after a request ended as
- * `expired-content`.
+ * `expired-content` or `posting-deadline`.
  */
 export interface RetryTerminalRecovery {
   /** The user of the device that sent the failed envelope. */
@@ -1586,6 +2625,7 @@ const RETRY_TERMINAL_CLASSES: ReadonlySet<string> = new Set<RetryTerminalClass>(
   'missing-prekey',
   'revoked-authority',
   'expired-content',
+  'posting-deadline',
   'attempts-exhausted',
   'deletion',
   'abuse-allowance-exhausted',
@@ -1647,6 +2687,7 @@ export async function getRetryRequest(
     record.attempt < 1 ||
     typeof record.answered !== 'boolean' ||
     !Number.isFinite(record.deadlineAt) ||
+    (record.postingDeadlineAt !== undefined && !Number.isFinite(record.postingDeadlineAt)) ||
     (record.nextAttemptAt !== undefined && !Number.isFinite(record.nextAttemptAt)) ||
     (record.lastFailureClass !== undefined &&
       record.lastFailureClass !== 'transport-outage' &&
@@ -1661,7 +2702,9 @@ export async function getRetryRequest(
       (typeof record.failedSender?.userId !== 'string' ||
         !Number.isSafeInteger(record.failedSender.deviceId))) ||
     (record.recovery !== undefined &&
-      (record.terminal?.class !== 'expired-content' || !isRetryTerminalRecovery(record.recovery)))
+      ((record.terminal?.class !== 'expired-content' &&
+        record.terminal?.class !== 'posting-deadline') ||
+        !isRetryTerminalRecovery(record.recovery)))
   ) {
     throw new Error('Corrupt retry-request record');
   }
@@ -1920,7 +2963,9 @@ export interface RetryResendTarget {
  * record key is the device that gets the answer and the failed envelope
  * ID. The record holds the last encryption: a later post for the same
  * request attempt and kind sends these bytes with this operation epoch
- * again, so the Relay sees one operation.
+ * again, so the Relay sees one operation. The record also holds the
+ * acceptance-unknown mark of that attempt, after which nothing more posts
+ * under its ID.
  */
 export interface StoredRetryResend extends RetryResendTarget {
   /**
@@ -1942,6 +2987,13 @@ export interface StoredRetryResend extends RetryResendTarget {
     | { type: 'groupSendToken'; groupId: string };
   contentHint?: ContentHint;
   message: StoredOutgoingDeviceMessage;
+  /**
+   * Set when the Relay refused the stored bytes with OPERATION_EXPIRED. The
+   * Relay acceptance of the attempt is unknown, so nothing more posts under
+   * its ID, and no new encryption replaces it. A record without the field
+   * is not marked.
+   */
+  acceptanceUnknown?: true;
   /** A stored encryption has no terminal state. */
   terminal?: undefined;
 }

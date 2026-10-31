@@ -6,6 +6,17 @@
 
 # Interface: SignalProtocolContentAdapter
 
+Serializes the content that the client sends, and inspects the content
+that it receives.
+
+The next major SDK version adds the required method
+`serializeGroupKeySync`, so a custom adapter must implement it in that
+version. An adapter that spreads the result of
+`createDefaultSignalProtocolContentAdapter()` into itself gets the default
+method. Upgrade every own device of one account in one release: an own
+device on an older SDK version gives the raw group key sync to
+`onMessageDecrypted`.
+
 ## Methods
 
 ### areReadReceiptsEnabled()

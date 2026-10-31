@@ -303,6 +303,27 @@ provider: react-native-get-random-values 2.x or react-native-quick-crypto.
 
 ***
 
+### SEND\_ACCEPTANCE\_UNKNOWN
+
+> **SEND\_ACCEPTANCE\_UNKNOWN**: `"SEND_ACCEPTANCE_UNKNOWN"`
+
+The posting deadline of a direct or group send ended, and the Relay
+acceptance of one or more devices is not known. The message might have arrived. The SDK
+throws `SendAcceptanceUnknownError` and posts nothing more for the send.
+
+***
+
+### SEND\_NEVER\_ACCEPTED
+
+> **SEND\_NEVER\_ACCEPTED**: `"SEND_NEVER_ACCEPTED"`
+
+The posting deadline of a send ended, the call raised no refusal (a
+thrown refusal or a refusal in the receipt of a shared body), and no
+refused device has a stored refusal code. The SDK throws
+`SendNeverAcceptedByRelayError` and posts nothing more for the send.
+
+***
+
 ### SENDER\_KEY\_EXPIRED
 
 > **SENDER\_KEY\_EXPIRED**: `"SENDER_KEY_EXPIRED"`

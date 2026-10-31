@@ -51,6 +51,7 @@ import type {
   SetDeviceRecordOptions,
 } from '../../../types';
 import type {
+  MetadataKeyQuery,
   ReceiveWorkMetadataWrite,
   ReceiveWorkQuery,
   ReceiveWorkRecord,
@@ -90,6 +91,7 @@ import { KeyValueSendLog } from './send-log';
 import { KeyValueSenderKeyHandoffs } from './sender-key-handoff';
 import { deserializeSessionRecord, serializeSessionRecord } from '../session-codec';
 import { convertLegacyReceivedContent } from '../receive-work';
+import { selectMetadataKeys } from '../metadata-keys';
 import { KeyValueReceiveWork, LEGACY_RECEIVED_CONTENT_PREFIX } from './receive-work';
 import {
   createKyberPreKeyState,
@@ -1050,6 +1052,15 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
   async deleteMetadata(key: string): Promise<void> {
     this.ensureInitialized();
     await this.storageBackend.removeItem(this.getMetadataStorageKey(key));
+  }
+
+  async listMetadataKeys(query: MetadataKeyQuery): Promise<string[]> {
+    this.ensureInitialized();
+    const prefix = this.getMetadataStorageKey('');
+    const keys = (await this.storageBackend.getAllKeys())
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length));
+    return selectMetadataKeys(keys, query);
   }
 
   async compareAndSetMetadata(

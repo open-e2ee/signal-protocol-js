@@ -40,6 +40,7 @@ import type { RetryTerminalClass } from '../local/store/reliability';
 import type { RelayProtocolError } from './device-set-reconciliation';
 import type { GroupInitStatus } from './group-init-status';
 import type { GroupId } from '../internal/groups/group-id';
+import type { SendResult } from './types';
 export type { RetryTerminalClass };
 import { ReceiveHookTimeout } from './receive-hook-bound';
 import { rethrowRelayWorkStopped } from './relay-work';
@@ -85,6 +86,41 @@ export interface DeliveredEvent {
 }
 
 /**
+ * The end of one send or of one manual resend of it, or an open send whose
+ * content the SDK send driver cannot find.
+ */
+export interface SendOutcomeEvent {
+  /** The client message ID of the send. */
+  readonly clientMessageId: string;
+  /**
+   * `completed`: the Relay accepted the send, and `result` holds its result.
+   * `failed` and `acceptance-unknown`: the send ended at its posting
+   * deadline, and `error` holds the error of the end.
+   * `content-required`: the send is open, and the driver did not find its
+   * plaintext, or the plaintext that it found does not match the send. The
+   * send stays open until its posting deadline. Call `send()` again with the
+   * same `clientMessageId` and content before `deadlineAt`.
+   */
+  readonly outcome: 'completed' | 'failed' | 'acceptance-unknown' | 'content-required';
+  /** The posting deadline of the send, in epoch milliseconds. */
+  readonly deadlineAt: number;
+  /** The result of a `completed` send. */
+  readonly result?: SendResult;
+  /**
+   * The error of a `failed` or `acceptance-unknown` end, as a `send()` call
+   * with the same `clientMessageId` throws it.
+   */
+  readonly error?: Error;
+  /**
+   * The number of the manual resend that ended, from 1, for the end of a
+   * `resendMessage` operation. The event then carries the `deadlineAt`, and
+   * the `result` or `error`, of that resend. It is absent for the end of
+   * the original send.
+   */
+  readonly manualResend?: number;
+}
+
+/**
  * The end of a retry request with no resend. The device that asked for the
  * resend gets it for each class except `missing-prekey`. The device that
  * sent the failed message gets `missing-prekey`, when it cannot start a new
@@ -97,15 +133,15 @@ export interface RetryTerminalEvent {
   /** The Relay message ID of the envelope that the requester failed to decrypt. */
   failedEnvelopeId: string;
   /**
-   * The session reset of the requester. Only an `expired-content` end of a
-   * client with a Relay has it.
+   * The session reset of the requester. Only an `expired-content` or
+   * `posting-deadline` end of a client with a Relay has it.
    */
   recovery?: RetryTerminalRecoveryEvent;
 }
 
 /**
  * The session reset of the requester after a retry request ends as
- * `expired-content`.
+ * `expired-content` or `posting-deadline`.
  *
  * The requester archived its session with the device that sent the failed
  * envelope, after each decrypt from that device in progress ended. The next
@@ -484,12 +520,52 @@ export interface SignalProtocolClientHooks {
   onDelivered?: (event: DeliveredEvent) => void | Promise<void>;
 
   /**
+   * Runs once for each end of a send
+   *
+   * A send ends when the Relay accepts it (`completed`), or at its posting
+   * deadline (`failed` or `acceptance-unknown`). With a store that implements
+   * `listMetadataKeys`, as every built-in store does, the SDK replays each
+   * open send at start and when the Relay connection returns, until its
+   * deadline, and the hook reports each end of that replay. The hook also
+   * reports each end of a `send()` call of the application, before the call
+   * returns or throws. A replay of a send that already ended reports nothing.
+   *
+   * The driver also reports `content-required` once for each client run
+   * when it cannot find the plaintext of an open send. The send stays open,
+   * and its end at the deadline is reported too.
+   *
+   * An event can carry the ID of a sender key distribution that an earlier
+   * SDK version stored, which the application never sent. Ignore an ID that
+   * the application does not know.
+   *
+   * The hook runs at most once for each end. The driver records the report
+   * before it calls the hook, so a crash or a client stop between the two
+   * loses the event. A crash before that record reports the end at the next
+   * start. A hook that throws is logged, and it does not run again for that
+   * end. The `send()` call still returns or throws its own result.
+   *
+   * @param event - The client message ID, the outcome and the deadline of the send
+   *
+   * @example
+   * ```typescript
+   * onSendOutcome: async (event) => {
+   *   if (event.outcome === 'completed') await messageStore.markSent(event.clientMessageId);
+   *   else if (event.outcome === 'content-required') await messageStore.resend(event.clientMessageId);
+   *   else await messageStore.markFailed(event.clientMessageId, event.outcome);
+   * }
+   * ```
+   */
+  onSendOutcome?: (event: SendOutcomeEvent) => void | Promise<void>;
+
+  /**
    * Runs when a retry request ends with no resend
    *
    * A failed decrypt asks the sender device for a resend. The request ends
    * when the Relay gives a conclusive answer to its post, when it does not
    * get its content before its deadline, 14 days after the first failure,
-   * when the resend of the fifth attempt also fails, when the sender used up
+   * when a post of it is due at or after its posting deadline, 24 hours
+   * after the first failure, when the Relay refuses its post with
+   * OPERATION_EXPIRED, when the resend of the fifth attempt also fails, when the sender used up
    * its retry allowance, when the sender device has no prekey bundle of the
    * requester, or when the sender device refuses group content to a
    * requester that is not a current member of the group. The content of the
@@ -500,10 +576,16 @@ export interface SignalProtocolClientHooks {
    * start, or redelivery. Make the hook idempotent for one
    * `failedEnvelopeId`.
    *
-   * Before the hook, an `expired-content` end resets the session with the
-   * device that sent the failed envelope, and `event.recovery` tells what
-   * the reset did. The other classes, and a post that fails and can be
-   * posted again, reset nothing. `onSessionArchived` runs for the archive.
+   * Before the hook, an `expired-content` or `posting-deadline` end resets
+   * the session with the device that sent the failed envelope, and
+   * `event.recovery` tells what the reset did. The other classes, and a post
+   * that fails and can be posted again, reset nothing. `onSessionArchived`
+   * runs for the archive.
+   *
+   * A `posting-deadline` end posts no replacement request. The session
+   * resets, and the request might have arrived at the sender. A request
+   * whose post the Relay accepted posts nothing after its posting deadline,
+   * and waits for its content until its deadline.
    *
    * @param event - The class of the end, the failed envelope, and the reset
    *
@@ -745,6 +827,7 @@ const HOOK_NAMES = {
   onEncryptionError: true,
   onKeysCleanedUp: true,
   onDelivered: true,
+  onSendOutcome: true,
   onRetryTerminal: true,
   onDeliveryError: true,
   onDeliveryRecovered: true,

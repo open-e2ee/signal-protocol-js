@@ -4,7 +4,9 @@
  * transaction can pass its own scope.
  */
 
+import type { MetadataKeyQuery } from '../../../../types/api';
 import type { SqliteExecutor } from '../driver';
+import { selectMetadataKeys } from '../../metadata-keys';
 import { receivedContentKey } from '../../received-content';
 import type { LegacyReceivedContentSource } from '../../receive-work';
 
@@ -23,6 +25,24 @@ export async function setMetadata(db: SqliteExecutor, key: string, value: string
 
 export async function deleteMetadata(db: SqliteExecutor, key: string): Promise<void> {
   await db.run('DELETE FROM metadata WHERE key = ?', [key]);
+}
+
+/**
+ * The metadata keys that start with the prefix of `query`, in UTF-16 code
+ * unit order. SQLite compares text in UTF-8 byte order, which is not UTF-16
+ * order for every key, so the query selects by prefix only and the order and
+ * the page come from `selectMetadataKeys`. `length` and `substr` count
+ * characters, so the prefix test is exact.
+ */
+export async function listMetadataKeys(
+  db: SqliteExecutor,
+  query: MetadataKeyQuery
+): Promise<string[]> {
+  const rows = await db.all<{ key: string }>(
+    'SELECT key FROM metadata WHERE substr(key, 1, length(?)) = ?',
+    [query.prefix, query.prefix]
+  );
+  return selectMetadataKeys(rows.map((row) => row.key), query);
 }
 
 export async function compareAndSetMetadata(

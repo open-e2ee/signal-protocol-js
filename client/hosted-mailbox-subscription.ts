@@ -22,7 +22,6 @@ import {
 import {
   HostedRelayUpgradeRequiredError,
   RELAY_AUTH_PROTOCOL_PREFIX,
-  RELAY_PROTOCOL_VERSION,
   relayProtocolToken,
 } from "./relay-protocol";
 import {
@@ -53,8 +52,6 @@ function relayRefusalReason(
   return undefined;
 }
 
-/** The subprotocol token that the socket offers and the Relay must echo. */
-const RELAY_PROTOCOL_TOKEN = relayProtocolToken(RELAY_PROTOCOL_VERSION);
 /**
  * The recovery pull waits a random time from half to one and a half of this
  * value after the call that asks for it, so clients that lose their sockets
@@ -177,6 +174,8 @@ export interface MailboxAcknowledgment {
 }
 
 interface MailboxSubscription {
+  /** The Relay protocol version of the client that owns the subscription. */
+  relayProtocolVersion: number;
   /**
    * Gets the socket address and a device token. `refreshed` is true when the
    * call got a new device token from the Relay.
@@ -320,6 +319,8 @@ function notConnected(): HostedRelayPresenceError {
 export function subscribeHostedMailbox(
   options: MailboxSubscription,
 ): MailboxSubscriptionHandle {
+  /** The subprotocol token that the socket offers and the Relay must echo. */
+  const protocolToken = relayProtocolToken(options.relayProtocolVersion);
   let active = true;
   /**
    * True after the Relay refused the protocol version of this SDK, refused
@@ -1084,7 +1085,7 @@ export function subscribeHostedMailbox(
       // A new device token shows that the Relay serves this device again.
       if (authority.refreshed) endOutage();
       const candidate = new WebSocket(authority.url, [
-        RELAY_PROTOCOL_TOKEN,
+        protocolToken,
         `${RELAY_AUTH_PROTOCOL_PREFIX}${authority.token}`,
       ]);
       socket = candidate;
@@ -1094,7 +1095,7 @@ export function subscribeHostedMailbox(
       }, 10_000);
       candidate.addEventListener("open", () => {
         if (!current()) return;
-        if (candidate.protocol !== RELAY_PROTOCOL_TOKEN) {
+        if (candidate.protocol !== protocolToken) {
           retryConnection("protocol");
           return;
         }

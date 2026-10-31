@@ -122,13 +122,14 @@ export interface RetryCallbacks {
    * sender keeps one resend record for the device and the failed envelope.
    * A call for the request attempt and the kind of that record posts its
    * stored bytes again under their own ID. A call for another request
-   * attempt or kind encrypts again, and the resend takes the attempt
-   * number of the request. A new encryption for the same request attempt,
-   * as after the Relay refuses the stored bytes as expired, posts the same
-   * ID: the processed ledger of the requester and the RETRY_CONFLICT
-   * answer of the Relay cover the new bytes. Null content posts only a
-   * stored attempt. It returns false only when null content has no stored
-   * attempt to post.
+   * attempt or kind encrypts once under its own attempt ID, and the resend
+   * takes the attempt number of the request. When the Relay refuses the
+   * stored bytes as expired, the record is marked acceptance-unknown, and
+   * nothing more posts under that ID: no new encryption replaces it. Null
+   * content posts only a stored attempt. It returns false when null content
+   * posted no stored bytes in this call. It returns true when the stored
+   * bytes posted, or when content exists and the stored attempt has unknown
+   * acceptance, and then nothing posts.
    */
   resend: (
     userId: string,
@@ -349,10 +350,13 @@ async function emitRetryResendTerminal(
 /**
  * Post the stored resend or null message that answered this request
  * envelope again: the post of that answer did not complete. It does no
- * session work. It returns false when the sender stored no answer to this
- * request envelope, or when the Relay refuses the stored answer as expired
- * and the plaintext is gone. A stored answer to another request envelope is
- * an earlier attempt: the caller answers this one with a new encryption.
+ * session work. When the Relay refuses the stored answer as expired, or
+ * marked it so earlier, the answer has unknown acceptance and nothing more
+ * posts under its ID. It returns false when the sender stored no answer to
+ * this request envelope, or when the plaintext is gone and no stored bytes
+ * posted. Then only a null-message reset under its own ID can follow. A
+ * stored answer to another request envelope is an earlier attempt: the
+ * caller answers this one with a new encryption.
  */
 async function replayStoredResend(
   ctx: RetryContext,
@@ -632,8 +636,8 @@ export async function sendRetryRequestInternal(
     }
     // The record of the failed envelope owns its request, so the envelope
     // is acknowledged. A member is acknowledged only when its request
-    // attempt is posted or ended: a deferred member asks again on its
-    // redelivery after the rate limit window.
+    // attempt is posted, waiting (nothing to post), or ended: a deferred
+    // member asks again on its redelivery after the rate limit window.
     if (!acknowledgesRetryRequest(outcome, family.member !== undefined)) return;
 
     // Mark failed message as delivered so it does not reappear
@@ -800,7 +804,8 @@ export async function handleRetryRequestAndResend(
     // The sender already answered this request envelope, and the post did
     // not complete. Post the stored bytes again, with no session work. A
     // group answer posts only stored bytes here. When they expired, the
-    // answer below encrypts again after the membership check.
+    // record is marked acceptance-unknown, and only a null-message reset
+    // under its own ID can follow.
     if (
       retry !== undefined &&
       (await replayStoredResend(
@@ -817,7 +822,7 @@ export async function handleRetryRequestAndResend(
           (responseState.retryResponseCounts.get(dedupKey) ?? 0) + 1
         );
       }
-      ctx.logger.info('Posted the stored resend of this request attempt again', {
+      ctx.logger.info('Answered the stored resend of this request attempt', {
         category: 'E2EE',
         data: { sessionId, failedTimestamp: retryRequest.failedTimestamp },
       });
@@ -1008,7 +1013,7 @@ export async function handleRetryRequestAndResend(
 
     // 5. SESAME Step 4-5: Re-encrypt the original message and send it only
     // to the device that asked. Reuse the original timestamp for envelope
-    // alignment. The post has a fresh operation epoch.
+    // alignment. A new request attempt gets one encryption under its own ID.
     await callbacks.resend(
       retryRequest.requesterUserId,
       retryRequest.requesterDeviceId,
@@ -1149,7 +1154,8 @@ async function resendLoggedGroupContent(
  * Write the pending resend job of one logged entry for a request attempt.
  * The job of the first entry that the request names holds the failed
  * envelope. A redelivered request envelope writes the same job again and
- * keeps its attempts.
+ * keeps its creation time and its attempts, so the one-day end of the job
+ * counts from the first write.
  */
 async function storePendingResendJob(
   ctx: RetryContext,
@@ -1168,7 +1174,7 @@ async function storePendingResendJob(
     retryId: retry.retryId,
     requestEnvelopeId: retry.requestEnvelopeId,
     ...(answersFailedEnvelope && { failedEnvelopeId: retry.failedEnvelopeId }),
-    createdAt: Date.now(),
+    createdAt: existing?.createdAt ?? Date.now(),
     attempts: existing?.attempts ?? 0,
     state: 'pending',
   };
@@ -1363,7 +1369,8 @@ function handoffOf(current: { groupId: string; distribution: SenderKeyDistributi
  * sender-key distribution of the group alone. The caller checked the
  * membership of the requester. The requester then decrypts the later group
  * messages of this device, but not the failed one. It returns true when it
- * posted the distribution.
+ * posted the distribution, or when the stored answer of this request attempt
+ * has unknown acceptance. In that case nothing posts.
  */
 async function resendCurrentDistribution(
   ctx: RetryContext,
@@ -1381,7 +1388,7 @@ async function resendCurrentDistribution(
     return false;
   }
   if (!(await prepareAnswerSession(ctx, retryRequest, callbacks, retry, null))) return false;
-  await callbacks.resend(
+  const answered = await callbacks.resend(
     retryRequest.requesterUserId,
     retryRequest.requesterDeviceId,
     ctx.contentAdapter.serializeSenderKeyDistributionText(current.groupId, current.distribution),
@@ -1391,15 +1398,17 @@ async function resendCurrentDistribution(
       senderKeyHandoff: handoffOf(current),
     }
   );
-  ctx.logger.info('Sent the current sender-key distribution after a group retry request', {
-    category: 'E2EE',
-    data: {
-      recipient: `${retryRequest.requesterUserId}:${retryRequest.requesterDeviceId}`,
-      groupId: current.groupId,
-      failedTimestamp: retryRequest.failedTimestamp,
-    },
-  });
-  return true;
+  if (answered) {
+    ctx.logger.info('Answered a group retry request with the current sender-key distribution', {
+      category: 'E2EE',
+      data: {
+        recipient: `${retryRequest.requesterUserId}:${retryRequest.requesterDeviceId}`,
+        groupId: current.groupId,
+        failedTimestamp: retryRequest.failedTimestamp,
+      },
+    });
+  }
+  return answered;
 }
 
 /**

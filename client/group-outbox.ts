@@ -13,15 +13,17 @@ import {
   completeOutgoingSyncPhase,
   confirmOutgoingPreMessages,
   getOutgoingMessageIntent,
+  outgoingDestinationProgressKey,
+  outgoingMessageDeadlineAt,
   outgoingMessageIntentResult,
   reconcileOutgoingGroupDeviceSet,
   reconcileOutgoingSyncMessages,
   repairOutgoingDeviceSet,
   replaceOutgoingGroupPreMessages,
-  restartOutgoingDeviceSet,
   storeOutgoingMessageIntent,
   withOutgoingMessageIntentLock,
   type OutgoingGroupDeviceSetChange,
+  type StoredDestinationProgress,
   type StoredGroupSharedMessage,
   type StoredOutgoingDeviceMessage,
   type StoredOutgoingMessageIntent,
@@ -32,6 +34,7 @@ import {
   type DeviceSetAccountRepair,
   type DeviceSetDevice,
   type DeviceSetPost,
+  type DeviceSetReconciliationError,
   type DeviceSetUnresolved,
   type RelayProtocolRoute,
   syncPostReceipts,
@@ -40,6 +43,7 @@ import {
 } from './device-set-reconciliation';
 import { isStaleDeviceRefusal } from './relay-device-refusal';
 import { newSendClientTimestamp, type SendTimestampOrigin } from './send-timestamp';
+import { intentBinaryAttachment } from './binary-send';
 import type { SendOptions, SendResult } from './types';
 import {
   groupDeviceKey,
@@ -47,7 +51,20 @@ import {
   listedOwnDeviceChange,
   sharedBodyDevices,
 } from './group-device-set';
-import { aggregateRelayAcceptance, type RelayPostAcceptance } from './relay-acceptance';
+import {
+  aggregateRelayAcceptance,
+  isConflictAcceptance,
+  sendResultAcceptance,
+  type RelayPostAcceptance,
+} from './relay-acceptance';
+import {
+  SEND_END_REPORT,
+  sendDestinations,
+  storedSendEndError,
+  type SendDevice,
+  type SendDestination,
+  type SendEndReportMark,
+} from './send-deadline';
 
 /** The relay phases of a group send, in their order. */
 export type GroupSendPhase = 'pre-message' | 'device' | 'sync';
@@ -63,11 +80,12 @@ export interface PreMessageTransport {
 /**
  * The pre-message of one post, and whether the Relay accepted it, the send
  * dropped it, or the send dropped it because the device list no longer shows
- * the device.
+ * the device. `held`: the Relay holds other bytes under the repair ID of this
+ * pre-message. The send records no handoff row.
  */
 export interface PreMessagePostResult {
   message: StoredOutgoingDeviceMessage;
-  outcome: 'accepted' | 'dropped' | 'removed';
+  outcome: 'accepted' | 'held' | 'dropped' | 'removed';
   /**
    * True when a repair in the post refreshed the session of the device. The
    * stored device message of the send then names the earlier registration.
@@ -111,8 +129,14 @@ export interface GroupDeviceSetContext {
     intent: StoredOutgoingMessageIntent,
     rebuild: (device: DeviceSetDevice) => Promise<StoredOutgoingDeviceMessage | undefined>
   ): Promise<DeclaredSyncOutcome>;
-  /** Record the terminal state of the recipient phase. */
-  unresolve(clientMessageId: string, unresolved: DeviceSetUnresolved): Promise<void>;
+  /**
+   * Record the terminal state of the recipient phase, with the outcome of
+   * the send. Resolves to the stored outcome.
+   */
+  unresolve(
+    clientMessageId: string,
+    unresolved: DeviceSetUnresolved
+  ): Promise<DeviceSetReconciliationError['outcome']>;
   /** Wait before the next pass. Rejects when the send stops. */
   wait(milliseconds: number): Promise<void>;
   /** Log a failed post of a pass that does not decide the phase. */
@@ -145,6 +169,26 @@ export interface GroupOutboxContext {
   senderUserId: string;
   senderDeviceId: number;
   deliveryMode: 'preferred' | 'required' | 'disabled';
+  /**
+   * Bind the evidence of this `send()` call to the stored intent, before any
+   * post. Each request of the call then meets the posting deadline of the
+   * intent, and each answer is stored in its progress.
+   */
+  bindEvidence(intent: StoredOutgoingMessageIntent): void;
+  /**
+   * Give the evidence of the call the stored entry of a device that a repair
+   * in this call returned, so a later RETRY_CONFLICT of the repost reads its
+   * repair mark.
+   */
+  refreshEntry(device: SendDevice, entry: StoredDestinationProgress): void;
+  /**
+   * Decide the recipient phase of a send that failed. At or after the
+   * posting deadline with an open destination, or when every open
+   * destination got OPERATION_EXPIRED, the send ends: the outbox stores its
+   * outcome, and the error is the class of the end. Before that, the error
+   * is thrown with the deadline, and the intent stays open.
+   */
+  endRecipientPhase(intent: StoredOutgoingMessageIntent, error: unknown): Promise<never>;
   /**
    * Prepare the sender-key payload and a distribution pre-message for each
    * member device that needs the current key. The preparation gets the
@@ -288,13 +332,14 @@ export interface GroupOutboxContext {
    * the relay refuses the new copy as stale too, the session is archived,
    * the copy leaves the intent, and the post resolves, so the send completes
    * without it. When the refresh fails or the rebuild gives no copy, the
-   * post throws, and the copy and the refreshed session stay.
+   * post throws, and the copy and the refreshed session stay. Resolves to
+   * true when the posting deadline stopped the copy: it then stays pending.
    */
   postSyncMessage(
     intent: StoredOutgoingMessageIntent,
     message: StoredOutgoingDeviceMessage,
     rebuild: (deviceId: number) => Promise<StoredOutgoingDeviceMessage | undefined>
-  ): Promise<void>;
+  ): Promise<boolean>;
   /**
    * Post one sealed device message. With `declaredDeviceIds`, the post
    * declares the devices of its account.
@@ -321,8 +366,23 @@ export interface GroupOutboxContext {
     task: (message: StoredOutgoingDeviceMessage) => Promise<R>,
     phase: GroupSendPhase
   ): Promise<R[]>;
-  /** Send one relay request of a device post under a slot of the bound. */
+  /**
+   * Send one relay request of a post under a slot of the bound. With one
+   * destination, the evidence of the call records the requests and the
+   * answer of the device. With a list, the post is a shared body, and its one
+   * answer is recorded on each destination of the list.
+   */
   postToRelay<T>(send: () => Promise<T>, sealed: boolean): Promise<T>;
+  postToRelay<T extends RelayPostAcceptance>(
+    send: () => Promise<T>,
+    sealed: boolean,
+    destination: SendDestination
+  ): Promise<RelayPostAcceptance>;
+  postToRelay<T extends RelayPostAcceptance & { uuids404: string[] }>(
+    send: () => Promise<T>,
+    sealed: boolean,
+    destinations: readonly SendDestination[]
+  ): Promise<T>;
   /**
    * The declared work of the send. Present only for a relay that compares
    * device sets. Without it, the send keeps the per-send device list reads.
@@ -385,7 +445,8 @@ async function sendStoredDeviceMessage(
           ...(intent.contentHint !== undefined && { contentHint: intent.contentHint }),
           ...(declaration && { declaredDeviceIds: declaration.deviceIds }),
         }),
-      false
+      false,
+      sendDestinations(intent.clientMessageId, [message])[0]!
     );
     declaration?.routes.set(acceptance, 'identified-direct');
     return acceptance;
@@ -452,29 +513,55 @@ async function sendGroupDeviceMessage(
     }
   }
   const repair = await context.repairStaleDevice(intent, message);
-  await reconcileOutgoingGroupDeviceSet(context.storage, intent.clientMessageId, {
-    removed: [{ userId: message.recipientUserId, deviceId: message.recipientDeviceId }],
-    preMessages: repair.preMessages,
-    deviceMessages: [repair.deviceMessage],
-    syncMessages: [],
-  });
-  const dispatched = await dispatchPreMessages(context, intent, repair.preMessages, required);
+  // The write marks the repaired device, so a RETRY_CONFLICT of its repost
+  // is not an acceptance.
+  const repaired = await reconcileOutgoingGroupDeviceSet(
+    context.storage,
+    intent.clientMessageId,
+    {
+      removed: [{ userId: message.recipientUserId, deviceId: message.recipientDeviceId }],
+      preMessages: repair.preMessages,
+      deviceMessages: [repair.deviceMessage],
+      syncMessages: [],
+    }
+  );
+  refreshAppendedEntries(context, repaired, repair.preMessages);
+  const dispatched = await dispatchPreMessages(context, repaired, repair.preMessages, required);
   const device = { userId: message.recipientUserId, deviceId: message.recipientDeviceId };
   if (dispatched.removed.some((removed) => groupDeviceKey(removed) === groupDeviceKey(device))) {
     return undefined;
   }
-  const { renewed } = await renewRefreshedDeviceMessages(
+  const renewal = await renewRefreshedDeviceMessages(
     context,
     dispatched.intent,
     dispatched.refreshed,
     [repair.deviceMessage]
   );
-  return sendStoredDeviceMessage(
-    context,
-    intent,
-    renewed[0] ?? repair.deviceMessage,
-    forceIdentified
-  );
+  const repost = renewal.renewed[0] ?? repair.deviceMessage;
+  refreshAppendedEntries(context, renewal.intent, [repost]);
+  return sendStoredDeviceMessage(context, repaired, repost, forceIdentified);
+}
+
+/**
+ * Give the evidence of the call the stored entry of each message that a
+ * write of this call appended, before the message posts. A reconcile or a
+ * repair writes the repair mark of the device, and a replay reads the same
+ * entry from the intent. So a RETRY_CONFLICT of the post gets the same
+ * class in the call and in a replay. A message with no stored entry keeps
+ * the entry that the call has.
+ */
+function refreshAppendedEntries(
+  context: GroupOutboxContext,
+  intent: StoredOutgoingMessageIntent,
+  messages: readonly StoredOutgoingDeviceMessage[]
+): void {
+  for (const destination of sendDestinations(intent.clientMessageId, messages)) {
+    const entry =
+      intent.destinationProgress?.[
+        outgoingDestinationProgressKey(destination.postMessageId, destination.device)
+      ];
+    if (entry) context.refreshEntry(destination.device, entry);
+  }
 }
 
 /**
@@ -674,6 +761,7 @@ async function renewRefreshedDeviceMessages(
     deviceMessages: renewed,
     syncMessages: [],
   });
+  refreshAppendedEntries(context, written, [...preMessages, ...renewed]);
   return { intent: written, renewed };
 }
 
@@ -717,200 +805,208 @@ async function sendStoredGroupIntent(
     context.deliveryMode === 'required' ||
     intent.transportMode === 'sealed_sender_required' ||
     preMessages.some((message) => message.sealedSenderDeliveryMode === 'required');
-  if (preMessages.length > 0) {
-    // One refresh covers the pre-messages and the group message.
-    await context.refreshPreMessageEndorsements(intent.recipientId, [
-      ...new Set([
-        ...preMessages.map((message) => message.recipientUserId),
-        ...(intent.groupSharedMessage?.recipientUserIds ?? []),
-      ]),
-    ]);
-  }
-  // Every pre-message is accepted or dropped before the group message.
-  const dispatched = await dispatchPreMessages(context, intent, preMessages, required);
-  intent = dispatched.intent;
-  // A device that a pre-message repair refreshed, or whose session no longer
-  // has the registration that the shared body names, leaves the shared body
-  // of this attempt. It gets the key of the send when it has no handoff row,
-  // and its own post under its current registration.
-  const leaving = await leaveStaleSharedBody(
-    context,
-    intent,
-    dispatched.refreshed,
-    groupCiphertext,
-    required
-  );
-  intent = leaving.intent;
-
-  if (
-    intent.groupSharedMessage?.deliveryMode === 'required' &&
-    !relay.sendMultiRecipientUnidentified
-  ) {
-    throw new EncryptionError(
-      'Required group sealed-sender transport is unavailable',
-      EncryptionErrorCode.SEALED_SENDER_REQUIRED,
-      { groupId: intent.recipientId }
+  // The recipient phase ends here when it fails at or after the posting
+  // deadline with an open destination, or when every open destination got
+  // OPERATION_EXPIRED. Before that, the error is thrown with the deadline.
+  try {
+    if (preMessages.length > 0) {
+      // One refresh covers the pre-messages and the group message.
+      await context.refreshPreMessageEndorsements(intent.recipientId, [
+        ...new Set([
+          ...preMessages.map((message) => message.recipientUserId),
+          ...(intent.groupSharedMessage?.recipientUserIds ?? []),
+        ]),
+      ]);
+    }
+    // Every pre-message is accepted or dropped before the group message.
+    const dispatched = await dispatchPreMessages(context, intent, preMessages, required);
+    intent = dispatched.intent;
+    // A device that a pre-message repair refreshed, or whose session no longer
+    // has the registration that the shared body names, leaves the shared body
+    // of this attempt. It gets the key of the send when it has no handoff row,
+    // and its own post under its current registration.
+    const leaving = await leaveStaleSharedBody(
+      context,
+      intent,
+      dispatched.refreshed,
+      groupCiphertext,
+      required
     );
-  }
+    intent = leaving.intent;
 
-  if (intent.groupSharedMessage && relay.sendMultiRecipientUnidentified) {
-    const auth = await context.resolveGroupAuthorization(
-      intent.groupSharedMessage.groupId,
-      intent.groupSharedMessage.recipientUserIds
-    );
-    if (!auth) {
-      if (intent.groupSharedMessage.deliveryMode === 'required') {
-        throw new Error('Required group sealed-sender authorization is unavailable');
-      }
-    } else {
-      const shared = intent.groupSharedMessage;
-      try {
-        const result = await context.postToRelay(
-          () =>
-            relay.sendMultiRecipientUnidentified!(
-              shared.sentMessageBase64,
-              auth,
-              intent.clientTimestamp,
-              'user-visible',
-              shared.recipientUserIds,
-              intent.clientMessageId
-            ),
-          true
-        );
-        messageId = result.messageId;
-        timestamp = result.serverTimestamp;
-        skippedUsers = result.uuids404;
-        refusedDestinationCount = result.refusedDestinationCount;
-        sharedRefusals = result.refusals ?? [];
-        sharedSucceeded = true;
-        acceptances.push(result);
-      } catch (error) {
-        if (!(error instanceof SealedSenderAuthError)) throw error;
-        if (intent.groupSharedMessage.deliveryMode === 'required') throw error;
-        await context.prepareEach(intent.groupSharedMessage.recipientUserIds, (recipientUserId) =>
-          context.reportIdentifiedFallback(recipientUserId)
-        );
+    if (
+      intent.groupSharedMessage?.deliveryMode === 'required' &&
+      !relay.sendMultiRecipientUnidentified
+    ) {
+      throw new EncryptionError(
+        'Required group sealed-sender transport is unavailable',
+        EncryptionErrorCode.SEALED_SENDER_REQUIRED,
+        { groupId: intent.recipientId }
+      );
+    }
+
+    if (intent.groupSharedMessage && relay.sendMultiRecipientUnidentified) {
+      const auth = await context.resolveGroupAuthorization(
+        intent.groupSharedMessage.groupId,
+        intent.groupSharedMessage.recipientUserIds
+      );
+      if (!auth) {
+        if (intent.groupSharedMessage.deliveryMode === 'required') {
+          throw new Error('Required group sealed-sender authorization is unavailable');
+        }
+      } else {
+        const shared = intent.groupSharedMessage;
+        try {
+          const result = await context.postToRelay(
+            () =>
+              relay.sendMultiRecipientUnidentified!(
+                shared.sentMessageBase64,
+                auth,
+                intent.clientTimestamp,
+                'user-visible',
+                shared.recipientUserIds,
+                intent.clientMessageId
+              ),
+            true,
+            sharedBodyDestinations(intent.clientMessageId, sharedBodyDevices(shared))
+          );
+          skippedUsers = result.uuids404;
+          refusedDestinationCount = result.refusedDestinationCount;
+          sharedRefusals = result.refusals ?? [];
+          sharedSucceeded = true;
+          acceptances.push(result);
+        } catch (error) {
+          if (!(error instanceof SealedSenderAuthError)) throw error;
+          if (intent.groupSharedMessage.deliveryMode === 'required') throw error;
+          await context.prepareEach(intent.groupSharedMessage.recipientUserIds, (recipientUserId) =>
+            context.reportIdentifiedFallback(recipientUserId)
+          );
+        }
       }
     }
-  }
 
-  // A device that the shared body does not name gets its own post. A replay
-  // keeps the stored body, so a device that the replay added is one. A
-  // device that left the shared body of this attempt is one too.
-  const sharedDevices = sharedSucceeded
-    ? sharedBodyDevices(intent.groupSharedMessage!)
-    : new Map<string, number>();
-  for (const device of leaving.left) sharedDevices.delete(device);
-  // The group-token receipt names each refused destination with its code. A
-  // destination that the Relay refused as STALE_DEVICE leaves the shared set
-  // and gets the device repair once. The refused count alone names no
-  // device, so the send infers nothing from it.
-  const refusedDevices = new Set(
-    sharedRefusals
-      .filter((refusal) => refusal.code === 'STALE_DEVICE')
-      .map(groupDeviceKey)
-      .filter((key) => sharedDevices.has(key))
-  );
-  for (const key of refusedDevices) sharedDevices.delete(key);
-  const usersToRepair = new Set(skippedUsers);
-  const forceIdentified = Boolean(intent.groupSharedMessage && !sharedSucceeded);
-  const devicePosts = intent.deviceMessages.filter(
-    (message) =>
-      !sharedDevices.has(
-        groupDeviceKey({ userId: message.recipientUserId, deviceId: message.recipientDeviceId })
-      ) || usersToRepair.has(message.recipientUserId)
-  );
-  const posting = intent;
-  const results = await context.sendPhase(
-    devicePosts,
-    (message) =>
-      sendGroupDeviceMessage(
-        context,
-        posting,
-        message,
-        forceIdentified,
-        required,
-        refusedDevices.has(
+    // A device that the shared body does not name gets its own post. A replay
+    // keeps the stored body, so a device that the replay added is one. A
+    // device that left the shared body of this attempt is one too.
+    const sharedDevices = sharedSucceeded
+      ? sharedBodyDevices(intent.groupSharedMessage!)
+      : new Map<string, number>();
+    for (const device of leaving.left) sharedDevices.delete(device);
+    // The group-token receipt names each refused destination with its code. A
+    // destination that the Relay refused as STALE_DEVICE leaves the shared set
+    // and gets the device repair once. The refused count alone names no
+    // device, so the send infers nothing from it.
+    const refusedDevices = new Set(
+      sharedRefusals
+        .filter((refusal) => refusal.code === 'STALE_DEVICE')
+        .map(groupDeviceKey)
+        .filter((key) => sharedDevices.has(key))
+    );
+    for (const key of refusedDevices) sharedDevices.delete(key);
+    const usersToRepair = new Set(skippedUsers);
+    const forceIdentified = Boolean(intent.groupSharedMessage && !sharedSucceeded);
+    const devicePosts = intent.deviceMessages.filter(
+      (message) =>
+        !sharedDevices.has(
           groupDeviceKey({ userId: message.recipientUserId, deviceId: message.recipientDeviceId })
-        )
-      ),
-    'device'
-  );
-  const posted = results.filter((result) => result !== undefined);
-  acceptances.push(...posted);
-  if (messageId.startsWith('group-') && posted[0]) {
-    messageId = posted[0].messageId;
-    timestamp = posted[0].serverTimestamp;
-  }
-
-  if (skippedUsers.length > 0) {
-    const refreshed = await context.resolveMemberDevices(intent.recipientId, {
-      clientMessageId: intent.clientMessageId,
-      groupMemberUserIds: skippedUsers,
-    });
-    const { added } = listedGroupDeviceChange(intent, refreshed, context.senderUserId);
-    if (added.length > 0) {
-      // The pre-messages come first. They give each added device a session
-      // and the key of the send, so its device message names the
-      // registration of that session, and the device can decrypt it.
-      const handoffs = await context.prepareSenderKeyHandoffs(intent, refreshed);
-      const additions = await context.prepareEach(added, (member) =>
-        context.prepareDeviceMessage(
-          member,
-          intent.recipientId,
-          groupCiphertext,
-          intent.clientTimestamp,
-          intent.contentHint
-        )
-      );
-      // A device that the repair adds gets a send log row before its post.
-      if (isLoggedSend(intent)) {
-        await context.storage.appendSendLogRecipients(
-          intent.clientMessageId,
-          sendLogDevices(additions)
-        );
-      }
-      intent = await reconcileOutgoingGroupDeviceSet(context.storage, intent.clientMessageId, {
-        removed: [],
-        preMessages: handoffs,
-        deviceMessages: additions,
-        syncMessages: [],
-      });
-      const dispatchedHandoffs = await dispatchPreMessages(context, intent, handoffs, required);
-      // A device that a repair of its pre-message refreshed gets a device
-      // message under its new session before its post.
-      const renewal = await renewRefreshedDeviceMessages(
-        context,
-        dispatchedHandoffs.intent,
-        dispatchedHandoffs.refreshed,
-        additions,
-        groupCiphertext
-      );
-      intent = renewal.intent;
-      // The confirmation of the pre-messages removed the device message of
-      // each device that the device list no longer shows. Only the additions
-      // that the intent still holds get a post.
-      const removedKeys = new Set(dispatchedHandoffs.removed.map(groupDeviceKey));
-      const renewedOf = new Map(
-        renewal.renewed.map((message) => [
-          groupDeviceKey({ userId: message.recipientUserId, deviceId: message.recipientDeviceId }),
+        ) || usersToRepair.has(message.recipientUserId)
+    );
+    const posting = intent;
+    const results = await context.sendPhase(
+      devicePosts,
+      (message) =>
+        sendGroupDeviceMessage(
+          context,
+          posting,
           message,
-        ])
-      );
-      const extended = intent;
-      const additionResults = await context.sendPhase(
-        additions.flatMap((message) => {
-          const key = groupDeviceKey({
-            userId: message.recipientUserId,
-            deviceId: message.recipientDeviceId,
-          });
-          return removedKeys.has(key) ? [] : [renewedOf.get(key) ?? message];
-        }),
-        (message) => sendGroupDeviceMessage(context, extended, message, false, required),
-        'device'
-      );
-      acceptances.push(...additionResults.filter((result) => result !== undefined));
+          forceIdentified,
+          required,
+          refusedDevices.has(
+            groupDeviceKey({ userId: message.recipientUserId, deviceId: message.recipientDeviceId })
+          )
+        ),
+      'device'
+    );
+    const posted = results.filter((result) => result !== undefined);
+    acceptances.push(...posted);
+    // The shared body gives the message ID and time, else the first device
+    // post. An acceptance that a RETRY_CONFLICT or a version 2
+    // DELIVERY_ALREADY_ACCEPTED gave has no Relay receipt, so a post with a
+    // receipt comes first.
+    const first = sendResultAcceptance(acceptances);
+    if (first) {
+      messageId = first.messageId;
+      timestamp = first.serverTimestamp;
     }
+
+    if (skippedUsers.length > 0) {
+      const refreshed = await context.resolveMemberDevices(intent.recipientId, {
+        clientMessageId: intent.clientMessageId,
+        groupMemberUserIds: skippedUsers,
+      });
+      const { added } = listedGroupDeviceChange(intent, refreshed, context.senderUserId);
+      if (added.length > 0) {
+        // The pre-messages come first. They give each added device a session
+        // and the key of the send, so its device message names the
+        // registration of that session, and the device can decrypt it.
+        const handoffs = await context.prepareSenderKeyHandoffs(intent, refreshed);
+        const additions = await context.prepareEach(added, (member) =>
+          context.prepareDeviceMessage(
+            member,
+            intent.recipientId,
+            groupCiphertext,
+            intent.clientTimestamp,
+            intent.contentHint
+          )
+        );
+        // A device that the repair adds gets a send log row before its post.
+        if (isLoggedSend(intent)) {
+          await context.storage.appendSendLogRecipients(
+            intent.clientMessageId,
+            sendLogDevices(additions)
+          );
+        }
+        intent = await reconcileOutgoingGroupDeviceSet(context.storage, intent.clientMessageId, {
+          removed: [],
+          preMessages: handoffs,
+          deviceMessages: additions,
+          syncMessages: [],
+        });
+        const dispatchedHandoffs = await dispatchPreMessages(context, intent, handoffs, required);
+        // A device that a repair of its pre-message refreshed gets a device
+        // message under its new session before its post.
+        const renewal = await renewRefreshedDeviceMessages(
+          context,
+          dispatchedHandoffs.intent,
+          dispatchedHandoffs.refreshed,
+          additions,
+          groupCiphertext
+        );
+        intent = renewal.intent;
+        // The confirmation of the pre-messages removed the device message of
+        // each device that the device list no longer shows. Only the additions
+        // that the intent still holds get a post.
+        const removedKeys = new Set(dispatchedHandoffs.removed.map(groupDeviceKey));
+        const renewedOf = new Map(
+          renewal.renewed.map((message) => [groupDeviceKey(messageDevice(message)), message])
+        );
+        const extended = intent;
+        const additionResults = await context.sendPhase(
+          additions.flatMap((message) => {
+            const key = groupDeviceKey({
+              userId: message.recipientUserId,
+              deviceId: message.recipientDeviceId,
+            });
+            return removedKeys.has(key) ? [] : [renewedOf.get(key) ?? message];
+          }),
+          (message) => sendGroupDeviceMessage(context, extended, message, false, required),
+          'device'
+        );
+        acceptances.push(...additionResults.filter((result) => result !== undefined));
+      }
+    }
+  } catch (error) {
+    return context.endRecipientPhase(intent, error);
   }
 
   // The sync copies start after every device post settles. They go to the
@@ -927,11 +1023,14 @@ async function sendStoredGroupIntent(
     );
     return message;
   };
-  await context.sendPhase(
+  // A sync copy that the posting deadline stopped keeps the sync phase
+  // pending.
+  const stopped = await context.sendPhase(
     intent.syncMessages,
     (message) => context.postSyncMessage(syncing, message, rebuildSyncMessage),
     'sync'
   );
+  const syncPending = stopped.some(Boolean);
 
   const result = {
     clientMessageId: intent.clientMessageId,
@@ -942,9 +1041,25 @@ async function sendStoredGroupIntent(
     ...(refusedDestinationCount !== undefined && { refusedDestinationCount }),
     groupId: intent.recipientId,
   };
-  await completeOutgoingMessageIntent(context.storage, intent.clientMessageId, result);
+  await completeOutgoingMessageIntent(context.storage, intent.clientMessageId, result, {
+    syncPending,
+  });
   await completeSendLog(context, intent);
-  return result;
+  return syncPending ? { ...result, syncPending: true as const } : result;
+}
+
+/**
+ * The destinations of a shared body: each device that the body names, under
+ * the client message ID of the send, which the shared post sends.
+ */
+function sharedBodyDestinations(
+  clientMessageId: string,
+  devices: ReadonlyMap<string, number>
+): SendDestination[] {
+  return [...devices.keys()].map((key) => {
+    const [userId, deviceId] = key.split('\u0000') as [string, string];
+    return { device: { userId, deviceId: Number(deviceId) }, postMessageId: clientMessageId };
+  });
 }
 
 /** The device of a stored device message. */
@@ -1119,6 +1234,7 @@ async function sendDeclaredGroupIntent(
             syncMessages: [],
             ...(groupSharedMessage !== undefined && { groupSharedMessage }),
           });
+          refreshAppendedEntries(context, intent, renewed);
         }
       }
     }
@@ -1178,7 +1294,8 @@ async function sendDeclaredGroupIntent(
                   undefined,
                   deviceSetsOfBody
                 ),
-              true
+              true,
+              sharedBodyDestinations(clientMessageId, bodyDevices)
             );
             sharedReceipt = receipt;
             routes.set(receipt, 'anonymous-group');
@@ -1317,26 +1434,44 @@ async function sendDeclaredGroupIntent(
       deviceMessages,
       ...(groupSharedMessage !== undefined && { groupSharedMessage }),
     });
+    // The store wrote `repairedFor` on each appended device, and `repaired`
+    // on a device that the repair removed and appended again, as for a stale
+    // device: the Relay can hold its replaced message. The evidence of the
+    // call takes the entry of each appended device before the next pass
+    // posts it, so the call and a replay give a RETRY_CONFLICT of that post
+    // the same class.
+    refreshAppendedEntries(context, intent, [...preMessages, ...deviceMessages]);
     unposted = bundleMissing;
     return { bundleMissing };
   };
 
-  const posts = await runDeviceSetPhase<RelayPostAcceptance>({
-    phase: 'recipient',
-    clientMessageId,
-    restarts: intent.deviceSetRestarts?.recipient ?? 0,
-    pass,
-    repair,
-    unresolve: (unresolved) => deviceSets.unresolve(clientMessageId, unresolved),
-    wait: (milliseconds) => deviceSets.wait(milliseconds),
-    logFailure: (device, error) => deviceSets.logFailure(device, error),
-  });
+  // The recipient phase ends here when it fails at or after the posting
+  // deadline with an open destination, or when every open destination got
+  // OPERATION_EXPIRED. Before that, the error is thrown with the deadline.
+  let posts: readonly DeviceSetPost<RelayPostAcceptance>[];
+  try {
+    posts = await runDeviceSetPhase<RelayPostAcceptance>({
+      phase: 'recipient',
+      clientMessageId,
+      restarts: intent.deviceSetRestarts?.recipient ?? 0,
+      pass,
+      repair,
+      unresolve: (unresolved) => deviceSets.unresolve(clientMessageId, unresolved),
+      wait: (milliseconds) => deviceSets.wait(milliseconds),
+      logFailure: (device, error) => deviceSets.logFailure(device, error),
+    });
+  } catch (error) {
+    return context.endRecipientPhase(intent, error);
+  }
 
   // The body receipt answers each device of the body, so it counts once.
   const accepted = [
     ...new Set(posts.flatMap((post) => (post.outcome.ok ? [post.outcome.value] : []))),
   ];
-  const first = sharedReceipt ?? accepted[0];
+  // An acceptance that a RETRY_CONFLICT or a version 2
+  // DELIVERY_ALREADY_ACCEPTED gave has no Relay receipt, so a post with a
+  // receipt gives the message ID and time.
+  const first = sendResultAcceptance(sharedReceipt ? [sharedReceipt, ...accepted] : accepted);
   const result = {
     clientMessageId,
     messageId: first?.messageId ?? `group-${groupId}-${String(intent.clientTimestamp)}`,
@@ -1350,14 +1485,26 @@ async function sendDeclaredGroupIntent(
   };
 
   // The sync phase runs when the intent holds a sync copy, or when a
-  // receipt sets needsSync. With needsSync and no own record, the send
-  // reads the own list once. When that read fails, the sync phase stays
-  // pending with no sync messages, and a replay reads it.
+  // receipt sets needsSync. An acceptance that a RETRY_CONFLICT, a version 2
+  // DELIVERY_ALREADY_ACCEPTED or the stored progress gave has no receipt,
+  // and the lost receipt can have set needsSync, so it counts as needsSync
+  // too. With needsSync and no own record, the send reads the own list
+  // once. When that read fails, the sync phase stays pending with no sync
+  // messages, and a replay reads it.
   let current = (await getOutgoingMessageIntent(context.storage, clientMessageId)) ?? intent;
+  // Another process can complete the send while this one posts. The Relay
+  // then answers the body of this process with RETRY_CONFLICT, which counts
+  // as acceptance, and the stored result holds the Relay receipt.
+  if (current.result) {
+    await completeSendLog(context, current);
+    return outgoingMessageIntentResult(current)!;
+  }
   let syncUnread = false;
   if (
     current.syncMessages.length === 0 &&
-    accepted.some((acceptance) => acceptance.needsSync === true)
+    accepted.some(
+      (acceptance) => acceptance.needsSync === true || isConflictAcceptance(acceptance)
+    )
   ) {
     const added = await addDeclaredGroupSync(context, deviceSets, current, plaintextBytes);
     current = added.intent;
@@ -1465,8 +1612,9 @@ function runDeclaredGroupSync(
 }
 
 /**
- * Replay a stored group send on a relay that compares device sets. A
- * terminal send starts a new run at 0 restarts. A completed send with a
+ * Replay a stored group send on a relay that compares device sets. A later
+ * `send()` after a recipient-phase end throws the stored-end class of its
+ * outcome and posts nothing. A completed send with a
  * pending sync phase posts only its sync messages. A send that is not
  * terminal resumes with its stored restart count. The replay reads no device
  * list: the Relay comparison finds each change. The one exception is a
@@ -1481,7 +1629,7 @@ async function replayDeclaredGroupIntent(
   existing: StoredOutgoingMessageIntent,
   plaintextBytes: Uint8Array
 ): Promise<SendResult> {
-  const intent = await restartOutgoingDeviceSet(context.storage, existing.clientMessageId);
+  const intent = existing;
   const stored = outgoingMessageIntentResult(intent);
   if (!stored) return sendDeclaredGroupIntent(context, deviceSets, intent, plaintextBytes);
   if (!intent.syncPending) {
@@ -1547,11 +1695,14 @@ async function rereadStoredGroupDevices(
  *
  * Signal encrypts the message again for the devices of each attempt. The
  * replay here keeps the stored ciphertext. The Relay keys each delivery
- * operation by its message ID and refuses another operation under the same
- * ID with RETRY_CONFLICT, so a new group ciphertext under the clientMessageId
- * of the send would conflict with the posts that the Relay already holds. A
- * device that the replay adds therefore gets the content only when the send
- * is `Resendable`.
+ * operation by message ID, class, destination device, generation and epoch.
+ * It refuses a changed request under the same operation with RETRY_CONFLICT.
+ * It also refuses a new operation whose message ID a row or journal entry of
+ * that mailbox holds. The message ID alone is not the ring key or the
+ * operation key. So a new group ciphertext under the clientMessageId of the
+ * send would conflict with the posts that the Relay already holds. A device
+ * that the replay adds therefore gets the content only when the send is
+ * `Resendable`.
  */
 async function rereadMemberDevices(
   context: GroupOutboxContext,
@@ -1722,8 +1873,9 @@ export async function sendGroupWithExactOutbox(
   context: GroupOutboxContext,
   groupId: string,
   plaintextBytes: Uint8Array,
-  options: SendOptions & SendTimestampOrigin & { clientMessageId: string }
+  options: SendOptions & SendTimestampOrigin & SendEndReportMark & { clientMessageId: string }
 ): Promise<SendResult> {
+  const report = options[SEND_END_REPORT];
   return withOutgoingMessageIntentLock(context.storage, options.clientMessageId, async () => {
     const plaintextDigest = CryptoUtils.bytesToBase64(await CryptoUtils.sha256(plaintextBytes));
     const groupMemberUserIds = [...new Set(options.groupMemberUserIds ?? [])].sort();
@@ -1739,12 +1891,17 @@ export async function sendGroupWithExactOutbox(
       ) {
         throw new Error('A clientMessageId cannot identify two different logical sends');
       }
+      // A send that ended at its posting deadline posts nothing again.
+      if (!existing.result && existing.outcome) throw storedSendEndError(existing);
+      context.bindEvidence(existing);
       if (context.deviceSets && context.relay) {
         return replayDeclaredGroupIntent(context, context.deviceSets, existing, plaintextBytes);
       }
+      // An undeclared intent completes with syncPending only when the posting
+      // deadline stopped its sync posts, so a replay posts nothing.
       if (existing.result) {
         await completeSendLog(context, existing);
-        return existing.result;
+        return outgoingMessageIntentResult(existing)!;
       }
       return sendStoredGroupIntent(
         context,
@@ -1796,13 +1953,16 @@ export async function sendGroupWithExactOutbox(
         )
       : [];
 
+    const createdAt = Date.now();
     const intent: StoredOutgoingMessageIntent = {
       kind: 'group',
       clientMessageId: options.clientMessageId,
       recipientId: groupId,
       plaintextDigest,
       clientTimestamp,
-      createdAt: Date.now(),
+      createdAt,
+      deadlineAt: outgoingMessageDeadlineAt({ createdAt, clientTimestamp }),
+      progressFromStart: true,
       transportMode: groupSharedMessage
         ? context.deliveryMode === 'required'
           ? 'sealed_sender_required'
@@ -1821,12 +1981,14 @@ export async function sendGroupWithExactOutbox(
       }),
       ...(groupSharedMessage && { groupSharedMessage }),
       ...(options.contentHint !== undefined && { contentHint: options.contentHint }),
+      ...intentBinaryAttachment(options),
     };
     await storeSendLog(context, intent, contentBytes);
     await storeOutgoingMessageIntent(context.storage, intent);
+    context.bindEvidence(intent);
     if (context.deviceSets && context.relay) {
       return sendDeclaredGroupIntent(context, context.deviceSets, intent, plaintextBytes);
     }
     return sendStoredGroupIntent(context, intent, plaintextBytes);
-  });
+  }, report);
 }

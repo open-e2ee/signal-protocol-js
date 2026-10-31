@@ -2161,6 +2161,30 @@ Remove a member from a group. Triggers sender key rotation.
 
 ***
 
+### resendMessage()
+
+> **resendMessage**(`clientMessageId`): `Promise`\<[`SendResult`](../interfaces/SendResult.md)\>
+
+#### Parameters
+
+##### clientMessageId
+
+`string`
+
+#### Returns
+
+`Promise`\<[`SendResult`](../interfaces/SendResult.md)\>
+
+#### See
+
+SignalProtocolClient.resendMessage
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`resendMessage`](../interfaces/SignalProtocolClient.md#resendmessage)
+
+***
+
 ### rotateAccountIdentity()
 
 > **rotateAccountIdentity**(`expectedCurrentCommitment`, `identityType?`): `Promise`\<`void`\>
@@ -2306,6 +2330,25 @@ This is the ONE way to send content. Handles:
 - Group recipients: Uses Sender Keys for O(1) encryption
 
 The client normalizes all inputs to Uint8Array before they reach the cipher layer.
+
+A direct or group send has a posting deadline: the earlier of 24 hours
+after the SDK first stores the send and 24 hours after its timestamp. A
+replay with the same `clientMessageId` or a restart never moves it. At or
+after the deadline, the SDK starts no relay request for the send. A
+request that started before it still counts when its answer arrives
+later. When the deadline ends with a device of unknown acceptance, the
+send throws `SendAcceptanceUnknownError`. Otherwise the send ends failed:
+when the call raised a refusal (a thrown refusal or a refusal in the
+receipt of a shared body), it throws the first such refusal. Otherwise it
+throws an `Error` with the stored code of the first refused device that
+has one, in the order of the destinations. Otherwise it throws
+`SendNeverAcceptedByRelayError` with code `SEND_NEVER_ACCEPTED`. A send
+error before the deadline gives `deadlineAt`, and `retryable` is true
+when a replay can still post the send.
+
+A backdated `timestamp` shortens the deadline. A send with a timestamp
+23 hours old has at most 1 hour to post. A send with a timestamp 24 hours
+old posts nothing and throws `SendNeverAcceptedByRelayError`.
 
 #### Parameters
 

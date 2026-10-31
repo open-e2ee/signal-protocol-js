@@ -112,8 +112,8 @@ export interface SignalProtocolClientContext {
 
   /**
    * The session reset steps of a retry request that ended as
-   * `expired-content`, bound to the given context. Undefined without a
-   * relay.
+   * `expired-content` or `posting-deadline`, bound to the given context.
+   * Undefined without a relay.
    *
    * @internal
    */
@@ -203,6 +203,11 @@ export interface DataMessageInput {
    * clock. A new send accepts a safe positive integer at most 5 minutes ahead
    * of the SDK clock and at most 24 hours behind it, and throws
    * `InvalidSendTimestampError` for any other value.
+   *
+   * The next major SDK version makes each send timestamp unique per sender
+   * device. A new send with a timestamp that a different send of the device
+   * used then throws `InvalidSendTimestampError`. Give each send its own
+   * timestamp, or omit it and read `SendResult.clientTimestamp`.
    */
   timestamp?: number;
   [key: string]: unknown;
@@ -287,6 +292,11 @@ export interface SendOptions {
    * A new send accepts a safe positive integer at most 5 minutes ahead of the
    * SDK clock and at most 24 hours behind it, and throws
    * `InvalidSendTimestampError` for any other value.
+   *
+   * The next major SDK version makes each send timestamp unique per sender
+   * device. A new send with a timestamp that a different send of the device
+   * used then throws `InvalidSendTimestampError`. Give each send its own
+   * timestamp. A retry with the same `clientMessageId` keeps its timestamp.
    */
   timestamp?: number;
 
@@ -410,8 +420,10 @@ export interface SendResult {
   /**
    * True when the relay accepted the send for every recipient device but the
    * copies for this account's other devices are not posted yet. The send is
-   * delivered. Call `send()` again with the same `clientMessageId` to post
-   * the pending copies. Absent when the copies were posted or none were due.
+   * delivered. Call `send()` again with the same `clientMessageId` before the
+   * posting deadline of the send to post the pending copies. No sync post
+   * starts at or after that deadline, and a replay of such a send returns
+   * `syncPending` again. Absent when the copies were posted or none were due.
    */
   syncPending?: true;
 
@@ -449,12 +461,37 @@ export interface SendResult {
  *
  * A direct send attempts every device of the recipient, also when a device
  * before it fails, and the error is that of the first failed device. A
- * replay sends to every device again. The Relay keeps one copy for a device
- * while it remembers the result of that device. After the Relay forgets the
- * result (60 s), the device gets a second copy and drops it as a duplicate.
+ * replay sends to every device again, with the stored bytes and the stored
+ * timestamp. The Relay keeps one copy for a device while it remembers the
+ * result of that device. From the Relay release that follows v2026.10.25, it
+ * remembers the result for 24 hours after the timestamp of the send.
+ *
+ * A direct or group send has a posting deadline, `deadlineAt`: the earlier of 24 hours
+ * after the SDK first stores the send and 24 hours after its timestamp. A
+ * replay or a restart never moves it. At or after it, the SDK starts no
+ * request for the send, and the replay ends with the stored result or error.
+ * The outbox keeps a send for 30 days after it stores it. A replay after that
+ * time is a new send, with a new timestamp and a new deadline.
  */
 export interface OutgoingMessageError extends Error {
   readonly clientMessageId: string;
+  /**
+   * The posting deadline of a stored send, in milliseconds since the epoch.
+   * Absent when the SDK did not store the send.
+   */
+  readonly deadlineAt?: number;
+  /**
+   * True on a send error before `deadlineAt` that leaves a device open: a
+   * replay with the same `clientMessageId` can post it. False when the send
+   * ended at its deadline. Absent on an error that keeps its own retry rule.
+   */
+  readonly retryable?: boolean;
+  /** The Relay's own `retryable` hint, when the SDK set `retryable`. */
+  readonly relayRetryable?: boolean;
+  /** The devices that the Relay accepted, when the send ended at its deadline. */
+  readonly acceptedDevices?: readonly { readonly userId: string; readonly deviceId: number }[];
+  /** The devices that the Relay refused, when the send ended at its deadline. */
+  readonly refusedDevices?: readonly { readonly userId: string; readonly deviceId: number }[];
 }
 
 /** Return true when a send error exposes its logical-send identifier. */

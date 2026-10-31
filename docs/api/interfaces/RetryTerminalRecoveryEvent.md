@@ -7,7 +7,7 @@
 # Interface: RetryTerminalRecoveryEvent
 
 The session reset of the requester after a retry request ends as
-`expired-content`.
+`expired-content` or `posting-deadline`.
 
 The requester archived its session with the device that sent the failed
 envelope, after each decrypt from that device in progress ended. The next

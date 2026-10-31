@@ -21,6 +21,7 @@
 
 import { utf8Decode } from '../../../internal/platform';
 import type {
+  MetadataKeyQuery,
   ReceiveWorkMetadataWrite,
   ReceiveWorkQuery,
   ReceiveWorkRecord,
@@ -94,6 +95,7 @@ import type { SenderKeyState } from '../../../internal/protocol/sender-keys/mana
 import { deserializeSessionRecord, serializeSessionRecord } from '../session-codec';
 import { receivedContentKey } from '../received-content';
 import { convertLegacyReceivedContent, type LegacyReceivedContentSource } from '../receive-work';
+import { metadataKeyLimit } from '../metadata-keys';
 import {
   createKyberPreKeyState,
   createKyberPreKeyInstanceId,
@@ -1456,6 +1458,27 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
   async deleteMetadata(key: string): Promise<void> {
     this.ensureInitialized();
     await this.db!.delete('metadata', metadataStorageKey(key));
+  }
+
+  /**
+   * IndexedDB orders string keys by UTF-16 code unit. In that order, the
+   * keys with the prefix are one block that starts at the prefix. So the read
+   * starts at the prefix, or after the cursor when that is later, and the
+   * page ends at the first key without the prefix.
+   */
+  async listMetadataKeys(query: MetadataKeyQuery): Promise<string[]> {
+    this.ensureInitialized();
+    const limit = metadataKeyLimit(query);
+    const prefix = metadataStorageKey(query.prefix);
+    const range =
+      query.after !== undefined && query.after >= query.prefix
+        ? IDBKeyRange.lowerBound(metadataStorageKey(query.after), true)
+        : IDBKeyRange.lowerBound(prefix);
+    const keys = await this.db!.getAllKeys('metadata', range, limit);
+    const end = keys.findIndex((key) => !key.startsWith(prefix));
+    return (end === -1 ? keys : keys.slice(0, end)).map((key) =>
+      key.slice(metadataStorageKey('').length)
+    );
   }
 
   async compareAndSetMetadata(

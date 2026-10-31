@@ -16,7 +16,9 @@
  *         ├── PQXDHRequiredError        which post-quantum key the peer is missing
  *         ├── StorageQuotaExceededError the store that ran out of room
  *         ├── SecureRandomUnavailableError the runtime has no secure random source
- *         └── InvalidSendTimestampError the refused send timestamp and the accepted window
+ *         ├── InvalidSendTimestampError the refused send timestamp and the accepted window
+ *         ├── SendAcceptanceUnknownError the devices of an ended send whose acceptance is not known
+ *         └── SendNeverAcceptedByRelayError the devices of an ended send that the Relay never accepted and that have no refusal code
  * ```
  *
  * A code or a subclass belongs here only if production code can produce it. An
@@ -160,6 +162,21 @@ export enum EncryptionErrorCode {
    * before it stores or posts anything for the send.
    */
   INVALID_SEND_TIMESTAMP = 'INVALID_SEND_TIMESTAMP',
+
+  /**
+   * The posting deadline of a direct or group send ended, and the Relay
+   * acceptance of one or more devices is not known. The message might have arrived. The SDK
+   * throws `SendAcceptanceUnknownError` and posts nothing more for the send.
+   */
+  SEND_ACCEPTANCE_UNKNOWN = 'SEND_ACCEPTANCE_UNKNOWN',
+
+  /**
+   * The posting deadline of a send ended, the call raised no refusal (a
+   * thrown refusal or a refusal in the receipt of a shared body), and no
+   * refused device has a stored refusal code. The SDK throws
+   * `SendNeverAcceptedByRelayError` and posts nothing more for the send.
+   */
+  SEND_NEVER_ACCEPTED = 'SEND_NEVER_ACCEPTED',
 
   /**
    * Duplicate message detected (replay attack).
@@ -791,6 +808,171 @@ export class InvalidSendTimestampError extends EncryptionError {
  */
 export function isInvalidSendTimestampError(error: unknown): error is InvalidSendTimestampError {
   return error instanceof InvalidSendTimestampError;
+}
+
+/** One device of a send: an account and one of its devices. */
+interface SendErrorDevice {
+  readonly userId: string;
+  readonly deviceId: number;
+}
+
+/**
+ * Error thrown when the posting deadline of a direct or group send ends and
+ * the Relay acceptance of one or more devices is not known.
+ *
+ * The posting deadline, `deadlineAt`, is the earlier of 24 hours after the
+ * SDK first stored the send and 24 hours after its timestamp. At or after it,
+ * the SDK starts no request for the send. The message might have arrived on
+ * each device in `unknownDevices`, so `mayHaveArrived` is true. The devices in
+ * `acceptedDevices` have the message. The devices in `refusedDevices` do not.
+ * `retryable` is false, because the SDK posts nothing more for the send.
+ *
+ * The outbox keeps the end of the send. A call of `send()` with the same
+ * `clientMessageId`, content and timestamp throws this error again and posts
+ * nothing. Such an error has no `cause`, because the outbox keeps no error.
+ * Otherwise `cause` is the last error of the send.
+ *
+ * A replay or a resend after this error can add one charged unit within 24
+ * hours, when the Relay no longer holds the first acceptance. The SDK does not
+ * promise that a retry is free of charge.
+ *
+ * `isOutgoingMessageError` is true for this error.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await signal.send(recipientId, { body }, { clientMessageId });
+ * } catch (error) {
+ *   if (isSendAcceptanceUnknownError(error)) {
+ *     showMightHaveArrived(error.clientMessageId);
+ *   }
+ * }
+ * ```
+ */
+export class SendAcceptanceUnknownError extends EncryptionError {
+  override readonly name = 'SendAcceptanceUnknownError';
+
+  /** The logical-send identifier of the send. */
+  public readonly clientMessageId: string;
+  /** The posting deadline of the send, in milliseconds since the epoch. */
+  public readonly deadlineAt: number;
+  /** The devices whose Relay acceptance the SDK holds. */
+  public readonly acceptedDevices: readonly SendErrorDevice[];
+  /** The devices whose Relay acceptance is not known. */
+  public readonly unknownDevices: readonly SendErrorDevice[];
+  /** The devices that the Relay never accepted the send for. */
+  public readonly refusedDevices: readonly SendErrorDevice[];
+  /** Always true: the message might have arrived on each unknown device. */
+  public readonly mayHaveArrived = true as const;
+  /** Always false: the SDK posts nothing more for the send. */
+  public readonly retryable = false as const;
+
+  constructor(details: {
+    readonly clientMessageId: string;
+    readonly deadlineAt: number;
+    readonly acceptedDevices: readonly SendErrorDevice[];
+    readonly unknownDevices: readonly SendErrorDevice[];
+    readonly refusedDevices: readonly SendErrorDevice[];
+    readonly cause?: unknown;
+  }) {
+    super(
+      `The posting deadline of send ${details.clientMessageId} ended, and the Relay acceptance of ${String(details.unknownDevices.length)} devices is not known`,
+      EncryptionErrorCode.SEND_ACCEPTANCE_UNKNOWN,
+      { operation: 'send', clientMessageId: details.clientMessageId, deadlineAt: details.deadlineAt }
+    );
+    this.clientMessageId = details.clientMessageId;
+    this.deadlineAt = details.deadlineAt;
+    this.acceptedDevices = details.acceptedDevices;
+    this.unknownDevices = details.unknownDevices;
+    this.refusedDevices = details.refusedDevices;
+    if (details.cause !== undefined) this.cause = details.cause;
+  }
+}
+
+/**
+ * Type guard to check if an error is a SendAcceptanceUnknownError.
+ *
+ * @param error - Error to check
+ * @returns true if error is SendAcceptanceUnknownError
+ */
+export function isSendAcceptanceUnknownError(error: unknown): error is SendAcceptanceUnknownError {
+  return error instanceof SendAcceptanceUnknownError;
+}
+
+/**
+ * Error thrown when the posting deadline of a send ends, the call raised no
+ * refusal (a thrown refusal or a refusal in the receipt of a shared body), and
+ * no refused device has a stored refusal code.
+ *
+ * The Relay never stored the send for the devices in `refusedDevices`, so
+ * they do not have the message. The devices in `acceptedDevices` have it.
+ * `retryable` is false, because the SDK posts nothing more for the send. A
+ * send whose timestamp is 24 hours old gets this error at once.
+ *
+ * The outbox keeps the end of the send. A call of `send()` with the same
+ * `clientMessageId`, content and timestamp throws this error again and posts
+ * nothing. When the call that ends the send raised a refusal, the SDK throws
+ * the first such refusal with the same fields in place of this error. A
+ * thrown refusal keeps its class, and a refusal in a receipt is an `Error`
+ * with its code. Otherwise, when a refused device has a stored refusal code,
+ * the SDK throws an `Error` with the code of the first such device in the
+ * order of the destinations.
+ *
+ * `isOutgoingMessageError` is true for this error.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await signal.send(recipientId, { body }, { clientMessageId });
+ * } catch (error) {
+ *   if (isSendNeverAcceptedByRelayError(error)) {
+ *     showNotDelivered(error.refusedDevices);
+ *   }
+ * }
+ * ```
+ */
+export class SendNeverAcceptedByRelayError extends EncryptionError {
+  override readonly name = 'SendNeverAcceptedByRelayError';
+
+  /** The logical-send identifier of the send. */
+  public readonly clientMessageId: string;
+  /** The posting deadline of the send, in milliseconds since the epoch. */
+  public readonly deadlineAt: number;
+  /** The devices whose Relay acceptance the SDK holds. */
+  public readonly acceptedDevices: readonly SendErrorDevice[];
+  /** The devices that the Relay never accepted the send for. */
+  public readonly refusedDevices: readonly SendErrorDevice[];
+  /** Always false: the SDK posts nothing more for the send. */
+  public readonly retryable = false as const;
+
+  constructor(details: {
+    readonly clientMessageId: string;
+    readonly deadlineAt: number;
+    readonly acceptedDevices: readonly SendErrorDevice[];
+    readonly refusedDevices: readonly SendErrorDevice[];
+  }) {
+    super(
+      `The posting deadline of send ${details.clientMessageId} ended before the Relay accepted it for ${String(details.refusedDevices.length)} devices`,
+      EncryptionErrorCode.SEND_NEVER_ACCEPTED,
+      { operation: 'send', clientMessageId: details.clientMessageId, deadlineAt: details.deadlineAt }
+    );
+    this.clientMessageId = details.clientMessageId;
+    this.deadlineAt = details.deadlineAt;
+    this.acceptedDevices = details.acceptedDevices;
+    this.refusedDevices = details.refusedDevices;
+  }
+}
+
+/**
+ * Type guard to check if an error is a SendNeverAcceptedByRelayError.
+ *
+ * @param error - Error to check
+ * @returns true if error is SendNeverAcceptedByRelayError
+ */
+export function isSendNeverAcceptedByRelayError(
+  error: unknown
+): error is SendNeverAcceptedByRelayError {
+  return error instanceof SendNeverAcceptedByRelayError;
 }
 
 /**

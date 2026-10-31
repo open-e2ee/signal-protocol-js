@@ -1897,6 +1897,29 @@ true if the store trusts the identity
 
 ***
 
+### listMetadataKeys()?
+
+> `optional` **listMetadataKeys**(`query`): `Promise`\<`string`[]\>
+
+List the metadata keys that start with `prefix`, in ascending UTF-16
+code unit order. With `after`, return only keys above it. Return at most
+`limit` keys, 100 when not set.
+
+This method is optional. Without it, the SDK does not replay open sends
+by itself.
+
+#### Parameters
+
+##### query
+
+`MetadataKeyQuery`
+
+#### Returns
+
+`Promise`\<`string`[]\>
+
+***
+
 ### listReceiveWork()
 
 > **listReceiveWork**(`query?`): `Promise`\<`ReceiveWorkRecord`[]\>

@@ -70,9 +70,15 @@ import { GroupSenderKeyOperations } from './group-sender-key-operations';
 import type { PreparedAttachmentUpload, SealedReceipt, SendOptions, SendResult } from './types';
 import {
   checkNewSendTimestamp,
+  SEND_TIMESTAMP_ORIGIN,
   type SendTimestampOrigin,
   withCheckedSendTimestamp,
 } from './send-timestamp';
+import {
+  intentBinaryAttachment,
+  SEND_BINARY_ATTACHMENT,
+  type SendBinaryAttachment,
+} from './binary-send';
 import { ContentHint } from '../types/messages';
 
 import {
@@ -94,11 +100,14 @@ import * as CryptoUtils from '../internal/crypto';
 import {
   completeOutgoingMessageIntent,
   completeOutgoingSyncPhase,
+  endOutgoingMessageIntent,
   getOutgoingMessageIntent,
   markOutgoingDeviceSetUnresolved,
+  outgoingDestinationProgressKey,
+  outgoingMessageDeadlineAt,
   outgoingMessageIntentResult,
+  recordOutgoingDestinationProgress,
   repairOutgoingDeviceSet,
-  restartOutgoingDeviceSet,
   getRetryResend,
   getSentClientMessageIds,
   reconcileOutgoingDirectDeviceMessages,
@@ -112,8 +121,19 @@ import {
   storeOutgoingMessageIntent,
   storeRetryResend,
   withOutgoingMessageIntentLock,
+  addOutgoingManualResend,
+  endOutgoingManualResend,
+  isOpenManualResend,
+  manualResendMessageId,
+  OUTGOING_POSTING_WINDOW_MS,
+  outgoingManualResends,
+  recordOutgoingManualResendProgress,
+  RELIABILITY_RECORD_TTL_MS,
+  type OutgoingIntentEndReport,
   type RetryResendTarget,
+  type StoredDestinationProgress,
   type StoredDeviceSetUnresolved,
+  type StoredManualResend,
   type StoredOutgoingDeviceMessage,
   type StoredOutgoingMessageIntent,
   type StoredRetryResend,
@@ -134,12 +154,38 @@ import {
 } from './relay-device-refusal';
 import {
   aggregateRelayAcceptance,
+  isConflictAcceptance,
+  relayHoldsMessageId,
   relayOperationRefusal,
+  sendResultAcceptance,
   type RelayPostAcceptance,
 } from './relay-acceptance';
+import {
+  attachSendDeadline,
+  isPostingDeadlineReached,
+  provenRefused,
+  recordDeadlineStop,
+  SEND_END_REPORT,
+  manualResendIntent,
+  SendCallEvidence,
+  type ManualResendEndReport,
+  sendDestinations,
+  storedAcceptance,
+  storedSendEndError,
+  type SendDestination,
+  type SendEndReportMark,
+} from './send-deadline';
+import { callerBytesMatch, type IntentContent } from './send-intent-driver';
+import {
+  admitRequestsFor,
+  followedRepeatedRequest,
+  markAfterRepeatedRequest,
+  type RepeatRequest,
+} from '../remote/relay/request-admission';
 import { forDirectSealedRoute, usedGroupRouteFallback } from './relay-sealed-route';
 import { comparesDeviceSets, markDeviceSetRefusal } from '../remote/relay/device-set';
 import {
+  DeviceSetReconciliationError,
   markRelayProtocolError,
   RelayProtocolError,
   runDeviceSetPhase,
@@ -173,7 +219,12 @@ import {
   type ResolvedSealedSenderContext,
   type SealedSenderProvider as SealedSenderProviderContract,
 } from './sealed-sender';
-import { prepareMediaAttachmentUpload, serializeMediaAttachmentMessage } from '../media';
+import {
+  type MediaAttachmentPointer,
+  parseMediaAttachmentMessage,
+  prepareMediaAttachmentUpload,
+  serializeMediaAttachmentMessage,
+} from '../media';
 import {
   UnidentifiedAccessMode,
   type ContactProfileStateStore,
@@ -194,6 +245,204 @@ export const RECIPIENT_DEVICE_LIST_FRESH_MILLISECONDS = 60_000;
  */
 function syncMessageId(clientMessageId: string, message: { recipientDeviceId: number }): string {
   return `${clientMessageId}:sync:device:${message.recipientDeviceId}`;
+}
+
+/**
+ * The end of a direct or group send at a classification point, or undefined
+ * when the send stays open. It reads the stored progress of `intent`, which
+ * the caller read under the intent lock. The destinations are the stored
+ * pre-messages and device messages. The own device of the sender is no
+ * destination of the send.
+ */
+function recipientSendEnd(
+  intent: StoredOutgoingMessageIntent,
+  evidence: SendCallEvidence,
+  userId: string,
+  deviceId: number
+) {
+  return evidence.end(recipientDestinations(intent, userId, deviceId), intent.destinationProgress);
+}
+
+/**
+ * The recipient destinations of a direct or group intent, each once: the
+ * stored pre-messages and device messages, without the own device of the
+ * sender.
+ */
+function recipientDestinations(
+  intent: StoredOutgoingMessageIntent,
+  userId: string,
+  deviceId: number
+): SendDestination[] {
+  const destinations = sendDestinations(
+    intent.clientMessageId,
+    [...(intent.preMessages ?? []), ...intent.deviceMessages].filter(
+      (message) => message.recipientUserId !== userId || message.recipientDeviceId !== deviceId
+    )
+  );
+  const keys = new Set<string>();
+  return destinations.filter(({ device, postMessageId }) => {
+    const key = outgoingDestinationProgressKey(postMessageId, device);
+    if (keys.has(key)) return false;
+    keys.add(key);
+    return true;
+  });
+}
+
+/**
+ * The recipient devices of an ended intent that a manual resend posts to:
+ * each device with a destination that no post of the intent accepted, and
+ * that no earlier manual resend got accepted.
+ */
+function manualResendTargets(
+  intent: StoredOutgoingMessageIntent,
+  userId: string,
+  deviceId: number
+): { userId: string; deviceId: number }[] {
+  const deviceKeyOf = (device: { userId: string; deviceId: number }) =>
+    `${device.userId}:${String(device.deviceId)}`;
+  const resent = new Set<string>();
+  for (const resend of outgoingManualResends(intent)) {
+    for (const entry of Object.values(resend.destinationProgress ?? {})) {
+      if (entry.state === 'accepted') resent.add(deviceKeyOf(entry));
+    }
+  }
+  const targets = new Map<string, { userId: string; deviceId: number }>();
+  for (const { device, postMessageId } of recipientDestinations(intent, userId, deviceId)) {
+    const entry = intent.destinationProgress?.[outgoingDestinationProgressKey(postMessageId, device)];
+    if (entry?.state === 'accepted' || resent.has(deviceKeyOf(device))) continue;
+    targets.set(deviceKeyOf(device), { userId: device.userId, deviceId: device.deviceId });
+  }
+  return [...targets.values()];
+}
+
+/** The key of the order lock that a manual resend of an intent holds. */
+function manualResendOrderKey(intent: Pick<StoredOutgoingMessageIntent, 'kind' | 'recipientId'>): string {
+  return intent.kind === 'group' ? extractGroupId(intent.recipientId) : intent.recipientId;
+}
+
+/** A new manual resend that the intent lock decided on, before its encryption. */
+interface ManualResendPlan {
+  intent: StoredOutgoingMessageIntent;
+  content: IntentContent;
+  targets: { userId: string; deviceId: number }[];
+  manualMessageId: string;
+  /** One clock read gives the creation time and the operation epoch of the resend. */
+  createdAt: number;
+}
+
+/** The stored intent of a manual resend. Throws for a send that is missing or did not end. */
+function endedManualResendIntent(
+  intent: StoredOutgoingMessageIntent | null
+): StoredOutgoingMessageIntent {
+  if (!intent) throw new Error('No stored send has this clientMessageId');
+  if (intent.result || intent.outcome === undefined) {
+    throw new Error('Only a send that ended at its posting deadline takes a manual resend');
+  }
+  return intent;
+}
+
+/**
+ * Check a new manual resend of an ended intent with no open resend, and
+ * plan it. The caller holds the intent lock. Nothing is encrypted.
+ */
+async function planManualResend(
+  intent: StoredOutgoingMessageIntent,
+  content: IntentContent | undefined,
+  userId: string,
+  deviceId: number,
+  withoutGroupContext: (plaintext: string) => string
+): Promise<ManualResendPlan> {
+  if (content === undefined) throw new Error('A new manual resend needs the content');
+  // The intent digests the caller bytes, without the group context.
+  const matches = content.withGroupContext
+    ? await callerBytesMatch(content.content, withoutGroupContext, intent.plaintextDigest)
+    : CryptoUtils.bytesToBase64(await CryptoUtils.sha256(content.content)) ===
+      intent.plaintextDigest;
+  if (!matches) {
+    throw new Error('A clientMessageId cannot identify two different logical sends');
+  }
+  // The last manual resend posts at most RELIABILITY_RECORD_TTL_MS after the
+  // intent, so the drop record of a recipient outlives each copy.
+  if (Date.now() >= intent.createdAt + RELIABILITY_RECORD_TTL_MS) {
+    throw new Error('Only a send younger than 30 days takes a manual resend');
+  }
+  const targets = manualResendTargets(intent, userId, deviceId);
+  if (targets.length === 0) {
+    throw new Error('The Relay accepted each recipient device of this send');
+  }
+  return {
+    intent,
+    content,
+    targets,
+    manualMessageId: manualResendMessageId(
+      intent.clientMessageId,
+      outgoingManualResends(intent).length + 1
+    ),
+    createdAt: Date.now(),
+  };
+}
+
+/** The destinations of a manual resend: one per message, under the manual message ID. */
+function manualResendDestinations(resend: StoredManualResend): SendDestination[] {
+  return sendDestinations(
+    resend.manualMessageId,
+    resend.messages.map(({ message }) => message)
+  );
+}
+
+/** The result of a manual resend that the Relay accepted for each of its devices. */
+function manualResendResult(
+  intent: StoredOutgoingMessageIntent,
+  resend: StoredManualResend,
+  acceptances: readonly RelayPostAcceptance[]
+): SendResult {
+  const first = sendResultAcceptance(acceptances);
+  return {
+    clientMessageId: intent.clientMessageId,
+    messageId: first?.messageId ?? resend.manualMessageId,
+    timestamp: first?.serverTimestamp ?? intent.clientTimestamp,
+    recipientDeviceCount: resend.messages.length,
+    ...aggregateRelayAcceptance(acceptances),
+    ...(intent.kind === 'group' && { groupId: intent.recipientId }),
+  };
+}
+
+/** True when a group post names a list of destinations, as a shared body does. */
+function isDestinationList(
+  destination: SendDestination | readonly SendDestination[]
+): destination is readonly SendDestination[] {
+  return Array.isArray(destination);
+}
+
+/**
+ * True when the stored progress of `intent` proves that the Relay refused the
+ * message of a device, so that a replay does not post it (`provenRefused`).
+ */
+function storedRefusal(
+  intent: StoredOutgoingMessageIntent,
+  message: StoredOutgoingDeviceMessage
+): boolean {
+  const [destination] = sendDestinations(intent.clientMessageId, [message]);
+  return provenRefused(
+    intent.destinationProgress?.[
+      outgoingDestinationProgressKey(destination!.postMessageId, destination!.device)
+    ]
+  );
+}
+
+/**
+ * The destination of the sync copy of a send to one own device. Its post
+ * message ID is the sync ID of the device, also after a repair gave the copy
+ * a repair ID, so the stored progress of the copy keeps one key.
+ */
+function syncDestination(
+  clientMessageId: string,
+  message: StoredOutgoingDeviceMessage
+): SendDestination {
+  return {
+    device: { userId: message.recipientUserId, deviceId: message.recipientDeviceId },
+    postMessageId: syncMessageId(clientMessageId, message),
+  };
 }
 
 /**
@@ -223,6 +472,17 @@ interface DevicePostControl {
    * relay does not compare.
    */
   readonly declaredDeviceIds?: readonly number[];
+  /**
+   * Runs before each relay request of the post, also before a fallback
+   * request, and refuses the request by rejecting. The request starts only
+   * after it resolves. The transport runs it before a repeat request too.
+   */
+  readonly beforeRequest?: () => Promise<void>;
+  /**
+   * Runs when a relay request of the post starts, after `beforeRequest`.
+   * For a transport repeat, it gets the answer that the repeat follows.
+   */
+  readonly onRequest?: (repeat?: RepeatRequest['after']) => void;
 }
 
 /** A distribution plaintext and the sender key that it gives. */
@@ -297,6 +557,16 @@ interface DeclaredPhaseRun<T> {
   encrypt(device: DeviceSetDevice): Promise<StoredOutgoingDeviceMessage | undefined>;
   /** Forget a device that leaves the send, or whose registration changed. */
   forget?(device: DeviceSetDevice): Promise<void>;
+  /**
+   * Take the stored progress entry of a device whose message a repair in
+   * this run appended or replaced. It runs after the store write.
+   */
+  repaired?(device: DeviceSetDevice, entry: StoredDestinationProgress): void;
+  /**
+   * The evidence of the send call of a recipient phase. With it, an
+   * unresolved end of the phase stores the outcome of the send.
+   */
+  evidence?: SendCallEvidence;
   sessions: SendSessionCallbacks | undefined;
   stopSignal: AbortSignal | undefined;
 }
@@ -502,7 +772,10 @@ interface ResendOptions {
   timestamp: number;
   contentHint?: ContentHint;
   senderKeyHandoff?: { groupId: string; senderKeyId: string; generation: number };
+  /** The operation epoch of the resend. Without it, the current time. */
+  operationEpochMilliseconds?: number;
 }
+
 
 /** The client message ID of one attempt of a stored resend or null message. */
 function retryResendAttemptId(resend: StoredRetryResend): string {
@@ -511,6 +784,53 @@ function retryResendAttemptId(resend: StoredRetryResend): string {
       ? retryResendClientMessageId(resend.retryId)
       : retryNullMessageClientMessageId(resend.retryId);
   return retryAttemptClientMessageId(id, resend.attempt);
+}
+
+/**
+ * The pointer metadata that a binary send takes from its options. The upload
+ * puts each field in the pointer unchanged, and a repeat compares the fields
+ * with the stored pointer.
+ */
+function attachmentMetadataFromOptions(options?: SendOptions) {
+  return {
+    contentType: options?.mimeType || 'application/octet-stream',
+    blurHash: options?.blurHash,
+    thumbnail: options?.thumbnail,
+    width: options?.width,
+    height: options?.height,
+    durationMs: options?.durationMs,
+    waveform: options?.waveform,
+    fileName: options?.fileName,
+    caption: options?.caption,
+    isViewOnce: options?.isViewOnce,
+    flags: options?.flags,
+    clientUuid: options?.clientUuid,
+    cdnNumber: options?.cdnNumber,
+  };
+}
+
+/**
+ * Whether a stored pointer has the metadata of the options of a repeat. A
+ * field that the options omit must be absent from the pointer, except
+ * `clientUuid`: the upload generates one when the options give none.
+ */
+function pointerHasAttachmentMetadata(
+  pointer: MediaAttachmentPointer,
+  metadata: ReturnType<typeof attachmentMetadataFromOptions>
+): boolean {
+  const fields = pointer as unknown as Record<string, unknown>;
+  return Object.entries(metadata).every(
+    ([key, value]) =>
+      (key === 'clientUuid' && value === undefined) ||
+      JSON.stringify(fields[key]) === JSON.stringify(value)
+  );
+}
+
+/** The pointer of a serialized attachment message. */
+function attachmentPointerOf(message: string): MediaAttachmentPointer {
+  const pointer = parseMediaAttachmentMessage(message)?.attachment;
+  if (!pointer) throw new Error('The attachment message of the send is not valid');
+  return pointer;
 }
 
 /**
@@ -731,6 +1051,11 @@ export class SignalProtocolServiceCipher {
     return this.contentAdapter ?? createDefaultSignalProtocolContentAdapter();
   }
 
+  /** The plaintext with no group context, by the resolved content adapter. */
+  withoutGroupContext(plaintext: string): string {
+    return this.getResolvedContentAdapter().withoutGroupContext(plaintext);
+  }
+
   private getDirectConversationId(recipientUserId: string): string {
     const sortedIds = [this.userId, recipientUserId].sort();
     return `dm:${sortedIds[0]}_${sortedIds[1]}`;
@@ -830,6 +1155,12 @@ export class SignalProtocolServiceCipher {
    * warning is logged. The post then resolves, so the send completes without
    * the copy.
    *
+   * `gate` gives the `beforeRequest` of each copy by its client message ID,
+   * or by `undefined` for a copy that has no ID. Without `gate`, each copy
+   * uses the `beforeRequest` of `control`.
+   *
+   * @returns The relay receipt of the copy or of its repaired copy, or
+   *   undefined when the copy left the intent
    * @throws {EncryptionError} SESSION_ESTABLISHMENT_FAILED when the refresh
    *   fails or the rebuild gives the device no copy. The copy stays in the
    *   intent, so a replay posts it again.
@@ -838,11 +1169,13 @@ export class SignalProtocolServiceCipher {
     relay: SignalProtocolRelayServer,
     message: StoredOutgoingDeviceMessage,
     control: DevicePostControl,
-    repair: SyncCopyRepair
-  ): Promise<void> {
+    repair: SyncCopyRepair,
+    gate?: (postMessageId: string | undefined) => () => Promise<void>
+  ): Promise<RelayPostAcceptance | undefined> {
+    const controlOf = (copy: StoredOutgoingDeviceMessage): DevicePostControl =>
+      gate ? { ...control, beforeRequest: gate(copy.clientMessageId) } : control;
     try {
-      await this.postSyncCopy(relay, message, control);
-      return;
+      return await this.postSyncCopy(relay, message, controlOf(message));
     } catch (error) {
       if (!isConclusiveDeviceRejection(error)) throw error;
     }
@@ -855,8 +1188,7 @@ export class SignalProtocolServiceCipher {
       : undefined;
     if (replacement) {
       try {
-        await this.postSyncCopy(relay, replacement, control);
-        return;
+        return await this.postSyncCopy(relay, replacement, controlOf(replacement));
       } catch (error) {
         if (!isConclusiveDeviceRejection(error)) throw error;
       }
@@ -875,6 +1207,7 @@ export class SignalProtocolServiceCipher {
       category: 'E2EE',
       data: { deviceId: refused.recipientDeviceId },
     });
+    return undefined;
   }
 
   /**
@@ -926,6 +1259,23 @@ export class SignalProtocolServiceCipher {
    * @returns The relay receipt of the post
    */
   private async postSyncCopy(
+    relay: SignalProtocolRelayServer,
+    message: StoredOutgoingDeviceMessage,
+    control: DevicePostControl
+  ): Promise<RelayPostAcceptance> {
+    // The transport gates a repeat by the ID that the posted envelope carries.
+    const release =
+      control.beforeRequest && message.clientMessageId !== undefined
+        ? admitRequestsFor(relay, message.clientMessageId, control.beforeRequest)
+        : undefined;
+    try {
+      return await this.postSyncCopyRequest(relay, message, control);
+    } finally {
+      release?.();
+    }
+  }
+
+  private postSyncCopyRequest(
     relay: SignalProtocolRelayServer,
     message: StoredOutgoingDeviceMessage,
     control: DevicePostControl
@@ -1000,8 +1350,10 @@ export class SignalProtocolServiceCipher {
     sealed: boolean,
     control: DevicePostControl
   ): Promise<T> {
-    const post = () => {
+    const post = async () => {
       control.admit?.();
+      await control.beforeRequest?.();
+      control.onRequest?.();
       return send();
     };
     if (sealed && relaySendsSealedUnderItsBound(this.relay!)) {
@@ -1876,10 +2228,13 @@ export class SignalProtocolServiceCipher {
     stopSignal?: AbortSignal
   ): Promise<SendResult> {
     const clientMessageId = options?.clientMessageId ?? (await CryptoUtils.generateUuidV4());
-    // The client entry can mark the origin of the timestamp. The public type
-    // of the options leaves the mark out, and the spread keeps its symbol key.
-    const durableOptions: SendOptions & SendTimestampOrigin & { clientMessageId: string } = {
-      ...(options as (SendOptions & SendTimestampOrigin) | undefined),
+    // The client entry can mark the origin of the timestamp and give the end
+    // report of the call. The public type of the options leaves both marks
+    // out, and the spread keeps their symbol keys.
+    const durableOptions: SendOptions &
+      SendTimestampOrigin &
+      SendEndReportMark & { clientMessageId: string } = {
+      ...(options as (SendOptions & SendTimestampOrigin & SendEndReportMark) | undefined),
       clientMessageId,
     };
     const encrypt = async () => {
@@ -1924,14 +2279,15 @@ export class SignalProtocolServiceCipher {
    * kind of the stored record posts the stored bytes with their epoch
    * again, and does not encrypt: that is the sender's own retry of a post
    * that did not complete. A call for another request envelope or kind
-   * encrypts with a fresh epoch, replaces the record in one write, and
-   * posts it. So does a call whose stored bytes the Relay refuses with
-   * OPERATION_EXPIRED: the new bytes post under the same ID. A
-   * RETRY_CONFLICT answer to a post means that the Relay holds an earlier
-   * encryption under this ID, so the answer is complete. When the Relay
-   * admits the new bytes after the recipient acknowledged the earlier
-   * ones, the recipient drops them as processed. Nothing deletes the
-   * record before `RELIABILITY_RECORD_TTL_MS`.
+   * encrypts once under its own attempt ID, replaces the record in one
+   * write, and posts it. A call whose stored bytes the Relay refuses with
+   * OPERATION_EXPIRED marks the record acceptance-unknown and posts
+   * nothing more under that ID. A later call for that attempt and kind
+   * finds the mark and posts nothing. A RETRY_CONFLICT answer to a post, or a
+   * DELIVERY_ALREADY_ACCEPTED answer under protocol version 2, means that the
+   * Relay holds an earlier encryption under this ID, so the answer is
+   * complete. Nothing deletes the record before
+   * `RELIABILITY_RECORD_TTL_MS`.
    *
    * @param recipientUserId - The user of the device
    * @param recipientDeviceId - The device that gets the message
@@ -1944,14 +2300,15 @@ export class SignalProtocolServiceCipher {
    *   the content carries that own sender key of the raw group: each
    *   encryption keeps the key, and when the Relay accepts the bytes, the
    *   send records a handoff row of the key that they carry. A post that the
-   *   Relay answers with RETRY_CONFLICT records no row, because the Relay
-   *   holds an earlier encryption
+   *   Relay answers with RETRY_CONFLICT, or with DELIVERY_ALREADY_ACCEPTED
+   *   under protocol version 2, records no row, because the Relay holds an
+   *   earlier encryption
    * @param stopSignal - The stop signal of the relay work that sends. When it
    *   aborts while the send waits for the recipient's lock, the send throws
    *   RelayWorkStopped
-   * @returns False only when the content is null and no stored attempt can
-   *   post: there is none for this request attempt, or the Relay refused it
-   *   with OPERATION_EXPIRED
+   * @returns False when the content is null and no stored bytes posted in
+   *   this call. True when the stored bytes posted, or when content exists
+   *   and the stored attempt has unknown acceptance. Then nothing posts
    * @throws Error when the request envelope ID is not a retry request of
    *   the retry ID. Nothing is posted
    */
@@ -1979,10 +2336,10 @@ export class SignalProtocolServiceCipher {
       try {
         await this.postResend(resend, retryResendAttemptId(resend), stopSignal);
       } catch (error) {
-        if (relayOperationRefusal(error) !== 'RETRY_CONFLICT') throw error;
-        // Only this sender posts this ID. A new encryption for the same
-        // request attempt and kind posts the same ID, so a conflict means
-        // that the Relay holds the earlier encryption.
+        if (!relayHoldsMessageId(error)) throw error;
+        // Only this sender posts this ID, and it posts one encryption under
+        // each attempt ID. So a conflict means that the Relay holds that
+        // encryption from an earlier post.
         this.logger.info('The Relay holds an earlier encryption of a retry resend attempt', {
           category: 'E2EE',
           data: { retryId: resend.retryId, kind: resend.kind, attempt: resend.attempt },
@@ -2023,23 +2380,35 @@ export class SignalProtocolServiceCipher {
           stored.requestEnvelopeId === target.requestEnvelopeId &&
           stored.kind === target.kind
         ) {
+          // The acceptance of the stored attempt is unknown, so nothing
+          // more posts under its ID.
+          if (stored.acceptanceUnknown === true) {
+            this.logger.info('A stored retry resend has unknown acceptance, so nothing posts', {
+              category: 'E2EE',
+              data: { retryId: stored.retryId, kind: stored.kind, attempt: stored.attempt },
+            });
+            return content !== null;
+          }
           try {
             await post(stored);
             return true;
           } catch (error) {
             if (relayOperationRefusal(error) !== 'OPERATION_EXPIRED') throw error;
           }
-          // The Relay no longer admits or replays the stored operation.
-          if (content === null) {
-            this.logger.info('A stored retry resend expired, and its plaintext is gone', {
-              category: 'E2EE',
-              data: { retryId: stored.retryId, attempt: stored.attempt },
-            });
-            return false;
-          }
+          // The Relay no longer admits or replays the stored operation. It
+          // can have accepted an earlier post of these bytes, so the
+          // attempt keeps its ID and gets no new encryption.
+          await storeRetryResend(this.storage, { ...stored, acceptanceUnknown: true });
+          this.logger.info('A stored retry resend expired, and its acceptance is unknown', {
+            category: 'E2EE',
+            data: { retryId: stored.retryId, kind: stored.kind, attempt: stored.attempt },
+          });
+          return content !== null;
         }
         if (content === null) return false;
-        // A new encryption replaces the record before its post.
+        // Only a target with no matching record gets here: a new request
+        // attempt or another kind, so a new ID. Its one encryption replaces
+        // the record before its post.
         const resend: StoredRetryResend = {
           ...target,
           ...(await this.encryptResend(recipientUserId, recipientDeviceId, content, options)),
@@ -2052,12 +2421,16 @@ export class SignalProtocolServiceCipher {
     );
   }
 
-  /** Post the encrypted bytes of a resend with their operation epoch, under one client message ID. */
+  /**
+   * Post the encrypted bytes of a resend with their operation epoch, under
+   * one client message ID. `control` gives the request checks of the post.
+   */
   private async postResend(
     resend: EncryptedResend,
     clientMessageId: string,
-    stopSignal?: AbortSignal
-  ): Promise<void> {
+    stopSignal?: AbortSignal,
+    control: Pick<DevicePostControl, 'beforeRequest' | 'onRequest'> = {}
+  ): Promise<RelayPostAcceptance> {
     const { message } = resend;
     if (
       resend.transportMode !== 'identified' &&
@@ -2074,7 +2447,7 @@ export class SignalProtocolServiceCipher {
         { recipientUserId: message.recipientUserId }
       );
     }
-    await this.sendToDevice(
+    return this.sendToDevice(
       message,
       message.ciphertext,
       message.messageType,
@@ -2092,6 +2465,8 @@ export class SignalProtocolServiceCipher {
       {
         ...(stopSignal && { stopSignal }),
         operationEpochMilliseconds: resend.operationEpochMilliseconds,
+        ...(control.beforeRequest && { beforeRequest: control.beforeRequest }),
+        ...(control.onRequest && { onRequest: control.onRequest }),
       }
     );
   }
@@ -2155,18 +2530,19 @@ export class SignalProtocolServiceCipher {
   }
 
   /**
-   * Encrypt one attempt of a resend, with the current time as its operation
-   * epoch. The resend of a group send's message takes the sealed
-   * authorization of a pre-message: the recipient's access key first, then
-   * the group endorsement of the recipient's account.
+   * Encrypt one attempt of a resend, with the epoch of the options or the
+   * current time as its operation epoch. The resend of a group send's
+   * message takes the sealed authorization of a pre-message: the
+   * recipient's access key first, then the group endorsement of the
+   * recipient's account.
    */
   private async encryptResend(
     recipientUserId: string,
     recipientDeviceId: number,
-    content: string,
+    content: string | Uint8Array,
     options: ResendOptions
   ): Promise<EncryptedResend> {
-    const operationEpochMilliseconds = Date.now();
+    const operationEpochMilliseconds = options.operationEpochMilliseconds ?? Date.now();
     const groupId = await this.findSentGroupId(recipientUserId, options.timestamp);
     const sealedSender =
       groupId === undefined
@@ -2186,7 +2562,7 @@ export class SignalProtocolServiceCipher {
     const message = await this.sesameManager.sendMessage(
       recipientUserId,
       recipientDeviceId,
-      new TextEncoder().encode(content),
+      typeof content === 'string' ? new TextEncoder().encode(content) : content,
       { clientTimestamp: options.timestamp, includeSyncMessages: false }
     );
     return {
@@ -2253,7 +2629,7 @@ export class SignalProtocolServiceCipher {
 
   /**
    * Archive the session with one device, for the session reset of a retry
-   * request that ended as `expired-content`.
+   * request that ended as `expired-content` or `posting-deadline`.
    *
    * The archive takes the decrypt lock of the device first, so each decrypt
    * from the device in progress ends before it, and a decrypt that starts
@@ -2735,25 +3111,29 @@ export class SignalProtocolServiceCipher {
   private async encryptToUserWithOutbox(
     recipientUserId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & SendTimestampOrigin & { clientMessageId: string },
+    options: SendOptions & SendTimestampOrigin & SendEndReportMark & { clientMessageId: string },
     sessions: SendSessionCallbacks | undefined,
     stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
-    return withOutgoingMessageIntentLock(this.storage, options.clientMessageId, () =>
-      this.encryptToUserWithOutboxLocked(
-        recipientUserId,
-        plaintextBytes,
-        options,
-        sessions,
-        stopSignal
-      )
+    return withOutgoingMessageIntentLock(
+      this.storage,
+      options.clientMessageId,
+      () =>
+        this.encryptToUserWithOutboxLocked(
+          recipientUserId,
+          plaintextBytes,
+          options,
+          sessions,
+          stopSignal
+        ),
+      options[SEND_END_REPORT]
     );
   }
 
   private async encryptToUserWithOutboxLocked(
     recipientUserId: string,
     plaintextBytes: Uint8Array,
-    options: SendOptions & SendTimestampOrigin & { clientMessageId: string },
+    options: SendOptions & SendTimestampOrigin & SendEndReportMark & { clientMessageId: string },
     sessions: SendSessionCallbacks | undefined,
     stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
@@ -2769,10 +3149,21 @@ export class SignalProtocolServiceCipher {
       ) {
         throw new Error('A clientMessageId cannot identify two different logical sends');
       }
+      // A send that ended at its posting deadline posts nothing again.
+      if (!existing.result && existing.outcome) throw storedSendEndError(existing);
+      const replay = this.sendCallEvidence(existing);
       if (this.declaresDeviceSets() && existing.kind === 'direct') {
-        return this.replayDeclaredDirectIntent(existing, plaintextBytes, sessions, stopSignal);
+        return this.replayDeclaredDirectIntent(
+          existing,
+          plaintextBytes,
+          sessions,
+          stopSignal,
+          replay
+        );
       }
-      if (existing.result) return existing.result;
+      // An undeclared intent completes with syncPending only when the posting
+      // deadline stopped its sync posts, so a replay posts nothing.
+      if (existing.result) return outgoingMessageIntentResult(existing)!;
       const reconciled = await this.reconcilePendingDirectIntent(
         existing,
         plaintextBytes,
@@ -2782,7 +3173,8 @@ export class SignalProtocolServiceCipher {
         await this.reconcileDirectSyncDevices(reconciled, plaintextBytes, sessions, stopSignal),
         plaintextBytes,
         sessions,
-        stopSignal
+        stopSignal,
+        replay
       );
     }
 
@@ -2861,33 +3253,770 @@ export class SignalProtocolServiceCipher {
       )
     );
 
+    // One clock read gives the first durable write and its posting deadline.
+    const createdAt = Date.now();
     const intent: StoredOutgoingMessageIntent = {
       kind: 'direct',
       clientMessageId: options.clientMessageId,
       recipientId: recipientUserId,
       plaintextDigest,
       clientTimestamp,
-      createdAt: Date.now(),
+      createdAt,
+      deadlineAt: outgoingMessageDeadlineAt({ createdAt, clientTimestamp }),
       transportMode,
       ...(sealedSenderAuth && { sealedSenderAuth }),
       ...(options.contentHint !== undefined && {
         contentHint: options.contentHint,
       }),
+      ...intentBinaryAttachment(options),
       ...(sendFirst && { reconcilePending: true as const }),
       deviceMessages,
       syncMessages,
+      progressFromStart: true,
+      ...(options[SEND_END_REPORT]?.internal && { internal: true as const }),
     };
+    const evidence = this.sendCallEvidence(intent);
     await storeOutgoingMessageIntent(this.storage, intent);
-    if (declared) return this.sendDeclaredDirectIntent(intent, plaintextBytes, sessions, stopSignal);
+    if (declared) {
+      return this.sendDeclaredDirectIntent(intent, plaintextBytes, sessions, stopSignal, evidence);
+    }
     if (sendFirst && sessions) {
       return this.sendDirectIntentBeforeDeviceListRead(
         intent,
         plaintextBytes,
         sessions,
-        stopSignal
+        stopSignal,
+        evidence
       );
     }
-    return this.sendStoredDirectIntent(intent, plaintextBytes, sessions, stopSignal);
+    return this.sendStoredDirectIntent(intent, plaintextBytes, sessions, stopSignal, evidence);
+  }
+
+  /**
+   * The evidence of one `send()` call of a direct or group intent. It starts
+   * from the stored progress of the intent and stores each answer of the
+   * call.
+   */
+  private sendCallEvidence(intent: StoredOutgoingMessageIntent): SendCallEvidence {
+    return new SendCallEvidence({
+      clientMessageId: intent.clientMessageId,
+      deadlineAt: outgoingMessageDeadlineAt(intent),
+      ...(intent.destinationProgress && { progress: intent.destinationProgress }),
+      ...(intent.progressFromStart && { progressFromStart: true }),
+      ...(intent.transportMode === 'sealed_sender_required' && { sealedSenderRequired: true }),
+      clock: () => Date.now(),
+      refusesDevice: isConclusiveDeviceRejection,
+      recordProgress: (key, update) =>
+        recordOutgoingDestinationProgress(this.storage, intent.clientMessageId, key, update),
+    });
+  }
+
+  /** A post control whose requests meet the posting deadline of the call. */
+  private postingControl(
+    evidence: SendCallEvidence,
+    base: DevicePostControl
+  ): DevicePostControl {
+    return { ...base, beforeRequest: evidence.check };
+  }
+
+  /**
+   * Post one device message of a direct intent and record its answer in the
+   * evidence of the call. Before each request of the post, the outbox stores
+   * the request of the device, after the checks of `control`. So the stored
+   * progress counts every request that starts.
+   */
+  private postDirectDeviceMessage(
+    intent: StoredOutgoingMessageIntent,
+    message: StoredOutgoingDeviceMessage,
+    control: DevicePostControl,
+    evidence: SendCallEvidence
+  ): Promise<RelayPostAcceptance> {
+    const [destination] = sendDestinations(intent.clientMessageId, [message]);
+    const { device, postMessageId } = destination!;
+    const key = outgoingDestinationProgressKey(postMessageId, device);
+    const beforeRequest = async () => {
+      await control.beforeRequest?.();
+      await recordOutgoingDestinationProgress(this.storage, intent.clientMessageId, key, {
+        phase: 'recipient',
+        userId: device.userId,
+        deviceId: device.deviceId,
+        postMessageId,
+        request: true,
+      });
+    };
+    return evidence.post(destination!, (onRequest) =>
+      this.sendStoredDirectDeviceMessage(intent, message, { ...control, beforeRequest, onRequest })
+    );
+  }
+
+  /**
+   * Post one destination of a group send and record its answer in the
+   * evidence of the call. Before each request of the post, the outbox stores
+   * the request of the destination, after the checks of `control`.
+   */
+  private postGroupDestination(
+    clientMessageId: string,
+    destination: SendDestination,
+    evidence: SendCallEvidence,
+    control: DevicePostControl,
+    post: (control: DevicePostControl) => Promise<RelayPostAcceptance>
+  ): Promise<RelayPostAcceptance> {
+    const beforeRequest = this.recordingRequests(clientMessageId, [destination], control);
+    return evidence.post(destination, (onRequest) =>
+      post({ ...control, beforeRequest, onRequest })
+    );
+  }
+
+  /**
+   * The `beforeRequest` of a group post: it runs the checks of `control`,
+   * then stores the request of each destination of the post.
+   */
+  private recordingRequests(
+    clientMessageId: string,
+    destinations: readonly SendDestination[],
+    control: DevicePostControl
+  ): () => Promise<void> {
+    return async () => {
+      await control.beforeRequest?.();
+      for (const { device, postMessageId } of destinations) {
+        await recordOutgoingDestinationProgress(
+          this.storage,
+          clientMessageId,
+          outgoingDestinationProgressKey(postMessageId, device),
+          {
+            phase: 'recipient',
+            userId: device.userId,
+            deviceId: device.deviceId,
+            postMessageId,
+            request: true,
+          }
+        );
+      }
+    };
+  }
+
+  /**
+   * Send one relay request of a group post under a slot of the bound. With
+   * one destination, the evidence of the call records the requests and the
+   * answer of the device, and a repeat request that the transport starts for
+   * the device meets the deadline and stores its request first. With a list,
+   * the post is a shared body: each request counts for each destination, and
+   * the one answer is recorded on each destination. A repeat request that the
+   * transport starts for one destination of the body stores the request of
+   * that destination.
+   */
+  private postGroupRelay<T>(
+    send: () => Promise<T>,
+    sealed: boolean,
+    control: DevicePostControl,
+    evidence: SendCallEvidence,
+    clientMessageId: string,
+    destination: SendDestination | readonly SendDestination[]
+  ): Promise<T> {
+    const ownRepeat = (repeat: RepeatRequest, { device }: SendDestination) =>
+      repeat.userId === device.userId && repeat.deviceId === device.deviceId;
+    if (!isDestinationList(destination)) {
+      const post = send as unknown as () => Promise<RelayPostAcceptance>;
+      return this.postGroupDestination(
+        clientMessageId,
+        destination,
+        evidence,
+        control,
+        async (posting) => {
+          // The transport gates a repeat by the ID that the posted envelope
+          // carries. Other posts of the send carry the same ID, so the gate
+          // takes only a repeat of this device.
+          const release = admitRequestsFor(
+            this.relay!,
+            clientMessageId,
+            async (repeat) => {
+              if (ownRepeat(repeat, destination)) await posting.beforeRequest?.();
+            },
+            (repeat) => {
+              if (ownRepeat(repeat, destination)) posting.onRequest?.(repeat.after);
+            }
+          );
+          try {
+            return await this.postToRelay(post, sealed, posting);
+          } finally {
+            release();
+          }
+        }
+      ) as unknown as Promise<T>;
+    }
+    const destinations = destination;
+    const shared = send as unknown as () => Promise<RelayPostAcceptance & { uuids404: string[] }>;
+    const beforeRequest = this.recordingRequests(clientMessageId, destinations, control);
+    return evidence.postShared(destinations, async (onRequest) => {
+      // The transport gates a repeat of the body once for each destination
+      // device. Each gate stores the request of its device, and the repeat
+      // counts once, at the first destination.
+      const release = admitRequestsFor(
+        this.relay!,
+        clientMessageId,
+        async (repeat) => {
+          const target = destinations.filter((candidate) => ownRepeat(repeat, candidate));
+          await this.recordingRequests(clientMessageId, target, control)();
+        },
+        (repeat) => {
+          if (destinations[0] && ownRepeat(repeat, destinations[0])) onRequest(repeat.after);
+        }
+      );
+      try {
+        return await this.postToRelay(shared, sealed, { ...control, beforeRequest, onRequest });
+      } finally {
+        release();
+      }
+    }) as unknown as Promise<T>;
+  }
+
+  /**
+   * Decide the recipient phase of a direct or group send that failed. At or
+   * after the posting deadline with an open destination, or when every open
+   * destination got OPERATION_EXPIRED, the send ends: the outbox stores its outcome, and
+   * the error is the class of the end. Before that, the error is thrown with
+   * the deadline, and the intent stays open. A device-set reconciliation
+   * error keeps its own rule.
+   */
+  private async endOrRethrow(
+    intent: StoredOutgoingMessageIntent,
+    evidence: SendCallEvidence,
+    error: unknown
+  ): Promise<never> {
+    if (error instanceof DeviceSetReconciliationError) throw error;
+    const current =
+      (await getOutgoingMessageIntent(this.storage, intent.clientMessageId)) ?? intent;
+    const end = recipientSendEnd(current, evidence, this.userId, this.deviceId);
+    if (!end) throw attachSendDeadline(error, evidence.deadlineAt);
+    await endOutgoingMessageIntent(this.storage, intent.clientMessageId, {
+      outcome: end.outcome,
+      destinationProgress: end.destinationProgress,
+    });
+    throw end.error;
+  }
+
+  /**
+   * End an open intent whose posting deadline has passed, with the class that
+   * its stored progress gives, and post nothing. The SDK send driver calls it.
+   * Under the intent lock, the call reads the intent again. An intent that is
+   * gone, ended, completed or not yet due stays as it is. Past the deadline,
+   * the stored progress gives no end only when the Relay accepted each
+   * recipient destination: the call then completes the intent from its
+   * stored progress, with `syncPending` when a sync copy is not accepted. With
+   * `report`, the end write or the completion write records the end in it.
+   */
+  async endPastDeadlineIntent(
+    clientMessageId: string,
+    report?: OutgoingIntentEndReport
+  ): Promise<void> {
+    await withOutgoingMessageIntentLock(
+      this.storage,
+      clientMessageId,
+      async () => {
+        const current = await getOutgoingMessageIntent(this.storage, clientMessageId);
+        if (!current || current.result || current.outcome !== undefined) return;
+        if (Date.now() < outgoingMessageDeadlineAt(current)) return;
+        const end = recipientSendEnd(
+          current,
+          this.sendCallEvidence(current),
+          this.userId,
+          this.deviceId
+        );
+        if (!end) {
+          await this.completeAcceptedIntent(current);
+          return;
+        }
+        await endOutgoingMessageIntent(this.storage, clientMessageId, {
+          outcome: end.outcome,
+          destinationProgress: end.destinationProgress,
+        });
+      },
+      report
+    );
+  }
+
+  /**
+   * Complete an open intent whose stored progress records each recipient
+   * destination as accepted, with no post. A process can stop after the last
+   * acceptance and before the completion write, or a sync failure can leave
+   * the intent open after its recipient phase. The result takes its message
+   * ID and time from the stored acceptances, as a send call that found each
+   * destination accepted does. A sync copy with no stored acceptance keeps
+   * the sync phase pending. The caller holds the intent lock.
+   */
+  private async completeAcceptedIntent(intent: StoredOutgoingMessageIntent): Promise<void> {
+    const progress = intent.destinationProgress ?? {};
+    const clock = () => Date.now();
+    const acceptances = recipientDestinations(intent, this.userId, this.deviceId).map(
+      ({ device, postMessageId }) =>
+        storedAcceptance(progress[outgoingDestinationProgressKey(postMessageId, device)]!, clock)
+    );
+    const first = sendResultAcceptance(acceptances);
+    const group = intent.kind === 'group';
+    const result = {
+      clientMessageId: intent.clientMessageId,
+      messageId:
+        first?.messageId ??
+        (group
+          ? `group-${intent.recipientId}-${String(intent.clientTimestamp)}`
+          : `local-${intent.clientTimestamp}`),
+      timestamp: first?.serverTimestamp ?? intent.clientTimestamp,
+      recipientDeviceCount: group
+        ? (intent.groupRecipientDeviceCount ?? intent.deviceMessages.length)
+        : intent.deviceMessages.length,
+      ...aggregateRelayAcceptance(acceptances),
+      ...(group && { groupId: intent.recipientId }),
+    };
+    const syncPending = intent.syncMessages.some((message) => {
+      const { device, postMessageId } = syncDestination(intent.clientMessageId, message);
+      return progress[outgoingDestinationProgressKey(postMessageId, device)]?.state !== 'accepted';
+    });
+    await completeOutgoingMessageIntent(this.storage, intent.clientMessageId, result, {
+      syncPending,
+    });
+    if (group && intent.contentHint === ContentHint.Resendable) {
+      await this.storage.markSendLogComplete(intent.clientMessageId);
+    }
+  }
+
+  /**
+   * Post a manual resend of a send that ended at its posting deadline
+   * without acceptance (`resendMessage`). Only an intent with `outcome` and
+   * no `result` takes one.
+   *
+   * - With no open resend, the call stores a new one. Its message ID is
+   *   `<clientMessageId>:manual:N`, N from 1. One clock read gives its
+   *   `createdAt` and its operation epoch, and its posting deadline is 24
+   *   hours later. It encrypts `content` again for each recipient device
+   *   that no post of the send or of an earlier resend got accepted, with
+   *   the client timestamp of the send in the content. Logged bytes of a
+   *   group send carry the group context of the send and post as they are.
+   *   Other content of a group intent takes the current group context.
+   * - An open resend posts again under its stored epoch and bytes, and the
+   *   call ignores `content`. At or after its deadline, it ends from its
+   *   stored progress and posts nothing.
+   *
+   * The resend ends with its result when the Relay accepts each of its
+   * devices, or with its class (contract §3.4) when it is due. A
+   * RETRY_CONFLICT under the manual message ID, or a version 2
+   * DELIVERY_ALREADY_ACCEPTED, is the resend's own earlier post, so it counts
+   * as accepted. The end write fills `report`.
+   *
+   * @throws Error when the send is missing, open, completed, or accepted by
+   *   each recipient device. Nothing is posted
+   */
+  async resendOutgoingMessage(
+    clientMessageId: string,
+    content: IntentContent | undefined,
+    options: { stopSignal?: AbortSignal; report?: ManualResendEndReport } = {}
+  ): Promise<SendResult> {
+    const { stopSignal, report } = options;
+    try {
+      return await this.withManualResendOrderLock(clientMessageId, stopSignal, () =>
+        this.resendOutgoingMessageOrdered(clientMessageId, content, stopSignal, report)
+      );
+    } catch (error) {
+      throw attachClientMessageId(error, clientMessageId);
+    }
+  }
+
+  /**
+   * Post the open manual resend of an ended intent again for the SDK send
+   * driver, as `resendOutgoingMessage` does with no content. When the intent
+   * has no open resend under the intent lock, for example because a
+   * `resendMessage` call ended it after the driver listed it, the call posts
+   * nothing and fills nothing in `report`.
+   */
+  async replayManualResend(
+    clientMessageId: string,
+    options: { stopSignal?: AbortSignal; report: ManualResendEndReport }
+  ): Promise<void> {
+    const { stopSignal, report } = options;
+    try {
+      await this.withManualResendOrderLock(clientMessageId, stopSignal, () =>
+        withOutgoingMessageIntentLock(this.storage, clientMessageId, async () => {
+          const intent = await getOutgoingMessageIntent(this.storage, clientMessageId);
+          const open = intent && outgoingManualResends(intent).find(isOpenManualResend);
+          if (!intent || !open) return;
+          await this.continueManualResend(endedManualResendIntent(intent), open, stopSignal, report);
+        })
+      );
+    } catch (error) {
+      throw attachClientMessageId(error, clientMessageId);
+    }
+  }
+
+  /**
+   * Run `operation` under the order lock of the recipient of a stored send.
+   * A resend keeps the order of the sends to its recipient, as a send does,
+   * and the lock serializes the manual resends of one intent.
+   */
+  private async withManualResendOrderLock<T>(
+    clientMessageId: string,
+    stopSignal: AbortSignal | undefined,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    if (!this.relay) throw new Error('Relay not configured - cannot resend');
+    const stored = await getOutgoingMessageIntent(this.storage, clientMessageId);
+    if (!stored) throw new Error('No stored send has this clientMessageId');
+    return acquireUntilStopped(
+      this.lock,
+      `encrypt:${manualResendOrderKey(stored)}`,
+      operation,
+      stopSignal
+    );
+  }
+
+  /**
+   * Post a manual resend under the order lock. No encrypt lock is taken
+   * while the intent lock is held: a send takes its encrypt lock before the
+   * intent lock, so the other order can deadlock with it.
+   *
+   * 1. Under the intent lock, an open resend posts or ends. With no open
+   *    resend, the checks run and the call plans a new resend.
+   * 2. With no intent lock held, the call encrypts the content for each
+   *    target device.
+   * 3. Under the intent lock, the call stores the resend, which refuses a
+   *    change to the intent since step 1, and posts it.
+   */
+  private async resendOutgoingMessageOrdered(
+    clientMessageId: string,
+    content: IntentContent | undefined,
+    stopSignal: AbortSignal | undefined,
+    report: ManualResendEndReport | undefined
+  ): Promise<SendResult> {
+    const step = await withOutgoingMessageIntentLock(
+      this.storage,
+      clientMessageId,
+      async (): Promise<{ done: SendResult } | { plan: ManualResendPlan }> => {
+        const intent = endedManualResendIntent(
+          await getOutgoingMessageIntent(this.storage, clientMessageId)
+        );
+        const open = outgoingManualResends(intent).find(isOpenManualResend);
+        if (open) return { done: await this.continueManualResend(intent, open, stopSignal, report) };
+        return {
+          plan: await planManualResend(intent, content, this.userId, this.deviceId, (plaintext) =>
+            this.withoutGroupContext(plaintext)
+          ),
+        };
+      }
+    );
+    if ('done' in step) return step.done;
+    const resend = await this.encryptManualResend(step.plan, stopSignal);
+    return withOutgoingMessageIntentLock(this.storage, clientMessageId, async () => {
+      const intent = await addOutgoingManualResend(this.storage, clientMessageId, resend);
+      return this.continueManualResend(intent, resend, stopSignal, report);
+    });
+  }
+
+  /**
+   * Post an open manual resend, or end it from its stored progress at or
+   * after its deadline. The caller holds the intent lock.
+   */
+  private async continueManualResend(
+    intent: StoredOutgoingMessageIntent,
+    resend: StoredManualResend,
+    stopSignal: AbortSignal | undefined,
+    report: ManualResendEndReport | undefined
+  ): Promise<SendResult> {
+    if (Date.now() >= resend.deadlineAt) {
+      const ended = await this.endStoredManualResend(intent, resend);
+      if (report) report.ended = { intent, resend: ended };
+      if (ended.result) return { ...ended.result };
+      throw storedSendEndError(manualResendIntent(intent, ended));
+    }
+    return this.postManualResend(intent, resend, stopSignal, report);
+  }
+
+  /**
+   * Encrypt a planned manual resend for each of its target devices. The
+   * caller holds the order lock of the recipient and no intent lock.
+   */
+  private async encryptManualResend(
+    plan: ManualResendPlan,
+    stopSignal: AbortSignal | undefined
+  ): Promise<StoredManualResend> {
+    const { intent, targets, manualMessageId, createdAt } = plan;
+    // A group resend is a direct message to each device, with the group
+    // context of the content that the group send carried. The logged bytes
+    // of the group send carry that context already. The caller bytes of a
+    // message record take the current context once.
+    const bytes =
+      intent.kind === 'group' && !plan.content.withGroupContext
+        ? await this.contentWithGroupContext(intent.recipientId, plan.content.content)
+        : plan.content.content;
+    const messages: StoredManualResend['messages'] = [];
+    const heldOrderKey = manualResendOrderKey(intent);
+    for (const device of targets) {
+      const encrypt = () =>
+        this.encryptResend(device.userId, device.deviceId, bytes, {
+          timestamp: intent.clientTimestamp,
+          ...(intent.contentHint !== undefined && { contentHint: intent.contentHint }),
+          operationEpochMilliseconds: createdAt,
+        });
+      // encryptResend takes no lock. As in the retry resend, the encryption
+      // to a user runs under the order lock of that user. The caller holds
+      // that lock for the recipient of a direct send, and the lock is not
+      // reentrant.
+      const encrypted =
+        device.userId === heldOrderKey
+          ? await encrypt()
+          : await acquireUntilStopped(this.lock, `encrypt:${device.userId}`, encrypt, stopSignal);
+      messages.push({
+        transportMode: encrypted.transportMode,
+        ...(encrypted.sealedSenderAuth && { sealedSenderAuth: encrypted.sealedSenderAuth }),
+        ...(encrypted.contentHint !== undefined && { contentHint: encrypted.contentHint }),
+        message: { ...encrypted.message, clientMessageId: manualMessageId },
+      });
+    }
+    return {
+      manualMessageId,
+      createdAt,
+      operationEpochMilliseconds: createdAt,
+      deadlineAt: createdAt + OUTGOING_POSTING_WINDOW_MS,
+      messages,
+    };
+  }
+
+  /** The evidence of one call of a manual resend, from its stored progress. */
+  private manualResendEvidence(
+    intent: StoredOutgoingMessageIntent,
+    resend: StoredManualResend
+  ): SendCallEvidence {
+    return new SendCallEvidence({
+      clientMessageId: intent.clientMessageId,
+      deadlineAt: resend.deadlineAt,
+      ...(resend.destinationProgress && { progress: resend.destinationProgress }),
+      progressFromStart: true,
+      ...(intent.transportMode === 'sealed_sender_required' && { sealedSenderRequired: true }),
+      clock: () => Date.now(),
+      refusesDevice: isConclusiveDeviceRejection,
+      recordProgress: (key, update) =>
+        recordOutgoingManualResendProgress(
+          this.storage,
+          intent.clientMessageId,
+          resend.manualMessageId,
+          key,
+          update
+        ),
+    });
+  }
+
+  /**
+   * Post each device of an open manual resend under its stored epoch, and
+   * end the resend when each device is accepted or when it is due. The
+   * caller holds the intent lock.
+   */
+  private async postManualResend(
+    intent: StoredOutgoingMessageIntent,
+    resend: StoredManualResend,
+    stopSignal: AbortSignal | undefined,
+    report: ManualResendEndReport | undefined
+  ): Promise<SendResult> {
+    const { clientMessageId } = intent;
+    const { manualMessageId } = resend;
+    const evidence = this.manualResendEvidence(intent, resend);
+    const destinations = manualResendDestinations(resend);
+    let skippedRefusal = false;
+    let acceptances: RelayPostAcceptance[];
+    try {
+      const posted = await this.sendPhase(
+        resend.messages.map((stored, index) => ({
+          recipientUserId: stored.message.recipientUserId,
+          recipientDeviceId: stored.message.recipientDeviceId,
+          stored,
+          destination: destinations[index]!,
+        })),
+        async ({ stored, destination }): Promise<RelayPostAcceptance | undefined> => {
+          const { device, postMessageId } = destination;
+          const key = outgoingDestinationProgressKey(postMessageId, device);
+          if (provenRefused(resend.destinationProgress?.[key])) {
+            skippedRefusal = true;
+            return undefined;
+          }
+          return evidence.post(destination, (onRequest) =>
+            this.postResend(
+              { ...stored, operationEpochMilliseconds: resend.operationEpochMilliseconds },
+              manualMessageId,
+              stopSignal,
+              {
+                beforeRequest: async () => {
+                  await evidence.check();
+                  await recordOutgoingManualResendProgress(
+                    this.storage,
+                    clientMessageId,
+                    manualMessageId,
+                    key,
+                    {
+                      phase: 'recipient',
+                      userId: device.userId,
+                      deviceId: device.deviceId,
+                      postMessageId,
+                      request: true,
+                    }
+                  );
+                },
+                onRequest,
+              }
+            )
+          );
+        },
+        'device',
+        stopSignal
+      );
+      acceptances = posted.filter((acceptance) => acceptance !== undefined);
+    } catch (error) {
+      const end = await this.endDueManualResend(intent, resend, evidence, report);
+      if (end) throw end;
+      throw attachSendDeadline(error, resend.deadlineAt);
+    }
+    if (skippedRefusal) {
+      const end = await this.endDueManualResend(intent, resend, evidence, report);
+      if (end) throw end;
+    }
+    const result = manualResendResult(intent, resend, acceptances);
+    const ended = await endOutgoingManualResend(
+      this.storage,
+      clientMessageId,
+      manualMessageId,
+      { result }
+    );
+    if (ended && report) report.ended = { intent, resend: ended };
+    return result;
+  }
+
+  /**
+   * End a manual resend that is due after a failed post (contract §3.4), and
+   * return the error of its end. Undefined when the resend stays open. The
+   * caller holds the intent lock.
+   */
+  private async endDueManualResend(
+    intent: StoredOutgoingMessageIntent,
+    resend: StoredManualResend,
+    evidence: SendCallEvidence,
+    report: ManualResendEndReport | undefined
+  ): Promise<Error | undefined> {
+    const current =
+      (await getOutgoingMessageIntent(this.storage, intent.clientMessageId))?.manualResends?.find(
+        (candidate) => candidate.manualMessageId === resend.manualMessageId
+      ) ?? resend;
+    const end = evidence.end(manualResendDestinations(resend), current.destinationProgress);
+    if (!end) return undefined;
+    const ended = await endOutgoingManualResend(
+      this.storage,
+      intent.clientMessageId,
+      resend.manualMessageId,
+      { outcome: end.outcome, destinationProgress: end.destinationProgress }
+    );
+    if (ended && report) report.ended = { intent, resend: ended };
+    return end.error;
+  }
+
+  /**
+   * End an open manual resend from its stored progress, and post nothing:
+   * with its result when the Relay accepted each of its devices, else with
+   * its class. The caller holds the intent lock.
+   */
+  private async endStoredManualResend(
+    intent: StoredOutgoingMessageIntent,
+    resend: StoredManualResend
+  ): Promise<StoredManualResend> {
+    const destinations = manualResendDestinations(resend);
+    const progress = resend.destinationProgress ?? {};
+    const end = this.manualResendEvidence(intent, resend).classify(destinations, progress);
+    const clock = () => Date.now();
+    const ended = await endOutgoingManualResend(
+      this.storage,
+      intent.clientMessageId,
+      resend.manualMessageId,
+      end
+        ? { outcome: end.outcome, destinationProgress: end.destinationProgress }
+        : {
+            result: manualResendResult(
+              intent,
+              resend,
+              destinations.map(({ device, postMessageId }) =>
+                storedAcceptance(progress[outgoingDestinationProgressKey(postMessageId, device)]!, clock)
+              )
+            ),
+          }
+    );
+    if (!ended) throw new Error('A manual resend ended in another call');
+    return ended;
+  }
+
+  /**
+   * End an open manual resend whose posting deadline has passed, from its
+   * stored progress, and post nothing. The SDK send driver calls it. Under
+   * the intent lock, the call reads the intent again.
+   *
+   * @returns The intent and the ended resend, or undefined when the resend
+   *   is gone, ended or not yet due
+   */
+  async endPastDeadlineManualResend(
+    clientMessageId: string,
+    manualMessageId: string
+  ): Promise<{ intent: StoredOutgoingMessageIntent; resend: StoredManualResend } | undefined> {
+    return withOutgoingMessageIntentLock(this.storage, clientMessageId, async () => {
+      const intent = await getOutgoingMessageIntent(this.storage, clientMessageId);
+      const resend = intent?.manualResends?.find(
+        (candidate) => candidate.manualMessageId === manualMessageId
+      );
+      if (!intent || !resend || !isOpenManualResend(resend)) return undefined;
+      if (Date.now() < resend.deadlineAt) return undefined;
+      return { intent, resend: await this.endStoredManualResend(intent, resend) };
+    });
+  }
+
+  /**
+   * End a replay whose recipient phase posted no device that a stored
+   * refusal proves refused (`provenRefused`). When every open device has such
+   * a refusal, the send ends now: the outbox stores its outcome, and the end
+   * error is thrown. Otherwise the call returns, and the replay goes on.
+   */
+  private async endRefusedReplay(
+    intent: StoredOutgoingMessageIntent,
+    evidence: SendCallEvidence
+  ): Promise<void> {
+    const current =
+      (await getOutgoingMessageIntent(this.storage, intent.clientMessageId)) ?? intent;
+    const end = recipientSendEnd(current, evidence, this.userId, this.deviceId);
+    if (!end) return;
+    await endOutgoingMessageIntent(this.storage, intent.clientMessageId, {
+      outcome: end.outcome,
+      destinationProgress: end.destinationProgress,
+    });
+    throw end.error;
+  }
+
+  /**
+   * The end of a recipient phase that the device-set reconciliation ended
+   * unresolved: the class of the send at this point (contract §3.4), from
+   * the evidence of the call and the stored progress. Reason `expired` gives
+   * `acceptance-unknown`, because the Relay refused the restart post with
+   * OPERATION_EXPIRED and an earlier post of the operation can have been
+   * accepted. Undefined for an intent that is gone or ended, or whose
+   * recipient destinations are all accepted. The caller holds the intent
+   * lock.
+   */
+  private async unresolvedRecipientEnd(
+    clientMessageId: string,
+    evidence: SendCallEvidence,
+    unresolved: DeviceSetUnresolved
+  ): Promise<
+    { outcome: NonNullable<StoredOutgoingMessageIntent['outcome']>; destinationProgress: Record<string, StoredDestinationProgress> } | undefined
+  > {
+    const current = await getOutgoingMessageIntent(this.storage, clientMessageId);
+    if (!current || current.result || current.outcome !== undefined) return undefined;
+    const end = evidence.classify(
+      recipientDestinations(current, this.userId, this.deviceId),
+      current.destinationProgress
+    );
+    if (!end) return undefined;
+    return {
+      outcome: unresolved.reason === 'expired' ? 'acceptance-unknown' : end.outcome,
+      destinationProgress: end.destinationProgress,
+    };
   }
 
   /**
@@ -2907,7 +4036,8 @@ export class SignalProtocolServiceCipher {
     intent: StoredOutgoingMessageIntent,
     plaintextBytes: Uint8Array,
     sessions: SendSessionCallbacks,
-    stopSignal: AbortSignal | undefined
+    stopSignal: AbortSignal | undefined,
+    evidence: SendCallEvidence
   ): Promise<SendResult> {
     const arrived: { listed?: ReadonlySet<number> } = {};
     const read = this.readRecipientDeviceList(intent.recipientId, sessions, true, (listed) => {
@@ -2917,20 +4047,22 @@ export class SignalProtocolServiceCipher {
     read.catch(() => undefined);
 
     const posts: DirectIntentPosts = { accepted: new Map(), refused: new Map() };
-    const control: DevicePostControl = {
+    const control = this.postingControl(evidence, {
       ...(stopSignal && { stopSignal }),
       admit: () => {
         if (arrived.listed) throw new DeferredPost();
       },
-    };
+    });
     try {
       await this.sendPhase(
         intent.deviceMessages,
         async (message) => {
+          // A stored refusal for good is not posted again.
+          if (storedRefusal(intent, message)) return;
           try {
             posts.accepted.set(
               message.recipientDeviceId,
-              await this.sendStoredDirectDeviceMessage(intent, message, control)
+              await this.postDirectDeviceMessage(intent, message, control, evidence)
             );
           } catch (error) {
             if (error instanceof DeferredPost) return;
@@ -2944,14 +4076,21 @@ export class SignalProtocolServiceCipher {
     } catch (error) {
       // The read commits sessions. It ends before the send fails.
       await read.catch(() => undefined);
-      throw error;
+      return this.endOrRethrow(intent, evidence, error);
     }
 
     const list = await read;
     const reconciled = list
       ? await this.reconcileDirectIntent(intent, list, plaintextBytes)
       : intent;
-    return this.sendStoredDirectIntent(reconciled, plaintextBytes, sessions, stopSignal, posts);
+    return this.sendStoredDirectIntent(
+      reconciled,
+      plaintextBytes,
+      sessions,
+      stopSignal,
+      evidence,
+      posts
+    );
   }
 
   /** A replay whose first attempt posted before its read reads and reconciles first. */
@@ -3126,13 +4265,18 @@ export class SignalProtocolServiceCipher {
     return this.lock.acquire(`session-repair:${recipientUserId}`, repair);
   }
 
-  /** Refresh the session of a rejected device and replace its transmission. */
+  /**
+   * Refresh the session of a rejected device and replace its transmission.
+   *
+   * @returns The new transmission, and the stored progress entry of the
+   *   device, which carries the repair mark
+   */
   private async repairRejectedDirectDeviceMessage(
     intent: StoredOutgoingMessageIntent,
     rejected: StoredOutgoingDeviceMessage,
     plaintextBytes: Uint8Array,
     sessions: SendSessionCallbacks | undefined
-  ): Promise<StoredOutgoingDeviceMessage> {
+  ): Promise<{ replacement: StoredOutgoingDeviceMessage; entry: StoredDestinationProgress }> {
     if (!sessions) throw new Error('Stale-session refresh is not configured');
     return this.inRepairTurn(rejected.recipientUserId, () =>
       this.repairRejectedDirectDeviceMessageInTurn(intent, rejected, plaintextBytes, sessions)
@@ -3144,7 +4288,7 @@ export class SignalProtocolServiceCipher {
     rejected: StoredOutgoingDeviceMessage,
     plaintextBytes: Uint8Array,
     sessions: SendSessionCallbacks
-  ): Promise<StoredOutgoingDeviceMessage> {
+  ): Promise<{ replacement: StoredOutgoingDeviceMessage; entry: StoredDestinationProgress }> {
     const refreshed = await sessions.refreshStaleSession(
       rejected.recipientUserId,
       rejected.recipientDeviceId
@@ -3168,13 +4312,20 @@ export class SignalProtocolServiceCipher {
       await this.resolveStoredDirectSealedSender(intent),
       intent.contentHint
     );
-    await replaceOutgoingDirectDeviceMessage(
+    const stored = await replaceOutgoingDirectDeviceMessage(
       this.storage,
       intent.clientMessageId,
       rejected,
       replacement
     );
-    return replacement;
+    const [destination] = sendDestinations(intent.clientMessageId, [replacement]);
+    const entry =
+      stored.destinationProgress?.[
+        outgoingDestinationProgressKey(destination!.postMessageId, destination!.device)
+      ];
+    // The store writes the entry of the replaced device with its repair mark.
+    if (!entry) throw new Error('A direct outbox repair stored no progress for its device');
+    return { replacement, entry };
   }
 
   private async sendStoredDirectDeviceMessage(
@@ -3225,6 +4376,7 @@ export class SignalProtocolServiceCipher {
     plaintextBytes: Uint8Array,
     sessions: SendSessionCallbacks | undefined,
     control: DevicePostControl,
+    evidence: SendCallEvidence,
     refusal?: { error: unknown }
   ): Promise<RelayPostAcceptance> {
     let rejection: unknown;
@@ -3232,31 +4384,41 @@ export class SignalProtocolServiceCipher {
       rejection = refusal.error;
     } else {
       try {
-        return await this.sendStoredDirectDeviceMessage(intent, message, control);
+        return await this.postDirectDeviceMessage(intent, message, control, evidence);
       } catch (error) {
         rejection = error;
       }
     }
     if (!isConclusiveDeviceRejection(rejection)) throw rejection;
-    const replacement = await this.repairRejectedDirectDeviceMessage(
+    const { replacement, entry } = await this.repairRejectedDirectDeviceMessage(
       intent,
       message,
       plaintextBytes,
       sessions
     );
-    return this.sendStoredDirectDeviceMessage(intent, replacement, control);
+    // A RETRY_CONFLICT or DELIVERY_ALREADY_ACCEPTED of the repost then reads
+    // the repair mark.
+    evidence.refreshEntry(
+      { userId: replacement.recipientUserId, deviceId: replacement.recipientDeviceId },
+      entry
+    );
+    return this.postDirectDeviceMessage(intent, replacement, control, evidence);
   }
 
   /**
    * Post each device message of a direct intent, then the sync messages, and
    * complete the intent. A device that a send-first pass already posted keeps
-   * its result or its refusal.
+   * its result or its refusal. A replay does not post a device that the
+   * stored progress records as accepted or as refused for good
+   * (`provenRefused`), and it does not post an accepted sync copy. When it
+   * skipped a refused device, the send can end before the sync copies.
    */
   private async sendStoredDirectIntent(
     intent: StoredOutgoingMessageIntent,
     plaintextBytes: Uint8Array,
     sessions: SendSessionCallbacks | undefined,
     stopSignal: AbortSignal | undefined,
+    evidence: SendCallEvidence,
     posts?: DirectIntentPosts
   ): Promise<SendResult> {
     if (intent.kind !== 'direct') throw new Error('Expected a direct outbox intent');
@@ -3272,55 +4434,80 @@ export class SignalProtocolServiceCipher {
     }
 
     const relay = this.relay;
-    let messageId = `local-${intent.clientTimestamp}`;
-    let timestamp = intent.clientTimestamp;
-    const control: DevicePostControl = { ...(stopSignal && { stopSignal }) };
+    const control = this.postingControl(evidence, { ...(stopSignal && { stopSignal }) });
 
-    const results = await this.sendPhase(
-      intent.deviceMessages,
-      async (msg) =>
-        posts?.accepted.get(msg.recipientDeviceId) ??
-        this.postStoredDirectDeviceMessage(
-          intent,
-          msg,
-          plaintextBytes,
-          sessions,
-          control,
-          posts?.refused.get(msg.recipientDeviceId)
-        ),
-      'device',
-      stopSignal
-    );
-    for (const result of results) {
-      if (messageId.startsWith('local-')) {
-        messageId = result.messageId;
-        timestamp = result.serverTimestamp;
-      }
+    let results: RelayPostAcceptance[];
+    let skippedRefusal = false;
+    try {
+      const posted = await this.sendPhase(
+        intent.deviceMessages,
+        async (msg): Promise<RelayPostAcceptance | undefined> => {
+          const accepted = posts?.accepted.get(msg.recipientDeviceId);
+          if (accepted) return accepted;
+          const refusal = posts?.refused.get(msg.recipientDeviceId);
+          if (!refusal && storedRefusal(intent, msg)) {
+            skippedRefusal = true;
+            return undefined;
+          }
+          return this.postStoredDirectDeviceMessage(
+            intent,
+            msg,
+            plaintextBytes,
+            sessions,
+            control,
+            evidence,
+            refusal
+          );
+        },
+        'device',
+        stopSignal
+      );
+      results = posted.filter((acceptance) => acceptance !== undefined);
+    } catch (error) {
+      return this.endOrRethrow(intent, evidence, error);
     }
+    if (skippedRefusal) await this.endRefusedReplay(intent, evidence);
+    const first = sendResultAcceptance(results);
 
-    // The sync copies start only after every device post settled.
+    // The sync copies start only after every device post settled. A copy
+    // that the posting deadline stopped stays pending, and the send
+    // completes with syncPending. Every other sync failure fails the send.
     const syncRepair: SyncCopyRepair = {
       sessions,
       intentId: intent.clientMessageId,
       rebuild: async (deviceId) =>
         (await this.prepareDirectSyncMessages(intent, plaintextBytes, [deviceId]))[0],
     };
+    let syncPending = false;
     await this.sendPhase(
       intent.syncMessages,
-      (message) => this.postSyncMessage(relay, message, control, syncRepair),
+      async (message) => {
+        const stop = recordDeadlineStop(control.beforeRequest);
+        const destination = syncDestination(intent.clientMessageId, message);
+        try {
+          await evidence.postSync(destination, stop.check, (gate) =>
+            this.postSyncMessage(relay, message, control, syncRepair, gate)
+          );
+        } catch (error) {
+          if (!stop.stopped()) throw error;
+          syncPending = true;
+        }
+      },
       'sync',
       stopSignal
     );
 
     const result = {
       clientMessageId: intent.clientMessageId,
-      messageId,
-      timestamp,
+      messageId: first?.messageId ?? `local-${intent.clientTimestamp}`,
+      timestamp: first?.serverTimestamp ?? intent.clientTimestamp,
       recipientDeviceCount: intent.deviceMessages.length,
       ...aggregateRelayAcceptance(results),
     };
-    await completeOutgoingMessageIntent(this.storage, intent.clientMessageId, result);
-    return result;
+    await completeOutgoingMessageIntent(this.storage, intent.clientMessageId, result, {
+      syncPending,
+    });
+    return syncPending ? { ...result, syncPending: true as const } : result;
   }
 
   /** True when the relay compares declared device sets, so each send declares them. */
@@ -3468,8 +4655,11 @@ export class SignalProtocolServiceCipher {
             bundleMissing.push(...repaired.bundleMissing);
             for (const device of repaired.ready) {
               const message = await run.encrypt(device);
-              if (message) added.push(message);
-              else bundleMissing.push(device);
+              if (message) {
+                added.push(message);
+              } else {
+                bundleMissing.push(device);
+              }
             }
           });
         }
@@ -3481,6 +4671,17 @@ export class SignalProtocolServiceCipher {
             bundleMissing,
             ...(run.phase === 'recipient' ? { deviceMessages: added } : { syncMessages: added }),
           });
+          // The store wrote `repairedFor` on each added device, and
+          // `repaired` on a device that the repair also removed. The hook
+          // takes the entry before the next pass posts the device.
+          for (const message of added) {
+            const [destination] = sendDestinations(run.intentId, [message]);
+            const entry =
+              intent.destinationProgress?.[
+                outgoingDestinationProgressKey(destination!.postMessageId, destination!.device)
+              ];
+            if (entry) run.repaired?.(destination!.device, entry);
+          }
           messages = postable(
             run.phase === 'recipient' ? intent.deviceMessages : intent.syncMessages
           );
@@ -3503,12 +4704,18 @@ export class SignalProtocolServiceCipher {
         return { bundleMissing };
       },
       unresolve: async (unresolved) => {
-        if (run.intentId === undefined) return;
-        await markOutgoingDeviceSetUnresolved(
+        if (run.intentId === undefined) return undefined;
+        const end =
+          run.phase === 'recipient' && run.evidence
+            ? await this.unresolvedRecipientEnd(run.intentId, run.evidence, unresolved)
+            : undefined;
+        const stored = await markOutgoingDeviceSetUnresolved(
           this.storage,
           run.intentId,
-          storedDeviceSetUnresolved(unresolved)
+          storedDeviceSetUnresolved(unresolved),
+          end
         );
+        return stored.result ? undefined : stored.outcome;
       },
       wait: (milliseconds) => waitUnlessStopped(milliseconds, run.stopSignal),
       logFailure: (device, error) => {
@@ -3695,7 +4902,8 @@ export class SignalProtocolServiceCipher {
 
   /**
    * Replay a stored direct send on a relay that compares device sets. A
-   * terminal send starts a new run at 0 restarts. A completed send with a
+   * later `send()` after a recipient-phase end throws the stored-end class
+   * of its outcome and posts nothing. A completed send with a
    * pending sync phase posts only its sync messages. It first reads the own
    * device list when the send could not read it: the phase has no sync
    * message and stores no own device with no bundle. A stored device with no
@@ -3707,11 +4915,14 @@ export class SignalProtocolServiceCipher {
     existing: StoredOutgoingMessageIntent,
     plaintextBytes: Uint8Array,
     sessions: SendSessionCallbacks | undefined,
-    stopSignal: AbortSignal | undefined
+    stopSignal: AbortSignal | undefined,
+    evidence: SendCallEvidence
   ): Promise<SendResult> {
-    const intent = await restartOutgoingDeviceSet(this.storage, existing.clientMessageId);
+    const intent = existing;
     const stored = outgoingMessageIntentResult(intent);
-    if (!stored) return this.sendDeclaredDirectIntent(intent, plaintextBytes, sessions, stopSignal);
+    if (!stored) {
+      return this.sendDeclaredDirectIntent(intent, plaintextBytes, sessions, stopSignal, evidence);
+    }
     if (!intent.syncPending) return stored;
     const { syncPending: _pending, ...result } = stored;
     let current = intent;
@@ -3731,7 +4942,9 @@ export class SignalProtocolServiceCipher {
       current,
       this.directSyncEncrypt(current, plaintextBytes),
       sessions,
-      stopSignal
+      stopSignal,
+      evidence.check,
+      evidence
     );
     return this.markUncheckedDeclaredPosts(
       sync.synced ? result : { ...result, syncPending: true as const },
@@ -3789,11 +5002,13 @@ export class SignalProtocolServiceCipher {
     intent: StoredOutgoingMessageIntent,
     plaintextBytes: Uint8Array,
     sessions: SendSessionCallbacks | undefined,
-    stopSignal: AbortSignal | undefined
+    stopSignal: AbortSignal | undefined,
+    evidence: SendCallEvidence
   ): Promise<SendResult> {
-    const control: DevicePostControl = { ...(stopSignal && { stopSignal }) };
+    const control = this.postingControl(evidence, { ...(stopSignal && { stopSignal }) });
     let sealedSender: ResolvedSealedSenderContext | null | undefined;
-    const recipient = await this.runDeclaredPhase<RelayPostAcceptance>({
+    let skippedRefusal = false;
+    const recipient = await this.runDeclaredPhase<RelayPostAcceptance | undefined>({
       phase: 'recipient',
       clientMessageId: intent.clientMessageId,
       intentId: intent.clientMessageId,
@@ -3801,8 +5016,22 @@ export class SignalProtocolServiceCipher {
       messages: intent.deviceMessages,
       bundleMissing: intent.deviceSetBundleMissing?.recipient ?? [],
       ...(intent.recipientId !== this.userId && { requirePostTo: intent.recipientId }),
-      post: (message, declaredDeviceIds) =>
-        this.sendStoredDirectDeviceMessage(intent, message, { ...control, declaredDeviceIds }),
+      // A device with a stored refusal for good stays declared, and is not
+      // posted again.
+      post: async (message, declaredDeviceIds) => {
+        if (storedRefusal(intent, message)) {
+          skippedRefusal = true;
+          return undefined;
+        }
+        return this.postDirectDeviceMessage(
+          intent,
+          message,
+          { ...control, declaredDeviceIds },
+          evidence
+        );
+      },
+      repaired: (device, entry) => evidence.refreshEntry(device, entry),
+      evidence,
       encrypt: async (device) => {
         const message = await this.sesameManager.sendMessage(
           device.userId,
@@ -3817,35 +5046,33 @@ export class SignalProtocolServiceCipher {
       },
       sessions,
       stopSignal,
-    });
+    }).catch((error: unknown) => this.endOrRethrow(intent, evidence, error));
+    if (skippedRefusal) await this.endRefusedReplay(intent, evidence);
 
-    const accepted = recipient.values;
-    let messageId = `local-${intent.clientTimestamp}`;
-    let timestamp = intent.clientTimestamp;
-    for (const acceptance of accepted) {
-      if (messageId.startsWith('local-')) {
-        messageId = acceptance.messageId;
-        timestamp = acceptance.serverTimestamp;
-      }
-    }
+    const accepted = recipient.values.filter((acceptance) => acceptance !== undefined);
+    const first = sendResultAcceptance(accepted);
     const result = {
       clientMessageId: intent.clientMessageId,
-      messageId,
-      timestamp,
+      messageId: first?.messageId ?? `local-${intent.clientTimestamp}`,
+      timestamp: first?.serverTimestamp ?? intent.clientTimestamp,
       recipientDeviceCount: recipient.messages.length,
       ...aggregateRelayAcceptance(accepted),
     };
 
     // The sync phase runs when a recipient receipt sets needsSync or the
     // send holds an own device record. With needsSync and no own record,
-    // the send reads the own list once. When that read fails, the sync
-    // phase stays pending with no sync messages, and a replay reads it.
+    // the send reads the own list once. A RETRY_CONFLICT or
+    // DELIVERY_ALREADY_ACCEPTED acceptance has no receipt, and the lost receipt can have set needsSync, so it also
+    // starts the read. When that read fails, the sync phase stays pending
+    // with no sync messages, and a replay reads it.
     let current =
       (await getOutgoingMessageIntent(this.storage, intent.clientMessageId)) ?? intent;
     let syncUnread = false;
     if (
       current.syncMessages.length === 0 &&
-      accepted.some((acceptance) => acceptance.needsSync === true)
+      accepted.some(
+        (acceptance) => acceptance.needsSync === true || isConflictAcceptance(acceptance)
+      )
     ) {
       const added = await this.addDeclaredDirectSync(current, plaintextBytes, sessions, stopSignal);
       current = added.intent;
@@ -3860,7 +5087,9 @@ export class SignalProtocolServiceCipher {
           current,
           this.directSyncEncrypt(current, plaintextBytes),
           sessions,
-          stopSignal
+          stopSignal,
+          evidence.check,
+          evidence
         )
       : { synced: true, accepted: [] };
     const route = intent.transportMode === 'identified' ? 'identified-direct' : 'anonymous-direct';
@@ -3888,16 +5117,24 @@ export class SignalProtocolServiceCipher {
    * restart count. A failure or an unresolved end is logged and leaves the
    * phase pending. The outcome keeps the receipt of each accepted sync post,
    * also when the phase fails, so the send reports a receipt without the
-   * `deviceSetChecked` mark.
+   * `deviceSetChecked` mark. A direct send passes its posting deadline
+   * check, so no sync post starts at or after the deadline. It also passes
+   * the evidence of its call: the outbox then stores the progress of each
+   * sync copy, and the phase does not post a copy that the Relay accepted.
    */
   private async finishDeclaredSync(
     intent: StoredOutgoingMessageIntent,
     encrypt: (device: DeviceSetDevice) => Promise<StoredOutgoingDeviceMessage | undefined>,
     sessions: SendSessionCallbacks | undefined,
-    stopSignal: AbortSignal | undefined
+    stopSignal: AbortSignal | undefined,
+    beforeRequest?: () => Promise<void>,
+    evidence?: SendCallEvidence
   ): Promise<DeclaredSyncOutcome> {
     const relay = this.relay!;
-    const control: DevicePostControl = { ...(stopSignal && { stopSignal }) };
+    const control: DevicePostControl = {
+      ...(stopSignal && { stopSignal }),
+      ...(beforeRequest && { beforeRequest }),
+    };
     const accepted: RelayPostAcceptance[] = [];
     try {
       await this.runDeclaredPhase<void>({
@@ -3908,9 +5145,21 @@ export class SignalProtocolServiceCipher {
         messages: intent.syncMessages,
         bundleMissing: intent.deviceSetBundleMissing?.sync ?? [],
         post: async (message, declaredDeviceIds) => {
-          accepted.push(
-            await this.postSyncCopy(relay, message, { ...control, declaredDeviceIds })
+          const copy: DevicePostControl = { ...control, declaredDeviceIds };
+          if (!evidence) {
+            accepted.push(await this.postSyncCopy(relay, message, copy));
+            return;
+          }
+          const acceptance = await evidence.postSync(
+            syncDestination(intent.clientMessageId, message),
+            beforeRequest ?? (async () => {}),
+            (gate) =>
+              this.postSyncCopy(relay, message, {
+                ...copy,
+                beforeRequest: gate(message.clientMessageId),
+              })
           );
+          if (acceptance) accepted.push(acceptance);
         },
         encrypt,
         sessions,
@@ -3987,12 +5236,28 @@ export class SignalProtocolServiceCipher {
     sessions: SendSessionCallbacks | undefined,
     stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
-    const control: DevicePostControl = { ...(stopSignal && { stopSignal }) };
+    // The outbox binds the evidence of the call once it holds the stored
+    // intent, before any post. Each request of the call meets its deadline.
+    let groupEvidence: SendCallEvidence | undefined;
+    const boundGroupEvidence = (): SendCallEvidence => {
+      if (!groupEvidence) throw new Error('group send evidence read before bindEvidence');
+      return groupEvidence;
+    };
+    const control: DevicePostControl = {
+      ...(stopSignal && { stopSignal }),
+      beforeRequest: () => boundGroupEvidence().check(),
+    };
     // A send prepared in this attempt keeps its distribution for a repair.
     const repair: PreMessageRepair = { ...(sessions && { sessions }) };
     const declared = this.declaresDeviceSets();
     return sendGroupWithExactOutbox(
       {
+        bindEvidence: (intent) => {
+          groupEvidence = this.sendCallEvidence(intent);
+        },
+        refreshEntry: (device, entry) => boundGroupEvidence().refreshEntry(device, entry),
+        endRecipientPhase: (intent, error) =>
+          this.endOrRethrow(intent, boundGroupEvidence(), error),
         storage: this.storage,
         ...(this.relay && { relay: this.relay }),
         senderUserId: this.userId,
@@ -4068,12 +5333,28 @@ export class SignalProtocolServiceCipher {
             )
           );
         },
-        postSyncMessage: (intent, message, rebuild) =>
-          this.postSyncMessage(this.relay!, message, control, {
-            sessions: repair.sessions,
-            intentId: intent.clientMessageId,
-            rebuild,
-          }),
+        postSyncMessage: async (intent, message, rebuild) => {
+          // A copy that the posting deadline stopped stays pending.
+          const stop = recordDeadlineStop(control.beforeRequest);
+          try {
+            await boundGroupEvidence().postSync(
+              syncDestination(intent.clientMessageId, message),
+              stop.check,
+              (gate) =>
+                this.postSyncMessage(
+                  this.relay!,
+                  message,
+                  control,
+                  { sessions: repair.sessions, intentId: intent.clientMessageId, rebuild },
+                  gate
+                )
+            );
+          } catch (error) {
+            if (!stop.stopped()) throw error;
+            return true;
+          }
+          return false;
+        },
         resolveGroupAuthorization: (groupId, recipients) =>
           this.resolveGroupSendAuthorization(groupId, recipients),
         reportIdentifiedFallback: (recipientUserId) =>
@@ -4083,7 +5364,7 @@ export class SignalProtocolServiceCipher {
         authorizePreMessage: (groupId, message, required) =>
           this.authorizePreMessage(groupId, message, required),
         postPreMessage: (intent, transport, required) =>
-          this.postPreMessage(intent, transport, required, repair, control),
+          this.postPreMessage(intent, transport, required, repair, control, boundGroupEvidence()),
         prepareSenderKeyHandoffs: (intent, listed) =>
           this.prepareIntentSenderKeyHandoffs(intent, listed, repair, repair.sessions, stopSignal),
         remoteRegistrationId: (device) =>
@@ -4092,29 +5373,50 @@ export class SignalProtocolServiceCipher {
         repairStaleDevice: (intent, message) =>
           this.repairStaleGroupDevice(intent, message, repair, stopSignal),
         sendPreparedSealedDevice: (intent, message, auth, declaredDeviceIds) =>
-          this.sendToDevice(
-            message,
-            message.ciphertext,
-            message.messageType,
-            message.recipientRegistrationId,
-            null,
-            undefined,
+          this.postGroupDestination(
             intent.clientMessageId,
-            {
-              sentMessageBase64: message.sealedSenderMessage!,
-              auth,
-              deliveryMode: message.sealedSenderDeliveryMode ?? 'preferred',
-            },
-            { ...control, ...(declaredDeviceIds && { declaredDeviceIds }) }
+            sendDestinations(intent.clientMessageId, [message])[0]!,
+            boundGroupEvidence(),
+            { ...control, ...(declaredDeviceIds && { declaredDeviceIds }) },
+            (posting) =>
+              this.sendToDevice(
+                message,
+                message.ciphertext,
+                message.messageType,
+                message.recipientRegistrationId,
+                null,
+                undefined,
+                intent.clientMessageId,
+                {
+                  sentMessageBase64: message.sealedSenderMessage!,
+                  auth,
+                  deliveryMode: message.sealedSenderDeliveryMode ?? 'preferred',
+                },
+                posting
+              )
           ),
         prepareEach: (items, task) =>
           this.fanOut.all(items, task).catch((error: unknown) => {
             throw firstItemError(error);
           }),
         sendPhase: (messages, task, phase) => this.sendPhase(messages, task, phase, stopSignal),
-        postToRelay: (send, sealed) => this.postToRelay(send, sealed, control),
+        postToRelay: <T>(
+          send: () => Promise<T>,
+          sealed: boolean,
+          destination?: SendDestination | readonly SendDestination[]
+        ) =>
+          destination === undefined
+            ? this.postToRelay(send, sealed, control)
+            : this.postGroupRelay(
+                send,
+                sealed,
+                control,
+                boundGroupEvidence(),
+                options.clientMessageId,
+                destination
+              ),
         ...(declared && {
-          deviceSets: this.groupDeviceSetContext(sessions, stopSignal),
+          deviceSets: this.groupDeviceSetContext(sessions, stopSignal, boundGroupEvidence),
         }),
       },
       actualGroupId,
@@ -4125,11 +5427,14 @@ export class SignalProtocolServiceCipher {
 
   /**
    * The declared work of a group send on a relay that compares device sets
-   * (§5.5 of the device-set contract).
+   * (§5.5 of the device-set contract). `readEvidence` gives the evidence of
+   * the call, so each sync copy meets the posting deadline and stores its
+   * progress.
    */
   private groupDeviceSetContext(
     sessions: SendSessionCallbacks | undefined,
-    stopSignal: AbortSignal | undefined
+    stopSignal: AbortSignal | undefined,
+    readEvidence: () => SendCallEvidence
   ): GroupDeviceSetContext {
     return {
       repairDevices: (account, postedRegistration, unposted) => {
@@ -4150,14 +5455,26 @@ export class SignalProtocolServiceCipher {
         );
       },
       readOwnDevices: () => this.readOwnDeviceList(sessions, stopSignal),
-      runSyncPhase: (intent, rebuild) =>
-        this.finishDeclaredSync(intent, rebuild, sessions, stopSignal),
+      runSyncPhase: (intent, rebuild) => {
+        const evidence = readEvidence();
+        return this.finishDeclaredSync(
+          intent,
+          rebuild,
+          sessions,
+          stopSignal,
+          evidence.check,
+          evidence
+        );
+      },
       unresolve: async (clientMessageId, unresolved) => {
-        await markOutgoingDeviceSetUnresolved(
+        const end = await this.unresolvedRecipientEnd(clientMessageId, readEvidence(), unresolved);
+        const stored = await markOutgoingDeviceSetUnresolved(
           this.storage,
           clientMessageId,
-          storedDeviceSetUnresolved(unresolved)
+          storedDeviceSetUnresolved(unresolved),
+          end
         );
+        return stored.result ? undefined : stored.outcome;
       },
       wait: (milliseconds) => waitUnlessStopped(milliseconds, stopSignal),
       logFailure: (device, error) => {
@@ -4365,27 +5682,39 @@ export class SignalProtocolServiceCipher {
     }
     await this.restrictUnidentifiedAccessMode(message.recipientUserId);
     // The rejected post started, so the next post continues it.
+    // Each request of it still meets the posting deadline and counts for
+    // the device.
     const continued: DevicePostControl = {
       ...(control.stopSignal && { stopSignal: control.stopSignal }),
       ...(control.operationEpochMilliseconds !== undefined && {
         operationEpochMilliseconds: control.operationEpochMilliseconds,
       }),
+      ...(control.beforeRequest && { beforeRequest: control.beforeRequest }),
+      ...(control.onRequest && { onRequest: control.onRequest }),
     };
     const endorsement = await this.resolveDistributionEndorsement(
       message.recipientUserId,
       intent.recipientId
     );
+    // When the posting deadline refuses a continued request, the sealed
+    // answer stays the answer of the post.
     if (endorsement) {
       try {
         return await this.postStoredPreMessage(intent, message, endorsement, true, continued);
       } catch (error) {
+        if (isPostingDeadlineReached(error)) throw rejection;
         if (!(error instanceof SealedSenderAuthError)) throw error;
         rejection = error;
       }
     }
     if (required) throw rejection;
     await this.reportIdentifiedFallback(message.recipientUserId);
-    return this.postStoredPreMessage(intent, message, undefined, false, continued);
+    try {
+      return await this.postStoredPreMessage(intent, message, undefined, false, continued);
+    } catch (error) {
+      if (isPostingDeadlineReached(error)) throw rejection;
+      throw error;
+    }
   }
 
   /**
@@ -4446,18 +5775,41 @@ export class SignalProtocolServiceCipher {
    * refreshes the session and drops the pre-message, because it has no
    * distribution of the key of the send. Resolves to the pre-message that the
    * relay accepted or that the send dropped, with the outcome.
+   *
+   * A RETRY_CONFLICT answer, or a DELIVERY_ALREADY_ACCEPTED answer under
+   * protocol version 2, means that the Relay holds a message under the ID of
+   * the post. The evidence of the call accepts it only when the stored
+   * entry of the destination has no blocking repair mark: then the Relay
+   * holds the same bytes, and the pre-message counts as accepted. Each other
+   * such answer leaves the destination unknown, and the pre-message counts
+   * as held: it writes no handoff row, so the next send gives the key again.
+   * A repair refreshes the evidence entry of its repaired post before the
+   * post, so the answer to that post reads the repair mark.
    */
   private async postPreMessage(
     intent: StoredOutgoingMessageIntent,
     transport: PreMessageTransport,
     required: boolean,
     repair: PreMessageRepair,
-    control: DevicePostControl
+    control: DevicePostControl,
+    evidence: SendCallEvidence
   ): Promise<PreMessagePostResult> {
+    const post = (sent: PreMessageTransport) =>
+      this.postGroupDestination(
+        intent.clientMessageId,
+        sendDestinations(intent.clientMessageId, [sent.message])[0]!,
+        evidence,
+        control,
+        (posting) => this.sendPreMessage(intent, sent, required, posting)
+      );
     try {
-      await this.sendPreMessage(intent, transport, required, control);
+      await post(transport);
       return { message: transport.message, outcome: 'accepted' };
     } catch (error) {
+      // The evidence did not accept this answer, so the post rejected.
+      if (relayHoldsMessageId(error)) {
+        return { message: transport.message, outcome: 'held' };
+      }
       if (await this.isRemovedDeviceRefusal(error, transport.message, control)) {
         return { message: transport.message, outcome: 'removed' };
       }
@@ -4469,13 +5821,24 @@ export class SignalProtocolServiceCipher {
       this.repairRejectedPreMessageInTurn(intent, transport.message, required, repair, sessions)
     );
     if (!repaired) return { message: transport.message, outcome: 'dropped', refreshed: true };
-    try {
-      await this.sendPreMessage(intent, repaired, required, control);
-    } catch (error) {
-      if (!(await this.isRemovedDeviceRefusal(error, repaired.message, control))) throw error;
-      return { message: repaired.message, outcome: 'removed' };
+    if (repaired.entry) {
+      evidence.refreshEntry(
+        { userId: repaired.entry.userId, deviceId: repaired.entry.deviceId },
+        repaired.entry
+      );
     }
-    return { message: repaired.message, outcome: 'accepted', refreshed: true };
+    try {
+      await post(repaired.transport);
+    } catch (error) {
+      if (relayHoldsMessageId(error)) {
+        return { message: repaired.transport.message, outcome: 'held', refreshed: true };
+      }
+      if (!(await this.isRemovedDeviceRefusal(error, repaired.transport.message, control))) {
+        throw error;
+      }
+      return { message: repaired.transport.message, outcome: 'removed' };
+    }
+    return { message: repaired.transport.message, outcome: 'accepted', refreshed: true };
   }
 
   /**
@@ -4566,8 +5929,10 @@ export class SignalProtocolServiceCipher {
   /**
    * Refresh the session of a device that refused a pre-message, encrypt the
    * distribution again, and replace the stored pre-message before its post.
-   * The saved refused ciphertext is never posted again. Resolves to
-   * undefined when a replay has no distribution of the key of the send.
+   * The saved refused ciphertext is never posted again. Resolves to the
+   * repaired transport and the stored entry of its post, which carries the
+   * repair mark, or to undefined when a replay has no distribution of the
+   * key of the send.
    */
   private async repairRejectedPreMessageInTurn(
     intent: StoredOutgoingMessageIntent,
@@ -4575,7 +5940,9 @@ export class SignalProtocolServiceCipher {
     required: boolean,
     repair: PreMessageRepair,
     sessions: SendSessionCallbacks
-  ): Promise<PreMessageTransport | undefined> {
+  ): Promise<
+    { transport: PreMessageTransport; entry: StoredDestinationProgress | undefined } | undefined
+  > {
     const refreshed = await sessions.refreshStaleSession(
       rejected.recipientUserId,
       rejected.recipientDeviceId
@@ -4605,10 +5972,17 @@ export class SignalProtocolServiceCipher {
     if (registrationId !== undefined) fresh.recipientRegistrationId = registrationId;
     if (rejected.senderKeyHandoff) fresh.senderKeyHandoff = rejected.senderKeyHandoff;
     const transport = await this.authorizePreMessage(intent.recipientId, fresh, required);
-    await replaceOutgoingGroupPreMessages(this.storage, intent.clientMessageId, [
+    const stored = await replaceOutgoingGroupPreMessages(this.storage, intent.clientMessageId, [
       { expected: rejected, replacement: transport.message },
     ]);
-    return transport;
+    const entry =
+      stored.destinationProgress?.[
+        outgoingDestinationProgressKey(fresh.clientMessageId, {
+          userId: fresh.recipientUserId,
+          deviceId: fresh.recipientDeviceId,
+        })
+      ];
+    return { transport, entry };
   }
 
   /**
@@ -5031,167 +6405,204 @@ export class SignalProtocolServiceCipher {
     control: DevicePostControl = {}
   ): Promise<RelayPostAcceptance> {
     const effectiveClientMessageId = msg.clientMessageId ?? clientMessageId;
-    // A fallback continues a post that started, so only the first request is
-    // admitted.
-    let identifiedControl = control;
-
-    if (preparedSealedSender && !this.relay!.sendMultiRecipientUnidentified) {
-      if (preparedSealedSender.deliveryMode === 'required') {
-        throw new EncryptionError(
-          'Required sealed-sender relay capability is unavailable',
-          EncryptionErrorCode.SEALED_SENDER_REQUIRED,
-          { recipientUserId: msg.recipientUserId }
-        );
-      }
-    }
-
-    // Sealed sender path: use the V2 upload format for one recipient. V2 has
-    // no two-recipient minimum; its recipient-count field permits this exact
-    // direct-delivery shape.
-    if ((sealedSender || preparedSealedSender) && this.relay!.sendMultiRecipientUnidentified) {
-      // The sealed body names the registration of its device, as the
-      // identified post does.
-      const prepared =
-        preparedSealedSender ??
-        (sealedSender
-          ? {
-              sentMessageBase64: await this.serializeDirectSealedSenderMessage(
-                msg,
-                ciphertextBase64,
-                messageType,
-                recipientRegistrationId,
-                sealedSender,
-                contentHint
-              ),
-              auth: sealedSender.auth,
-              deliveryMode:
-                sealedSender.config.deliveryMode === 'required' ? 'required' : 'preferred',
-            }
-          : undefined);
-      if (!prepared) throw new Error('Missing sealed-sender delivery state');
-      // This post has one destination device, so a group endorsement takes
-      // the direct sealed route.
-      const sealedAuth =
-        prepared.auth.type === 'groupSendToken'
-          ? forDirectSealedRoute(prepared.auth)
-          : prepared.auth;
-
-      // The identified fallback declares the same device set as the sealed
-      // post, because both name the same account.
-      identifiedControl = {
-        ...(control.stopSignal && { stopSignal: control.stopSignal }),
-        ...(control.operationEpochMilliseconds !== undefined && {
-          operationEpochMilliseconds: control.operationEpochMilliseconds,
-        }),
-        ...(control.deliveryClass && { deliveryClass: control.deliveryClass }),
-        ...(control.declaredDeviceIds && { declaredDeviceIds: control.declaredDeviceIds }),
-      };
-      const declaredDeviceIds = control.declaredDeviceIds;
-      try {
-        const result = await this.postToRelay(
-          () =>
-            declaredDeviceIds
-              ? this.relay!.sendMultiRecipientUnidentified!(
-                  prepared.sentMessageBase64,
-                  sealedAuth,
-                  msg.timestamp,
-                  control.deliveryClass ?? 'user-visible',
-                  [msg.recipientUserId],
-                  effectiveClientMessageId,
-                  control.operationEpochMilliseconds,
-                  undefined,
-                  [{ userId: msg.recipientUserId, deviceIds: declaredDeviceIds }]
-                )
-              : this.relay!.sendMultiRecipientUnidentified!(
-                  prepared.sentMessageBase64,
-                  sealedAuth,
-                  msg.timestamp,
-                  control.deliveryClass ?? 'user-visible',
-                  [msg.recipientUserId],
-                  effectiveClientMessageId,
-                  ...(control.operationEpochMilliseconds !== undefined
-                    ? ([control.operationEpochMilliseconds] as const)
-                    : ([] as const))
-                ),
-          true,
-          control
-        );
-        if (result.uuids404.length > 0) {
-          throw new SealedSenderRecipientRejectedError();
-        }
-        if (usedGroupRouteFallback(result)) {
-          // The privacy of the post is the same on both routes. The record
-          // shows that the Relay does not take the endorsement on the
-          // direct route.
-          this.logger.info('The Relay refused the group endorsement on the direct sealed route', {
-            category: 'E2EE',
-            data: {
-              recipientUserId: msg.recipientUserId,
-              recipientDeviceId: msg.recipientDeviceId,
-              behavior: 'GROUP_ROUTE_FALLBACK',
-            },
-          });
-        }
-        // The group-token receipt names each refused destination with its
-        // code. A declared post gets a whole-post refusal for a stale
-        // registration instead. The refused count alone names no device, so
-        // the send infers nothing from it.
-        if (
-          result.refusals?.some(
-            (refusal) =>
-              refusal.code === 'STALE_DEVICE' &&
-              refusal.userId === msg.recipientUserId &&
-              refusal.deviceId === msg.recipientDeviceId
+    // The transport gates a repeat by the ID that the posted envelope carries.
+    // The devices of one intent share that ID, so only a repeat to this
+    // device counts as a request of this post, and only that repeat runs
+    // the gate of this post.
+    const { beforeRequest, onRequest } = control;
+    const ownRepeat = (repeat: RepeatRequest) =>
+      repeat.userId === msg.recipientUserId && repeat.deviceId === msg.recipientDeviceId;
+    const release =
+      (beforeRequest || onRequest) && effectiveClientMessageId !== undefined
+        ? admitRequestsFor(
+            this.relay!,
+            effectiveClientMessageId,
+            beforeRequest
+              ? (repeat) => (ownRepeat(repeat) ? beforeRequest() : Promise.resolve())
+              : async () => {},
+            onRequest &&
+              ((repeat) => {
+                if (ownRepeat(repeat)) onRequest(repeat.after);
+              })
           )
-        ) {
-          throw markRelayDeviceRefusal(new Error('Recipient device registration changed'), {
-            code: 'STALE_DEVICE',
-            userId: msg.recipientUserId,
-            deviceId: msg.recipientDeviceId,
-          });
+        : undefined;
+    // A fallback continues a post that started, so only the first request is
+    // admitted. Each request still meets the posting deadline.
+    let identifiedControl = control;
+    let fallbackFrom: SealedSenderAuthError | undefined;
+    try {
+      if (preparedSealedSender && !this.relay!.sendMultiRecipientUnidentified) {
+        if (preparedSealedSender.deliveryMode === 'required') {
+          throw new EncryptionError(
+            'Required sealed-sender relay capability is unavailable',
+            EncryptionErrorCode.SEALED_SENDER_REQUIRED,
+            { recipientUserId: msg.recipientUserId }
+          );
         }
-        return result;
-      } catch (error) {
-        // Fall back to identified delivery only for sealed-sender authorization
-        // failures. Other failures retain their original error semantics.
-        if (error instanceof SealedSenderAuthError) {
-          if (prepared.deliveryMode === 'required') {
+      }
+
+      // Sealed sender path: use the V2 upload format for one recipient. V2 has
+      // no two-recipient minimum; its recipient-count field permits this exact
+      // direct-delivery shape.
+      if ((sealedSender || preparedSealedSender) && this.relay!.sendMultiRecipientUnidentified) {
+        // The sealed body names the registration of its device, as the
+        // identified post does.
+        const prepared =
+          preparedSealedSender ??
+          (sealedSender
+            ? {
+                sentMessageBase64: await this.serializeDirectSealedSenderMessage(
+                  msg,
+                  ciphertextBase64,
+                  messageType,
+                  recipientRegistrationId,
+                  sealedSender,
+                  contentHint
+                ),
+                auth: sealedSender.auth,
+                deliveryMode:
+                  sealedSender.config.deliveryMode === 'required' ? 'required' : 'preferred',
+              }
+            : undefined);
+        if (!prepared) throw new Error('Missing sealed-sender delivery state');
+        // This post has one destination device, so a group endorsement takes
+        // the direct sealed route.
+        const sealedAuth =
+          prepared.auth.type === 'groupSendToken'
+            ? forDirectSealedRoute(prepared.auth)
+            : prepared.auth;
+
+        // The identified fallback declares the same device set as the sealed
+        // post, because both name the same account.
+        identifiedControl = {
+          ...(control.stopSignal && { stopSignal: control.stopSignal }),
+          ...(control.operationEpochMilliseconds !== undefined && {
+            operationEpochMilliseconds: control.operationEpochMilliseconds,
+          }),
+          ...(control.deliveryClass && { deliveryClass: control.deliveryClass }),
+          ...(control.declaredDeviceIds && { declaredDeviceIds: control.declaredDeviceIds }),
+          ...(control.beforeRequest && { beforeRequest: control.beforeRequest }),
+          ...(control.onRequest && { onRequest: control.onRequest }),
+        };
+        const declaredDeviceIds = control.declaredDeviceIds;
+        try {
+          const result = await this.postToRelay(
+            () =>
+              declaredDeviceIds
+                ? this.relay!.sendMultiRecipientUnidentified!(
+                    prepared.sentMessageBase64,
+                    sealedAuth,
+                    msg.timestamp,
+                    control.deliveryClass ?? 'user-visible',
+                    [msg.recipientUserId],
+                    effectiveClientMessageId,
+                    control.operationEpochMilliseconds,
+                    undefined,
+                    [{ userId: msg.recipientUserId, deviceIds: declaredDeviceIds }]
+                  )
+                : this.relay!.sendMultiRecipientUnidentified!(
+                    prepared.sentMessageBase64,
+                    sealedAuth,
+                    msg.timestamp,
+                    control.deliveryClass ?? 'user-visible',
+                    [msg.recipientUserId],
+                    effectiveClientMessageId,
+                    ...(control.operationEpochMilliseconds !== undefined
+                      ? ([control.operationEpochMilliseconds] as const)
+                      : ([] as const))
+                  ),
+            true,
+            control
+          );
+          if (result.uuids404.length > 0) {
+            throw new SealedSenderRecipientRejectedError();
+          }
+          if (usedGroupRouteFallback(result)) {
+            // The privacy of the post is the same on both routes. The record
+            // shows that the Relay does not take the endorsement on the
+            // direct route.
+            this.logger.info('The Relay refused the group endorsement on the direct sealed route', {
+              category: 'E2EE',
+              data: {
+                recipientUserId: msg.recipientUserId,
+                recipientDeviceId: msg.recipientDeviceId,
+                behavior: 'GROUP_ROUTE_FALLBACK',
+              },
+            });
+          }
+          // The group-token receipt names each refused destination with its
+          // code. A declared post gets a whole-post refusal for a stale
+          // registration instead. The refused count alone names no device, so
+          // the send infers nothing from it.
+          if (
+            result.refusals?.some(
+              (refusal) =>
+                refusal.code === 'STALE_DEVICE' &&
+                refusal.userId === msg.recipientUserId &&
+                refusal.deviceId === msg.recipientDeviceId
+            )
+          ) {
+            throw markRelayDeviceRefusal(new Error('Recipient device registration changed'), {
+              code: 'STALE_DEVICE',
+              userId: msg.recipientUserId,
+              deviceId: msg.recipientDeviceId,
+            });
+          }
+          return result;
+        } catch (error) {
+          // Fall back to identified delivery only for sealed-sender authorization
+          // failures. Other failures retain their original error semantics.
+          if (error instanceof SealedSenderAuthError) {
+            if (prepared.deliveryMode === 'required') {
+              throw error;
+            }
+            await this.restrictUnidentifiedAccessMode(msg.recipientUserId);
+            await this.reportIdentifiedFallback(msg.recipientUserId);
+            fallbackFrom = error;
+            // Fall through to identified path below
+          } else {
             throw error;
           }
-          await this.restrictUnidentifiedAccessMode(msg.recipientUserId);
-          await this.reportIdentifiedFallback(msg.recipientUserId);
-          // Fall through to identified path below
-        } else {
-          throw error;
         }
       }
-    }
 
-    // Identified sender path: standard relay send
-    return this.postToRelay(
-      () =>
-        this.relay!.send({
-          targetUserId: msg.recipientUserId,
-          targetDeviceId: msg.recipientDeviceId,
-          senderUserId: this.userId,
-          senderDeviceId: this.deviceId,
-          ciphertext: ciphertextBase64,
-          messageType,
-          deliveryClass: identifiedControl.deliveryClass ?? 'user-visible',
-          timestamp: msg.timestamp,
-          ...(identifiedControl.operationEpochMilliseconds !== undefined && {
-            operationEpochMilliseconds: identifiedControl.operationEpochMilliseconds,
-          }),
-          clientMessageId: effectiveClientMessageId,
-          recipientRegistrationId,
-          contentHint,
-          ...(identifiedControl.declaredDeviceIds && {
-            declaredDeviceIds: identifiedControl.declaredDeviceIds,
-          }),
-        }),
-      false,
-      identifiedControl
-    );
+      // Identified sender path: standard relay send
+      try {
+        return await this.postToRelay(
+          () =>
+            this.relay!.send({
+              targetUserId: msg.recipientUserId,
+              targetDeviceId: msg.recipientDeviceId,
+              senderUserId: this.userId,
+              senderDeviceId: this.deviceId,
+              ciphertext: ciphertextBase64,
+              messageType,
+              deliveryClass: identifiedControl.deliveryClass ?? 'user-visible',
+              timestamp: msg.timestamp,
+              ...(identifiedControl.operationEpochMilliseconds !== undefined && {
+                operationEpochMilliseconds: identifiedControl.operationEpochMilliseconds,
+              }),
+              clientMessageId: effectiveClientMessageId,
+              recipientRegistrationId,
+              contentHint,
+              ...(identifiedControl.declaredDeviceIds && {
+                declaredDeviceIds: identifiedControl.declaredDeviceIds,
+              }),
+            }),
+          false,
+          identifiedControl
+        );
+      } catch (error) {
+        if (fallbackFrom === undefined) throw error;
+        // The posting deadline refused the fallback request, so the sealed
+        // answer stays the answer of the post.
+        if (isPostingDeadlineReached(error)) throw fallbackFrom;
+        if (followedRepeatedRequest(fallbackFrom)) markAfterRepeatedRequest(error);
+        throw error;
+      }
+    } finally {
+      release?.();
+    }
   }
 
   /**
@@ -5623,20 +7034,57 @@ export class SignalProtocolServiceCipher {
       );
     }
 
-    // The upload posts the file, so a new send checks its timestamp first,
-    // once, against one clock reading. The mark stops the checks of the send
-    // after the upload, which would read a later clock. A send that repeats a
-    // stored intent keeps the stored timestamp.
-    const sendOptions = (await getOutgoingMessageIntent(this.storage, options.clientMessageId))
-      ? options
-      : withCheckedSendTimestamp(options);
-    const uploaded = await this.prepareAttachmentUpload(data, sendOptions);
+    const fileDigest = CryptoUtils.bytesToBase64(await CryptoUtils.sha256(data));
+    const stored = await getOutgoingMessageIntent(this.storage, options.clientMessageId);
+    let message: string;
+    let pointer: MediaAttachmentPointer;
+    let sendOptions: SendOptions &
+      SendTimestampOrigin &
+      SendBinaryAttachment & { clientMessageId: string };
+    if (stored) {
+      // A repeat sends the stored message under the stored timestamp, so the
+      // locked send replays the stored intent and uploads nothing. Another
+      // file, pointer metadata, recipient or timestamp is another logical
+      // send, and the repeat refuses it before any upload.
+      const group = isGroupId(recipientId);
+      const storedPointer =
+        stored.binaryAttachment && attachmentPointerOf(stored.binaryAttachment.message);
+      if (
+        !stored.binaryAttachment ||
+        !storedPointer ||
+        stored.binaryAttachment.fileDigest !== fileDigest ||
+        !pointerHasAttachmentMetadata(storedPointer, attachmentMetadataFromOptions(options)) ||
+        stored.kind !== (group ? 'group' : 'direct') ||
+        stored.recipientId !== (group ? extractGroupId(recipientId) : recipientId) ||
+        (options.timestamp !== undefined && stored.clientTimestamp !== options.timestamp)
+      ) {
+        throw new Error('A clientMessageId cannot identify two different logical sends');
+      }
+      message = stored.binaryAttachment.message;
+      pointer = storedPointer;
+      sendOptions = { ...options, timestamp: stored.clientTimestamp };
+    } else {
+      // The upload posts the file, so a new send checks its timestamp first,
+      // once, against one clock reading. Without a caller timestamp, the SDK
+      // reads its clock once, before the upload, and the message and the
+      // intent take that timestamp. The timestamp mark stops the checks of
+      // the send after the upload, which would read a later clock. The
+      // attachment mark puts the message in the intent.
+      const checked = withCheckedSendTimestamp(options);
+      const timestamp = checked.timestamp ?? Date.now();
+      const uploaded = await this.prepareAttachmentUpload(data, checked);
+      message = serializeMediaAttachmentMessage({ attachment: uploaded, timestamp });
+      // The pointer of the result comes from the message, as on a repeat.
+      pointer = attachmentPointerOf(message);
+      sendOptions = {
+        ...checked,
+        timestamp,
+        [SEND_TIMESTAMP_ORIGIN]: checked[SEND_TIMESTAMP_ORIGIN] ?? 'sdk-clock',
+        [SEND_BINARY_ATTACHMENT]: { fileDigest, message },
+      };
+    }
 
-    const attachmentPayload = serializeMediaAttachmentMessage({
-      attachment: uploaded,
-      timestamp: sendOptions.timestamp ?? Date.now(),
-    });
-    const attachmentBytes = new TextEncoder().encode(attachmentPayload);
+    const attachmentBytes = new TextEncoder().encode(message);
     let result: SendResult;
     if (isGroupId(recipientId)) {
       result = await this.encryptToGroup(
@@ -5652,11 +7100,11 @@ export class SignalProtocolServiceCipher {
 
     return {
       ...result,
-      storageId: uploaded.storageId,
-      aesKey: uploaded.key,
-      segmentSize: uploaded.segmentSize,
-      digest: uploaded.digest,
-      contentType: uploaded.contentType,
+      storageId: pointer.storageId,
+      aesKey: pointer.key,
+      segmentSize: pointer.segmentSize,
+      digest: pointer.digest,
+      contentType: pointer.contentType,
     };
   }
 
@@ -5680,19 +7128,7 @@ export class SignalProtocolServiceCipher {
       onProgress: options?.attachment?.onProgress,
       onCheckpoint: options?.attachment?.onCheckpoint,
       resume: options?.attachment?.resume,
-      contentType: options?.mimeType || 'application/octet-stream',
-      blurHash: options?.blurHash,
-      thumbnail: options?.thumbnail,
-      width: options?.width,
-      height: options?.height,
-      durationMs: options?.durationMs,
-      waveform: options?.waveform,
-      fileName: options?.fileName,
-      caption: options?.caption,
-      isViewOnce: options?.isViewOnce,
-      flags: options?.flags,
-      clientUuid: options?.clientUuid,
-      cdnNumber: options?.cdnNumber,
+      ...attachmentMetadataFromOptions(options),
     });
   }
 }

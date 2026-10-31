@@ -6,8 +6,9 @@
  * failed envelope posts nothing while the record exists. A post that fails
  * with a retryable class is posted again by the scheduler at its next
  * attempt time. A post that fails with a conclusive class, the deadline of
- * the record, a failed resend of the last answered attempt, and an
- * exhausted abuse allowance end the request. Each end calls the
+ * the record, a post due at or after its posting deadline, an
+ * OPERATION_EXPIRED refusal, a failed resend of the last answered attempt,
+ * and an exhausted abuse allowance end the request. Each end calls the
  * `onRetryTerminal` hook at least once: the record is marked emitted only
  * after the hook returns. Each request and each scheduler pass also checks
  * the delivery error of the record, as `reportDeliveryError` tells. Each
@@ -24,6 +25,8 @@ import {
   getRetryRequest,
   listRetryRequestIds,
   RETRY_REQUEST_DEADLINE_MS,
+  RETRY_REQUEST_POSTING_WINDOW_MS,
+  retryRequestPostingDeadlineAt,
   storeRetryRequest,
   updateRetryRequest,
   withProcessedEnvelopeLock,
@@ -54,8 +57,8 @@ type RetryRequestStore = Parameters<typeof storeRetryRequest>[0];
 /**
  * What the retry request of one failed decrypt did.
  *
- * - `posted`, `pending`, `terminal`: as `postRetryRequest` gives them. A
- *   terminal request also called the hook.
+ * - `posted`, `waiting`, `pending`, `terminal`: as `postRetryRequest`
+ *   gives them. A terminal request also called the hook.
  * - `owned`: the record of the failed envelope owns the request, so a
  *   redelivery of the failed envelope posted nothing.
  * - `deferred`: the rate limit refused a member, and the next attempt waits
@@ -67,12 +70,13 @@ export type RetryRequestOutcome = RetryPostOutcome | 'owned' | 'deferred' | 'ski
 /**
  * Tell whether the receive path acknowledges a failed envelope after its
  * retry request. A failed envelope is acknowledged once a record owns its
- * request. A member is acknowledged only when its request attempt is posted
- * or ended, so a member that waits is delivered again.
+ * request. A member is acknowledged only when its request attempt is
+ * posted, held by the Relay with nothing to post (`waiting`), or ended, so
+ * a deferred or skipped member is delivered again.
  */
 export function acknowledgesRetryRequest(outcome: RetryRequestOutcome, member: boolean): boolean {
   if (outcome === 'deferred' || outcome === 'skipped') return false;
-  return !member || outcome === 'posted' || outcome === 'terminal';
+  return !member || outcome === 'posted' || outcome === 'waiting' || outcome === 'terminal';
 }
 
 /** What the requester uses to ask for a resend after one failed decrypt. */
@@ -123,16 +127,20 @@ export interface RetryRequestSource {
    * group of `failedEnvelope`.
    */
   readonly groupId?: string;
-  /** The session reset of an `expired-content` end. Without it, nothing resets. */
+  /**
+   * The session reset of an `expired-content` or `posting-deadline` end.
+   * Without it, nothing resets.
+   */
   readonly reset: RetryTerminalResetSteps | undefined;
 }
 
 /**
  * Call the `onRetryTerminal` hook for the terminal state of a request
  * record, once. It reads the record, and when the terminal state is not
- * emitted, it first resets the session of an `expired-content` end with
- * `resetRetryTerminalSession`. It then calls the hook and stores the state
- * as emitted. The other classes reset nothing.
+ * emitted, it first resets the session of an `expired-content` or
+ * `posting-deadline` end with `resetRetryTerminalSession`. It then calls
+ * the hook and stores the state as emitted. The other classes reset
+ * nothing.
  *
  * The hook is called directly, not through `callHook`, so a hook that
  * throws, and the RelayWorkStopped of a stop or of the reset, propagate and
@@ -193,6 +201,10 @@ export async function emitRetryTerminal(
  *   end of the limit window and gives `deferred`.
  * - A member whose stored attempt is not answered posts it again, with no
  *   rate limit.
+ * - A member at or after the posting deadline of its stored attempt,
+ *   `retryRequestPostingDeadlineAt`, spends no request of the rate limit.
+ *   An answered or held attempt posts nothing and gives `waiting`. A due
+ *   attempt ends as `posting-deadline`.
  *
  * After a post, a terminal outcome calls the hook, and any other outcome
  * arms the scheduler for the record. Then, for each failed envelope with
@@ -245,6 +257,7 @@ export async function requestRetryInFamily(
           ...(own?.contentHint !== undefined && { contentHint: own.contentHint }),
           failedSender: sender,
           deadlineAt: now + RETRY_REQUEST_DEADLINE_MS,
+          postingDeadlineAt: now + RETRY_REQUEST_POSTING_WINDOW_MS,
           terminal: { class: 'abuse-allowance-exhausted', at: now, emitted: false },
         });
         await emitRetryTerminal(source, failedEnvelopeId);
@@ -253,8 +266,12 @@ export async function requestRetryInFamily(
     } else if (stored?.terminal) {
       await emitRetryTerminal(source, failedEnvelopeId);
       return 'terminal';
-    } else if (stored && answeredLastRetryAttempt(stored)) {
-      // The post ends the request, so it spends no request of the rate limit.
+    } else if (
+      stored &&
+      (answeredLastRetryAttempt(stored) || Date.now() >= retryRequestPostingDeadlineAt(stored))
+    ) {
+      // The post ends the request or posts nothing, so it spends no request
+      // of the rate limit.
     } else if (!stored || stored.answered) {
       const now = Date.now();
       if (stored?.lastFailureClass === 'rate-refusal' && (stored.nextAttemptAt ?? 0) > now) {
@@ -298,7 +315,7 @@ export async function requestRetryInFamily(
       await emitRetryTerminal(source, failedEnvelopeId);
     } else {
       const record = await getRetryRequest(storage, failedEnvelopeId);
-      if (record && !record.terminal) source.schedule?.(record.nextAttemptAt ?? record.deadlineAt);
+      if (record && !record.terminal) source.schedule?.(nextPassAt(record));
     }
     return outcome;
   };
@@ -335,22 +352,26 @@ export interface RetryRequestPass {
   readonly hooks: SignalProtocolClientHooks | undefined;
   readonly local: RetryRequestDevice;
   readonly send: ((envelope: Envelope) => Promise<unknown>) | undefined;
-  /** The session reset of an `expired-content` end. Without it, nothing resets. */
+  /**
+   * The session reset of an `expired-content` or `posting-deadline` end.
+   * Without it, nothing resets.
+   */
   readonly reset: RetryTerminalResetSteps | undefined;
 }
 
 /**
  * Posts each stored retry request whose next attempt time has come, ends
  * each request at its deadline, also when its stored attempt is answered,
- * and calls the hook for each terminal state that is not emitted. A request
- * whose failed envelope is fulfilled has its content, so the scheduler
- * neither posts nor ends it. It then runs `onDeliveryError` for each record whose
+ * ends as `posting-deadline` each request whose post is due at or after its
+ * posting deadline, and calls the hook for each terminal state that is not
+ * emitted. A request whose failed envelope is fulfilled has its content,
+ * so the scheduler neither posts nor ends it. It then runs `onDeliveryError` for each record whose
  * error is due, and `onDeliveryRecovered` for each fulfilled record whose
  * recovery the hook did not mark. A hook error for one record is logged,
  * the record keeps the time of its next attempt or deadline, and the pass
  * goes on with the next record. A pass runs at start() and at
  * the earliest next attempt
- * time, deadline or error time of the records. Each pass is relay work, so a
+ * time, posting deadline, deadline or error time of the records. Each pass is relay work, so a
  * client stop stops it. Each record is read and posted under the processed
  * lock of its failed envelope, as a receive does.
  *
@@ -496,15 +517,18 @@ export class RetryRequestScheduler {
       await updateRetryRequest(storage, failedEnvelopeId, record.retryId, record.attempt, {
         terminal: { class: 'expired-content', at: now, emitted: false },
         nextAttemptAt: undefined,
+        lastFailureClass: undefined,
       });
       await emitRetryTerminal(pass, failedEnvelopeId);
       return Infinity;
     }
     // An answered attempt waits for its resend, or for its deadline.
     if (record.answered) return record.deadlineAt;
-    // With no next attempt time, the Relay holds the stored attempt.
-    if (record.nextAttemptAt === undefined || record.nextAttemptAt > now) {
-      return Math.min(record.nextAttemptAt ?? Infinity, record.deadlineAt);
+    // With no next attempt time, the Relay holds the stored attempt. A due
+    // attempt at or after its posting deadline ends in the post.
+    if (record.nextAttemptAt === undefined) return record.deadlineAt;
+    if (record.nextAttemptAt > now && now < retryRequestPostingDeadlineAt(record)) {
+      return nextPassAt(record);
     }
     const outcome = await postStoredRetryRequest(
       storage,
@@ -520,8 +544,19 @@ export class RetryRequestScheduler {
     const after = await getRetryRequest(storage, failedEnvelopeId);
     if (!after || after.terminal) return Infinity;
     if (after.answered) return after.deadlineAt;
-    return Math.min(after.nextAttemptAt ?? Infinity, after.deadlineAt);
+    return nextPassAt(after);
   }
+}
+
+/**
+ * The time of the next pass for a record that has not ended: its next
+ * attempt time, at most its posting deadline and its deadline. With no next
+ * attempt time, the Relay holds the stored attempt, and the record waits
+ * for its deadline.
+ */
+function nextPassAt(record: StoredRetryRequest): number {
+  if (record.nextAttemptAt === undefined) return record.deadlineAt;
+  return Math.min(record.nextAttemptAt, retryRequestPostingDeadlineAt(record), record.deadlineAt);
 }
 
 /**

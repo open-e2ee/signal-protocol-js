@@ -86,6 +86,12 @@ export interface BlockedRecipientsSyncInput {
   syncedAt: number;
 }
 
+/**
+ * The sync content that `inspectContent` reads from a plaintext.
+ *
+ * The next major SDK version adds the `type` member `'groupKeySync'`. Code
+ * that switches on `type` must handle it in that version.
+ */
 export interface ParsedSyncContent {
   type:
     | 'sent'
@@ -160,6 +166,18 @@ export interface InspectedSignalProtocolContent {
   nullMessage: boolean;
 }
 
+/**
+ * Serializes the content that the client sends, and inspects the content
+ * that it receives.
+ *
+ * The next major SDK version adds the required method
+ * `serializeGroupKeySync`, so a custom adapter must implement it in that
+ * version. An adapter that spreads the result of
+ * `createDefaultSignalProtocolContentAdapter()` into itself gets the default
+ * method. Upgrade every own device of one account in one release: an own
+ * device on an older SDK version gives the raw group key sync to
+ * `onMessageDecrypted`.
+ */
 export interface SignalProtocolContentAdapter {
   serializeDataMessage(content: DataMessageInput): Uint8Array;
   serializeSentTranscript(input: SentSyncTranscriptInput): Uint8Array;

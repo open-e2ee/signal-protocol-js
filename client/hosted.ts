@@ -1084,7 +1084,11 @@ export async function createClientFromHostedResult(
   const resolvedGroups =
     groups === undefined
       ? undefined
-      : await resolveHostedGroupOptions(connection, groups);
+      : await resolveHostedGroupOptions(
+          connection,
+          groups,
+          hostedTransport?.relayProtocolVersion,
+        );
   const config = createSignalProtocolClientConfig({
     ...rest,
     ...(resolvedGroups

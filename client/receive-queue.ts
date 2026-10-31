@@ -227,17 +227,21 @@
  *   legacy conversion suite and the converted row tests.
  */
 
+import { bytesToBase64, sha256 } from '../internal/crypto';
 import { extractGroupId } from '../internal/groups';
 import type { Envelope } from '../remote/relay/types';
 import type { ReceiveWorkQuery, ReceiveWorkRecord } from '../types/api';
 import {
   completeReceiveRecord,
   getProcessedEnvelope,
+  hasReceivedTimestamp,
+  recordReceivedTimestamp,
   storeProcessedEnvelope,
   withProcessedEnvelopeLock,
   writeProcessedEnvelopes,
   type ProcessedEnvelopeOutcome,
-  type ProcessedEnvelopeWrite,
+  type ReceiveCompletionWrite,
+  type ReceivedMessageKey,
 } from '../local/store/reliability';
 import { RECEIVE_WORK_DEFAULT_LIMIT, sizedReceiveWork } from '../local/store/receive-work';
 import { reportDeliveryRecovered, reportReceiveDenial } from './delivery-error';
@@ -324,6 +328,17 @@ const DONE: RecordStep = { next: Infinity, processed: true };
 
 /** The time at which a `receipt-due` record stops sending its receipt. */
 const receiptEndsAt = (record: ReceiveWorkRecord): number => record.dueAt + RECEIPT_LIFESPAN_MS;
+
+/** The result of one delivery of authorized content. */
+interface Delivery {
+  /** True when the content owes a delivery receipt. */
+  readonly owesReceipt: boolean;
+  /** The key of the content that the hook took, when it has a timestamp. */
+  readonly received?: ReceivedMessageKey;
+}
+
+/** Content that the hook did not take, or that owes nothing. */
+const NOT_DELIVERED: Delivery = { owesReceipt: false };
 
 /** The application has not registered onMessageDecrypted yet. */
 class ReceiveHookMissing extends Error {
@@ -508,14 +523,18 @@ function withoutContent(record: ReceiveWorkRecord): ReceiveWorkRecord {
  * the same step, then runs `onDeliveryRecovered` through the completion gate. An
  * expired or denied resend never marks its failed envelope completed.
  *
+ * @param received - The key of the content that the application got. The
+ *   step records it, so a later copy with the same key is dropped. A
+ *   receipt record carries its key, and the step records that key again.
  * @returns False, with nothing written, when the stored revision changed.
  */
 export async function completeReceiveWork(
   ctx: Pick<SignalProtocolClientContext, 'storage' | 'hooks' | 'logger'>,
   record: ReceiveWorkRecord,
-  outcome?: ProcessedEnvelopeOutcome
+  outcome?: ProcessedEnvelopeOutcome,
+  received?: ReceivedMessageKey
 ): Promise<boolean> {
-  const writes: ProcessedEnvelopeWrite[] = [];
+  const writes: ReceiveCompletionWrite[] = [];
   if (record.envelopeId !== undefined) {
     writes.push({
       envelopeId: record.envelopeId,
@@ -530,6 +549,8 @@ export async function completeReceiveWork(
   if (recovered !== undefined) {
     writes.push({ envelopeId: recovered, fulfilled: true, completed: true });
   }
+  const receivedMessage = received ?? record.received;
+  if (receivedMessage !== undefined) writes.push({ receivedMessage });
   const done = await completeReceiveRecord(ctx.storage, record.workId, record.revision, writes);
   if (!done || recovered === undefined) return done;
   await reportResendRecovered(ctx, recovered);
@@ -1329,9 +1350,9 @@ export class ReceiveQueue {
       }
     }
     const retryAt = Date.now() + RECEIVE_RETRY_BACKOFF_MS;
-    let owesReceipt: boolean;
+    let delivery: Delivery;
     try {
-      owesReceipt = await this.deliver(pass, attempted, content, decision.groupId, receive);
+      delivery = await this.deliver(pass, attempted, content, decision.groupId, receive);
     } catch (error) {
       rethrowRelayWorkStopped(error);
       // The registration of onMessageDecrypted wakes the queue. See
@@ -1364,8 +1385,9 @@ export class ReceiveQueue {
     }
     work.proceed();
     this.backoff.delete(record.workId);
+    const { owesReceipt, received } = delivery;
     if (!owesReceipt) {
-      await completeReceiveWork(ctx, attempted);
+      await completeReceiveWork(ctx, attempted, undefined, received);
       this.forget(record.workId);
       return DONE;
     }
@@ -1383,8 +1405,13 @@ export class ReceiveQueue {
         Number.isSafeInteger(contentTimestamp) && { senderTimestamp: contentTimestamp }),
       dueAt: record.ackIntent?.hasReceiptJoin ? record.ackIntent.at + RELAY_RECEIPT_REPLY_MS : at,
       ...(decided !== undefined && { relayOwnsReceipt: decided }),
+      ...(received !== undefined && { received }),
     });
     if (!(await ctx.storage.putReceiveWork(due, attempted.revision))) return DONE;
+    // The key is recorded right after the receipt-due write, and again with
+    // the completion of the receipt record, which carries it. A stop before
+    // this write leaves the key to that completion.
+    if (received !== undefined) await recordReceivedTimestamp(ctx.storage, received);
     // The record keeps the decision.
     if (decided !== undefined) this.decisions.delete(record.workId);
     // Outcome 2: the application has the content, and the receipt follows.
@@ -1400,7 +1427,8 @@ export class ReceiveQueue {
    *
    * @param receive - The `onMessageDecrypted` hook that the attempt count
    *   covers, or undefined when the application has not registered it.
-   * @returns True when the content owes a delivery receipt.
+   * @returns Whether the content owes a delivery receipt, and the key of
+   *   content that the hook took.
    */
   private async deliver(
     pass: ReceiveQueuePass,
@@ -1408,7 +1436,7 @@ export class ReceiveQueue {
     content: CommittedContent,
     groupId: string | null,
     receive: SignalProtocolClientHooks['onMessageDecrypted']
-  ): Promise<boolean> {
+  ): Promise<Delivery> {
     const { ctx, callbacks } = pass;
     const { inspected } = content;
     let decrypted = ctx.cipher.decryptedEnvelopeOf(content, groupId);
@@ -1427,10 +1455,10 @@ export class ReceiveQueue {
     }
     // The commit installed the distribution. Content beside it continues.
     if (inspected.senderKeyDistribution && inspected.senderKeyDistributionOnly !== false) {
-      return false;
+      return NOT_DELIVERED;
     }
     // A key-update DataMessage carries only the profile key, kept above.
-    if (inspected.profileKeyUpdate) return false;
+    if (inspected.profileKeyUpdate) return NOT_DELIVERED;
     const authenticated: Envelope = {
       targetUserId: ctx.userId,
       targetDeviceId: ctx.deviceId,
@@ -1445,26 +1473,46 @@ export class ReceiveQueue {
     };
     if (inspected.receipt) {
       await callbacks.handleDeliveryReceipt(authenticated, inspected.receipt);
-      return false;
+      return NOT_DELIVERED;
     }
     if (inspected.typing) {
       // Typing indicators are transient: no storage, no delivery receipt.
       await callbacks.handleTypingIndicator(authenticated, inspected.typing);
-      return false;
+      return NOT_DELIVERED;
+    }
+    // A manual resend posts under a new message ID, so the envelope ID
+    // check misses it. The device drops a copy whose sender device, content
+    // timestamp and content digest match content that the application
+    // already has. The key is recorded with the completion of the receive,
+    // so a stop after the hook and before the completion runs the hook again.
+    // When a receipt is owed, the key is recorded right after the
+    // receipt-due write, and again with the completion of the receipt.
+    const timestamp = inspected.timestamp;
+    const delivered = ctx.contentAdapter.withoutGroupContext(decrypted.content);
+    const received: ReceivedMessageKey | undefined =
+      typeof timestamp === 'number'
+        ? {
+            senderUserId: content.senderUserId,
+            senderDeviceId: content.senderDeviceId,
+            timestamp,
+            contentDigest: bytesToBase64(await sha256(new TextEncoder().encode(delivered))),
+          }
+        : undefined;
+    if (received !== undefined && (await hasReceivedTimestamp(ctx.storage, received))) {
+      return NOT_DELIVERED;
     }
     if (!receive) throw new ReceiveHookMissing();
     // The application gets the content as its sender gave it.
-    await receive({
-      ...decrypted,
-      content: ctx.contentAdapter.withoutGroupContext(decrypted.content),
-    });
+    await receive({ ...decrypted, content: delivered });
     const receipts = ctx.config.deliveryReceipts ?? 'auto';
-    return (
-      inspected.shouldSendDeliveryReceipt &&
-      ctx.relay !== undefined &&
-      receipts !== 'off' &&
-      Boolean(decrypted.timestamp)
-    );
+    return {
+      owesReceipt:
+        inspected.shouldSendDeliveryReceipt &&
+        ctx.relay !== undefined &&
+        receipts !== 'off' &&
+        Boolean(decrypted.timestamp),
+      ...(received !== undefined && { received }),
+    };
   }
 
   /**

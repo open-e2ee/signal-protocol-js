@@ -39,6 +39,18 @@ const isString = (value: unknown): boolean => typeof value === 'string';
 const isNonEmptyString = (value: unknown): boolean => typeof value === 'string' && value !== '';
 const isSafeInteger = (value: unknown): boolean => Number.isSafeInteger(value);
 const isBoolean = (value: unknown): boolean => typeof value === 'boolean';
+const isReceivedKey = (value: unknown): boolean => {
+  const key = value as Record<string, unknown> | null;
+  return (
+    key !== null &&
+    typeof key === 'object' &&
+    isNonEmptyString(key.senderUserId) &&
+    isSafeInteger(key.senderDeviceId) &&
+    typeof key.timestamp === 'number' &&
+    Number.isFinite(key.timestamp) &&
+    isString(key.contentDigest)
+  );
+};
 
 /**
  * Check the shape of one receive record. Throws on a record that a store
@@ -85,7 +97,8 @@ export function assertReceiveWork(record: ReceiveWorkRecord, workId = record.wor
       (value) => isSafeInteger(value) && (value as number) > 0
     ) ||
     !isOptional(candidate.failedEnvelopeId, isNonEmptyString) ||
-    !isOptional(candidate.awaitingEnvelope, (value) => value === true)
+    !isOptional(candidate.awaitingEnvelope, (value) => value === true) ||
+    !isOptional(candidate.received, isReceivedKey)
   ) {
     throw new Error('Invalid receive-work record');
   }

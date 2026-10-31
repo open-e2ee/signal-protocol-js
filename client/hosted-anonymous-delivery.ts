@@ -29,10 +29,19 @@ import {
   type DeviceSetMismatchAccount,
 } from "../remote/relay/device-set";
 import {
+  markAfterRepeatedRequest,
+  type RepeatRequest,
+} from "../remote/relay/request-admission";
+import {
   markGroupRouteFallback,
   takesDirectSealedRoute,
 } from "./relay-sealed-route";
-import { relayProtocolHeaders, throwIfUpgradeRequired } from "./relay-protocol";
+import {
+  RELAY_PROTOCOL_VERSION,
+  markRelayAnswerVersion,
+  relayProtocolHeadersFor,
+  throwIfUpgradeRequired,
+} from "./relay-protocol";
 import { withRelayRequestDeadline } from "./relay-request-deadline";
 
 const FRAME_VERSION = 1;
@@ -211,6 +220,17 @@ export class HostedAnonymousDelivery {
       deviceId: number,
       declaredDeviceIds?: readonly number[],
     ) => Promise<Destination>,
+    /**
+     * Runs before each repeat request of a post, with the client message ID
+     * of the post and the device of the repeat. A group repeat runs it once
+     * for each destination device. When it rejects, no repeat starts.
+     */
+    private readonly beforeRepeat: (
+      clientMessageId: string,
+      request: RepeatRequest,
+    ) => Promise<void> = async () => {},
+    /** The Relay protocol version of the client that owns this delivery. */
+    private readonly relayProtocolVersion: number = RELAY_PROTOCOL_VERSION,
   ) {}
 
   /**
@@ -274,7 +294,7 @@ export class HostedAnonymousDelivery {
             headers: {
               accept: "application/json",
               "content-type": "application/json",
-              ...relayProtocolHeaders(),
+              ...relayProtocolHeadersFor(this.relayProtocolVersion),
             },
             body: JSON.stringify({
               ...body,
@@ -290,7 +310,7 @@ export class HostedAnonymousDelivery {
       }
       const value = await responseObject(response);
       if (!response.ok) {
-        throwIfUpgradeRequired(response.status, value);
+        throwIfUpgradeRequired(response.status, value, this.relayProtocolVersion);
         const code = record(value.error) ? value.error.code : undefined;
         // Each route answers a rejected credential with the code of its
         // type. A Relay without the endorsement on the direct route answers
@@ -316,6 +336,7 @@ export class HostedAnonymousDelivery {
           "NOT_FOUND",
           "STALE_DEVICE",
           "RETRY_CONFLICT",
+          "DELIVERY_ALREADY_ACCEPTED",
           "OPERATION_EXPIRED",
           "DELIVERY_UNCERTAIN",
           "DEVICE_SET_MISMATCH",
@@ -328,10 +349,15 @@ export class HostedAnonymousDelivery {
           record(value.error) && record(value.error.details)
             ? value.error.details
             : undefined;
-        const error = new HostedAnonymousDeliveryError(
-          response.status,
-          safeCode,
-          details === undefined ? undefined : { details },
+        // The meaning of DELIVERY_ALREADY_ACCEPTED depends on the protocol
+        // version of the request, so the error records it.
+        const error = markRelayAnswerVersion(
+          new HostedAnonymousDeliveryError(
+            response.status,
+            safeCode,
+            details === undefined ? undefined : { details },
+          ),
+          this.relayProtocolVersion,
         );
         // Only a declared post gets a device-set refusal.
         const refusal =
@@ -501,7 +527,16 @@ export class HostedAnonymousDelivery {
         if (!(error instanceof DirectRouteRefusedError)) throw error;
       }
       // The Relay refused the endorsement on the direct route before the
-      // post started. The same post goes once on the group route.
+      // post started. The same post goes once on the group route. That post
+      // is a new request of the destination device, so it meets the repeat
+      // check first. When the check rejects, its error reaches the caller
+      // and no request starts.
+      for (const destination of destinations)
+        await this.beforeRepeat(clientMessageId, {
+          userId: destination.accountAddress,
+          deviceId: destination.deviceId,
+          after: "token",
+        });
       return markGroupRouteFallback(
         await this.sendGroup(groupSendToken, destinations, operation),
       );
@@ -516,20 +551,53 @@ export class HostedAnonymousDelivery {
     operation: SendOperation,
   ): Promise<AnonymousReceipt> {
     const { clientMessageId } = operation;
-    const result = await this.fanOut.request(() =>
-      this.post("/groups/send", {
-        auth: { type: "groupSendToken", groupSendToken },
-        body: bytesToBase64(operation.messageCiphertext),
-        destinations,
-        contentKind: operation.contentKind,
-        deliveryClass: operation.deliveryClass,
-        logicalSendId: clientMessageId,
-        operationEpochMilliseconds: operation.operationEpochMilliseconds,
-        ...(operation.deviceSets !== undefined && {
-          deviceSets: operation.deviceSets,
-        }),
+    const body = {
+      auth: { type: "groupSendToken", groupSendToken },
+      body: bytesToBase64(operation.messageCiphertext),
+      destinations,
+      contentKind: operation.contentKind,
+      deliveryClass: operation.deliveryClass,
+      logicalSendId: clientMessageId,
+      operationEpochMilliseconds: operation.operationEpochMilliseconds,
+      ...(operation.deviceSets !== undefined && {
+        deviceSets: operation.deviceSets,
       }),
-    );
+    };
+    const deliver = () =>
+      this.fanOut.request(() => this.post("/groups/send", body));
+    let result: JsonRecord;
+    let repeated = false;
+    try {
+      result = await deliver();
+    } catch (error) {
+      // A fan-out reset before its answer gives 503 DELIVERY_UNCERTAIN. The
+      // logical send identifier makes one repeat exact; a second uncertain
+      // answer reaches the caller. The repeat is a new request with its own
+      // slot, and it is a repeat request of each destination device. The
+      // group credential refuses an ephemeral post before any request, so
+      // every group post can repeat.
+      if (
+        !(error instanceof HostedAnonymousDeliveryError) ||
+        error.code !== "DELIVERY_UNCERTAIN"
+      )
+        throw error;
+      try {
+        for (const destination of destinations)
+          await this.beforeRepeat(clientMessageId, {
+            userId: destination.accountAddress,
+            deviceId: destination.deviceId,
+            after: "uncertain",
+          });
+      } catch {
+        throw error;
+      }
+      repeated = true;
+      // The first request can have stored the fan-out, so an error answer to
+      // the repeat tells nothing about the post.
+      result = await deliver().catch((repeatError: unknown) => {
+        throw markAfterRepeatedRequest(repeatError);
+      });
+    }
     if (
       result.logicalSendId !== clientMessageId ||
       result.replayable !== true ||
@@ -565,7 +633,9 @@ export class HostedAnonymousDelivery {
       messageId: clientMessageId,
       serverTimestamp: operation.timestamp,
       uuids404,
-      duplicate: result.duplicate as boolean,
+      // The uncertain first request can have stored the fan-out that the
+      // repeat finds, so the repeat's duplicate tells nothing.
+      ...(!repeated && { duplicate: result.duplicate as boolean }),
       refusedDestinationCount:
         destinations.length - (result.acceptedDestinations as number),
       ...(result.deviceSetChecked === true && { deviceSetChecked: true }),
@@ -621,13 +691,27 @@ export class HostedAnonymousDelivery {
             error.code !== "DELIVERY_UNCERTAIN"
           )
             throw markDestinationRefusal(error, destination);
+          try {
+            await this.beforeRepeat(clientMessageId, {
+              userId: destination.accountAddress,
+              deviceId: destination.deviceId,
+              after: "uncertain",
+            });
+          } catch {
+            throw error;
+          }
           repeated = true;
           result = await deliver().catch((repeatError: unknown) => {
             // The first request can have stored the copy, so a refused
-            // repeat does not move the post to another route.
+            // repeat does not move the post to another route, and its answer
+            // tells nothing about the post.
             if (repeatError instanceof DirectRouteRefusedError)
-              throw new HostedAnonymousDeliveryError(401, "DELIVERY_FAILED");
-            throw markDestinationRefusal(repeatError, destination);
+              throw markAfterRepeatedRequest(
+                new HostedAnonymousDeliveryError(401, "DELIVERY_FAILED"),
+              );
+            throw markAfterRepeatedRequest(
+              markDestinationRefusal(repeatError, destination),
+            );
           });
         }
         if (

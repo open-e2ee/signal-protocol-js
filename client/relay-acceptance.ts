@@ -1,4 +1,5 @@
 import type { RetryFailureClass, RetryTerminalClass } from '../local/store/reliability';
+import { relayAnswerVersion } from './relay-protocol';
 
 /** What the relay reports about one post that it accepted. */
 export interface RelayPostAcceptance {
@@ -40,17 +41,87 @@ export function aggregateRelayAcceptance(
 }
 
 /**
- * The Relay's refusal of one delivery operation. OPERATION_EXPIRED: the
- * operation epoch is outside the admission window or the replay horizon.
- * RETRY_CONFLICT: the Relay holds another operation under the same message ID.
+ * The Relay's refusal of one delivery operation.
+ *
+ * OPERATION_EXPIRED has four sources: an operation epoch more than 5 minutes
+ * ahead of the Relay clock, an epoch older than the 24-hour replay horizon, an
+ * accepted operation before the end of the retained period, and an epoch
+ * older than the admission window with no stored operation.
+ *
+ * RETRY_CONFLICT has three sources: the Relay holds the same operation with
+ * other bytes, the same operation under another accepted class, or another
+ * operation under the same message ID. A direct post that never changed its
+ * bytes counts it as an earlier acceptance, under protocol version 1 and
+ * version 2.
+ *
+ * DELIVERY_ALREADY_ACCEPTED is a protocol version 2 code: the Relay already
+ * holds an accepted post under the message ID, so it refused this post
+ * before it stored anything. A post and a retry request both read it as
+ * RETRY_CONFLICT. Under version 1 the Relay sends RETRY_CONFLICT in its
+ * place, so a version 1 answer with this code is an unknown code.
  */
-export type RelayOperationRefusal = 'OPERATION_EXPIRED' | 'RETRY_CONFLICT';
+export type RelayOperationRefusal =
+  | 'OPERATION_EXPIRED'
+  | 'RETRY_CONFLICT'
+  | 'DELIVERY_ALREADY_ACCEPTED';
 
-/** The operation refusal that a relay error carries as its code, if any. */
+const conflictAcceptances = new WeakSet<RelayPostAcceptance>();
+
+/**
+ * The acceptance of a post that got RETRY_CONFLICT, or DELIVERY_ALREADY_ACCEPTED
+ * under protocol version 2: the Relay already holds a post under its message
+ * ID. Neither answer carries a Relay receipt, so the acceptance carries only
+ * the client message ID of the post and the time of the answer on the SDK
+ * clock.
+ */
+export function conflictAcceptance(
+  clientMessageId: string,
+  serverTimestamp: number
+): RelayPostAcceptance {
+  const acceptance: RelayPostAcceptance = { messageId: clientMessageId, serverTimestamp };
+  conflictAcceptances.add(acceptance);
+  return acceptance;
+}
+
+/** True for an acceptance that `conflictAcceptance` made. */
+export function isConflictAcceptance(acceptance: RelayPostAcceptance): boolean {
+  return conflictAcceptances.has(acceptance);
+}
+
+/**
+ * The acceptance that gives the message ID and time of a send result: the
+ * first one with a Relay receipt, else the first one.
+ */
+export function sendResultAcceptance(
+  acceptances: readonly RelayPostAcceptance[]
+): RelayPostAcceptance | undefined {
+  return acceptances.find((acceptance) => !isConflictAcceptance(acceptance)) ?? acceptances[0];
+}
+
+/**
+ * The operation refusal that a relay error carries as its code, if any.
+ * DELIVERY_ALREADY_ACCEPTED is a refusal only when a hosted carrier marked
+ * the error as the answer to a request of protocol version 2 or later. An
+ * unmarked error and a version 1 answer carry it as an unknown code.
+ */
 export function relayOperationRefusal(error: unknown): RelayOperationRefusal | undefined {
   if (error === null || typeof error !== 'object') return undefined;
   const { code } = error as { code?: unknown };
-  return code === 'OPERATION_EXPIRED' || code === 'RETRY_CONFLICT' ? code : undefined;
+  if (code === 'OPERATION_EXPIRED' || code === 'RETRY_CONFLICT') return code;
+  if (code === 'DELIVERY_ALREADY_ACCEPTED' && (relayAnswerVersion(error) ?? 1) >= 2) {
+    return code;
+  }
+  return undefined;
+}
+
+/**
+ * True when a relay error says that the Relay already holds a post under the
+ * message ID of the post: RETRY_CONFLICT, or DELIVERY_ALREADY_ACCEPTED under
+ * protocol version 2. A post reads both answers in the same way.
+ */
+export function relayHoldsMessageId(error: unknown): boolean {
+  const refusal = relayOperationRefusal(error);
+  return refusal === 'RETRY_CONFLICT' || refusal === 'DELIVERY_ALREADY_ACCEPTED';
 }
 
 /** The class of a retry request post that the Relay or the transport refused. */
@@ -89,7 +160,9 @@ const RATE_CODES: ReadonlySet<string> = new Set(['QUOTA_EXCEEDED', 'MAILBOX_FULL
  * AUTHORITY_OVERRIDE, TOKEN_INVALID, 401 or 403 is a revoked authority.
  * QUOTA_EXCEEDED, MAILBOX_FULL and 429 are a rate refusal. Every other
  * error, a network error and a lost answer included, is a transport outage.
- * The caller handles OPERATION_EXPIRED and RETRY_CONFLICT first.
+ * The caller handles OPERATION_EXPIRED, RETRY_CONFLICT and the version 2
+ * DELIVERY_ALREADY_ACCEPTED first. A version 1 DELIVERY_ALREADY_ACCEPTED is
+ * an unknown code, so it is a transport outage.
  */
 export function classifyRetryRequestPostFailure(error: unknown): RetryRequestPostFailure {
   if (error === null || typeof error !== 'object') return { retry: 'transport-outage' };

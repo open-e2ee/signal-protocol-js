@@ -2,7 +2,11 @@ import { utf8Decode } from '../internal/platform';
 import type { SignalProtocolClientCompositionOptions } from './compose';
 import type { HostedRelayConnection } from './hosted-connection';
 import { withRelayRequestDeadline } from './relay-request-deadline';
-import { relayProtocolHeaders, throwIfUpgradeRequired } from './relay-protocol';
+import {
+  RELAY_PROTOCOL_VERSION,
+  relayProtocolHeadersFor,
+  throwIfUpgradeRequired,
+} from './relay-protocol';
 import {
   EndorsementManager,
   type EndorsementCacheStore,
@@ -18,7 +22,10 @@ export type HostedGroupOptions = Pick<GroupOptions, 'profileKey' | 'store'> & {
   readonly endorsementCache?: EndorsementCacheStore;
 };
 
-async function fetchAuthority(connection: HostedRelayConnection) {
+async function fetchAuthority(
+  connection: HostedRelayConnection,
+  relayProtocolVersion: number
+) {
   const buffer = await withRelayRequestDeadline(async (signal) => {
     const response = await fetch(
       `${connection.protocolEndpoint}/groups/authority`,
@@ -29,7 +36,7 @@ async function fetchAuthority(connection: HostedRelayConnection) {
         headers: {
           'content-type': 'application/json',
           accept: 'application/json',
-          ...relayProtocolHeaders(),
+          ...relayProtocolHeadersFor(relayProtocolVersion),
         },
         body: JSON.stringify({ publishableKey: connection.publishableKey }),
         signal,
@@ -71,7 +78,7 @@ async function fetchAuthority(connection: HostedRelayConnection) {
       } catch {
         error = undefined;
       }
-      throwIfUpgradeRequired(response.status, error);
+      throwIfUpgradeRequired(response.status, error, relayProtocolVersion);
       throw new Error('Managed group authority is unavailable');
     }
     return body;
@@ -86,10 +93,15 @@ async function fetchAuthority(connection: HostedRelayConnection) {
   );
 }
 
-/** Managed group keys come from a signed response under the compiled environment root. */
+/**
+ * Managed group keys come from a signed response under the compiled
+ * environment root. Each authority request carries the Relay protocol version
+ * of the client.
+ */
 export async function resolveHostedGroupOptions(
   connection: HostedRelayConnection,
-  options: HostedGroupOptions
+  options: HostedGroupOptions,
+  relayProtocolVersion: number = RELAY_PROTOCOL_VERSION
 ): Promise<GroupOptions> {
   if (
     Object.keys(options).some(
@@ -108,7 +120,7 @@ export async function resolveHostedGroupOptions(
       return current.value;
     if (pending) return pending;
     pending = (async () => {
-      const authority = await fetchAuthority(connection);
+      const authority = await fetchAuthority(connection, relayProtocolVersion);
       const root = decodeGroupTrustRoot(authority.trustRoot);
       const value: GroupAuthority = {
         trustRoot: authority.trustRoot,

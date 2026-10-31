@@ -142,7 +142,7 @@ async function connectionError(response: Response): Promise<Error> {
   if (response.status === 404) {
     return new Error('Signal Protocol Relay connection does not exist or is stale');
   }
-  if (response.status === 403) {
+  if (response.status === 403 && code === 'SCOPE_MISMATCH') {
     return new Error('Signal Protocol Relay connection belongs to another environment');
   }
   if (response.status === 410) {
