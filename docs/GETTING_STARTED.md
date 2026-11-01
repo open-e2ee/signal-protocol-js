@@ -28,10 +28,10 @@ The [adapter guide](../ADAPTERS.md) lists the supported stores.
 - Application storage for decrypted messages and attachment bytes.
 
 A Sandbox environment uses device-owned identity. `hostedRelaySandboxIdentity`
-creates its `getIdentityAssertion` callback. The callback signs each assertion
-with a key that it keeps in the device-local store, so the device gets the same
-account each time it registers. A device that loses its store loses that
-Sandbox account. The helper works only in a Sandbox environment.
+creates its `getIdentityAssertion` callback. The callback keeps a key in the device-local store. It signs each assertion
+with that key. The device gets the same account each time it registers.
+
+A device that loses its store loses that Sandbox account. The helper works only in a Sandbox environment.
 
 Production supports application-bound and explicitly configured device-owned
 accounts. For application-bound accounts, `getIdentityAssertion` returns a
@@ -62,6 +62,7 @@ transfer or by a channel that the application owns, then joins the account
 with `linkHostedRelayDevice()`. That call runs in one process that holds the
 active device's store and the new device's store. It copies each group master
 key from the active device and gives the new device its own registration ID.
+
 It refuses a new device's store that already lists a group, with
 `HostedRelayDeviceLinkError`. See the [device guide](../device/README.md). The
 default policy requires post-quantum session establishment and Braid
@@ -153,39 +154,37 @@ await signal.send("bob", {
 A new send accepts a `timestamp` at most 5 minutes ahead of the SDK clock and
 at most 24 hours behind it. For any other value, `send()` throws
 `InvalidSendTimestampError` and stores or posts nothing. Omit `timestamp`, and
-the SDK uses its clock. From the Relay release that follows v2026.10.25, the
-Relay admits a mailbox delivery epoch and a new group fan-out operation in the
-same window. Earlier Relay releases admit a new operation only within 5
+the SDK uses its clock.
+
+From the Relay release that follows v2026.10.25, the Relay admits a mailbox
+delivery epoch in the same window. It also admits a new group fan-out
+operation in that window. Earlier Relay releases admit a new operation only within 5
 minutes of its epoch. On an earlier Relay release, a time 5 minutes to 24 hours
-old passes the SDK check but gets `OPERATION_EXPIRED`. The SDK check uses the
+old passes the SDK check. The Relay returns `OPERATION_EXPIRED`.
+
+The SDK check uses the
 same bounds, so the SDK refuses an application-supplied time before any post.
 
 A hosted client sends a sealed 1:1 message only when you pass
 `hosted.profileKeys`, and only to a contact whose profile key `contacts` holds.
-Each other 1:1 message is identified, so the Relay sees its sender. Until the
-client holds the profile key of a contact, its messages to that contact are
-identified and carry the profile key of this account.
+The client identifies each other 1:1 message, so the Relay sees its sender.
+Until the client holds a contact's profile key, it identifies messages to that
+contact. Those messages carry the profile key of this account.
 
 ## Attachments
 
-Add a remote object store when your app sends encrypted attachments. The
-`remoteObjectStore` adapter brokers encrypted byte objects rather than
-plaintext files.
+The hosted factory supplies the Relay object store for encrypted
+attachments. Configure the media callbacks below to read local bytes and
+save attachment references and downloaded bytes.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createHostedSignalProtocolClient, media } from "@open-e2ee/signal-protocol-sdk";
-import { convexR2ObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2";
-import { api } from "../convex/_generated/api";
 
 const signal = await createHostedSignalProtocolClient({
   hosted: { relayUrl, getIdentityAssertion },
   adapters: {
     storage,
-    remoteObjectStore: convexR2ObjectStore({
-      convex,
-      api: api.signalObjectStore,
-    }),
   },
   media: {
     preparedUploads: appPreparedUploads,
@@ -201,6 +200,12 @@ const signal = await createHostedSignalProtocolClient({
   },
 });
 ```
+
+For an application-owned relay and object broker, use
+`createSignalProtocolClient` with `adapters.remoteObjectStore`. The
+[client composition guide](CLIENT_COMPOSITION.md#attachments) shows the
+Convex R2 adapter with that factory. The hosted factory supplies its own
+Relay object store and does not accept a replacement.
 
 For Amazon S3 or S3-compatible storage, use the framework-neutral adapter with
 an authenticated application-backend broker:
@@ -480,12 +485,14 @@ await signal.media.cleanup(
 
 The default is:
 
-<!-- doc-snippet:illustrative config-object-fragment -->
+<!-- doc-snippet:skip configuration-only -->
 ```ts
-protocol: {
+import type { SignalProtocolConfig } from '@open-e2ee/signal-protocol-sdk';
+
+export const protocol: SignalProtocolConfig = {
   postQuantum: 'required',
   braid: 'required',
-}
+};
 ```
 
 Leave it unset. `'required'` is the only `postQuantum` value. See

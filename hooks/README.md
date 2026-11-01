@@ -27,19 +27,22 @@ import {
   useRelayConnectionState,
   useRelayLifecycle,
   useSessionHealth,
+  type UseRelayLifecycleOptions,
+  type UseRelayConnectionStateOptions,
+  type UseSessionHealthOptions,
 } from "@open-e2ee/signal-protocol-sdk/hooks";
 
-function SignalLifecycle({ signal }) {
+function SignalLifecycle({ signal }: Pick<UseRelayLifecycleOptions, "signal">) {
   useRelayLifecycle({ signal });
   return null;
 }
 
-function OwnConnectionDot({ signal }) {
+function OwnConnectionDot({ signal }: Pick<UseRelayConnectionStateOptions, "signal">) {
   const { state } = useRelayConnectionState({ signal });
   return <Dot online={state === "connected"} />;
 }
 
-function ConversationStatus({ signal, userId }) {
+function ConversationStatus({ signal, userId }: Pick<UseSessionHealthOptions, "signal" | "userId">) {
   const { health, isLoading } = useSessionHealth({ signal, userId });
   if (isLoading) return <p>Checking…</p>;
   return <p>{health?.status === "healthy" ? "Ready" : "Check the session"}</p>;

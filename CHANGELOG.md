@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.5.1
+
+### Fixed
+
+- Correct code examples and local links in ten SDK 13.5 guides.
+
 ## 13.5.0
 
 ### Added

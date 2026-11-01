@@ -1,10 +1,9 @@
 # React Native SQLite Store
 
 `ReactNativeSignalProtocolStore` implements `SignalProtocolLocalStore`
-for bare React Native in an SDK-owned SQLCipher database on
-[op-sqlite](https://github.com/OP-Engineering/op-sqlite). The database key is
-held through the local secret-vault boundary, by default in the
-react-native-keychain vault.
+for bare React Native. It uses an SDK-owned SQLCipher database on
+[op-sqlite](https://github.com/OP-Engineering/op-sqlite). The local secret-vault
+boundary holds the database key. The react-native-keychain vault is the default.
 
 ## Why it exists
 
@@ -86,8 +85,8 @@ Options:
 - `logger`: receives the warning of each open without encryption.
 
 A store holds its name until `close()`. In one process, the opens and resets
-of a name run one at a time. An open or a reset of a name that an open store
-holds fails with `INVALID_STATE`, so two parallel first opens write one key
+of a name run one at a time. An open or reset fails with `INVALID_STATE`
+when an open store holds that name. Two parallel first opens write one key,
 and the second open fails.
 
 Keep application tables in a separate database file. The SDK database holds
@@ -115,8 +114,8 @@ and its key. `resetReactNativeStore()` is the full teardown.
 
 ## Convert a plaintext store
 
-An encrypted open with `convertPlaintext: true` converts a database that was
-created with `encryptionAtRest: false`:
+If you created a database with `encryptionAtRest: false`, an encrypted open
+with `convertPlaintext: true` converts it:
 
 <!-- doc-snippet:skip requires-external-context -->
 
@@ -176,7 +175,7 @@ therefore the only thing that protects them.
 
 Do not back up the database file to a server or sync it between devices. The
 default vault keeps the key out of device backups. iOS backs up the Library
-directory, and Android Auto Backup includes the databases directory unless the
+directory. Android Auto Backup includes the databases directory unless the
 app excludes it. A file restored from a backup to a new device therefore has no
 key there, and the open fails with `LOCAL_STORE_KEY_LOST`.
 
@@ -198,5 +197,5 @@ For replaced-prekey maintenance, pass the open store to
 `createPreKeyMaintenanceStore(store)`.
 
 See the parent [storage guide](../README.md), [adapter guide](../../../ADAPTERS.md),
-the [op-sqlite installation guide](https://op-engineering.github.io/op-sqlite/docs/installation),
+the [op-sqlite installation guide](https://op-engineering.github.io/op-sqlite/docs/installation/),
 and [security model](../../../docs/SECURITY.md).
