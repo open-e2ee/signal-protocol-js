@@ -10,12 +10,14 @@ identity, the Ed25519-instead-of-XEdDSA signature scheme, the ML-KEM Braid
 
 The public Signal Protocol client policy is:
 
-<!-- doc-snippet:illustrative config-object-fragment -->
+<!-- doc-snippet:skip configuration-only -->
 ```ts
-protocol: {
+import type { SignalProtocolConfig } from '@open-e2ee/signal-protocol-sdk';
+
+export const protocol: SignalProtocolConfig = {
   postQuantum: 'required',
   braid: 'required',
-}
+};
 ```
 
 Both values are the defaults.
@@ -42,7 +44,7 @@ message ratchet are mandatory. `'required'` is the only `postQuantum` value.
 
 The SDK has no classical key agreement. Every new session uses PQXDH with
 ML-KEM-1024. A peer that publishes no post-quantum prekeys fails closed with
-`PQXDHRequiredError` (`PQXDH_REQUIRED`), and no session is stored.
+`PQXDHRequiredError` (`PQXDH_REQUIRED`). The SDK stores no session.
 
 No setting allows downgrade recovery:
 
@@ -104,7 +106,7 @@ await createSignalProtocolClient({
 ```
 
 `'required'` is the only `postQuantum` value. Any other value throws
-`Unsupported postQuantum policy` when the client is created.
+`Unsupported postQuantum policy` when you create the client.
 
 ## Advanced Telemetry
 
@@ -130,18 +132,24 @@ direct-vs-Braid choice.
 ## Content Recovery
 
 A device that cannot decrypt a message asks the sender for it again with a
-retry request. To answer with the content, the sender keeps the plaintext of
-each resendable message in its local store. `protocol.contentRecovery`
+retry request. The sender keeps each resendable message's plaintext in its local store.
+It uses that content to answer. `protocol.contentRecovery`
 decides whether the store may hold that plaintext.
 
-<!-- doc-snippet:illustrative config-object-fragment -->
+<!-- doc-snippet:skip requires-application-membership -->
 ```ts
-protocol: {
-  contentRecovery: {
-    mode: 'require-protected',
-    retentionMs: 14 * 24 * 60 * 60 * 1000,
-    isCurrentMember: async (groupId, userId) => true,
-  },
+import type { ContentRecoveryPolicy, SignalProtocolConfig } from '@open-e2ee/signal-protocol-sdk';
+
+export function protectedContentRecovery(
+  isCurrentMember: NonNullable<ContentRecoveryPolicy['isCurrentMember']>,
+): SignalProtocolConfig {
+  return {
+    contentRecovery: {
+      mode: 'require-protected',
+      retentionMs: 14 * 24 * 60 * 60 * 1000,
+      isCurrentMember,
+    },
+  };
 }
 ```
 
@@ -170,7 +178,7 @@ The modes:
 - `off` keeps no content.
 
 A `none` level never keeps content. When the policy refuses the store, the
-client keeps no pairwise message record and no send log entry, and deletes
+client keeps no pairwise message record and no send log entry. It deletes
 the ones that the store already holds. A retry request for a direct message
 then resets the session with no content. The client shows the decision in
 `client.contentRecoveryStatus`, with `reason` when it is off, and logs it
@@ -186,9 +194,10 @@ The client deletes expired content before each send log lookup, at creation,
 at `stop()`, and before the first resendable group send of each day. An E2EE
 delivery receipt from a device deletes the send log row of that device, and
 the last row takes the content with it. A Relay delivery receipt, a read
-receipt, and a viewed receipt delete no row. A device also acknowledges a
-copy that it could not decrypt, so the Relay receipt does not prove that the
-device has the content. `client.getPendingRecipients(clientMessageId)` lists
+receipt, and a viewed receipt delete no row. A device also acknowledges a copy that it could not decrypt. The Relay
+receipt does not prove that the device has the content.
+
+`client.getPendingRecipients(clientMessageId)` lists
 the devices that still have a row. `client.forgetSentContent(clientMessageId)`
 deletes the content of one group send at once. It does not delete the
 pairwise message records. A device lifecycle reset clears the send log with
@@ -200,14 +209,16 @@ groups, or set `isCurrentMember` for ad hoc groups. The client checks a
 managed group against its verified group state and never asks the hook
 about it. The hook gets the prefixed group ID that `createGroupId` makes.
 `contentRecoveryStatus.groupMembershipSource` is `managed`, `hook`, or
-`none`. A client with no source still keeps content and logs one warning
+`none`.
+
+A client with no source still keeps content and logs one warning
 at creation. With no source for a group, the sender gives no group content
 again. A direct message resend needs no source.
 
 A group send of a `DataMessage` has the content hint `Resendable` when the
 policy keeps content and the application sets no other hint. The client
 writes the content and the recipient devices to the send log before it
-stores the outgoing intent, so a failed write stops the send. When the
+stores the outgoing intent. A failed write stops the send. When the
 policy keeps no content, the send goes out as `Default`.
 
 A custom store must declare its `protection` as `{ atRest, keyCustody }`.

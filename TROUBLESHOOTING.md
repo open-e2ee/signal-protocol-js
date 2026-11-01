@@ -59,15 +59,22 @@ with `--force` or `--legacy-peer-deps`.
 
 **"Identity key not found - client not initialized"**
 
-<!-- doc-snippet:illustrative elided-call-arguments -->
+<!-- doc-snippet:skip requires-application-storage -->
 ```typescript
-// ❌ Wrong: forgot to initialize
-const signal = new DefaultSignalProtocolClient(); // Don't use constructor directly!
-await signal.encryptMessage(...); // Error!
+import { DefaultSignalProtocolClient, type SignalProtocolClientConfig } from '@open-e2ee/signal-protocol-sdk';
 
-// ✅ Correct: use factory method
-const signal = await DefaultSignalProtocolClient.create(userId, { storage });
-await signal.encryptMessage(...); // Works!
+// Compile-only negative example. This function is never called.
+function compileOnlyRejectsDirectConstruction(): void {
+  // @ts-expect-error Initialize the client through its asynchronous factory.
+  new DefaultSignalProtocolClient();
+}
+
+export function initializeSignal(
+  userId: string,
+  storage: SignalProtocolClientConfig['storage'],
+): Promise<DefaultSignalProtocolClient> {
+  return DefaultSignalProtocolClient.create(userId, { storage });
+}
 ```
 
 ### Session Establishment
@@ -78,31 +85,44 @@ Make sure the prekey bundle is fresh and valid:
 
 <!-- doc-snippet:skip requires-external-context -->
 ```typescript
-// Fetch the latest prekey bundle through the relay adapter
-const bundle = await relay.fetchPreKeyBundle(bobId, 1, undefined, 'aci');
+import { ProtocolAddress, type DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
+import type { SignalProtocolRelayServer } from '@open-e2ee/signal-protocol-sdk/remote/relay';
 
-// Verify bundle has required fields
-if (!bundle.identityKey || !bundle.signedPreKey) {
-  throw new Error('Invalid prekey bundle');
+export async function establishBobSession(
+  signal: DefaultSignalProtocolClient,
+  relay: SignalProtocolRelayServer,
+  bobId: string,
+): Promise<void> {
+  const address = ProtocolAddress.create(bobId, 1);
+  const bundle = await relay.fetchPreKeyBundle(bobId, 1, undefined, 'aci');
+  if (!bundle || !bundle.identity || !bundle.ecSignedPreKey) {
+    throw new Error('Invalid prekey bundle');
+  }
+  await signal.establishSession(address, bundle);
 }
-
-await signal.establishSession(sessionId, bobId, bundle);
 ```
 
-### Session ID Format
+### Device Address Format
 
 **"No session with address"**
 
-Session IDs must be in `userId:deviceId` format:
+The serialized address form is `userId:deviceId`. Direct client methods take a
+`ProtocolAddress` object. Create it with `ProtocolAddress.create(userId, deviceId)`.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```typescript
-// ❌ Wrong: missing device ID
-await signal.encryptMessage('bob', 'Hello');
+import { ProtocolAddress, type DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 
-// ✅ Correct: include device ID
-await signal.encryptMessage('bob:1', 'Hello'); // Primary device
-await signal.encryptMessage('bob:2', 'Hello'); // Secondary device
+// Compile-only negative example. This function is never called.
+async function compileOnlyRejectsSerializedAddress(signal: DefaultSignalProtocolClient): Promise<void> {
+  // @ts-expect-error encryptMessage requires a ProtocolAddress object.
+  await signal.encryptMessage('bob', 'Hello');
+}
+
+export async function encryptToBobDevices(signal: DefaultSignalProtocolClient): Promise<void> {
+  await signal.encryptMessage(ProtocolAddress.create('bob', 1), 'Hello');
+  await signal.encryptMessage(ProtocolAddress.create('bob', 2), 'Hello');
+}
 ```
 
 ### Out-of-Order Messages
@@ -144,19 +164,27 @@ console.log('OneTime prekeys remaining:', stats.oneTimePreKeysCount);
 
 <!-- doc-snippet:skip requires-external-context -->
 ```typescript
-// Check if session exists
-const hasSession = await signal.hasSession('bob:1');
-console.log('Has session with bob:1:', hasSession);
+import { ProtocolAddress, type DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
+
+export async function checkBobSession(signal: DefaultSignalProtocolClient): Promise<void> {
+  const address = ProtocolAddress.create('bob', 1);
+  const hasSession = await signal.hasSession(address);
+  console.log('Has session with bob:1:', hasSession);
+}
 ```
 
 ### Enable Debug Logging
 
 <!-- doc-snippet:skip requires-external-context -->
 ```typescript
-const signal = await DefaultSignalProtocolClient.create(userId, {
+import { DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
+import { inMemoryStore } from '@open-e2ee/signal-protocol-sdk/local/store/memory';
+
+const signal = await DefaultSignalProtocolClient.create('alice', {
+  storage: inMemoryStore(),
   enableDebugLogging: true,
 });
-// Now all crypto operations will log to console
+// The in-memory adapter is for this local example. Select a protected platform store in an application.
 ```
 
 ### Verify Identity Keys

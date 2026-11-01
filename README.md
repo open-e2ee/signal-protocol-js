@@ -16,13 +16,9 @@ The default policy requires post-quantum session establishment and ratcheting. T
 [![npm provenance](https://img.shields.io/badge/npm-provenance-2f6f5e)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk#provenance)
 [![Checks](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml/badge.svg)](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml)
 
-[Documentation](https://docs.open-e2ee.dev) · [API reference](https://docs.open-e2ee.dev/reference/api) · [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay) · [Security](./SECURITY.md)
+[Documentation](https://docs.open-e2ee.dev) · [API reference](https://docs.open-e2ee.dev/reference/api) · [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay/) · [Security](./SECURITY.md)
 
 ## See an encrypted round trip
-
-Press play for device setup, session establishment, encrypted delivery, and decryption on each device.
-
-https://github.com/user-attachments/assets/d8002bc3-c037-41b6-8f48-4008f2d49e6c
 
 The [visual demo](https://open-e2ee.dev/#demo) shows the envelope, ratchets, relay mailbox, and decrypted result. On desktop, type a message and inspect each step. On mobile, a recorded protocol run replays at reading pace. Displayed timings exclude network time.
 
@@ -33,7 +29,7 @@ The demonstrations use real protocol code and cryptography. Application integrat
 - **Session establishment and ratcheting.** PQXDH establishes sessions. The ML-KEM Braid ratchet adds post-quantum key updates. Required post-quantum operations fail closed.
 - **Chat features.** Multi-device messaging, groups, sealed sender, encrypted attachments, and safety-number verification use the same package.
 - **Device-local state.** Storage adapters keep identities, sessions, and message state on the device.
-- **Hosted delivery.** Connect to [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay) with the hosted client factory. Advanced integrations can supply a custom transport. A hosted client sends a sealed 1:1 message only with `hosted.profileKeys`, and only to a contact whose profile key it holds.
+- **Hosted delivery.** Connect to [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay/) with the hosted client factory. Advanced integrations can supply a custom transport. A hosted client sends a sealed 1:1 message only with `hosted.profileKeys`. It must also hold the contact's profile key.
 
 The relay never needs message plaintext or device private keys.
 
@@ -105,7 +101,7 @@ See [client composition](./docs/CLIENT_COMPOSITION.md) for platform setup.
 
 ## Use your app’s storage and relay
 
-Choose the device-local store for your runtime. Then supply a relay that authenticates each device and implements your product's access policy, or use [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay) as the managed delivery path. The SDK does not require the managed service. [Review Relay plans and exact meter definitions.](https://open-e2ee.dev/relay/pricing)
+Choose the device-local store for your runtime. Then supply a relay that authenticates each device and implements your product's access policy, or use [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay/) as the managed delivery path. The SDK does not require the managed service. [Review Relay plans and exact meter definitions.](https://open-e2ee.dev/pricing/#relay-plans)
 
 | Runtime | Storage path | Deployment boundary |
 |---|---|---|

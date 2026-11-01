@@ -38,7 +38,7 @@ const groups = new GroupManager({
   serverSigningPublicKey,
   aci: localAccountServiceId,
   pni: localPhoneNumberServiceId,
-  issueProfileKeyCredential: () => appGroupCredentials.issueProfileKey(),
+  issueProfileKeyCredential: (request) => appGroupCredentials.issueProfileKey(request),
   profileKeyCredentialPublicKey,
   profileKey: localProfileKey,
 });

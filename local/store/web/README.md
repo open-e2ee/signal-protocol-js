@@ -71,7 +71,7 @@ Browser applications using this adapter should:
 
 The exact controls depend on the host application's deployment and threat
 model. See the [OWASP XSS Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html)
-and [MDN Content Security Policy guide](https://developer.mozilla.org/docs/Web/HTTP/CSP).
+and [MDN Content Security Policy guide](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP).
 
 ## Operational status
 

@@ -10,7 +10,7 @@ The public repository contains SDK client source, documentation, and build check
 
 You can inspect the client implementation and run the public checks. Relay server implementations and the internal runtime examples remain private. You cannot reproduce the private results from this repository alone.
 
-Private testing also exists in other open-source projects. [SQLite publishes some checks and keeps TH3 private](https://www.sqlite.org/testing.html). [Convex documents a private testing framework](https://github.com/get-convex/convex-backend#readme). Those projects do not review or endorse this SDK.
+Private testing also exists in other open-source projects. [SQLite publishes some checks and keeps TH3 private](https://www.sqlite.org/testing.html). [Convex documents a private testing framework](https://github.com/convex/convex-backend/blob/main/README.md). Those projects do not review or endorse this SDK.
 
 ## Reported engineering results
 
@@ -38,12 +38,14 @@ Release tooling generates this table from a completed run. It refuses results fr
 - **Generated inputs:** check protocol and encoding properties across randomized inputs.
 - **Messaging flows:** exercise device fanout, groups, device linking, device transfer, PNI-to-ACI changes, and relay delivery.
 - **Storage contracts:** check persistence, concurrency, interruption, recovery, and storage pressure at adapter boundaries.
-- **Runtime behavior:** run the browser storage contracts in Chromium, Firefox, and WebKit. Run each public flow on the Hermes V1 command-line engine that React Native 0.86 uses, with only the globals of a bare React Native app. A committed list records each flow step that fails on that engine and its error. The job fails when a result differs from that list. Run release builds of the Expo example and the bare React Native example on an Android emulator. Both use Hermes V1. The Expo build uses Expo SDK 57 and React Native 0.86, and the bare build uses React Native 0.87.1.
+- **Runtime behavior:** run the browser storage contracts in Chromium, Firefox, and WebKit. Run each public flow on the Hermes V1 command-line engine that React Native 0.86 uses. Use only the globals of a bare React Native app. A committed list records each flow step that fails on that engine and its error. The job fails when a result differs from that list.
+
+  Run release builds of the Expo example and the bare React Native example on an Android emulator. Both use Hermes V1. The Expo build uses Expo SDK 57 and React Native 0.86. The bare build uses React Native 0.87.1.
 - **Public API:** check exported types, import paths, documented calls, and expected example output against the packed package.
 - **React Native hosts:** add the packed package to React Native and Expo projects without an override of peer conflicts. The projects cover React Native 0.83 through 0.87 and the Expo SDK 55 through 57 lines. Build the Expo example's Hermes bundle on Expo SDK 55 and 57.
 - **Errors:** check construction sites for exported error classes and codes. Reject unresolved code forwarding.
 
-The browser storage job also runs 2,000 open, write, read, and close cycles of the IndexedDB store, and a soak of the web SQLite store. Each checks for upward memory and latency drift.
+The browser storage job also runs 2,000 open, write, read, and close cycles of the IndexedDB store. It also runs a soak of the web SQLite store. Each checks for upward memory and latency drift.
 
 In Chromium, the browser storage job also builds an app with the Vite version of the browser example and the packed package. The entry module of the app completes an exchange in each direction with a top-level await. The job fails when the exchange does not finish in 30 seconds, or when a chunk of the build imports the entry chunk. A default automated check also fails when the SDK loads a module with a dynamic import and that module imports another module. Other bundlers are not checked.
 
@@ -51,7 +53,9 @@ A storage contract check does not prove a full encrypted exchange. Internal brow
 
 ## SQLite store checks
 
-Four package entries keep device-local state in a SQLite database: `./local/store/node`, `./local/store/expo`, `./local/store/react-native`, and `./local/store/web-sqlite`. A Tauri app uses `./local/store/web-sqlite`. Each row gives one runtime claim and the check that proves it. Rows that do not name public CI run in the project's engineering CI. A check runs on each change to the main branch and on each pull request that is ready for review, unless its row says otherwise. On a pull request, a job on macOS or Windows runs only when a maintainer requests it. Without that request, a pull request runs the Node store job only on Linux with Node 22, and the default automated checks run its tests on Linux with Node 26.
+Four package entries keep device-local state in a SQLite database: `./local/store/node`, `./local/store/expo`, `./local/store/react-native`, and `./local/store/web-sqlite`. A Tauri app uses `./local/store/web-sqlite`. Each row gives one runtime claim and the check that proves it. Rows that do not name public CI run in the project's engineering CI. A check runs on each change to the main branch and on each pull request that is ready for review, unless its row says otherwise.
+
+On a pull request, a job on macOS or Windows runs only when a maintainer requests it. Without that request, the Node store job uses only Linux and Node 22 on a pull request. The default automated checks run its tests on Linux with Node 26.
 
 ### Node and the Electron main process: `./local/store/node`
 
@@ -74,7 +78,11 @@ Four package entries keep device-local state in a SQLite database: `./local/stor
 | On Linux, with a running Secret portal and the default Chromium features, the store passes the shared storage contract. `safeStorage` does not use the key of the portal. | Electron store job: Linux, Electron 44 | Electron with `--password-store=gnome-libsecret`, and xdg-desktop-portal with the GNOME keyring as the back end of its Secret portal. |
 | On Linux, the vault refuses the key of the Secret portal, which `safeStorage` uses with the Chromium feature `SecretPortalKeyProviderUseForEncryption`. The store does not open, and no key reaches the disk. | Electron store job: Linux, Electron 44 | Electron with that feature and a Secret portal, with the GNOME keyring as the back end of the portal. The test checks that the ciphertext starts with `v12`. Run 36528132421 also refused the key with KWallet 6 (`kwallet6`, Ubuntu 26.04) as the back end of the portal. No job runs that case again. |
 
-No CI job signs the app with a Developer ID. On 2026-09-29, a manual check on macOS 15.7.2 arm64 with Xcode 26.3 built the packaged app twice from the main branch, as version 1.0.0 and version 1.0.1. The build used the SDK 8.1.0 package and Electron 44.4.5. Electron Forge signed each build with a Developer ID identity and the hardened runtime, and notarized and stapled it. For each build, `spctl -a -vv` reported `accepted` and `source=Notarized Developer ID`. A check script wrote a value with version 1.0.0 in the main process and in a utility process. Then it copied version 1.0.1 over the app, and the relaunches read each value back. The securityd log had no Keychain prompt for a launch. When the check copied an ad-hoc signed copy of version 1.0.1 over version 1.0.0, securityd logged a Keychain prompt for each read, and the check stopped the app. The access list of the Keychain item of the key holds the designated requirement of the app, which names the bundle identifier and the Developer ID team, not a code hash.
+No CI job signs the app with a Developer ID. On 2026-09-29, a manual check built the packaged app twice from the main branch. The check used macOS 15.7.2 arm64 with Xcode 26.3 for both builds. It built version 1.0.0 and version 1.0.1 of the app. The build used the SDK 8.1.0 package and Electron 44.4.5.
+
+Electron Forge signed each build with a Developer ID identity and the hardened runtime, and notarized and stapled it. For each build, `spctl -a -vv` reported `accepted` and `source=Notarized Developer ID`. A check script wrote a value with version 1.0.0 in the main process and in a utility process. Then it copied version 1.0.1 over the app, and the relaunches read each value back. The securityd log had no Keychain prompt for a launch.
+
+The check replaced version 1.0.0 with an ad-hoc signed copy of version 1.0.1 of the app. Then securityd logged a Keychain prompt for each read. The check stopped the app. The access list of the key's Keychain item holds the app's designated requirement. That requirement names the bundle identifier and the Developer ID team. It does not name a code hash.
 
 ### Expo: `./local/store/expo`
 
@@ -87,7 +95,7 @@ No CI job signs the app with a Developer ID. On 2026-09-29, a manual check on ma
 | The Expo example, which imports this entry, bundles with the Hermes compiler that React Native pins. | Engineering CI | The Android bundle of the Expo example with the packed package, on Expo SDK 55 and Expo SDK 57. |
 | In an Expo web build, an encrypted open and a reset fail with `SqliteEncryptionUnavailableError` (`KEY_STORAGE_ERROR`) before they use the vault. With `encryptionAtRest: false`, the store opens and keeps its data across a page load. | Browser storage job: Chromium on Linux | An `expo export --platform web` of an Expo SDK 57 app that installs the packed package, loaded in Chromium. The page reads no `PRAGMA cipher_version` row, and Expo SecureStore reports that it is not available. The check does not open a store with `./local/store/web-sqlite` in the Expo web build. |
 
-The Hermes flow job does not load a SQLite store. Its flows use the memory and key-value stores. The Android emulator job is the only CI job that runs the Expo store on Hermes. No check runs the conversion on iOS, so it is unverified there.
+The Hermes flow job does not load a SQLite store. Its flows use the memory and key-value stores. The Android emulator job is the only CI job that runs the Expo store on Hermes. No check runs the conversion on iOS, so no check verifies it there.
 
 ### Bare React Native: `./local/store/react-native`
 
@@ -103,7 +111,9 @@ The Hermes flow job does not load a SQLite store. Its flows use the memory and k
 | A release build of the bare React Native example converts a plaintext database with SQLCipher on Android. The rows and the schema version stay, the file has no SQLite header, and the vault holds one key that opens it. | Android emulator job | The release APK of the row above. Each run must log the number of rows and the schema version that the conversion kept. The same trigger rules apply. |
 | The bare React Native example, which imports this entry, bundles with the Hermes compiler that React Native pins. | Engineering CI | The Android release bundle of the bare React Native example with the packed package. |
 
-The Android emulator job is the only CI job that runs this store on Hermes with the native op-sqlite module. No CI job runs it on iOS. No check runs the conversion on iOS, so it is unverified there. On 2026-09-28, a manual check of a development build of the SDK before 8.0.0 ran the bare React Native example in the iOS 26.2 simulator with Xcode 26.3. Each of four launches logged a SQLCipher version, a database header that is not the SQLite header, and the wrong-key failure. Each launch after the first resumed the stored identity.
+The Android emulator job is the only CI job that runs this store on Hermes with the native op-sqlite module. No CI job runs it on iOS. No check runs the conversion on iOS, so no check verifies it there.
+
+On 2026-09-28, a manual check ran the bare React Native example. It used a development build from before the SDK's 8.0.0 release. The check used Xcode 26.3 and the iOS 26.2 simulator. Each of four launches logged a SQLCipher version, a database header that is not the SQLite header, and the wrong-key failure. Each launch after the first resumed the stored identity.
 
 On 2026-09-29, a manual check with Xcode 26.3 ran the release build of the example four times in the iOS 26.2 simulator. The check used the SDK 8.1.0 package built from the main branch. Each launch passed the same checks. A temporary native log in the app read the storage attributes. The example does not include this log:
 
@@ -127,7 +137,11 @@ The simulator does not enforce Data Protection. These results do not show the pr
 | Over a long run, the store holds latency, memory, and file size flat. A closed store leaves no worker, no lock of the store, and no IndexedDB connection. Two tabs that write in turn each read the last write of the other. | Browser storage job: Chromium on Linux | 150 open, write, read, and close cycles, one session of 2,000 churn operations over 250 sessions, and 100 writes that two tabs make in turn. The check counts the workers, locks, IndexedDB connections, and OPFS entries that the cycles leave. It times each cycle and each two-tab read next to a control that does the same platform work with no store state, and compares the early and late thirds of that ratio. It compares the medians of the early and late thirds of the churn, and fits a slope to the page heap of the cycles. It reads the page heap, the IndexedDB connections, and the heap and Wasm memory of the store's worker, through the DevTools protocol. Firefox and WebKit have no such protocol in the test runner, and no CI job runs this check in them. |
 | A worker without OPFS synchronous access handles fails with `OPFS_UNAVAILABLE` before it loads the engine. | Browser storage job: Chromium, Firefox, and WebKit on Linux | WebKit on Linux (WebKitGTK) has no OPFS synchronous access handles, so there WebKit runs only these checks and the checks that need no OPFS. |
 
-The WebKit store job runs Playwright's WebKit on macOS, where WebKit has OPFS synchronous access handles. Playwright's WebKit is not Safari, so the same job then runs the same checks in the Safari of the macOS runner through `safaridriver`, and records the Safari version. A WebDriver runner runs the Playwright checks unchanged. It counts the workers of a page from inside the page, and it reports the uncaught errors of a page only after the page loads. Each browser context is a Safari WebDriver session, so the check for an ephemeral context that refuses OPFS access handles skips when that session has them. It runs only on a change to the web SQLite store, the SQLite core, the storage contract, the key vault, the job, or a dependency. On a pull request, it runs only when a maintainer requests it. In the browser storage job for Chromium and Firefox and in the WebKit store job, a check that skips for want of OPFS fails.
+The WebKit store job runs Playwright's WebKit on macOS, where WebKit has OPFS synchronous access handles. Playwright's WebKit is not Safari. The same job then runs the same checks in the macOS runner's Safari through `safaridriver`. It records the Safari version. A WebDriver runner runs the Playwright checks unchanged.
+
+It counts the workers of a page from inside the page, and it reports the uncaught errors of a page only after the page loads. Each browser context is a Safari WebDriver session. The check for an ephemeral context that refuses OPFS access handles skips when that session has them.
+
+Only changes to the web SQLite store, the SQLite core, the storage contract, the key vault, the job, or a dependency trigger the job. On a pull request, it runs only when a maintainer requests it. In the browser storage job for Chromium and Firefox and in the WebKit store job, a check that skips for want of OPFS fails.
 
 The internal code-generation check runs an encrypted exchange with the memory store. It does not load a SQLite store.
 
@@ -139,7 +153,9 @@ The internal code-generation check runs an encrypted exchange with the memory st
 | In a Tauri 2.12.0 app on Linux, the first open fails with `OPFS_UNAVAILABLE`, because WebKitGTK has no OPFS synchronous access handles. No other step of the check runs. | Tauri example job: Linux x64, WebKitGTK 2.52.6 | The same app under Xvfb. The job fails when the first open succeeds or fails with a different code. |
 | In a Tauri 2.12.0 app on Android, the store opens in the Android WebView with the default IndexedDB vault. Every step of the Windows check passes, including the relaunch in a new process. | Tauri example job: Android API 36 x86_64 emulator, Android WebView 133.0.6943.137 | A debug APK of the same app, installed on the emulator and launched twice. The app writes its report to its data directory, and the job reads the report with `adb`. The job fails unless every step passes. On a pull request, the Android leg runs only when a maintainer requests it. |
 
-A Tauri 2 app uses `./local/store/web-sqlite` in its webview, with no Tauri-specific SDK code. The [web SQLite store guide](../local/store/web-sqlite/README.md#tauri) gives the Tauri setup. On 2026-09-28, a manual check of a development build of the SDK before 8.0.0, in a Tauri 2.12.0 app, passed in WKWebView on macOS 15.7.2 and in the iOS 18.0 simulator. The check covered a two-device exchange, a close and reopen, an app relaunch, a relaunch after the app was killed with both stores open, and the store locks.
+A Tauri 2 app uses `./local/store/web-sqlite` in its webview, with no Tauri-specific SDK code. The [web SQLite store guide](../local/store/web-sqlite/README.md#tauri) gives the Tauri setup.
+
+On 2026-09-28, a manual check used a development build of the SDK before 8.0.0 in a Tauri 2.12.0 app. It passed in WKWebView on macOS 15.7.2 and in the iOS 18.0 simulator. The check covered a two-device exchange, a close and reopen, an app relaunch, and the store locks. It also covered the next relaunch after an app kill with both stores open.
 
 On 2026-09-29, a manual check ran a debug build of the Tauri example with Tauri 2.12.0 in its shell. The app installed SDK 8.1.0, packed from the same commit as the example. On macOS 15.7.2 and in the iOS 17.5 simulator, every step of the first launch and of the relaunch passed. On macOS, two windows of the app shared one store. The second window opened the store that the first window held, and each window read the writes of the other. A reset in the second window failed with `INVALID_STATE`.
 
@@ -152,7 +168,7 @@ No CI job checks these items:
 - **A full origin quota in Firefox, WebKit, and Safari.** In these browsers, the quota check injects `QuotaExceededError` in the worker. No check fills a real origin quota there.
 - **Tauri on macOS and iOS.** No CI job runs the Tauri example on macOS or iOS. The manual checks ran a debug build on macOS 15.7.2 and in the iOS 17.5 and 18.0 simulators. No check ran the store in a Tauri app on a physical iOS device.
 - **A Tauri store that WebKit removes.** A check cleared all website data of the webview with a Tauri call. No check saw WebKit remove the data under storage pressure or after a period without use. No check removed the IndexedDB vault of a Tauri app while its database file stayed.
-- **A Tauri release build, and Tauri on physical Android devices.** The Tauri example job runs a debug build with no bundle on Windows and Linux, and a debug APK on an Android API 36 emulator. No check ran the store in a release build, in an installed desktop app, on another Android API level, or on a physical Android device.
+- **A Tauri release build, and Tauri on physical Android devices.** The Tauri example job runs debug builds. On Windows and Linux, they have no bundle. On an Android API 36 emulator, the job runs a debug APK. No check ran the store in a release build or an installed desktop app. No check ran it on another Android API level or a physical Android device.
 - **The React Native store on iOS and on physical devices.** No CI job opens `./local/store/react-native` on iOS. The manual checks used only the iOS simulator. No check ran the store on a physical Android or iOS device.
 - **iOS devices.** No CI job runs on iOS. The manual checks used only the iOS simulator.
 - **iOS Data Protection.** The simulator does not keep a file protection class. So no check recorded the class of the React Native store files. No check observed a file class or the keychain class enforced on a locked device.
