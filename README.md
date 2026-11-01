@@ -13,7 +13,7 @@ The default policy requires post-quantum session establishment and ratcheting. T
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-2f6f5e)](./LICENSE)
 [![npm version](https://img.shields.io/npm/v/@open-e2ee/signal-protocol-sdk)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk)
-[![npm provenance](https://img.shields.io/badge/npm-provenance-2f6f5e)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk#provenance)
+[![npm provenance](https://img.shields.io/badge/npm-provenance-2f6f5e)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk#user-content-provenance)
 [![Checks](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml/badge.svg)](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml)
 
 [Documentation](https://docs.open-e2ee.dev) · [API reference](https://docs.open-e2ee.dev/reference/api) · [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay/) · [Security](./SECURITY.md)

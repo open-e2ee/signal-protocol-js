@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.5.2
+
+### Fixed
+
+- Point the npm provenance badge at its section on npmjs.com.
+
 ## 13.5.1
 
 ### Fixed
