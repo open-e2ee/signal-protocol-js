@@ -60,7 +60,10 @@ export interface GroupReceiveRecord {
   requiredRevision: number;
   source: GroupRecordSource;
   init: GroupFetchState;
-  /** Set while a group that a sender's context created has never verified. */
+  /**
+   * Set while a group that a sender's context created has never verified.
+   * A `GroupKeySync` from an own device also clears it.
+   */
   unverified?: GroupUnverifiedOrigin;
 }
 

@@ -199,67 +199,6 @@ there.
 
 ***
 
-### ~~decryptGroupMessage()~~
-
-> **decryptGroupMessage**(`groupId`, `senderId`, `senderDeviceId`, `framedMessage`): `Promise`\<`string`\>
-
-Decrypt a group message from a sender
-
-The message passes the group decision of `processIncomingEnvelope`.
-Content whose group state must update first stays stored, and a later
-call with the same message decides it with no second decrypt.
-
-#### Parameters
-
-##### groupId
-
-`string`
-
-Group identifier
-
-##### senderId
-
-`string`
-
-Sender's user ID
-
-##### senderDeviceId
-
-`number`
-
-Sender's device ID
-
-##### framedMessage
-
-`Uint8Array`
-
-Framed SenderKeyMessage bytes
-
-#### Returns
-
-`Promise`\<`string`\>
-
-Decrypted plaintext
-
-#### Deprecated
-
-Use `processIncomingEnvelope`, which returns a receive
-  outcome and keeps the content until the application completes the
-  receive. This method completes the receive before it returns, so a
-  plaintext that the application loses is gone.
-
-#### Throws
-
-GroupReceiveUnavailableError when the group state of the content
-  is not current. Its `messageId` names the stored receive. Call again
-  later with the same message.
-
-#### Throws
-
-GroupReceiveRefusedError when the client refuses the content
-
-***
-
 ### decryptMessage()
 
 > **decryptMessage**(`remoteAddress`, `ciphertext`): `Promise`\<`string`\>
@@ -502,6 +441,16 @@ EncryptionError with `BINARY_BLOB_UNAVAILABLE` when the runtime's
 > **encryptGroupMessage**(`groupId`, `plaintext`): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
 
 Encrypt a message for group using sender key (O(1) encryption)
+
+This primitive adds no group context and checks no group master key.
+Unless the plaintext carries a group context, a
+`processIncomingEnvelope` receiver denies the output for a managed
+group. A receiver with a `groups` config gives the reason
+`legacy-no-context`, or `blocked` when the group is blocked. A receiver
+with no `groups` config refuses the output with a
+`GroupReceiveRefusedError` of reason `configuration`. Send managed group
+content with `send`. A caller that delivers the bytes itself decrypts
+them with `decryptEnvelope`, as a `sender_key` envelope.
 
 #### Parameters
 
@@ -854,12 +803,14 @@ The outcome tells the caller what to do with the envelope:
 - `duplicate`: this client processed the envelope, or the application
   already has the content of the failed envelope of a retry request.
   The client acknowledged the envelope.
-- `null-message`: the envelope carries no content. The client consumes
-  a null message when the content adapter reports `nullMessage: true`,
-  and a custom adapter must report it for its own null encoding. The
-  client acknowledged it. A null message for a failed envelope marks
-  that envelope processed, so a redelivery of it is dropped, but a
-  content resend for it that comes later still gives its content.
+- `null-message`: the envelope carries no content for the application.
+  It is a null message, or a `GroupKeySync` from an own device that the
+  client consumed. The client consumes a null message when the content
+  adapter reports `nullMessage: true`, and a custom adapter must report
+  it for its own null encoding. The client acknowledged it. A null
+  message for a failed envelope marks that envelope processed, so a
+  redelivery of it is dropped, but a content resend for it that comes
+  later still gives its content.
 - `denied`: the client refused the content. The ratchet step is spent,
   so no resend can repair it. `onDecryptionError` ran, except for a
   group that the user blocked (reason `blocked`), which has no report.
@@ -1038,20 +989,20 @@ deadline without acceptance.
 Call it only for a send whose `send()` threw `SendAcceptanceUnknownError`
 or `SendNeverAcceptedByRelayError`, or whose `onSendOutcome` event gave
 `failed` or `acceptance-unknown`. The resend keeps the `clientMessageId`,
-the client timestamp and the content of the send. It encrypts the
-content again for each recipient device that the Relay did not accept,
-and posts each copy under the message ID `<clientMessageId>:manual:N`,
-N from 1. The receive queue of a recipient device that already holds
-the message drops the copy by its sender device, its client timestamp
-and its content. The drop needs the timestamp that the content adapter
-reads from the message. Content with no timestamp, such as raw string or
-byte content, takes no drop key, and a recipient that holds it receives
-the copy again. The recipient records the message with the completion
-of its receive record, or, when a receipt is due, right after the
-receipt-due write and again with the completion of the receipt. The
-record expires after 60 days. The caller-origin receive path gives every
-decrypted message to the caller, and a caller that keeps its own records
-removes a copy itself.
+the client timestamp and the content of the send. It encrypts the content
+again for each recipient device that the Relay did not accept, and posts
+each copy under the message ID `<clientMessageId>:manual:N`, N from 1. The
+receive queue of a recipient device that already holds the message drops
+the copy by its sender and its client timestamp, from any device of the
+sender. The drop needs the timestamp that the content adapter reads from
+the message. Content with no timestamp, such as raw string or byte
+content, takes no drop key, and a recipient that holds it receives the
+copy again. The recipient records the message with the completion of its
+receive record, or, when a receipt is due, right after the receipt-due
+write and again with the completion of the receipt. The record expires
+after 60 days. The caller-origin receive path gives every decrypted
+message to the caller, and a caller that keeps its own records removes a
+copy itself.
 
 Only a send younger than 30 days takes a new resend. An open resend of
 an older send still posts until its own deadline.
@@ -1434,7 +1385,8 @@ instead of applying deltas.
 The `syncedAt` time is the epoch of the sync. The SDK accepts a safe positive
 integer at most 5 minutes ahead of the SDK clock and at most 24 hours
 behind it, and throws `InvalidSendTimestampError` for any other value
-before it posts.
+before it posts. The SDK does not reserve this time as a send timestamp,
+so a send or another sync can use the same time.
 
 #### Parameters
 
@@ -1481,7 +1433,8 @@ remains responsible for applying the delete to its local media cache.
 The `deletedAt` time is the epoch of the sync. The SDK accepts a safe positive
 integer at most 5 minutes ahead of the SDK clock and at most 24 hours
 behind it, and throws `InvalidSendTimestampError` for any other value
-before it posts.
+before it posts. The SDK does not reserve this time as a send timestamp,
+so a send or another sync can use the same time.
 
 #### Parameters
 
@@ -1528,7 +1481,8 @@ they should be available on the account's other linked devices.
 The `learnedAt` time is the epoch of the sync. The SDK accepts a safe positive
 integer at most 5 minutes ahead of the SDK clock and at most 24 hours
 behind it, and throws `InvalidSendTimestampError` for any other value
-before it posts.
+before it posts. The SDK does not reserve this time as a send timestamp,
+so a send or another sync can use the same time.
 
 #### Parameters
 
@@ -1553,7 +1507,8 @@ This is app-level linked-device notification state, not sender-facing content.
 The `acknowledgedAt` time is the epoch of the sync. The SDK accepts a safe positive
 integer at most 5 minutes ahead of the SDK clock and at most 24 hours
 behind it, and throws `InvalidSendTimestampError` for any other value
-before it posts.
+before it posts. The SDK does not reserve this time as a send timestamp,
+so a send or another sync can use the same time.
 
 #### Parameters
 
@@ -1599,7 +1554,8 @@ Conflict and untrusted state is still derived locally from identity-key changes.
 The `changedAt` time is the epoch of the sync. The SDK accepts a safe positive
 integer at most 5 minutes ahead of the SDK clock and at most 24 hours
 behind it, and throws `InvalidSendTimestampError` for any other value
-before it posts.
+before it posts. The SDK does not reserve this time as a send timestamp,
+so a send or another sync can use the same time.
 
 #### Parameters
 

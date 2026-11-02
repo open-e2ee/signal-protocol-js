@@ -9,9 +9,8 @@
 Serializes the content that the client sends, and inspects the content
 that it receives.
 
-The next major SDK version adds the required method
-`serializeGroupKeySync`, so a custom adapter must implement it in that
-version. An adapter that spreads the result of
+The method `serializeGroupKeySync` is required, so a custom adapter must
+implement it. An adapter that spreads the result of
 `createDefaultSignalProtocolContentAdapter()` into itself gets the default
 method. Upgrade every own device of one account in one release: an own
 device on an older SDK version gives the raw group key sync to
@@ -168,6 +167,28 @@ The context of the group at the send
 ##### content
 
 [`DataMessageInput`](DataMessageInput.md)
+
+#### Returns
+
+`Uint8Array`
+
+***
+
+### serializeGroupKeySync()
+
+> **serializeGroupKeySync**(`input`): `Uint8Array`
+
+The sync content that gives the key of one managed group to the other
+own devices. `inspectContent` must report the result as a sync of type
+`'groupKeySync'` with its `groupKey`.
+
+#### Parameters
+
+##### input
+
+[`GroupKeySyncInput`](GroupKeySyncInput.md)
+
+The group master key and the revision at the send
 
 #### Returns
 

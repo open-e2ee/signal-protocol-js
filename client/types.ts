@@ -112,7 +112,7 @@ export interface SignalProtocolClientContext {
 
   /**
    * The session reset steps of a retry request that ended as
-   * `expired-content` or `posting-deadline`, bound to the given context.
+   * `posting-deadline`, bound to the given context.
    * Undefined without a relay.
    *
    * @internal
@@ -204,10 +204,11 @@ export interface DataMessageInput {
    * of the SDK clock and at most 24 hours behind it, and throws
    * `InvalidSendTimestampError` for any other value.
    *
-   * The next major SDK version makes each send timestamp unique per sender
-   * device. A new send with a timestamp that a different send of the device
-   * used then throws `InvalidSendTimestampError`. Give each send its own
-   * timestamp, or omit it and read `SendResult.clientTimestamp`.
+   * Each send timestamp is unique per sender device. A new send with a
+   * timestamp that a different send of the device used throws
+   * `InvalidSendTimestampError` with the reason `already_used`. Without a
+   * timestamp, the SDK picks a free one, and `SendResult.clientTimestamp`
+   * gives it. A retry with the same `clientMessageId` keeps its timestamp.
    */
   timestamp?: number;
   [key: string]: unknown;
@@ -293,10 +294,12 @@ export interface SendOptions {
    * SDK clock and at most 24 hours behind it, and throws
    * `InvalidSendTimestampError` for any other value.
    *
-   * The next major SDK version makes each send timestamp unique per sender
-   * device. A new send with a timestamp that a different send of the device
-   * used then throws `InvalidSendTimestampError`. Give each send its own
-   * timestamp. A retry with the same `clientMessageId` keeps its timestamp.
+   * Each send timestamp is unique per sender device. A new send with a
+   * timestamp that a different send of the device used throws
+   * `InvalidSendTimestampError` with the reason `already_used`. Without a
+   * timestamp, the SDK picks a free one, and `SendResult.clientTimestamp`
+   * gives it. A retry with the same `clientMessageId`, a manual resend and a
+   * retry answer keep the original timestamp.
    */
   timestamp?: number;
 
@@ -377,10 +380,13 @@ export interface SendResult {
   timestamp: number;
 
   /**
-   * Client timestamp from the proto.
-   * Use this for storing outgoing messages to enable receipt matching.
+   * The client timestamp of the send, in milliseconds since the epoch: the
+   * timestamp that the application gave, or the timestamp that the SDK
+   * picked. Each send timestamp is unique per sender device. A receipt names
+   * the message by this timestamp, so store it with the outgoing message. A
+   * retry with the same `clientMessageId` returns the same timestamp.
    */
-  clientTimestamp?: number;
+  clientTimestamp: number;
 
   /**
    * Number of recipient devices that the relay accepted a copy of the message
@@ -861,7 +867,9 @@ export interface ProcessedReceive {
  *   lists it when it is ready. Acknowledge the envelope.
  * - `duplicate`: the client processed the envelope before, or the
  *   application already has its content. Acknowledge the envelope.
- * - `null-message`: the envelope carries no content. Acknowledge it.
+ * - `null-message`: the envelope carries no content for the application: a
+ *   null message, or a `GroupKeySync` from an own device that the client
+ *   consumed. Acknowledge it.
  * - `denied`: the client refused the content and ran `onDecryptionError`,
  *   except for a group that the user blocked (reason `blocked`), which has
  *   no report. Acknowledge the envelope.
@@ -878,10 +886,7 @@ export type ReceiveOutcome =
 
 /** One receive that `processIncomingEnvelope` stored and did not complete. */
 export interface PendingReceive {
-  /**
-   * The ID that `completeReceive` and `discardPendingReceive` take. A
-   * receive stored before the client kept message IDs gives its record ID.
-   */
+  /** The ID that `completeReceive` and `discardPendingReceive` take. */
   messageId: string;
   /**
    * `awaiting-completion` when the content is ready and waits for

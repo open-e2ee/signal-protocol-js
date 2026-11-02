@@ -237,8 +237,10 @@ export {
 export type {
   BlockedRecipientsSyncInput,
   GroupContentContext,
+  GroupKeySyncInput,
   InspectedSignalProtocolContent,
   ParsedReceiptContent,
+  ParsedSyncContent,
   ParsedTypingContent,
   ConfigurationSyncInput,
   MediaAttachmentDeleteSyncInput,

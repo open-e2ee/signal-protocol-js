@@ -1,5 +1,328 @@
 # Changelog
 
+## 14.0.0
+
+### Breaking
+
+- **`decryptGroupMessage` is removed from the client.**
+  `DefaultSignalProtocolClient` and the `SignalProtocolClient` interface no
+  longer have the method, which 12.0.0 deprecated. Use
+  `processIncomingEnvelope`. It returns a receive outcome and keeps the
+  content until `completeReceive`. Give it the framed message as a
+  `sender_key` envelope. The client resolves the group from the frame. See
+  step 20.
+- **Managed group content with no group context is denied.** A client with
+  a `groups` config denies all such content. The reason is
+  `legacy-no-context`, also when the client has state of the group. An
+  earlier check can deny the content first, such as `blocked` for a blocked
+  group. Before, the client decided such content against its local group
+  state. Content from an SDK 11 sender is not delivered. A client with no
+  `groups` config refuses such content with a `GroupReceiveRefusedError` of
+  reason `configuration`. See step 21.
+- **A send to a managed group with no stored master key throws.** When the
+  client has a `groups` config and its group store has no master key for
+  the managed group, a new send or a manual resend of content with no
+  logged group context throws `EncryptionError` with the new code
+  `GROUP_MASTER_KEY_MISSING`, and stores and posts nothing. An attachment
+  send also uploads nothing. A manual resend of logged content that
+  carries a group context keeps that context and needs no master key. A
+  replay that must build a sent transcript for an own device skips that
+  transcript, keeps its posts, and logs one warning with the code.
+  Before, the client posted content with no group context, which every
+  receiver now denies. A send to an ad hoc group does not change.
+  See step 21.
+- **The output of `encryptGroupMessage` is denied for a managed group.**
+  The primitive adds no group context and checks no master key. Unless the
+  plaintext already carries a group context, a `processIncomingEnvelope`
+  receiver denies the output for a managed group. A receiver with a `groups`
+  config gives the reason `legacy-no-context`, or `blocked` when the group
+  is blocked. A receiver with no `groups` config refuses the output with a
+  `GroupReceiveRefusedError` of reason `configuration`. The primitive
+  remains for a caller that delivers the bytes itself and decrypts them
+  with `decryptEnvelope`. See step 21.
+- **`ReceivedContent` is removed.** The type of an SDK 11 received-content
+  row, which 13.5.0 deprecated, is no longer exported. Use
+  `ReceiveWorkRecord`. See step 22.
+- **`ReceiveWorkRecord.awaitingEnvelope` is removed, and the sender fields
+  are required.** Each `ReceiveWorkRecord` now has the required fields
+  `messageId`, `senderUserId` and `senderDeviceId`. See step 22.
+- **The legacy received-content conversion is removed, and the SQLite open
+  wrapper is renamed.** `LegacyConversionMarker`,
+  `LegacyReceivedContentSource`, `convertLegacyReceivedContent`,
+  `legacyReceiveWork`, `LEGACY_RECEIVED_CONTENT_UNREADABLE`,
+  `receivedContentKey`, `parseReceivedContent`,
+  `legacyReceivedContentSource` and `KeyValueReceiveWork.legacySource` are
+  no longer exported. No store converts an SDK 11 received-content row.
+  `convertSqliteLegacyReceivedContent` is now
+  `sweepSqliteLegacyReceivedContent`. It keeps its contract: when the sweep
+  fails, it closes the database and throws the error again. See step 22.
+- **Each durable store deletes the legacy received content at open.** At
+  each open, the IndexedDB, SQLite and key-value stores delete every SDK 11
+  received-content row and every converted record that waits for its
+  envelope. The sweep reads each row only to count the readable rows, then
+  deletes it. It logs one warning with the code
+  `LEGACY_RECEIVED_CONTENT_DELETED` and two fields: `count` holds the
+  deleted rows and records, and `readable` holds the deleted rows that
+  parse. A readable row is in a store that SDK 12.0.0 or later never opened.
+  The sweep relies on the Relay retention constraint. The Relay keeps an
+  undelivered envelope for at most its retention period, 30 days in
+  production. The constraint does not cover a device that received the
+  content on SDK 11 inside the last 30 days. For that device, 13.x would
+  convert the row and complete it when the Relay delivers the envelope
+  again. This release deletes the row at first open, and the sweep does not
+  restore it. An open that finds nothing logs nothing. The memory store
+  keeps no data across a restart and has no sweep. See step 22.
+- **`SignalProtocolContentAdapter` has the required method
+  `serializeGroupKeySync`.** `ParsedSyncContent.type` has the new member
+  `'groupKeySync'`, and `ParsedSyncContent` has the new optional field
+  `groupKey`. A custom adapter must implement the method, and its
+  `inspectContent` must report the result as a sync of type `'groupKeySync'`
+  with its `groupKey`. An adapter that spreads the result of
+  `createDefaultSignalProtocolContentAdapter()` into itself gets the default
+  method. Code that switches on the sync `type` must handle
+  `'groupKeySync'`. See step 23.
+- **The retry terminal class `expired-content` is now `request-expired`.**
+  `RetryTerminalClass` no longer holds `expired-content`. A retry request
+  whose latest attempt the Relay answered or holds ends as `request-expired`
+  when its content did not come before its deadline. The session does not
+  reset. A retry request whose latest attempt the Relay did not accept ends
+  as `posting-deadline` at its posting deadline or its deadline. The session
+  resets. Only a `posting-deadline` end resets the session. The class
+  `request-expired` is not the delivery error cause `request-ended`. At
+  client start, the SDK moves each stored retry request record to a new key
+  prefix, and rewrites a stored `expired-content` end to `request-expired`.
+  It keeps the time, the emitted flag and the session reset of the end, so
+  a moved end can carry `event.recovery` from an SDK 13.x reset. The reader
+  also reads a stored `expired-content` end as `request-expired`. That
+  reader is removed only when both conditions are true: the next major SDK
+  version ships, and at least 60 days have passed since the publish day of
+  14.0.0. See step 24.
+- **Each send timestamp is unique per sender device.** A new send reserves
+  its timestamp in the store before it writes its intent and before it posts
+  anything. A new send with a timestamp that a different send of the device
+  used throws `InvalidSendTimestampError` with the new reason
+  `already_used`, and stores and posts nothing. The SDK's own sends, the
+  profile key offer and the sender key distribution, reserve from the same
+  index of the device. So an application that passes
+  `timestamp: Date.now()` can get `already_used` when it did not use the
+  value again itself. Omit `timestamp`, or send again with no `timestamp`
+  on `already_used`. When a different send used the timestamp that the SDK
+  reads from its clock, the SDK moves to the next free millisecond. A moved
+  timestamp more than 5 minutes ahead of the SDK clock throws the error with
+  the reason `too_far_ahead`. A reservation with no stored send holds its
+  timestamp for 5 minutes, and a new send can then take it. A send that
+  spends longer than 5 minutes between its reservation and its stored
+  intent, and whose timestamp another send took in the meantime, fails with
+  `already_used` instead of posting a duplicate timestamp.
+  `InvalidSendTimestampError.earliest` and `latest` are now optional, and
+  are absent for `already_used`. `SendResult.clientTimestamp` is now
+  required, and every send returns it. After the SDK has stored a send, a
+  retry with the same `clientMessageId` keeps the original timestamp and
+  reserves nothing. A send that failed before the SDK stored it gets a new
+  timestamp on retry. A manual resend, a retry answer and a group resend
+  keep the original timestamp and reserve nothing. A sync to linked devices
+  and the null message of a session reset reserve no timestamp. See step 25.
+- **A received message is keyed by its sender and timestamp only.** The
+  receive queue drops a copy by the key `[senderUserId, timestamp]`. A later
+  message of the same sender with the same timestamp drops with no notice
+  and runs no `onMessageDecrypted`. This applies to any body and to any
+  device of the sender. `ReceivedMessageKey` no longer has the fields
+  `contentDigest` and `senderDeviceId`. At the first start on this release,
+  the SDK moves the stored received-timestamp records to a new prefix. Two
+  old records of one sender and timestamp become one record with the
+  earliest receive time. A custom store that checks
+  `ReceiveWorkRecord.received` gets a key with the two fields `senderUserId`
+  and `timestamp`. A receive record that SDK 13.x stored can still carry
+  `senderDeviceId` and `contentDigest` in `received`, and a custom store must
+  accept that shape until the next major. A send to the own account posts
+  only a sent transcript to each other own device, and posts nothing when
+  the account has no other device. See step 26.
+- **The stores refuse SDK 13.x after the first open of this release.** The
+  IndexedDB store opens its database at version 12, and the SQLite store
+  applies step 7. Neither changes a table. A 13.x tab then fails to open
+  the database with `VersionError`, and a 13.x SQLite store refuses the file
+  with `INVALID_STATE`. An open IndexedDB connection of this release closes
+  when another connection opens a newer version. When an open connection of
+  an older tab blocks the open, the store logs one warning with the code
+  `INDEXEDDB_OPEN_BLOCKED` and the field `version`, and the open completes
+  when that connection closes. The key-value store has no guard.
+  See step 27.
+
+#### Upgrade steps
+
+20. Replace `decryptGroupMessage` with `processIncomingEnvelope`. A cipher
+    primitive that returns plaintext has a `decrypt*` name, such as
+    `decryptMessage`, `decryptEnvelope` and `decryptFile`. A receive
+    workflow that returns an outcome and keeps the content until
+    `completeReceive` has a `process*` name, such as
+    `processIncomingEnvelope`. Pass the delivered envelope with its Relay
+    `id`. An envelope with no `id` takes no receive lock, and a repeat call
+    gives the retained content again until `completeReceive`. A refusal now
+    gives a `denied` outcome and runs `onDecryptionError` instead of
+    throwing. A retryable decrypt failure sends a retry request and throws.
+    Receives that 13.x `decryptGroupMessage` left pending complete through
+    `completeReceive` once `listPendingReceives` lists them at
+    `awaiting-completion`. A `completeReceive` call before that stage
+    deletes nothing. A repeated `processIncomingEnvelope` call with the
+    same frame does not find them. It fails with `DECRYPTION_FAILED` and
+    sends a retry request. So stop any 13.x re-call loop and use
+    `listPendingReceives`.
+21. Expect a denial for all managed group content with no group context. A
+    client with a `groups` config gives the reason `legacy-no-context`. An
+    earlier check can deny the content first, such as `blocked` for a
+    blocked group. A client with no `groups` config refuses such content
+    with a `GroupReceiveRefusedError` of reason `configuration`. Before, the
+    client decided such content against local group state. Every sender must
+    run SDK 12.0.0 or later. A client with a `groups` config whose group
+    store has no master key for a managed group now refuses a new send to
+    that group, and a manual resend of content with no logged group
+    context. It throws `EncryptionError` with the
+    code `GROUP_MASTER_KEY_MISSING`, and stores and posts nothing. An
+    attachment send also uploads nothing. Store the group master key through
+    the link or sync path, then send again. A manual resend of logged content
+    that carries a group context keeps that context. A replay that must build
+    a sent transcript for an own device skips that transcript, keeps its
+    posts, and logs one warning with the code. The output of
+    `encryptGroupMessage` carries no group context unless its plaintext holds
+    one. A `processIncomingEnvelope` receiver with a `groups` config denies it
+    for a managed group as `legacy-no-context`, or as `blocked` when the group
+    is blocked. A receiver with no `groups` config refuses it with a
+    `GroupReceiveRefusedError` of reason `configuration`. Send managed group
+    content with `send`. A caller that delivers the bytes of
+    `encryptGroupMessage` itself decrypts them with `decryptEnvelope`.
+22. Expect each durable store to delete every SDK 11 received-content row
+    at the first open on this release. It also deletes every converted
+    record that waits for an envelope, and it logs the count once with the
+    code `LEGACY_RECEIVED_CONTENT_DELETED`. It also deletes each readable
+    SDK 11 row in a store that SDK 12.0.0 or later never opened, and the
+    count line carries that number in the separate field `readable`. The
+    sweep relies on the Relay retention constraint. The Relay keeps an
+    undelivered envelope for at most its retention period, 30 days in
+    production. Where the constraint holds, no SDK version shows the content
+    of such a row. The constraint does not cover a device that received the
+    content on SDK 11 inside the last 30 days. For that device, 13.x would
+    convert the row and complete it when the Relay delivers the envelope
+    again. This release deletes the row at first open, and the sweep does not
+    restore it. Remove all use of `ReceivedContent`,
+    `ReceiveWorkRecord.awaitingEnvelope`, `receivedContentKey` and
+    `parseReceivedContent`. A custom store must now set `messageId`,
+    `senderUserId` and `senderDeviceId` on each `ReceiveWorkRecord`.
+23. Upgrade every own device of one account in one release. An own device
+    on an older SDK version gives the raw group key sync to
+    `onMessageDecrypted`. That sync holds the group master key. A custom
+    content adapter must implement `serializeGroupKeySync`, or spread the
+    result of `createDefaultSignalProtocolContentAdapter()` into itself.
+    Handle `'groupKeySync'` when you switch on `ParsedSyncContent.type`. A
+    custom local store must keep each metadata value across a close and a
+    reopen. The first start on this release sends one `GroupKeySync` for
+    each managed group with a verified record and with stored state that
+    lists the account as a member, to each other own device.
+24. Replace `case 'expired-content':` with `case 'request-expired':` in
+    `onRetryTerminal`. A retry request whose latest attempt the Relay
+    answered or holds ends as `request-expired` at its deadline and resets no
+    session. A retry request whose latest attempt the Relay did not accept
+    ends as `posting-deadline` at its posting deadline or its deadline. It
+    resets the session. Only `posting-deadline` resets. A record that the
+    migration moved can carry `event.recovery` with `request-expired` during
+    the reader window. Do not confuse `request-expired` with the delivery
+    error cause `request-ended`. The reader window lasts until the next major
+    SDK version ships, and for at least 60 days after the publish day of
+    14.0.0. In that window, the SDK reads a stored `expired-content` end as
+    `request-expired`.
+25. Expect a unique send timestamp per device. A new send with a timestamp
+    that a different send of the device used throws
+    `InvalidSendTimestampError` with the reason `already_used`. The field
+    `SendResult.clientTimestamp` is now required. Read the timestamp there
+    when the SDK picks it. A retry with the same `clientMessageId`, a manual
+    resend and a retry answer keep the original timestamp. The fields
+    `InvalidSendTimestampError.earliest` and `latest` are absent for
+    `already_used`.
+26. Expect the SDK to drop a later message of the same sender with the same
+    timestamp. This applies to any device of the sender. The rule also
+    covers sent transcripts from two own devices in two conversations. A
+    custom store that checks `ReceiveWorkRecord.received` gets a key with
+    `senderUserId` and `timestamp` only. A note to self arrives at each
+    other own device as a sent transcript only.
+27. Do not go back to SDK 13.x after the first open on this release. A 13.x
+    reader throws on a record of this release and does not degrade. A 13.x
+    web tab fails to open with `VersionError`. A 14.x open waits for each
+    open 13.x tab to close. A 13.x SQLite store refuses the file with
+    `INVALID_STATE`. The key-value store has no guard, so stop each 13.x
+    process on it before the first 14.x open.
+
+### Added
+
+- **Own devices get the key of each managed group.** When a client creates a
+  managed group, joins one through an invite link, or accepts a member
+  invitation, it sends one `GroupKeySync` with the group master key and the
+  revision to each other own device. When the client sees an own device for
+  the first time, it sends the key of each group to that device only. Each
+  start sends the key of each group to each own device that the key sync
+  ledger does not mark for the group. So the first start on this release
+  sends one `GroupKeySync` for each group and own device, and a start after
+  a complete run sends none. The ledger marks the own devices whose copy
+  the Relay accepted and the own device that sent this device the key, so
+  a refused or failed send is sent again at the next start. A group sends
+  no key while its record is unverified, while it has no stored state, or
+  while its stored state does not list the account as a member. The
+  receiver accepts a `GroupKeySync` only from its own account. For a group
+  with no record, it writes the group record with the source `'sync'`
+  before the master key, and schedules a fetch of the group. So an own
+  device knows the group with no group traffic. A record that exists keeps
+  its source. A `GroupKeySync` from an own device clears the unverified
+  origin that a group context set, so the group leaves the per-sender
+  `unverified-cap`. A record that already has its master key gets no new
+  fetch, and a repeated `GroupKeySync` applies once.
+  `processIncomingEnvelope`, the Relay subscription and the receive queue
+  consume the content, so the application never gets it from them, and
+  `processIncomingEnvelope` gives the outcome `null-message`.
+  `decryptEnvelope` and the raw decrypt methods `receive`, `decryptMessage`
+  and `decryptMessages` return the sync unapplied, master key included. The
+  ledger is one metadata value for each group, under the key prefix
+  `open-e2ee:group-key-sync:v1:`. The client deletes the value when it
+  removes the group record. See step 23.
+
+### Fixed
+
+- **A dying page no longer leaves a rotated pin with sessions.** The
+  IndexedDB store now writes the new pin last. If a page stops inside an
+  identity rotation transaction, a browser can commit only part of it. The
+  store then keeps the old pin. Before, the store could keep the new pin
+  together with sessions of the old identity. An encrypt on such a session
+  then failed the identity trust check, and the send reported
+  `EncryptionError` with code `ENCRYPTION_FAILED` for that device.
+- **A dying page no longer leaves a session with unused prekeys.** The
+  IndexedDB store now deletes the one-time prekeys, records the Kyber
+  prekey use, and deletes the sender-key handoff rows of the device first.
+  It writes the pin, then the receive record, and then the session. If a page
+  stops inside a session commit, a browser can commit only part of it.
+  Before, the store could keep the receive record of a PreKey message
+  without its session while the one-time prekeys of that message stayed.
+  It could also keep the session while the one-time prekeys stayed or the
+  Kyber prekey use was not recorded. It could also keep the session with
+  handoff rows of the device, so a group send could skip the sender key
+  for that device. Now a commit that stops before the receive record keeps
+  no session. If it already deleted a one-time prekey of the message, a
+  redelivery of that PreKey message fails with `EncryptionError` with
+  code `PREKEY_NOT_FOUND`, and the client sends a retry request to the
+  sender. If it recorded only the Kyber prekey use, the next entry
+  applies. A commit that stops between the receive
+  record and the session keeps the content, and the client gives it to
+  the application.
+- **A PreKey message whose Kyber prekey use the store recorded without its
+  session now gets a resend.** A session commit that stops after the Kyber
+  prekey use and before the session leaves that state. No released write
+  order could leave it, and the order above can. Without this change,
+  each redelivery of that PreKey message fails at the session commit
+  with `ReusedBaseKeyError`, the client does not acknowledge the envelope
+  and sends no retry request, and the message never arrives. Now, when no
+  session of the sender device holds the base key of the message, the
+  failure is a retryable decryption error. The client sends a retry
+  request to the sender and acknowledges the envelope. The sender makes a
+  new session from a fresh prekey bundle, with a new base key, and resends.
+  `processIncomingEnvelope` sends the request and throws `EncryptionError`
+  with code `DECRYPTION_FAILED`.
+
 ## 13.5.2
 
 ### Fixed

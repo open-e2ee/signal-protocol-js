@@ -13,21 +13,28 @@ import { SERVICE_ID_ACI, serviceIdBinary } from '../internal/protocol/zk/groups/
 import type { GroupContentContext, InspectedSignalProtocolContent } from './content-adapter';
 import type { GroupFetcher } from './group-fetcher';
 
-// A managed group's raw ID is its group identifier in lowercase hex.
 const MANAGED_GROUP_ID = new RegExp(`^[0-9a-f]{${GROUP_IDENTIFIER_LEN * 2}}$`);
 const MASTER_KEY_LEN = 32;
 /** How long a receive waits before it tries an unresolved sender again. */
 const SENDER_RESOLUTION_RETRY_MS = 30_000;
 
 /**
+ * True when a raw group ID names a managed group: its group identifier in
+ * lowercase hex. Any other ID names an ad hoc group.
+ *
+ * @param groupId - A raw group ID, with no `open-e2ee:group:` prefix
+ */
+export function isManagedGroupId(groupId: string): boolean {
+  return MANAGED_GROUP_ID.test(groupId);
+}
+
+/**
  * Why the client delivers no group content and never will.
  *
  * `legacy-no-context`: the content of a managed group carries no group
- * context, and the client has no state of the group. SDK 12.0.0 and later
- * put the group context in group content. The next major SDK version no
- * longer decides group content that has no group context, so content from
- * an SDK 11 sender is not delivered. Move every sender to SDK 12.0.0 or
- * later before that version.
+ * context. The client denies all such content, also when it has state of
+ * the group. SDK 12.0.0 and later put the group context in group content,
+ * so content from an SDK 11 sender is not delivered.
  */
 export type GroupReceiveDenial =
   | 'malformed-context'
@@ -73,10 +80,10 @@ export class GroupReceiveRefusedError extends Error {
  * The client cannot decide on group content yet, because its group state
  * is not current. The content is committed in a receive record under
  * `messageId`, and the receive queue decides it when the group state
- * updates. `decryptGroupMessage` throws it for a `pending` receive. A
- * repeat call with the same message finds the record and spends no second
- * ratchet step. `messageId` is absent only on an error that no receive
- * record backs.
+ * updates. No client method throws it: `processIncomingEnvelope` gives a
+ * `pending` outcome for it. A redelivery of the envelope finds the record
+ * and spends no second ratchet step. `messageId` is absent only on an
+ * error that no receive record backs.
  */
 export class GroupReceiveUnavailableError extends Error {
   override readonly name = 'GroupReceiveUnavailableError';
@@ -95,6 +102,8 @@ export class GroupReceiveUnavailableError extends Error {
  * content is content of the own account. A sent transcript names the
  * conversation that its content is delivered under, so the refusal comes
  * before any group decision on the content.
+ * A `GroupKeySync` carries a group master key, so the refusal also comes
+ * before its receive writes a group record or a master key.
  *
  * @param inspected - The inspection of the content
  * @param senderId - The sender of the content
@@ -139,7 +148,7 @@ export function classifyGroupContent(
 ): GroupContentClaim | null {
   const context = inspected.groupContext;
   const managedOrContext = (groupId: string | undefined) =>
-    context !== undefined || (groupId !== undefined && MANAGED_GROUP_ID.test(groupId));
+    context !== undefined || (groupId !== undefined && isManagedGroupId(groupId));
   // The transport binds content to a group before the content names one:
   // content that a sender key decrypted, or that came beside a distribution,
   // is content of that group whatever its shape, and never a transcript.
@@ -217,10 +226,11 @@ export interface GroupReceiveEvaluatorOptions {
  *    cap of the sender device. The revision raises the group's required
  *    revision.
  * 3. A blocked group drops the content with no report.
- * 4. When no state covers the claimed revision, the fetcher updates the
- *    group first. Content with no context is evaluated against local state
- *    only, and with no state it is denied.
- * 5. The recipient and the sender must be members, and the sender must be
+ * 4. Content with no context is denied as `legacy-no-context`, also when
+ *    the client has state of the group.
+ * 5. When no state covers the claimed revision, the fetcher updates the
+ *    group first.
+ * 6. The recipient and the sender must be members, and the sender must be
  *    allowed to send. A sent transcript checks only the recipient.
  *
  * An unavailable verdict keeps no state here. The receive queue owns the
@@ -251,10 +261,9 @@ export function createGroupReceiveEvaluator(
     if (await options.isGroupBlocked?.(createGroupId(groupId))) {
       return { kind: 'denied', reason: 'blocked' };
     }
+    if (!context) return { kind: 'denied', reason: 'legacy-no-context' };
     let state: DecryptedGroup | null = await store.getGroupState(groupId);
-    if (!context) {
-      if (!state) return { kind: 'denied', reason: 'legacy-no-context' };
-    } else if (!state || state.revision < context.revision) {
+    if (!state || state.revision < context.revision) {
       const freshness = await fetcher.ensureFresh(groupId, {
         revision: context.revision,
         ...(context.groupChange && { change: context.groupChange }),
@@ -393,7 +402,7 @@ export function createGroupMembershipChecker(
 ): GroupMembershipChecker {
   return async (groupId, userId) => {
     const rawGroupId = extractGroupId(groupId);
-    if (!MANAGED_GROUP_ID.test(rawGroupId)) {
+    if (!isManagedGroupId(rawGroupId)) {
       if (!isCurrentMember) return 'no-source';
       return (await isCurrentMember(createGroupId(rawGroupId), userId)) ? 'member' : 'not-member';
     }

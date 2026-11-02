@@ -152,6 +152,12 @@ export interface GroupFetcherOptions {
   readonly deadlineMs?: number;
 }
 
+/** The record with no `unverified` origin. */
+function withoutUnverified(record: GroupReceiveRecord): GroupReceiveRecord {
+  const { unverified: _unverified, ...verified } = record;
+  return verified;
+}
+
 /** The denial that a group server refusal states, if it states one. */
 export function groupFetchDenial(error: unknown): GroupFetchDenial | null {
   if (GroupManager.isNotReadableRejection(error)) return 'group-not-readable';
@@ -244,6 +250,50 @@ export class GroupFetcher {
     });
     await store.storeMasterKey(groupId, masterKey);
     return 'admitted';
+  }
+
+  /**
+   * Admit the master key and the revision of a `GroupKeySync` from an own
+   * device. The caller refuses a sync from another account before this
+   * call.
+   *
+   * An own device vouches for the key, so the sync clears the `unverified`
+   * origin that a group context gave the record. The group then leaves the
+   * unverified cap of the context's sender device. A group that has both a
+   * receive record and its master key writes nothing else, so a repeated
+   * sync applies once. Otherwise the record is written with source `'sync'`
+   * before the master key, as in `admitContext`, and the timer schedules a
+   * fetch of the group. False when the sync writes no master key.
+   */
+  async admitSync(
+    groupId: string,
+    masterKey: Uint8Array,
+    revision: number
+  ): Promise<boolean> {
+    const { store } = this.options;
+    const known = await store.getGroupReceiveRecord(groupId);
+    if (known && (await store.getMasterKey(groupId))) {
+      if (known.unverified) {
+        await store.updateGroupReceiveRecord(groupId, (current) =>
+          current?.unverified ? withoutUnverified(current) : current
+        );
+      }
+      return false;
+    }
+    await store.updateGroupReceiveRecord(groupId, (current) => {
+      this.raiseInFlight(groupId, revision);
+      const record = withoutUnverified(current ?? newGroupReceiveRecord('sync'));
+      return revision > record.requiredRevision
+        ? { ...record, requiredRevision: revision }
+        : record;
+    });
+    await store.storeMasterKey(groupId, masterKey);
+    if (!this.stopped) {
+      const dueAt = await this.dueAt(groupId, this.now());
+      if (dueAt !== null) this.due.set(groupId, dueAt);
+      this.arm();
+    }
+    return true;
   }
 
   /**

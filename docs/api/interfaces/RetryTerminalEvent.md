@@ -34,5 +34,7 @@ The Relay message ID of the envelope that the requester failed to decrypt.
 
 > `optional` **recovery?**: [`RetryTerminalRecoveryEvent`](RetryTerminalRecoveryEvent.md)
 
-The session reset of the requester. Only an `expired-content` or
-`posting-deadline` end of a client with a Relay has it.
+The session reset of the requester. A `posting-deadline` end of a client
+with a Relay has it. An SDK 13.x reset also on `expired-content`, so
+while the SDK reads the records of SDK 13.x, a `request-expired` end that
+the record migration moved from SDK 13.x can also have it.

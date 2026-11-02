@@ -96,23 +96,6 @@ export interface RetainedKyberPreKey {
 }
 
 /**
- * The legacy row of recoverable plaintext that SDK 11 stored. A store that
- * opens such a row converts it to a receive record with
- * `awaitingEnvelope: true`. No store writes this shape any more.
- *
- * @deprecated Use `ReceiveWorkRecord` and the receive-work store methods.
- *   The next major SDK version removes this type and the conversion of
- *   these rows at the first open of a durable store. Open each durable
- *   store once on SDK 13.x before that version.
- */
-export interface ReceivedContent {
-  id: string;
-  plaintext: string;
-  receivedAt: number;
-  groupId?: string;
-}
-
-/**
  * The stage of one receive record.
  *
  * - `decrypted`: the ratchet step and the plaintext are committed, and the
@@ -150,11 +133,11 @@ export interface ReceiveWorkRecord {
   sizeBytes: number;
   /** The decrypted content. Absent in `receipt-due`. */
   plaintext?: string;
-  /** The message ID that the application sees. Absent on a converted legacy row. */
-  messageId?: string;
+  /** The message ID that the application sees. */
+  messageId: string;
   envelopeId?: string;
-  senderUserId?: string;
-  senderDeviceId?: number;
+  senderUserId: string;
+  senderDeviceId: number;
   messageType?: 'prekey_bundle' | 'ciphertext' | 'sender_key';
   serverTimestamp?: number;
   arrivedSealed?: boolean;
@@ -189,12 +172,13 @@ export interface ReceiveWorkRecord {
   hookAttempts?: number;
   /** The failed envelope that this record resends. */
   failedEnvelopeId?: string;
-  /** A converted legacy row. The next delivery of its envelope gives the sender fields. */
-  awaitingEnvelope?: true;
   /**
    * `receipt-due`: the key of the content that the application got. The
    * completion of the record records the key again, so a later copy with
-   * the key is dropped.
+   * the key is dropped. The key holds `senderUserId` and `timestamp` only. A
+   * record that SDK 13.x wrote can hold a key that also has `senderDeviceId`
+   * and `contentDigest`. A store accepts both shapes until the next major SDK
+   * version after this one.
    */
   received?: ReceivedMessageKey;
 }
@@ -483,20 +467,20 @@ export interface SignalProtocolClient {
    * Call it only for a send whose `send()` threw `SendAcceptanceUnknownError`
    * or `SendNeverAcceptedByRelayError`, or whose `onSendOutcome` event gave
    * `failed` or `acceptance-unknown`. The resend keeps the `clientMessageId`,
-   * the client timestamp and the content of the send. It encrypts the
-   * content again for each recipient device that the Relay did not accept,
-   * and posts each copy under the message ID `<clientMessageId>:manual:N`,
-   * N from 1. The receive queue of a recipient device that already holds
-   * the message drops the copy by its sender device, its client timestamp
-   * and its content. The drop needs the timestamp that the content adapter
-   * reads from the message. Content with no timestamp, such as raw string or
-   * byte content, takes no drop key, and a recipient that holds it receives
-   * the copy again. The recipient records the message with the completion
-   * of its receive record, or, when a receipt is due, right after the
-   * receipt-due write and again with the completion of the receipt. The
-   * record expires after 60 days. The caller-origin receive path gives every
-   * decrypted message to the caller, and a caller that keeps its own records
-   * removes a copy itself.
+   * the client timestamp and the content of the send. It encrypts the content
+   * again for each recipient device that the Relay did not accept, and posts
+   * each copy under the message ID `<clientMessageId>:manual:N`, N from 1. The
+   * receive queue of a recipient device that already holds the message drops
+   * the copy by its sender and its client timestamp, from any device of the
+   * sender. The drop needs the timestamp that the content adapter reads from
+   * the message. Content with no timestamp, such as raw string or byte
+   * content, takes no drop key, and a recipient that holds it receives the
+   * copy again. The recipient records the message with the completion of its
+   * receive record, or, when a receipt is due, right after the receipt-due
+   * write and again with the completion of the receipt. The record expires
+   * after 60 days. The caller-origin receive path gives every decrypted
+   * message to the caller, and a caller that keeps its own records removes a
+   * copy itself.
    *
    * Only a send younger than 30 days takes a new resend. An open resend of
    * an older send still posts until its own deadline.
@@ -628,12 +612,14 @@ export interface SignalProtocolClient {
    * - `duplicate`: this client processed the envelope, or the application
    *   already has the content of the failed envelope of a retry request.
    *   The client acknowledged the envelope.
-   * - `null-message`: the envelope carries no content. The client consumes
-   *   a null message when the content adapter reports `nullMessage: true`,
-   *   and a custom adapter must report it for its own null encoding. The
-   *   client acknowledged it. A null message for a failed envelope marks
-   *   that envelope processed, so a redelivery of it is dropped, but a
-   *   content resend for it that comes later still gives its content.
+   * - `null-message`: the envelope carries no content for the application.
+   *   It is a null message, or a `GroupKeySync` from an own device that the
+   *   client consumed. The client consumes a null message when the content
+   *   adapter reports `nullMessage: true`, and a custom adapter must report
+   *   it for its own null encoding. The client acknowledged it. A null
+   *   message for a failed envelope marks that envelope processed, so a
+   *   redelivery of it is dropped, but a content resend for it that comes
+   *   later still gives its content.
    * - `denied`: the client refused the content. The ratchet step is spent,
    *   so no resend can repair it. `onDecryptionError` ran, except for a
    *   group that the user blocked (reason `blocked`), which has no report.
@@ -903,40 +889,21 @@ export interface SignalProtocolClient {
   /**
    * Encrypt a message for group using sender key (O(1) encryption)
    *
+   * This primitive adds no group context and checks no group master key.
+   * Unless the plaintext carries a group context, a
+   * `processIncomingEnvelope` receiver denies the output for a managed
+   * group. A receiver with a `groups` config gives the reason
+   * `legacy-no-context`, or `blocked` when the group is blocked. A receiver
+   * with no `groups` config refuses the output with a
+   * `GroupReceiveRefusedError` of reason `configuration`. Send managed group
+   * content with `send`. A caller that delivers the bytes itself decrypts
+   * them with `decryptEnvelope`, as a `sender_key` envelope.
+   *
    * @param groupId - Group identifier
    * @param plaintext - Message to encrypt
    * @returns Framed SenderKeyMessage bytes
    */
   encryptGroupMessage(groupId: string, plaintext: string): Promise<Uint8Array>;
-
-  /**
-   * Decrypt a group message from a sender
-   *
-   * The message passes the group decision of `processIncomingEnvelope`.
-   * Content whose group state must update first stays stored, and a later
-   * call with the same message decides it with no second decrypt.
-   *
-   * @deprecated Use `processIncomingEnvelope`, which returns a receive
-   *   outcome and keeps the content until the application completes the
-   *   receive. This method completes the receive before it returns, so a
-   *   plaintext that the application loses is gone.
-   *
-   * @param groupId - Group identifier
-   * @param senderId - Sender's user ID
-   * @param senderDeviceId - Sender's device ID
-   * @param framedMessage - Framed SenderKeyMessage bytes
-   * @returns Decrypted plaintext
-   * @throws GroupReceiveUnavailableError when the group state of the content
-   *   is not current. Its `messageId` names the stored receive. Call again
-   *   later with the same message.
-   * @throws GroupReceiveRefusedError when the client refuses the content
-   */
-  decryptGroupMessage(
-    groupId: string,
-    senderId: string,
-    senderDeviceId: number,
-    framedMessage: Uint8Array
-  ): Promise<string>;
 
   /**
    * Rotate sender key for a group (forward secrecy on membership changes)
@@ -1059,7 +1026,8 @@ export interface SignalProtocolClient {
    * The `deletedAt` time is the epoch of the sync. The SDK accepts a safe positive
    * integer at most 5 minutes ahead of the SDK clock and at most 24 hours
    * behind it, and throws `InvalidSendTimestampError` for any other value
-   * before it posts.
+   * before it posts. The SDK does not reserve this time as a send timestamp,
+   * so a send or another sync can use the same time.
    */
   syncMediaAttachmentDeleteToLinkedDevices(
     entry: import('../client/content-adapter').MediaAttachmentDeleteSyncInput
@@ -1093,7 +1061,8 @@ export interface SignalProtocolClient {
    * The `learnedAt` time is the epoch of the sync. The SDK accepts a safe positive
    * integer at most 5 minutes ahead of the SDK clock and at most 24 hours
    * behind it, and throws `InvalidSendTimestampError` for any other value
-   * before it posts.
+   * before it posts. The SDK does not reserve this time as a send timestamp,
+   * so a send or another sync can use the same time.
    */
   syncRecipientUsernameToLinkedDevices(
     recipientUsername: import('../client/content-adapter').RecipientUsernameSyncInput
@@ -1108,7 +1077,8 @@ export interface SignalProtocolClient {
    * The `changedAt` time is the epoch of the sync. The SDK accepts a safe positive
    * integer at most 5 minutes ahead of the SDK clock and at most 24 hours
    * behind it, and throws `InvalidSendTimestampError` for any other value
-   * before it posts.
+   * before it posts. The SDK does not reserve this time as a send timestamp,
+   * so a send or another sync can use the same time.
    */
   syncVerificationStateToLinkedDevices(
     verificationState: import('../client/content-adapter').VerificationStateSyncInput
@@ -1122,7 +1092,8 @@ export interface SignalProtocolClient {
    * The `acknowledgedAt` time is the epoch of the sync. The SDK accepts a safe positive
    * integer at most 5 minutes ahead of the SDK clock and at most 24 hours
    * behind it, and throws `InvalidSendTimestampError` for any other value
-   * before it posts.
+   * before it posts. The SDK does not reserve this time as a send timestamp,
+   * so a send or another sync can use the same time.
    */
   syncTaskNotificationAckToLinkedDevices(
     input: Omit<
@@ -1140,7 +1111,8 @@ export interface SignalProtocolClient {
    * The `syncedAt` time is the epoch of the sync. The SDK accepts a safe positive
    * integer at most 5 minutes ahead of the SDK clock and at most 24 hours
    * behind it, and throws `InvalidSendTimestampError` for any other value
-   * before it posts.
+   * before it posts. The SDK does not reserve this time as a send timestamp,
+   * so a send or another sync can use the same time.
    */
   syncBlockedRecipientsToLinkedDevices(
     blocked: import('../client/content-adapter').BlockedRecipientsSyncInput

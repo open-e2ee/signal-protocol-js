@@ -7,7 +7,8 @@
 # Interface: RetryTerminalRecoveryEvent
 
 The session reset of the requester after a retry request ends as
-`expired-content` or `posting-deadline`.
+`posting-deadline`, or after an SDK 13.x reset for an `expired-content`
+request that the record migration moved as `request-expired`.
 
 The requester archived its session with the device that sent the failed
 envelope, after each decrypt from that device in progress ended. The next

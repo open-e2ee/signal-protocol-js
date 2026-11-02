@@ -90,9 +90,10 @@ import { deleteDataThenReplaceValueKey, openValueKey } from './value-key';
 import { KeyValueSendLog } from './send-log';
 import { KeyValueSenderKeyHandoffs } from './sender-key-handoff';
 import { deserializeSessionRecord, serializeSessionRecord } from '../session-codec';
-import { convertLegacyReceivedContent } from '../receive-work';
+import { sweepLegacyReceivedContent } from '../receive-work';
 import { selectMetadataKeys } from '../metadata-keys';
-import { KeyValueReceiveWork, LEGACY_RECEIVED_CONTENT_PREFIX } from './receive-work';
+import { KeyValueReceiveWork } from './receive-work';
+import { resolveSignalProtocolLogger, type Logger } from '../../../logger';
 import {
   createKyberPreKeyState,
   createKyberPreKeyInstanceId,
@@ -318,6 +319,8 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
   private readonly sendLog: KeyValueSendLog;
   private readonly senderKeyHandoffs: KeyValueSenderKeyHandoffs;
   private readonly receiveWork: KeyValueReceiveWork;
+  /** The logger of the open-time diagnostics: the default logger of the package. */
+  private readonly logger: Required<Logger> = resolveSignalProtocolLogger();
 
   private constructor(options: KeyValueSignalProtocolStoreOptions, operation: string) {
     this.storageBackend = options.storage;
@@ -391,7 +394,7 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
     this.databaseKey = await openValueKey(this.storageBackend, this.vault);
     await this.encryptClearMetadata();
     this.initialized = true;
-    await this.convertLegacyReceivedRows();
+    await sweepLegacyReceivedContent(this, this.legacyReceivedContentRows(), this.logger);
   }
 
   /** Delete the store data, then replace the value key. See `deleteDataThenReplaceValueKey`. */
@@ -1143,21 +1146,23 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
   }
 
   /**
-   * Convert the legacy received-content rows to receive records. A backend
-   * without legacy rows gets no marker, so opening an empty store writes
-   * nothing. A full backend stops the conversion without the marker, and
-   * the next open continues it.
+   * The legacy received-content rows of this backend. A row
+   * `received-content:<id>` is the backend key
+   * `@signal:received-content:<id>`, and its value is encrypted.
    */
-  private async convertLegacyReceivedRows(): Promise<void> {
-    const keys = await this.storageBackend.getAllKeys();
-    if (!keys.some((key) => key.startsWith(LEGACY_RECEIVED_CONTENT_PREFIX))) return;
-    try {
-      await convertLegacyReceivedContent(this, this.receiveWork.legacySource());
-    } catch (error) {
-      if (!isQuotaExceededError(error) && !(error instanceof StorageQuotaExceededError)) {
-        throw error;
-      }
-    }
+  private legacyReceivedContentRows(): Parameters<typeof sweepLegacyReceivedContent>[1] {
+    const backendKey = (key: string) => `@signal:${key}`;
+    return {
+      listKeys: async (prefix) =>
+        (await this.storageBackend.getAllKeys())
+          .filter((key) => key.startsWith(backendKey(prefix)))
+          .map((key) => key.slice(backendKey('').length)),
+      read: async (key) => {
+        const value = await this.storageBackend.getItem(backendKey(key));
+        return value === null ? null : this.decrypt(value);
+      },
+      delete: (key) => this.storageBackend.removeItem(backendKey(key)),
+    };
   }
 
   /** Encrypt one metadata value with the record cipher, behind its version tag. */

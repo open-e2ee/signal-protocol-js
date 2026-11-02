@@ -85,7 +85,7 @@ custom adapter must report it for its own distribution encoding.
 
 ### sync
 
-> **sync**: `ParsedSyncContent` \| `null`
+> **sync**: [`ParsedSyncContent`](ParsedSyncContent.md) \| `null`
 
 ***
 

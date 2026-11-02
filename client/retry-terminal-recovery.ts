@@ -1,15 +1,15 @@
 /**
  * The session reset of the requester after a retry request ends as
- * `expired-content` or `posting-deadline`.
+ * `posting-deadline`.
  *
- * The request got no content before its deadline, or it can post no more
- * before its posting deadline, so the session with the device that sent
- * the failed envelope can be out of step. The requester
- * archives that session, deletes its sender-key handoff rows for each device
- * of that account in every group, and sends one null message to the
- * device, at most once an hour for each device. The null message, or else
+ * The request can post no more before its posting deadline, so the session
+ * with the device that sent the failed envelope can be out of step. The
+ * requester archives that session, deletes its sender-key handoff rows for
+ * each device of that account in every group, and sends one null message to
+ * the device, at most once an hour for each device. The null message, or else
  * the next ordinary message, starts a new session with the device. The
- * other terminal classes and a retryable post failure reset nothing.
+ * other terminal classes, `request-expired` included, and a retryable post
+ * failure reset nothing.
  *
  * Each step is stored on the request record when it ends, so a replay of
  * the terminal state after a restart or a client stop does not archive a
@@ -76,9 +76,9 @@ export interface RetryTerminalResetContext {
 }
 
 /**
- * Reset the session with the sender device of an `expired-content` or
- * `posting-deadline` request whose terminal state is not emitted. Another
- * class, an emitted state, and a context with no reset steps do nothing.
+ * Reset the session with the sender device of a `posting-deadline` request
+ * whose terminal state is not emitted. Another class, `request-expired`
+ * included, an emitted state, and a context with no reset steps do nothing.
  *
  * The steps run in this order. A step that a stored marker shows as done
  * does not run again.
@@ -102,8 +102,8 @@ export interface RetryTerminalResetContext {
  * archives again at the replay. A failed null message is stored as
  * `failed`.
  *
- * @returns The stored record after the reset of an `expired-content` or
- *   `posting-deadline` end, else the stored record.
+ * @returns The stored record after the reset of a `posting-deadline` end,
+ *   else the stored record.
  */
 export async function resetRetryTerminalSession(
   context: RetryTerminalResetContext,
@@ -116,11 +116,11 @@ export async function resetRetryTerminalSession(
     !record ||
     !terminal ||
     terminal.emitted ||
-    (terminal.class !== 'expired-content' && terminal.class !== 'posting-deadline')
+    terminal.class !== 'posting-deadline'
   ) {
     return record;
   }
-  // An expired or posting-deadline request always has its stored envelope.
+  // A posting-deadline request always has its stored envelope.
   // Its target is the device that sent the failed envelope.
   if (!reset || !record.envelope) return record;
   const device: RetryTerminalDevice = {
@@ -232,8 +232,7 @@ const failedGroups = new WeakMap<object, string>();
 /**
  * Attach the raw group ID of a group message to an error that its decrypt
  * threw. The retry request record of the failed envelope then keeps the
- * group, so an `expired-content` or `posting-deadline` end marks the sender
- * key of that group.
+ * group, so a `posting-deadline` end marks the sender key of that group.
  */
 export function attachFailedGroup(error: unknown, groupId: string): void {
   if (typeof error === 'object' && error !== null) failedGroups.set(error, groupId);

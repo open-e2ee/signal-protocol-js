@@ -9,10 +9,10 @@
 The client cannot decide on group content yet, because its group state
 is not current. The content is committed in a receive record under
 `messageId`, and the receive queue decides it when the group state
-updates. `decryptGroupMessage` throws it for a `pending` receive. A
-repeat call with the same message finds the record and spends no second
-ratchet step. `messageId` is absent only on an error that no receive
-record backs.
+updates. No client method throws it: `processIncomingEnvelope` gives a
+`pending` outcome for it. A redelivery of the envelope finds the record
+and spends no second ratchet step. `messageId` is absent only on an
+error that no receive record backs.
 
 ## Extends
 

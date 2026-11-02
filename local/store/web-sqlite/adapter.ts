@@ -19,7 +19,7 @@ import {
 } from '../sqlite/open-store';
 import {
   SqliteSignalProtocolStore,
-  convertSqliteLegacyReceivedContent,
+  sweepSqliteLegacyReceivedContent,
 } from '../sqlite/store';
 import { createWebSqliteDriver, type WebSqliteDriver } from '../sqlite/web/driver';
 import { assertWebSqliteDatabaseName } from '../sqlite/web/file-name';
@@ -163,7 +163,7 @@ export class WebSqliteSignalProtocolStore extends SqliteSignalProtocolStore {
       return releasedOnClose(opened, stopper(open.driver, release));
     });
     const protection = await readSqliteStoreProtection(database, open.vault);
-    return await convertSqliteLegacyReceivedContent(
+    return await sweepSqliteLegacyReceivedContent(
       new WebSqliteSignalProtocolStore(database, protection, options.logger, open.name),
       database
     );

@@ -130,6 +130,8 @@ import {
   type GroupReceiveEvaluator,
 } from './group-receive-authorization';
 import { GroupFetcher } from './group-fetcher';
+import { GroupKeySync, deleteGroupKeySyncWithRecord } from './group-key-sync';
+import { bytesToHex } from '../encoding/hex';
 import { envelopeCiphertextBytes, receiveRefusal, reportReceiveRefusal } from './delivery-error';
 import { profileKeyExchange } from './profile-key-exchange';
 import {
@@ -139,7 +141,7 @@ import {
   type SendSessionCallbacks,
 } from './signal-service-cipher';
 import { establishMultiDeviceSessions } from '../internal/sesame/device-registry';
-import { isRetryableDecryptionError } from './retry-utils';
+import { isPartialCommitKyberPreKeyUse, isRetryableDecryptionError } from './retry-utils';
 import { envelopeTypeForContent, SealedRetryRequestReceived, unsealMessage } from './sealed-sender';
 import { ResendableContent } from './resendable-content';
 import {
@@ -181,6 +183,7 @@ import type { RetryTerminalResetSteps } from './retry-terminal-recovery';
 import {
   getOutgoingMessageIntent,
   migrateOutgoingIntentRecords,
+  migrateReceivedTimestampRecords,
   migrateRetryRequestRecords,
   type OutgoingIntentEndReport,
 } from '../local/store/reliability';
@@ -194,12 +197,15 @@ import {
 import { intentContent, SendIntentDriver } from './send-intent-driver';
 import {
   checkNewSendTimestamp,
+  releaseNewSendTimestampWithLock,
+  type ReservedSendTimestamp,
+  reserveNewSendTimestamp,
   SEND_TIMESTAMP_ORIGIN,
   type SendTimestampOrigin,
   type SendTimestampOriginKind,
 } from './send-timestamp';
 import { deliveredEnvelopeFingerprint } from '../local/store/received-content';
-import { RECEIVE_WORK_DEFAULT_LIMIT, sizedReceiveWork } from '../local/store/receive-work';
+import { RECEIVE_WORK_DEFAULT_LIMIT } from '../local/store/receive-work';
 import {
   awaitReceiveCompletion,
   blockReceiveWork,
@@ -221,7 +227,6 @@ import {
 } from './relay-work';
 import { StaleSessionRefreshError } from './relay-device-refusal';
 import type { BoundedFanOut } from '../utils/bounded-fan-out';
-import { createKeyedLocks, withKeyedLock } from '../utils/keyed-lock';
 import {
   deleteMediaAttachment,
   resolveMediaAttachment,
@@ -253,13 +258,6 @@ const storageLock = new AsyncLock({
   timeout: 30000, // 30 second timeout for storage initialization
   maxPending: 100, // Limit pending operations
 });
-
-/**
- * `decryptGroupMessage` calls for one group message run one at a time per
- * local store, from the read of its receive record to its completion, so
- * one content is given once.
- */
-const groupMessageReceiveLocks = createKeyedLocks();
 
 /** The reason of a `denied` receive outcome. */
 function receiveDenialReason(error: Error): string {
@@ -360,6 +358,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   private groupReceiveEvaluator?: GroupReceiveEvaluator;
   /** The single fetcher that brings each group up to its claimed revision. */
   private groupFetcher?: GroupFetcher;
+  private groupKeySync?: GroupKeySync;
   /** The current membership that a retry resend of group content needs. */
   private readonly groupMembership: GroupMembershipChecker;
   /** The processor of the stored receive records. */
@@ -711,8 +710,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     if (config?.groups) {
       const groupConfig = config.groups;
       // Each client write to a group record reports a changed init status.
+      // A deleted group record also deletes its key sync ledger value.
       this.groupStore = observeGroupInitStatus(
-        config.groups.store ?? new SignalProtocolGroupStateStore(this._storage),
+        deleteGroupKeySyncWithRecord(
+          config.groups.store ?? new SignalProtocolGroupStateStore(this._storage),
+          this._storage
+        ),
         {
           isObserved: () => typeof this.hooks.onGroupInitStatus === 'function',
           report: (groupId, status) =>
@@ -886,6 +889,27 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         logger: this.logger,
       });
       this.groupFetcher = fetcher;
+      // Each own device gets the key of each group in a GroupKeySync.
+      const keySync = new GroupKeySync({
+        storage: this._storage,
+        store,
+        ...(config.aci?.uuid && { localAci: config.aci.uuid }),
+        ownDevices: () => this.cipher.localOwnSyncDevices(),
+        send: (input, deviceIds, stopSignal) =>
+          this.cipher.sendGroupKeySyncToLocalOtherDevices(input, deviceIds, stopSignal),
+        runInBackground: (job) => this.state.relayWork.run((work) => job(work.stopSignal)),
+        logger: this.logger,
+      });
+      this.groupKeySync = keySync;
+      this.cipher.setOwnDevicesFirstSeenListener((deviceIds) => {
+        void keySync.devicesFirstSeen(deviceIds);
+      });
+      this.cipher.setGroupKeySyncReceiver(async ({ masterKey, revision }, sender) => {
+        const groupId = bytesToHex(deriveGroupSecretParams(masterKey).groupId);
+        await fetcher.admitSync(groupId, masterKey, revision);
+        // The sender has the key, so this device does not send it back.
+        await keySync.receivedFrom(groupId, sender);
+      });
       this.groupReceiveEvaluator = createGroupReceiveEvaluator({
         store,
         fetcher,
@@ -1338,7 +1362,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
   /**
    * The session reset steps of a retry request that ended as
-   * `expired-content` or `posting-deadline`. Their session hooks run through
+   * `posting-deadline`. Their session hooks run through
    * the given context, and its stop signal stops their lock waits and relay
    * requests. There are none without a relay.
    */
@@ -1694,6 +1718,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         await client.initialize(retained);
         await client.hydratePersistedState();
         await migrateRetryRequestRecords(client._storage);
+        await migrateReceivedTimestampRecords(client._storage, client.logger);
         await migrateOutgoingIntentRecords(client._storage);
         await client.applyContentRecoveryDecision();
         // A failed sweep fails the start and runs again at the next start.
@@ -2294,10 +2319,11 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * - `duplicate`: this client processed the envelope, or the application
    *   already has the content of the failed envelope of a retry request.
    *   The client acknowledged the envelope.
-   * - `null-message`: the envelope carries no content. The client consumed
-   *   it and acknowledged it. A null message for a failed envelope marks
-   *   that envelope processed, but a content resend for it that comes later
-   *   still gives its content.
+   * - `null-message`: the envelope carries no content for the application.
+   *   It is a null message, or a `GroupKeySync` from an own device that the
+   *   client consumed. The client acknowledged it. A null message for a
+   *   failed envelope marks that envelope processed, but a content resend
+   *   for it that comes later still gives its content.
    * - `denied`: the client refused the content. The ratchet step is spent,
    *   and the client acknowledged the envelope. Content from another
    *   account that carries a sync message is denied in any envelope.
@@ -2347,7 +2373,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         limit: RECEIVE_WORK_DEFAULT_LIMIT,
       });
       const record = page.find(
-        (item) => item.origin === 'caller' && (item.messageId ?? item.workId) === messageId
+        (item) => item.origin === 'caller' && item.messageId === messageId
       );
       if (record) {
         await this.completeCallerRecord(record.workId);
@@ -2431,7 +2457,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         limit: RECEIVE_WORK_DEFAULT_LIMIT,
       });
       record = page.find(
-        (item) => item.stage !== 'receipt-due' && (item.messageId ?? item.workId) === messageId
+        (item) => item.stage !== 'receipt-due' && item.messageId === messageId
       );
       if (record === undefined && page.length < RECEIVE_WORK_DEFAULT_LIMIT) return null;
       const last = page[page.length - 1];
@@ -2552,16 +2578,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * Receive one envelope that the application passed. The queue skips its
    * record while the receive runs, and runs a pass after it.
    *
-   * @param direct - The group and the receive record ID of a framed group
-   *   message that `decryptGroupMessage` passed. A decrypt failure then
-   *   throws with no retry request and no report.
    * @returns The outcome, and the error behind a `pending` or `denied`
    *   outcome
    */
   private async receiveForCaller(
     envelope: IncomingEnvelope,
-    options: ProcessEnvelopeOptions | undefined,
-    direct?: { readonly groupId: string; readonly workId: string; readonly framed: Uint8Array }
+    options: ProcessEnvelopeOptions | undefined
   ): Promise<{ outcome: ReceiveOutcome; error?: Error }> {
     if (envelope.messageType === 'retry_request') {
       throw new EncryptionError(
@@ -2572,8 +2594,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     }
     // The fingerprint covers the envelope as the Relay delivered it, before
     // any unseal, so every receive path stores one value for it.
-    const workId =
-      direct?.workId ?? (await deliveredEnvelopeFingerprint(this.userId, this.deviceId, envelope));
+    const workId = await deliveredEnvelopeFingerprint(this.userId, this.deviceId, envelope);
     const release = this.receiveQueue.hold(workId);
     try {
       // The record sorts after the stored records once the resume ends. The
@@ -2584,7 +2605,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         this.logger,
         this.hooks,
         envelope,
-        (family) => this.receiveForCallerLocked(envelope, family, workId, options, direct)
+        (family) => this.receiveForCallerLocked(envelope, family, workId, options)
       );
     } finally {
       release();
@@ -2597,10 +2618,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     envelope: IncomingEnvelope,
     family: RetryFamilyReceive,
     workId: string,
-    options: ProcessEnvelopeOptions | undefined,
-    direct:
-      | { readonly groupId: string; readonly workId: string; readonly framed: Uint8Array }
-      | undefined
+    options: ProcessEnvelopeOptions | undefined
   ): Promise<{ outcome: ReceiveOutcome; error?: Error }> {
     // The processed record of an envelope with no ID has no key.
     const receiveId = envelope.id ? workId : undefined;
@@ -2611,21 +2629,15 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         await this.markMessageDeliveredSilently(envelope.id, options);
         return { outcome: { kind: 'duplicate' } };
       }
-      if (!record.awaitingEnvelope) {
-        // The receive queue delivers a Relay record to onMessageDecrypted.
-        if (record.origin === 'relay') {
-          return {
-            outcome: { kind: 'pending', messageId: record.messageId ?? workId, reason: 'queued' },
-          };
-        }
-        // A redelivery of content that waits for completeReceive.
-        if (record.stage === 'awaiting-completion') {
-          return { outcome: await this.processedReceive(record, options) };
-        }
-      } else {
-        // A converted legacy record gets its sender from this envelope.
-        const opened = await this.openForCaller(envelope, family, receiveId, options);
-        record = await this.fillAwaitingRecord(record, family, workId, opened);
+      // The receive queue delivers a Relay record to onMessageDecrypted.
+      if (record.origin === 'relay') {
+        return {
+          outcome: { kind: 'pending', messageId: record.messageId, reason: 'queued' },
+        };
+      }
+      // A redelivery of content that waits for completeReceive.
+      if (record.stage === 'awaiting-completion') {
+        return { outcome: await this.processedReceive(record, options) };
       }
     } else {
       if (!(await family.admit(receiveId))) {
@@ -2633,14 +2645,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         return { outcome: { kind: 'duplicate' } };
       }
       const opened = await this.openForCaller(envelope, family, receiveId, options);
-      const decrypted = await this.decryptForCaller(
-        envelope,
-        opened,
-        family,
-        workId,
-        options,
-        direct
-      );
+      const decrypted = await this.decryptForCaller(envelope, opened, family, workId, options);
       if ('outcome' in decrypted) return decrypted;
       record = decrypted.record;
     }
@@ -2675,6 +2680,13 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         content.inspected.senderKeyDistributionOnly === false,
       ...RelaySubscriptionOps.groupOfFulfill(content),
     });
+    // A GroupKeySync from an own device is SDK content, so the caller
+    // never gets it.
+    if (await this.cipher.consumeGroupKeySync(content)) {
+      await completeReceiveWork(this.ctx, record);
+      await this.markMessageDeliveredSilently(envelope.id, options);
+      return { outcome: { kind: 'null-message' } };
+    }
     const decision = await this.cipher.decideGroupContent(content);
     if (decision.kind === 'denied') {
       await denyReceiveWork(this.ctx, record, content, decision.error);
@@ -2782,47 +2794,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   }
 
   /**
-   * Fill the sender fields of a converted legacy record from the envelope
-   * that the application passed. The record keeps its age and its arrival
-   * order, and becomes a helper record.
-   */
-  private async fillAwaitingRecord(
-    existing: ReceiveWorkRecord,
-    family: RetryFamilyReceive,
-    workId: string,
-    opened: { inner: IncomingEnvelope; arrivedSealed: boolean }
-  ): Promise<ReceiveWorkRecord> {
-    const { inner, arrivedSealed } = opened;
-    const groupId =
-      existing.groupId ??
-      (inner.messageType === 'sender_key'
-        ? ((await this.senderKeyManager.resolveGroupForFramedMessage(
-            envelopeCiphertextBytes(inner.ciphertext),
-            inner.senderUserId,
-            inner.senderDeviceId
-          )) ?? undefined)
-        : undefined);
-    const seed = this.callerReceiveCommit(family, workId).commit.seed(
-      this.relayEnvelopeOf(inner),
-      arrivedSealed
-    );
-    const filled = sizedReceiveWork({
-      ...seed({ plaintext: existing.plaintext!, ...(groupId !== undefined && { groupId }) }),
-      workId: existing.workId,
-      revision: existing.revision + 1,
-      stage: existing.stage,
-      arrivalSeq: existing.arrivalSeq,
-      receivedAt: existing.receivedAt,
-      dueAt: existing.dueAt,
-      plaintext: existing.plaintext!,
-      ...(groupId !== undefined && { groupId }),
-      ...(existing.blockedOn !== undefined && { blockedOn: existing.blockedOn }),
-    });
-    if (await this._storage.putReceiveWork(filled, existing.revision)) return filled;
-    return (await this._storage.getReceiveWork(workId)) ?? existing;
-  }
-
-  /**
    * Decrypt one opened envelope under the receive admission, and commit its
    * receive record with the ratchet step.
    *
@@ -2832,7 +2803,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * the outcome is `denied`. A retryable failure (per SESAME spec §4.1)
    * sends a retry request, which acknowledges the envelope, and throws. A
    * failure after the decrypt built the record is a store failure: it
-   * throws with no request, and the ratchet step rolled back.
+   * throws with no request, and the ratchet step rolled back. A refused
+   * Kyber prekey use with no session for its base key is retryable, as
+   * `isPartialCommitKyberPreKeyUse` tells.
    *
    * @returns The committed record, or the outcome when nothing committed
    */
@@ -2841,8 +2814,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     opened: { inner: IncomingEnvelope; arrivedSealed: boolean },
     family: RetryFamilyReceive,
     workId: string,
-    options: ProcessEnvelopeOptions | undefined,
-    direct: { readonly groupId: string; readonly framed: Uint8Array } | undefined
+    options: ProcessEnvelopeOptions | undefined
   ): Promise<{ record: ReceiveWorkRecord } | { outcome: ReceiveOutcome; error?: Error }> {
     const { inner, arrivedSealed } = opened;
     const receiveId = envelope.id ? workId : undefined;
@@ -2856,14 +2828,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         // does not say which group, so the group comes from the frame's
         // distribution identifier resolved against the local sender key
         // store.
-        const framed = direct?.framed ?? envelopeCiphertextBytes(inner.ciphertext);
-        const groupId =
-          direct?.groupId ??
-          (await this.senderKeyManager.resolveGroupForFramedMessage(
-            framed,
-            inner.senderUserId,
-            inner.senderDeviceId
-          ));
+        const framed = envelopeCiphertextBytes(inner.ciphertext);
+        const groupId = await this.senderKeyManager.resolveGroupForFramedMessage(
+          framed,
+          inner.senderUserId,
+          inner.senderDeviceId
+        );
         if (groupId === null) {
           throw new EncryptionError(
             `No sender key from ${inner.senderUserId} matches this group message - request key distribution`,
@@ -2898,7 +2868,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         });
       }
     } catch (error) {
-      if (handle.seeded() || direct !== undefined) throw error;
+      // A Kyber prekey use without a session is a partial-commit artifact,
+      // not a store failure that a redelivery repairs.
+      if (handle.seeded() && !isPartialCommitKyberPreKeyUse(error as Error)) throw error;
       if (receiveRefusal(error) !== null) {
         await reportReceiveRefusal(
           this._storage,
@@ -2942,7 +2914,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       kind: 'processed',
       // The caller gets the content as its sender gave it.
       plaintext: this.contentAdapter.withoutGroupContext(record.plaintext!),
-      messageId: record.messageId ?? record.workId,
+      messageId: record.messageId,
       ...(record.groupId !== undefined && { groupId: extractGroupId(record.groupId) }),
     };
     if (options?.onPersist) {
@@ -2980,14 +2952,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   private pendingReceiveOf(record: ReceiveWorkRecord): PendingReceive {
     const ready = record.stage === 'awaiting-completion';
     return {
-      // A converted legacy record has no message ID. Its outcomes give the
-      // record ID, as `completeReceive` matches.
-      messageId: record.messageId ?? record.workId,
+      messageId: record.messageId,
       stage: ready ? 'awaiting-completion' : 'decrypted',
       origin: record.origin,
       receivedAt: record.receivedAt,
-      ...(record.senderUserId !== undefined && { senderId: record.senderUserId }),
-      ...(record.senderDeviceId !== undefined && { senderDeviceId: record.senderDeviceId }),
+      senderId: record.senderUserId,
+      senderDeviceId: record.senderDeviceId,
       ...(record.groupId !== undefined && { groupId: extractGroupId(record.groupId) }),
       ...(ready &&
         record.plaintext !== undefined && {
@@ -3372,7 +3342,11 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     // that repeats a stored intent keeps the stored timestamp, which can be
     // outside the window, so a refused value passes only when a stored intent
     // for this identifier holds the same timestamp. The mark stops the inner
-    // checks of this send.
+    // checks of this send. A new DataMessage send also reserves its timestamp
+    // here, because the serialized message holds it. A new send with an
+    // application timestamp reserves it here too, before the profile key
+    // offer, so the profile key update cannot take that value. The inner
+    // reservation of the send then finds the entry with its own ID.
     const applicationTimestamp = isDataMessage(content)
       ? (content.timestamp as number | undefined)
       : options?.timestamp;
@@ -3385,6 +3359,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         : profileKeyExchange(this);
     let profileKey: string | undefined;
     let timestampOrigin: SendTimestampOriginKind | undefined;
+    let reservation: ReservedSendTimestamp | undefined;
     let result: SendResult;
     // A receipt for this send waits until the send resolves. The hold starts
     // before the stored-intent read, so a receipt for a replay of a sent
@@ -3409,11 +3384,22 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
           if (stored?.clientTimestamp !== applicationTimestamp) throw error;
         }
       }
+      if (!stored && (isDataMessage(content) || applicationTimestamp != null)) {
+        reservation = await reserveNewSendTimestamp(this._storage, {
+          clientMessageId,
+          timestamp: applicationTimestamp,
+          [SEND_TIMESTAMP_ORIGIN]: timestampOrigin,
+        });
+        timestampOrigin = 'checked';
+      }
 
       if (isDataMessage(content)) {
         // DataMessage path: build Content, set timestamp, serialize to protobuf (application send-pipeline ordering)
         const timestamp =
-          (content.timestamp as number | undefined) ?? stored?.clientTimestamp ?? Date.now();
+          reservation?.timestamp ??
+          (content.timestamp as number | undefined) ??
+          stored?.clientTimestamp ??
+          Date.now();
         clientTimestamp = timestamp;
         profileKey = await profileKeys?.outgoing();
         const dm: DataMessageInput = { ...content, timestamp, ...(profileKey && { profileKey }) };
@@ -3456,6 +3442,21 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       result = await (isGroupId(recipientId)
         ? this.withDeferredHooks(context, encrypt)
         : encrypt(context));
+    } catch (error) {
+      // A send that failed before its intent write removes its reservation.
+      // A stored intent with the reserved timestamp keeps it. A failed
+      // release does not replace the error of the send.
+      if (reservation) {
+        try {
+          await releaseNewSendTimestampWithLock(this._storage, reservation);
+        } catch (releaseError) {
+          this.logger.warn('Failed to release the send timestamp reservation', {
+            category: 'E2EE',
+            data: { clientMessageId, error: (releaseError as Error).message },
+          });
+        }
+      }
+      throw error;
     } finally {
       this.deliveries.endSend(clientMessageId);
     }
@@ -3465,7 +3466,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     this.releaseDeliveries(clientMessageId);
     if (profileKey) await profileKeys?.delivered(recipientId, profileKey);
     if (protocolError) await callHook(context.hooks, 'onRelayProtocolError', protocolError);
-    return clientTimestamp !== undefined ? { ...result, clientTimestamp } : result;
+    return result;
   }
 
   /** @see SignalProtocolClient.resendMessage */
@@ -3803,6 +3804,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         data: { behavior: 'GROUP_FETCH_START_FAILED', error: (error as Error).message },
       });
     });
+    void this.groupKeySync?.start();
     void this.resendJobs.start();
     const relay = this.relay;
     if (this.resendJobsOnConnect === undefined && relay) {
@@ -4156,6 +4158,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     this.resendJobs.stop();
     this.sendIntents.stop();
     this.groupFetcher?.stop();
+    this.groupKeySync?.stop();
     this.receiveQueue.stop();
     this.resendJobsOnConnect?.();
     this.resendJobsOnConnect = undefined;
@@ -4415,6 +4418,16 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * use this to encrypt messages. All group members can decrypt
    * the same ciphertext, making it efficient for large groups.
    *
+   * This primitive adds no group context and checks no group master key.
+   * Unless the plaintext carries a group context, a
+   * `processIncomingEnvelope` receiver denies the output for a managed
+   * group. A receiver with a `groups` config gives the reason
+   * `legacy-no-context`, or `blocked` when the group is blocked. A receiver
+   * with no `groups` config refuses the output with a
+   * `GroupReceiveRefusedError` of reason `configuration`. Send managed group
+   * content with `send`. A caller that delivers the bytes itself decrypts
+   * them with `decryptEnvelope`, as a `sender_key` envelope.
+   *
    * @param groupId - Group identifier
    * @param plaintext - Message to encrypt
    * @returns Framed SenderKeyMessage bytes
@@ -4442,100 +4455,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
           : undefined
       )
     );
-  }
-
-  /**
-   * Decrypt a group message from a sender
-   *
-   * Use this to decrypt messages from other group members.
-   * You must process the sender's distribution message first.
-   *
-   * The message passes the group decision of `processIncomingEnvelope`.
-   * Content whose group state must update first stays stored, and a later
-   * call with the same message decides it with no second decrypt.
-   *
-   * @deprecated Use `processIncomingEnvelope`, which returns a receive
-   *   outcome and keeps the content until the application completes the
-   *   receive. This method completes the receive before it returns, so a
-   *   plaintext that the application loses is gone.
-   *
-   * @param groupId - Group identifier
-   * @param senderId - Sender's user ID
-   * @param senderDeviceId - Sender's device ID
-   * @param framedMessage - Framed SenderKeyMessage bytes
-   * @returns Decrypted plaintext
-   * @throws GroupReceiveUnavailableError when the group state of the content
-   *   is not current. Its `messageId` names the stored receive. Call again
-   *   later with the same message.
-   * @throws GroupReceiveRefusedError when the client refuses the content
-   * @throws EncryptionError MESSAGE_DUPLICATE for a message that this client
-   *   processed, or that carries no content, and STORAGE_QUOTA_EXCEEDED when
-   *   the receive queue has no room
-   *
-   * @example
-   * ```typescript
-   * const plaintext = await signal.decryptGroupMessage(
-   *   'group-123',
-   *   senderId,
-   *   senderDeviceId,
-   *   encryptedMessage
-   * );
-   * console.log('Message:', plaintext);
-   * ```
-   */
-  async decryptGroupMessage(
-    groupId: string,
-    senderId: string,
-    senderDeviceId: number,
-    framedMessage: Uint8Array
-  ): Promise<string> {
-    // The message has no envelope ID, so its receive record ID binds the
-    // sender and the framed bytes.
-    const ciphertext = bytesToBase64(framedMessage);
-    const workId = await deliveredEnvelopeFingerprint(this.userId, this.deviceId, {
-      senderUserId: senderId,
-      senderDeviceId,
-      messageType: 'sender_key',
-      ciphertext,
-    });
-    // A concurrent call with the same message waits here, and then reads
-    // the record that the first call left, as a later call does.
-    return withKeyedLock(groupMessageReceiveLocks, this._storage, workId, async () => {
-      const { outcome, error } = await this.receiveForCaller(
-        {
-          id: '',
-          senderUserId: senderId,
-          senderDeviceId,
-          ciphertext,
-          timestamp: Date.now(),
-          messageType: 'sender_key',
-        },
-        undefined,
-        { groupId, workId, framed: framedMessage }
-      );
-      switch (outcome.kind) {
-        case 'processed':
-          await this.completeCallerRecord(workId);
-          return outcome.plaintext;
-        case 'pending':
-        case 'denied':
-          if (error) throw error;
-          break;
-        case 'refused':
-          throw new EncryptionError(
-            'The receive queue has no room for this group message',
-            EncryptionErrorCode.STORAGE_QUOTA_EXCEEDED,
-            { senderId }
-          );
-        default:
-          break;
-      }
-      throw new EncryptionError(
-        'This group message gives no content',
-        EncryptionErrorCode.MESSAGE_DUPLICATE,
-        { senderId }
-      );
-    });
   }
 
   /**
@@ -4930,7 +4849,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       disappearingMessagesDuration?: number;
     }
   ): Promise<{ groupId: GroupId; masterKey: Uint8Array }> {
-    return GroupOps.createGroup(
+    const created = await GroupOps.createGroup(
       this.ctx,
       await this.groups,
       creatorAci,
@@ -4939,6 +4858,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       title,
       options
     );
+    void this.groupKeySync?.groupJoined(extractGroupId(created.groupId));
+    return created;
   }
 
   /**
@@ -4993,7 +4914,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
   /** Accept this client's pending profile-key invitation. */
   async acceptGroupMemberInvitation(groupId: GroupId): Promise<void> {
-    return GroupOps.acceptGroupMemberInvitation(this.ctx, await this.groups, groupId);
+    await GroupOps.acceptGroupMemberInvitation(this.ctx, await this.groups, groupId);
+    void this.groupKeySync?.groupJoined(extractGroupId(groupId));
   }
 
   /**
@@ -5068,7 +4990,21 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     userAci: Uint8Array,
     userProfileKey: Uint8Array
   ): Promise<{ groupId: GroupId; status: 'joined' | 'pending_approval' }> {
-    return GroupOps.joinGroupViaInviteLink(this.ctx, await this.groups, url, userAci, userProfileKey);
+    const joined = await GroupOps.joinGroupViaInviteLink(
+      this.ctx,
+      await this.groups,
+      url,
+      userAci,
+      userProfileKey
+    );
+    // Only a join with membership sends the key now. A join that waits for
+    // approval or fails stores the master key and no state, so no pass sends
+    // its key until its state arrives. The next start, join or first sight
+    // of an own device after that sends it.
+    if (joined.status === 'joined') {
+      void this.groupKeySync?.groupJoined(extractGroupId(joined.groupId));
+    }
+    return joined;
   }
 
   // ============================================================================

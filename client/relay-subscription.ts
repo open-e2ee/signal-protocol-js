@@ -9,6 +9,7 @@ import type { Envelope } from '../remote/relay/types';
 import { EncryptionError, EncryptionErrorCode, type Base64 } from '../types';
 import {
   determineRetryReason,
+  isPartialCommitKyberPreKeyUse,
   isRetryableDecryptionError,
   retryFailedEnvelope,
 } from './retry-utils';
@@ -283,12 +284,6 @@ async function handleRelayMessageLocked(
         },
       }
     );
-    // SDK 11 could stop between its processed write and the delete of its
-    // received content, and it deleted that row on the redelivery. The
-    // converted record of that row completes here. The application has its
-    // content, so no hook runs.
-    const converted = await ctx.storage.getReceiveWork(workId);
-    if (converted?.awaitingEnvelope) await completeReceiveWork(ctx, converted);
     return true;
   }
 
@@ -340,7 +335,9 @@ async function handleRelayMessageLocked(
     // The decrypt succeeded and its store commit failed. The ratchet step
     // rolled back, so the redelivery decrypts again. It asks for no resend.
     // One Signal client also sends no acknowledgment when its commit fails.
-    if (handle.seeded()) {
+    // A Kyber prekey use without a session is a partial-commit artifact
+    // that a redelivery cannot repair, so it goes to the retry request.
+    if (handle.seeded() && !isPartialCommitKyberPreKeyUse(error as Error)) {
       ctx.logger.warn('The receive record of a decrypted envelope failed to commit', {
         category: 'E2EE',
         data: {

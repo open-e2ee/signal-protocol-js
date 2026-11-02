@@ -165,6 +165,23 @@ old passes the SDK check. The Relay returns `OPERATION_EXPIRED`.
 The SDK check uses the
 same bounds, so the SDK refuses an application-supplied time before any post.
 
+Each send timestamp is unique per sender device. A new send with a `timestamp`
+that a different send of the device used throws `InvalidSendTimestampError`
+with the reason `already_used`. It stores or posts nothing.
+
+When a different
+send used the value that the SDK reads from its clock, the SDK moves to the
+next free millisecond. The SDK's own sends, the profile key offer and the
+sender key distribution, reserve from the same index of the device. So a
+`timestamp: Date.now()` can get `already_used` when your app did not use the
+value again. Omit `timestamp`, or send again with no `timestamp` on
+`already_used`. Read the timestamp of the send in `SendResult.clientTimestamp`.
+
+After the SDK stores a send, a retry with the same `clientMessageId` keeps
+the original timestamp. A send that failed before the SDK stored it gets a new
+timestamp on retry. A manual resend and a retry answer keep the original
+timestamp.
+
 A hosted client sends a sealed 1:1 message only when you pass
 `hosted.profileKeys`, and only to a contact whose profile key `contacts` holds.
 The client identifies each other 1:1 message, so the Relay sees its sender.

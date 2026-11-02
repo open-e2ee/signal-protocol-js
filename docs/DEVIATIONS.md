@@ -91,15 +91,17 @@ model and what is out of scope.
 | **Cross-tab locks** | Signal's Desktop and Android clients | **Faithful** in a browser: a group send and each session write take a Web Lock named by the store identity, so the tabs and workers of one origin run them one at a time. **Deviation** elsewhere: the lock orders one store object in one process | Signal runs one process for each device. Only the browser stores have a store identity, and Web Locks in Node order one process only | Two processes, or two store objects, that share one database need exclusive access from the application (§7.6) |
 | **Group send route** | Signal's server, multi-recipient send | **Faithful** in the SDK: each group send goes to the anonymous group route with a group send token. The Relay still serves an identified group route that no SDK release calls | The Relay removes the identified route forward only | Until the removal, a client that posts to the identified route sends under its account credential, with no device-set check when the post declares none (§7.7) |
 | **Groups** | Signal Private Group System | **Independent design.** Real zkgroup primitives underneath; profile-key credential issuance blinds the ACI-bound profile-key attribute, the server validates every change against zero-knowledge presentations and signs the accepted result, and clients verify those signatures | Ships a validating group server with an enforcement contract (S1–S14) specified in-tree | Not wire-compatible with the Signal Private Group System; credentials are not interchangeable. The issuer sees the authenticated ACI and redemption window, but not the raw profile key |
+| **Group content with no group context** | Signal's client routing of group content | **Faithful** for content that no transport binds to a group: it takes no group decision, and direct content stays direct. **Deviation** for managed groups: content that the sender key of a managed group decrypted, content that came beside its sender key distribution, and a sent transcript to it are denied as `legacy-no-context` when they carry no group context. **Deviation** for ad hoc groups: content that the sender key of an ad hoc group decrypted, or that came beside its distribution, takes no group decision and is delivered in that ad hoc group. Upstream routes content with no group context to the direct conversation of the sender | The SDK binds that content to its group by the transport. A direct delivery would show content of the group in a direct conversation. Managed group content carries its context since SDK 12.0.0 | Content of a managed group from an SDK 11 sender is not delivered. Ad hoc group content with no group context arrives in its ad hoc group, not in a direct conversation (§7.8) |
 | **Receive order** | Signal's Android client | **Faithful.** The receive queue (`client/receive-queue.ts`) holds back the later records of one conversation, as Android queues its message jobs: group content per group, a sent transcript per destination, and other content per sender account. The commit order stays per sender device | — | A record that waits for its group state holds back the later content of its group from every sender until a fetch of its group or `syncGroup` completes, or until the record expires after 30 days. Direct chats and other groups make progress. A record in hook backoff holds back its conversation until its hook succeeds, it reaches the hook attempt cap of 10, or it expires. Before the queue restores a record, it keys the record by its stored group or by its sender account. A missing sender key does not hold the queue: that content goes to the retry request handler |
 | **Receive hook attempt cap** | Signal's Desktop client | **Deviation.** After 10 failed `onMessageDecrypted` attempts, a record no longer holds back its conversation, as on Desktop. Desktop deletes the record at startup. The SDK keeps it, offers it to the hook once at each start, shows the count in `PendingReceive.hookAttempts`, and removes it at `discardPendingReceive` | The hook is application code. A drop loses content whose ratchet step is spent, and an application update can repair the hook | A hook that ends the process on the record ends it once at each start, until the record expires or the application discards it (§8.2) |
 | **Receive hook bound** | Signal's Desktop client | **Deviation** in detail. Each application hook that a receive pass awaits has a bound, `receiveHookTimeoutMs`, 2 minutes by default. Desktop bounds its receive dispatch at 2 minutes and its long-running tasks at 30 minutes | A founder ruling sets the bound at 2 minutes. The SDK cannot tell a slow hook from a hung one | A timeout of `onMessageDecrypted` counts as one failed attempt. A timeout of another hook is logged, and the pass continues. A settle after the bound writes nothing (§8.4) |
 | **Delivery receipt lifespan** | Signal's Android client | **Faithful.** A stored receipt is sent only within 1 day after it becomes owed, as Android's receipt job lives for 1 day. The receipt is durable across a restart, as on Android | — | A receipt that cannot go out within 1 day is not sent, and no hook reports it (§8.3) |
 | **Receive admission bounds** | Signal's Desktop client | **Extension.** Before a decrypt, the receive queue checks `maxItems`, `maxBytes`, and the group share `blockedGroupShare`. The defaults are provisional. Desktop decrypts each envelope as it arrives and bounds stored content only by age and attempts | The SDK shares a storage budget with the application in a browser and on mobile | A refused envelope is not acknowledged. It stays at the Relay and expires there with no local hook. The messages behind it still arrive (§8.5) |
+| **Legacy received content** | Signal's job migration of a retired format | **Faithful** for unreadable rows: the open deletes them and logs a count. **Deviation** for readable rows: the open deletes each readable SDK 11 row too, and counts it in a separate field. Signal converts each readable pending item to the new format | A founder ruling deletes the readable rows. The constraint is Relay retention: the Relay keeps an undelivered envelope for at most 30 days in production, and a readable row is in a store that SDK 12.0.0 or later never opened | Where the constraint holds, the content of such a row never reaches the application. A device that received the content on SDK 11 inside the last 30 days is not covered: 13.x would complete that row on redelivery, and the sweep does not restore it. The count line holds no key and no value (§8.6) |
 | **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation is structured as four labeled derivations rather than one seeded derivation | Server keys are the deploying operator's own trust root (each deployment generates its own seed), not Signal Messenger's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal Messenger's |
 | **Registration IDs** | `libsignal` `sealed_sender.rs` | **Faithful.** Generated in `[1, 16383]`, strictly inside the 14 bits the wire format reserves | — | — |
 | **Linked-device registration IDs** | Signal's device linking | **Faithful** for a new link: the linked device gets its own fresh registration ID. **Deviation:** a device that a 12.0.x release linked keeps the ID of its active device, and a link that a 12.0.x release began keeps its stored ID (§5.7) | A changed ID on a live device fails its next prekey sync. A fresh ID on a link already begun can reserve a second device | Two devices of one account can share a registration ID. The sender-key handoff ledger keys each row by the device, so they stay apart |
-| **Linked-device group keys** | Signal's device linking | **Deviation.** The link copies each group master key from the active device's group store in the calling process. A group record that a release before 12.0.0 wrote, and that the active device has not read since, is not copied (§5.8) | The SDK has no storage service, and no master key crosses the Relay | The process that links the device must hold the active device's store. Such an unread group initializes from its first group message |
+| **Linked-device group keys** | Signal's device linking | **Deviation.** The link copies each group master key from the active device's group store in the calling process. A group record that a release before 12.0.0 wrote, and that the active device has not read since, is not copied (§5.8) | The SDK has no storage service, and the link sends no master key through the Relay | The process that links the device must hold the active device's store. Such an unread group initializes from its first group message |
 | **Posting deadline and send progress** | Signal's Android client `IndividualSendJob`; Signal's Desktop client `conversationJobQueue` | **Faithful** on a window of 1 day and on progress at the deadline: an accepted device stays accepted. **Deviation** in detail. The deadline also ends 24 hours after the send timestamp, has no message-expiry term, and never moves on a restart. A lost Relay answer is acceptance-unknown, not failed. An automatic retry posts the stored bytes and epoch. With a store that lists its metadata keys, the SDK replays open sends at start and on reconnect, as the Signal job runners do, and reports each end once through `onSendOutcome`. On a custom store without the listing method, the application replays (§5.9) | The Relay admits an epoch at most 24 hours behind its clock, keeps a fingerprint of each operation, and charges each accepted operation. Custom stores stay supported, so the listing method is optional | A direct send posts nothing at or after its deadline. When the acceptance of a device is not known, the send throws `SendAcceptanceUnknownError`, and a replay or a resend after it can add one charged unit. When the plaintext of an open send is gone, `onSendOutcome` reports `content-required` |
 
 ---
@@ -906,7 +908,7 @@ it never runs.
 
 ### 5.6 Device-set reconciliation differs in detail
 
-Reviewed: 2026-10-29.
+Reviewed: 2026-11-01.
 
 The reconciliation of §5.5 follows Signal's server and Signal's Desktop
 client in its rule: the server compares, the client repairs and posts again,
@@ -919,7 +921,7 @@ Signal's Android client. The following details differ.
 | D1 | A stale registration is reported after missing and extra devices on every route, also for a direct post to one account | One answer order for every route | Signal's server reports stale devices first on its route for one account | Relay tests assert the order on each route |
 | D2 | A direct send is one post for each device, and each post carries the full declaration of the account | The direct Relay route takes one destination for each body. A replay works for each device | One Signal request carries every device of the account. Here a race can accept some posts and refuse others | A restart posts the stored bytes to each accepted device, and each device gets the message once. A partly accepted pass posts every device again, and an accepted device replays |
 | D3 | A group comparison reads the record of each account, up to 1,000, when the Relay accepts the post | The Relay keeps one record for each account | Signal's server reads accounts from one store in one process | Relay tests, and a cost measurement |
-| D4 | The operation time is fixed. `OPERATION_EXPIRED` ends the reconciliation as acceptance-unknown. A new send refuses an application timestamp outside the delivery window with `InvalidSendTimestampError`. A manual resend carries its own stored operation time (row P8) | From the Relay release that follows v2026.10.25, the Relay admits a mailbox delivery epoch and a new group fan-out operation at most 5 minutes ahead of its clock and at most 24 hours behind it. Earlier Relay releases admit a new operation only within 5 minutes of its epoch. On an earlier Relay release, a time 5 minutes to 24 hours old passes the SDK check but gets `OPERATION_EXPIRED`. The SDK check uses the same bounds, so the SDK refuses an application-supplied time before any post | Signal has no admission window | A restart post that gets `OPERATION_EXPIRED` ends the phase as expired, and a recipient-phase end stores the outcome `acceptance-unknown`. A new send with a timestamp outside the window throws `InvalidSendTimestampError`, and stores and posts nothing |
+| D4 | The operation time is fixed. `OPERATION_EXPIRED` ends the reconciliation as acceptance-unknown. A new send refuses an application timestamp outside the delivery window with `InvalidSendTimestampError`. Each send timestamp is unique per sender device: a new send refuses a timestamp that a different send of the device used, with the reason `already_used`, and a timestamp from the SDK clock moves to the next free millisecond. A manual resend and a retry answer keep the original timestamp and reserve none. A manual resend carries its own stored operation time (row P8) | From the Relay release that follows v2026.10.25, the Relay admits a mailbox delivery epoch and a new group fan-out operation at most 5 minutes ahead of its clock and at most 24 hours behind it. Earlier Relay releases admit a new operation only within 5 minutes of its epoch. On an earlier Relay release, a time 5 minutes to 24 hours old passes the SDK check but gets `OPERATION_EXPIRED`. The SDK check uses the same bounds, so the SDK refuses an application-supplied time before any post | Signal has no admission window | A restart post that gets `OPERATION_EXPIRED` ends the phase as expired, and a recipient-phase end stores the outcome `acceptance-unknown`. A new send with a timestamp outside the window, or with the timestamp of a different send of the device, throws `InvalidSendTimestampError`, and stores and posts nothing |
 | D5 | No fallback to one post for each recipient after the bound | The same bound covers every path | Signal's Desktop client falls back because its one-to-one path has no bound. Under the bound, a fallback only moves the churn | The 11th refusal of a phase ends the send with `DeviceSetReconciliationError` |
 | D6 | A direct send also stops at 10 restarts | One bound for every send | Signal's Desktop client has no bound on missing or extra devices for a one-to-one send | The restart bound test of the direct send |
 | D7 | No empty sync post. A `needsSync` mark on the recipient receipt and one read of the own list replace it | A Relay post needs at least one destination | Signal's server accepts an empty sync list, and Signal's Android client addresses its own device | A new own device repairs the sync phase and the recipient post is not sent again. The own list is read only on `needsSync` with no own record, and a failed read leaves the sync phase pending |
@@ -948,7 +950,7 @@ device has its own registration ID. Two cases keep an ID.
 
 ### 5.8 Group keys of linked devices
 
-Reviewed: 2026-10-21.
+Reviewed: 2026-11-01.
 
 A managed device link copies the master key of each group that the active
 device's group store lists into the linked device's group store. The copy runs
@@ -956,14 +958,27 @@ in the process that calls the link. A later client on the linked device fetches
 each copied group with no application step. In Signal, a linked device restores
 its groups from the storage service.
 
+After the link, each own device sends the key of each group that its group
+store lists, whose record is verified, and whose stored state lists the
+account as a member, to each other own device until the ledger marks the
+pair, in an end-to-end encrypted `GroupKeySync`. The ledger marks an own
+device when the Relay accepts a copy for that device's registration, and it
+marks the own device that sent this device the key. Three events send a key:
+the device creates or joins a group, the device accepts a group invitation,
+and the device sees an own device for the first time. Each start also sends
+the key again for each pair of a group and an own device that the ledger does
+not mark. So a group that a device creates or joins after the
+link reaches the other own devices with no group traffic. This follows Signal,
+which sends a group key sync to the own devices.
+
 | ID | Deviation | Constraint | Why Signal's form does not fit | Guarantee test |
 |---|---|---|---|---|
-| G1 | The link copies group master keys in the calling process | No master key crosses the Relay, and the adapter gets no private key | The SDK has no storage service | Each listed group arrives on the linked device with the master key of the active device and initializes with no application step. A link stopped at any write of the copy and restarted, also in a new browser tab, ends with the group set of the active device. A Relay refusal removes each copied group |
+| G1 | The link copies group master keys in the calling process | The link sends no master key through the Relay, and the adapter gets no private key | The SDK has no storage service | Each listed group arrives on the linked device with the master key of the active device and initializes with no application step. A link stopped at any write of the copy and restarted, also in a new browser tab, ends with the group set of the active device. A Relay refusal removes each copied group |
 | G2 | A group record that a release before 12.0.0 wrote, and that the active device has not read since, is not copied | The group store lists only migrated records. The link has no other source of the group IDs | Signal restores each group from the storage service | Such a group initializes on the linked device from its first group message. Read each group once on the active device before the link to copy it |
 
 ### 5.9 The posting deadline and send progress
 
-Reviewed: 2026-10-30.
+Reviewed: 2026-11-01.
 
 Signal's Android client gives a send job a lifespan of one day from its
 creation, and Signal's Desktop client stops a send job one day after its
@@ -986,8 +1001,8 @@ A retry request has its own posting deadline, in row P9. The following details d
 | P5 | An automatic retry posts the stored bytes and the stored epoch, also for a retry resend | The Relay keeps a fingerprint of each operation and answers `RETRY_CONFLICT` to other bytes under one ID. A fresh epoch makes a new charged operation | Signal encrypts the content again for each attempt | A replay after a restart posts the same bytes under the same ID and the first epoch, and a repair keeps that epoch. A stored retry resend that gets `OPERATION_EXPIRED` keeps its stored epoch and bytes, posts nothing more under its ID and encrypts nothing again |
 | P6 | The SDK stores the progress of each destination device, for recipients and sync copies. Before each request, it marks the device as posted and counts the request. At the end, a device counts as refused only when its stored answer is a refusal or a pending answer and its `uncertain` flag is unset. A request with no answer, an uncertain answer, or a send that SDK 13.3 stored sets the flag for good. A replay skips a refused device, and counts it toward an end at once, only when no recovery in the call can change the refusal or its repair already ran | The Relay can store a post whose answer the SDK does not get, and a later post under the same ID can add one charged unit. The Relay gives a refusal or a pending answer before it stores the post | Signal has no charged operation, so it does not keep a durable mark of each request | A replay after a restart posts only the devices with no stored acceptance. A replay ends at once, and posts nothing, when each open device has a stored refusal that the SDK cannot recover, and throws an `Error` with the stored code of the first refused device that has one, in the order of the destinations. A stored `STALE_DEVICE` refusal with no spent repair gets a new post. A crash after a request, or a send that SDK 13.3 stored, ends with `SendAcceptanceUnknownError` when the replay gets `OPERATION_EXPIRED` |
 | P7 | A repair of a stale device keeps the operation and its epoch. A `RETRY_CONFLICT` answer to the repaired post makes the device unknown, not accepted. The repair writes its mark to the stored progress, and the same call reads that mark | The repaired post has new bytes under the kept ID. The Relay answers `RETRY_CONFLICT` when it holds other bytes for that ID, so the SDK cannot tell which bytes it holds | Signal encrypts the content again for each attempt | A `RETRY_CONFLICT` answer to a repaired post throws a retryable `RETRY_CONFLICT` error, and the device is stored unknown with the `uncertain` flag. The answer never counts as an earlier acceptance, in the same call or on a replay |
-| P8 | A manual resend with `resendMessage` after a send end is a new operation. It has a fresh stored operation time, the message ID `<clientMessageId>:manual:N` and its own posting deadline 24 hours after its creation. Its content keeps the original timestamp, and the receive queue of a recipient drops a copy with the same sender device, the same original timestamp and the same content digest. The drop needs the timestamp that the content adapter reads from the message, so raw string or byte content takes no drop key and a recipient that holds it receives the copy again. A resend of a group send posts the content of its send log entry, so each copy carries the group context of the original send, not the current one. The recipient records the message with the completion of its receive record. When a delivery receipt is due, it records the message right after the receipt-due write and again with the completion of the receipt. The record expires after 60 days. The caller-origin receive path gives every decrypted message to the caller, and a caller that keeps its own records removes a copy itself. Only a send younger than 30 days takes a new manual resend. The Relay can charge the resend as a new message, and the message might already have arrived | The Relay admits an operation time at most 24 hours behind its clock and charges each accepted operation. The founder ruling "DA1 F4 manual resend identity: a fresh operation epoch with the original timestamp in the content (2026-10-28, founder)" sets this identity. The SDK encrypts the content again for each device, as the retry-request resend does | Signal's clients resend the stored message with its original timestamp in a new job, and the receivers drop a copy by sender and timestamp alone. The SDK adds the SHA-256 digest of the content to the key, so an application that sends two messages in one millisecond keeps both. This rule holds in SDK 13.x and ends in the next major SDK version, which keys a received message by its sender and timestamp only. Signal's server keeps no operation time and charges no send | A resend posts under a fresh operation time and the manual message ID, with the original timestamp in the content. The Relay admits it after the original ended at its deadline. The entry stores its operation time, and a stored send without manual entries reads as an empty list. A recipient that holds the original drops the resend copy, and a recipient that never got the original receives it once. Two different messages of one sender device with one timestamp both deliver. When no receipt is owed, a stop before the completion of the receive record runs `onMessageDecrypted` again. When a receipt is owed, only a stop before the receipt-due write runs it again. A new resend at or after 30 days from the send throws and posts nothing |
-| P9 | A retry request has a posting deadline 24 hours after the first failure of its message, and no post starts at or after it. A request whose post is due then ends as `posting-deadline`. After its posting deadline, a request whose post the Relay accepted posts nothing more and waits for its content until its 14-day deadline. `OPERATION_EXPIRED` before the posting deadline ends the request as `posting-deadline` with acceptance unknown. Each `posting-deadline` end resets the session, emits one `onRetryTerminal` event and posts no replacement attempt | The Relay admits an epoch at most 24 hours behind its clock. Its `OPERATION_EXPIRED` also answers an accepted operation that left its retained period, so it does not prove that the Relay holds nothing. The founder ruling "DA1 F3 OPERATION_EXPIRED before the posting deadline: end as acceptance-unknown now, resend on proof after DA1-Q3 (2026-10-28, founder)" sets this end. The version 2 code `DELIVERY_ALREADY_ACCEPTED` proves that the Relay holds the attempt, so a retry request reads it as `RETRY_CONFLICT` and posts no replacement | Signal's server refuses a send only for a wrong device set, before it stores anything, so a Signal client repairs and sends again at once. Signal's Android client gives its retry receipt job a lifespan of one day | A stored attempt that gets `OPERATION_EXPIRED` before the posting deadline posts no attempt 2, ends as `posting-deadline`, resets the session and emits one `onRetryTerminal` event. A fresh attempt and a stale-session repeat end the same way. No retry request posts at or after its first failure plus 24 hours, also after a restart. A request whose post the Relay accepted posts nothing after its posting deadline and ends as `expired-content` at its deadline. The next major SDK version renames this class to `request-expired`. A retry request that SDK 13.3 stored derives the posting deadline from its first failure, at most its deadline. A stored `posting-deadline` record reads back, and an unknown terminal class or a posting deadline that is not a number still reads as corrupt |
+| P8 | A manual resend with `resendMessage` after a send end is a new operation. It has a fresh stored operation time, the message ID `<clientMessageId>:manual:N` and its own posting deadline 24 hours after its creation. Its content keeps the original timestamp, and the receive queue of a recipient drops a copy with the same sender and the same original timestamp. The drop needs the timestamp that the content adapter reads from the message, so raw string or byte content takes no drop key and a recipient that holds it receives the copy again. A resend of a group send posts the content of its send log entry, so each copy carries the group context of the original send, not the current one. The recipient records the message with the completion of its receive record. When a delivery receipt is due, it records the message right after the receipt-due write and again with the completion of the receipt. The record expires after 60 days. The caller-origin receive path gives every decrypted message to the caller, and a caller that keeps its own records removes a copy itself. Only a send younger than 30 days takes a new manual resend. The Relay can charge the resend as a new message, and the message might already have arrived | The Relay admits an operation time at most 24 hours behind its clock and charges each accepted operation. The founder ruling "DA1 F4 manual resend identity: a fresh operation epoch with the original timestamp in the content (2026-10-28, founder)" sets this identity. The SDK encrypts the content again for each device, as the retry-request resend does | Signal's clients resend the stored message with its original timestamp in a new job, and the receivers drop a copy by sender and timestamp alone. The SDK uses the same key. The key has no conversation, so a sent transcript from a second own device with the same timestamp drops with no hook, also when the two transcripts name two conversations. A Signal client drops a duplicate transcript by the same key, so that drop is upstream-equal behavior and not a deviation. Signal's server keeps no operation time and charges no send | A resend posts under a fresh operation time and the manual message ID, with the original timestamp in the content. The Relay admits it after the original ended at its deadline. The entry stores its operation time, and a stored send without manual entries reads as an empty list. A recipient that holds the original drops the resend copy, and a recipient that never got the original receives it once. A later message of the same sender with the same timestamp drops, from any device of the sender. Two own devices send transcripts with one timestamp to two conversations, and the second transcript drops with no hook. When no receipt is owed, a stop before the completion of the receive record runs `onMessageDecrypted` again. When a receipt is owed, only a stop before the receipt-due write runs it again. A new resend at or after 30 days from the send throws and posts nothing |
+| P9 | A retry request has a posting deadline 24 hours after the first failure of its message, and no post starts at or after it. A request whose post is due then ends as `posting-deadline`. After its posting deadline, a request whose post the Relay accepted posts nothing more and waits for its content until its 14-day deadline. At that deadline, a retry request whose latest attempt the Relay answered or holds ends as `request-expired` and resets no session. A retry request whose latest attempt the Relay did not accept ends as `posting-deadline`. `OPERATION_EXPIRED` before the posting deadline ends the request as `posting-deadline` with acceptance unknown. Each `posting-deadline` end resets the session, emits one `onRetryTerminal` event and posts no replacement attempt. At client start, the SDK moves each stored retry request record to the current key prefix, and rewrites a stored `expired-content` end as `request-expired` with its time, its emitted flag and its recovery. The reader also reads a stored `expired-content` end as `request-expired`, until the next major SDK version and for at least 60 days after the publish day of 14.0.0 | The Relay admits an epoch at most 24 hours behind its clock. Its `OPERATION_EXPIRED` also answers an accepted operation that left its retained period, so it does not prove that the Relay holds nothing. The founder ruling "DA1 F3 OPERATION_EXPIRED before the posting deadline: end as acceptance-unknown now, resend on proof after DA1-Q3 (2026-10-28, founder)" sets this end. The version 2 code `DELIVERY_ALREADY_ACCEPTED` proves that the Relay holds the attempt, so a retry request reads it as `RETRY_CONFLICT` and posts no replacement | Signal's server refuses a send only for a wrong device set, before it stores anything, so a Signal client repairs and sends again at once. Signal's Android client gives its retry receipt job a lifespan of one day | A stored attempt that gets `OPERATION_EXPIRED` before the posting deadline posts no attempt 2, ends as `posting-deadline`, resets the session and emits one `onRetryTerminal` event. A fresh attempt and a stale-session repeat end the same way. No retry request posts at or after its first failure plus 24 hours, also after a restart. A request whose post the Relay accepted posts nothing after its posting deadline, ends as `request-expired` at its deadline and resets no session. A request whose posts all failed, and that no pass ended at its posting deadline, ends as `posting-deadline` at its deadline and resets the session. The class `request-expired` is not the delivery error cause `request-ended`. A stored `expired-content` end moves to the current prefix as `request-expired`, with its time, its emitted flag and its recovery kept. A stored `expired-content` record that the move has not reached reads as `request-expired`. A retry request that SDK 13.3 stored derives the posting deadline from its first failure, at most its deadline. A stored `posting-deadline` record reads back, and an unknown terminal class or a posting deadline that is not a number still reads as corrupt |
 | P10 | With a store that implements `listMetadataKeys`, as every built-in store does, the SDK replays each open send at start and when the Relay connection returns, ends each send at its posting deadline, and reports each end once through `onSendOutcome`. An internal send of the SDK, such as a sender key distribution, never reaches `onSendOutcome`. The SDK keeps no content of a sender key distribution at rest, so it does not replay one: with the listing method, it ends an open distribution at its deadline and reports nothing, and a retry request of the receiver recovers a lost distribution, as in Signal. An open sender key distribution that an earlier SDK version stored carries no marker, so the SDK reports `content-required` for it once for each client run before its deadline, and reports its end through `onSendOutcome` once, at its deadline. When the stored plaintext of an open send is gone or does not match the send, the SDK reports `content-required` once for each client run, and the send stays open until its deadline. On a custom store without the optional listing method, the SDK does not replay open sends by itself, and the application replays with the same `clientMessageId` | The founder ruling "Managed-group receive follows Signal's complete workflow (DA13-L correction)" keeps custom stores supported through a documented contract and conformance tests, so the store contract does not require the listing method. The SDK keeps the plaintext of a send only when the store and the content recovery policy keep resendable content | Signal's clients keep each pending send as a job, with its content, in their own database, and run the job queue at start and when the network returns. The SDK runs on a store that the application provides, and that store can keep no content | An open send replays at start under its stored epoch and bytes, and again when the Relay connection returns. A send past its deadline at start ends with the class that its stored progress gives, posts nothing, and reports once, also across a restart before the report. A send whose plaintext is gone or does not match its digest reports `content-required` once for each client run. A store without the method starts no driver, logs one line, and still reports the end of an application send, and the conformance suite skips its listing cases on that store |
 
 ---
@@ -1460,11 +1475,67 @@ and it checks no device set when the post declares none. The constraint is
 that the Relay removes a served route forward only. The SDK does not depend on
 the route, so its removal changes no SDK behavior.
 
+### 7.8 Group content with no group context
+
+Reviewed: 2026-11-02.
+
+A Signal client routes each received message by the group context in its
+content. Content with no group context goes to the direct conversation of the
+sender, also when a sender key decrypted it. With a context, the client
+updates the group first, and drops the message only when a member check fails.
+
+**Faithful** for content that no transport binds to a group.
+`classifyGroupContent` (`client/group-receive-authorization.ts:145-172`)
+returns null for content with no group context, unless the transport binds
+the content to a managed group. Content that no transport binds to a group
+takes no group decision, and direct content stays in the direct
+conversation of its sender.
+
+**Deviation for ad hoc groups.** `classifyGroupContent` also returns null
+for ad hoc group content with no group context
+(`client/group-receive-authorization.ts:155-164`). That is content that the
+sender key of an ad hoc group decrypted, or that came beside its
+distribution. The client authorizes such content with the transport group
+as its group (`client/signal-service-cipher.ts:2359-2368`). The delivered
+envelope has that ad hoc group as its `conversationId` and has
+`isGroup: true` (`client/signal-service-cipher.ts:2402-2407` and `:2425`).
+Upstream routes content with no group context to the direct conversation of
+the sender, also when a sender key decrypted it.
+
+The constraint is that the SDK binds content to its group by the transport.
+**Consequence:** ad hoc group content with no group context arrives in its
+ad hoc group, not in the direct conversation of its sender.
+
+**Deviation for managed groups.** The transport binds content to a group
+before the content names one. Content that a sender key decrypted, and
+content that came beside a sender key distribution, is content of that
+group. A sent transcript is
+content of its destination. When that group is a managed group and the
+content carries no group context, the evaluator denies the content with the
+reason `legacy-no-context` (`client/group-receive-authorization.ts:264`),
+also when the client has state of the group. A blocked group gives the
+reason `blocked` first. The client does not deliver the content as direct
+content. `processIncomingEnvelope` gives a `denied` outcome and
+runs `onDecryptionError`. A client with no `groups` config refuses such
+content with a `GroupReceiveRefusedError` of reason `configuration`
+(`client/signal-service-cipher.ts:2370`).
+
+The constraint is that the SDK binds sender-key content and content beside a
+distribution to its group by the transport. A direct delivery of that content
+would show content of the group in a direct conversation. Managed group
+content carries its group context since SDK 12.0.0. **Consequence:** content
+of a managed group from an SDK 11 sender is not delivered.
+
+Guarantee tests assert that group content with no group context is denied as
+`legacy-no-context` also when local group state exists, that a blocked group
+with such content still reports `blocked`, and that ad hoc content with no
+group context and no group transport arrives as direct content.
+
 ---
 
 ## 8. Receive queue
 
-Reviewed: 2026-10-20.
+Reviewed: 2026-11-02.
 
 The receive queue keeps each decrypted receive in the local store until the
 application hook accepts it and the receipt goes out (`client/receive-queue.ts`).
@@ -1565,6 +1636,52 @@ each pass the check and overshoot a bound.
 Guarantee tests assert the global item and byte bounds, the group item and
 byte shares, the progress of direct and other-group messages beside a full
 group, and an HTTP pull past a full page of refused envelopes.
+### 8.6 The open sweep deletes legacy received content
+
+A Signal client that retires a job format keeps a converter for it. The
+converter turns each readable pending item into a job of the new format, and
+fails each unreadable item with a log line.
+
+**Faithful** for unreadable rows. At each open, each durable store deletes
+every SDK 11 received-content row and every converted receive record that
+waits for its envelope (`local/store/receive-work.ts:326`). The store logs
+one line with the code `LEGACY_RECEIVED_CONTENT_DELETED` and two counts:
+`count`, the deleted rows and records, and `readable`, the deleted rows that
+parse. The line holds no key and no value. An open that finds nothing logs
+nothing.
+
+**Deviation.** The sweep also deletes each readable SDK 11 row, and counts it
+in `readable`. It does not convert the row. The founder ruling "Bundled major
+deletes readable SDK 11 received-content rows too, with a separate count
+(2026-10-30, founder)" sets this deletion. The constraint is Relay
+retention.
+
+The sweep relies on this constraint. The Relay keeps an undelivered envelope
+for at most its retention period, 30 days in production. The SDK states
+this bound as `RELIABILITY_RECORD_TTL_MS` (`local/store/reliability.ts:21`
+and `:33-35`). The first open of SDK 12.0.0 through 13.x converted each
+readable row. So a readable SDK 11 row is in a store that SDK 12.0.0 or
+later never opened.
+
+On 13.x, a converted row completes when the Relay delivers its envelope
+again. Otherwise it expires in one `onReceiveExpired` call with no sender.
+Where the constraint holds, the Relay no longer has the envelope. So a
+conversion as upstream does it would restore nothing.
+
+The constraint does not cover a device that received the content on SDK 11
+inside the last 30 days. For that device, 13.x would convert the row and
+complete it when the Relay delivers the envelope again. This release
+deletes the row at first open instead, and the sweep does not restore it.
+
+**Consequence:** where the constraint holds, the content of such a row never
+reaches the application, as on SDK 13.x. For a device inside the 30 days,
+the sweep deletes a row that 13.x would complete.
+
+Guarantee tests assert that each durable store deletes every legacy row at
+first open and logs the count once, that a stored record that waits for its
+envelope is removed and counted, that the log line carries the count and the
+readable count and no key or value, and that a second open logs nothing.
+
 ---
 
 ## Unverified and needs review

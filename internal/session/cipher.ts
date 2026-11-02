@@ -1574,6 +1574,27 @@ export class SessionCipher {
 
             return plaintext;
           } catch (innerError) {
+            // The store refused the Kyber prekey use of this PreKey message
+            // at the session commit. A new session from the same message
+            // meets the same refusal, so no archive and retry runs. The
+            // context tells whether a session of this device held the base
+            // key before this decrypt. `isPartialCommitKyberPreKeyUse`
+            // classifies the failure.
+            if (
+              isPreKeyMessage &&
+              innerError instanceof Error &&
+              innerError.name === 'ReusedBaseKeyError'
+            ) {
+              throw new EncryptionError(
+                'Failed to decrypt message',
+                EncryptionErrorCode.DECRYPTION_FAILED,
+                {
+                  originalError: innerError,
+                  baseKeySessionExists: preKeyMatchedExistingSession,
+                }
+              );
+            }
+
             // SECURITY: Never auto-recover from replay attacks
             // (MESSAGE_DUPLICATE). Replaying a PreKeyMessage could allow an
             // attacker to bypass fingerprint checks. A sender with a stale

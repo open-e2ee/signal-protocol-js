@@ -55,11 +55,10 @@ import { resolveSignalProtocolLogger, type Logger } from '../../../logger';
 
 import type { SqliteExecutor } from './driver';
 import { SqliteKeyStorage, type SqliteKeyStorageOptions } from './key-storage';
-import { legacyReceivedContentSource } from './key-storage/metadata';
 import { writeReceiveWork } from './key-storage/receive-work';
 import * as handoffs from './key-storage/sender-key-handoff';
 import type { SqliteRootExecutor } from './executor';
-import { convertLegacyReceivedContent, LEGACY_RECEIVED_CONTENT_UNREADABLE } from '../receive-work';
+import { sweepLegacyReceivedContent } from '../receive-work';
 import { withDeviceRecordLocks } from '../../../internal/session/record-locks';
 import { withSession } from '../device-record';
 import {
@@ -1129,28 +1128,44 @@ function isExpiredSession(record: SessionRecord, now: number, maxRecv: number): 
 }
 
 /**
- * Convert the legacy received content rows of a store that a platform entry
- * opened, then return the store. A row that does not parse is reported as an
- * error through the logger of the store. A failure closes the database, so
- * the failed open holds no file.
+ * The legacy rows of a SQLite store: metadata keys `received-content:<id>`,
+ * each value the JSON of one SDK 11 received content.
  */
-export async function convertSqliteLegacyReceivedContent<Store extends SqliteSignalProtocolStore>(
+function sqliteLegacyReceivedContentRows(
+  store: SqliteSignalProtocolStore
+): Parameters<typeof sweepLegacyReceivedContent>[1] {
+  return {
+    async listKeys(prefix) {
+      const keys: string[] = [];
+      for (;;) {
+        const page = await store.listMetadataKeys({ prefix, after: keys.at(-1) });
+        if (page.length === 0) return keys;
+        keys.push(...page);
+      }
+    },
+    read: (key) => store.getMetadata(key),
+    delete: (key) => store.deleteMetadata(key),
+  };
+}
+
+/**
+ * Sweep the legacy received content of a store that a platform entry opened,
+ * then return the store. See `sweepLegacyReceivedContent`. The count line goes
+ * through the logger of the store. A failure closes the database, so the
+ * failed open holds no file.
+ */
+export async function sweepSqliteLegacyReceivedContent<Store extends SqliteSignalProtocolStore>(
   store: Store,
   database: SqliteRootExecutor
 ): Promise<Store> {
   // The logger is protected. The store routes its other diagnostics through
   // it, and setLogger can replace it, so the report reads it at the call.
-  const reportUnreadable = (legacyKey: string) =>
-    (store as unknown as { logger: Required<Logger> }).logger.error(
-      LEGACY_RECEIVED_CONTENT_UNREADABLE,
-      { legacyKey }
-    );
+  const logger = {
+    warn: (message: string, data?: unknown) =>
+      (store as unknown as { logger: Required<Logger> }).logger.warn(message, data),
+  };
   try {
-    await convertLegacyReceivedContent(
-      store,
-      legacyReceivedContentSource(database),
-      reportUnreadable
-    );
+    await sweepLegacyReceivedContent(store, sqliteLegacyReceivedContentRows(store), logger);
   } catch (error) {
     await database.close().catch(() => undefined);
     throw error;

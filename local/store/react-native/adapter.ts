@@ -20,7 +20,7 @@ import {
 } from '../sqlite/open-store';
 import {
   SqliteSignalProtocolStore,
-  convertSqliteLegacyReceivedContent,
+  sweepSqliteLegacyReceivedContent,
 } from '../sqlite/store';
 
 /** The database file name when the options name none. */
@@ -97,7 +97,7 @@ export class ReactNativeSignalProtocolStore extends SqliteSignalProtocolStore {
     const open = storeOptions(options);
     const database = await openSqliteStore(open);
     const protection = await readSqliteStoreProtection(database, open.vault);
-    return await convertSqliteLegacyReceivedContent(
+    return await sweepSqliteLegacyReceivedContent(
       new ReactNativeSignalProtocolStore(database, protection, options.logger),
       database
     );

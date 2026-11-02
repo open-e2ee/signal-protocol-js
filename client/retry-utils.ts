@@ -72,6 +72,11 @@ export function determineRetryReason(error: Error): RetryReason {
  * @returns true if this is an expected retry case, false if unexpected failure
  */
 export function isRetryableDecryptionError(error: Error): boolean {
+  // A refused Kyber prekey use is retryable only as a partial-commit artifact.
+  if (error instanceof EncryptionError && error.originalError?.name === 'ReusedBaseKeyError') {
+    return isPartialCommitKyberPreKeyUse(error);
+  }
+
   // Check for SesameError codes directly (nested in EncryptionError.context)
   const errorMessage = error.message.toLowerCase();
   const sesameRetryPatterns = [
@@ -125,6 +130,35 @@ export function isRetryableDecryptionError(error: Error): boolean {
   }
 
   return false;
+}
+
+/**
+ * Tell whether a PreKey decrypt failed at its session commit because the
+ * store holds the use record of its Kyber prekey and base key, and no
+ * session of the sender device held that base key.
+ *
+ * A use record without a session for its base key is the state a partial
+ * commit of the same PreKey message leaves when it stops after the use record
+ * and before the session. The predicate checks the state, not its cause: a
+ * session deleted after a full commit leaves the same state and gets the same
+ * repair. The decrypt succeeds again and the commit fails again, so a
+ * redelivery cannot repair it. The receive paths send a retry request for it,
+ * as for any other retryable decryption error. The sender re-establishes the
+ * session from a fresh prekey bundle, with a new base key, and resends.
+ *
+ * A refused use beside a session that holds the base key is not this
+ * artifact. It is not retryable, and the receive paths treat it as a failed
+ * store commit.
+ *
+ * @param error - The error of the failed decrypt
+ * @returns true for a refused Kyber prekey use with no session for its base key
+ */
+export function isPartialCommitKyberPreKeyUse(error: Error): boolean {
+  return (
+    error instanceof EncryptionError &&
+    error.originalError?.name === 'ReusedBaseKeyError' &&
+    error.context?.baseKeySessionExists === false
+  );
 }
 
 /**
