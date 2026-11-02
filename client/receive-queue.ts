@@ -222,12 +222,8 @@
  *   starts. Tests: both V9 tests, "the retry deadline never deletes a
  *   committed receive record".
  * - The separate sender key install and its replay: see `restoreCommitted`.
- * - Converted SDK 11 rows have no Signal form. The data-preserving migration
- *   rule keeps them, and the redelivered envelope fills them. Tests: the
- *   legacy conversion suite and the converted row tests.
  */
 
-import { bytesToBase64, sha256 } from '../internal/crypto';
 import { extractGroupId } from '../internal/groups';
 import type { Envelope } from '../remote/relay/types';
 import type { ReceiveWorkQuery, ReceiveWorkRecord } from '../types/api';
@@ -353,15 +349,12 @@ const groupConversation = (groupId: string): string => `group:${extractGroupId(g
 
 /**
  * The conversation key of a record before the pass restores its content:
- * the group that the record stores, otherwise the sender account. A
- * converted legacy record has no sender, so it keys by itself. See "Order
- * key" in the module comment.
+ * the group that the record stores, otherwise the sender account. See
+ * "Order key" in the module comment.
  */
 function storedConversationOf(record: ReceiveWorkRecord): string {
   if (record.groupId !== undefined) return groupConversation(record.groupId);
-  return record.senderUserId === undefined
-    ? `work:${record.workId}`
-    : `account:${record.senderUserId}`;
+  return `account:${record.senderUserId}`;
 }
 
 /**
@@ -525,7 +518,9 @@ function withoutContent(record: ReceiveWorkRecord): ReceiveWorkRecord {
  *
  * @param received - The key of the content that the application got. The
  *   step records it, so a later copy with the same key is dropped. A
- *   receipt record carries its key, and the step records that key again.
+ *   receipt record carries its key, and the step records that key again. A
+ *   receipt record that SDK 13.x wrote carries a key with four fields, and
+ *   the step records it under its sender user and timestamp only.
  * @returns False, with nothing written, when the stored revision changed.
  */
 export async function completeReceiveWork(
@@ -712,9 +707,9 @@ async function expireReceiveWork(
     receivedAt: record.receivedAt,
     stage: record.stage === 'awaiting-completion' ? 'awaiting-completion' : 'decrypted',
     origin: record.origin,
-    ...(record.messageId !== undefined && { messageId: record.messageId }),
-    ...(record.senderUserId !== undefined && { senderId: record.senderUserId }),
-    ...(record.senderDeviceId !== undefined && { senderDeviceId: record.senderDeviceId }),
+    messageId: record.messageId,
+    senderId: record.senderUserId,
+    senderDeviceId: record.senderDeviceId,
     ...(record.groupId !== undefined && { groupId: record.groupId }),
     ...(record.failedEnvelopeId !== undefined && { failedEnvelopeId: record.failedEnvelopeId }),
   };
@@ -1236,8 +1231,6 @@ export class ReceiveQueue {
     }
     if (record.stage === 'awaiting-completion') return WAIT(expiresAt);
     if (record.stage === 'receipt-due') return this.receiptStep(pass, record, now);
-    // A converted legacy record waits for its redelivery.
-    if (record.awaitingEnvelope) return WAIT(expiresAt);
     // An earlier record of the conversation holds back this record. See
     // "Order key" in the module comment.
     if (isBlocked(blocked, record, conversation)) {
@@ -1293,6 +1286,13 @@ export class ReceiveQueue {
     const { content } = restored;
     // A null message carries no content. Its receive consumed it.
     if (content.inspected.nullMessage) {
+      await completeReceiveWork(ctx, record);
+      this.forget(record.workId);
+      return DONE;
+    }
+    // A GroupKeySync from an own device is SDK content. Its receive applies
+    // the group master key, and the application never gets it.
+    if (await ctx.cipher.consumeGroupKeySync(content)) {
       await completeReceiveWork(ctx, record);
       this.forget(record.workId);
       return DONE;
@@ -1481,23 +1481,16 @@ export class ReceiveQueue {
       return NOT_DELIVERED;
     }
     // A manual resend posts under a new message ID, so the envelope ID
-    // check misses it. The device drops a copy whose sender device, content
-    // timestamp and content digest match content that the application
-    // already has. The key is recorded with the completion of the receive,
-    // so a stop after the hook and before the completion runs the hook again.
-    // When a receipt is owed, the key is recorded right after the
-    // receipt-due write, and again with the completion of the receipt.
+    // check misses it. The device drops content whose sender user and
+    // content timestamp match content that the application already has,
+    // from any device of the sender. The key is recorded with the completion
+    // of the receive, so a stop after the hook and before the completion runs
+    // the hook again. When a receipt is owed, the key is recorded right after
+    // the receipt-due write, and again with the completion of the receipt.
     const timestamp = inspected.timestamp;
     const delivered = ctx.contentAdapter.withoutGroupContext(decrypted.content);
     const received: ReceivedMessageKey | undefined =
-      typeof timestamp === 'number'
-        ? {
-            senderUserId: content.senderUserId,
-            senderDeviceId: content.senderDeviceId,
-            timestamp,
-            contentDigest: bytesToBase64(await sha256(new TextEncoder().encode(delivered))),
-          }
-        : undefined;
+      typeof timestamp === 'number' ? { senderUserId: content.senderUserId, timestamp } : undefined;
     if (received !== undefined && (await hasReceivedTimestamp(ctx.storage, received))) {
       return NOT_DELIVERED;
     }
@@ -1535,7 +1528,7 @@ export class ReceiveQueue {
     const { workId, senderUserId } = record;
     const receipts = ctx.config.deliveryReceipts ?? 'auto';
     const batchReceipt =
-      ctx.relay !== undefined && receipts !== 'off' && senderUserId !== undefined
+      ctx.relay !== undefined && receipts !== 'off'
         ? (): void => {
             accumulateDeliveryReceipt(
               state.receiptAccumulator,

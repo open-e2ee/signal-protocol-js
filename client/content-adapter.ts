@@ -87,10 +87,28 @@ export interface BlockedRecipientsSyncInput {
 }
 
 /**
+ * The key of one managed group that a device gives to the other devices of
+ * its account, so each own device can fetch the group with no group traffic.
+ */
+export interface GroupKeySyncInput {
+  /** The group master key. It is 32 bytes. */
+  masterKey: Uint8Array;
+  /** The revision of the sender's group state at the send, or 0 with no state. */
+  revision: number;
+}
+
+/**
  * The sync content that `inspectContent` reads from a plaintext.
  *
- * The next major SDK version adds the `type` member `'groupKeySync'`. Code
- * that switches on `type` must handle it in that version.
+ * The `type` member `'groupKeySync'` names the key of a managed group from
+ * another own device. Code that switches on `type` must handle it.
+ * `processIncomingEnvelope`, the Relay subscription and the receive queue
+ * consume a group key sync and never give it to the application.
+ * `decryptEnvelope` and the raw decrypt methods `receive`, `decryptMessage`
+ * and `decryptMessages` return it unapplied, master key included.
+ * An own device on an older SDK version gives the raw group key sync to
+ * `onMessageDecrypted`, so upgrade every own device of one account in one
+ * release.
  */
 export interface ParsedSyncContent {
   type:
@@ -103,7 +121,8 @@ export interface ParsedSyncContent {
     | 'recipientUsername'
     | 'verificationState'
     | 'taskNotificationAck'
-    | 'blocked';
+    | 'blocked'
+    | 'groupKeySync';
   conversationId?: string;
   timestamp?: number;
   recipientUserId?: string;
@@ -112,6 +131,11 @@ export interface ParsedSyncContent {
   storageId?: string;
   attachmentId?: string;
   reason?: string;
+  /**
+   * The group key of a `groupKeySync`. A custom adapter must report it for
+   * its own group key sync encoding, with a 32-byte master key.
+   */
+  groupKey?: GroupKeySyncInput;
 }
 
 /**
@@ -170,9 +194,8 @@ export interface InspectedSignalProtocolContent {
  * Serializes the content that the client sends, and inspects the content
  * that it receives.
  *
- * The next major SDK version adds the required method
- * `serializeGroupKeySync`, so a custom adapter must implement it in that
- * version. An adapter that spreads the result of
+ * The method `serializeGroupKeySync` is required, so a custom adapter must
+ * implement it. An adapter that spreads the result of
  * `createDefaultSignalProtocolContentAdapter()` into itself gets the default
  * method. Upgrade every own device of one account in one release: an own
  * device on an older SDK version gives the raw group key sync to
@@ -190,6 +213,14 @@ export interface SignalProtocolContentAdapter {
   serializeVerificationStateSync(input: VerificationStateSyncInput): Uint8Array;
   serializeTaskNotificationAckSync(input: TaskNotificationAckSyncInput): Uint8Array;
   serializeBlockedRecipientsSync(input: BlockedRecipientsSyncInput): Uint8Array;
+  /**
+   * The sync content that gives the key of one managed group to the other
+   * own devices. `inspectContent` must report the result as a sync of type
+   * `'groupKeySync'` with its `groupKey`.
+   *
+   * @param input - The group master key and the revision at the send
+   */
+  serializeGroupKeySync(input: GroupKeySyncInput): Uint8Array;
   serializeReceipt(type: 'DELIVERY' | 'READ' | 'VIEWED', timestamps: number[]): string;
   serializeTyping(action: 'STARTED' | 'STOPPED', groupId?: string): string;
   serializeNullMessage(): string;
@@ -306,6 +337,9 @@ function losslessText(bytes: Uint8Array): string {
   }
   return CryptoUtils.bytesToBase64(bytes);
 }
+
+/** The length of a group master key in a group key sync. */
+const GROUP_MASTER_KEY_LENGTH = 32;
 
 function decodeBase64(value: unknown): Uint8Array | null {
   if (typeof value !== 'string') return null;
@@ -738,6 +772,24 @@ function inspectPayload(payload: JsonObject): InspectedSignalProtocolContent {
           timestamp: blocked.syncedAt,
         };
       }
+    } else if (
+      type === 'groupKeySync' &&
+      (syncMessage as JsonObject).groupKeySync &&
+      typeof (syncMessage as JsonObject).groupKeySync === 'object' &&
+      !Array.isArray((syncMessage as JsonObject).groupKeySync)
+    ) {
+      const groupKeySync = (syncMessage as JsonObject).groupKeySync as JsonObject;
+      const masterKey = decodeBase64(groupKeySync.masterKey);
+      const revision = groupKeySync.revision;
+      if (
+        masterKey &&
+        masterKey.length === GROUP_MASTER_KEY_LENGTH &&
+        typeof revision === 'number' &&
+        Number.isSafeInteger(revision) &&
+        revision >= 0
+      ) {
+        sync = { type: 'groupKeySync', groupKey: { masterKey, revision } };
+      }
     }
   }
 
@@ -920,6 +972,20 @@ export function createDefaultSignalProtocolContentAdapter(): SignalProtocolConte
             blocked: {
               recipients: input.recipients,
               syncedAt: input.syncedAt,
+            },
+          },
+        })
+      );
+    },
+
+    serializeGroupKeySync(input) {
+      return new TextEncoder().encode(
+        JSON.stringify({
+          syncMessage: {
+            type: 'groupKeySync',
+            groupKeySync: {
+              masterKey: CryptoUtils.bytesToBase64(input.masterKey),
+              revision: input.revision,
             },
           },
         })

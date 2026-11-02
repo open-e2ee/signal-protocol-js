@@ -19,7 +19,7 @@ import {
 } from '../sqlite/open-store';
 import {
   SqliteSignalProtocolStore,
-  convertSqliteLegacyReceivedContent,
+  sweepSqliteLegacyReceivedContent,
 } from '../sqlite/store';
 import { withOwnerLock } from './owner-lock';
 
@@ -98,7 +98,7 @@ export class NodeSignalProtocolStore extends SqliteSignalProtocolStore {
   static async open(options: NodeSignalProtocolStoreOptions): Promise<NodeSignalProtocolStore> {
     const database = await withStoreOptions(options, 'open', openSqliteStore);
     const protection = await readSqliteStoreProtection(database, options.vault);
-    return await convertSqliteLegacyReceivedContent(
+    return await sweepSqliteLegacyReceivedContent(
       new NodeSignalProtocolStore(database, protection, options.logger),
       database
     );

@@ -1333,13 +1333,13 @@ async function storeLinkedIdentityRegistration(
  *
  * The call copies the master key of each group that `activeGroupStore` lists
  * into the linked device's group store: `groups.store`, or the SDK group store
- * on the linked store. The copy runs in the calling process, so no master key
- * crosses the Relay. It runs with no `groups` option too, and a later client
- * with `groups` fetches each copied group. A group record that an earlier
- * release wrote, and that the active device has not read since, is not listed
- * and is not copied. Read each group once on the active device before the
- * link to copy it. A linked group store that lists a group that the link did
- * not write is refused with `HostedRelayDeviceLinkError` before any write.
+ * on the linked store. The copy runs in the calling process, so the link sends
+ * no master key through the Relay. It runs with no `groups` option too, and a
+ * later client with `groups` fetches each copied group. A group record that an
+ * earlier release wrote, and that the active device has not read since, is not
+ * listed and is not copied. Read each group once on the active device before
+ * the link to copy it. A linked group store that lists a group that the link
+ * did not write is refused with `HostedRelayDeviceLinkError` before any write.
  * The copied keys live in the linked device's group store. The SDK does not
  * move them again. A later move of that store is the application's store move.
  *

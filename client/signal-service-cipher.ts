@@ -62,17 +62,20 @@ import {
   refuseSyncFromOtherAccount,
   classifyGroupContent,
   groupOfContext,
+  isManagedGroupId,
   type GroupReceiveEvaluator,
 } from './group-receive-authorization';
-import { sizedReceiveWork } from '../local/store/receive-work';
 import { envelopeCiphertextBytes } from './delivery-error';
 import { GroupSenderKeyOperations } from './group-sender-key-operations';
 import type { PreparedAttachmentUpload, SealedReceipt, SendOptions, SendResult } from './types';
 import {
   checkNewSendTimestamp,
+  releaseNewSendTimestamp,
+  releaseNewSendTimestampWithLock,
+  type ReservedSendTimestamp,
+  reserveNewSendTimestamp,
   SEND_TIMESTAMP_ORIGIN,
   type SendTimestampOrigin,
-  withCheckedSendTimestamp,
 } from './send-timestamp';
 import {
   intentBinaryAttachment,
@@ -86,6 +89,7 @@ import {
   createDefaultSignalProtocolContentAdapter,
   type ConfigurationSyncInput,
   type GroupContentContext,
+  type GroupKeySyncInput,
   type InspectedSignalProtocolContent,
   type MediaAttachmentDeleteSyncInput,
   type ReadSyncEntryInput,
@@ -97,6 +101,11 @@ import {
   type ViewOnceOpenSyncInput,
 } from './content-adapter';
 import * as CryptoUtils from '../internal/crypto';
+import {
+  withAcceptedSyncDevices,
+  type GroupKeySyncDevice,
+} from '../internal/groups/key-sync-ledger';
+import type { KnownOwnDevice } from './group-key-sync';
 import {
   completeOutgoingMessageIntent,
   completeOutgoingSyncPhase,
@@ -207,6 +216,7 @@ import {
   type GroupDeviceSetContext,
   type PreMessagePostResult,
   type PreMessageTransport,
+  type SyncCopyRebuild,
 } from './group-outbox';
 import { groupDeviceKey, listedOwnDeviceChange } from './group-device-set';
 import {
@@ -395,7 +405,7 @@ function manualResendResult(
   intent: StoredOutgoingMessageIntent,
   resend: StoredManualResend,
   acceptances: readonly RelayPostAcceptance[]
-): SendResult {
+): NonNullable<StoredManualResend['result']> {
   const first = sendResultAcceptance(acceptances);
   return {
     clientMessageId: intent.clientMessageId,
@@ -514,9 +524,11 @@ interface SyncCopyRepair {
   intentId?: string;
   /**
    * Encrypt the transcript again for one own device. Resolves to undefined
-   * when the device has no session, and the repair then throws.
+   * when the device has no session, and the repair then throws. Resolves to
+   * `no-transcript` when the send has no transcript, and the copy then
+   * leaves the intent.
    */
-  rebuild(deviceId: number): Promise<StoredOutgoingDeviceMessage | undefined>;
+  rebuild(deviceId: number): Promise<SyncCopyRebuild>;
 }
 
 /**
@@ -544,6 +556,13 @@ interface DeclaredPhaseRun<T> {
    */
   bundleMissing?: readonly DeviceSetDevice[];
   /**
+   * The devices that the phase posts nothing to. Each pass declares them
+   * beside the posts of their account, so the relay accepts the posts to
+   * the other devices of the account. `encrypt` resolves to `no-transcript`
+   * for each of them.
+   */
+  uncopied?: readonly DeviceSetDevice[];
+  /**
    * The recipient account, when a pass with no message and no
    * bundle-missing device is an error, not a completed phase.
    */
@@ -553,8 +572,11 @@ interface DeclaredPhaseRun<T> {
   /**
    * Encrypt the message of the phase again for one device that has a
    * current session. Resolves to undefined when the device has no session.
+   * Resolves to `no-transcript` when a sync phase has no transcript: the
+   * device then gets no message and is not bundle-missing, and each later
+   * pass declares it.
    */
-  encrypt(device: DeviceSetDevice): Promise<StoredOutgoingDeviceMessage | undefined>;
+  encrypt(device: DeviceSetDevice): Promise<SyncCopyRebuild>;
   /** Forget a device that leaves the send, or whose registration changed. */
   forget?(device: DeviceSetDevice): Promise<void>;
   /**
@@ -593,6 +615,43 @@ function storedDeviceSetUnresolved(unresolved: DeviceSetUnresolved): StoredDevic
 
 function declaredDeviceKey(device: DeviceSetDevice): string {
   return `${device.userId}\u0000${String(device.deviceId)}`;
+}
+
+/** The own devices that a sync payload send posts to. */
+interface SyncPayloadTarget {
+  /** Post only to these own devices. Without it, post to each own device. */
+  readonly deviceIds?: readonly number[];
+  /**
+   * On a relay that compares device sets, read the own list once when this
+   * device holds no own device record.
+   */
+  readonly readOwnListWithoutRecord?: boolean;
+  /**
+   * The stop signal of the send. No post or wait starts after it aborts,
+   * and the send then rejects with RelayWorkStopped.
+   */
+  readonly stopSignal?: AbortSignal;
+  /**
+   * The own devices whose copy the relay accepted, also of a send that
+   * fails. Each post that the relay accepts adds its device, with the
+   * registration that the copy named. A copy that names no registration
+   * adds no device.
+   */
+  readonly accepted?: GroupKeySyncDevice[];
+}
+
+/** The byte length of a group master key that a `GroupKeySync` applies. */
+const GROUP_KEY_SYNC_MASTER_KEY_LENGTH = 32;
+
+/** The own devices of accepted sync copies that name a registration. */
+function acceptedSyncDevices(
+  copies: ReadonlyArray<StoredOutgoingDeviceMessage | undefined>
+): GroupKeySyncDevice[] {
+  return copies.flatMap((copy) =>
+    copy?.recipientRegistrationId !== undefined
+      ? [{ deviceId: copy.recipientDeviceId, registrationId: copy.recipientRegistrationId }]
+      : []
+  );
 }
 
 /**
@@ -1020,6 +1079,11 @@ export class SignalProtocolServiceCipher {
   private sealedSenderDeliveryMode: import('./config').SealedSenderDeliveryMode = 'preferred';
   private sealedSenderIdentifiedFallback?: import('./config').SealedSenderConfig['onIdentifiedFallback'];
   private relayProtocolErrorReporter?: (error: RelayProtocolError) => Promise<void>;
+  private ownDevicesFirstSeen?: (deviceIds: readonly number[]) => void;
+  private groupKeySyncReceiver?: (
+    input: GroupKeySyncInput,
+    sender: KnownOwnDevice
+  ) => Promise<void>;
   private contactProfileStateStore?: ContactProfileStateStore;
   private endorsementManager?: EndorsementManager;
   private endorsementManagerResolver?: () => Promise<EndorsementManager | undefined>;
@@ -1089,19 +1153,33 @@ export class SignalProtocolServiceCipher {
     return CryptoUtils.bytesToBase64(plaintextBytes);
   }
 
+  /**
+   * Post sync copies to own devices, with no intent.
+   *
+   * @returns Each own device whose copy the relay accepted, with the
+   *   registration that the accepted copy named. A copy that named no
+   *   registration, or that left the send, gives no device.
+   * @throws The error of the first failed device. The `accepted` list of
+   *   the target holds the devices whose copy the relay accepted before the
+   *   failure.
+   */
   private async uploadSyncMessages(
     syncMessages: SesameMessage[],
     payloadBytes: Uint8Array,
-    timestamp: number
-  ): Promise<void> {
+    timestamp: number,
+    target?: SyncPayloadTarget
+  ): Promise<GroupKeySyncDevice[]> {
+    const stopSignal = target?.stopSignal;
     const relay = this.relay;
     if (!relay || syncMessages.length === 0) {
-      return;
+      return [];
     }
 
     const prepared = await Promise.all(
       syncMessages.map((message) => this.prepareStoredSyncMessage(message))
     );
+    // The copy that a stale repair posts in place of the first copy.
+    const replacements = new Map<number, StoredOutgoingDeviceMessage>();
     const repair: SyncCopyRepair = {
       sessions: this.sessionCallbacks,
       rebuild: async (deviceId) => {
@@ -1110,14 +1188,24 @@ export class SignalProtocolServiceCipher {
           includeSyncMessages: false,
           listedDeviceIds: [deviceId],
         });
-        return message && this.prepareStoredSyncMessage(message);
+        const fresh = message && (await this.prepareStoredSyncMessage(message));
+        if (fresh) replacements.set(deviceId, fresh);
+        return fresh;
       },
     };
-    await this.sendPhase(
+    const posted = await this.sendPhase(
       prepared,
-      (message) => this.postSyncMessage(relay, message, {}, repair),
-      'sync'
+      async (message) => {
+        const control = stopSignal ? { stopSignal } : {};
+        if (!(await this.postSyncMessage(relay, message, control, repair))) return undefined;
+        const copy = replacements.get(message.recipientDeviceId) ?? message;
+        target?.accepted?.push(...acceptedSyncDevices([copy]));
+        return copy;
+      },
+      'sync',
+      stopSignal
     );
+    return acceptedSyncDevices(posted);
   }
 
   /** A stored sync copy that names the registration of the own device's current session. */
@@ -1160,7 +1248,9 @@ export class SignalProtocolServiceCipher {
    * uses the `beforeRequest` of `control`.
    *
    * @returns The relay receipt of the copy or of its repaired copy, or
-   *   undefined when the copy left the intent
+   *   undefined when the copy left the intent. A copy leaves the intent when
+   *   the relay refuses its repaired copy too, or when the send has no
+   *   transcript to repair it with.
    * @throws {EncryptionError} SESSION_ESTABLISHMENT_FAILED when the refresh
    *   fails or the rebuild gives the device no copy. The copy stays in the
    *   intent, so a replay posts it again.
@@ -1186,6 +1276,7 @@ export class SignalProtocolServiceCipher {
           this.repairRefusedSyncCopyInTurn(message, repair, sessions)
         )
       : undefined;
+    if (replacement === 'no-transcript') return undefined;
     if (replacement) {
       try {
         return await this.postSyncCopy(relay, replacement, controlOf(replacement));
@@ -1213,8 +1304,11 @@ export class SignalProtocolServiceCipher {
   /**
    * Refresh the session of an own device that refused a sync copy as stale,
    * encrypt the transcript again for the device, and replace the stored copy
-   * before its post. The refused ciphertext is never posted again.
+   * before its post. The refused ciphertext is never posted again. When the
+   * send has no transcript, the stored copy leaves the intent and the
+   * refreshed session stays.
    *
+   * @returns The new copy, or `no-transcript` when the copy left the intent
    * @throws {EncryptionError} SESSION_ESTABLISHMENT_FAILED when the refresh
    *   fails or the rebuild gives the device no copy. The stored copy stays,
    *   and the refreshed session is not archived.
@@ -1223,7 +1317,7 @@ export class SignalProtocolServiceCipher {
     refused: StoredOutgoingDeviceMessage,
     repair: SyncCopyRepair,
     sessions: SendSessionCallbacks
-  ): Promise<StoredOutgoingDeviceMessage | undefined> {
+  ): Promise<StoredOutgoingDeviceMessage | 'no-transcript'> {
     const refreshed = await sessions.refreshStaleSession(
       refused.recipientUserId,
       refused.recipientDeviceId
@@ -1236,6 +1330,13 @@ export class SignalProtocolServiceCipher {
       );
     }
     const fresh = await repair.rebuild(refused.recipientDeviceId);
+    if (fresh === 'no-transcript') {
+      if (repair.intentId !== undefined) {
+        const removed = [refused.recipientDeviceId];
+        await reconcileOutgoingSyncMessages(this.storage, repair.intentId, removed, []);
+      }
+      return fresh;
+    }
     if (!fresh) {
       throw new EncryptionError(
         'Failed to encrypt a sync copy again for a refreshed own device',
@@ -1370,23 +1471,80 @@ export class SignalProtocolServiceCipher {
    */
   private async sendSyncPayloadToLocalOtherDevices(
     payloadBytes: Uint8Array,
-    timestamp: number
-  ): Promise<void> {
+    timestamp: number,
+    target?: SyncPayloadTarget
+  ): Promise<GroupKeySyncDevice[]> {
     if (!this.relay) {
-      return;
+      return [];
     }
     if (this.declaresDeviceSets()) {
-      await this.sendDeclaredSyncPayload(payloadBytes, timestamp);
-      return;
+      return this.sendDeclaredSyncPayload(payloadBytes, timestamp, target);
     }
 
-    const listed = await this.readOwnDeviceList(this.sessionCallbacks, undefined);
+    const listed = await this.readOwnDeviceList(this.sessionCallbacks, target?.stopSignal);
     const syncMessages = await this.sesameManager.sendToLocalOtherDevices(payloadBytes, {
       clientTimestamp: timestamp,
       includeSyncMessages: false,
-      listedDeviceIds: listed.map((device) => device.deviceId),
+      listedDeviceIds: listed
+        .map((device) => device.deviceId)
+        .filter((deviceId) => target?.deviceIds?.includes(deviceId) ?? true),
     });
-    await this.uploadSyncMessages(syncMessages, payloadBytes, timestamp);
+    return this.uploadSyncMessages(syncMessages, payloadBytes, timestamp, target);
+  }
+
+  /**
+   * The other own devices that have a local device record not marked
+   * removed, each with the registration of its current session when the
+   * session names one.
+   */
+  async localOwnSyncDevices(): Promise<Array<{ deviceId: number; registrationId?: number }>> {
+    const devices = [];
+    for (const { deviceId } of await this.localOwnDevices()) {
+      const registrationId = await this.sesameManager.getRemoteRegistrationId(
+        this.userId,
+        deviceId
+      );
+      devices.push({ deviceId, ...(registrationId !== undefined && { registrationId }) });
+    }
+    return devices;
+  }
+
+  /**
+   * Post the key of one managed group to the other own devices, through
+   * the identified sync copy path. On a relay that compares device sets, a
+   * send to every own device reads the own list once when this device holds
+   * no own device record, because a sync post alone never learns of an own
+   * device.
+   *
+   * @param input - The group master key and the revision at the send
+   * @param deviceIds - The own devices to post to. Without it, the send
+   *   posts to each own device.
+   * @param stopSignal - The stop signal of the send. No post or wait starts
+   *   after it aborts.
+   * @returns Each own device whose copy the relay accepted, with the
+   *   registration that the accepted copy named
+   * @throws When the send fails or stops. Each error of the send, also one
+   *   from before the first post, carries the devices whose copy the relay
+   *   accepted before the failure, which `syncDevicesAcceptedBefore` reads.
+   */
+  async sendGroupKeySyncToLocalOtherDevices(
+    input: GroupKeySyncInput,
+    deviceIds?: readonly number[],
+    stopSignal?: AbortSignal
+  ): Promise<GroupKeySyncDevice[]> {
+    const accepted: GroupKeySyncDevice[] = [];
+    try {
+      const timestamp = Date.now();
+      const payloadBytes = this.getResolvedContentAdapter().serializeGroupKeySync(input);
+      return await this.sendSyncPayloadToLocalOtherDevices(payloadBytes, timestamp, {
+        ...(deviceIds && { deviceIds }),
+        readOwnListWithoutRecord: deviceIds === undefined,
+        ...(stopSignal && { stopSignal }),
+        accepted,
+      });
+    } catch (error) {
+      throw withAcceptedSyncDevices(error, accepted);
+    }
   }
 
   async sendReadSyncToLocalOtherDevices(entries: ReadSyncEntryInput[]): Promise<void> {
@@ -1501,6 +1659,18 @@ export class SignalProtocolServiceCipher {
    */
   setRelayProtocolErrorReporter(report: (error: RelayProtocolError) => Promise<void>): void {
     this.relayProtocolErrorReporter = report;
+  }
+
+  /**
+   * Set the listener of own devices that this device sees for the first
+   * time: a listed own device that gets its first device record from an own
+   * device list read, or an own device that a declared-phase repair starts a
+   * session with as a missing device. The listener runs after the read or
+   * the repair, and must not send in the turn of the send that saw the
+   * device. Called by SignalProtocolClient after construction.
+   */
+  setOwnDevicesFirstSeenListener(listener: (deviceIds: readonly number[]) => void): void {
+    this.ownDevicesFirstSeen = listener;
   }
 
   private async reportIdentifiedFallback(recipientUserId: string): Promise<void> {
@@ -1643,15 +1813,43 @@ export class SignalProtocolServiceCipher {
     this.groupContextProvider = provider;
   }
 
-  /** The content of a new group send, with the context of a managed group in it. */
+  /**
+   * The content of a new group send, with the context of a managed group in it.
+   *
+   * @throws EncryptionError `GROUP_MASTER_KEY_MISSING` when the group is a
+   *   managed group and the provider has no master key for it. Receivers
+   *   deny managed group content with no context, so the send posts nothing.
+   */
   private async contentWithGroupContext(
     groupId: string,
     plaintextBytes: Uint8Array
   ): Promise<Uint8Array> {
-    const context = await this.groupContextProvider?.(groupId);
+    const context = await this.groupSendContext(groupId);
     return context
       ? this.getResolvedContentAdapter().serializeContentWithGroupContext(plaintextBytes, context)
       : plaintextBytes;
+  }
+
+  /**
+   * The group context that a new send to a group carries. Undefined when the
+   * client has no group context provider, or when the group is an ad hoc
+   * group with no master key.
+   *
+   * @throws EncryptionError `GROUP_MASTER_KEY_MISSING` when the group is a
+   *   managed group and the provider has no master key for it
+   */
+  private async groupSendContext(groupId: string): Promise<GroupContentContext | undefined> {
+    if (!this.groupContextProvider) return undefined;
+    const context = await this.groupContextProvider(groupId);
+    if (context) return context;
+    if (isManagedGroupId(groupId)) {
+      throw new EncryptionError(
+        'No group master key is stored for this managed group',
+        EncryptionErrorCode.GROUP_MASTER_KEY_MISSING,
+        { groupId }
+      );
+    }
+    return undefined;
   }
 
   // ============================================================================
@@ -1664,6 +1862,69 @@ export class SignalProtocolServiceCipher {
    */
   setGroupReceiveEvaluator(evaluate: GroupReceiveEvaluator): void {
     this.groupReceiveEvaluator = evaluate;
+  }
+
+  /**
+   * Apply the group master key of a `GroupKeySync` from an own device. The
+   * receiver gets the sending own device with the registration of its
+   * session, when the session names one. Without a receiver, a
+   * `GroupKeySync` is consumed and writes nothing: a device without
+   * `config.groups` drops the sync, the sender does not send it again, and
+   * that device gets the key only from group traffic.
+   */
+  setGroupKeySyncReceiver(
+    receive: (input: GroupKeySyncInput, sender: KnownOwnDevice) => Promise<void>
+  ): void {
+    this.groupKeySyncReceiver = receive;
+  }
+
+  /**
+   * Consume committed content that carries a `GroupKeySync`.
+   * `processIncomingEnvelope`, the Relay subscription and the receive queue
+   * call this method, so they never give that content to the application.
+   * `decryptEnvelope` and the raw decrypt methods `receive`,
+   * `decryptMessage` and `decryptMessages` do not call it. They return the
+   * sync unapplied, master key included. The commit and `restoreCommitted`
+   * already refused a sync from another account, so the content comes from
+   * an own device.
+   *
+   * The receiver gets only a 32-byte master key and a non-negative safe
+   * integer revision, as a group context must carry. A custom content
+   * adapter can give other values. Such a sync is consumed, writes nothing,
+   * and logs a warning.
+   *
+   * @returns True when the content is a `GroupKeySync`, which the caller
+   *   then completes with no delivery. False for other content.
+   */
+  async consumeGroupKeySync(content: CommittedContent): Promise<boolean> {
+    const sync = content.inspected.sync;
+    if (sync?.type !== 'groupKeySync') return false;
+    const key = sync.groupKey;
+    if (!key || !this.groupKeySyncReceiver) return true;
+    if (
+      !(key.masterKey instanceof Uint8Array) ||
+      key.masterKey.length !== GROUP_KEY_SYNC_MASTER_KEY_LENGTH ||
+      !Number.isSafeInteger(key.revision) ||
+      key.revision < 0
+    ) {
+      this.logger.warn('A group key sync carried a malformed group key', {
+        category: 'E2EE',
+        data: {
+          behavior: 'GROUP_KEY_SYNC_MALFORMED',
+          senderDeviceId: content.senderDeviceId,
+        },
+      });
+      return true;
+    }
+    const registrationId = await this.sesameManager.getRemoteRegistrationId(
+      content.senderUserId,
+      content.senderDeviceId
+    );
+    await this.groupKeySyncReceiver(key, {
+      deviceId: content.senderDeviceId,
+      ...(registrationId !== undefined && { registrationId }),
+    });
+    return true;
   }
 
   /**
@@ -1800,9 +2061,6 @@ export class SignalProtocolServiceCipher {
             existing.groupId ??
             (await this.resolveFramedGroup(envelope, envelopeCiphertextBytes(envelope.ciphertext)));
         }
-        if (existing.awaitingEnvelope && seed) {
-          record = await this.fillAwaitingEnvelope(existing, seed, transportGroupId);
-        }
       } else {
         // Route on the envelope type. `sender_key` says "decrypt this as a
         // framed SenderKeyMessage". It does not say which group, and cannot.
@@ -1937,35 +2195,6 @@ export class SignalProtocolServiceCipher {
   }
 
   /**
-   * Fill the sender fields of a converted legacy record from its
-   * redelivered envelope. The record keeps its age and its arrival order.
-   */
-  private async fillAwaitingEnvelope(
-    existing: ReceiveWorkRecord,
-    seed: ReceiveWorkSeed,
-    groupId: string | null
-  ): Promise<ReceiveWorkRecord> {
-    const seeded = seed({
-      plaintext: existing.plaintext!,
-      ...(groupId !== null && { groupId }),
-    });
-    const filled = sizedReceiveWork({
-      ...seeded,
-      workId: existing.workId,
-      revision: existing.revision + 1,
-      stage: existing.stage,
-      arrivalSeq: existing.arrivalSeq,
-      receivedAt: existing.receivedAt,
-      dueAt: existing.dueAt,
-      plaintext: existing.plaintext!,
-      ...(existing.groupId !== undefined && { groupId: existing.groupId }),
-      ...(existing.blockedOn !== undefined && { blockedOn: existing.blockedOn }),
-    });
-    if (await this.storage.putReceiveWork(filled, existing.revision)) return filled;
-    return (await this.storage.getReceiveWork(existing.workId)) ?? existing;
-  }
-
-  /**
    * The checks of committed content that run before its distribution
    * installs: the replay check, sync content from another account, and a
    * distribution inside a sender-key message.
@@ -2028,8 +2257,7 @@ export class SignalProtocolServiceCipher {
    * Test: "gives the content once, and the failed message is a duplicate
    * after a restart".
    *
-   * @param record - A record that holds plaintext and its sender. A
-   *   converted legacy record waits for its envelope, and has no sender.
+   * @param record - A record that holds plaintext and its sender.
    * @param stopSignal - Stops the wait for the sender key lock.
    * @returns `committed` with the content, or `denied` when a check fails
    */
@@ -2629,7 +2857,7 @@ export class SignalProtocolServiceCipher {
 
   /**
    * Archive the session with one device, for the session reset of a retry
-   * request that ended as `expired-content` or `posting-deadline`.
+   * request that ended as `posting-deadline`.
    *
    * The archive takes the decrypt lock of the device first, so each decrypt
    * from the device in progress ends before it, and a decrypt that starts
@@ -3046,6 +3274,9 @@ export class SignalProtocolServiceCipher {
     const others = listed.filter(
       (device) => device.userId === this.userId && device.deviceId !== this.deviceId
     );
+    const recorded = this.ownDevicesFirstSeen
+      ? new Set(unremovedDeviceIds(await this.sesameManager.getUserRecord(this.userId)))
+      : undefined;
     if (others.length > 0 && sessions) {
       try {
         // A device that fails gets no copy from this send.
@@ -3062,6 +3293,15 @@ export class SignalProtocolServiceCipher {
     const listedIds = new Set(others.map((device) => device.deviceId));
     listedIds.add(this.deviceId);
     await this.reconcileDeviceRecords(this.userId, listedIds);
+    if (recorded) {
+      // A listed device that got its first record from this read. A device
+      // with no session gets no record, so a later read sees it again.
+      const now = new Set(unremovedDeviceIds(await this.sesameManager.getUserRecord(this.userId)));
+      const seen = others
+        .map((device) => device.deviceId)
+        .filter((deviceId) => !recorded.has(deviceId) && now.has(deviceId));
+      if (seen.length > 0) this.ownDevicesFirstSeen?.(seen);
+    }
     return others;
   }
 
@@ -3178,10 +3418,64 @@ export class SignalProtocolServiceCipher {
       );
     }
 
-    // A new send checks the timestamp before the session setup, which can
-    // post to the Relay. The replays above keep the stored timestamp.
-    checkNewSendTimestamp(options);
-    const sendFirst = await this.ensureSessionsForUser(recipientUserId, sessions, true);
+    // A new send checks and reserves the timestamp before the session setup,
+    // which can post to the Relay. The replays above keep the stored
+    // timestamp. A failure before the intent write removes the reservation.
+    const reservation = await reserveNewSendTimestamp(this.storage, options);
+    let stored: { intent: StoredOutgoingMessageIntent; declared: boolean; sendFirst: boolean };
+    try {
+      stored = await this.storeNewDirectIntent(
+        recipientUserId,
+        plaintextBytes,
+        plaintextDigest,
+        reservation.timestamp,
+        options,
+        sessions,
+        stopSignal
+      );
+    } catch (error) {
+      // A failed release does not replace the error of the send.
+      try {
+        await releaseNewSendTimestamp(this.storage, reservation);
+      } catch (releaseError) {
+        this.warnReleaseFailure(reservation, releaseError);
+      }
+      throw error;
+    }
+    const { intent, declared, sendFirst } = stored;
+    const evidence = this.sendCallEvidence(intent);
+    if (declared) {
+      return this.sendDeclaredDirectIntent(intent, plaintextBytes, sessions, stopSignal, evidence);
+    }
+    if (sendFirst && sessions) {
+      return this.sendDirectIntentBeforeDeviceListRead(
+        intent,
+        plaintextBytes,
+        sessions,
+        stopSignal,
+        evidence
+      );
+    }
+    return this.sendStoredDirectIntent(intent, plaintextBytes, sessions, stopSignal, evidence);
+  }
+
+  /**
+   * Prepare and store a new direct intent with its reserved client
+   * timestamp. The session setup can post to the Relay.
+   */
+  private async storeNewDirectIntent(
+    recipientUserId: string,
+    plaintextBytes: Uint8Array,
+    plaintextDigest: string,
+    clientTimestamp: number,
+    options: SendOptions & SendTimestampOrigin & SendEndReportMark & { clientMessageId: string },
+    sessions: SendSessionCallbacks | undefined,
+    stopSignal: AbortSignal | undefined
+  ): Promise<{ intent: StoredOutgoingMessageIntent; declared: boolean; sendFirst: boolean }> {
+    // A note to self has no recipient post to send before the list read,
+    // and the read of a later pass would address the own devices again.
+    const ownAccount = recipientUserId === this.userId;
+    const sendFirst = await this.ensureSessionsForUser(recipientUserId, sessions, !ownAccount);
     const sealedSender = this.relay ? await this.resolveSealedSenderContext(recipientUserId) : null;
     const directSealedSender =
       sealedSender && this.relay?.sendMultiRecipientUnidentified ? sealedSender : null;
@@ -3196,7 +3490,6 @@ export class SignalProtocolServiceCipher {
     const sealedSenderAuth =
       directSealedSender?.auth.type === 'accessKey' ? { ...directSealedSender.auth } : undefined;
 
-    const clientTimestamp = options.timestamp ?? Date.now();
     const syncPlaintext = this.buildSentSyncTranscript(
       this.getDirectConversationId(recipientUserId),
       plaintextBytes,
@@ -3209,10 +3502,22 @@ export class SignalProtocolServiceCipher {
       : await this.readOwnDeviceList(sessions, stopSignal);
     let batch: OutgoingMessageBatch;
     try {
-      batch = await this.sesameManager.send(recipientUserId, plaintextBytes, {
-        clientTimestamp,
-        includeSyncMessages: false,
-      });
+      // A note to self posts only the sent transcript to the other own
+      // devices. This matches the Signal sync transcript contract. With no
+      // other own device, the batch is empty and the send posts nothing.
+      batch = ownAccount
+        ? {
+            deviceMessages: [],
+            syncMessages: [],
+            recipientUserId,
+            timestamp: clientTimestamp,
+            attemptedDevices: 0,
+            failedDevices: 0,
+          }
+        : await this.sesameManager.send(recipientUserId, plaintextBytes, {
+            clientTimestamp,
+            includeSyncMessages: false,
+          });
       batch.syncMessages.push(
         ...(await this.sesameManager.sendToLocalOtherDevices(syncPlaintext, {
           clientTimestamp,
@@ -3275,21 +3580,8 @@ export class SignalProtocolServiceCipher {
       progressFromStart: true,
       ...(options[SEND_END_REPORT]?.internal && { internal: true as const }),
     };
-    const evidence = this.sendCallEvidence(intent);
     await storeOutgoingMessageIntent(this.storage, intent);
-    if (declared) {
-      return this.sendDeclaredDirectIntent(intent, plaintextBytes, sessions, stopSignal, evidence);
-    }
-    if (sendFirst && sessions) {
-      return this.sendDirectIntentBeforeDeviceListRead(
-        intent,
-        plaintextBytes,
-        sessions,
-        stopSignal,
-        evidence
-      );
-    }
-    return this.sendStoredDirectIntent(intent, plaintextBytes, sessions, stopSignal, evidence);
+    return { intent, declared, sendFirst };
   }
 
   /**
@@ -3722,7 +4014,7 @@ export class SignalProtocolServiceCipher {
     if (Date.now() >= resend.deadlineAt) {
       const ended = await this.endStoredManualResend(intent, resend);
       if (report) report.ended = { intent, resend: ended };
-      if (ended.result) return { ...ended.result };
+      if (ended.result) return { ...ended.result, clientTimestamp: intent.clientTimestamp };
       throw storedSendEndError(manualResendIntent(intent, ended));
     }
     return this.postManualResend(intent, resend, stopSignal, report);
@@ -3882,7 +4174,7 @@ export class SignalProtocolServiceCipher {
       { result }
     );
     if (ended && report) report.ended = { intent, resend: ended };
-    return result;
+    return { ...result, clientTimestamp: intent.clientTimestamp };
   }
 
   /**
@@ -4430,7 +4722,7 @@ export class SignalProtocolServiceCipher {
         recipientDeviceCount: intent.deviceMessages.length,
       };
       await completeOutgoingMessageIntent(this.storage, intent.clientMessageId, result);
-      return result;
+      return { ...result, clientTimestamp: intent.clientTimestamp };
     }
 
     const relay = this.relay;
@@ -4507,7 +4799,8 @@ export class SignalProtocolServiceCipher {
     await completeOutgoingMessageIntent(this.storage, intent.clientMessageId, result, {
       syncPending,
     });
-    return syncPending ? { ...result, syncPending: true as const } : result;
+    const returned = { ...result, clientTimestamp: intent.clientTimestamp };
+    return syncPending ? { ...returned, syncPending: true as const } : returned;
   }
 
   /** True when the relay compares declared device sets, so each send declares them. */
@@ -4562,6 +4855,12 @@ export class SignalProtocolServiceCipher {
       );
     let messages = postable(run.messages);
     let unposted: DeviceSetDevice[] = [...(run.bundleMissing ?? [])];
+    // The devices that the phase has no transcript for. Each pass declares
+    // them beside the posts of their account, so the relay accepts the
+    // other copies of the account.
+    const uncopied = new Map<string, DeviceSetDevice>(
+      (run.uncopied ?? []).map((device) => [declaredDeviceKey(device), device])
+    );
     // The accounts that the last pass refused here, because they had no post.
     let unpostedAccounts = new Set<string>();
     const posts = await runDeviceSetPhase<T>({
@@ -4575,6 +4874,7 @@ export class SignalProtocolServiceCipher {
           deviceIds.push(message.recipientDeviceId);
           declared.set(message.recipientUserId, deviceIds);
         }
+        for (const device of uncopied.values()) declared.get(device.userId)?.push(device.deviceId);
         for (const deviceIds of declared.values()) deviceIds.sort((a, b) => a - b);
         // An account whose devices all lack a bundle has no post to refuse.
         // It is refused here as missing those devices, so the pass counts.
@@ -4633,6 +4933,7 @@ export class SignalProtocolServiceCipher {
         const removed: DeviceSetDevice[] = [];
         const added: StoredOutgoingDeviceMessage[] = [];
         const bundleMissing: DeviceSetDevice[] = [];
+        const untranscribed: DeviceSetDevice[] = [];
         const posted = new Map(
           messages.map((message) => [
             declaredDeviceKey({
@@ -4655,7 +4956,9 @@ export class SignalProtocolServiceCipher {
             bundleMissing.push(...repaired.bundleMissing);
             for (const device of repaired.ready) {
               const message = await run.encrypt(device);
-              if (message) {
+              if (message === 'no-transcript') {
+                untranscribed.push(device);
+              } else if (message) {
                 added.push(message);
               } else {
                 bundleMissing.push(device);
@@ -4663,6 +4966,11 @@ export class SignalProtocolServiceCipher {
             }
           });
         }
+        // A removed device leaves the declaration. A stale device that has
+        // no transcript is removed, so its stored copy leaves the intent, and
+        // it is declared again here.
+        for (const device of removed) uncopied.delete(declaredDeviceKey(device));
+        for (const device of untranscribed) uncopied.set(declaredDeviceKey(device), device);
         if (run.intentId !== undefined) {
           const intent = await repairOutgoingDeviceSet(this.storage, run.intentId, {
             phase: run.phase,
@@ -4781,12 +5089,19 @@ export class SignalProtocolServiceCipher {
     const removed: DeviceSetDevice[] = [];
     const ready: DeviceSetDevice[] = [];
     const bundleMissing: DeviceSetDevice[] = [];
+    // The own devices that this repair sees for the first time.
+    const firstSeen: number[] = [];
     /**
      * Start sessions with devices that have none. A missing bundle is not an
      * error. A started session clears the removed marker of its record, so
      * the next pass declares the device.
+     *
+     * @param unrecorded - True for devices that had no current record
      */
-    const establish = async (deviceIds: readonly number[]): Promise<void> => {
+    const establish = async (
+      deviceIds: readonly number[],
+      unrecorded: boolean
+    ): Promise<void> => {
       const result = await sessions.establishSessions(
         userId,
         deviceIds.map((deviceId) => ({ userId, deviceId }))
@@ -4798,6 +5113,7 @@ export class SignalProtocolServiceCipher {
         if (established.has(deviceId)) {
           await this.sesameManager.relistDevice(userId, deviceId);
           ready.push({ userId, deviceId });
+          if (unrecorded && userId === this.userId) firstSeen.push(deviceId);
         } else {
           bundleMissing.push({ userId, deviceId });
         }
@@ -4835,10 +5151,10 @@ export class SignalProtocolServiceCipher {
       } else {
         // The refresh archived the stale session or found none. A second
         // start tells a missing bundle from a session start that failed.
-        await establish([deviceId]);
+        await establish([deviceId], false);
       }
     }
-    if (repair.missingDeviceIds.length > 0) await establish(repair.missingDeviceIds);
+    if (repair.missingDeviceIds.length > 0) await establish(repair.missingDeviceIds, true);
     if (options.unposted && bundleMissing.length > 0) {
       for (const device of bundleMissing.splice(0)) {
         await this.sesameManager.removeDevice(userId, device.deviceId);
@@ -4852,7 +5168,7 @@ export class SignalProtocolServiceCipher {
       const remainingIds = held.filter((id) => !handled.has(id));
       const relay = this.relay;
       if (remainingIds.length > 0) {
-        await establish(remainingIds);
+        await establish(remainingIds, false);
       } else if (relay && held.length === 0) {
         const listed = await this.fanOut.request(
           () => relay.getActiveDevices(userId),
@@ -4861,9 +5177,10 @@ export class SignalProtocolServiceCipher {
         const deviceIds = listed
           .filter((device) => device.userId === userId && !own(device.deviceId))
           .map((device) => device.deviceId);
-        if (deviceIds.length > 0) await establish(deviceIds);
+        if (deviceIds.length > 0) await establish(deviceIds, true);
       }
     }
+    if (firstSeen.length > 0) this.ownDevicesFirstSeen?.(firstSeen);
     return { removed, ready, bundleMissing };
   }
 
@@ -5094,7 +5411,11 @@ export class SignalProtocolServiceCipher {
       : { synced: true, accepted: [] };
     const route = intent.transportMode === 'identified' ? 'identified-direct' : 'anonymous-direct';
     return this.markUncheckedDeclaredPosts(
-      { ...result, ...((!sync.synced || syncUnread) && { syncPending: true as const }) },
+      {
+        ...result,
+        clientTimestamp: intent.clientTimestamp,
+        ...((!sync.synced || syncUnread) && { syncPending: true as const }),
+      },
       [
         ...accepted.map((acceptance): DeclaredPostReceipt => [acceptance, route]),
         ...syncPostReceipts(sync.accepted),
@@ -5124,7 +5445,7 @@ export class SignalProtocolServiceCipher {
    */
   private async finishDeclaredSync(
     intent: StoredOutgoingMessageIntent,
-    encrypt: (device: DeviceSetDevice) => Promise<StoredOutgoingDeviceMessage | undefined>,
+    encrypt: (device: DeviceSetDevice) => Promise<SyncCopyRebuild>,
     sessions: SendSessionCallbacks | undefined,
     stopSignal: AbortSignal | undefined,
     beforeRequest?: () => Promise<void>,
@@ -5185,32 +5506,63 @@ export class SignalProtocolServiceCipher {
    * payload has no send result, so the reporter gives the protocol error of
    * an accepted post without the `deviceSetChecked` mark to the app.
    *
-   * @throws {DeviceSetReconciliationError} when the phase ends unresolved
+   * A target with device IDs posts only to those devices, and each pass
+   * declares the other own devices beside the posts. A target that reads
+   * the own list without a record reads it once when this device holds no
+   * own device record.
+   *
+   * @returns Each own device whose copy the relay accepted, with the
+   *   registration that the accepted copy named
+   * @throws {DeviceSetReconciliationError} when the phase ends unresolved.
+   *   The `accepted` list of the target holds the devices whose copy the
+   *   relay accepted before the failure.
    */
-  private async sendDeclaredSyncPayload(payloadBytes: Uint8Array, timestamp: number): Promise<void> {
+  private async sendDeclaredSyncPayload(
+    payloadBytes: Uint8Array,
+    timestamp: number,
+    target?: SyncPayloadTarget
+  ): Promise<GroupKeySyncDevice[]> {
     const relay = this.relay!;
-    const ownDevices = await this.localOwnDevices();
-    if (ownDevices.length === 0) return;
+    let ownDevices = await this.localOwnDevices();
+    if (ownDevices.length === 0 && target?.readOwnListWithoutRecord) {
+      await this.readOwnDeviceList(this.sessionCallbacks, target.stopSignal);
+      ownDevices = await this.localOwnDevices();
+    }
+    const targeted = (deviceId: number) => target?.deviceIds?.includes(deviceId) ?? true;
+    const targets = ownDevices.filter((device) => targeted(device.deviceId));
+    if (targets.length === 0) return [];
     const copies = await this.sesameManager.sendToLocalOtherDevices(payloadBytes, {
       clientTimestamp: timestamp,
       includeSyncMessages: false,
-      listedDeviceIds: ownDevices.map((device) => device.deviceId),
+      listedDeviceIds: targets.map((device) => device.deviceId),
     });
-    if (copies.length === 0) return;
+    if (copies.length === 0) return [];
     const operationId = await CryptoUtils.generateUuidV4();
     const prepare = (message: SesameMessage) =>
       this.prepareStoredSyncMessage(message, syncMessageId(operationId, message));
     const accepted: RelayPostAcceptance[] = [];
+    // The last accepted copy of each device.
+    const delivered = new Map<number, StoredOutgoingDeviceMessage>();
     try {
       await this.runDeclaredPhase<void>({
         phase: 'sync',
         clientMessageId: operationId,
         restarts: 0,
         messages: await Promise.all(copies.map(prepare)),
+        uncopied: ownDevices.filter((device) => !targeted(device.deviceId)),
         post: async (message, declaredDeviceIds) => {
-          accepted.push(await this.postSyncCopy(relay, message, { declaredDeviceIds }));
+          const control = {
+            declaredDeviceIds,
+            ...(target?.stopSignal && { stopSignal: target.stopSignal }),
+          };
+          accepted.push(await this.postSyncCopy(relay, message, control));
+          delivered.set(message.recipientDeviceId, message);
+          target?.accepted?.push(...acceptedSyncDevices([message]));
         },
         encrypt: async (device) => {
+          if (device.userId !== this.userId || !targeted(device.deviceId)) {
+            return 'no-transcript';
+          }
           const [message] = await this.sesameManager.sendToLocalOtherDevices(payloadBytes, {
             clientTimestamp: timestamp,
             includeSyncMessages: false,
@@ -5219,7 +5571,7 @@ export class SignalProtocolServiceCipher {
           return message && prepare(message);
         },
         sessions: this.sessionCallbacks,
-        stopSignal: undefined,
+        stopSignal: target?.stopSignal,
       });
     } finally {
       // The payload is delivered to each accepted device, also when the
@@ -5227,6 +5579,7 @@ export class SignalProtocolServiceCipher {
       const error = this.uncheckedDeclaredPostError(syncPostReceipts(accepted), undefined);
       if (error) await this.relayProtocolErrorReporter?.(error);
     }
+    return acceptedSyncDevices([...delivered.values()]);
   }
 
   private async encryptToGroupWithOutbox(
@@ -5256,6 +5609,9 @@ export class SignalProtocolServiceCipher {
           groupEvidence = this.sendCallEvidence(intent);
         },
         refreshEntry: (device, entry) => boundGroupEvidence().refreshEntry(device, entry),
+        warn: (message, data) => {
+          this.logger.warn(message, { category: 'E2EE', data });
+        },
         endRecipientPhase: (intent, error) =>
           this.endOrRethrow(intent, boundGroupEvidence(), error),
         storage: this.storage,
@@ -7041,6 +7397,7 @@ export class SignalProtocolServiceCipher {
     let sendOptions: SendOptions &
       SendTimestampOrigin &
       SendBinaryAttachment & { clientMessageId: string };
+    let reservation: ReservedSendTimestamp | undefined;
     if (stored) {
       // A repeat sends the stored message under the stored timestamp, so the
       // locked send replays the stored intent and uploads nothing. Another
@@ -7064,38 +7421,63 @@ export class SignalProtocolServiceCipher {
       pointer = storedPointer;
       sendOptions = { ...options, timestamp: stored.clientTimestamp };
     } else {
-      // The upload posts the file, so a new send checks its timestamp first,
-      // once, against one clock reading. Without a caller timestamp, the SDK
-      // reads its clock once, before the upload, and the message and the
-      // intent take that timestamp. The timestamp mark stops the checks of
-      // the send after the upload, which would read a later clock. The
-      // attachment mark puts the message in the intent.
-      const checked = withCheckedSendTimestamp(options);
-      const timestamp = checked.timestamp ?? Date.now();
-      const uploaded = await this.prepareAttachmentUpload(data, checked);
-      message = serializeMediaAttachmentMessage({ attachment: uploaded, timestamp });
+      // The upload posts the file, so a new send checks and reserves its
+      // timestamp first, once, against one clock reading. Without a caller
+      // timestamp, the SDK reads its clock once, before the upload, and the
+      // message and the intent take the reserved timestamp. The timestamp
+      // mark stops the checks of the send after the upload, which would read
+      // a later clock, and the inner reservation of the send finds the entry
+      // with its own ID. The attachment mark puts the message in the intent.
+      // A send to a managed group with no master key throws before the
+      // upload, so it uploads, stores and posts nothing.
+      if (isGroupId(recipientId)) await this.groupSendContext(extractGroupId(recipientId));
+      reservation = await reserveNewSendTimestamp(this.storage, options);
+      const timestamp = reservation.timestamp;
+      const checked = { ...options, timestamp, [SEND_TIMESTAMP_ORIGIN]: 'checked' as const };
+      try {
+        const uploaded = await this.prepareAttachmentUpload(data, checked);
+        message = serializeMediaAttachmentMessage({ attachment: uploaded, timestamp });
+      } catch (error) {
+        try {
+          await releaseNewSendTimestampWithLock(this.storage, reservation);
+        } catch (releaseError) {
+          this.warnReleaseFailure(reservation, releaseError);
+        }
+        throw error;
+      }
       // The pointer of the result comes from the message, as on a repeat.
       pointer = attachmentPointerOf(message);
       sendOptions = {
         ...checked,
-        timestamp,
-        [SEND_TIMESTAMP_ORIGIN]: checked[SEND_TIMESTAMP_ORIGIN] ?? 'sdk-clock',
         [SEND_BINARY_ATTACHMENT]: { fileDigest, message },
       };
     }
 
     const attachmentBytes = new TextEncoder().encode(message);
     let result: SendResult;
-    if (isGroupId(recipientId)) {
-      result = await this.encryptToGroup(
-        recipientId,
-        attachmentBytes,
-        sendOptions,
-        sessions,
-        stopSignal
-      );
-    } else {
-      result = await this.encryptToUser(recipientId, attachmentBytes, sendOptions, sessions);
+    try {
+      if (isGroupId(recipientId)) {
+        result = await this.encryptToGroup(
+          recipientId,
+          attachmentBytes,
+          sendOptions,
+          sessions,
+          stopSignal
+        );
+      } else {
+        result = await this.encryptToUser(recipientId, attachmentBytes, sendOptions, sessions);
+      }
+    } catch (error) {
+      // The inner send found the reservation with its own ID, so it does not
+      // remove it. A failure before the intent write removes it here.
+      if (reservation) {
+        try {
+          await releaseNewSendTimestampWithLock(this.storage, reservation);
+        } catch (releaseError) {
+          this.warnReleaseFailure(reservation, releaseError);
+        }
+      }
+      throw error;
     }
 
     return {
@@ -7106,6 +7488,17 @@ export class SignalProtocolServiceCipher {
       digest: pointer.digest,
       contentType: pointer.contentType,
     };
+  }
+
+  /**
+   * Log a failed release of a send timestamp reservation. The send then
+   * throws its own error, not the release error.
+   */
+  private warnReleaseFailure(reservation: ReservedSendTimestamp, error: unknown): void {
+    this.logger.warn('Failed to release the send timestamp reservation', {
+      category: 'E2EE',
+      data: { clientMessageId: reservation.clientMessageId, error: (error as Error).message },
+    });
   }
 
   private async prepareAttachmentUpload(

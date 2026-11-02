@@ -301,7 +301,8 @@ The kit has these cases:
 - receive record listing: arrival order, then work ID order, an exclusive
   `after` cursor, the default page size, and the filters
 - receive record completion and usage
-- durability after reopen: each kind of write survives a reopen
+- durability after reopen: each kind of write survives a reopen, including a
+  metadata value in the shape of the group key sync ledger
 - no plaintext at rest: the stored bytes hold no known plaintext. It runs
   only when the store declares a cipher.
 - protection declaration: `store.protection` is a valid declaration
@@ -348,6 +349,13 @@ An `SignalProtocolLocalStore` implementation must preserve:
   encryption at rest and the custody of its key. Client creation fails
   without one, and [Content Recovery](../../docs/PROTOCOL_POLICY.md#content-recovery)
   reads it
+- each metadata value across a close and a reopen, with an atomic
+  `compareAndSetMetadata` for one key. The group key sync ledger keeps, for
+  each group, the own devices whose `GroupKeySync` copy the relay accepted
+  and the own device that sent this device the key, under the metadata key
+  prefix `open-e2ee:group-key-sync:v1:`. A store that
+  loses a value causes one more `GroupKeySync` for each own device that the
+  value marked
 
 ## Session Record Shape
 
@@ -409,7 +417,7 @@ with `assertBackendConformance`.
 
 ## Design Notes
 
-Reviewed: 2026-10-24.
+Reviewed: 2026-11-02.
 
 Receive records use the same encryption and transaction boundary as protocol state.
 
@@ -463,12 +471,28 @@ hash of the group ID, not the group ID. A SQLite store with
 `encryptionAtRest: false` and the in-memory store keep the records without
 encryption.
 
-At the first open after an upgrade from an earlier SDK, each durable store
-converts the legacy received-content rows to receive records, and writes the
-conversion marker last. An interrupted conversion continues at the next open,
-and skips each row that already has a record. A row that does not parse stays
-under its legacy key. The store logs the key, never the value, and keeps the
-key in the marker.
+At each open, each durable store deletes every SDK 11 received-content row
+and every converted receive record that waits for its envelope. It also
+deletes the conversion marker of SDK 13.x. When the open deletes a row or a
+record, the store logs one line with the code
+`LEGACY_RECEIVED_CONTENT_DELETED` and two counts: `count`, the deleted rows and
+records, and `readable`, the deleted rows that parsed. The line holds no key
+and no value. No marker records the sweep. An interrupted sweep deletes the
+rest at the next open, and an open that finds nothing logs nothing.
+
+A readable SDK 11 row is in a store that SDK 12.0.0 or later never opened.
+The first open of SDK 12.0.0 through 13.x converted each readable row to a
+receive record that waits for its envelope, and deleted the row. The sweep
+deletes each readable row and counts it in `readable`. The sweep relies on
+the Relay retention constraint. The Relay keeps an undelivered envelope for
+at most its retention period, 30 days in production. Where the constraint
+holds, no SDK version gives the content of such a row to the application.
+
+The constraint does not cover a device that received the content on SDK 11
+inside the last 30 days. For that device, 13.x would convert the row and
+complete it when the Relay delivers the envelope again. This release deletes
+the row at first open instead, and the sweep does not restore it. The
+in-memory store keeps no data across a restart and has no sweep.
 
 The IndexedDB web store and the key-value store also encrypt each metadata
 value with their store key. Their metadata key names stay in clear text. Some

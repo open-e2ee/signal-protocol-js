@@ -83,13 +83,14 @@ holds each member to a production construction site.
 | `INVALID_CIPHERTEXT` | The ciphertext format is invalid. | Reject the message. |
 | `DECRYPTION_FAILED` | Available session state could not decrypt the message. | Let the retry flow recover, or inspect the session state. |
 | `ENCRYPTION_FAILED` | The SDK could not encrypt the message. | Inspect the session state and `originalError`. |
-| `INVALID_SEND_TIMESTAMP` | A new send carries a `timestamp`, or a sync to linked devices carries an application time, that is not a safe positive integer, or that is more than 5 minutes ahead of or more than 24 hours behind the SDK clock. The SDK throws `InvalidSendTimestampError` from `@open-e2ee/signal-protocol-sdk/types` and stores or posts nothing for the send. | Send again with a timestamp in the window, or with no timestamp. |
+| `INVALID_SEND_TIMESTAMP` | A new send carries a `timestamp`, or a sync to linked devices carries an application time, that is not a safe positive integer, or that is more than 5 minutes ahead of or more than 24 hours behind the SDK clock. A new send also gets it for a `timestamp` that a different send of the device used. The SDK's own sends, the profile key offer and the sender key distribution, reserve from the same index of the device, so an application that passes `timestamp: Date.now()` can get `already_used` when it did not use the value again itself. The SDK throws `InvalidSendTimestampError` from `@open-e2ee/signal-protocol-sdk/types` and stores or posts nothing for the send. The `reason` is `not_safe_positive_integer`, `too_far_ahead`, `too_old` or `already_used`. `earliest` and `latest` give the window, and are absent for `already_used`. | Omit `timestamp`, so that the SDK picks a free value. On `already_used`, send again with no timestamp. Otherwise send again with a timestamp in the window that no other send used. |
 | `SEND_ACCEPTANCE_UNKNOWN` | The posting deadline of a direct or group send ended, and the Relay acceptance of a device is not known. The SDK throws `SendAcceptanceUnknownError` from `@open-e2ee/signal-protocol-sdk/types`. The message might have arrived. | Tell the user that the message might already have arrived. Do not replay the send. |
 | `SEND_NEVER_ACCEPTED` | The posting deadline of a direct or group send ended, the call raised no refusal (a thrown refusal or a refusal in the receipt of a shared body), and no refused device has a stored refusal code. The SDK throws `SendNeverAcceptedByRelayError` from `@open-e2ee/signal-protocol-sdk/types`. | Tell the user which devices did not get the message. |
 | `MESSAGE_DUPLICATE` | The session processed this message before. | Discard the duplicate. |
 | `TOO_MANY_SKIPPED_MESSAGES` | The message exceeded the skipped-key bound. | Reset the affected session. |
 | `REPLAY_DETECTED` | Envelope and encrypted-content timestamps differ. | Reject the message as a replay. |
 | `SENDER_KEY_EXPIRED` | The sender key exceeded its rotation period. | Rotate and redistribute the sender key. |
+| `GROUP_MASTER_KEY_MISSING` | A client with a `groups` config has no master key for a managed group in its group store, and a new send, an attachment send, or a manual resend of content with no logged group context goes to that group. Receivers deny managed group content with no group context, so the SDK stores and posts nothing for the send, and an attachment send uploads nothing. A manual resend of logged content that carries a group context keeps that context and does not throw. A replay that must build a sent transcript for an own device skips that transcript, keeps its posts, and logs one warning with this code. | Store the group master key through the link or sync path, then send again. |
 
 ### Identity and Trust Errors
 
@@ -403,16 +404,14 @@ set to N. Only a send younger than 30 days takes a new resend. At or after
 days takes a manual resend` and posts nothing. An open resend of an older
 send still posts until its own deadline.
 
-The receive queue of a recipient device drops a copy whose sender device,
-timestamp and content match a message that it already processed, for 60
-days. Two different messages of one sender device with the same timestamp
-both deliver. This rule holds in SDK 13.x and ends in the next major SDK
-version, which drops a later message of the same sender with the same
-timestamp. The drop needs the timestamp that the content adapter reads
-from the message. Content with no timestamp, such as raw string or byte
-content, takes no drop key, and a recipient that holds it receives the copy
-again. The recipient records the message with the completion of its
-receive record. When a delivery receipt is due, it records the message right
+The receive queue of a recipient device drops a copy whose sender and
+timestamp match a message that it already processed, for 60 days. A later
+message of the same sender with the same timestamp drops too, with any body
+and from any device of the sender. The drop needs the timestamp that the
+content adapter reads from the message. Content with no timestamp, such as
+raw string or byte content, takes no drop key, and a recipient that holds
+it receives the copy again. The recipient records the message with the
+completion of its receive record. When a delivery receipt is due, it records the message right
 after the receipt-due write and again with the completion of the receipt.
 When no receipt is owed, a stop before the completion of the receive record
 runs `onMessageDecrypted` again. When a receipt is owed, only a stop before
@@ -512,20 +511,16 @@ try {
 
 ## Group Receive Errors
 
-A managed group receive can end in three errors. None of them is an
-`EncryptionError`. Each one tells the caller what to do with the message.
+Three error classes describe a managed group receive that gives no content.
+None of them is an `EncryptionError`. Each one tells the caller what to do
+with the message.
 
 | Error | Cause | Keep rule |
 |---|---|---|
-| [`GroupReceiveUnavailableError`](./api/classes/GroupReceiveUnavailableError.md) | The group state is not current. `reason` names the wait, and `retryAfterMs` gives the time to the next try. The client stored the content in a receive record under `messageId`. | Call again later with the same message. The later call decides the stored content with no second decrypt. |
+| [`GroupReceiveUnavailableError`](./api/classes/GroupReceiveUnavailableError.md) | The group state is not current. `reason` names the wait, and `retryAfterMs` gives the time to the next try. The client stored the content in a receive record under `messageId`. | No client method throws it. `processIncomingEnvelope` gives a `pending` outcome for it. Acknowledge the envelope. The receive queue decides the stored content when the group updates, with no second decrypt. |
 | [`GroupReceiveRefusedError`](./api/classes/GroupReceiveRefusedError.md) | The client refused the content. `reason` names the refusal, for example `sender-not-member` or `sync-from-other-account`. The client asked for no resend. | Drop the message. A redelivery is dropped as a processed duplicate. |
 | [`GroupResendDeferredError`](./api/classes/GroupResendDeferredError.md) | A resend to a group member waits for the group state. The client neither sent nor refused the resend. | The Relay keeps the retry request. Do not acknowledge it. A later delivery decides again. |
 
-The deprecated `decryptGroupMessage` throws the first two errors. It also
-throws `EncryptionError` with `STORAGE_QUOTA_EXCEEDED` when the receive queue
-has no room, and with `MESSAGE_DUPLICATE` for a message that this client
-processed or that gives no content, such as a null message. A decrypt failure
-throws its error with no retry request and no report.
 `decryptEnvelope` throws `GroupReceiveRefusedError` for a group context that
 is malformed or names another group. `processIncomingEnvelope` throws none
 of them. It returns a receive outcome: `pending` for content that waits for
@@ -536,10 +531,30 @@ it when its group updates. Do not acknowledge an envelope whose outcome is
 
 Content from another account that carries a sync message is refused as
 `sync-from-other-account` on the Relay subscription, in
-`receiveIncomingEnvelopes`, in `decryptEnvelope` and `decryptGroupMessage`,
-and in `processIncomingEnvelope` as a `denied` outcome. The raw decrypt
-methods `receive`, `decryptMessage`, and `decryptMessages` return the
-plaintext with no group classification and do not refuse it.
+`receiveIncomingEnvelopes`, in `decryptEnvelope`, and in
+`processIncomingEnvelope` as a `denied` outcome. The raw decrypt methods
+`receive`, `decryptMessage`, and `decryptMessages` return the plaintext with
+no group classification and do not refuse it.
+
+A `GroupKeySync` from an own device carries the master key of a managed
+group. `processIncomingEnvelope`, the Relay subscription, and the receive
+queue consume it and never give it to the application.
+`processIncomingEnvelope` gives the outcome `null-message` for it, so
+acknowledge the envelope. `decryptEnvelope` and the raw decrypt methods
+`receive`, `decryptMessage`, and `decryptMessages` return it unapplied,
+master key included. A sender device reinstalled with the same device ID
+between the arrival and the consumption of its `GroupKeySync` is marked in
+the key sync ledger with the new registration, so that install gets the key
+from another own device or from group traffic. A device without
+`config.groups` drops the sync, the
+sender does not send it again, and that device gets the key only from group
+traffic. A sync whose key is not a 32-byte master key with a non-negative
+revision, which a custom content adapter can give, is consumed and writes
+nothing. A `GroupKeySync` from another account is refused as
+`sync-from-other-account` before the client writes a group record or a master
+key. An own device on an older SDK version does not know this sync. It gives
+the raw group key sync, with the master key, to `onMessageDecrypted`. So
+upgrade every own device of one account in one release.
 
 The Relay subscription applies the rule itself. It acknowledges an envelope
 after its content is committed, also when the content waits for its group

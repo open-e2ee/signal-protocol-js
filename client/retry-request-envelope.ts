@@ -38,6 +38,7 @@ import { utf8Decode } from '../internal/platform';
 import type { Base64 } from '../types';
 import type { ContentHint } from '../types/messages';
 import {
+  deadlineTerminalClass,
   isRetryId,
   RETRY_REQUEST_DEADLINE_MS,
   RETRY_REQUEST_POSTING_WINDOW_MS,
@@ -321,14 +322,16 @@ const MAX_RETRY_REQUEST_BACKOFF_MS = 60 * 60_000;
  * request record owns the request. With no record, it creates attempt 1
  * with a new retry ID and stores it before the post, due at once. A
  * record that ended posts nothing. At the deadline of the record, the
- * request ends as `expired-content` and posts nothing. When a member
+ * request ends with the class that `deadlineTerminalClass` gives and posts
+ * nothing: `request-expired` when the Relay answered or holds the stored
+ * attempt, else `posting-deadline`. When a member
  * failed and the stored attempt is answered, it creates the next attempt
  * under the same retry ID, with the same deadlines, and posts it. When that
  * answered attempt is the last one, as `answeredLastRetryAttempt` tells,
  * the request ends as `attempts-exhausted` and posts nothing. At or after
  * the posting deadline, `retryRequestPostingDeadlineAt`, an answered
  * attempt gets no next attempt and gives `waiting`: the Relay accepted the
- * request, so it waits, and its deadline ends it as `expired-content`. The
+ * request, so it waits, and its deadline ends it as `request-expired`. The
  * Relay also holds a stored attempt with no next attempt time, so after
  * the posting deadline that attempt is not posted again and gives
  * `waiting`. Otherwise it posts the stored attempt, as
@@ -380,7 +383,7 @@ export async function postRetryRequest(
     );
   }
   if (stored.terminal !== undefined || stored.envelope === undefined) return 'terminal';
-  if (Date.now() >= stored.deadlineAt) return attempts.end(stored, 'expired-content');
+  if (Date.now() >= stored.deadlineAt) return attempts.end(stored, deadlineTerminalClass(stored));
   if (failed.member !== undefined && stored.answered) {
     if (answeredLastRetryAttempt(stored)) return attempts.end(stored, 'attempts-exhausted');
     // The answer proves that the Relay accepted the request, so it waits
@@ -517,7 +520,7 @@ function retryRequestAttempts(
 
   const end = async (
     stored: StoredRetryRequest,
-    terminal: 'expired-content' | 'posting-deadline' | 'attempts-exhausted'
+    terminal: 'request-expired' | 'posting-deadline' | 'attempts-exhausted'
   ): Promise<RetryPostOutcome> => {
     await update(stored, {
       terminal: { class: terminal, at: Date.now(), emitted: false },

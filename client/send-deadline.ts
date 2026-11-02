@@ -1071,7 +1071,7 @@ export function sendOutcomeEvent(intent: StoredOutgoingMessageIntent): SendOutco
       clientMessageId: intent.clientMessageId,
       outcome: 'completed',
       deadlineAt,
-      result: { ...result, clientTimestamp: intent.clientTimestamp },
+      result,
     };
   }
   if (intent.outcome === undefined) {

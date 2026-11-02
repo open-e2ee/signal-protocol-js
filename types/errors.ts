@@ -153,13 +153,16 @@ export enum EncryptionErrorCode {
   ENCRYPTION_FAILED = 'ENCRYPTION_FAILED',
 
   /**
-   * A new send carries an application-supplied `timestamp` that the SDK
-   * refuses, or a sync to linked devices carries an application-supplied time
-   * that the SDK refuses.
+   * A new send cannot get a valid unique timestamp, either the
+   * application-supplied `timestamp` or the value that the SDK moved to, or a
+   * sync to linked devices carries an application-supplied time that the SDK
+   * refuses.
    *
    * The SDK accepts a safe positive integer at most 5 minutes ahead of its
-   * clock and at most 24 hours behind it. It throws `InvalidSendTimestampError`
-   * before it stores or posts anything for the send.
+   * clock and at most 24 hours behind it. A new send also refuses a timestamp
+   * that a different send of the device used. The SDK throws
+   * `InvalidSendTimestampError` before it stores or posts anything for the
+   * send.
    */
   INVALID_SEND_TIMESTAMP = 'INVALID_SEND_TIMESTAMP',
 
@@ -210,6 +213,15 @@ export enum EncryptionErrorCode {
    * The caller should auto-rotate the sender key and redistribute to group members.
    */
   SENDER_KEY_EXPIRED = 'SENDER_KEY_EXPIRED',
+
+  /**
+   * The client has no group master key for a managed group that it sends to.
+   *
+   * Receivers deny managed group content with no group context, so the send
+   * posts nothing. Store the group master key through the link or sync path,
+   * then send again.
+   */
+  GROUP_MASTER_KEY_MISSING = 'GROUP_MASTER_KEY_MISSING',
 
   // ===== Identity & Trust Errors =====
 
@@ -729,12 +741,19 @@ export class SecureRandomUnavailableError extends EncryptionError {
   }
 }
 
-/** Why the SDK refused an application-supplied send timestamp. */
-export type InvalidSendTimestampReason = 'not_safe_positive_integer' | 'too_far_ahead' | 'too_old';
+/**
+ * Why a new send cannot get a valid unique timestamp, either the
+ * application-supplied value or the value that the SDK moved to.
+ */
+export type InvalidSendTimestampReason =
+  | 'not_safe_positive_integer'
+  | 'too_far_ahead'
+  | 'too_old'
+  | 'already_used';
 
 /**
- * Error thrown when a new send carries an application-supplied `timestamp`
- * that the SDK refuses.
+ * Error thrown when a new send cannot get a valid unique timestamp, either
+ * the application-supplied `timestamp` or the value that the SDK moved to.
  *
  * The timestamp of a send is its operation epoch, and each retry of the send
  * keeps it. The SDK accepts a safe positive integer at most 5 minutes ahead
@@ -748,11 +767,24 @@ export type InvalidSendTimestampReason = 'not_safe_positive_integer' | 'too_far_
  * A sync to linked devices whose epoch is an application-supplied time, such
  * as `deletedAt`, gets the same check before it posts.
  *
+ * Each send timestamp is unique per sender device. A new send with a
+ * timestamp that a different send of the device used gets the reason
+ * `already_used`, and the error has no `earliest` and no `latest`. When a
+ * different send used the timestamp that the SDK reads from its own clock,
+ * the SDK moves it to the next free millisecond. The SDK's own sends, the
+ * profile key offer and the sender key distribution, reserve from the same
+ * index of the device, so an application-supplied `Date.now()` can get
+ * `already_used` when the application did not use the value again. A send
+ * that holds its reservation for more than 5 minutes before the SDK stores
+ * it can lose its timestamp to another send, and then gets `already_used`
+ * with either origin of the timestamp.
+ *
  * The SDK stored nothing for the refused send. The application can send the
- * content again with a timestamp in the window, or with no timestamp, and the
- * SDK then uses its clock. A send that repeats a stored `clientMessageId`
- * with its stored timestamp keeps that timestamp, and the SDK does not check
- * it again. With another timestamp, the check applies.
+ * content again with a timestamp in the window that no other send used, or
+ * with no timestamp, and the SDK then uses its clock. A send that repeats a
+ * stored `clientMessageId` with its stored timestamp keeps that timestamp,
+ * and the SDK does not check it again. With another timestamp, the SDK
+ * refuses the send.
  *
  * @example
  * ```typescript
@@ -772,31 +804,54 @@ export class InvalidSendTimestampError extends EncryptionError {
   public readonly timestamp: number;
   /** Why the SDK refused the timestamp. */
   public readonly reason: InvalidSendTimestampReason;
-  /** The earliest timestamp that the check accepted, in milliseconds since the epoch. */
-  public readonly earliest: number;
-  /** The latest timestamp that the check accepted, in milliseconds since the epoch. */
-  public readonly latest: number;
+  /**
+   * The earliest timestamp that the check accepted, in milliseconds since the
+   * epoch. Absent for `already_used`.
+   */
+  public readonly earliest?: number;
+  /**
+   * The latest timestamp that the check accepted, in milliseconds since the
+   * epoch. Absent for `already_used`.
+   */
+  public readonly latest?: number;
 
+  constructor(timestamp: number, reason: 'already_used');
+  constructor(
+    timestamp: number,
+    reason: Exclude<InvalidSendTimestampReason, 'already_used'>,
+    window: { earliest: number; latest: number }
+  );
   constructor(
     timestamp: number,
     reason: InvalidSendTimestampReason,
-    window: { earliest: number; latest: number }
+    window?: { earliest: number; latest: number }
   ) {
     const problem =
       reason === 'not_safe_positive_integer'
         ? 'is not a safe positive integer'
         : reason === 'too_far_ahead'
           ? 'is more than 5 minutes ahead of the SDK clock'
-          : 'is more than 24 hours behind the SDK clock';
+          : reason === 'too_old'
+            ? 'is more than 24 hours behind the SDK clock'
+            : 'is the timestamp of a different send of this device';
     super(
-      `The send timestamp ${String(timestamp)} ${problem}. A new send accepts ${window.earliest} through ${window.latest}`,
+      window
+        ? `The send timestamp ${String(timestamp)} ${problem}. A new send accepts ${window.earliest} through ${window.latest}`
+        : `The send timestamp ${String(timestamp)} ${problem}. Give each new send its own timestamp`,
       EncryptionErrorCode.INVALID_SEND_TIMESTAMP,
-      { operation: 'send', timestamp, reason, earliest: window.earliest, latest: window.latest }
+      {
+        operation: 'send',
+        timestamp,
+        reason,
+        ...(window && { earliest: window.earliest, latest: window.latest }),
+      }
     );
     this.timestamp = timestamp;
     this.reason = reason;
-    this.earliest = window.earliest;
-    this.latest = window.latest;
+    if (window) {
+      this.earliest = window.earliest;
+      this.latest = window.latest;
+    }
   }
 }
 

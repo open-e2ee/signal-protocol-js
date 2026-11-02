@@ -1,17 +1,21 @@
 import type { Envelope } from '../../remote/relay/types';
 import type { SignalProtocolLocalStore } from '../../types';
 import type { ContentHint } from '../../types/messages';
+import { InvalidSendTimestampError } from '../../types/errors';
+import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import { createKeyedLocks, withKeyedLock } from '../../utils/keyed-lock';
 import { originLockScope, withOriginLock } from '../../utils/origin-lock';
 
 const OUTBOX_PREFIX = 'reliability:exact-ciphertext-outbox:v2';
 const INCOMING_PREFIX = 'reliability:processed-envelopes:v2';
-const RETRY_REQUESTED_PREFIX = 'reliability:retry-requested:v2';
+const RETRY_REQUESTED_PREFIX = 'reliability:retry-requested:v3';
 const RETRY_RESEND_PREFIX = 'reliability:retry-resend:v1';
 const RETRY_FAMILY_PREFIX = 'reliability:retry-family:v1';
 const SENT_TIMESTAMP_PREFIX = 'reliability:sent-timestamps:v1';
 const DELIVERY_STATUS_PREFIX = 'reliability:delivery-status:v1';
-const RECEIVED_TIMESTAMP_PREFIX = 'reliability:received-timestamps:v1';
+const RECEIVED_TIMESTAMP_V2_PREFIX = 'reliability:received-timestamps:v2';
+/** The prefix of the SDK 13.x received-message records. Only the rewrite step reads it. */
+const RECEIVED_TIMESTAMP_V1_PREFIX = 'reliability:received-timestamps:v1';
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
 export const RELIABILITY_RECORD_TTL_MS = 30 * DAY_MS;
@@ -37,7 +41,7 @@ export const RETRY_REQUESTER_RECORD_TTL_MS = 2 * RELIABILITY_RECORD_TTL_MS;
  * The time from the first failure of a retry request to its end: 14 days,
  * the default retention of resendable content of a sender,
  * `RESENDABLE_CONTENT_RETENTION_MS`. A request whose content did not come
- * at this time ends as `expired-content`.
+ * at this time ends with the class that `deadlineTerminalClass` gives.
  */
 export const RETRY_REQUEST_DEADLINE_MS = 14 * DAY_MS;
 
@@ -330,6 +334,7 @@ const mutationTails = new WeakMap<object, Promise<void>>();
 const outgoingIntentLocks = createKeyedLocks();
 const outgoingIntentEndReports = new WeakMap<object, Map<string, OutgoingIntentEndReport>>();
 const incomingEnvelopeLocks = createKeyedLocks();
+const sendTimestampLocks = createKeyedLocks();
 
 const LEDGER_PREFIXES: Record<LedgerKind, string> = {
   outbox: OUTBOX_PREFIX,
@@ -339,7 +344,7 @@ const LEDGER_PREFIXES: Record<LedgerKind, string> = {
   'retry-resend': RETRY_RESEND_PREFIX,
   'sent-timestamp': SENT_TIMESTAMP_PREFIX,
   'delivery-status': DELIVERY_STATUS_PREFIX,
-  'received-timestamp': RECEIVED_TIMESTAMP_PREFIX,
+  'received-timestamp': RECEIVED_TIMESTAMP_V2_PREFIX,
 };
 
 const LEDGER_TTL_MS: Record<LedgerKind, number> = {
@@ -879,10 +884,16 @@ export async function completeOutgoingSyncPhase(
  */
 export function outgoingMessageIntentResult(
   intent: StoredOutgoingMessageIntent
-): (NonNullable<StoredOutgoingMessageIntent['result']> & { syncPending?: true }) | undefined {
+):
+  | (NonNullable<StoredOutgoingMessageIntent['result']> & {
+      clientTimestamp: number;
+      syncPending?: true;
+    })
+  | undefined {
   if (!intent.result) return undefined;
   return {
     ...cloneReliabilityValue(intent.result),
+    clientTimestamp: intent.clientTimestamp,
     ...(intent.syncPending && { syncPending: true as const }),
   };
 }
@@ -1552,8 +1563,9 @@ export async function storeOutgoingMessageIntent(
       throw new Error('A clientMessageId cannot identify two different encrypted sends');
     }
     if (!retainedExisting) {
-      await store.setMetadata(key, JSON.stringify(intent));
-      await indexSentTimestamp(store, intent, now);
+      await indexSentTimestamp(store, intent, now, () =>
+        store.setMetadata(key, JSON.stringify(intent))
+      );
     } else {
       // A failed index write after the intent write leaves the retained
       // intent without its timestamp lookup. The same intent repairs only
@@ -1573,22 +1585,316 @@ export async function storeOutgoingMessageIntent(
 /**
  * Index the client message ID of an intent under its client timestamp,
  * the value by which an E2EE receipt names the message. The index expires
- * with the intent. A second call for the same intent changes no entry.
+ * with the intent. A second call for the same intent changes no entry. A new
+ * send reserved its timestamp with `reserveSendTimestamp` before this call,
+ * so the entry already holds the ID, and this call deletes the pending
+ * marker of the reservation. Every read and write of the entry, its bucket,
+ * its manifest and the marker runs under the send timestamp lock, so a
+ * reservation in another tab does not write over it.
+ *
+ * With `writeIntent`, the call writes a new intent under the same lock.
+ * When the intent has no pending marker for its timestamp, and the entry
+ * holds a different ID and not this one, a later send took the timestamp
+ * of this send as an orphan. The call then throws `InvalidSendTimestampError`
+ * with the reason `already_used` and writes no intent, so the device never
+ * posts two messages with one timestamp.
+ *
+ * @throws {InvalidSendTimestampError} when a later send took the timestamp
+ *   of the new intent
  */
 async function indexSentTimestamp(
   store: ReliabilityMetadataStore,
   intent: StoredOutgoingMessageIntent,
-  now: number
+  now: number,
+  writeIntent?: () => Promise<void>
 ): Promise<void> {
-  const retainedDays = await pruneExpiredBuckets(store, 'sent-timestamp', now);
-  const id = String(intent.clientTimestamp);
+  await withSendTimestampLock(store, async () => {
+    const retainedDays = await pruneExpiredBuckets(store, 'sent-timestamp', now);
+    const id = String(intent.clientTimestamp);
+    const key = recordKey('sent-timestamp', id);
+    const clientMessageIds = parseJson<string[]>(await store.getMetadata(key), []);
+    const held = clientMessageIds.includes(intent.clientMessageId);
+    const pending = await pendingSendTimestamp(store, intent.clientMessageId);
+    const ownsPending = pending?.timestamp === intent.clientTimestamp;
+    if (writeIntent) {
+      if (!ownsPending && !held && clientMessageIds.length > 0) {
+        throw new InvalidSendTimestampError(intent.clientTimestamp, 'already_used');
+      }
+      await writeIntent();
+    }
+    if (!held) {
+      clientMessageIds.push(intent.clientMessageId);
+      await store.setMetadata(key, JSON.stringify(clientMessageIds));
+    }
+    if (ownsPending) await store.deleteMetadata(pendingSendTimestampKey(intent.clientMessageId));
+    await indexRecord(store, 'sent-timestamp', id, intent.createdAt, retainedDays);
+  });
+}
+
+/**
+ * The pending marker of a reservation: the reservation has no intent yet.
+ * The marker holds the reserved timestamp, so a marker of an earlier
+ * reservation of the same ID does not count for another timestamp.
+ */
+interface PendingSendTimestamp {
+  /** The SDK clock at the reservation. */
+  readonly reservedAt: number;
+  /** The reserved client timestamp. */
+  readonly timestamp: number;
+}
+
+/** The key of the pending marker of one client message ID. */
+function pendingSendTimestampKey(clientMessageId: string): string {
+  return `${SENT_TIMESTAMP_PREFIX}:pending:${encodeURIComponent(clientMessageId)}`;
+}
+
+async function pendingSendTimestamp(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string
+): Promise<PendingSendTimestamp | null> {
+  return parseJson<PendingSendTimestamp | null>(
+    await store.getMetadata(pendingSendTimestampKey(clientMessageId)),
+    null
+  );
+}
+
+/**
+ * The state of a different ID in the entry of a requested timestamp.
+ *
+ * - `committed`: a retained intent with this timestamp owns the ID, or the
+ *   ID has no pending marker for this timestamp.
+ * - `in-flight`: the pending marker is younger than the grace period.
+ * - `orphan`: the pending marker is as old as the grace period or older, and
+ *   no intent with this timestamp exists. The reservation does not count.
+ */
+async function sendTimestampHolderState(
+  store: ReliabilityMetadataStore,
+  pending: PendingSendTimestamp | null,
+  clientMessageId: string,
+  timestamp: number,
+  grace: number,
+  now: number
+): Promise<'committed' | 'in-flight' | 'orphan'> {
+  if (pending?.timestamp !== timestamp) return 'committed';
+  const intent = await getOutgoingMessageIntent(store, clientMessageId, now);
+  if (intent?.clientTimestamp === timestamp) return 'committed';
+  return now - pending.reservedAt < grace ? 'in-flight' : 'orphan';
+}
+
+/**
+ * Run `operation` under the send timestamp lock of one store. When
+ * `navigator.locks.request` exists and the store sets `storeIdentity`, the
+ * lock is the Web Lock `open-e2ee:send-timestamp:<store identity>`, so the
+ * tabs, workers and threads of one origin that share the store share it.
+ * Otherwise it is an in-process lock keyed by the store object.
+ *
+ * The lock is a leaf lock: `operation` reads and writes store metadata only,
+ * and takes no other lock of the SDK. A caller can hold the intent lock or
+ * the mutation queue of the store when it takes this lock, never the reverse.
+ */
+function withSendTimestampLock<T>(
+  store: ReliabilityMetadataStore,
+  operation: () => Promise<T>
+): Promise<T> {
+  const scope = originLockScope(store);
+  if (scope !== null) return withOriginLock(`open-e2ee:send-timestamp:${scope}`, operation);
+  return withKeyedLock(sendTimestampLocks, store, 'send-timestamp', operation);
+}
+
+/** A request to reserve the client timestamp of a new send. */
+export interface SendTimestampRequest {
+  /** The intent that the timestamp is for. */
+  readonly clientMessageId: string;
+  /** The timestamp to reserve, or the first candidate for `sdk-clock`. */
+  readonly timestamp: number;
+  /**
+   * `sdk-clock` when the SDK read the timestamp from its clock: a timestamp
+   * of a different send moves it to the next free millisecond. `caller` when
+   * the application gave it: a timestamp of a different send refuses it.
+   */
+  readonly origin: 'sdk-clock' | 'caller';
+  /** The latest timestamp that a move to a free millisecond can reach. */
+  readonly latest: number;
+  /**
+   * The grace period of a pending reservation, in milliseconds. A
+   * reservation of a different ID with no intent that is this old or older
+   * is an orphan, and does not hold its timestamp.
+   */
+  readonly grace: number;
+}
+
+/**
+ * The result of a send timestamp reservation.
+ *
+ * - `reserved`: this call wrote the ID into the entry of `timestamp`.
+ * - `reused`: the entry of `timestamp` already held the ID.
+ * - `used`: the entry of the caller timestamp holds a different send only.
+ * - `past-latest`: the next free millisecond, `timestamp`, is after `latest`.
+ */
+export type SendTimestampReservation =
+  | { readonly kind: 'reserved'; readonly timestamp: number; readonly reservedAt: number }
+  | { readonly kind: 'reused'; readonly timestamp: number; readonly reservedAt: number }
+  | { readonly kind: 'used'; readonly timestamp: number }
+  | { readonly kind: 'past-latest'; readonly timestamp: number };
+
+/**
+ * Reserve the client timestamp of a new send, so that each send timestamp is
+ * unique per sender device. The reservation is the ID of the intent in the
+ * sent-timestamp entry of the timestamp, the entry that a receipt reads, and
+ * a pending marker of the ID with the time of the reservation. A new send
+ * reserves its timestamp before it writes its intent and before it posts
+ * anything. The intent write deletes the marker. The entry expires as the
+ * entry of an intent does, and a new send accepts a caller timestamp at most
+ * 24 hours old, so the entries hold every timestamp that a new send can
+ * repeat.
+ *
+ * An entry that holds the ID is a reuse, so a retry of the same intent gets
+ * its timestamp again, and a pending reuse gets a new reservation time. An
+ * entry that a 13.x send wrote can hold several IDs. Each other ID in the
+ * entry is committed, in flight or an orphan (see `sendTimestampHolderState`).
+ * A committed or an in-flight ID makes the timestamp taken. The call removes
+ * each orphan from the entry and deletes its marker, so a reservation that a
+ * crash left before its intent write holds its timestamp only for the grace
+ * period.
+ *
+ * A new reservation of the ID at another timestamp also removes the ID from
+ * the entry of its earlier pending marker, unless a stored intent of the ID
+ * has that timestamp. A send that stopped before its intent write and that a
+ * retry with no timestamp reserves again leaves that earlier reservation.
+ *
+ * The read, the check and the write run under the send timestamp lock, so
+ * two tabs on one store do not reserve one timestamp.
+ */
+export async function reserveSendTimestamp(
+  store: ReliabilityMetadataStore,
+  request: SendTimestampRequest,
+  now = Date.now()
+): Promise<SendTimestampReservation> {
+  return serializeMutation(store, () =>
+    withSendTimestampLock(store, async () => {
+      let retainedDays = await pruneExpiredBuckets(store, 'sent-timestamp', now);
+      const markerKey = pendingSendTimestampKey(request.clientMessageId);
+      let timestamp = request.timestamp;
+      for (;;) {
+        const id = String(timestamp);
+        const key = recordKey('sent-timestamp', id);
+        const clientMessageIds = parseJson<string[]>(await store.getMetadata(key), []);
+        if (clientMessageIds.includes(request.clientMessageId)) {
+          const pending = await pendingSendTimestamp(store, request.clientMessageId);
+          if (pending?.timestamp === timestamp && pending.reservedAt < now) {
+            await store.setMetadata(markerKey, JSON.stringify({ reservedAt: now, timestamp }));
+          }
+          return { kind: 'reused', timestamp, reservedAt: now };
+        }
+        const orphans: { clientMessageId: string; reservedAt: number }[] = [];
+        let taken = false;
+        for (const holder of clientMessageIds) {
+          const pending = await pendingSendTimestamp(store, holder);
+          const state = await sendTimestampHolderState(
+            store,
+            pending,
+            holder,
+            timestamp,
+            request.grace,
+            now
+          );
+          if (state !== 'orphan') {
+            taken = true;
+            break;
+          }
+          orphans.push({ clientMessageId: holder, reservedAt: pending!.reservedAt });
+        }
+        if (!taken) {
+          // The new marker writes over the earlier marker of this ID, so the
+          // earlier reservation goes first. A stored intent with its
+          // timestamp owns it, and a replay of the intent reuses it.
+          let unindexed = false;
+          const earlier = await pendingSendTimestamp(store, request.clientMessageId);
+          if (earlier !== null && earlier.timestamp !== timestamp) {
+            const intent = await getOutgoingMessageIntent(store, request.clientMessageId, now);
+            if (intent?.clientTimestamp !== earlier.timestamp) {
+              unindexed = await removeSentTimestampId(store, request.clientMessageId, earlier);
+            }
+          }
+          // An ID is never in an entry without its marker before its intent
+          // write: the marker goes before the entry that adds the ID, and the
+          // entry that removes the orphans goes before their marker deletes.
+          // A stop between the writes leaves only a stale marker.
+          await store.setMetadata(markerKey, JSON.stringify({ reservedAt: now, timestamp }));
+          await store.setMetadata(key, JSON.stringify([request.clientMessageId]));
+          for (const orphan of orphans) {
+            await store.deleteMetadata(pendingSendTimestampKey(orphan.clientMessageId));
+            await unindexRecord(store, 'sent-timestamp', id, orphan.reservedAt);
+          }
+          if (unindexed || orphans.length > 0) {
+            // The removal can delete a bucket and its day in the manifest.
+            const manifest = parseJson<number[]>(
+              await store.getMetadata(manifestKey('sent-timestamp')),
+              []
+            );
+            retainedDays = retainedDays.filter((day) => manifest.includes(day));
+          }
+          await indexRecord(store, 'sent-timestamp', id, now, retainedDays);
+          return { kind: 'reserved', timestamp, reservedAt: now };
+        }
+        if (request.origin === 'caller') return { kind: 'used', timestamp };
+        timestamp += 1;
+        if (timestamp > request.latest) return { kind: 'past-latest', timestamp };
+      }
+    })
+  );
+}
+
+/**
+ * Remove one ID from the sent-timestamp entry of `reservation.timestamp`.
+ * The call deletes the entry and its index record when no ID remains.
+ *
+ * @returns True when the call removed the index record of the entry.
+ */
+async function removeSentTimestampId(
+  store: ReliabilityMetadataStore,
+  clientMessageId: string,
+  reservation: { readonly timestamp: number; readonly reservedAt: number }
+): Promise<boolean> {
+  const id = String(reservation.timestamp);
   const key = recordKey('sent-timestamp', id);
   const clientMessageIds = parseJson<string[]>(await store.getMetadata(key), []);
-  if (!clientMessageIds.includes(intent.clientMessageId)) {
-    clientMessageIds.push(intent.clientMessageId);
-    await store.setMetadata(key, JSON.stringify(clientMessageIds));
+  const remaining = clientMessageIds.filter((candidate) => candidate !== clientMessageId);
+  if (remaining.length === clientMessageIds.length) return false;
+  if (remaining.length > 0) {
+    await store.setMetadata(key, JSON.stringify(remaining));
+    return false;
   }
-  await indexRecord(store, 'sent-timestamp', id, intent.createdAt, retainedDays);
+  await store.deleteMetadata(key);
+  await unindexRecord(store, 'sent-timestamp', id, reservation.reservedAt);
+  return true;
+}
+
+/**
+ * Remove the reservation of a send that failed before its intent write. A
+ * retained intent with this ID and timestamp owns the reservation, so the
+ * call then changes nothing. The call removes the ID from the entry, deletes
+ * the entry when no ID remains, and then deletes the pending marker of the
+ * reservation. The marker delete is the last write: when an earlier write
+ * fails, the marker stays, and the ID is an orphan after the grace period.
+ * Without the marker, the ID would be committed for the life of the entry.
+ */
+export async function releaseSendTimestamp(
+  store: ReliabilityMetadataStore,
+  reservation: { readonly clientMessageId: string; readonly timestamp: number; readonly reservedAt: number },
+  now = Date.now()
+): Promise<void> {
+  await serializeMutation(store, () =>
+    withSendTimestampLock(store, async () => {
+      const intent = await getOutgoingMessageIntent(store, reservation.clientMessageId, now);
+      if (intent?.clientTimestamp === reservation.timestamp) return;
+      await removeSentTimestampId(store, reservation.clientMessageId, reservation);
+      const pending = await pendingSendTimestamp(store, reservation.clientMessageId);
+      if (pending?.timestamp === reservation.timestamp) {
+        await store.deleteMetadata(pendingSendTimestampKey(reservation.clientMessageId));
+      }
+    })
+  );
 }
 
 /**
@@ -1607,47 +1913,29 @@ export async function getSentClientMessageIds(
 }
 
 /**
- * The key of one received message: its sender device, its content timestamp
- * and the digest of its content. A manual resend of a sender has a new
- * envelope ID and keeps the content timestamp and the content, so the key
- * finds a copy that the envelope ID does not. The digest keeps two messages
- * that one sender device sent in the same millisecond apart. The record of
- * a key expires after `RETRY_REQUESTER_RECORD_TTL_MS`: a sender posts its
- * last manual resend at most `RELIABILITY_RECORD_TTL_MS` after the intent,
- * and the Relay keeps a post for at most `RELIABILITY_RECORD_TTL_MS`.
+ * The key of one received message: its sender user and its content
+ * timestamp. A manual resend of a sender has a new envelope ID and keeps the
+ * content timestamp, so the key finds a copy that the envelope ID does not.
+ * The recipient keeps the first message of a key and drops a later message
+ * with the same key, from any device of the sender, with no notice. Each
+ * send timestamp is unique per sender device, so only two devices of one
+ * sender that send in the same millisecond share a key. The record of a key
+ * expires after `RETRY_REQUESTER_RECORD_TTL_MS`: a sender posts its last
+ * manual resend at most `RELIABILITY_RECORD_TTL_MS` after the intent, and
+ * the Relay keeps a post for at most `RELIABILITY_RECORD_TTL_MS`.
  */
 export interface ReceivedMessageKey {
   readonly senderUserId: string;
-  /**
-   * The device ID of the sender.
-   *
-   * @deprecated The next major SDK version removes the sender device from
-   *   the key. A key then holds only the sender user and the timestamp, so
-   *   the recipient also drops a later message from another device of the
-   *   sender with the same timestamp. A custom store that checks or stores
-   *   `ReceiveWorkRecord.received` must accept a key with no
-   *   `senderDeviceId`.
-   */
-  readonly senderDeviceId: number;
   /** The content timestamp of the message. */
   readonly timestamp: number;
-  /**
-   * The base64 SHA-256 of the UTF-8 bytes of the content that the
-   * application gets, with no group context in it.
-   *
-   * @deprecated The next major SDK version removes the digest from the key.
-   *   In SDK 13.x, two different messages of one sender device with one
-   *   timestamp both deliver. In the next major SDK version, the recipient
-   *   keeps the first such message and drops a later one with no notice. A
-   *   custom store that checks or stores `ReceiveWorkRecord.received` must
-   *   accept a key with no `contentDigest`.
-   */
-  readonly contentDigest: string;
 }
 
-/** The record ID of one received message. */
+/**
+ * The record ID of one received message. The ID reads only the sender user
+ * and the timestamp, so an SDK 13.x key with more fields gives the same ID.
+ */
 function receivedMessageId(key: ReceivedMessageKey): string {
-  return JSON.stringify([key.senderUserId, key.senderDeviceId, key.timestamp, key.contentDigest]);
+  return JSON.stringify([key.senderUserId, key.timestamp]);
 }
 
 /**
@@ -2477,8 +2765,11 @@ export interface StoredRetryRequest {
    * The end of the attempts: the time of attempt 1, which is the first
    * failure, plus `RETRY_REQUEST_DEADLINE_MS`. The failed message timestamp
    * does not change it, and each later attempt keeps it. A request whose
-   * content did not come at this time ends as `expired-content`, also when
-   * its stored attempt is answered.
+   * content did not come at this time ends with the class that
+   * `deadlineTerminalClass` gives. A retry request whose latest attempt the
+   * Relay answered or holds ends as `request-expired` and resets no session.
+   * A retry request whose latest attempt the Relay did not accept ends as
+   * `posting-deadline` and resets the session.
    */
   deadlineAt: number;
   /**
@@ -2510,10 +2801,11 @@ export interface StoredRetryRequest {
    */
   envelope?: Envelope;
   /**
-   * The session reset of an `expired-content` or `posting-deadline` end.
-   * Each step is stored when it ends, so a replay does not do a step again.
-   * Only a record whose terminal class is `expired-content` or
-   * `posting-deadline` has it.
+   * The session reset of a `posting-deadline` end. Each step is stored when
+   * it ends, so a replay does not do a step again. Only a record whose
+   * terminal class is `posting-deadline` has it. An SDK 13.x reset also on
+   * `expired-content`, so a `request-expired` record that the migration moved
+   * from SDK 13.x can also have it.
    */
   recovery?: RetryTerminalRecovery;
 }
@@ -2535,6 +2827,28 @@ export function retryRequestPostingDeadlineAt(
 }
 
 /**
+ * The terminal class of a retry request at its deadline, `deadlineAt`. The
+ * class follows the acceptance state of the latest attempt, the stored
+ * attempt:
+ *
+ * - The Relay answered the latest attempt, `answered`, or holds it, with no
+ *   `nextAttemptAt`: `request-expired`. The session does not reset.
+ * - The Relay did not accept the latest attempt, which is not answered and
+ *   has a `nextAttemptAt`: `posting-deadline`. The posting deadline,
+ *   `retryRequestPostingDeadlineAt`, is at most `deadlineAt`, so it has
+ *   passed. The session resets, as at each `posting-deadline` end.
+ *
+ * Both writers of the deadline end use it: the scheduler pass and the post
+ * of a retry request.
+ */
+export function deadlineTerminalClass(
+  record: Pick<StoredRetryRequest, 'answered' | 'nextAttemptAt'>
+): 'request-expired' | 'posting-deadline' {
+  if (record.answered || record.nextAttemptAt === undefined) return 'request-expired';
+  return 'posting-deadline';
+}
+
+/**
  * The conclusive end of a retry request or a retry resend.
  *
  * - `missing-sender`: the device that sent the failed message is gone, or
@@ -2542,12 +2856,14 @@ export function retryRequestPostingDeadlineAt(
  * - `missing-prekey`: the Relay has no prekey bundle of the requester, so the
  *   sender of the resend cannot start a new session.
  * - `revoked-authority`: the Relay revoked the authority of the post.
- * - `expired-content`: the content of the request did not come before its
- *   deadline. The next major SDK version renames this class to
- *   `request-expired`.
+ * - `request-expired`: the Relay answered or holds the latest attempt of the
+ *   request, and the content did not come before its deadline. The session
+ *   does not reset. This class is not the delivery error cause
+ *   `request-ended`.
  * - `posting-deadline`: a post of the request was due at or after its
- *   posting deadline, or the Relay refused a post with OPERATION_EXPIRED;
- *   the session resets.
+ *   posting deadline, the Relay refused a post with OPERATION_EXPIRED, or
+ *   the request got to its deadline and the Relay did not accept its latest
+ *   attempt; the session resets.
  * - `attempts-exhausted`: the resend that answered the fifth attempt of the
  *   request, `MAX_RETRY_RESPONSES_PER_MESSAGE`, also failed. The sender
  *   answers no later attempt.
@@ -2561,7 +2877,7 @@ export type RetryTerminalClass =
   | 'missing-sender'
   | 'missing-prekey'
   | 'revoked-authority'
-  | 'expired-content'
+  | 'request-expired'
   | 'posting-deadline'
   | 'attempts-exhausted'
   | 'deletion'
@@ -2587,7 +2903,9 @@ export interface RetryTerminal {
 
 /**
  * The session reset that the requester did after a request ended as
- * `expired-content` or `posting-deadline`.
+ * `posting-deadline`. An SDK 13.x reset also on `expired-content`, so a
+ * `request-expired` record that the migration moved from SDK 13.x can also
+ * have it.
  */
 export interface RetryTerminalRecovery {
   /** The user of the device that sent the failed envelope. */
@@ -2624,7 +2942,7 @@ const RETRY_TERMINAL_CLASSES: ReadonlySet<string> = new Set<RetryTerminalClass>(
   'missing-sender',
   'missing-prekey',
   'revoked-authority',
-  'expired-content',
+  'request-expired',
   'posting-deadline',
   'attempts-exhausted',
   'deletion',
@@ -2632,12 +2950,28 @@ const RETRY_TERMINAL_CLASSES: ReadonlySet<string> = new Set<RetryTerminalClass>(
   'membership-refused',
 ]);
 
+/**
+ * The SDK 13.x name of the class `request-expired`. The dual reader reads a
+ * stored `expired-content` terminal as `request-expired`, so a record that the
+ * migration did not move yet stays readable. Remove the dual reader only when
+ * both conditions are true: the next major SDK version ships, and at least 60
+ * days, `RETRY_REQUESTER_RECORD_TTL_MS`, have passed since the publish day of
+ * SDK 14.0.0.
+ */
+const EXPIRED_CONTENT_CLASS = 'expired-content';
+
+/** The class of a stored terminal: the dual reader reads `expired-content` as `request-expired`. */
+function readRetryTerminalClass(value: unknown): unknown {
+  return value === EXPIRED_CONTENT_CLASS ? 'request-expired' : value;
+}
+
 function isRetryTerminal(value: unknown): value is RetryTerminal {
   if (value === null || typeof value !== 'object') return false;
   const terminal = value as Partial<RetryTerminal>;
+  const terminalClass = readRetryTerminalClass(terminal.class);
   return (
-    typeof terminal.class === 'string' &&
-    RETRY_TERMINAL_CLASSES.has(terminal.class) &&
+    typeof terminalClass === 'string' &&
+    RETRY_TERMINAL_CLASSES.has(terminalClass) &&
     Number.isFinite(terminal.at) &&
     typeof terminal.emitted === 'boolean'
   );
@@ -2674,11 +3008,31 @@ export async function getRetryRequest(
   now = Date.now(),
   fingerprint?: string
 ): Promise<StoredRetryRequest | null> {
-  const record = parseJson<StoredRetryRequest | null>(
+  const record = parseRetryRequest(
     await store.getMetadata(recordKey('retry-requested', failedEnvelopeId)),
-    null
+    failedEnvelopeId
   );
   if (!record) return null;
+  if (record.requestedAt < now - RETRY_REQUESTER_RECORD_TTL_MS) return null;
+  if (fingerprint !== undefined && fingerprint !== record.fingerprint) {
+    throw new RetryRequestedEnvelopeChangedError();
+  }
+  return record;
+}
+
+/**
+ * Parse a stored retry request record of one failed envelope, with the dual
+ * reader: a stored `expired-content` terminal reads as `request-expired`.
+ *
+ * @throws Error When the record is corrupt.
+ */
+function parseRetryRequest(
+  value: string | null,
+  failedEnvelopeId: string
+): StoredRetryRequest | null {
+  const record = parseJson<StoredRetryRequest | null>(value, null);
+  if (!record) return null;
+  const terminalClass = readRetryTerminalClass(record.terminal?.class);
   if (
     !Number.isFinite(record.requestedAt) ||
     record.failedEnvelopeId !== failedEnvelopeId ||
@@ -2702,17 +3056,14 @@ export async function getRetryRequest(
       (typeof record.failedSender?.userId !== 'string' ||
         !Number.isSafeInteger(record.failedSender.deviceId))) ||
     (record.recovery !== undefined &&
-      ((record.terminal?.class !== 'expired-content' &&
-        record.terminal?.class !== 'posting-deadline') ||
+      ((terminalClass !== 'request-expired' && terminalClass !== 'posting-deadline') ||
         !isRetryTerminalRecovery(record.recovery)))
   ) {
     throw new Error('Corrupt retry-request record');
   }
-  if (record.requestedAt < now - RETRY_REQUESTER_RECORD_TTL_MS) return null;
-  if (fingerprint !== undefined && fingerprint !== record.fingerprint) {
-    throw new RetryRequestedEnvelopeChangedError();
-  }
-  return cloneReliabilityValue(record);
+  const parsed = cloneReliabilityValue(record);
+  if (parsed.terminal) parsed.terminal.class = terminalClass as RetryTerminalClass;
+  return parsed;
 }
 
 /**
@@ -2825,6 +3176,9 @@ export async function listRetryRequestIds(
 /** The key prefix of the retry request records before the lifecycle fields. */
 const RETRY_REQUESTED_V1_PREFIX = 'reliability:retry-requested:v1';
 
+/** The key prefix of the retry request records of SDK 13.x, with the class `expired-content`. */
+const RETRY_REQUESTED_V2_PREFIX = 'reliability:retry-requested:v2';
+
 /** A v1 retry request record, or null for a value that does not parse. */
 function parseV1RetryRequest(value: string | null): Omit<StoredRetryRequest, 'deadlineAt'> | null {
   try {
@@ -2835,23 +3189,69 @@ function parseV1RetryRequest(value: string | null): Omit<StoredRetryRequest, 'de
   }
 }
 
+/** A v2 retry request record through the dual reader, or null for a value that does not parse. */
+function parseV2RetryRequest(
+  value: string | null,
+  failedEnvelopeId: string
+): StoredRetryRequest | null {
+  try {
+    return parseRetryRequest(value, failedEnvelopeId);
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Move each retry request record of the v1 prefix to the current prefix,
- * and delete the v1 keys. A v1 record has no deadline, so the moved record
- * gets the time of its stored attempt plus `RETRY_REQUEST_DEADLINE_MS`. A
- * v1 record does not tell whether the post of its attempt reached the
- * Relay, so an unanswered record is due at the time of its stored attempt,
- * and the scheduler posts its stored bytes again. A
- * record older than `RETRY_REQUESTER_RECORD_TTL_MS`, and a record that does
- * not parse, is deleted. With no v1 keys, it writes nothing.
+ * Move each retry request record of an earlier prefix to the current prefix,
+ * and delete the earlier keys.
+ *
+ * The v1 step: a v1 record has no deadline, so the moved record gets the
+ * time of its stored attempt plus `RETRY_REQUEST_DEADLINE_MS`. A v1 record
+ * does not tell whether the post of its attempt reached the Relay, so an
+ * unanswered record is due at the time of its stored attempt, and the
+ * scheduler posts its stored bytes again.
+ *
+ * The v2 step: the dual reader reads each v2 record, so a stored
+ * `expired-content` terminal moves as `request-expired`, with its `at`, its
+ * `emitted` and the `recovery` of the record. The step deletes the v2
+ * records, then the v2 buckets, and the v2 manifest last, so a stop leaves
+ * each record that did not move in the v2 index, and the next start moves it.
+ *
+ * In each step, a record older than `RETRY_REQUESTER_RECORD_TTL_MS`, and a
+ * record that does not parse, is deleted. With no v1 or v2 keys, it writes
+ * nothing.
+ *
+ * The whole migration, the reads of the two manifests included, runs under
+ * one lock. When `navigator.locks.request` exists and the store sets
+ * `storeIdentity`, the lock is the Web Lock
+ * `open-e2ee:retry-request-migration:<store identity>`, so two tabs, workers
+ * or threads of one origin that start on one store do not move the same
+ * records at the same time. Otherwise the in-process mutation order of the
+ * store is the only lock.
  */
 export async function migrateRetryRequestRecords(
   store: ReliabilityMetadataStore,
   now = Date.now()
 ): Promise<void> {
+  const scope = originLockScope(store);
+  if (scope !== null) {
+    return withOriginLock(`open-e2ee:retry-request-migration:${scope}`, () =>
+      moveRetryRequestRecords(store, now)
+    );
+  }
+  return moveRetryRequestRecords(store, now);
+}
+
+/** The body of `migrateRetryRequestRecords`, which its caller runs under the migration lock. */
+async function moveRetryRequestRecords(
+  store: ReliabilityMetadataStore,
+  now: number
+): Promise<void> {
   const v1ManifestKey = `${RETRY_REQUESTED_V1_PREFIX}:manifest`;
   const days = parseJson<number[]>(await store.getMetadata(v1ManifestKey), []);
-  if (days.length === 0) return;
+  const v2ManifestKey = `${RETRY_REQUESTED_V2_PREFIX}:manifest`;
+  const v2Days = parseJson<number[]>(await store.getMetadata(v2ManifestKey), []);
+  if (days.length === 0 && v2Days.length === 0) return;
   await serializeMutation(store, async () => {
     for (const day of days) {
       const v1BucketKey = `${RETRY_REQUESTED_V1_PREFIX}:bucket:${day}`;
@@ -2879,7 +3279,204 @@ export async function migrateRetryRequestRecords(
       }
       await store.deleteMetadata(v1BucketKey);
     }
+    if (days.length > 0) await store.deleteMetadata(v1ManifestKey);
+    for (const day of v2Days) {
+      const v2BucketKey = `${RETRY_REQUESTED_V2_PREFIX}:bucket:${day}`;
+      for (const id of parseJson<string[]>(await store.getMetadata(v2BucketKey), [])) {
+        const v2RecordKey = `${RETRY_REQUESTED_V2_PREFIX}:record:${encodeURIComponent(id)}`;
+        const record = parseV2RetryRequest(await store.getMetadata(v2RecordKey), id);
+        if (record && record.requestedAt >= now - RETRY_REQUESTER_RECORD_TTL_MS) {
+          const retainedDays = await pruneExpiredBuckets(store, 'retry-requested', now);
+          await store.setMetadata(recordKey('retry-requested', id), JSON.stringify(record));
+          await indexRecord(store, 'retry-requested', id, record.requestedAt, retainedDays);
+        }
+        await store.deleteMetadata(v2RecordKey);
+      }
+      await store.deleteMetadata(v2BucketKey);
+    }
+    if (v2Days.length > 0) await store.deleteMetadata(v2ManifestKey);
+  });
+}
+
+/** The counts of one received-timestamp record rewrite. */
+interface ReceivedTimestampRewrite {
+  /** The v1 records that the step wrote under the current prefix. */
+  rewritten: number;
+  /** The rewritten records whose key already had a record under the current prefix. */
+  merged: number;
+  /** The v1 records whose ID or value does not parse. The step deletes them. */
+  malformed: number;
+}
+
+/**
+ * Move each SDK 13.x received-message record to the current prefix, under
+ * the key `[senderUserId, timestamp]`, and delete the v1 keys.
+ *
+ * A v1 record ID is `[senderUserId, senderDeviceId, timestamp, digest]`.
+ * The step writes one record for each sender user and timestamp, with the
+ * earliest `receivedAt` of the v1 records and of a record that the current
+ * prefix already holds for the key. It indexes each record under the day of
+ * that time, so the current ledger prunes it after
+ * `RETRY_REQUESTER_RECORD_TTL_MS`. A v1 record whose ID or value does not
+ * parse is deleted and counted, and does not stop the step.
+ *
+ * The v1 manifest is the marker: with no v1 manifest, the step writes
+ * nothing. The step deletes the v1 records of a bucket, then that bucket,
+ * and the v1 manifest after every bucket. A stop before the manifest delete
+ * runs the whole step again at the next start. That run merges into the
+ * records that the stopped run wrote, so each key keeps one record with the
+ * earliest `receivedAt`.
+ *
+ * The whole step, the read of the v1 manifest included, runs under one lock.
+ * When `navigator.locks.request` exists and the store sets `storeIdentity`,
+ * the lock is the Web Lock
+ * `open-e2ee:received-timestamp-migration:<store identity>`. Otherwise the
+ * in-process mutation order of the store is the only lock. The step takes no
+ * other lock while it holds this one. A step that rewrote at least one record
+ * logs one line with its counts.
+ */
+export async function migrateReceivedTimestampRecords(
+  store: ReliabilityMetadataStore,
+  logger: Pick<Required<Logger>, 'info'> = defaultSignalProtocolLogger
+): Promise<void> {
+  const scope = originLockScope(store);
+  const counts =
+    scope !== null
+      ? await withOriginLock(`open-e2ee:received-timestamp-migration:${scope}`, () =>
+          moveReceivedTimestampRecords(store)
+        )
+      : await moveReceivedTimestampRecords(store);
+  if (counts !== null && counts.rewritten > 0) {
+    logger.info('Rewrote received-timestamp records', { category: 'KeyStorage', data: counts });
+  }
+}
+
+/**
+ * The v1 record ID `[senderUserId, senderDeviceId, timestamp, digest]` as
+ * the current key, or null for an ID that does not parse into four fields.
+ */
+function parseV1ReceivedMessageId(id: string): ReceivedMessageKey | null {
+  let fields: unknown;
+  try {
+    fields = JSON.parse(id);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(fields) || fields.length !== 4) return null;
+  const [senderUserId, senderDeviceId, timestamp, digest] = fields as unknown[];
+  if (
+    typeof senderUserId !== 'string' ||
+    senderUserId === '' ||
+    !Number.isSafeInteger(senderDeviceId) ||
+    typeof timestamp !== 'number' ||
+    !Number.isFinite(timestamp) ||
+    typeof digest !== 'string'
+  ) {
+    return null;
+  }
+  return { senderUserId, timestamp };
+}
+
+/** The `receivedAt` of one stored received-message record, or null for a value that does not parse. */
+function parseReceivedAt(value: string | null): number | null {
+  if (value === null) return null;
+  try {
+    const { receivedAt } = JSON.parse(value) as { receivedAt?: unknown };
+    return typeof receivedAt === 'number' && Number.isFinite(receivedAt) ? receivedAt : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The body of `migrateReceivedTimestampRecords`, which its caller runs under
+ * the migration lock. Resolves to null when the store has no v1 manifest.
+ *
+ * The step works one v1 day bucket at a time, so its store operations grow
+ * linearly with the v1 records. For each bucket it reads each v1 record
+ * once and merges the records of one key to the earliest `receivedAt`. It
+ * then reads and writes the current record of each key once, reads and
+ * writes the current bucket of each affected day once, and writes the
+ * current manifest once. Only then does it delete the v1 records and the v1
+ * bucket. A stop before those deletes leaves the v1 records, and the next run
+ * merges them again into the same current records.
+ */
+async function moveReceivedTimestampRecords(
+  store: ReliabilityMetadataStore
+): Promise<ReceivedTimestampRewrite | null> {
+  const v1ManifestKey = `${RECEIVED_TIMESTAMP_V1_PREFIX}:manifest`;
+  const manifest = await store.getMetadata(v1ManifestKey);
+  if (manifest === null) return null;
+  return serializeMutation(store, async () => {
+    const counts: ReceivedTimestampRewrite = { rewritten: 0, merged: 0, malformed: 0 };
+    const retainedDays = parseJson<number[]>(
+      await store.getMetadata(manifestKey('received-timestamp')),
+      []
+    );
+    for (const day of parseJson<number[]>(manifest, [])) {
+      const v1BucketKey = `${RECEIVED_TIMESTAMP_V1_PREFIX}:bucket:${day}`;
+      const v1Ids = parseJson<string[]>(await store.getMetadata(v1BucketKey), []);
+      const v1RecordKeys = v1Ids.map((v1Id) => ({
+        v1Id,
+        key: `${RECEIVED_TIMESTAMP_V1_PREFIX}:record:${encodeURIComponent(v1Id)}`,
+      }));
+      // The earliest v1 receivedAt of each current ID, and its number of v1 records.
+      const merges = new Map<string, { receivedAt: number; records: number }>();
+      for (const { v1Id, key: v1RecordKey } of v1RecordKeys) {
+        const value = await store.getMetadata(v1RecordKey);
+        const key = parseV1ReceivedMessageId(v1Id);
+        const v1ReceivedAt = parseReceivedAt(value);
+        if (key === null || (value !== null && v1ReceivedAt === null)) {
+          counts.malformed += 1;
+          continue;
+        }
+        // A null value is a record that a stopped run already deleted.
+        if (v1ReceivedAt === null) continue;
+        const id = receivedMessageId(key);
+        const merge = merges.get(id);
+        merges.set(id, {
+          receivedAt: merge === undefined ? v1ReceivedAt : Math.min(merge.receivedAt, v1ReceivedAt),
+          records: (merge?.records ?? 0) + 1,
+        });
+      }
+      const idsByDay = new Map<number, string[]>();
+      for (const [id, merge] of merges) {
+        const key = recordKey('received-timestamp', id);
+        const current = parseReceivedAt(await store.getMetadata(key));
+        const receivedAt =
+          current === null ? merge.receivedAt : Math.min(current, merge.receivedAt);
+        await store.setMetadata(key, JSON.stringify({ receivedAt }));
+        const ids = idsByDay.get(dayFor(receivedAt));
+        if (ids === undefined) idsByDay.set(dayFor(receivedAt), [id]);
+        else ids.push(id);
+        counts.rewritten += merge.records;
+        // Each v1 record merges into a current record, except the first v1
+        // record of a key that had no current record.
+        counts.merged += current === null ? merge.records - 1 : merge.records;
+      }
+      let manifestChanged = false;
+      for (const [v2Day, ids] of idsByDay) {
+        const dayKey = bucketKey('received-timestamp', v2Day);
+        const indexed = parseJson<string[]>(await store.getMetadata(dayKey), []);
+        const present = new Set(indexed);
+        const added = ids.filter((id) => !present.has(id));
+        if (added.length > 0) {
+          await store.setMetadata(dayKey, JSON.stringify([...indexed, ...added]));
+        }
+        if (!retainedDays.includes(v2Day)) {
+          retainedDays.push(v2Day);
+          manifestChanged = true;
+        }
+      }
+      if (manifestChanged) {
+        retainedDays.sort((a, b) => a - b);
+        await store.setMetadata(manifestKey('received-timestamp'), JSON.stringify(retainedDays));
+      }
+      for (const { key: v1RecordKey } of v1RecordKeys) await store.deleteMetadata(v1RecordKey);
+      await store.deleteMetadata(v1BucketKey);
+    }
     await store.deleteMetadata(v1ManifestKey);
+    return counts;
   });
 }
 

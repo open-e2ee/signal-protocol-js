@@ -20,7 +20,7 @@ import {
 import { SqliteEncryptionUnavailableError } from '../sqlite/errors';
 import {
   SqliteSignalProtocolStore,
-  convertSqliteLegacyReceivedContent,
+  sweepSqliteLegacyReceivedContent,
 } from '../sqlite/store';
 import { createExpoSqliteDriver, expoSqliteHasCipher } from './driver';
 
@@ -103,7 +103,7 @@ export class ExpoSignalProtocolStore extends SqliteSignalProtocolStore {
     const open = storeOptions(options);
     const database = await openSqliteStore(open);
     const protection = await readSqliteStoreProtection(database, open.vault);
-    return await convertSqliteLegacyReceivedContent(
+    return await sweepSqliteLegacyReceivedContent(
       new ExpoSignalProtocolStore(database, protection, options.logger),
       database
     );

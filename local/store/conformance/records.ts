@@ -119,6 +119,9 @@ export function receiveWork(
     dueAt: 1_000,
     sizeBytes: 0,
     plaintext: 'content of ' + workId,
+    messageId: 'message of ' + workId,
+    senderUserId: 'sender-user',
+    senderDeviceId: 1,
     ...overrides,
   });
 }

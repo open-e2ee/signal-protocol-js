@@ -17,7 +17,9 @@ The outcome of `processIncomingEnvelope`.
   lists it when it is ready. Acknowledge the envelope.
 - `duplicate`: the client processed the envelope before, or the
   application already has its content. Acknowledge the envelope.
-- `null-message`: the envelope carries no content. Acknowledge it.
+- `null-message`: the envelope carries no content for the application: a
+  null message, or a `GroupKeySync` from an own device that the client
+  consumed. Acknowledge it.
 - `denied`: the client refused the content and ran `onDecryptionError`,
   except for a group that the user blocked (reason `blocked`), which has
   no report. Acknowledge the envelope.

@@ -31,7 +31,7 @@ The raw group of the content, when known.
 
 > `optional` **messageId?**: `string`
 
-The message ID. Absent for content stored before the receive queue.
+The message ID.
 
 ***
 
@@ -63,7 +63,7 @@ When the device first admitted the content, in epoch milliseconds.
 
 > `optional` **senderDeviceId?**: `number`
 
-The sender device. Absent for content stored before the receive queue.
+The sender device.
 
 ***
 
@@ -71,7 +71,7 @@ The sender device. Absent for content stored before the receive queue.
 
 > `optional` **senderId?**: `string`
 
-The sender. Absent for content stored before the receive queue.
+The sender.
 
 ***
 

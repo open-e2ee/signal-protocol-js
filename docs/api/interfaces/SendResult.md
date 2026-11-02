@@ -29,12 +29,15 @@ Stable logical-send identifier used by the exact-ciphertext outbox.
 
 ***
 
-### clientTimestamp?
+### clientTimestamp
 
-> `optional` **clientTimestamp?**: `number`
+> **clientTimestamp**: `number`
 
-Client timestamp from the proto.
-Use this for storing outgoing messages to enable receipt matching.
+The client timestamp of the send, in milliseconds since the epoch: the
+timestamp that the application gave, or the timestamp that the SDK
+picked. Each send timestamp is unique per sender device. A receipt names
+the message by this timestamp, so store it with the outgoing message. A
+retry with the same `clientMessageId` returns the same timestamp.
 
 ***
 

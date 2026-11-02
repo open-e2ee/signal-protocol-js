@@ -53,6 +53,18 @@ Message encryption failed
 
 ***
 
+### GROUP\_MASTER\_KEY\_MISSING
+
+> **GROUP\_MASTER\_KEY\_MISSING**: `"GROUP_MASTER_KEY_MISSING"`
+
+The client has no group master key for a managed group that it sends to.
+
+Receivers deny managed group content with no group context, so the send
+posts nothing. Store the group master key through the link or sync path,
+then send again.
+
+***
+
 ### IDENTITY\_MISMATCH
 
 > **IDENTITY\_MISMATCH**: `"IDENTITY_MISMATCH"`
@@ -103,13 +115,16 @@ PreKey bundle is invalid or malformed
 
 > **INVALID\_SEND\_TIMESTAMP**: `"INVALID_SEND_TIMESTAMP"`
 
-A new send carries an application-supplied `timestamp` that the SDK
-refuses, or a sync to linked devices carries an application-supplied time
-that the SDK refuses.
+A new send cannot get a valid unique timestamp, either the
+application-supplied `timestamp` or the value that the SDK moved to, or a
+sync to linked devices carries an application-supplied time that the SDK
+refuses.
 
 The SDK accepts a safe positive integer at most 5 minutes ahead of its
-clock and at most 24 hours behind it. It throws `InvalidSendTimestampError`
-before it stores or posts anything for the send.
+clock and at most 24 hours behind it. A new send also refuses a timestamp
+that a different send of the device used. The SDK throws
+`InvalidSendTimestampError` before it stores or posts anything for the
+send.
 
 ***
 

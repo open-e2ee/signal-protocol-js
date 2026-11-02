@@ -1,14 +1,11 @@
 /**
- * The key-value metadata table, and the legacy received content rows that it
- * holds under `received-content:` keys. Each function takes the executor, so a
+ * The key-value metadata table. Each function takes the executor, so a
  * transaction can pass its own scope.
  */
 
 import type { MetadataKeyQuery } from '../../../../types/api';
 import type { SqliteExecutor } from '../driver';
 import { selectMetadataKeys } from '../../metadata-keys';
-import { receivedContentKey } from '../../received-content';
-import type { LegacyReceivedContentSource } from '../../receive-work';
 
 export async function getMetadata(db: SqliteExecutor, key: string): Promise<string | null> {
   const row = await db.first<{ value: string }>('SELECT value FROM metadata WHERE key = ?', [key]);
@@ -68,23 +65,4 @@ export async function compareAndSetMetadata(
             expected,
           ]);
   return changes === 1;
-}
-
-/**
- * The legacy received content rows, for the conversion at open. A row
- * holds the JSON of one `ReceivedContent`.
- */
-export function legacyReceivedContentSource(db: SqliteExecutor): LegacyReceivedContentSource {
-  const prefix = receivedContentKey('');
-  return {
-    async listIds() {
-      const rows = await db.all<{ key: string }>(
-        'SELECT key FROM metadata WHERE substr(key, 1, ?) = ? ORDER BY key',
-        [prefix.length, prefix]
-      );
-      return rows.map((row) => row.key.slice(prefix.length));
-    },
-    read: (id) => getMetadata(db, receivedContentKey(id)),
-    delete: (id) => deleteMetadata(db, receivedContentKey(id)),
-  };
 }

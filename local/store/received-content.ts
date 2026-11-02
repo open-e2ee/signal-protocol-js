@@ -1,6 +1,5 @@
 import { sha256, bytesToBase64 } from '../../internal/crypto';
 import type { Envelope } from '../../remote/relay/types';
-import type { ReceivedContent } from '../../types/api';
 
 /**
  * Bind recovery to the device that consumed an envelope, and to the
@@ -50,25 +49,4 @@ export async function deliveredEnvelopeFingerprint(
     ...envelope,
     messageType: envelope.messageType ?? 'ciphertext',
   });
-}
-
-/** The metadata key of one legacy row. */
-export function receivedContentKey(id: string): string {
-  return `received-content:${id}`;
-}
-
-/** Parse one legacy row. Throws on a row that does not parse. */
-export function parseReceivedContent(value: string, id: string): ReceivedContent {
-  const record = JSON.parse(value) as ReceivedContent;
-  if (
-    record.id !== id ||
-    typeof record.plaintext !== 'string' ||
-    !Number.isSafeInteger(record.receivedAt) ||
-    record.receivedAt <= 0 ||
-    (record.groupId !== undefined &&
-      (typeof record.groupId !== 'string' || record.groupId.length === 0))
-  ) {
-    throw new Error('Invalid received-content record');
-  }
-  return record;
 }

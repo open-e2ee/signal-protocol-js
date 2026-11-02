@@ -676,92 +676,6 @@ Array of decrypted file blobs in the same order
 
 ***
 
-### ~~decryptGroupMessage()~~
-
-> **decryptGroupMessage**(`groupId`, `senderId`, `senderDeviceId`, `framedMessage`): `Promise`\<`string`\>
-
-Decrypt a group message from a sender
-
-Use this to decrypt messages from other group members.
-You must process the sender's distribution message first.
-
-The message passes the group decision of `processIncomingEnvelope`.
-Content whose group state must update first stays stored, and a later
-call with the same message decides it with no second decrypt.
-
-#### Parameters
-
-##### groupId
-
-`string`
-
-Group identifier
-
-##### senderId
-
-`string`
-
-Sender's user ID
-
-##### senderDeviceId
-
-`number`
-
-Sender's device ID
-
-##### framedMessage
-
-`Uint8Array`
-
-Framed SenderKeyMessage bytes
-
-#### Returns
-
-`Promise`\<`string`\>
-
-Decrypted plaintext
-
-#### Deprecated
-
-Use `processIncomingEnvelope`, which returns a receive
-  outcome and keeps the content until the application completes the
-  receive. This method completes the receive before it returns, so a
-  plaintext that the application loses is gone.
-
-#### Throws
-
-GroupReceiveUnavailableError when the group state of the content
-  is not current. Its `messageId` names the stored receive. Call again
-  later with the same message.
-
-#### Throws
-
-GroupReceiveRefusedError when the client refuses the content
-
-#### Throws
-
-EncryptionError MESSAGE_DUPLICATE for a message that this client
-  processed, or that carries no content, and STORAGE_QUOTA_EXCEEDED when
-  the receive queue has no room
-
-#### Example
-
-```typescript
-const plaintext = await signal.decryptGroupMessage(
-  'group-123',
-  senderId,
-  senderDeviceId,
-  encryptedMessage
-);
-console.log('Message:', plaintext);
-```
-
-#### Implementation of
-
-[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`decryptGroupMessage`](../interfaces/SignalProtocolClient.md#decryptgroupmessage)
-
-***
-
 ### decryptMessage()
 
 > **decryptMessage**(`remoteAddress`, `ciphertext`): `Promise`\<`string`\>
@@ -1140,6 +1054,16 @@ Encrypt a message for group using sender key (O(1) encryption)
 After creating your sender key and distributing it to members,
 use this to encrypt messages. All group members can decrypt
 the same ciphertext, making it efficient for large groups.
+
+This primitive adds no group context and checks no group master key.
+Unless the plaintext carries a group context, a
+`processIncomingEnvelope` receiver denies the output for a managed
+group. A receiver with a `groups` config gives the reason
+`legacy-no-context`, or `blocked` when the group is blocked. A receiver
+with no `groups` config refuses the output with a
+`GroupReceiveRefusedError` of reason `configuration`. Send managed group
+content with `send`. A caller that delivers the bytes itself decrypts
+them with `decryptEnvelope`, as a `sender_key` envelope.
 
 #### Parameters
 
@@ -1884,10 +1808,11 @@ The outcome tells the caller what to do with the envelope:
 - `duplicate`: this client processed the envelope, or the application
   already has the content of the failed envelope of a retry request.
   The client acknowledged the envelope.
-- `null-message`: the envelope carries no content. The client consumed
-  it and acknowledged it. A null message for a failed envelope marks
-  that envelope processed, but a content resend for it that comes later
-  still gives its content.
+- `null-message`: the envelope carries no content for the application.
+  It is a null message, or a `GroupKeySync` from an own device that the
+  client consumed. The client acknowledged it. A null message for a
+  failed envelope marks that envelope processed, but a content resend
+  for it that comes later still gives its content.
 - `denied`: the client refused the content. The ratchet step is spent,
   and the client acknowledged the envelope. Content from another
   account that carries a sync message is denied in any envelope.

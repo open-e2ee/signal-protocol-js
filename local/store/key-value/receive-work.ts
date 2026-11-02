@@ -22,16 +22,12 @@ import {
   receiveWorkGroupKey,
   receiveWorkIndex,
   receiveWorkLimit,
-  type LegacyReceivedContentSource,
   type ReceiveWorkIndex,
 } from '../receive-work';
 import type { KeyValueOperation, KeyValueStorage } from './storage';
 
 /** The key prefix of the receive records. */
 export const RECEIVE_WORK_PREFIX = '@signal:receive-work:';
-
-/** The key prefix of the legacy received-content rows. */
-export const LEGACY_RECEIVED_CONTENT_PREFIX = '@signal:received-content:';
 
 /** The stored envelope of one record. */
 interface StoredReceiveWork extends ReceiveWorkIndex {
@@ -154,22 +150,6 @@ export class KeyValueReceiveWork {
       { type: 'remove', key: receiveWorkKey(workId) },
       ...writes,
     ]);
-  }
-
-  /** The legacy received-content rows of this backend. Their values are encrypted. */
-  legacySource(): LegacyReceivedContentSource {
-    return {
-      listIds: async () =>
-        (await this.backend.getAllKeys())
-          .filter((key) => key.startsWith(LEGACY_RECEIVED_CONTENT_PREFIX))
-          .map((key) => key.slice(LEGACY_RECEIVED_CONTENT_PREFIX.length))
-          .sort(),
-      read: async (id) => {
-        const value = await this.backend.getItem(`${LEGACY_RECEIVED_CONTENT_PREFIX}${id}`);
-        return value === null ? null : this.cipher.decrypt(value);
-      },
-      delete: (id) => this.backend.removeItem(`${LEGACY_RECEIVED_CONTENT_PREFIX}${id}`),
-    };
   }
 
   /**

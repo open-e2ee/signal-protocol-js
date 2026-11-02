@@ -42,7 +42,11 @@ import {
   type DeclaredSyncOutcome,
 } from './device-set-reconciliation';
 import { isStaleDeviceRefusal } from './relay-device-refusal';
-import { newSendClientTimestamp, type SendTimestampOrigin } from './send-timestamp';
+import {
+  releaseNewSendTimestamp,
+  reserveNewSendTimestamp,
+  type SendTimestampOrigin,
+} from './send-timestamp';
 import { intentBinaryAttachment } from './binary-send';
 import type { SendOptions, SendResult } from './types';
 import {
@@ -123,11 +127,14 @@ export interface GroupDeviceSetContext {
   /**
    * Run the declared sync phase of a completed intent. A failure or an
    * unresolved end is logged and leaves the phase pending. The outcome keeps
-   * the receipt of each accepted sync post, also when the phase fails.
+   * the receipt of each accepted sync post, also when the phase fails. A
+   * device whose rebuild answers `no-transcript` gets no copy and is not
+   * bundle-missing: its stored copy leaves the intent, and each later post
+   * declares the device.
    */
   runSyncPhase(
     intent: StoredOutgoingMessageIntent,
-    rebuild: (device: DeviceSetDevice) => Promise<StoredOutgoingDeviceMessage | undefined>
+    rebuild: (device: DeviceSetDevice) => Promise<SyncCopyRebuild>
   ): Promise<DeclaredSyncOutcome>;
   /**
    * Record the terminal state of the recipient phase, with the outcome of
@@ -153,6 +160,14 @@ export interface GroupDeviceSetContext {
     clientMessageId: string
   ): T;
 }
+
+/**
+ * The answer of the rebuild of a sync copy for one own device: the new copy,
+ * undefined when the device gets no copy, or `no-transcript` when the send
+ * has no transcript. A send has no transcript when it has no logged content
+ * and the client has no master key of its managed group.
+ */
+export type SyncCopyRebuild = StoredOutgoingDeviceMessage | undefined | 'no-transcript';
 
 /**
  * The work of one group send.
@@ -181,6 +196,8 @@ export interface GroupOutboxContext {
    * repair mark.
    */
   refreshEntry(device: SendDevice, entry: StoredDestinationProgress): void;
+  /** Log a failure that does not fail the send. */
+  warn(message: string, data: Readonly<Record<string, unknown>>): void;
   /**
    * Decide the recipient phase of a send that failed. At or after the
    * posting deadline with an open destination, or when every open
@@ -331,14 +348,16 @@ export interface GroupOutboxContext {
    * copy in the intent, and the new copy is posted under a repair ID. When
    * the relay refuses the new copy as stale too, the session is archived,
    * the copy leaves the intent, and the post resolves, so the send completes
-   * without it. When the refresh fails or the rebuild gives no copy, the
-   * post throws, and the copy and the refreshed session stay. Resolves to
-   * true when the posting deadline stopped the copy: it then stays pending.
+   * without it. When the rebuild answers `no-transcript`, the copy leaves
+   * the intent, the refreshed session stays, and the post resolves. When the
+   * refresh fails or the rebuild gives no copy, the post throws, and the copy
+   * and the refreshed session stay. Resolves to true when the posting
+   * deadline stopped the copy: it then stays pending.
    */
   postSyncMessage(
     intent: StoredOutgoingMessageIntent,
     message: StoredOutgoingDeviceMessage,
-    rebuild: (deviceId: number) => Promise<StoredOutgoingDeviceMessage | undefined>
+    rebuild: (deviceId: number) => Promise<SyncCopyRebuild>
   ): Promise<boolean>;
   /**
    * Post one sealed device message. With `declaredDeviceIds`, the post
@@ -768,7 +787,7 @@ async function renewRefreshedDeviceMessages(
 async function sendStoredGroupIntent(
   context: GroupOutboxContext,
   initialIntent: StoredOutgoingMessageIntent,
-  plaintextBytes: Uint8Array
+  transcript: SentTranscript
 ): Promise<SendResult> {
   let intent = initialIntent;
   if (intent.kind !== 'group') throw new Error('Expected a group outbox intent');
@@ -785,7 +804,7 @@ async function sendStoredGroupIntent(
     };
     await completeOutgoingMessageIntent(context.storage, intent.clientMessageId, localResult);
     await completeSendLog(context, intent);
-    return localResult;
+    return { ...localResult, clientTimestamp: intent.clientTimestamp };
   }
 
   let messageId = `group-${intent.recipientId}-${String(intent.clientTimestamp)}`;
@@ -1013,10 +1032,12 @@ async function sendStoredGroupIntent(
   // sender's own devices, so they are identified in every privacy mode: the
   // relay already knows the account that owns the destination mailbox.
   const syncing = intent;
-  const rebuildSyncMessage = async (deviceId: number) => {
+  const rebuildSyncMessage = async (deviceId: number): Promise<SyncCopyRebuild> => {
+    const content = await transcript();
+    if (!content) return 'no-transcript';
     const [message] = await context.prepareSyncMessages(
       syncing.recipientId,
-      await transcriptContent(context, syncing, plaintextBytes),
+      content,
       syncing.clientTimestamp,
       syncing.clientMessageId,
       [{ userId: context.senderUserId, deviceId }]
@@ -1045,7 +1066,8 @@ async function sendStoredGroupIntent(
     syncPending,
   });
   await completeSendLog(context, intent);
-  return syncPending ? { ...result, syncPending: true as const } : result;
+  const returned = { ...result, clientTimestamp: intent.clientTimestamp };
+  return syncPending ? { ...returned, syncPending: true as const } : returned;
 }
 
 /**
@@ -1149,7 +1171,7 @@ async function sendDeclaredGroupIntent(
   context: GroupOutboxContext,
   deviceSets: GroupDeviceSetContext,
   initialIntent: StoredOutgoingMessageIntent,
-  plaintextBytes: Uint8Array
+  transcript: SentTranscript
 ): Promise<SendResult> {
   let intent = initialIntent;
   if (intent.kind !== 'group') throw new Error('Expected a group outbox intent');
@@ -1506,7 +1528,7 @@ async function sendDeclaredGroupIntent(
       (acceptance) => acceptance.needsSync === true || isConflictAcceptance(acceptance)
     )
   ) {
-    const added = await addDeclaredGroupSync(context, deviceSets, current, plaintextBytes);
+    const added = await addDeclaredGroupSync(context, deviceSets, current, transcript);
     current = added.intent;
     syncUnread = added.unread;
   }
@@ -1515,11 +1537,12 @@ async function sendDeclaredGroupIntent(
     syncPending: syncPhase || syncUnread,
   });
   const sync: DeclaredSyncOutcome = syncPhase
-    ? await runDeclaredGroupSync(context, deviceSets, current, plaintextBytes)
+    ? await runDeclaredGroupSync(context, deviceSets, current, transcript)
     : { synced: true, accepted: [] };
   await completeSendLog(context, current);
   const completed = {
     ...result,
+    clientTimestamp: current.clientTimestamp,
     ...((!sync.synced || syncUnread) && { syncPending: true as const }),
   };
   return deviceSets.markUnchecked(
@@ -1546,20 +1569,20 @@ async function addDeclaredGroupSync(
   context: GroupOutboxContext,
   deviceSets: GroupDeviceSetContext,
   intent: StoredOutgoingMessageIntent,
-  plaintextBytes: Uint8Array
+  transcript: SentTranscript
 ): Promise<{ intent: StoredOutgoingMessageIntent; unread: boolean }> {
   try {
     const ownDevices = await deviceSets.readOwnDevices();
-    const syncMessages =
-      ownDevices.length > 0
-        ? await context.prepareSyncMessages(
-            intent.recipientId,
-            await transcriptContent(context, intent, plaintextBytes),
-            intent.clientTimestamp,
-            intent.clientMessageId,
-            ownDevices
-          )
-        : [];
+    const content = ownDevices.length > 0 ? await transcript() : undefined;
+    const syncMessages = content
+      ? await context.prepareSyncMessages(
+          intent.recipientId,
+          content,
+          intent.clientTimestamp,
+          intent.clientMessageId,
+          ownDevices
+        )
+      : [];
     if (syncMessages.length === 0) return { intent, unread: false };
     if (isLoggedSend(intent)) {
       await context.storage.appendSendLogRecipients(
@@ -1585,18 +1608,22 @@ async function addDeclaredGroupSync(
 /**
  * Run the declared sync phase of a completed group intent. A device that a
  * repair refreshes or adds gets a transcript of the logged content when the
- * send is logged, and a send log row.
+ * send is logged, and a send log row. Only such a device reads the
+ * transcript. When the send has no transcript, the device gets no copy, and
+ * each stored copy that needs no rebuild posts unchanged.
  */
 function runDeclaredGroupSync(
   context: GroupOutboxContext,
   deviceSets: GroupDeviceSetContext,
   intent: StoredOutgoingMessageIntent,
-  plaintextBytes: Uint8Array
+  transcript: SentTranscript
 ): Promise<DeclaredSyncOutcome> {
-  return deviceSets.runSyncPhase(intent, async (device) => {
+  return deviceSets.runSyncPhase(intent, async (device): Promise<SyncCopyRebuild> => {
+    const content = await transcript();
+    if (!content) return 'no-transcript';
     const [message] = await context.prepareSyncMessages(
       intent.recipientId,
-      await transcriptContent(context, intent, plaintextBytes),
+      content,
       intent.clientTimestamp,
       intent.clientMessageId,
       [{ userId: context.senderUserId, deviceId: device.deviceId }]
@@ -1627,11 +1654,11 @@ async function replayDeclaredGroupIntent(
   context: GroupOutboxContext,
   deviceSets: GroupDeviceSetContext,
   existing: StoredOutgoingMessageIntent,
-  plaintextBytes: Uint8Array
+  transcript: SentTranscript
 ): Promise<SendResult> {
   const intent = existing;
   const stored = outgoingMessageIntentResult(intent);
-  if (!stored) return sendDeclaredGroupIntent(context, deviceSets, intent, plaintextBytes);
+  if (!stored) return sendDeclaredGroupIntent(context, deviceSets, intent, transcript);
   if (!intent.syncPending) {
     await completeSendLog(context, intent);
     return stored;
@@ -1642,7 +1669,7 @@ async function replayDeclaredGroupIntent(
     current.syncMessages.length === 0 &&
     (current.deviceSetBundleMissing?.sync ?? []).length === 0
   ) {
-    const added = await addDeclaredGroupSync(context, deviceSets, current, plaintextBytes);
+    const added = await addDeclaredGroupSync(context, deviceSets, current, transcript);
     if (added.unread) return stored;
     current = added.intent;
     if (current.syncMessages.length === 0) {
@@ -1651,7 +1678,7 @@ async function replayDeclaredGroupIntent(
       return result;
     }
   }
-  const sync = await runDeclaredGroupSync(context, deviceSets, current, plaintextBytes);
+  const sync = await runDeclaredGroupSync(context, deviceSets, current, transcript);
   await completeSendLog(context, current);
   return deviceSets.markUnchecked(
     sync.synced ? result : { ...result, syncPending: true as const },
@@ -1669,11 +1696,11 @@ async function replayDeclaredGroupIntent(
 async function rereadStoredGroupDevices(
   context: GroupOutboxContext,
   intent: StoredOutgoingMessageIntent,
-  plaintextBytes: Uint8Array
+  transcript: SentTranscript
 ): Promise<StoredOutgoingMessageIntent> {
   if (!context.relay) return intent;
   const members = await rereadMemberDevices(context, intent);
-  const own = await rereadOwnDevices(context, intent, plaintextBytes);
+  const own = await rereadOwnDevices(context, intent, transcript);
   if (!members && !own) return intent;
   return reconcileOutgoingGroupDeviceSet(context.storage, intent.clientMessageId, {
     removed: [...(members?.removed ?? []), ...(own?.removed ?? [])],
@@ -1753,7 +1780,7 @@ async function rereadMemberDevices(
 async function rereadOwnDevices(
   context: GroupOutboxContext,
   intent: StoredOutgoingMessageIntent,
-  plaintextBytes: Uint8Array
+  transcript: SentTranscript
 ): Promise<OutgoingGroupDeviceSetChange | undefined> {
   const ownDevices = await context.resolveOwnDevices();
   const { unlisted, added } = listedOwnDeviceChange(
@@ -1763,16 +1790,17 @@ async function rereadOwnDevices(
   if (unlisted.length === 0 && added.length === 0) return undefined;
 
   const addedDevices = ownDevices.filter((device) => added.includes(device.deviceId));
-  const syncMessages =
-    addedDevices.length > 0
-      ? await context.prepareSyncMessages(
-          intent.recipientId,
-          await transcriptContent(context, intent, plaintextBytes),
-          intent.clientTimestamp,
-          intent.clientMessageId,
-          addedDevices
-        )
-      : [];
+  const content = addedDevices.length > 0 ? await transcript() : undefined;
+  const syncMessages = content
+    ? await context.prepareSyncMessages(
+        intent.recipientId,
+        content,
+        intent.clientTimestamp,
+        intent.clientMessageId,
+        addedDevices
+      )
+    : [];
+  if (unlisted.length === 0 && syncMessages.length === 0) return undefined;
   if (isLoggedSend(intent) && syncMessages.length > 0) {
     await context.storage.appendSendLogRecipients(
       intent.clientMessageId,
@@ -1787,21 +1815,59 @@ async function rereadOwnDevices(
   };
 }
 
+/** The sent transcript of one group send. See {@link sentTranscript}. */
+type SentTranscript = () => Promise<Uint8Array | undefined>;
+
+/**
+ * The one transcript read of a group send. Each site of the send that
+ * builds a sync copy reads it, so the send builds its transcript at most
+ * once, and a send with no transcript logs its warning once. A failed read
+ * is not kept, so the next site reads again.
+ */
+function sentTranscript(
+  context: GroupOutboxContext,
+  intent: StoredOutgoingMessageIntent,
+  plaintextBytes: Uint8Array
+): SentTranscript {
+  let read: Promise<Uint8Array | undefined> | undefined;
+  return () =>
+    (read ??= transcriptContent(context, intent, plaintextBytes).catch((error: unknown) => {
+      read = undefined;
+      throw error;
+    }));
+}
+
 /**
  * The content of a sent transcript of a stored group send. A logged send
  * gives its logged content, so the transcript is equal to the content that
  * the other devices got. With no logged content, the transcript carries the
- * content as the group gets it now.
+ * content as the group gets it now. Undefined when the send has no logged
+ * content and the client no longer has the master key of its managed
+ * group: the send skips the transcript, keeps its posts, and logs a warning
+ * with the code GROUP_MASTER_KEY_MISSING.
  */
 async function transcriptContent(
   context: GroupOutboxContext,
   intent: StoredOutgoingMessageIntent,
   plaintextBytes: Uint8Array
-): Promise<Uint8Array> {
-  return (
-    (await loggedContent(context, intent)) ??
-    (await context.prepareContent(intent.recipientId, plaintextBytes))
-  );
+): Promise<Uint8Array | undefined> {
+  const logged = await loggedContent(context, intent);
+  if (logged) return logged;
+  try {
+    return await context.prepareContent(intent.recipientId, plaintextBytes);
+  } catch (error) {
+    if (
+      error instanceof EncryptionError &&
+      error.code === EncryptionErrorCode.GROUP_MASTER_KEY_MISSING
+    ) {
+      context.warn('A send skipped its sent transcript: no group master key is stored', {
+        code: EncryptionErrorCode.GROUP_MASTER_KEY_MISSING,
+        clientMessageId: intent.clientMessageId,
+      });
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 /** The logged content of a send, or undefined when the send is not logged or no row remains. */
@@ -1894,8 +1960,10 @@ export async function sendGroupWithExactOutbox(
       // A send that ended at its posting deadline posts nothing again.
       if (!existing.result && existing.outcome) throw storedSendEndError(existing);
       context.bindEvidence(existing);
+      // One transcript read serves every site of the replay.
+      const transcript = sentTranscript(context, existing, plaintextBytes);
       if (context.deviceSets && context.relay) {
-        return replayDeclaredGroupIntent(context, context.deviceSets, existing, plaintextBytes);
+        return replayDeclaredGroupIntent(context, context.deviceSets, existing, transcript);
       }
       // An undeclared intent completes with syncPending only when the posting
       // deadline stopped its sync posts, so a replay posts nothing.
@@ -1905,90 +1973,131 @@ export async function sendGroupWithExactOutbox(
       }
       return sendStoredGroupIntent(
         context,
-        await rereadStoredGroupDevices(context, existing, plaintextBytes),
-        plaintextBytes
+        await rereadStoredGroupDevices(context, existing, transcript),
+        transcript
       );
     }
 
-    // A new send checks the timestamp before it prepares or posts anything.
-    // The replays above keep the stored timestamp.
-    const clientTimestamp = newSendClientTimestamp(options);
-    // The digest above covers the caller's content, so a replay compares
-    // like with like. The group gets the content with its context.
-    const contentBytes = await context.prepareContent(groupId, plaintextBytes);
-    // One device-list read for each member in this send.
-    let memberRead: Promise<GroupMemberDevice[]> | undefined;
-    const readMembers = () => (memberRead ??= context.resolveMemberDevices(groupId, options));
-    const preparedPayload = await context.preparePayload(
-      groupId,
-      contentBytes,
-      { ...options, timestamp: clientTimestamp },
-      readMembers
-    );
-    const encryptedMessageBase64 = preparedPayload.ciphertext;
-    const members = context.relay ? await readMembers() : [];
-    const otherMembers = members.filter((member) => member.userId !== context.senderUserId);
-    const groupSharedMessage = await context.prepareSharedMessage(
-      groupId,
-      otherMembers,
-      encryptedMessageBase64,
-      options.contentHint
-    );
-    const deviceMessages = await context.prepareEach(otherMembers, (member) =>
-      context.prepareDeviceMessage(
-        member,
+    // A new send checks and reserves the timestamp before it prepares or
+    // posts anything. The replays above keep the stored timestamp. A failure
+    // before the intent write removes the reservation.
+    const reservation = await reserveNewSendTimestamp(context.storage, options);
+    let intent: StoredOutgoingMessageIntent;
+    try {
+      intent = await storeNewGroupIntent(
+        context,
         groupId,
-        encryptedMessageBase64,
-        clientTimestamp,
-        options.contentHint
-      )
-    );
-    const syncMessages = context.relay
-      ? await context.prepareSyncMessages(
-          groupId,
-          contentBytes,
-          clientTimestamp,
-          options.clientMessageId,
-          await context.resolveOwnDevices()
-        )
-      : [];
-
-    const createdAt = Date.now();
-    const intent: StoredOutgoingMessageIntent = {
-      kind: 'group',
-      clientMessageId: options.clientMessageId,
-      recipientId: groupId,
-      plaintextDigest,
-      clientTimestamp,
-      createdAt,
-      deadlineAt: outgoingMessageDeadlineAt({ createdAt, clientTimestamp }),
-      progressFromStart: true,
-      transportMode: groupSharedMessage
-        ? context.deliveryMode === 'required'
-          ? 'sealed_sender_required'
-          : 'sealed_sender_preferred'
-        : 'identified',
-      ...(preparedPayload.preMessages.length > 0 && {
-        preMessages: preparedPayload.preMessages,
-      }),
-      deviceMessages,
-      syncMessages,
-      groupMemberUserIds,
-      groupRecipientDeviceCount: otherMembers.length,
-      groupCiphertext: encryptedMessageBase64,
-      ...(preparedPayload.senderKeyDistributionId && {
-        groupSenderKeyDistributionId: preparedPayload.senderKeyDistributionId,
-      }),
-      ...(groupSharedMessage && { groupSharedMessage }),
-      ...(options.contentHint !== undefined && { contentHint: options.contentHint }),
-      ...intentBinaryAttachment(options),
-    };
-    await storeSendLog(context, intent, contentBytes);
-    await storeOutgoingMessageIntent(context.storage, intent);
-    context.bindEvidence(intent);
-    if (context.deviceSets && context.relay) {
-      return sendDeclaredGroupIntent(context, context.deviceSets, intent, plaintextBytes);
+        plaintextBytes,
+        plaintextDigest,
+        groupMemberUserIds,
+        reservation.timestamp,
+        options
+      );
+    } catch (error) {
+      // A failed release does not replace the error of the send.
+      try {
+        await releaseNewSendTimestamp(context.storage, reservation);
+      } catch (releaseError) {
+        context.warn('Failed to release the send timestamp reservation', {
+          clientMessageId: reservation.clientMessageId,
+          error: (releaseError as Error).message,
+        });
+      }
+      throw error;
     }
-    return sendStoredGroupIntent(context, intent, plaintextBytes);
+    context.bindEvidence(intent);
+    const transcript = sentTranscript(context, intent, plaintextBytes);
+    if (context.deviceSets && context.relay) {
+      return sendDeclaredGroupIntent(context, context.deviceSets, intent, transcript);
+    }
+    return sendStoredGroupIntent(context, intent, transcript);
   }, report);
+}
+
+/**
+ * Prepare and store a new group intent with its reserved client timestamp.
+ * The send log entry comes before the intent.
+ */
+async function storeNewGroupIntent(
+  context: GroupOutboxContext,
+  groupId: string,
+  plaintextBytes: Uint8Array,
+  plaintextDigest: string,
+  groupMemberUserIds: string[],
+  clientTimestamp: number,
+  options: SendOptions & SendTimestampOrigin & SendEndReportMark & { clientMessageId: string }
+): Promise<StoredOutgoingMessageIntent> {
+  // The plaintext digest covers the caller's content, so a replay compares
+  // like with like. The group gets the content with its context.
+  const contentBytes = await context.prepareContent(groupId, plaintextBytes);
+  // One device-list read for each member in this send.
+  let memberRead: Promise<GroupMemberDevice[]> | undefined;
+  const readMembers = () => (memberRead ??= context.resolveMemberDevices(groupId, options));
+  const preparedPayload = await context.preparePayload(
+    groupId,
+    contentBytes,
+    { ...options, timestamp: clientTimestamp },
+    readMembers
+  );
+  const encryptedMessageBase64 = preparedPayload.ciphertext;
+  const members = context.relay ? await readMembers() : [];
+  const otherMembers = members.filter((member) => member.userId !== context.senderUserId);
+  const groupSharedMessage = await context.prepareSharedMessage(
+    groupId,
+    otherMembers,
+    encryptedMessageBase64,
+    options.contentHint
+  );
+  const deviceMessages = await context.prepareEach(otherMembers, (member) =>
+    context.prepareDeviceMessage(
+      member,
+      groupId,
+      encryptedMessageBase64,
+      clientTimestamp,
+      options.contentHint
+    )
+  );
+  const syncMessages = context.relay
+    ? await context.prepareSyncMessages(
+        groupId,
+        contentBytes,
+        clientTimestamp,
+        options.clientMessageId,
+        await context.resolveOwnDevices()
+      )
+    : [];
+
+  const createdAt = Date.now();
+  const intent: StoredOutgoingMessageIntent = {
+    kind: 'group',
+    clientMessageId: options.clientMessageId,
+    recipientId: groupId,
+    plaintextDigest,
+    clientTimestamp,
+    createdAt,
+    deadlineAt: outgoingMessageDeadlineAt({ createdAt, clientTimestamp }),
+    progressFromStart: true,
+    transportMode: groupSharedMessage
+      ? context.deliveryMode === 'required'
+        ? 'sealed_sender_required'
+        : 'sealed_sender_preferred'
+      : 'identified',
+    ...(preparedPayload.preMessages.length > 0 && {
+      preMessages: preparedPayload.preMessages,
+    }),
+    deviceMessages,
+    syncMessages,
+    groupMemberUserIds,
+    groupRecipientDeviceCount: otherMembers.length,
+    groupCiphertext: encryptedMessageBase64,
+    ...(preparedPayload.senderKeyDistributionId && {
+      groupSenderKeyDistributionId: preparedPayload.senderKeyDistributionId,
+    }),
+    ...(groupSharedMessage && { groupSharedMessage }),
+    ...(options.contentHint !== undefined && { contentHint: options.contentHint }),
+    ...intentBinaryAttachment(options),
+  };
+  await storeSendLog(context, intent, contentBytes);
+  await storeOutgoingMessageIntent(context.storage, intent);
+  return intent;
 }

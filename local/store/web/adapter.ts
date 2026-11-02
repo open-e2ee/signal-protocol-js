@@ -28,7 +28,7 @@ import type {
   ReceiveWorkUsage,
   SenderKeyReceiveCommit,
 } from '../../../types';
-import { openDB, IDBPDatabase, DBSchema } from 'idb';
+import { openDB, unwrap, IDBPDatabase, DBSchema } from 'idb';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS } from '../../../types/protocol-config';
 import type {
   LocalStoreProtection,
@@ -48,6 +48,7 @@ import type {
   SetDeviceRecordOptions,
 } from '../../../types';
 import { getErrorMessage } from '../../../utils/errors';
+import { resolveSignalProtocolLogger, type Logger } from '../../../logger';
 import { generateRandomBytes } from '../../../internal/crypto/random';
 import { decryptAes, encryptAes } from '../../../internal/crypto/symmetric/aes-provider';
 import type {
@@ -93,8 +94,7 @@ import {
 import type { Base64 } from '../../../types/utils';
 import type { SenderKeyState } from '../../../internal/protocol/sender-keys/manager';
 import { deserializeSessionRecord, serializeSessionRecord } from '../session-codec';
-import { receivedContentKey } from '../received-content';
-import { convertLegacyReceivedContent, type LegacyReceivedContentSource } from '../receive-work';
+import { sweepLegacyReceivedContent } from '../receive-work';
 import { metadataKeyLimit } from '../metadata-keys';
 import {
   createKyberPreKeyState,
@@ -107,6 +107,12 @@ import {
   retainKyberPreKey,
   type StoredKyberPreKeyState,
 } from '../kyber-prekey-lifecycle';
+
+/**
+ * The log code of an open that an open connection of an older version blocks.
+ * The open waits until that connection closes.
+ */
+export const INDEXEDDB_OPEN_BLOCKED = 'INDEXEDDB_OPEN_BLOCKED';
 
 function equalBytes(left: Uint8Array | undefined, right: Uint8Array | undefined): boolean {
   if (!left || !right) return left === right;
@@ -467,8 +473,11 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
   // v10 adds the sender-key handoff store. v11 adds `removedAt` to the
   // device record. The encrypted record holds the field, so v11 changes no
   // object store. It keeps an older SDK, which does not skip a removed
-  // device, from opening the database.
-  private readonly dbVersion = 11;
+  // device, from opening the database. v12 moves the retry request records
+  // to a new metadata key prefix and renames a terminal class. It changes no
+  // object store. It keeps SDK 13.x, which does not read the moved records,
+  // from opening the database.
+  private readonly dbVersion = 12;
   private readonly sendLog = new IndexedDbSendLog(
     () => sendLogView(this.db!),
     {
@@ -481,6 +490,8 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     decrypt: (encrypted) => this.decrypt(encrypted),
     databaseKey: () => this.getDatabaseKey(),
   });
+  /** The logger of the open-time diagnostics: the default logger of the package. */
+  private readonly logger: Required<Logger> = resolveSignalProtocolLogger();
 
   constructor() {
     mapQuotaFailuresAtBoundary(this);
@@ -590,6 +601,19 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
         upgradeReceiveWorkStore(receiveWorkView(db));
         upgradeSenderKeyHandoffStore(senderKeyHandoffView(db));
       },
+      // An open connection of an older version blocks the open, and the open
+      // waits until it closes. An SDK 13.x connection does not close itself.
+      blocked: () => {
+        this.logger.warn(INDEXEDDB_OPEN_BLOCKED, { version: this.dbVersion });
+      },
+      // A newer version, or a delete of the database, waits for this
+      // connection, so the connection closes. The store then needs
+      // initialize() again.
+      blocking: (_currentVersion, _blockedVersion, event) => {
+        const connection = event.target as IDBDatabase;
+        connection.close();
+        if (this.db !== null && unwrap(this.db) === connection) this.close();
+      },
     });
 
     // Get or generate database encryption key
@@ -618,16 +642,16 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     }
 
     await this.encryptClearMetadata();
-    await this.convertLegacyReceivedRows();
+    await sweepLegacyReceivedContent(this, this.legacyReceivedContentRows(), this.logger);
   }
 
   /**
    * Close the underlying IndexedDB connection and drop the in-memory copy of
    * the database key.
    *
-   * An open connection blocks both deletion and version upgrades of the
-   * database from any other connection. An application that signs out, clears
-   * local state, or migrates must therefore be able to close the store. After
+   * The store also closes its connection when another connection deletes the
+   * database or opens a newer version of it. An application that signs out,
+   * clears local state, or migrates can close the store itself. After
    * close(), call initialize() again before any other operation.
    */
   close(): void {
@@ -790,12 +814,21 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
       }
       // Read the doomed session and handoff keys before mutating, then enter
       // every mutation in one synchronous batch. A cursor walk that deletes
-      // as it goes leaves windows where the new pin commits with sessions
-      // still trusted under the old identity.
+      // as it goes awaits between requests, so a page that stops there lets
+      // the transaction commit with only some of the deletes applied.
       const sessions = tx.objectStore('sessions');
       const handoffs = tx.objectStore('senderKeyHandoff');
       const doomedKeys = await sessions.index('by-user').getAllKeys(address.userId);
       const doomedHandoffs = await handoffs.index('by-account').getAllKeys(accountHash);
+      // Push each request as it is created. A later synchronous throw must
+      // not leave an earlier request outside the settled set.
+      for (const sessionKey of doomedKeys) writes.push(sessions.delete(sessionKey));
+      for (const handoffKey of doomedHandoffs) writes.push(handoffs.delete(handoffKey));
+      // The new pin is the last request of the batch. A page that dies
+      // inside the batch cannot reach the abort, and an engine that commits
+      // a prefix of the issued requests then keeps only some deletes. Any
+      // committed prefix of this batch therefore leaves the old pin, never
+      // the new pin with sessions still trusted under the old identity.
       writes.push(
         contacts.put({
           key,
@@ -804,10 +837,6 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
           revision: replacement.revision,
         })
       );
-      // Push each request as it is created. A later synchronous throw must
-      // not leave an earlier request outside the settled set.
-      for (const sessionKey of doomedKeys) writes.push(sessions.delete(sessionKey));
-      for (const handoffKey of doomedHandoffs) writes.push(handoffs.delete(handoffKey));
     });
     return replacement;
   }
@@ -1254,7 +1283,17 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     // An await between mutations is a window for a partial commit.
     const writes: Promise<unknown>[] = [];
     try {
-      if (work) writes.push(tx.objectStore('receiveWork').put(work));
+      // Destructive writes come first and the session put comes last. A
+      // page that dies inside the batch cannot reach the abort, and a
+      // transaction can then commit a prefix of the issued requests. Any
+      // committed prefix that holds the receive record therefore also holds
+      // the consumed prekeys, and a prefix that holds the session also holds
+      // the consumed prekeys, the Kyber use, the cleared handoffs, the pin,
+      // and the receive record.
+      if (ecPreKeyStorageKey) writes.push(prekeys.delete(ecPreKeyStorageKey));
+      if (kemPreKeyStorageKey) writes.push(prekeys.delete(kemPreKeyStorageKey));
+      if (updatedKyberState) writes.push(prekeys.put(updatedKyberState, kyberStorageKey));
+      for (const handoffKey of doomedHandoffs) writes.push(handoffs.delete(handoffKey));
       if (newContact && encryptedContact) {
         writes.push(
           contacts.put({
@@ -1265,6 +1304,7 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
           })
         );
       }
+      if (work) writes.push(tx.objectStore('receiveWork').put(work));
       writes.push(
         tx
           .objectStore('sessions')
@@ -1276,10 +1316,6 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
             updatedAt: Date.now(),
           })
       );
-      if (ecPreKeyStorageKey) writes.push(prekeys.delete(ecPreKeyStorageKey));
-      if (kemPreKeyStorageKey) writes.push(prekeys.delete(kemPreKeyStorageKey));
-      if (updatedKyberState) writes.push(prekeys.put(updatedKyberState, kyberStorageKey));
-      for (const handoffKey of doomedHandoffs) writes.push(handoffs.delete(handoffKey));
       await Promise.all([...writes, tx.done]);
     } catch (error) {
       try {
@@ -2213,37 +2249,19 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     }
   }
 
-  /**
-   * Convert the legacy received content rows to receive records. A full
-   * origin stops the conversion without its marker. The store still opens,
-   * and the next open continues the conversion.
-   */
-  private async convertLegacyReceivedRows(): Promise<void> {
-    try {
-      await convertLegacyReceivedContent(this, this.legacyReceivedContent());
-    } catch (error) {
-      if (!isQuotaExceededError(error) && !(error instanceof StorageQuotaExceededError)) {
-        throw error;
-      }
-    }
-  }
-
   /** The legacy rows: raw metadata keys `received-content:<id>`, each value from the record cipher. */
-  private legacyReceivedContent(): LegacyReceivedContentSource {
-    const prefix = receivedContentKey('');
+  private legacyReceivedContentRows(): Parameters<typeof sweepLegacyReceivedContent>[1] {
     return {
-      listIds: async () =>
-        (await this.db!.getAllKeys('metadata'))
-          .filter((key) => key.startsWith(prefix))
-          .map((key) => key.slice(prefix.length)),
-      read: async (id) => {
-        const value = await this.db!.get('metadata', receivedContentKey(id));
+      listKeys: async (prefix) =>
+        (await this.db!.getAllKeys('metadata')).filter((key) => key.startsWith(prefix)),
+      read: async (key) => {
+        const value = await this.db!.get('metadata', key);
         if (value === undefined) return null;
         if (!(value instanceof Uint8Array)) throw new Error('Invalid encrypted received content');
         return await this.decrypt(value);
       },
-      delete: async (id) => {
-        await this.db!.delete('metadata', receivedContentKey(id));
+      delete: async (key) => {
+        await this.db!.delete('metadata', key);
       },
     };
   }

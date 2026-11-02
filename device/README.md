@@ -130,9 +130,10 @@ device's key. Existing custom-adapter refusal and rollback rules still apply.
 
 The link copies the master key of each group that the active device's group
 store lists into the new device's group store. The copy runs in the calling
-process, so no master key crosses the Relay. A client with `groups` on the new
-device then fetches each copied group. The application calls no group method
-for this. The link copies no protocol state, so sessions start fresh.
+process, so the link sends no master key through the Relay. A client with
+`groups` on the new device then fetches each copied group. The application calls
+no group method for this. The link copies no protocol state, so sessions start
+fresh.
 
 A group record that a release before 12.0.0 wrote, and that the active device
 has not read since, is not listed and is not copied. Read each group once on

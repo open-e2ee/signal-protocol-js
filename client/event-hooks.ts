@@ -133,15 +133,18 @@ export interface RetryTerminalEvent {
   /** The Relay message ID of the envelope that the requester failed to decrypt. */
   failedEnvelopeId: string;
   /**
-   * The session reset of the requester. Only an `expired-content` or
-   * `posting-deadline` end of a client with a Relay has it.
+   * The session reset of the requester. A `posting-deadline` end of a client
+   * with a Relay has it. An SDK 13.x reset also on `expired-content`, so
+   * while the SDK reads the records of SDK 13.x, a `request-expired` end that
+   * the record migration moved from SDK 13.x can also have it.
    */
   recovery?: RetryTerminalRecoveryEvent;
 }
 
 /**
  * The session reset of the requester after a retry request ends as
- * `expired-content` or `posting-deadline`.
+ * `posting-deadline`, or after an SDK 13.x reset for an `expired-content`
+ * request that the record migration moved as `request-expired`.
  *
  * The requester archived its session with the device that sent the failed
  * envelope, after each decrypt from that device in progress ended. The next
@@ -239,11 +242,11 @@ export interface ReceiveExpiredEvent {
   stage: 'decrypted' | 'awaiting-completion';
   /** `relay` for a Relay message, `caller` for a helper receive. */
   origin: 'relay' | 'caller';
-  /** The message ID. Absent for content stored before the receive queue. */
+  /** The message ID. */
   messageId?: string;
-  /** The sender. Absent for content stored before the receive queue. */
+  /** The sender. */
   senderId?: string;
-  /** The sender device. Absent for content stored before the receive queue. */
+  /** The sender device. */
   senderDeviceId?: number;
   /** The raw group of the content, when known. */
   groupId?: string;
@@ -576,11 +579,19 @@ export interface SignalProtocolClientHooks {
    * start, or redelivery. Make the hook idempotent for one
    * `failedEnvelopeId`.
    *
-   * Before the hook, an `expired-content` or `posting-deadline` end resets
-   * the session with the device that sent the failed envelope, and
-   * `event.recovery` tells what the reset did. The other classes, and a post
-   * that fails and can be posted again, reset nothing. `onSessionArchived`
-   * runs for the archive.
+   * Before the hook, a `posting-deadline` end resets the session with the
+   * device that sent the failed envelope, and `event.recovery` tells what
+   * the reset did. The other classes, and a post that fails and can be
+   * posted again, reset nothing. `onSessionArchived` runs for the archive.
+   *
+   * A `request-expired` end resets nothing. A retry request whose latest
+   * attempt the Relay answered or holds ends as `request-expired` when no
+   * content came before its deadline. A retry request whose latest attempt
+   * the Relay did not accept ends as `posting-deadline` at its posting
+   * deadline or its deadline. The session then resets. `request-expired` is
+   * not the delivery error cause `request-ended`. While the SDK reads the
+   * records of SDK 13.x, a `request-expired` end that the record migration
+   * moved can carry `event.recovery` of an SDK 13.x reset.
    *
    * A `posting-deadline` end posts no replacement request. The session
    * resets, and the request might have arrived at the sender. A request

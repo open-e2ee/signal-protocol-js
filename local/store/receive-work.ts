@@ -1,20 +1,25 @@
+import type { Logger } from '../../logger';
 import type {
-  ReceivedContent,
   ReceiveWorkQuery,
   ReceiveWorkRecord,
   SignalProtocolLocalStore,
 } from '../../types/api';
 import { keyedGroupHash, keyedIndexSubkey } from './keyed-index';
-import { parseReceivedContent, receivedContentKey } from './received-content';
 
 /** The default page size of a receive-record listing. */
 export const RECEIVE_WORK_DEFAULT_LIMIT = 100;
 
-/** The metadata key that marks the legacy conversion as done. */
+/**
+ * The metadata key that the legacy conversion of SDK 13.x set when it was
+ * done. The sweep deletes it.
+ */
 export const LEGACY_RECEIVED_CONTENT_MARKER_KEY = 'receive-work:legacy-conversion:v1';
 
-/** The log code of a legacy row that does not parse. */
-export const LEGACY_RECEIVED_CONTENT_UNREADABLE = 'LEGACY_RECEIVED_CONTENT_UNREADABLE';
+/** The log code of an open that deleted legacy received content. */
+export const LEGACY_RECEIVED_CONTENT_DELETED = 'LEGACY_RECEIVED_CONTENT_DELETED';
+
+/** The key prefix of a legacy row that SDK 11 wrote: `received-content:<id>`. */
+const LEGACY_RECEIVED_CONTENT_KEY_PREFIX = 'received-content:';
 
 const STAGES = new Set(['decrypted', 'receipt-due', 'awaiting-completion']);
 const ORIGINS = new Set(['relay', 'caller']);
@@ -39,17 +44,32 @@ const isString = (value: unknown): boolean => typeof value === 'string';
 const isNonEmptyString = (value: unknown): boolean => typeof value === 'string' && value !== '';
 const isSafeInteger = (value: unknown): boolean => Number.isSafeInteger(value);
 const isBoolean = (value: unknown): boolean => typeof value === 'boolean';
+/**
+ * Tell whether a value is the `received` key of a receive record. Two shapes
+ * pass:
+ *
+ * - The key of this release: `senderUserId` and `timestamp` only.
+ * - The SDK 13.x key: `senderUserId`, `senderDeviceId` as a safe integer,
+ *   `timestamp` and `contentDigest` as a string. A receive record that SDK
+ *   13.x wrote completes through the same reader, and the completion records
+ *   the key under its sender user and timestamp only. A receive record lives
+ *   at most `MAX_RECEIVE_WORK_AGE_MS` (30 days), which bounds this window.
+ *   The next major SDK version after this one removes this shape.
+ */
 const isReceivedKey = (value: unknown): boolean => {
   const key = value as Record<string, unknown> | null;
-  return (
-    key !== null &&
-    typeof key === 'object' &&
-    isNonEmptyString(key.senderUserId) &&
-    isSafeInteger(key.senderDeviceId) &&
-    typeof key.timestamp === 'number' &&
-    Number.isFinite(key.timestamp) &&
-    isString(key.contentDigest)
-  );
+  if (
+    key === null ||
+    typeof key !== 'object' ||
+    !isNonEmptyString(key.senderUserId) ||
+    typeof key.timestamp !== 'number' ||
+    !Number.isFinite(key.timestamp)
+  ) {
+    return false;
+  }
+  const fields = Object.keys(key).length;
+  if (fields === 2) return true;
+  return fields === 4 && isSafeInteger(key.senderDeviceId) && isString(key.contentDigest);
 };
 
 /**
@@ -97,7 +117,6 @@ export function assertReceiveWork(record: ReceiveWorkRecord, workId = record.wor
       (value) => isSafeInteger(value) && (value as number) > 0
     ) ||
     !isOptional(candidate.failedEnvelopeId, isNonEmptyString) ||
-    !isOptional(candidate.awaitingEnvelope, (value) => value === true) ||
     !isOptional(candidate.received, isReceivedKey)
   ) {
     throw new Error('Invalid receive-work record');
@@ -227,87 +246,115 @@ export function indexMatchesReceiveWorkQuery(
   );
 }
 
-/** The arrival order of a converted legacy row: before any new arrival. */
-function legacyArrivalSeq(receivedAt: number): number {
-  return receivedAt * 1024;
-}
-
-/** The receive record of one legacy row. */
-export function legacyReceiveWork(content: ReceivedContent): ReceiveWorkRecord {
-  return sizedReceiveWork({
-    workId: content.id,
-    revision: 0,
-    stage: 'decrypted',
-    origin: 'relay',
-    arrivalSeq: legacyArrivalSeq(content.receivedAt),
-    receivedAt: content.receivedAt,
-    dueAt: content.receivedAt,
-    sizeBytes: 0,
-    plaintext: content.plaintext,
-    ...(content.groupId !== undefined && { groupId: content.groupId }),
-    awaitingEnvelope: true,
-  });
-}
-
 /** The legacy rows of one store, as its adapter keeps them. */
-export interface LegacyReceivedContentSource {
-  /** The IDs of every legacy row. */
-  listIds(): Promise<string[]>;
+interface LegacyReceivedContentRows {
+  /** The keys of every legacy row whose key starts with `prefix`. */
+  listKeys(prefix: string): Promise<string[]>;
   /** The stored text of one legacy row, after any record cipher. Throws when unreadable. */
-  read(id: string): Promise<string | null>;
+  read(key: string): Promise<string | null>;
   /** Delete one legacy row. */
-  delete(id: string): Promise<void>;
-}
-
-/** The marker that the legacy conversion sets last. */
-export interface LegacyConversionMarker {
-  version: 1;
-  /** The legacy keys of rows that did not parse. Each row stays in place. */
-  unreadable: string[];
+  delete(key: string): Promise<void>;
 }
 
 /**
- * Convert each legacy `ReceivedContent` row to a receive record with
- * `awaitingEnvelope: true`, at the first open after the upgrade.
- *
- * A row that parses becomes a record unless one exists for its ID, and
- * the row is deleted after its record commits. A row that does not parse
- * stays under its legacy key, and its key goes into the marker and the
- * error log. The marker is set last, so a crash reruns the conversion and
- * the rerun skips each row that has a record.
- *
- * The conversion takes no lock across processes, as the receive admission
- * in `client/receive-admission.ts` takes none. Two processes that open one
- * store at the same time, such as two browser tabs, can each convert one
- * row. When the first process completes its record before the second
- * process puts its own, the second record comes back, and the queue later
- * reports it as expired once. The window is a few store operations and one
- * decrypt, once after the upgrade.
+ * Parse one legacy row as the received content that SDK 11 wrote. Throws on
+ * a row that does not parse.
  */
-export async function convertLegacyReceivedContent(
-  store: Pick<SignalProtocolLocalStore, 'getReceiveWork' | 'putReceiveWork' | 'getMetadata' | 'setMetadata'>,
-  source: LegacyReceivedContentSource,
-  reportUnreadable: (legacyKey: string) => void = (legacyKey) =>
-    console.error(LEGACY_RECEIVED_CONTENT_UNREADABLE, legacyKey)
-): Promise<void> {
-  if ((await store.getMetadata(LEGACY_RECEIVED_CONTENT_MARKER_KEY)) !== null) return;
-  const unreadable: string[] = [];
-  for (const id of await source.listIds()) {
-    let content: ReceivedContent;
-    try {
-      const value = await source.read(id);
-      if (value === null) continue;
-      content = parseReceivedContent(value, id);
-    } catch {
-      unreadable.push(receivedContentKey(id));
-      reportUnreadable(receivedContentKey(id));
-      continue;
-    }
-    if ((await store.getReceiveWork(id)) === null) {
-      await store.putReceiveWork(legacyReceiveWork(content), null);
-    }
-    await source.delete(id);
+function parseLegacyReceivedContent(value: string, id: string): void {
+  const record = JSON.parse(value) as {
+    id?: unknown;
+    plaintext?: unknown;
+    receivedAt?: unknown;
+    groupId?: unknown;
+  };
+  if (
+    record.id !== id ||
+    typeof record.plaintext !== 'string' ||
+    !Number.isSafeInteger(record.receivedAt) ||
+    (record.receivedAt as number) <= 0 ||
+    (record.groupId !== undefined &&
+      (typeof record.groupId !== 'string' || record.groupId.length === 0))
+  ) {
+    throw new Error('Invalid received-content record');
   }
-  const marker: LegacyConversionMarker = { version: 1, unreadable };
-  await store.setMetadata(LEGACY_RECEIVED_CONTENT_MARKER_KEY, JSON.stringify(marker));
+}
+
+/** Tell whether one legacy row parses as the received content of SDK 11. */
+async function isReadableLegacyRow(
+  rows: LegacyReceivedContentRows,
+  key: string
+): Promise<boolean | null> {
+  let value: string | null;
+  try {
+    value = await rows.read(key);
+  } catch {
+    return false;
+  }
+  if (value === null) return null;
+  try {
+    parseLegacyReceivedContent(value, key.slice(LEGACY_RECEIVED_CONTENT_KEY_PREFIX.length));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Tell whether one stored record is a converted legacy row that waits for its envelope. */
+function isAwaitingEnvelope(record: ReceiveWorkRecord): boolean {
+  return (record as unknown as { awaitingEnvelope?: unknown }).awaitingEnvelope === true;
+}
+
+/**
+ * Delete the received content that SDK 11 and the legacy conversion of
+ * SDK 13.x left, at each open of a durable store.
+ *
+ * The sweep deletes each receive record with `awaitingEnvelope: true`, which
+ * the conversion wrote, then each legacy row under `received-content:<id>`,
+ * and then the marker of the conversion. A record of this release always
+ * carries the sender fields of its envelope, so no later read of the open
+ * finds a converted record. A converted record waits for an envelope that
+ * the Relay keeps for at most its retention period, 30 days in production,
+ * and no version gave its content to the application. A device that
+ * received the content on SDK 11 inside that period loses the row here,
+ * where 13.x would have completed it on redelivery.
+ *
+ * No marker guards the sweep. Each open lists the records and the legacy
+ * rows again, so a sweep that stops deletes the rest at the next open. An
+ * open that deleted at least one record or row logs one line with
+ * `LEGACY_RECEIVED_CONTENT_DELETED`: `count` is every deleted record and
+ * row, and `readable` is the legacy rows that parse as SDK 11 received
+ * content. The line holds no key and no value.
+ */
+export async function sweepLegacyReceivedContent(
+  store: Pick<
+    SignalProtocolLocalStore,
+    'listReceiveWork' | 'completeReceiveWork' | 'getMetadata' | 'deleteMetadata'
+  >,
+  rows: LegacyReceivedContentRows,
+  logger: Pick<Required<Logger>, 'warn'>
+): Promise<void> {
+  let count = 0;
+  let readable = 0;
+  let after: ReceiveWorkQuery['after'];
+  for (;;) {
+    const page = await store.listReceiveWork(after === undefined ? {} : { after });
+    for (const record of page) {
+      if (!isAwaitingEnvelope(record)) continue;
+      if (await store.completeReceiveWork(record.workId, record.revision)) count += 1;
+    }
+    const last = page.at(-1);
+    if (last === undefined) break;
+    after = { arrivalSeq: last.arrivalSeq, workId: last.workId };
+  }
+  for (const key of await rows.listKeys(LEGACY_RECEIVED_CONTENT_KEY_PREFIX)) {
+    const parsed = await isReadableLegacyRow(rows, key);
+    if (parsed === null) continue;
+    await rows.delete(key);
+    count += 1;
+    if (parsed) readable += 1;
+  }
+  if ((await store.getMetadata(LEGACY_RECEIVED_CONTENT_MARKER_KEY)) !== null) {
+    await store.deleteMetadata(LEGACY_RECEIVED_CONTENT_MARKER_KEY);
+  }
+  if (count > 0) logger.warn(LEGACY_RECEIVED_CONTENT_DELETED, { count, readable });
 }

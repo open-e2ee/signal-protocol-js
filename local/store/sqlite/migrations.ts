@@ -302,6 +302,14 @@ export const SQLITE_STORE_MIGRATIONS: readonly SqliteMigration[] = [
     // the file.
     statements: [],
   },
+  {
+    version: 7,
+    // The retry request records move to a new metadata key prefix, and a
+    // terminal class is renamed. The metadata table holds the records, so the
+    // step changes no table. A 13.x reader does not read the moved records, so
+    // the step keeps a 13.x SDK from opening the file.
+    statements: [],
+  },
 ];
 
 /**

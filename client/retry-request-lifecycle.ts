@@ -21,6 +21,7 @@ import type { Envelope } from '../remote/relay/types';
 import type { RetryRequest } from '../internal/sesame/types';
 import type { ContentHint } from '../types/messages';
 import {
+  deadlineTerminalClass,
   getProcessedEnvelope,
   getRetryRequest,
   listRetryRequestIds,
@@ -128,8 +129,8 @@ export interface RetryRequestSource {
    */
   readonly groupId?: string;
   /**
-   * The session reset of an `expired-content` or `posting-deadline` end.
-   * Without it, nothing resets.
+   * The session reset of a `posting-deadline` end. Without it, nothing
+   * resets.
    */
   readonly reset: RetryTerminalResetSteps | undefined;
 }
@@ -137,10 +138,9 @@ export interface RetryRequestSource {
 /**
  * Call the `onRetryTerminal` hook for the terminal state of a request
  * record, once. It reads the record, and when the terminal state is not
- * emitted, it first resets the session of an `expired-content` or
- * `posting-deadline` end with `resetRetryTerminalSession`. It then calls
- * the hook and stores the state as emitted. The other classes reset
- * nothing.
+ * emitted, it first resets the session of a `posting-deadline` end with
+ * `resetRetryTerminalSession`. It then calls the hook and stores the state
+ * as emitted. The other classes, `request-expired` included, reset nothing.
  *
  * The hook is called directly, not through `callHook`, so a hook that
  * throws, and the RelayWorkStopped of a stop or of the reset, propagate and
@@ -353,15 +353,16 @@ export interface RetryRequestPass {
   readonly local: RetryRequestDevice;
   readonly send: ((envelope: Envelope) => Promise<unknown>) | undefined;
   /**
-   * The session reset of an `expired-content` or `posting-deadline` end.
-   * Without it, nothing resets.
+   * The session reset of a `posting-deadline` end. Without it, nothing
+   * resets.
    */
   readonly reset: RetryTerminalResetSteps | undefined;
 }
 
 /**
  * Posts each stored retry request whose next attempt time has come, ends
- * each request at its deadline, also when its stored attempt is answered,
+ * each request at its deadline with the class that `deadlineTerminalClass`
+ * gives, also when its stored attempt is answered,
  * ends as `posting-deadline` each request whose post is due at or after its
  * posting deadline, and calls the hook for each terminal state that is not
  * emitted. A request whose failed envelope is fulfilled has its content,
@@ -513,9 +514,12 @@ export class RetryRequestScheduler {
     if (!record || !send) return Infinity;
     const now = Date.now();
     if ((await getProcessedEnvelope(storage, failedEnvelopeId, now))?.fulfilled) return Infinity;
+    // At the deadline, the acceptance state of the stored attempt gives the
+    // class, so a request whose latest attempt the Relay did not accept
+    // resets the session.
     if (now >= record.deadlineAt) {
       await updateRetryRequest(storage, failedEnvelopeId, record.retryId, record.attempt, {
-        terminal: { class: 'expired-content', at: now, emitted: false },
+        terminal: { class: deadlineTerminalClass(record), at: now, emitted: false },
         nextAttemptAt: undefined,
         lastFailureClass: undefined,
       });

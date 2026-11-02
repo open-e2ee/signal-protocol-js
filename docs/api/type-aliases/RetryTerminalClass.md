@@ -6,7 +6,7 @@
 
 # Type Alias: RetryTerminalClass
 
-> **RetryTerminalClass** = `"missing-sender"` \| `"missing-prekey"` \| `"revoked-authority"` \| `"expired-content"` \| `"posting-deadline"` \| `"attempts-exhausted"` \| `"deletion"` \| `"abuse-allowance-exhausted"` \| `"membership-refused"`
+> **RetryTerminalClass** = `"missing-sender"` \| `"missing-prekey"` \| `"revoked-authority"` \| `"request-expired"` \| `"posting-deadline"` \| `"attempts-exhausted"` \| `"deletion"` \| `"abuse-allowance-exhausted"` \| `"membership-refused"`
 
 The conclusive end of a retry request or a retry resend.
 
@@ -15,12 +15,14 @@ The conclusive end of a retry request or a retry resend.
 - `missing-prekey`: the Relay has no prekey bundle of the requester, so the
   sender of the resend cannot start a new session.
 - `revoked-authority`: the Relay revoked the authority of the post.
-- `expired-content`: the content of the request did not come before its
-  deadline. The next major SDK version renames this class to
-  `request-expired`.
+- `request-expired`: the Relay answered or holds the latest attempt of the
+  request, and the content did not come before its deadline. The session
+  does not reset. This class is not the delivery error cause
+  `request-ended`.
 - `posting-deadline`: a post of the request was due at or after its
-  posting deadline, or the Relay refused a post with OPERATION_EXPIRED;
-  the session resets.
+  posting deadline, the Relay refused a post with OPERATION_EXPIRED, or
+  the request got to its deadline and the Relay did not accept its latest
+  attempt; the session resets.
 - `attempts-exhausted`: the resend that answered the fifth attempt of the
   request, `MAX_RETRY_RESPONSES_PER_MESSAGE`, also failed. The sender
   answers no later attempt.

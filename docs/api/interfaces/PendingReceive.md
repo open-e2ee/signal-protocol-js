@@ -30,8 +30,7 @@ no later receive, and each start offers it to the hook once.
 
 > **messageId**: `string`
 
-The ID that `completeReceive` and `discardPendingReceive` take. A
-receive stored before the client kept message IDs gives its record ID.
+The ID that `completeReceive` and `discardPendingReceive` take.
 
 ***
 
