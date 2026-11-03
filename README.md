@@ -54,8 +54,8 @@ environment. It writes the connection URL to `.env.local` as
 the public prefix of the framework, for example `EXPO_PUBLIC_OPEN_E2EE_RELAY_URL`.
 The URL is public configuration. It is not a credential.
 
-A Sandbox environment uses device-owned identity. `hostedRelaySandboxIdentity`
-signs the identity assertion with a key that it keeps in the device-local store.
+A new Sandbox environment defaults to device-owned identity.
+`hostedRelaySandboxIdentity` signs the identity assertion with a key that it keeps in the device-local store.
 Use the same store for the client.
 
 This example needs that Sandbox environment. It is not an offline script.
