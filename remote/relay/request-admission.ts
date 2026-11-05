@@ -4,7 +4,8 @@
  * on an answer that followed a repeat.
  *
  * One post can make more than one request. A transport repeats a request
- * once after an uncertain answer, and once after a refused device token. The
+ * once after an uncertain answer, once after a refused device token, and
+ * once after a PERIOD_CLOSED refusal. The
  * owner of a post registers a check under the client message ID that its
  * envelope carries, and the transport awaits each check of that ID before a
  * repeat starts. A check that rejects stops the repeat. When every check
@@ -24,9 +25,10 @@ export interface RepeatRequest {
   /**
    * `uncertain` after a DELIVERY_UNCERTAIN answer, `token` after a refused
    * credential: a device token, or a group endorsement that the direct route
-   * refused.
+   * refused. `period-closed` after a PERIOD_CLOSED refusal, which the Relay
+   * gives before it stores anything.
    */
-  readonly after: 'uncertain' | 'token';
+  readonly after: 'uncertain' | 'token' | 'period-closed';
 }
 
 interface Admission {

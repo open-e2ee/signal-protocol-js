@@ -16,16 +16,16 @@ Private testing also exists in other open-source projects. [SQLite publishes som
 
 Engineering CI runs the default automated checks on pull requests that are ready for review and on changes to the main branch. Release preparation requires a passing run.
 
-Most recent full run on 2026-11-02:
+Most recent full run on 2026-11-05:
 
 | | |
 |---|---|
-| Test modules | 606 |
-| Test cases | 12,678 |
-| Passed | 12,674 |
+| Test modules | 607 |
+| Test cases | 12,725 |
+| Passed | 12,721 |
 | Skipped | 4 |
 | Failed | 0 |
-| Wall time | 695 s |
+| Wall time | 1513 s |
 
 The total counts test cases. One test case can contain several assertions. Separate commands run the longer performance and endurance checks.
 
@@ -42,7 +42,7 @@ Release tooling generates this table from a completed run. It refuses results fr
 
   Run release builds of the Expo example and the bare React Native example on an Android emulator. Both use Hermes V1. The Expo build uses Expo SDK 57 and React Native 0.86. The bare build uses React Native 0.87.1.
 - **Public API:** check exported types, import paths, documented calls, and expected example output against the packed package.
-- **React Native hosts:** add the packed package to React Native and Expo projects without an override of peer conflicts. The projects cover React Native 0.83 through 0.87 and the Expo SDK 55 through 57 lines. Build the Expo example's Hermes bundle on Expo SDK 55 and 57.
+- **React Native hosts:** add the packed package to React Native and Expo projects without an override of peer conflicts. The projects cover React Native 0.83, 0.85, 0.86, and 0.87. They also cover the Expo SDK 55, 56, and 57 lines. Build the Expo example's Hermes bundle on Expo SDK 55 and 57.
 - **Errors:** check construction sites for exported error classes and codes. Reject unresolved code forwarding.
 
 The browser storage job also runs 2,000 open, write, read, and close cycles of the IndexedDB store. It also runs a soak of the web SQLite store. Each checks for upward memory and latency drift.
@@ -71,7 +71,7 @@ On a pull request, a job on macOS or Windows runs only when a maintainer request
 | A process killed at a step of a conversion leaves a store that the next encrypted open finishes or starts again, with every row. A kill between the end of the copy and the commit point leaves the plaintext file beside a complete encrypted copy. The next open then fails with `INVALID_STATE` and keeps the copy, and it finishes after the plaintext file is deleted. A directory move after the commit point makes the open fail with `INVALID_STATE`, and it changes no file and no vault entry. | Default automated checks: Linux, Node 26 | A child process converts 2,000 rows inside the owner lock and stops at one step. The parent kills it and opens the store again. |
 | In the Electron main process, the store passes the shared storage contract with its key in the real `safeStorage`. The file has no SQLite header, and the vault file keeps only a ciphertext of the key. | Electron store job: Electron 44 on Linux, macOS, and Windows, and Electron 42 on Linux | Electron from its npm package, with the GNOME keyring through libsecret on Linux, the Keychain on macOS, and DPAPI on Windows. A push to the main branch or a pull request runs this job only when it changes the store, the vault, the storage contract, the job, or a dependency. |
 | In the Electron main process, a conversion with its key in the real `safeStorage` writes a file with no SQLite header and keeps the data. The vault then holds only the main key, and an open without the option reads the data. | Electron store job: Electron 44 on Linux, macOS, and Windows, and Electron 42 on Linux | The same Electron runs as the row above. |
-| In an app that Electron Forge packages with ASAR, the store opens in the main process and in a utility process with its key in the real `safeStorage`, and a value that one launch writes reads back after a relaunch. The binding loads from `app.asar.unpacked`, and the file has no SQLite header. | Electron package job: Linux x64, macOS arm64, and Windows x64 | `electron-forge package` with Electron Forge 7.11.2 of an app that installs the packed package, with the auto-unpack-natives plugin and the fuses that the [Node store guide](../local/store/node/README.md#packaging) gives. On macOS, the job signs the app ad hoc and requires `codesign --verify --deep --strict` to pass before the first launch. A push to the main branch or a pull request runs this job only when it changes the store, the vault, the packaged app, the job, or a dependency. |
+| In an app that Electron Forge packages with ASAR, the store opens in the main process and in a utility process with its key in the real `safeStorage`, and a value that one launch writes reads back after a relaunch. The binding loads from `app.asar.unpacked`, and the file has no SQLite header. | Electron package job: Linux x64, macOS arm64, and Windows x64 | `electron-forge package` with Electron Forge 8.0.1 of an app that installs the packed package, with the auto-unpack-natives plugin and the fuses that the [Node store guide](../local/store/node/README.md#packaging) gives. On macOS, the job signs the app ad hoc and requires `codesign --verify --deep --strict` to pass before the first launch. A push to the main branch or a pull request runs this job only when it changes the store, the vault, the packaged app, the job, or a dependency. |
 | On Linux, the vault refuses the `basic_text` backend of `safeStorage`. The store does not open, and no key reaches the disk. | Electron store job: Linux, Electron 44 and 42 | Electron with `--password-store=basic`. |
 | On Linux, the vault refuses the fixed fallback key that `safeStorage` uses when no secret service answers. The store does not open, and no key reaches the disk. | Electron store job: Linux, Electron 44 and 42 | Electron with `--password-store=gnome-libsecret` and no unlocked keyring on the D-Bus session. |
 | On Linux, the store passes the shared storage contract with its key in KWallet, on the `kwallet5` and `kwallet6` backends of `safeStorage`. | Electron store job: Linux, Electron 44. KWallet 6 job: Ubuntu 26.04, Electron 44 | Electron with `--password-store=kwallet5` on KWallet 5, and with `--password-store=kwallet6` on KWallet 6.24. A new wallet opens with no prompt, through the `pamOpen` call that `pam_kwallet` makes at login. The test checks the backend that `safeStorage` selected, and the harness removes the key from the wallet. Run 36528132421 also passed `--password-store=kwallet5` on KWallet 6.24. No job runs that case again. |
@@ -217,7 +217,7 @@ This statement describes our process. It is not an independent security assessme
 
 ## Checks you can run
 
-[Public CI](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml) runs on pushes and pull requests. On a draft pull request, it runs only the first two checks. Its logs show these checks:
+[Public CI](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml) runs on each push to the main branch and on each pull request, draft or ready for review. Its logs show these checks:
 
 - Install from the committed lockfile, compile the SDK, and check its types.
 - Check dependencies for known advisories at moderate severity or higher.

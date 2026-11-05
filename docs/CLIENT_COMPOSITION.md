@@ -34,8 +34,10 @@ const signal = await createSignalProtocolClient({
 the environment connection URL to your application configuration.
 `getIdentityAssertion` returns a short-lived signed assertion. The hosted
 factory uses it for device registration and authentication. In a Sandbox
-environment, `hostedRelaySandboxIdentity(storage)` supplies it. In production,
-it returns an assertion for the signed-in user from your identity provider.
+environment, `hostedRelaySandboxIdentity(storage)` supplies it. In a production
+project in device-owned mode, `hostedRelayDeviceOwnedIdentity(storage)`
+supplies it. In a production project in application-bound mode, it returns an
+assertion for the signed-in user from your backend.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts

@@ -720,7 +720,7 @@ export type RelayConnectionReason =
  * `stopped` state that the Relay caused, it is `upgrade-required`,
  * `authority-refused`, `device-revoked`, or `device-unknown`. It is never an
  * error message. `since` is the Unix time in milliseconds of the transition. A
- * planned token renewal on a live connection is not a transition.
+ * token renewal keeps the live connection and is not a transition.
  */
 export interface RelayConnectionState {
   readonly state: 'stopped' | 'connecting' | 'connected' | 'reconnecting';

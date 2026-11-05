@@ -31,8 +31,10 @@ const signal = await createHostedSignalProtocolClient({
 `oe new` writes `relayUrl` to `.env.local` as `OPEN_E2EE_RELAY_URL`, with the
 public prefix of the framework in a Next.js, Expo, or Vite application. Supply
 `storage` for this device and `getIdentityAssertion`. In a Sandbox environment,
-pass `hostedRelaySandboxIdentity(storage)`. In production, pass the callback of
-your identity provider.
+pass `hostedRelaySandboxIdentity(storage)`. In a production project in
+device-owned mode, pass `hostedRelayDeviceOwnedIdentity(storage)`. In a
+production project in application-bound mode, pass a callback that returns an
+assertion from your backend.
 
 For advanced integrations, implement the `SignalProtocolRelayServer` client
 transport against your own backend. That backend must authenticate

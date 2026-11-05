@@ -1,5 +1,51 @@
 # Changelog
 
+## 14.1.0
+
+### Added
+
+- `hostedRelayDeviceOwnedIdentity(storage)`, from the package root and
+  `@open-e2ee/signal-protocol-sdk/client`. It returns a `getIdentityAssertion`
+  callback for a device-owned account in a Sandbox environment or in a
+  Production environment in device-owned identity mode. It signs a
+  normal-assurance registration assertion with an Ed25519 key in `storage`.
+  It refuses recovery, refresh, provider migration, and recent or step-up
+  assurance, and creates no key for a refused request. Its TSDoc documents
+  the header and claims of the assertion. It uses the key slot of
+  `hostedRelaySandboxIdentity`, so for the same store and publishable key both
+  helpers return the same account. `hostedRelaySandboxIdentity` keeps its
+  Sandbox-only behavior. A Production project in application-bound mode
+  refuses the assertion with `ASSERTION_INVALID`.
+
+### Changed
+
+- **The OpenE2EE Signal Protocol Relay mailbox socket stays open across a device
+  token renewal.** The Relay authorizes the device token once, at the socket
+  handshake, and closes the socket with 4401 `AUTHORITY_REVALIDATE` when the
+  authority changes. Before, the hosted transport closed and reopened the socket
+  shortly before each token expired, about every 14 minutes. Now it renews the
+  token only for an HTTP request or a reconnect, and reconnects only on a Relay
+  close or a transport error. The presence watches and the Relay receipt intake
+  stay on the one socket. `onConnectionState` and `relayConnectionState` no
+  longer emit `reconnecting` for a failed renewal socket, because no renewal
+  socket exists. No API changes. See `docs/RELAY_CONNECTION.md`.
+
+### Fixed
+
+- **A `PERIOD_CLOSED` refusal gets one repeat.** When the Relay refuses
+  a device post with `PERIOD_CLOSED`, the SDK posts the same request once more,
+  with the same message ID, epoch and bytes. When the Relay refuses the repeat
+  too, the device stays pending: the send throws a retryable error with its
+  deadline, and a replay posts the same operation. On the sealed route the
+  error code stays `DELIVERY_FAILED`.
+- **A send reaches a recovered device.** When the Relay refuses a
+  device post with `NOT_FOUND` because the mailbox generation of the device is
+  retired, and the device list names the device at a new generation, the SDK
+  archives the session, starts a new session and posts to the new generation
+  under the same message ID and epoch. The other devices keep their
+  acceptance, and the Relay charges each device once. Before, the device ended
+  with a `NOT_FOUND` refusal.
+
 ## 14.0.0
 
 ### Breaking

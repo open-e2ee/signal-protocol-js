@@ -35,6 +35,7 @@ export {
   HostedRelayUpgradeRequiredError,
   advanceHostedRelayIdentityMigration,
   createHostedSignalProtocolClient,
+  hostedRelayDeviceOwnedIdentity,
   hostedRelayPresence,
   hostedRelaySandboxIdentity,
   hostedRelayWakePresence,

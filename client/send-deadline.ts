@@ -1,5 +1,5 @@
 import { deviceSetRefusal } from '../remote/relay/device-set';
-import { followedRepeatedRequest } from '../remote/relay/request-admission';
+import { followedRepeatedRequest, type RepeatRequest } from '../remote/relay/request-admission';
 import {
   outgoingDestinationProgressKey,
   outgoingMessageDeadlineAt,
@@ -24,6 +24,7 @@ import {
 } from './relay-acceptance';
 import type { SendOutcomeEvent } from './event-hooks';
 import { markRelayDeviceRefusal, relayDeviceRefusal } from './relay-device-refusal';
+import { isPeriodClosed } from './relay-period-close';
 
 /**
  * The posting deadline of a direct or group send: the time after which the
@@ -333,7 +334,7 @@ export class SendCallEvidence {
    */
   async post(
     destination: SendDestination,
-    post: (onRequest: (repeat?: 'uncertain' | 'token') => void) => Promise<RelayPostAcceptance>
+    post: (onRequest: (repeat?: RepeatRequest['after']) => void) => Promise<RelayPostAcceptance>
   ): Promise<RelayPostAcceptance> {
     const key = destinationKey(destination);
     const evidence = this.evidenceAt(key);
@@ -408,7 +409,7 @@ export class SendCallEvidence {
    */
   async postShared<T extends SharedPostAnswer>(
     destinations: readonly SendDestination[],
-    post: (onRequest: (repeat?: 'uncertain' | 'token') => void) => Promise<T>
+    post: (onRequest: (repeat?: RepeatRequest['after']) => void) => Promise<T>
   ): Promise<T> {
     const targets = destinations.map((destination) => {
       const key = destinationKey(destination);
@@ -780,6 +781,9 @@ export class SendCallEvidence {
     const { status } = error as { status?: unknown };
     if (status === 423 || status === 429) return 'pending';
     if (typeof code === 'string' && PENDING_CODES.has(code)) return 'pending';
+    // The transport repeated the post once after PERIOD_CLOSED, and the
+    // Relay refused the repeat too before it stored anything.
+    if (isPeriodClosed(error)) return 'pending';
     return 'uncertain';
   }
 

@@ -178,12 +178,13 @@ interface MailboxSubscription {
   relayProtocolVersion: number;
   /**
    * Gets the socket address and a device token. `refreshed` is true when the
-   * call got a new device token from the Relay.
+   * call got a new device token from the Relay. The Relay reads the token
+   * only at the socket handshake, so an open socket outlives it. A token
+   * renewal for HTTP requests does not touch the socket.
    */
   authenticate(): Promise<{
     url: string;
     token: string;
-    renewAt: number;
     refreshed: boolean;
   }>;
   /**
@@ -230,15 +231,15 @@ interface MailboxSubscription {
    * `upgrade-required` when the Relay no longer serves the protocol version of
    * this SDK, with `device-revoked` or `device-unknown` when the Relay refuses
    * this device, and with `authority-refused` after a conclusive refusal. A
-   * token renewal on a live socket is not a transition.
+   * token renewal is not a transition, because it keeps the socket.
    */
   onConnectionState(
     state: RelayConnectionState["state"],
     reason?: RelayConnectionReason,
   ): void;
   /**
-   * Receives each presence event. A token renewal opens a new socket without
-   * a connection transition, and the new socket holds no watch.
+   * Receives each presence event. A token renewal keeps the socket and its
+   * watches.
    */
   onPresence?(event: PresenceSocketEvent): void;
 }
@@ -336,7 +337,6 @@ export function subscribeHostedMailbox(
   /** The ceiling of the retry schedule. */
   let reconnectDelay = FIRST_RECONNECT_MILLISECONDS;
   let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
-  let renewalTimer: ReturnType<typeof setTimeout> | undefined;
   /**
    * The one timer of the retries. It fires at the sooner of `retryDue` and
    * `recoveryDue`.
@@ -979,7 +979,6 @@ export function subscribeHostedMailbox(
     for (const messageId of unanswered)
       options.onAcknowledgmentReply(messageId, false);
     clearTimeout(handshakeTimer);
-    clearTimeout(renewalTimer);
     clearTimeout(pingTimer);
     unansweredPings = 0;
     // An answer can arrive only on the socket that carried the request.
@@ -1134,18 +1133,11 @@ export function subscribeHostedMailbox(
             schedulePing();
           }, PING_MILLISECONDS);
         };
+        // The socket stays open until the Relay closes it or it fails. The
+        // Relay authorizes the device token once, at the handshake, and
+        // closes the socket with 4401 when the authority changes. So a token
+        // renewal does not touch the socket.
         schedulePing();
-        renewalTimer = setTimeout(
-          () => {
-            if (!current()) return;
-            disconnect();
-            void connect();
-          },
-          Math.max(
-            1_000,
-            Math.min(2_147_483_647, authority.renewAt - Date.now()),
-          ),
-        );
       });
       candidate.addEventListener("message", (event: MessageEvent) => {
         if (!current()) return;

@@ -19,9 +19,17 @@ same store as `adapters.storage`. A device that loses the store loses the
 Sandbox account. Another device of the account joins through device linking.
 
 The callback rejects a request for a production environment, for recovery,
-for provider migration, or for recent or step-up assurance. Production needs
-a `getIdentityAssertion` callback for its configured application-bound or
-device-owned identity mode.
+for provider migration, or for recent or step-up assurance. This helper is
+the Sandbox-only guard, and it is not deprecated. For a Production project in
+device-owned mode, use [hostedRelayDeviceOwnedIdentity](hostedRelayDeviceOwnedIdentity.md). For a
+Production project in application-bound mode, supply a `getIdentityAssertion`
+callback that returns an assertion from your backend.
+
+The key is stored under the metadata key
+`'hostedRelay.sandboxIdentity.v1:'` followed by the base64 SHA-256 digest of
+the publishable key. This is a persisted format that both helpers keep. A
+new prefix would orphan existing Sandbox accounts. So for the same store and
+publishable key, both helpers sign with the same key.
 
 ## Parameters
 

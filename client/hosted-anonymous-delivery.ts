@@ -22,6 +22,7 @@ import { FanOutError, type BoundedFanOut } from "../utils/bounded-fan-out";
 import type { HostedRelayConnection } from "./hosted-connection";
 import { aggregateRelayAcceptance } from "./relay-acceptance";
 import { markRelayDeviceRefusal } from "./relay-device-refusal";
+import { markPeriodClosed, onePeriodClosedRetry } from "./relay-period-close";
 import {
   deviceSetRefusal,
   markDeviceSetRefusal,
@@ -231,6 +232,14 @@ export class HostedAnonymousDelivery {
     ) => Promise<void> = async () => {},
     /** The Relay protocol version of the client that owns this delivery. */
     private readonly relayProtocolVersion: number = RELAY_PROTOCOL_VERSION,
+    /**
+     * Runs after the Relay refuses a direct post as NOT_FOUND. True when the
+     * device directory lists the device at another mailbox generation than
+     * the posted destination: a recovery retired the posted generation.
+     */
+    private readonly destinationRecovered: (
+      destination: Destination,
+    ) => Promise<boolean> = async () => false,
   ) {}
 
   /**
@@ -359,6 +368,9 @@ export class HostedAnonymousDelivery {
           ),
           this.relayProtocolVersion,
         );
+        // The public code stays DELIVERY_FAILED. The mark lets the send
+        // repeat the post once and keep the device pending.
+        if (code === "PERIOD_CLOSED") markPeriodClosed(error);
         // Only a declared post gets a device-set refusal.
         const refusal =
           body.deviceSets === undefined
@@ -674,8 +686,47 @@ export class HostedAnonymousDelivery {
             deviceSets: operation.deviceSets,
           }),
         };
+        // A PERIOD_CLOSED answer proves that the Relay stored nothing, so
+        // the same request goes once more, in the next period. The repeat is
+        // a new request with its own slot.
+        const periodClosedRetry = onePeriodClosedRetry();
         const deliver = () =>
-          this.fanOut.request(() => this.post("/delivery/send", body));
+          periodClosedRetry(
+            () => this.fanOut.request(() => this.post("/delivery/send", body)),
+            () =>
+              this.beforeRepeat(clientMessageId, {
+                userId: destination.accountAddress,
+                deviceId: destination.deviceId,
+                after: "period-closed",
+              }),
+          );
+        // A recovery retired the posted generation. As for a stale device,
+        // the send archives the session and posts to the recovered device.
+        // A declared post gets the declared STALE_DEVICE that the Relay
+        // gives for a changed registration.
+        const refusalOf = async (error: unknown): Promise<unknown> => {
+          if (
+            !(error instanceof HostedAnonymousDeliveryError) ||
+            error.code !== "NOT_FOUND" ||
+            !(await this.destinationRecovered(destination))
+          )
+            return markDestinationRefusal(error, destination);
+          const stale = markDestinationRefusal(
+            new HostedAnonymousDeliveryError(error.status, "STALE_DEVICE"),
+            destination,
+          ) as HostedAnonymousDeliveryError;
+          return operation.deviceSets === undefined
+            ? stale
+            : markDeviceSetRefusal(stale, {
+                kind: "stale",
+                accounts: [
+                  {
+                    userId: destination.accountAddress,
+                    staleDeviceIds: [destination.deviceId],
+                  },
+                ],
+              });
+        };
         let result: JsonRecord;
         let repeated = false;
         try {
@@ -690,7 +741,7 @@ export class HostedAnonymousDelivery {
             !(error instanceof HostedAnonymousDeliveryError) ||
             error.code !== "DELIVERY_UNCERTAIN"
           )
-            throw markDestinationRefusal(error, destination);
+            throw await refusalOf(error);
           try {
             await this.beforeRepeat(clientMessageId, {
               userId: destination.accountAddress,
@@ -701,7 +752,7 @@ export class HostedAnonymousDelivery {
             throw error;
           }
           repeated = true;
-          result = await deliver().catch((repeatError: unknown) => {
+          result = await deliver().catch(async (repeatError: unknown) => {
             // The first request can have stored the copy, so a refused
             // repeat does not move the post to another route, and its answer
             // tells nothing about the post.
@@ -709,9 +760,7 @@ export class HostedAnonymousDelivery {
               throw markAfterRepeatedRequest(
                 new HostedAnonymousDeliveryError(401, "DELIVERY_FAILED"),
               );
-            throw markAfterRepeatedRequest(
-              markDestinationRefusal(repeatError, destination),
-            );
+            throw markAfterRepeatedRequest(await refusalOf(repeatError));
           });
         }
         if (

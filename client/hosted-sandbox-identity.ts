@@ -1,17 +1,20 @@
 /**
- * Device-owned identity for a Sandbox environment of the Signal Protocol Relay.
+ * Device-owned identity for the Signal Protocol Relay.
  *
- * A Sandbox environment verifies a device-owned assertion: a JWT that the
- * device signs with its own Ed25519 key and that carries the public key in
- * its header. The Relay binds the account to the RFC 7638 thumbprint of that
- * key. So the key is the account identity in the environment, and this module
- * keeps it in the device-local store next to the protocol identity. A device
- * that loses its store loses the account. Another device of the account joins
- * through device linking, not with a copy of this key.
+ * A Sandbox environment, and a Production environment in device-owned mode,
+ * verify a device-owned assertion: a JWT that the device signs with its own
+ * Ed25519 key and that carries the public key in its header. The Relay binds
+ * the account to the RFC 7638 thumbprint of that key. So the key is the
+ * account identity in the environment, and this module keeps it in the
+ * device-local store next to the protocol identity. A device that loses its
+ * store loses the account. Another device of the account joins through device
+ * linking, not with a copy of this key.
  *
- * The helper signs only registration assertions for a Sandbox connection. A
- * production environment, recovery, and provider migration need an identity
- * provider that authenticates the user.
+ * The helpers sign only registration assertions. `hostedRelaySandboxIdentity`
+ * serves only a Sandbox connection. `hostedRelayDeviceOwnedIdentity` serves a
+ * Sandbox connection or a device-owned Production connection. An
+ * application-bound Production project needs an application callback. Recovery
+ * and provider migration need an identity provider that authenticates the user.
  */
 import {
   base64ToBytes,
@@ -28,6 +31,11 @@ import type { PrivateKey, PublicKey } from '../keys';
 import type { Base64, SignalProtocolLocalStore } from '../types';
 import type { GetIdentityAssertion, IdentityAssertionRequest } from './hosted';
 
+/**
+ * The metadata key prefix of the stored device-owned key. It is a persisted
+ * format that both helpers keep. A new prefix would orphan the existing keys,
+ * and so the existing accounts.
+ */
 const SANDBOX_IDENTITY_METADATA_PREFIX = 'hostedRelay.sandboxIdentity.v1:';
 const DEVICE_OWNED_ISSUER = 'https://relay.open-e2ee.dev/device-owned';
 /** The Relay accepts a lifetime of up to 600 seconds. */
@@ -121,20 +129,47 @@ function sandboxIdentityKey(
   return created;
 }
 
-function assertSandboxRegistration(request: IdentityAssertionRequest): void {
-  if (request.environment !== 'sandbox') {
+/** The environments that a helper serves, and its name in errors. */
+interface DeviceOwnedIdentityScope {
+  readonly name: string;
+  readonly environments: readonly IdentityAssertionRequest['environment'][];
+  readonly environmentsLabel: string;
+}
+
+const SANDBOX_SCOPE: DeviceOwnedIdentityScope = {
+  name: 'sandbox identity',
+  environments: ['sandbox'],
+  environmentsLabel: 'a Sandbox environment',
+};
+
+const DEVICE_OWNED_SCOPE: DeviceOwnedIdentityScope = {
+  name: 'device-owned identity',
+  environments: ['sandbox', 'production'],
+  environmentsLabel: 'a Sandbox or Production environment',
+};
+
+/**
+ * Accepts only a normal-assurance registration request for an environment of
+ * the scope. The Relay refuses device-owned recovery and migration away from
+ * device-owned mode, so registration is the whole device-owned path.
+ */
+function assertRegistration(
+  request: IdentityAssertionRequest,
+  scope: DeviceOwnedIdentityScope,
+): void {
+  if (!scope.environments.includes(request.environment)) {
     throw new Error(
-      'Signal Protocol Relay sandbox identity works only with a Sandbox environment',
+      `Signal Protocol Relay ${scope.name} works only with ${scope.environmentsLabel}`,
     );
   }
   if (request.purpose !== 'register' || request.migration !== undefined) {
     throw new Error(
-      'Signal Protocol Relay sandbox identity supports only device registration',
+      `Signal Protocol Relay ${scope.name} supports only device registration`,
     );
   }
   if (request.assurance !== undefined && request.assurance !== 'normal') {
     throw new Error(
-      'Signal Protocol Relay sandbox identity cannot assert recent or step-up assurance',
+      `Signal Protocol Relay ${scope.name} cannot assert recent or step-up assurance`,
     );
   }
 }
@@ -143,39 +178,12 @@ function encodeSegment(value: unknown): string {
   return bytesToUrlSafeBase64(stringToBytes(JSON.stringify(value)));
 }
 
-/**
- * Creates the identity assertion callback for a Sandbox environment of the
- * Signal Protocol Relay.
- *
- * The callback signs a short-lived device-owned assertion with an Ed25519 key
- * that it keeps in `storage`. It creates the key on the first call and uses the
- * same key after that, so the Relay returns the same account each time the
- * device registers. The key is separate for each publishable key. Pass the
- * same store as `adapters.storage`. A device that loses the store loses the
- * Sandbox account. Another device of the account joins through device linking.
- *
- * The callback rejects a request for a production environment, for recovery,
- * for provider migration, or for recent or step-up assurance. Production needs
- * a `getIdentityAssertion` callback for its configured application-bound or
- * device-owned identity mode.
- *
- * @example
- * ```ts
- * const storage = inMemoryStore();
- * const client = await createHostedSignalProtocolClient({
- *   adapters: { storage },
- *   hosted: {
- *     relayUrl: process.env.OPEN_E2EE_RELAY_URL!,
- *     getIdentityAssertion: hostedRelaySandboxIdentity(storage),
- *   },
- * });
- * ```
- */
-export function hostedRelaySandboxIdentity(
+function deviceOwnedIdentity(
   storage: SignalProtocolLocalStore,
+  scope: DeviceOwnedIdentityScope,
 ): GetIdentityAssertion {
   return async (request) => {
-    assertSandboxRegistration(request);
+    assertRegistration(request, scope);
     const key = await sandboxIdentityKey(storage, request.publishableKey);
     const x = bytesToUrlSafeBase64(base64ToBytes(key.publicKey));
     const jwk = { crv: 'Ed25519', kty: 'OKP', x };
@@ -202,4 +210,106 @@ export function hostedRelaySandboxIdentity(
     }
     return `${signingInput}.${bytesToUrlSafeBase64(base64ToBytes(signature))}`;
   };
+}
+
+/**
+ * Creates the identity assertion callback for a Sandbox environment of the
+ * Signal Protocol Relay.
+ *
+ * The callback signs a short-lived device-owned assertion with an Ed25519 key
+ * that it keeps in `storage`. It creates the key on the first call and uses the
+ * same key after that, so the Relay returns the same account each time the
+ * device registers. The key is separate for each publishable key. Pass the
+ * same store as `adapters.storage`. A device that loses the store loses the
+ * Sandbox account. Another device of the account joins through device linking.
+ *
+ * The callback rejects a request for a production environment, for recovery,
+ * for provider migration, or for recent or step-up assurance. This helper is
+ * the Sandbox-only guard, and it is not deprecated. For a Production project in
+ * device-owned mode, use {@link hostedRelayDeviceOwnedIdentity}. For a
+ * Production project in application-bound mode, supply a `getIdentityAssertion`
+ * callback that returns an assertion from your backend.
+ *
+ * The key is stored under the metadata key
+ * `'hostedRelay.sandboxIdentity.v1:'` followed by the base64 SHA-256 digest of
+ * the publishable key. This is a persisted format that both helpers keep. A
+ * new prefix would orphan existing Sandbox accounts. So for the same store and
+ * publishable key, both helpers sign with the same key.
+ *
+ * @example
+ * ```ts
+ * const storage = inMemoryStore();
+ * const client = await createHostedSignalProtocolClient({
+ *   adapters: { storage },
+ *   hosted: {
+ *     relayUrl: process.env.OPEN_E2EE_RELAY_URL!,
+ *     getIdentityAssertion: hostedRelaySandboxIdentity(storage),
+ *   },
+ * });
+ * ```
+ */
+export function hostedRelaySandboxIdentity(
+  storage: SignalProtocolLocalStore,
+): GetIdentityAssertion {
+  return deviceOwnedIdentity(storage, SANDBOX_SCOPE);
+}
+
+/**
+ * Creates the identity assertion callback for a device-owned account in a
+ * Sandbox environment, or in a Production environment that is configured in
+ * device-owned identity mode.
+ *
+ * The callback signs a short-lived device-owned assertion with an Ed25519 key
+ * that it keeps in `storage`. It creates the key on the first call and uses the
+ * same key after that, so the Relay returns the same account each time the
+ * device registers. The key is separate for each publishable key. Pass the
+ * same store as `adapters.storage`. The key never leaves the store. A device
+ * that loses the store loses the account, and its next registration creates a
+ * new account: the Relay refuses device-owned recovery. Another device of the
+ * account joins through device linking.
+ *
+ * The assertion is a compact JWS. Its protected header is
+ * `{ alg: 'EdDSA', typ: 'JWT', jwk: { kty: 'OKP', crv: 'Ed25519', x } }`,
+ * where `x` is the base64url public key. Its claims are:
+ *
+ * - `iss`: `'https://relay.open-e2ee.dev/device-owned'`.
+ * - `aud`: the publishable key of the request.
+ * - `sub`: the RFC 7638 SHA-256 thumbprint of the embedded JWK, base64url.
+ * - `iat` and `nbf`: the issue time in seconds. `exp`: `iat + 300`.
+ * - `jti`: a new UUID for each assertion.
+ * - `purpose`: `'register'`. `assurance`: `'normal'`.
+ *   `token_use`: `'identity'`.
+ *
+ * The callback rejects a request for an environment other than Sandbox or
+ * Production, for recovery, for refresh or provider migration, or for recent or
+ * step-up assurance. It creates no key for a request that it rejects.
+ *
+ * The Production project must be configured in device-owned identity mode. A
+ * project in application-bound mode refuses this assertion with
+ * `ASSERTION_INVALID`. For that mode, supply a `getIdentityAssertion` callback
+ * that returns an assertion from your backend.
+ *
+ * The key is stored under the metadata key
+ * `'hostedRelay.sandboxIdentity.v1:'` followed by the base64 SHA-256 digest of
+ * the publishable key. This is a persisted format that both helpers keep. A
+ * new prefix would orphan existing Sandbox accounts. So for the same store
+ * and publishable key, this helper and {@link hostedRelaySandboxIdentity} sign
+ * with the same key, and the Relay returns the same account.
+ *
+ * @example
+ * ```ts
+ * const storage = inMemoryStore();
+ * const client = await createHostedSignalProtocolClient({
+ *   adapters: { storage },
+ *   hosted: {
+ *     relayUrl: process.env.OPEN_E2EE_RELAY_URL!,
+ *     getIdentityAssertion: hostedRelayDeviceOwnedIdentity(storage),
+ *   },
+ * });
+ * ```
+ */
+export function hostedRelayDeviceOwnedIdentity(
+  storage: SignalProtocolLocalStore,
+): GetIdentityAssertion {
+  return deviceOwnedIdentity(storage, DEVICE_OWNED_SCOPE);
 }
