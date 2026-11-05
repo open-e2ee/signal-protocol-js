@@ -87,6 +87,7 @@ export {
   createHostedSignalProtocolClient,
   createSignalProtocolClient,
   createSignalProtocolClientConfig,
+  hostedRelayDeviceOwnedIdentity,
   hostedRelayPresence,
   hostedRelaySandboxIdentity,
   hostedRelayWakePresence,

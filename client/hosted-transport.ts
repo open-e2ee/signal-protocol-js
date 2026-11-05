@@ -96,7 +96,7 @@ import {
   HostedAnonymousDeliveryError,
   decodeHostedAnonymousEnvelope,
 } from "./hosted-anonymous-delivery";
-import { createAdapterRelayFanOut } from "./relay-work";
+import { createAdapterRelayFanOut, rethrowRelayWorkStopped } from "./relay-work";
 import { withRelayRequestDeadline } from "./relay-request-deadline";
 import type { BoundedFanOut } from "../utils/bounded-fan-out";
 import {
@@ -117,6 +117,7 @@ import {
   declareRefusesRemovedDevices,
   markRelayDeviceRefusal,
 } from "./relay-device-refusal";
+import { onePeriodClosedRetry } from "./relay-period-close";
 import {
   declareComparesDeviceSets,
   deviceSetRefusal,
@@ -793,6 +794,8 @@ export class HostedRelayHttpTransport
       (clientMessageId, request) =>
         admitRepeatRequest(this, clientMessageId, request),
       relayProtocolVersion,
+      ({ accountAddress, deviceId, generation }) =>
+        this.destinationRecovered(accountAddress, deviceId, generation, true),
     );
   }
 
@@ -1131,6 +1134,37 @@ export class HostedRelayHttpTransport
       this.destinationLookups.set(accountAddress, lookup);
     }
     return lookup;
+  }
+
+  /**
+   * The Relay refused a post to this mailbox generation as NOT_FOUND. True
+   * when a new read of the device directory lists the device at another
+   * mailbox generation: a recovery replaced the device, so the refusal is
+   * the stale-device refusal of the posted generation. False when the read
+   * fails, or the directory does not list the device, or lists it at the
+   * posted generation. The read refills the destination cache, so a repost
+   * goes to the listed generation. An identified post runs in a slot of the
+   * relay request bound, so it reads without a slot. A sealed post holds no
+   * slot, so it reads under the bound.
+   */
+  private async destinationRecovered(
+    userId: string,
+    deviceId: number,
+    postedGeneration: number,
+    underBound: boolean,
+  ): Promise<boolean> {
+    try {
+      await (underBound
+        ? this.fanOut.request(() => this.directory(userId))
+        : this.directory(userId));
+    } catch (error) {
+      rethrowRelayWorkStopped(error);
+      return false;
+    }
+    const listed = this.destinationGenerations.get(
+      `${userId}\0${String(deviceId)}`,
+    );
+    return listed !== undefined && listed !== postedGeneration;
   }
 
   private async directory(
@@ -1909,7 +1943,7 @@ export class HostedRelayHttpTransport
             },
           ];
     let value: unknown;
-    let attempts = 0;
+    let uncertainRepeat = false;
     // Each repeat request meets the checks that the owner of the post
     // registered under its message ID, and names its device and the answer
     // that it follows.
@@ -1919,10 +1953,16 @@ export class HostedRelayHttpTransport
         deviceId: envelope.targetDeviceId,
         after,
       });
+    const repeatAfterUncertain = async (): Promise<void> => {
+      await beforeRepeat("uncertain")();
+      uncertainRepeat = true;
+    };
+    // A PERIOD_CLOSED answer proves that the Relay stored nothing, so the
+    // same request goes once more, in the next period.
+    const periodClosedRetry = onePeriodClosedRetry();
     try {
-      value = await withOneUncertainRetry(envelope.deliveryClass, () => {
-        attempts++;
-        return this.authenticatedPost("/delivery/send", {
+      value = await withOneUncertainRetry(envelope.deliveryClass, () =>
+        periodClosedRetry(() => this.authenticatedPost("/delivery/send", {
           contentKind: envelope.contentKind ?? "message",
           deliveryClass: envelope.deliveryClass,
           destination: {
@@ -1939,13 +1979,13 @@ export class HostedRelayHttpTransport
             ? {}
             : { recipientRegistrationId: envelope.recipientRegistrationId }),
           ...(deviceSets === undefined ? {} : { deviceSets }),
-        }, beforeRepeat("token"));
-      }, beforeRepeat("uncertain"));
+        }, beforeRepeat("token")), beforeRepeat("period-closed")),
+      repeatAfterUncertain);
     } catch (error) {
       // After an uncertain answer, the first request can have stored the
       // copy, so the answer to the repeat tells nothing about the post.
       const answer = <T>(failure: T): T =>
-        attempts > 1 ? markAfterRepeatedRequest(failure) : failure;
+        uncertainRepeat ? markAfterRepeatedRequest(failure) : failure;
       const device = {
         userId: envelope.targetUserId,
         deviceId: envelope.targetDeviceId,
@@ -1957,31 +1997,59 @@ export class HostedRelayHttpTransport
           throw answer(markDeviceSetRefusal(error, refusal));
         }
       }
-      if (
-        error instanceof HostedRelayHttpError &&
-        error.code === "STALE_DEVICE"
-      ) {
-        throw answer(
+      const staleDevice = (stale: HostedRelayHttpError) =>
+        answer(
           markRelayDeviceRefusal(
-            new HostedRelayHttpError(error.status, error.code, error.message, {
+            new HostedRelayHttpError(stale.status, "STALE_DEVICE", stale.message, {
               data: {
                 code: "STALE_DEVICE",
-                message: error.message,
+                message: stale.message,
                 reason: "device_reinstalled",
                 staleDevices: [envelope.targetDeviceId],
               },
-              retryable: error.retryable,
+              retryable: stale.retryable,
             }),
             { code: "STALE_DEVICE", ...device },
           ),
         );
+      if (
+        error instanceof HostedRelayHttpError &&
+        error.code === "STALE_DEVICE"
+      ) {
+        throw staleDevice(error);
       }
       // Only the Relay's own error body names NOT_FOUND. A 404 without it
       // fails to parse or carries no code, so it is not a device refusal.
-      if (error instanceof HostedRelayHttpError && error.code === "NOT_FOUND")
+      if (error instanceof HostedRelayHttpError && error.code === "NOT_FOUND") {
+        // A recovery retired the posted generation. As for a stale device,
+        // the send archives the session and posts to the recovered device.
+        // A declared post gets the declared STALE_DEVICE that the Relay
+        // gives for a changed registration.
+        if (
+          await this.destinationRecovered(
+            envelope.targetUserId,
+            envelope.targetDeviceId,
+            generation,
+            false,
+          )
+        ) {
+          const stale = staleDevice(error);
+          throw deviceSets === undefined
+            ? stale
+            : markDeviceSetRefusal(stale, {
+                kind: "stale",
+                accounts: [
+                  {
+                    userId: envelope.targetUserId,
+                    staleDeviceIds: [envelope.targetDeviceId],
+                  },
+                ],
+              });
+        }
         throw answer(
           markRelayDeviceRefusal(error, { code: "NOT_FOUND", ...device }),
         );
+      }
       throw answer(error);
     }
     if (
@@ -2006,7 +2074,7 @@ export class HostedRelayHttpTransport
         typeof value.enqueuedAt === "number"
           ? value.enqueuedAt
           : envelope.timestamp,
-      ...(typeof value.duplicate === "boolean" && attempts === 1
+      ...(typeof value.duplicate === "boolean" && !uncertainRepeat
         ? { duplicate: value.duplicate }
         : {}),
       ...(typeof value.expiresAt === "number"
@@ -2055,15 +2123,7 @@ export class HostedRelayHttpTransport
           `${identifiedEndpoint(this.connection)}/mailbox/connect`,
           [["publishableKey", this.connection.publishableKey]],
         );
-        return {
-          url,
-          token,
-          renewAt:
-            (tokenExpiration(token, this.session) -
-              DEVICE_TOKEN_REFRESH_SECONDS) *
-            1_000,
-          refreshed: token !== previous,
-        };
+        return { url, token, refreshed: token !== previous };
       },
       isConclusiveRefusal,
       decodeDurable: (message) => this.incomingEnvelope(message) as Envelope,

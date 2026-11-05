@@ -35,7 +35,7 @@ The relay never needs message plaintext or device private keys.
 
 The OpenE2EE Signal Protocol SDK implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
-Version `14.0.x`. Public APIs and persisted formats follow semantic versioning.
+Version `14.1.x`. Public APIs and persisted formats follow semantic versioning.
 
 ## Install
 
@@ -76,11 +76,12 @@ const signal = await createHostedSignalProtocolClient({
 });
 ```
 
-`hostedRelaySandboxIdentity` works only in a Sandbox environment. In production,
-your identity provider signs the assertion: pass a `getIdentityAssertion`
-callback that returns a short-lived assertion for the signed-in user. The
-[identity guide](https://docs.open-e2ee.dev/relay/identity) describes the
-production setup.
+`hostedRelaySandboxIdentity` works only in a Sandbox environment. A production
+project in device-owned mode uses `hostedRelayDeviceOwnedIdentity(storage)`. A
+production project in application-bound mode needs a `getIdentityAssertion`
+callback that returns a short-lived assertion for the signed-in user from your
+backend. The [identity guide](https://docs.open-e2ee.dev/relay/identity)
+describes the production setup.
 
 Register a handler before you start incoming delivery. Persist each message
 before the handler resolves, and use its ID to make repeated writes idempotent.

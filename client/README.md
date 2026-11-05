@@ -36,9 +36,11 @@ await signal.encryptMessage(bob, 'hello');
 Run `oe new` in the application directory. It creates the Relay project and
 its Sandbox environment, and it writes the connection URL to `.env.local`. In
 a Sandbox environment, `hostedRelaySandboxIdentity(storage)` supplies
-`getIdentityAssertion` from a key in the device-local store. In production,
-supply `getIdentityAssertion` from your authentication integration. It returns
-a short-lived signed assertion for the signed-in user.
+`getIdentityAssertion` from a key in the device-local store. In a production
+project in device-owned mode, `hostedRelayDeviceOwnedIdentity(storage)`
+supplies it from the same kind of key. In a production project in
+application-bound mode, supply `getIdentityAssertion` from your backend. It
+returns a short-lived signed assertion for the signed-in user.
 
 The hosted factory registers the device and publishes its public prekeys.
 The published SDK contains client code and transport contracts. Relay server

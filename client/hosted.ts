@@ -99,7 +99,10 @@ export type {
   HostedRelayWakePresence,
 } from './hosted-presence';
 export type { HostedRelayProfileKeys } from './hosted-profile-keys';
-export { hostedRelaySandboxIdentity } from './hosted-sandbox-identity';
+export {
+  hostedRelayDeviceOwnedIdentity,
+  hostedRelaySandboxIdentity,
+} from './hosted-sandbox-identity';
 export type {
   HostedRelayPushPlatform,
   HostedRelayPushProfile,
@@ -1527,8 +1530,11 @@ export async function linkHostedRelayDevice(
  * account, registered device, scope, and authenticated transport used by the client.
  *
  * In a Sandbox environment, {@link hostedRelaySandboxIdentity} supplies the
- * assertion. Production needs a callback for its configured application-bound
- * or device-owned identity mode. The Sandbox helper cannot serve Production.
+ * assertion. The Sandbox helper cannot serve Production. A Production project
+ * in device-owned identity mode uses {@link hostedRelayDeviceOwnedIdentity}. A
+ * Production project in application-bound mode needs an application callback
+ * that returns an assertion from your backend. Recovery and provider migration
+ * need an identity provider that authenticates the user.
  *
  * @example
  * ```ts

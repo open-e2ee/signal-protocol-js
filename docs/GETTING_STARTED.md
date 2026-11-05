@@ -37,10 +37,13 @@ Production supports application-bound and explicitly configured device-owned
 accounts. For application-bound accounts, `getIdentityAssertion` returns a
 short-lived Relay-specific assertion from your backend after it verifies the
 server session and current application membership.
+
 Device-owned accounts prove possession of a persistent account key. They do
 not bind to an application login, and provider sign-in cannot recover a lost
-account key. The SDK does not supply an identity provider or a relay server
-implementation. See [identity and authentication](https://docs.open-e2ee.dev/relay/identity)
+account key. For device-owned accounts, pass
+`hostedRelayDeviceOwnedIdentity(storage)` as `getIdentityAssertion`. The SDK
+does not supply an identity provider or a relay server implementation.
+See [identity and authentication](https://docs.open-e2ee.dev/relay/identity)
 for Production configuration.
 
 For a tested backend path, see the [Better Auth recipe](https://docs.open-e2ee.dev/relay/better-auth)
