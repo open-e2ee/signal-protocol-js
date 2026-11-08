@@ -266,7 +266,7 @@ Remote party's protocol address (userId:deviceId)
 
 ##### prekeyBundle
 
-[`RelayPreKeyBundle`](RelayPreKeyBundle.md)
+[`PreKeyBundle`](PreKeyBundle.md)
 
 Remote user's prekey bundle
 

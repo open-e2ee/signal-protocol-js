@@ -81,7 +81,7 @@ export function deserializeSenderCertificate(bytes: Uint8Array): SenderCertifica
       !inner.senderUuid ||
       !inner.identityKey.length ||
       !inner.signerCertificate.length ||
-      inner.relayScopeId.length !== 16
+      inner.signalRelayScopeId.length !== 16
     ) {
       throw new Error('missing required fields');
     }
@@ -124,7 +124,7 @@ export function deserializeSenderCertificate(bytes: Uint8Array): SenderCertifica
       senderIdentityKey: bytesToBase64(inner.identityKey),
       expires: inner.expires,
       senderE164: inner.senderE164,
-      relayScopeId: bytesToBase64(inner.relayScopeId),
+      relayScopeId: bytesToBase64(inner.signalRelayScopeId),
       signer,
       certificateBytes: bytesToBase64(outer.certificate),
       signature: bytesToBase64(outer.signature),

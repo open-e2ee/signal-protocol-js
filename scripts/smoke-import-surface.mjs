@@ -77,7 +77,7 @@ const { parseSync } = createRequire(import.meta.url)('@swc/core');
  */
 const PLATFORM_BOUND = new Map([
   ['./convex.config', 'convex — Convex component definition, loaded by the Convex CLI'],
-  ['./remote/relay/convex', 'convex — Convex-backed relay adapter'],
+  ['./remote/signal-relay/convex', 'convex — Convex-backed relay adapter'],
   ['./remote/object-store/convex-r2/server', '@convex-dev/r2 — Convex R2 server half'],
   ['./hooks', 'react — React hooks, unusable without a renderer'],
   ['./local/store/expo', 'expo-sqlite — Expo SQLite-backed store'],
@@ -102,7 +102,7 @@ const TYPE_BOUND = new Map([
   ['./profile', 'convex — the profile service operations take a Convex client and API'],
   ['./remote/object-store/convex-r2', 'convex — Convex R2 client half'],
   ['./remote/object-store/convex-r2/server', 'convex — Convex R2 server half'],
-  ['./remote/relay/convex', 'convex — Convex-backed relay adapter'],
+  ['./remote/signal-relay/convex', 'convex — Convex-backed relay adapter'],
 ]);
 
 /** The compiler options of a strict consumer that checks every declaration file. */
@@ -133,6 +133,26 @@ const CONSUMER_TSCONFIG = {
 const KNOWN_DEFECTS = new Map([]);
 
 /**
+ * Deprecated subpaths, each with the subpath that replaces it.
+ *
+ * A deprecated subpath names the same files as its replacement. Thus both
+ * specifiers load one module, and a class keeps one identity for
+ * `instanceof`. The tables in this script name only the replacement, and a
+ * deprecated subpath takes the line of its replacement. The probe checks each
+ * pair: the two entries name the same files, both specifiers resolve to one
+ * module URL, and both imports return one namespace object. The public export
+ * withholds the Convex and memory entries, so there a pair with neither entry
+ * in the export map is skipped. SDK 15.0.0 removes the deprecated subpaths.
+ */
+const DEPRECATED_SUBPATHS = new Map([
+  ['./remote/relay', './remote/signal-relay'],
+  ['./remote/relay/convex', './remote/signal-relay/convex'],
+  ['./remote/relay/memory', './remote/signal-relay/memory'],
+  ['./remote/relay/types', './remote/signal-relay/types'],
+]);
+const canonicalSubpath = (subpath) => DEPRECATED_SUBPATHS.get(subpath) ?? subpath;
+
+/**
  * The guide of each store and vault entry, and of each entry that loads an
  * optional peer.
  *
@@ -145,7 +165,7 @@ const KNOWN_DEFECTS = new Map([]);
  * entry loads is stale.
  */
 const ENTRY_GUIDES = new Map([
-  ['./convex.config', 'remote/relay/convex/component/README.md'],
+  ['./convex.config', 'remote/signal-relay/convex/component/README.md'],
   ['./device', 'device/README.md'],
   ['./device/constants', 'device/README.md'],
   ['./device/device-id', 'device/README.md'],
@@ -169,7 +189,7 @@ const ENTRY_GUIDES = new Map([
   ['./local/vault/react-native-keychain', 'local/vault/README.md'],
   ['./remote/object-store/convex-r2', 'remote/object-store/convex-r2/README.md'],
   ['./remote/object-store/convex-r2/server', 'remote/object-store/convex-r2/server.md'],
-  ['./remote/relay/convex', 'remote/relay/convex/README.md'],
+  ['./remote/signal-relay/convex', 'remote/signal-relay/convex/README.md'],
 ]);
 const isGuidedEntry = (subpath) => subpath.startsWith('./local/');
 const INSTALL_COMMAND = /^\s*(?:npm install|npx expo install)\s+(.+)$/gm;
@@ -354,7 +374,7 @@ function checkEntryGuides(packageRoot, peers) {
   };
   const problems = [];
   for (const subpath of subpaths) {
-    if (ENTRY_GUIDES.has(subpath)) continue;
+    if (ENTRY_GUIDES.has(canonicalSubpath(subpath))) continue;
     if (isGuidedEntry(subpath) || peersLoadedFrom(entryFileOf(subpath), peers).size > 0) {
       problems.push(`${specifierFor(subpath)} has no guide in ENTRY_GUIDES.`);
     }
@@ -395,6 +415,100 @@ function checkEntryGuides(packageRoot, peers) {
     }
   }
   return problems;
+}
+
+/**
+ * Checks each deprecated subpath against its replacement in the packed package
+ * that the fixture in `fixtureDir` installs.
+ */
+function checkDeprecatedSubpaths(fixtureDir) {
+  const problems = [];
+  const pairs = [];
+  for (const [deprecated, replacement] of DEPRECATED_SUBPATHS) {
+    const hasDeprecated = Object.hasOwn(packageJson.exports, deprecated);
+    const hasReplacement = Object.hasOwn(packageJson.exports, replacement);
+    if (!hasDeprecated && !hasReplacement) continue;
+    if (!hasDeprecated || !hasReplacement) {
+      problems.push(
+        `${hasDeprecated ? replacement : deprecated} is not in the export map, but ` +
+          `${hasDeprecated ? deprecated : replacement} is.`
+      );
+      continue;
+    }
+    const left = JSON.stringify(packageJson.exports[deprecated]);
+    const right = JSON.stringify(packageJson.exports[replacement]);
+    if (left !== right) {
+      problems.push(`${deprecated} names ${left}, but its replacement ${replacement} names ${right}.`);
+      continue;
+    }
+    pairs.push([deprecated, specifierFor(deprecated), specifierFor(replacement)]);
+  }
+  for (const [subpath, target] of Object.entries(packageJson.exports)) {
+    if (DEPRECATED_SUBPATHS.has(subpath) || subpath === './package.json') continue;
+    for (const [other, otherTarget] of Object.entries(packageJson.exports)) {
+      if (other <= subpath || DEPRECATED_SUBPATHS.has(other)) continue;
+      if (JSON.stringify(target) === JSON.stringify(otherTarget)) {
+        problems.push(`${subpath} and ${other} name the same files, and neither is in DEPRECATED_SUBPATHS.`);
+      }
+    }
+  }
+
+  writeFileSync(
+    join(fixtureDir, 'deprecated-probe.mjs'),
+    `import { writeFileSync } from 'node:fs';
+
+const pairs = ${JSON.stringify(pairs, null, 2)};
+
+for (const [subpath, deprecated, replacement] of pairs) {
+  const record = { subpath, resolved: false, loaded: null };
+  try {
+    record.resolved = import.meta.resolve(deprecated) === import.meta.resolve(replacement);
+  } catch (error) {
+    record.error = error instanceof Error ? error.message.split('\\n')[0] : String(error);
+  }
+  try {
+    const [left, right] = await Promise.all([import(deprecated), import(replacement)]);
+    record.loaded = left === right;
+  } catch {
+    /* A platform-bound entry cannot load without its peer; resolution still holds. */
+  }
+  writeFileSync(1, JSON.stringify(record) + '\\n');
+}
+`
+  );
+  const probe = spawnSync(process.execPath, ['deprecated-probe.mjs'], {
+    cwd: fixtureDir,
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  const records = probe.stdout
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line));
+  if (records.length !== pairs.length) {
+    problems.push(
+      `The deprecated subpath probe reported ${records.length} of ${pairs.length} pairs.\n` +
+        [probe.stdout, probe.stderr].filter(Boolean).join('\n')
+    );
+  }
+  for (const record of records) {
+    const replacement = DEPRECATED_SUBPATHS.get(record.subpath);
+    if (!record.resolved) {
+      problems.push(
+        `${specifierFor(record.subpath)} does not resolve to the module of ` +
+          `${specifierFor(replacement)}${record.error ? `: ${record.error}` : '.'}`
+      );
+    } else if (record.loaded === false) {
+      problems.push(
+        `${specifierFor(record.subpath)} and ${specifierFor(replacement)} load two namespace objects.`
+      );
+    }
+  }
+  return {
+    problems,
+    checked: records.filter((record) => record.resolved).length,
+    loaded: records.filter((record) => record.loaded === true).length,
+  };
 }
 
 /*
@@ -489,6 +603,8 @@ for (const [subpath, specifier] of specifiers) {
     );
   }
 
+  const deprecatedPairs = checkDeprecatedSubpaths(fixtureDir);
+
   /*
    * One compile per entry, so that a failure names the entry that reaches the
    * broken declaration file.
@@ -515,7 +631,9 @@ for (const [subpath, specifier] of specifiers) {
   const failures = [];
   const stale = [];
   for (const result of results) {
-    const exempted = PLATFORM_BOUND.has(result.subpath) || KNOWN_DEFECTS.has(result.subpath);
+    const exempted =
+      PLATFORM_BOUND.has(canonicalSubpath(result.subpath)) ||
+      KNOWN_DEFECTS.has(canonicalSubpath(result.subpath));
     if (!result.ok && !exempted) {
       failures.push(result);
     } else if (result.ok && exempted) {
@@ -524,10 +642,10 @@ for (const [subpath, specifier] of specifiers) {
   }
 
   const typeFailures = typeResults.filter(
-    (result) => !result.ok && !TYPE_BOUND.has(result.subpath)
+    (result) => !result.ok && !TYPE_BOUND.has(canonicalSubpath(result.subpath))
   );
   const staleTypeBound = typeResults
-    .filter((result) => result.ok && TYPE_BOUND.has(result.subpath))
+    .filter((result) => result.ok && TYPE_BOUND.has(canonicalSubpath(result.subpath)))
     .map((result) => result.subpath);
 
   const problems = [];
@@ -554,6 +672,14 @@ for (const [subpath, specifier] of specifiers) {
         `their peer:\n` +
         staleTypeBound.map((subpath) => `  - ${specifierFor(subpath)}`).join('\n') +
         `\n\n  Remove them; the exemption is no longer true.`
+    );
+  }
+  if (deprecatedPairs.problems.length > 0) {
+    problems.push(
+      `${deprecatedPairs.problems.length} deprecated subpath problem(s):\n` +
+        deprecatedPairs.problems.map((problem) => `  - ${problem}`).join('\n') +
+        `\n\n  A deprecated subpath names the same files as its replacement, so that ` +
+        `both specifiers load one module.`
     );
   }
   const guideProblems = checkEntryGuides(join(fixtureNodeModules, ...nameSegments), excluded);
@@ -584,7 +710,7 @@ for (const [subpath, specifier] of specifiers) {
         `without their peer:\n` +
         stale
           .map((subpath) => {
-            const list = KNOWN_DEFECTS.has(subpath) ? 'KNOWN_DEFECTS' : 'PLATFORM_BOUND';
+            const list = KNOWN_DEFECTS.has(canonicalSubpath(subpath)) ? 'KNOWN_DEFECTS' : 'PLATFORM_BOUND';
             return `  - ${specifierFor(subpath)} (${list})`;
           })
           .join('\n') +
@@ -596,10 +722,10 @@ for (const [subpath, specifier] of specifiers) {
     throw new Error(problems.join('\n\n'));
   }
 
-  const byDesign = results.filter((result) => PLATFORM_BOUND.has(result.subpath)).length;
-  const deferred = results.filter((result) => KNOWN_DEFECTS.has(result.subpath)).length;
-  const guided = subpaths.filter((subpath) => ENTRY_GUIDES.has(subpath)).length;
-  const typeBound = typeResults.filter((result) => TYPE_BOUND.has(result.subpath)).length;
+  const byDesign = results.filter((result) => PLATFORM_BOUND.has(canonicalSubpath(result.subpath))).length;
+  const deferred = results.filter((result) => KNOWN_DEFECTS.has(canonicalSubpath(result.subpath))).length;
+  const guided = subpaths.filter((subpath) => ENTRY_GUIDES.has(canonicalSubpath(subpath))).length;
+  const typeBound = typeResults.filter((result) => TYPE_BOUND.has(canonicalSubpath(result.subpath))).length;
   console.log(
     `Import surface: ${results.length - byDesign - deferred} of ${results.length} export ` +
       `subpaths load with no optional peer dependency installed; ${byDesign} are ` +
@@ -613,6 +739,10 @@ for (const [subpath, specifier] of specifiers) {
   console.log(
     `Entry guides: the guides of ${guided} entries name ` +
       `each optional peer that the entry loads.`
+  );
+  console.log(
+    `Deprecated subpaths: ${deprecatedPairs.checked} of ${DEPRECATED_SUBPATHS.size} resolve ` +
+      `to the module of their replacement; ${deprecatedPairs.loaded} of them also load it.`
   );
 } finally {
   rmSync(fixtureRoot, { recursive: true, force: true });

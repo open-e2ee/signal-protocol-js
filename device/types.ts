@@ -263,7 +263,7 @@ export interface RetryConfig {
 /**
  * Relay channel configuration
  */
-export interface RelayConfig extends ConnectionConfig {
+export interface SignalProtocolRelayConfig extends ConnectionConfig {
   createChannel: (channelId: string) => Promise<void>;
   uploadData: (channelId: string, data: string) => Promise<void>;
   downloadData: (channelId: string) => Promise<{ status: string; data: string | null }>;
@@ -300,3 +300,7 @@ export const TRANSFER_PROTOCOL_VERSION = 1;
  * Backup format version
  */
 export const BACKUP_FORMAT_VERSION = 2;
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `SignalProtocolRelayConfig`. SDK 15.0.0 removes this name. */
+export type RelayConfig = SignalProtocolRelayConfig;

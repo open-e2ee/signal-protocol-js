@@ -40,7 +40,7 @@ const storage: SignalProtocolLocalStore = appProtocolStore;
 
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay },
+  adapters: { storage, signalProtocolRelay },
 });
 ```
 
@@ -87,10 +87,10 @@ delivery, key rotation, and encrypted group coordination.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import type { SignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
+import type { SignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/signal-relay";
 
 // An application-owned client transport to an authenticated backend.
-const relay: SignalProtocolRelayServer = appRelayTransport;
+const signalProtocolRelay: SignalProtocolRelayServer = appSignalProtocolRelayTransport;
 ```
 
 The hosted factory configures the OpenE2EE Signal Protocol Relay transport.
@@ -128,7 +128,7 @@ The server remains responsible for atomic one-time-key consumption.
 
 The relay stores public protocol material, ciphertext, and required routing
 metadata. It must not require device private keys or decrypted message content.
-See the [relay guide](../remote/relay/README.md).
+See the [relay guide](../remote/signal-relay/README.md).
 
 ## `SignalProtocolRemoteObjectStore`
 
@@ -175,7 +175,7 @@ media lifecycle callbacks and client hooks at the client boundary:
 ```ts
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay, remoteObjectStore },
+  adapters: { storage, signalProtocolRelay, remoteObjectStore },
   media: {
     preparedUploads: appPreparedUploads,
     maxPreparedUploadBytes: appUploadBudgetBytes,

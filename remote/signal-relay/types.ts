@@ -1,0 +1,1065 @@
+/**
+ * Signal Protocol relay interfaces for remote infrastructure.
+ *
+ * These are the DI contracts for the remote services of a relay:
+ * - SignalProtocolRelayServer: Envelope delivery, device registry, prekey management
+ *
+ * @see docs/INTERFACES.md for full documentation
+ */
+
+// Import PreKeyBundle from keys module (uses branded types)
+import type { PreKeyBundle, IdentityType, CompositeIdentityV1 } from '../../keys/types';
+import type { RetryRequest } from '../../internal/sesame/types';
+import { ContentHint } from '../../types/messages';
+import type { GroupAuthorization, GroupServer } from '../../internal/groups/manager';
+
+// Re-export for consumers of this module
+export {};
+export type { PreKeyBundle, RetryRequest, IdentityType, CompositeIdentityV1 };
+
+/** Device metadata used when attaching a device to an account identity. */
+export interface AccountIdentityProvisioning {
+  userId: string;
+  deviceId: number;
+  identity: CompositeIdentityV1;
+  registrationId: number;
+  identityType?: IdentityType;
+}
+
+/** Explicit account identity rotation guarded by the previously trusted tuple. */
+export interface AccountIdentityRotation extends AccountIdentityProvisioning {
+  expectedCurrentCommitment: Uint8Array;
+}
+
+/**
+ * Optional relay capability for the Group System.
+ *
+ * The trust root is intentionally absent: clients pin it out of band rather
+ * than discovering and trusting it from this runtime capability.
+ */
+export interface SignalProtocolRelayGroupServer {
+  /** Encrypted group-state transport. */
+  readonly server: GroupServer;
+  /** Issue an auth credential for the relay's authenticated account. */
+  issueAuthCredential(userId: string, authorityKeyId?: string): Promise<Uint8Array>;
+  /** Store the client-derived sealed-sender access key for the authenticated account. */
+  setUnidentifiedAccessKey(userId: string, accessKey: Uint8Array): Promise<void>;
+  /** Issue a profile-key credential from a blinded request for the authenticated account. */
+  issueProfileKeyCredential(userId: string, request: Uint8Array, authorityKeyId?: string): Promise<Uint8Array>;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// IKEYROTATIONSERVICE
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Public metadata for a reusable prekey. */
+export interface PreKeyMetadata {
+  keyId: number;
+  createdAt: number;
+  expiresAt: number;
+  publicKey: string;
+}
+
+/** Read-only inventory observations for an account, device, and identity type. */
+export interface PreKeyInventory {
+  ecSignedPreKey: PreKeyMetadata | null;
+  kemLastResortPreKey: PreKeyMetadata | null;
+  ecOneTimePreKeyCount: number;
+  kemOneTimePreKeyCount: number;
+}
+
+/** Metadata queries for independent key-rotation decisions. */
+export interface KeyRotationService {
+  /**
+   * Get EC signed prekey metadata for rotation checks and server key verification.
+   *
+   * @param userId - User ID
+   * @param deviceId - Device ID
+   * @param identityType - 'aci' or 'pni' (defaults to 'aci')
+   * @returns Metadata with timestamps and publicKey, or null if no key exists
+   */
+  getEcSignedPreKeyMetadata(
+    userId: string,
+    deviceId: number,
+    identityType?: IdentityType
+  ): Promise<{
+    keyId: number;
+    createdAt: number;
+    expiresAt: number;
+    publicKey: string;
+  } | null>;
+
+  /**
+   * Get KEM last-resort prekey metadata for rotation checks and server key verification.
+   *
+   * @param userId - User ID
+   * @param deviceId - Device ID
+   * @param identityType - 'aci' or 'pni' (defaults to 'aci')
+   * @returns Metadata with timestamps, publicKey, and keyId, or null if no key exists
+   */
+  getKemLastResortPreKeyMetadata(
+    userId: string,
+    deviceId: number,
+    identityType?: IdentityType
+  ): Promise<{
+    keyId: number;
+    createdAt: number;
+    expiresAt: number;
+    publicKey: string;
+  } | null>;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SIGNALPROTOCOLRELAYSERVER
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Client transport contract for encrypted envelope delivery.
+ *
+ * Responsibilities:
+ * - Envelope delivery (push to devices via real-time subscription)
+ * - Device registry (multi-device support, max 5 devices per user)
+ * - Prekey management (PQXDH key exchange)
+ *
+ * The hosted client configures this transport for the OpenE2EE Signal Protocol Relay.
+ *
+ * @example
+ * ```typescript
+ * const relay: SignalProtocolRelayServer = appSignalProtocolRelayTransport;
+ *
+ * // Subscribe to incoming envelopes
+ * const unsubscribe = relay.subscribe(userId, deviceId, (envelope) => {
+ *   // Decrypt and process
+ * });
+ *
+ * // Send encrypted envelope
+ * await relay.send({
+ *   targetUserId: 'bob',
+ *   targetDeviceId: 1,
+ *   senderUserId: 'alice',
+ *   senderDeviceId: 1,
+ *   ciphertext: encryptedBytes,
+ *   messageType: 'ciphertext',
+ * });
+ * ```
+ */
+export interface SignalProtocolRelayServer extends KeyRotationService {
+  /** Optional conforming Group System transport and issuance capability. */
+  readonly groupServer?: SignalProtocolRelayGroupServer;
+
+  // ════════════════════════════════════════════════════════════
+  // ENVELOPE DELIVERY
+  // Maps to: envelopes table
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Send encrypted envelope to a device.
+   * Server pushes to recipient via their subscription.
+   *
+   * @param envelope - Encrypted envelope with targeting info
+   * @returns Message ID and server timestamp (for delivery receipt matching).
+   * A relay that reports them also returns `duplicate` and `expiresAt`.
+   */
+  send(envelope: Envelope): Promise<{
+    messageId: string;
+    serverTimestamp: number;
+    /**
+     * True when the relay had already stored this message, so this call
+     * stored no new copy. Absent when the relay does not report it, as for an
+     * ephemeral message. Also absent when the call sent the request again
+     * after an uncertain answer, because the first request can have stored
+     * the copy that the repeat found.
+     */
+    duplicate?: boolean;
+    /**
+     * Time in milliseconds since the epoch at which the relay drops the stored
+     * copy that the device has not acknowledged. Absent when the relay does
+     * not report it, as for an ephemeral message.
+     */
+    expiresAt?: number;
+    /**
+     * True when the relay compared `Envelope.declaredDeviceIds` with the
+     * target account's device list and accepted the post. Absent for a post
+     * without a declaration, and from a relay that does not compare. A
+     * declared post that the relay accepts without this mark is delivered,
+     * and the client reports `SignalProtocolRelayProtocolError` with code
+     * `DEVICE_SET_UNCHECKED`.
+     */
+    deviceSetChecked?: boolean;
+    /**
+     * For a declared post to another account, true when the sender account
+     * has other devices that need a sync copy of the message. Absent when
+     * the relay does not report it.
+     */
+    needsSync?: boolean;
+  }>;
+
+  /**
+   * Subscribe to incoming envelopes for this device.
+   * Real-time push over the relay's subscription channel.
+   *
+   * @param userId - Current user ID
+   * @param deviceId - This device's ID (1-5)
+   * @param onEnvelope - Callback for each incoming envelope. A relay that waits
+   * for the returned promise acknowledges or accepts the envelope itself only
+   * when it resolves. A rejected promise that did not acknowledge a durable
+   * envelope with `markDelivered` leaves it in the mailbox, and the hosted
+   * transport gives it to this callback again on the next recovery pull or
+   * socket replay. The hosted transport continues with the next envelope at
+   * once and does not keep the order across a rejected envelope. It holds
+   * back no envelope, durable or ephemeral.
+   * @param options - Optional batching callbacks for notification coalescing
+   * @param options.onBatchStart - Called when first message in a batch arrives
+   * @param options.onBatchEnd - Called when batch is complete (idle detected)
+   * @returns Unsubscribe function
+   */
+  subscribe(
+    userId: string,
+    deviceId: number,
+    onEnvelope: (envelope: Envelope) => void | Promise<void>,
+    options?: {
+      onBatchStart?: () => void;
+      onBatchEnd?: () => void;
+    }
+  ): Unsubscribe;
+
+  /**
+   * The connection state of this device's envelope subscription.
+   *
+   * It reads `stopped` before `subscribe` and after its unsubscribe. The value
+   * is replaced on each transition and is stable between transitions.
+   *
+   * SDK 14 makes this member optional and requires the deprecated
+   * `relayConnectionState`. When an implementation supplies both, the SDK
+   * reads this member. SDK 15.0.0 requires this member.
+   */
+  readonly signalProtocolRelayConnectionState?: SignalProtocolRelayConnectionState;
+
+  /** @deprecated Use `signalProtocolRelayConnectionState`. SDK 15.0.0 requires `signalProtocolRelayConnectionState` and removes this name. */
+  readonly relayConnectionState: SignalProtocolRelayConnectionState;
+
+  /**
+   * Subscribe to transitions of `signalProtocolRelayConnectionState`.
+   *
+   * The listener receives each new state once. It does not receive the
+   * current state when it subscribes.
+   *
+   * SDK 14 makes this member optional and requires the deprecated
+   * `subscribeRelayConnectionState`. When an implementation supplies both,
+   * the SDK calls this member. SDK 15.0.0 requires this member.
+   *
+   * @param listener - Callback for each transition
+   * @returns Unsubscribe function
+   */
+  subscribeSignalProtocolRelayConnectionState?(
+    listener: (state: SignalProtocolRelayConnectionState) => void
+  ): Unsubscribe;
+
+  /** @deprecated Use `subscribeSignalProtocolRelayConnectionState`. SDK 15.0.0 requires `subscribeSignalProtocolRelayConnectionState` and removes this name. */
+  subscribeRelayConnectionState(
+    listener: (state: SignalProtocolRelayConnectionState) => void
+  ): Unsubscribe;
+
+  /**
+   * Mark envelope as delivered.
+   * Depending on privacy settings, may delete immediately or mark for cleanup.
+   *
+   * @param envelopeId - ID from send() or subscription
+   */
+  markDelivered(envelopeId: string): Promise<void>;
+
+  // ════════════════════════════════════════════════════════════
+  // DEVICE REGISTRY
+  // Maps to: devices table
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Get all active devices for a user.
+   * Used for multi-device fanout during encryption.
+   *
+   * @param userId - Target user ID
+   * @returns Array of device info (max 5 devices)
+   */
+  getDevices(userId: string): Promise<DeviceInfo[]>;
+
+  /**
+   * Register this device with the server.
+   *
+   * For first device: deviceId = 1 (PRIMARY_ID)
+   * For linked devices: server assigns 2-5
+   *
+   * @param userId - Current user ID
+   * @param device - Device registration info
+   * @returns Assigned device ID
+   */
+  registerDevice(userId: string, device: DeviceRegistration): Promise<number>;
+
+  /**
+   * Remove a device from the registry.
+   * Also deletes all prekeys and pending envelopes for that device.
+   *
+   * @param userId - User ID
+   * @param deviceId - Device to remove
+   */
+  removeDevice(userId: string, deviceId: number): Promise<void>;
+
+  // Push token management belongs to the relay implementation, keyed by device.
+
+  // ════════════════════════════════════════════════════════════
+  // IDENTITY KEYS
+  // Maps to: accounts table (account-level identity keys)
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Provision a device against the account-level canonical composite identity.
+   * Creates an absent identity, accepts an exact tuple match for linked
+   * devices, and rejects a different tuple without mutating device metadata.
+   */
+  provisionIdentityKey(request: AccountIdentityProvisioning): Promise<void>;
+
+  /**
+   * Rotate an existing account-level composite identity using compare-and-swap.
+   * A successful rotation invalidates prekeys for every linked device in the
+   * selected identity namespace.
+   */
+  rotateIdentityKey(request: AccountIdentityRotation): Promise<void>;
+
+  /**
+   * Get the account-level canonical composite identity.
+   *
+   * @param userId - Target user ID
+   * @param identityType - 'aci' or 'pni' (defaults to 'aci')
+   * @returns Composite identity or null if not found
+   */
+  getIdentityKey(userId: string, identityType?: IdentityType): Promise<CompositeIdentityV1 | null>;
+
+  // ════════════════════════════════════════════════════════════
+  // PREKEY MANAGEMENT (PQXDH)
+  // Maps to: ecPreKeys, ecSignedPreKeys, kemOneTimePreKeys, kemLastResortPreKeys
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Upload prekeys for this device (batch upload).
+   *
+   * Typically called:
+   * - On registration: 100 EC + 1 signed + 100 KEM + 1 last-resort
+   * - When count < 10: replenish one-time keys
+   *
+   * @param userId - User ID
+   * @param deviceId - Device ID
+   * @param keys - Array of prekeys to upload
+   * @param identityType - 'aci' or 'pni' (defaults to 'aci')
+   */
+  uploadPreKeys(
+    userId: string,
+    deviceId: number,
+    keys: PreKeyUpload[],
+    identityType?: IdentityType
+  ): Promise<void>;
+
+  /**
+   * Fetch prekey bundle for session establishment.
+   *
+   * Atomically consumes one EC and one KEM one-time prekey.
+   * Returns bundle with identity key, signed prekey, and optional one-time keys.
+   *
+   * @param userId - Target user ID
+   * @param deviceId - Target device ID
+   * @param fetcherUserId - Deprecated, ignored. The server derives fetcher identity from auth.
+   * @param identityType - 'aci' or 'pni' (defaults to 'aci')
+   * @returns Prekey bundle or null if device not found
+   */
+  fetchPreKeyBundle(
+    userId: string,
+    deviceId: number,
+    fetcherUserId?: string,
+    identityType?: IdentityType
+  ): Promise<PreKeyBundle | null>;
+
+  /**
+   * Get count of remaining one-time prekeys.
+   * Client should upload more when count < 10.
+   *
+   * @param userId - User ID
+   * @param deviceId - Device ID
+   * @param type - 'ec' for X25519, 'kem' for ML-KEM-1024
+   * @param identityType - 'aci' or 'pni' (defaults to 'aci')
+   */
+  getPreKeyCount(
+    userId: string,
+    deviceId: number,
+    type: 'ec' | 'kem',
+    identityType?: IdentityType
+  ): Promise<number>;
+
+  /**
+   * Read both signed-key records and one-time-key counts for one sync decision.
+   * This does not consume keys or reserve an inventory version.
+   * Adapters can use separate read transactions. Counts can change before upload.
+   * Request new observations after intervening work.
+   */
+  getPreKeyInventory(
+    userId: string,
+    deviceId: number,
+    identityType?: IdentityType
+  ): Promise<PreKeyInventory>;
+
+  /**
+   * Clear stale KEM one-time prekeys during recovery.
+   *
+   * Called when PREKEY_NOT_FOUND indicates Bob has stale one-time KEM keys
+   * on the server that he no longer has private keys for. Clearing them lets
+   * subsequent bundle fetches select a current one-time or last-resort key.
+   *
+   * @param userId - User ID
+   * @param deviceId - Device ID
+   * @returns Number of keys cleared
+   */
+  clearStaleKemPreKeys(
+    userId: string,
+    deviceId: number,
+    identityType?: IdentityType
+  ): Promise<{ cleared: number }>;
+
+  /**
+   * Publish the prekeys that one rotation decision calls for, in one
+   * publication.
+   *
+   * The adapter reads the inventory, hands it to `plan`, and publishes the
+   * uploads the plan returns through the same path as `uploadPreKeys`. An
+   * empty plan publishes nothing, so a check that finds nothing due costs one
+   * inventory read. The plan runs inside the adapter's publication fence, so
+   * a concurrent publication cannot separate the read from the write.
+   *
+   * @param userId - User ID
+   * @param deviceId - Device ID
+   * @param plan - Decides the uploads from the inventory the adapter read
+   * @param identityType - 'aci' or 'pni' (defaults to 'aci')
+   */
+  publishPlannedPreKeys(
+    userId: string,
+    deviceId: number,
+    plan: PreKeyPublicationPlan,
+    identityType?: IdentityType
+  ): Promise<void>;
+
+  // ════════════════════════════════════════════════════════════
+  // GROUP MEMBER RESOLUTION (Sender Keys)
+  //
+  // There is deliberately no getGroupMembers(groupId) endpoint: the relay
+  // keeps no server-side membership map (it would reveal the social graph
+  // the zero-knowledge group design hides). Membership is local-first.
+  // Callers resolve the roster from their own decrypted group state and
+  // pass member user IDs, which the relay expands to devices.
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Get all active devices for a user.
+   * Used for local-first member resolution (caller provides user IDs,
+   * relay resolves to device IDs).
+   */
+  getActiveDevices(userId: string): Promise<GroupMemberDevice[]>;
+
+  // ════════════════════════════════════════════════════════════
+  // GROUP STATE (encrypted, server cannot decrypt)
+  // Maps to: groups + groupChanges + groupSnapshots tables
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Create a new encrypted group on the server.
+   * Server stores and evaluates ciphertext structure but never decrypts it.
+   *
+   * @param groupId - 32-byte group identifier
+   * @param encryptedState - Serialized EncryptedGroup (opaque to server)
+   * @param authorization - ZK auth credential for anonymous group access
+   */
+  createGroupState(
+    groupId: Uint8Array,
+    encryptedState: Uint8Array,
+    authorization: GroupAuthorization
+  ): Promise<void>;
+
+  /**
+   * Get encrypted group state.
+   *
+   * @param groupId - 32-byte group identifier
+   * @param authorization - ZK auth credential for anonymous group access
+   * @param version - Optional exact historical version for a race-safe baseline
+   * @returns Encrypted state + version, or null if the group/version is not found
+   */
+  getGroupState(
+    groupId: Uint8Array,
+    authorization: GroupAuthorization,
+    version?: number
+  ): Promise<{
+    encryptedState: Uint8Array;
+    version: number;
+    /** S14 signature over groupId, version, and the exact encryptedState bytes. */
+    baselineSignature: Uint8Array;
+  } | null>;
+
+  /**
+   * Get the reduced invite-link projection after independent password
+   * verification. This response never includes member lists.
+   */
+  getGroupJoinInfo(
+    groupId: Uint8Array,
+    inviteLinkPassword: Uint8Array,
+    authorization: GroupAuthorization
+  ): Promise<{
+    encryptedJoinInfo: Uint8Array;
+    version: number;
+  } | null>;
+
+  /**
+   * Get one page of group change log entries after a given version.
+   * Used for incremental state synchronization.
+   *
+   * Authorization runs at the `fromVersion` snapshot, and the
+   * requester must be a member there. Serve through the first transition
+   * that makes the requester unreadable, inclusive, and do not serve later
+   * transitions under that request. A page cut for size sets `hasMore`.
+   * The client resumes from the last served version.
+   *
+   * @param groupId - 32-byte group identifier
+   * @param fromVersion - Fetch changes with version > fromVersion
+   * @param authorization - ZK auth credential for anonymous group access
+   * @returns One authorized contiguous change-log page in version order
+   */
+  getGroupChanges(
+    groupId: Uint8Array,
+    fromVersion: number,
+    authorization: GroupAuthorization
+  ): Promise<GroupChangePage>;
+
+  /**
+   * Submit a group change with optimistic concurrency control.
+   * Server validates expectedVersion === currentVersion before accepting.
+   *
+   * @param groupId - 32-byte group identifier
+   * @param expectedVersion - Expected current version (for optimistic concurrency)
+   * @param actions - Client-proposed serialized Actions
+   * @param inviteLinkPassword - Required independently for link-join submissions
+   * @param authorization - ZK auth credential for anonymous group access
+   * @returns Exact accepted Actions bytes and their server signature
+   * @throws ConflictError if expectedVersion !== currentVersion
+   */
+  submitGroupChange(
+    groupId: Uint8Array,
+    expectedVersion: number,
+    actions: Uint8Array,
+    inviteLinkPassword: Uint8Array,
+    authorization: GroupAuthorization
+  ): Promise<GroupChangeEntry>;
+
+  // ════════════════════════════════════════════════════════════
+  // ZK AUTH CREDENTIALS (anonymous group access)
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Issue a blinded auth credential for anonymous group access.
+   *
+   * @param userId - User requesting the credential
+   * @returns Blinded auth credential bytes
+   */
+  issueAuthCredential(userId: string): Promise<Uint8Array>;
+
+  /**
+   * Refresh group send endorsements from the server.
+   * Returns serialized endorsement response and expiration.
+   *
+   * @param groupId - 32-byte group identifier
+   * @param authorization - ZK auth presentation + group public params
+   * @returns Endorsement response bytes and expiration epoch seconds
+   */
+  refreshGroupSendEndorsements?(
+    groupId: Uint8Array,
+    authorization: GroupAuthorization
+  ): Promise<{ endorsements: Uint8Array; expiration: number }>;
+
+  // ════════════════════════════════════════════════════════════
+  // SEALED SENDER (Anonymous Delivery)
+  // Maps to: certificates (server-side issuance)
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Fetch a sender certificate for sealed sender messaging.
+   *
+   * The certificate binds the user's uuid, deviceId, and identity key,
+   * signed by the server's trust root key. Expires after 24 hours.
+   *
+   * @param deviceId - Device ID (1-5) to bind the certificate to
+   * @returns Base64-encoded serialized SenderCertificate
+   */
+  fetchSenderCertificate?(deviceId: number): Promise<string>;
+
+  /**
+   * Send a multi-recipient sealed sender message.
+   *
+   * Client sends the full binary blob (base64-encoded).
+   * Relay parses client-side, sends structured JSON to mutation.
+   * Server constructs per-device ReceivedMessage blobs and fans out.
+   *
+   * The blob gives each destination device a registration ID. A nonzero ID
+   * names the registration that the send expects at that device, as
+   * `Envelope.recipientRegistrationId` does on the identified route. The
+   * relay refuses that device as `STALE_DEVICE` when its current registration
+   * differs. A device with registration 0 gets no check.
+   *
+   * @param sentMessageBase64 - Base64-encoded V2 multi-recipient binary blob
+   * @param auth - Sealed sender authentication (access key or group send token)
+   * @param timestamp - Client timestamp for message identification
+   * @param deliveryClass - Exact persistence and wake behavior
+   * @param recipientUserIds - Original user IDs in same order as binary recipients
+   * @param clientMessageId - The operation ID of the send
+   * @param operationEpochMilliseconds - The operation epoch that the relay
+   *   admits the post by. Without it, the relay uses `timestamp`
+   * @param contentKind - The cleartext label that a relay can count by.
+   *   Without it, the send is a `message`
+   * @param deviceSets - The device set that the sender declares for each
+   *   recipient account, sent as the wire field `deviceSets`. A relay that
+   *   compares refuses the whole post with `DEVICE_SET_MISMATCH` when a
+   *   declared set differs from the account's device list, and with a
+   *   declared `STALE_DEVICE` when a registration changed. Each account
+   *   appears once, with 1 to 5 device IDs. Without it, the relay does not
+   *   compare
+   * @returns Message ID, server timestamp, and list of unknown recipient UUIDs
+   *
+   */
+  sendMultiRecipientUnidentified?(
+    sentMessageBase64: string,
+    auth: SealedSenderAuth,
+    timestamp: number,
+    deliveryClass: DeliveryClass,
+    recipientUserIds?: string[],
+    clientMessageId?: string,
+    operationEpochMilliseconds?: number,
+    contentKind?: ContentKind,
+    deviceSets?: readonly { userId: string; deviceIds: readonly number[] }[]
+  ): Promise<{
+    messageId: string;
+    serverTimestamp: number;
+    uuids404: string[];
+    /**
+     * For an access-key send, true when the relay had already stored the
+     * message for every destination. Absent when the relay does not report it
+     * for each one, or when a destination needed a repeat after an uncertain
+     * answer.
+     *
+     * For a group-token send, true when the relay had already accepted a
+     * fan-out of this send. That does not tell that each destination stored a
+     * copy: the relay can have refused a destination or still hold it.
+     */
+    duplicate?: boolean;
+    /**
+     * The earliest time, in milliseconds since the epoch, at which the relay
+     * drops a stored copy that a device has not acknowledged. Absent when the
+     * relay does not report it for each destination.
+     */
+    expiresAt?: number;
+    /**
+     * For a group-token send, the number of destinations that the relay
+     * refused when it accepted the fan-out. A refusal after that acceptance
+     * is not counted. Absent for an access-key send, and when the relay does
+     * not report it.
+     */
+    refusedDestinationCount?: number;
+    /**
+     * True when the relay compared `deviceSets` with each account's device
+     * list and accepted the post. Absent for a post without `deviceSets`,
+     * and from a relay that does not compare.
+     */
+    deviceSetChecked?: boolean;
+    /**
+     * For a declared group-token send, each destination device that the
+     * relay refused, with the relay's result code. `NOT_FOUND` on a first
+     * acceptance names an account that the relay does not know. On a
+     * duplicate receipt it can also name a delivery that the relay ended
+     * later. Absent when the relay does not report it.
+     */
+    refusals?: { userId: string; deviceId: number; code: string }[];
+  }>;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SUPPORTING TYPES
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Unsubscribe function returned by subscribe() */
+export type Unsubscribe = () => void;
+
+/**
+ * The transition site that moved a relay connection to `reconnecting`, or to
+ * `stopped` without a call to stop it.
+ *
+ * - `handshake`: the socket did not open within 10 seconds.
+ * - `protocol`: the socket opened with a subprotocol other than the mailbox one.
+ * - `closed`: the socket closed.
+ * - `error`: the socket reported an error, or a frame could not be sent.
+ * - `frame`: the socket delivered a frame that the client refuses.
+ * - `authentication`: the device token for the socket could not be issued.
+ * - `silent`: the Relay did not answer a ping before the next one was due.
+ * - `upgrade-required`: the Relay no longer serves the protocol version of
+ *   this SDK. The state is `stopped`, and the subscription does not retry.
+ *   Only a newer SDK can connect again.
+ * - `authority-refused`: the Relay refused the device token refresh or a
+ *   pull in a way that a retry gets again, for example for a deleted account.
+ *   The state is `stopped`, and the subscription does not retry.
+ * - `device-revoked`: an account recovery revoked this device. The state is
+ *   `stopped`, and the subscription does not retry.
+ * - `device-unknown`: the Relay has no device for the stored session. The
+ *   state is `stopped`, and the subscription does not retry. Only an explicit
+ *   re-registration can connect this device again.
+ */
+export type SignalProtocolRelayConnectionReason =
+  | 'handshake'
+  | 'protocol'
+  | 'closed'
+  | 'error'
+  | 'frame'
+  | 'authentication'
+  | 'silent'
+  | 'upgrade-required'
+  | 'authority-refused'
+  | 'device-revoked'
+  | 'device-unknown';
+
+/**
+ * The local device's relay connection, as its envelope subscription sees it.
+ *
+ * - `stopped`: no subscription is running.
+ * - `connecting`: the subscription started and has not connected yet.
+ * - `connected`: the subscription has a live connection.
+ * - `reconnecting`: the connection failed and the subscription retries it.
+ *
+ * `reason` names the transition site of the last move to `reconnecting`. On a
+ * `stopped` state that the Relay caused, it is `upgrade-required`,
+ * `authority-refused`, `device-revoked`, or `device-unknown`. It is never an
+ * error message. `since` is the Unix time in milliseconds of the transition. A
+ * token renewal keeps the live connection and is not a transition.
+ */
+export interface SignalProtocolRelayConnectionState {
+  readonly state: 'stopped' | 'connecting' | 'connected' | 'reconnecting';
+  readonly reason?: SignalProtocolRelayConnectionReason;
+  readonly since: number;
+}
+
+/**
+ * Discriminated union for sealed sender authentication.
+ *
+ * Two auth paths for anonymous delivery:
+ * - accessKey: Derived from recipient's profile key (pairwise messages)
+ * - groupSendToken: ZK group send endorsement token (group messages)
+ *
+ */
+export type SealedSenderAuth =
+  | { type: 'accessKey'; unidentifiedAccessKey: string }
+  | {
+      type: 'groupSendToken';
+      groupSendToken: Uint8Array;
+      /**
+       * ACI bytes per recipient user ID. The identities the token endorses.
+       *
+       * The token is a signature over ACIs, not user IDs, and the relay
+       * verifies it before reading any account. It therefore needs the
+       * claimed ACI for each recipient up front. It then binds each claim to
+       * the recipient's stored account after the token checks out. The
+       * endorsement manager supplies these from its cache, which records the
+       * exact identities that the endorsements cover.
+       */
+      recipientAciBytes: Map<string, Uint8Array>;
+    };
+
+/** Provider-neutral delivery behavior inferred from encrypted-content semantics. */
+export type DeliveryClass = 'user-visible' | 'background-sync' | 'ephemeral';
+
+/**
+ * Coarse cleartext label of the encrypted content: `receipt` for an E2EE
+ * delivery, read, or viewed receipt, and `message` for everything else.
+ */
+export type ContentKind = 'message' | 'receipt';
+
+/**
+ * Envelope for delivery.
+ *
+ * Server treats ciphertext as opaque bytes (zero-knowledge).
+ */
+export interface Envelope {
+  /** Target user ID */
+  targetUserId: string;
+  /** Target device ID (1-5) */
+  targetDeviceId: number;
+
+  /** Sender user ID */
+  senderUserId: string;
+  /** Sender device ID */
+  senderDeviceId: number;
+
+  /** Encrypted payload (base64 or Uint8Array) */
+  ciphertext: string | Uint8Array;
+
+  /**
+   * Relay-visible envelope type.
+   * A ciphertext envelope holds the client-to-client types (delivery_receipt,
+   * typing_indicator, sender_key_distribution) as encrypted content types. The
+   * relay contract carries only the outer envelope type.
+   *
+   * - ciphertext: Standard Double Ratchet message (contains encrypted Content)
+   * - prekey_bundle: Session initiation (PQXDH)
+   * - sender_key: Group message encrypted with sender keys
+   * - unidentified_sender: Sealed sender protocol messages
+   * - retry_request: A request that the original sender device resend a
+   *   message that the requester could not decrypt. The payload is not
+   *   encrypted. The envelope sender is the requester.
+   *
+   * `sender_key` tells the receiver to decrypt the payload as a framed
+   * SenderKeyMessage rather than as a pairwise ratchet message. It names no
+   * group: the receiver reads the opaque distribution identifier out of the
+   * frame and resolves the group from its own sender key store. The relay
+   * therefore learns that an envelope is group traffic, which its fan-out
+   * pattern already implies, but not which group.
+   */
+  messageType:
+    | 'ciphertext'
+    | 'prekey_bundle'
+    | 'sender_key'
+    | 'unidentified_sender'
+    | 'retry_request';
+
+  /** Exact persistence and wake behavior for this encrypted envelope. */
+  deliveryClass: DeliveryClass;
+
+  /**
+   * Cleartext label that a relay can count by. The SDK sets `receipt` on
+   * each E2EE receipt that it sends. An envelope without it is a `message`.
+   */
+  contentKind?: ContentKind;
+
+  /**
+   * Server-assigned envelope ID (set by server). A relay gives an envelope
+   * one `id` and keeps it on every redelivery of that envelope. The client
+   * records each processed envelope by this `id`, so a redelivery decrypts
+   * no second time, and the content hook carries it as `messageId` for
+   * application deduplication. Hook delivery is at least once.
+   */
+  id?: string;
+
+  /** Server timestamp (set by server) */
+  serverTimestamp?: number;
+
+  /**
+   * Client timestamp for message identification.
+   * Set by sender BEFORE encryption. Same value embedded in dataMessage.timestamp.
+   * Used for: retry request matching, delivery receipt correlation, replay prevention.
+   */
+  timestamp: number;
+
+  /**
+   * Stable client-generated send identifier for idempotent retry.
+   *
+   * If a client retries after an unknown relay result, it should reuse the
+   * same value. The relay then returns the original accept metadata, instead
+   * of inserting a duplicate pending envelope.
+   *
+   * MUST be globally unique. A UUID, not a counter or timestamp. On the
+   * identified path the relay scopes deduplication by sender. A sealed sender
+   * is anonymous by design, so every sealed send to a device shares one dedup
+   * namespace. Two sealed senders reusing the same value would silently
+   * collapse into one stored message. The second sender would receive the
+   * first message's receipt.
+   *
+   * A relay that assigns its own `id` delivers this value with the
+   * envelope. A retry request names its attempt here.
+   */
+  clientMessageId?: string;
+
+  /**
+   * The operation epoch that the relay admits the post by. Without it, the
+   * relay uses `timestamp`. A retry resend keeps the original `timestamp`, so
+   * it posts the time of its first attempt here.
+   */
+  operationEpochMilliseconds?: number;
+
+  /**
+   * The device IDs that the sender declares for the target account, sent as
+   * the wire field `deviceSets` with one entry for `targetUserId`. A sync
+   * copy to the sender's own account leaves out the sender device. A relay
+   * that compares refuses the post with `DEVICE_SET_MISMATCH` when the
+   * declared set differs from the account's device list, and with a
+   * declared `STALE_DEVICE` when a registration changed. Without it, the
+   * relay does not compare.
+   */
+  declaredDeviceIds?: readonly number[];
+
+  // ════════════════════════════════════════════════════════════
+  // STALE-DEVICE HANDLING
+  // All six post kinds carry the registration ID of the recipient
+  // session, so that the relay detects a stale device: a direct message, a
+  // sync copy, a sender-key distribution, a group device message, a
+  // receipt, and a retry request, sealed or identified. A post to a
+  // device with no session carries none. Stale-prekey detection remains
+  // client-side through authentication failure and retry.
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * The registration ID of the recipient device's current session. All six
+   * post kinds name it: a direct message, a sync copy, a sender-key
+   * distribution, a group device message, a receipt, and a retry request.
+   * A post to a device with no session names none.
+   * Server validates this matches recipient's current registration.
+   * If mismatch (device reinstalled), server returns STALE_DEVICE error (equivalent to HTTP 410).
+   */
+  recipientRegistrationId?: number;
+
+  /**
+   * The content hint of the sender. It sets what the receiver does when a
+   * decrypt fails with an error that a resend can repair.
+   *
+   * - `Default`: the client sends a retry request and runs
+   *   `onDeliveryError` at once.
+   * - `Resendable`: the client sends a retry request. It runs
+   *   `onDeliveryError` one hour after the receive
+   *   (`RETRY_PLACEHOLDER_DEADLINE_MS`) if the content has not arrived. It
+   *   runs it at once when a rate limit refuses the request, when the
+   *   request allowance for the sender is used up, or when the request
+   *   ends.
+   * - `Implicit`: disposable content, such as typing indicators and
+   *   receipts. The client sends no retry request and never runs
+   *   `onDeliveryError`. A resend that answers a retry request of this
+   *   device still asks again.
+   *
+   * With no hint, the client uses the `Default` behavior.
+   */
+  contentHint?: ContentHint;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// STALE SESSION ERROR TYPES
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Error codes for stale session detection */
+export type StaleSessionErrorCode = 'STALE_DEVICE';
+
+/**
+ * Error data for stale session errors.
+ * Returned by server when session freshness validation fails.
+ *
+ * This SDK checks the registration ID at the relay boundary. Stale-prekey
+ * detection remains client-side through authentication failure and retry.
+ */
+export interface StaleSessionErrorData {
+  /** Error code identifying the type of staleness */
+  code: StaleSessionErrorCode;
+  /** List of stale device IDs */
+  staleDevices: number[];
+  /** Reason for staleness */
+  reason: 'device_reinstalled';
+  /** Human-readable error message */
+  message: string;
+}
+
+/** Device info returned by getDevices() */
+export interface DeviceInfo {
+  deviceId: number;
+  encryptedDeviceName?: ArrayBuffer;
+  deviceType?: DeviceType;
+  /** Device completed setup (has keys) - false = soft deleted */
+  registered: boolean;
+  /** Secondary device linked to primary (always false for primary deviceId=1) */
+  linked: boolean;
+  /** Whether device can receive messages (user-controlled) */
+  enabled: boolean;
+  /**
+   * When the device's mailbox last saw it, in Unix milliseconds, or `null`
+   * before its first connection. The OpenE2EE Signal Protocol Relay reports it
+   * only in the caller's own account listing.
+   */
+  lastSeenAt?: number | null;
+  /** Registration time, when the relay exposes device observations. */
+  createdAt?: number;
+  /** When the user linked the device (for secondary devices) */
+  linkedAt?: number;
+}
+
+/** Device type */
+export type DeviceType = 'mobile' | 'desktop' | 'tablet' | 'web';
+
+/** Device registration info */
+export interface DeviceRegistration {
+  deviceId?: number; // 1 = primary, undefined = auto-assign linked
+  encryptedDeviceName?: ArrayBuffer;
+  deviceType?: DeviceType;
+}
+
+// Push tokens are managed by the relay implementation, not by this interface.
+
+/**
+ * Prekey upload (batch).
+ * Server stores in appropriate table based on `type`.
+ */
+export interface PreKeyUpload {
+  /** Table to store in */
+  type: 'ecPreKey' | 'ecSignedPreKey' | 'kemOneTimePreKey' | 'kemLastResortPreKey';
+  /** Key ID (unique per type per device) */
+  keyId: number;
+  /** Public key (base64 encoded) */
+  publicKey: string;
+  /** Signature (for signed keys only) */
+  signature?: string;
+}
+
+/**
+ * The uploads one rotation decision calls for, decided from the inventory the
+ * relay adapter read for it. The adapter publishes the returned uploads in one
+ * publication. An empty array publishes nothing.
+ */
+export type PreKeyPublicationPlan = (
+  inventory: PreKeyInventory
+) => Promise<readonly PreKeyUpload[]>;
+
+/**
+ * Group member device info for message fanout.
+ * Returned by getActiveDevices() for Sender Key distribution.
+ */
+export interface GroupMemberDevice {
+  /** User ID of the group member */
+  userId: string;
+  /** Device ID of the member's device */
+  deviceId: number;
+}
+
+/**
+ * Group change log entry returned by getGroupChanges().
+ * All content is opaque to the server.
+ */
+export interface GroupChangeEntry {
+  /** Revision number this change produces */
+  version: number;
+  /** Exact serialized Actions bytes accepted and stored by the server */
+  actions: Uint8Array;
+  /** Server's binding signature for this change */
+  serverSignature: Uint8Array;
+  /** Protocol epoch for action feature gating */
+  changeEpoch: number;
+  /** When the server accepted this change */
+  timestamp: number;
+}
+
+/**
+ * One page of the group change log, returned by getGroupChanges().
+ *
+ * `hasMore` is true only when the server cut the page for size with the
+ * requester still readable. Resume from the version of the last entry.
+ */
+export interface GroupChangePage {
+  entries: GroupChangeEntry[];
+  hasMore: boolean;
+}
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `SignalProtocolRelayConnectionReason`. SDK 15.0.0 removes this name. */
+export type RelayConnectionReason = SignalProtocolRelayConnectionReason;
+/** @deprecated Use `SignalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
+export type RelayConnectionState = SignalProtocolRelayConnectionState;
+/** @deprecated Use `SignalProtocolRelayGroupServer`. SDK 15.0.0 removes this name. */
+export type RelayGroupServer = SignalProtocolRelayGroupServer;

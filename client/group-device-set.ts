@@ -14,7 +14,7 @@ import type {
   StoredOutgoingDeviceMessage,
   StoredOutgoingMessageIntent,
 } from '../local/store/reliability';
-import type { GroupMemberDevice } from '../remote/relay/types';
+import type { GroupMemberDevice } from '../remote/signal-relay/types';
 import { asBase64 } from '../types/utils';
 
 /** The change that a new read of the member device lists makes to a stored group send. */

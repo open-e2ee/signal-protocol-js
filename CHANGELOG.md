@@ -1,5 +1,420 @@
 # Changelog
 
+## 14.2.0
+
+### Deprecated
+
+- **Names without the Signal Protocol prefix.** Each of the 81 names in the
+  table has a new name. A new name has the form `SignalProtocolRelay`, or
+  `HostedSignalProtocolRelay` for a name that starts with `Hosted`. SDK 15.0.0
+  removes the earlier names. See step 1.
+- **`RelayPreKeyBundle`, from the package root.** Use `PreKeyBundle`. The two
+  names identify the same type. SDK 15.0.0 removes `RelayPreKeyBundle`. See
+  step 2.
+
+Each earlier name is a deprecated alias of the same class, function, or type,
+from the same entry points. A class alias is the same value. Thus `instanceof`
+with the earlier class name is true for an error that the SDK throws.
+
+The new names do not change the `name` property of an error or a property
+of an object. The package subpaths are in
+[Deprecated package subpaths](#deprecated-package-subpaths).
+
+| Earlier name | New name |
+| --- | --- |
+| `advanceHostedRelayIdentityMigration` | `advanceHostedSignalProtocolRelayIdentityMigration` |
+| `bindRelayLifecycle` | `bindSignalProtocolRelayLifecycle` |
+| `convexRelay` | `convexSignalProtocolRelay` |
+| `createRelayConnection` | `createSignalProtocolRelayConnection` |
+| `HostedRelayBootstrapAdapter` | `HostedSignalProtocolRelayBootstrapAdapter` |
+| `HostedRelayBootstrapRequest` | `HostedSignalProtocolRelayBootstrapRequest` |
+| `HostedRelayBootstrapResult` | `HostedSignalProtocolRelayBootstrapResult` |
+| `HostedRelayDeviceAuthentication` | `HostedSignalProtocolRelayDeviceAuthentication` |
+| `HostedRelayDeviceLinkError` | `HostedSignalProtocolRelayDeviceLinkError` |
+| `hostedRelayDeviceOwnedIdentity` | `hostedSignalProtocolRelayDeviceOwnedIdentity` |
+| `HostedRelayDeviceRevokedError` | `HostedSignalProtocolRelayDeviceRevokedError` |
+| `HostedRelayDeviceUnknownError` | `HostedSignalProtocolRelayDeviceUnknownError` |
+| `HostedRelayHttpError` | `HostedSignalProtocolRelayHttpError` |
+| `HostedRelayIdentityMigrationAction` | `HostedSignalProtocolRelayIdentityMigrationAction` |
+| `HostedRelayIdentityMigrationAdapter` | `HostedSignalProtocolRelayIdentityMigrationAdapter` |
+| `HostedRelayIdentityMigrationOptions` | `HostedSignalProtocolRelayIdentityMigrationOptions` |
+| `HostedRelayIdentityMigrationRequest` | `HostedSignalProtocolRelayIdentityMigrationRequest` |
+| `HostedRelayIdentityMigrationSnapshot` | `HostedSignalProtocolRelayIdentityMigrationSnapshot` |
+| `HostedRelayIdentityMigrationState` | `HostedSignalProtocolRelayIdentityMigrationState` |
+| `HostedRelayIdentityProgress` | `HostedSignalProtocolRelayIdentityProgress` |
+| `HostedRelayIdentityProgressCallback` | `HostedSignalProtocolRelayIdentityProgressCallback` |
+| `HostedRelayManagedDeviceLinkAdapter` | `HostedSignalProtocolRelayManagedDeviceLinkAdapter` |
+| `HostedRelayManagedDeviceLinkOptions` | `HostedSignalProtocolRelayManagedDeviceLinkOptions` |
+| `HostedRelayManagedDeviceLinkRequest` | `HostedSignalProtocolRelayManagedDeviceLinkRequest` |
+| `HostedRelayManagedDeviceLinkResult` | `HostedSignalProtocolRelayManagedDeviceLinkResult` |
+| `hostedRelayPresence` | `hostedSignalProtocolRelayPresence` |
+| `HostedRelayPresence` | `HostedSignalProtocolRelayPresence` |
+| `HostedRelayPresenceAccount` | `HostedSignalProtocolRelayPresenceAccount` |
+| `HostedRelayPresenceApproximateLastSeen` | `HostedSignalProtocolRelayPresenceApproximateLastSeen` |
+| `HostedRelayPresenceAudience` | `HostedSignalProtocolRelayPresenceAudience` |
+| `HostedRelayPresenceError` | `HostedSignalProtocolRelayPresenceError` |
+| `HostedRelayPresenceErrorCode` | `HostedSignalProtocolRelayPresenceErrorCode` |
+| `HostedRelayPresenceLastSeenPolicy` | `HostedSignalProtocolRelayPresenceLastSeenPolicy` |
+| `HostedRelayPresenceMode` | `HostedSignalProtocolRelayPresenceMode` |
+| `HostedRelayPresencePolicy` | `HostedSignalProtocolRelayPresencePolicy` |
+| `HostedRelayPresenceSetting` | `HostedSignalProtocolRelayPresenceSetting` |
+| `HostedRelayPresenceStatus` | `HostedSignalProtocolRelayPresenceStatus` |
+| `HostedRelayPresenceVisibility` | `HostedSignalProtocolRelayPresenceVisibility` |
+| `HostedRelayProfileKeys` | `HostedSignalProtocolRelayProfileKeys` |
+| `HostedRelayPushPlatform` | `HostedSignalProtocolRelayPushPlatform` |
+| `HostedRelayPushProfile` | `HostedSignalProtocolRelayPushProfile` |
+| `HostedRelayPushRegistration` | `HostedSignalProtocolRelayPushRegistration` |
+| `HostedRelayRegistrationPreKey` | `HostedSignalProtocolRelayRegistrationPreKey` |
+| `HostedRelayRegistrationPreKeys` | `HostedSignalProtocolRelayRegistrationPreKeys` |
+| `HostedRelayResumeError` | `HostedSignalProtocolRelayResumeError` |
+| `HostedRelayResumeErrorCode` | `HostedSignalProtocolRelayResumeErrorCode` |
+| `HostedRelayResumePhase` | `HostedSignalProtocolRelayResumePhase` |
+| `HostedRelayResumeProgress` | `HostedSignalProtocolRelayResumeProgress` |
+| `HostedRelayResumeProgressCallback` | `HostedSignalProtocolRelayResumeProgressCallback` |
+| `hostedRelaySandboxIdentity` | `hostedSignalProtocolRelaySandboxIdentity` |
+| `HostedRelayTokenPushRegistration` | `HostedSignalProtocolRelayTokenPushRegistration` |
+| `HostedRelayUpgradeRequiredError` | `HostedSignalProtocolRelayUpgradeRequiredError` |
+| `HostedRelayWakeClient` | `HostedSignalProtocolRelayWakeClient` |
+| `HostedRelayWakeOptions` | `HostedSignalProtocolRelayWakeOptions` |
+| `hostedRelayWakePresence` | `hostedSignalProtocolRelayWakePresence` |
+| `HostedRelayWakePresence` | `HostedSignalProtocolRelayWakePresence` |
+| `HostedRelayWakeResult` | `HostedSignalProtocolRelayWakeResult` |
+| `HostedRelayWebPushRegistration` | `HostedSignalProtocolRelayWebPushRegistration` |
+| `inMemoryRelay` | `inMemorySignalProtocolRelay` |
+| `isSendNeverAcceptedByRelayError` | `isSendNeverAcceptedBySignalProtocolRelayError` |
+| `linkHostedRelayDevice` | `linkHostedSignalProtocolRelayDevice` |
+| `pullHostedRelayAfterWake` | `pullHostedSignalProtocolRelayAfterWake` |
+| `registerHostedRelayPush` | `registerHostedSignalProtocolRelayPush` |
+| `RelayConfig` | `SignalProtocolRelayConfig` |
+| `RelayConnection` | `SignalProtocolRelayConnection` |
+| `RelayConnectionReason` | `SignalProtocolRelayConnectionReason` |
+| `RelayConnectionState` | `SignalProtocolRelayConnectionState` |
+| `RelayFailureController` | `SignalProtocolRelayFailureController` |
+| `RelayFailureOptions` | `SignalProtocolRelayFailureOptions` |
+| `RelayGroupServer` | `SignalProtocolRelayGroupServer` |
+| `RelayLifecycleAppState` | `SignalProtocolRelayLifecycleAppState` |
+| `RelayLifecycleOptions` | `SignalProtocolRelayLifecycleOptions` |
+| `RelayProtocolError` | `SignalProtocolRelayProtocolError` |
+| `RelayProtocolErrorCode` | `SignalProtocolRelayProtocolErrorCode` |
+| `RelayProtocolRoute` | `SignalProtocolRelayProtocolRoute` |
+| `removeHostedRelayPush` | `removeHostedSignalProtocolRelayPush` |
+| `SendNeverAcceptedByRelayError` | `SendNeverAcceptedBySignalProtocolRelayError` |
+| `useRelayConnectionState` | `useSignalProtocolRelayConnectionState` |
+| `UseRelayConnectionStateOptions` | `UseSignalProtocolRelayConnectionStateOptions` |
+| `useRelayLifecycle` | `useSignalProtocolRelayLifecycle` |
+| `UseRelayLifecycleOptions` | `UseSignalProtocolRelayLifecycleOptions` |
+
+### Changed
+
+- **The docs read the new URL variable first.** The examples read
+  `OPEN_E2EE_SIGNAL_RELAY_URL` or `EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL`
+  first. They read the earlier name without `SIGNAL_` second. `oe` 5.0.0 added
+  `SIGNAL_` to these names. The SDK reads no environment variable. See step 3.
+- **The SDK verifies the protocol version 3 names of the OpenE2EE Signal
+  Protocol Relay.** A device link accepts a device token with the issuer
+  `signal-relay` and the audience `signal-relay-device`. A group authority
+  certificate with the domain `signal-relay-group-authority-v2` verifies. The
+  earlier issuer, audience, and domain still verify. A token that mixes an
+  earlier name with a new name fails. A device token can carry the scope claim
+  `signal_relay_scope_id`, the earlier claim `relay_scope_id`, or both. A token
+  with two different scope values fails. The SDK still sends protocol version 2.
+  The sender certificate schema names field 7 `signalRelayScopeId`. The field
+  number and the bytes on the wire do not change. No step is necessary.
+
+#### Upgrade steps
+
+1. Replace each earlier name in the table with its new name. Code that keeps
+   an earlier name compiles and runs unchanged in this release. The
+   TypeScript tools mark the earlier name as deprecated. Complete this step before
+   SDK 15.0.0, which removes the earlier names.
+2. Replace `RelayPreKeyBundle` with `PreKeyBundle`.
+3. Set the Relay URL in `OPEN_E2EE_SIGNAL_RELAY_URL`. In a Next.js, Vite, or
+   Expo application, use the public prefix of the framework:
+   `NEXT_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL`, `VITE_OPEN_E2EE_SIGNAL_RELAY_URL`,
+   or `EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL`. An `oe` release before 5.0.0
+   wrote the earlier name. Until each environment has the new name, read the
+   new name first and the earlier name second.
+
+### Relay values that SDK 15.0.0 changes
+
+- **The Relay union values accept `'signal-relay'`.** `DeliverySource`, the
+  `origin` of `ReceiveExpiredEvent`, and the `origin` of `PendingReceive`
+  accept `'signal-relay'` and `'relay'`. This release reports `'relay'`. SDK
+  15.0.0 reports `'signal-relay'`.
+- **SDK 15.0.0 changes two error names.** This release does not change the
+  `name` property of an error.
+- **SDK 15.0.0 changes four log operations.** A device transfer log entry
+  holds its operation in the `data.operation` field. This release does not
+  change the operations.
+
+| Kind | Value in this release | Value in SDK 15.0.0 |
+| --- | --- | --- |
+| `DeliverySource` value | `'relay'` | `'signal-relay'` |
+| `ReceiveExpiredEvent.origin` value | `'relay'` | `'signal-relay'` |
+| `PendingReceive.origin` value | `'relay'` | `'signal-relay'` |
+| Error `name` | `RelayWorkStopped` | `SignalProtocolRelayWorkStopped` |
+| Error `name` | `InMemoryRelayRefusal` | `InMemorySignalProtocolRelayRefusal` |
+| Log operation | `relay-connect` | `signal-relay-connect` |
+| Log operation | `relay-disconnect` | `signal-relay-disconnect` |
+| Log operation | `relay-upload` | `signal-relay-upload` |
+| Log operation | `relay-download` | `signal-relay-download` |
+
+#### Upgrade steps for the Relay values
+
+1. Find each comparison with `'relay'` of a value in the first three rows of
+   the table. Make it also accept `'signal-relay'`. Before you upgrade to SDK
+   15.0.0, complete this step. In that release, code that accepts only
+   `'relay'` does not match a Relay delivery or a Relay message. A `switch`
+   that ends with an exhaustive check needs a `case` for each value now,
+   because it does not compile with this release. For example, this `switch`
+   compiles with SDK 14.1.0 only:
+
+   <!-- doc-snippet:skip requires-external-context -->
+   ```ts
+   import type { DeliverySource } from '@open-e2ee/signal-protocol-sdk';
+
+   function deliveryLabel(source: DeliverySource): string {
+     switch (source) {
+       case 'relay':
+         return 'Delivered to the device';
+       case 'e2ee':
+         return 'Decrypted on the device';
+       default: {
+         const unhandled: never = source;
+         return unhandled;
+       }
+     }
+   }
+   ```
+
+   Add a `case` for `'signal-relay'` next to the `case` for `'relay'`. This
+   `switch` compiles with this release and with SDK 15.0.0:
+
+   <!-- doc-snippet:skip requires-external-context -->
+   ```ts
+   import type { DeliverySource } from '@open-e2ee/signal-protocol-sdk';
+
+   function deliveryLabel(source: DeliverySource): string {
+     switch (source) {
+       case 'relay':
+       case 'signal-relay':
+         return 'Delivered to the device';
+       case 'e2ee':
+         return 'Decrypted on the device';
+       default: {
+         const unhandled: never = source;
+         return unhandled;
+       }
+     }
+   }
+   ```
+
+2. Find each match of an error `name` in the table, in code or in a log
+   query. Make it also match the SDK 15.0.0 name.
+3. Find each log query that matches a log operation in the table. Make it
+   also match the SDK 15.0.0 value.
+
+### Store keys
+
+- **The SDK reads a hosted record under a new key prefix first.** Seven
+  records in the application store have a new metadata key prefix,
+  `signalRelay.<record>.v2:`. The records are `session`,
+  `deviceAuthentication`, `registrationSnapshot`, `reregistrationSnapshot`,
+  `sandboxIdentity`, `presenceGrant`, and `profileKeyDelivered`. The SDK reads
+  the new key first and the earlier `hostedRelay.<record>.v1:` key second.
+- **The SDK writes the earlier key.** This release writes each record under
+  the earlier key, so SDK 14.1.0 still finds every record. When the store
+  already holds the new key, a write also replaces it. A later release writes
+  the new key. SDK 15 still reads the earlier key.
+- **A store that SDK 14.1.0 wrote opens with its sessions and device
+  authentication.** You do not need to change the store. The documentation of
+  `hostedSignalProtocolRelaySandboxIdentity` and
+  `hostedSignalProtocolRelayDeviceOwnedIdentity` names the two key prefixes of
+  the sandbox identity key.
+
+### Stored Relay values
+
+- **A receive record accepts the Relay values of a later release.** The
+  `origin` of `ReceiveWorkRecord` accepts `'signal-relay'`, the same origin as
+  `'relay'`. The new optional field `signalProtocolRelayOwnsReceipt` holds the
+  Relay receipt decision, the same decision as `relayOwnsReceipt`. A stored
+  delivery status accepts the source `'signal-relay'`, the same source as
+  `'relay'`. The SDK reads both values and both field names. When a record
+  holds both field names, the new name wins.
+- **The SDK writes the values of SDK 14.1.0.** This release writes the origin
+  `'relay'`, the field `relayOwnsReceipt`, and the source `'relay'`, so SDK
+  14.1.0 reads each record that it writes. The SDK does not rewrite or delete
+  a stored record to change a value. It reports `'relay'` for a stored
+  `'signal-relay'`.
+- **A store refuses a record whose two field names hold different values.**
+  `putReceiveWork` and a read of the record throw
+  `SignalProtocolRelayNameConflictError`. A store that SDK 14.1.0 wrote opens
+  with each record intact. You do not need to change the store.
+- **A custom store keeps each value that it gets.** A
+  `SignalProtocolLocalStore` that you write must store and return
+  `'signal-relay'` and `signalProtocolRelayOwnsReceipt` without a change, as
+  it does each other field.
+
+### Deprecated package subpaths
+
+- **Package subpaths without `signal-`.** Each subpath in the table has a new
+  subpath. SDK 15.0.0 removes the earlier subpaths.
+
+Each earlier subpath is a deprecated entry to the same files as its new
+subpath. Thus the two subpaths load one module, and `instanceof` with a class
+from either subpath is true for an object from the other. An exports map cannot
+mark a subpath as deprecated, so the TypeScript tools do not mark an import of
+an earlier subpath.
+
+| Earlier subpath | New subpath |
+| --- | --- |
+| `@open-e2ee/signal-protocol-sdk/remote/relay` | `@open-e2ee/signal-protocol-sdk/remote/signal-relay` |
+| `@open-e2ee/signal-protocol-sdk/remote/relay/types` | `@open-e2ee/signal-protocol-sdk/remote/signal-relay/types` |
+
+The package files move to the same names. The directory `remote/relay/` is
+now `remote/signal-relay/`. Each `client/relay-<name>.ts` file is now
+`client/signal-relay-<name>.ts`. The hook files `use-relay-connection-state`
+and `use-relay-lifecycle` are now `use-signal-relay-connection-state` and
+`use-signal-relay-lifecycle`. The page `docs/RELAY_CONNECTION.md` is now
+`docs/SIGNAL_RELAY_CONNECTION.md`. Import only the subpaths in the exports
+map.
+
+The Convex component, which the public package does not include, also changes.
+Its `./convex.config` entry points to `remote/signal-relay/convex/component`,
+and its cron `delete expired relay messages` is now
+`delete expired signal-relay messages`. The component name stays
+`signalProtocol`. On a local Convex backend, a deploy of this release kept the
+component and its tables, deleted the earlier cron and its run history, and
+added the new cron. The new cron ran once at the deploy, and its next run was
+one hour later.
+
+#### Upgrade steps
+
+1. Replace each earlier subpath in the table with its new subpath. Code that
+   keeps an earlier subpath runs unchanged in this release. Complete this step
+   before SDK 15.0.0, which removes the earlier subpaths.
+2. For a Convex deployment that mounts the component, keep the mount name
+   `signalProtocol` and deploy. Before the deploy, copy the run history of
+   `delete expired relay messages` if you need it, because the deploy deletes
+   it. Change each monitor or alert that names the earlier cron to the new name.
+
+### Deprecated: members and options without the Signal Protocol prefix
+
+- **Members and options named `relay`.** Each member and option in the table
+  has a new name in the `signalProtocolRelay` form. SDK 15.0.0 removes the
+  earlier names. See steps 1 and 3.
+
+An option accepts the new name or the earlier name. When a call sets both
+names to different values, it fails with `SignalProtocolRelayNameConflictError`,
+from `@open-e2ee/signal-protocol-sdk/types`. The error holds `newName` and
+`earlierName`, and its code is `SIGNAL_PROTOCOL_RELAY_NAME_CONFLICT`. Two equal
+values, or two byte arrays with the same bytes, do not fail. See step 2.
+
+In this release, each interface that your code implements keeps the earlier
+member required, with its earlier type, and adds the new member as optional.
+This applies to `SignalProtocolRelayServer`, `SignalProtocolContentAdapter`, and
+`HostedSignalProtocolRelayBootstrapResult`. An implementation with only the
+earlier members compiles and works unchanged, and code that reads an earlier
+member needs no change. When an implementation has both members, the SDK uses
+the new member. SDK 15.0.0 requires the new members.
+
+The SDK uses the name that the nearest level of an object defines, so a
+subclass or a spread object that overrides only one name keeps its override.
+For example, a subclass of `InMemorySignalProtocolRelayServer` that overrides
+only `subscribeRelayConnectionState` gets the client subscriptions. Each SDK
+class and each object that the SDK returns has both members, and one member
+forwards to the other. `registerHook('onRelayProtocolError', hook)` registers
+the hook under `onSignalProtocolRelayProtocolError`.
+`bindSignalProtocolRelayLifecycle` and `useSignalProtocolRelayLifecycle` accept
+an object with only the earlier members.
+
+This release does not change bytes on the wire, signed bytes, or stored bytes.
+The sealed sender field `relayScopeId` keeps protobuf field 7, and the group
+authority certificate encodes the same bytes for both names.
+
+Three options had a required earlier name: `SealedSenderConfig.relayScopeId`,
+`HostedSignalProtocolRelayIdentityMigrationOptions.relayUrl`, and the
+`relayScopeId` field of `encodeGroupAuthority`. Each now accepts either name,
+so both names are optional, and the SDK requires one of the two. A call that
+sets the earlier name compiles unchanged. Code that reads one of these fields
+back from its own options object must handle `undefined`. See step 4.
+
+| Type | Earlier name | New name |
+| --- | --- | --- |
+| `SignalProtocolClient`, `DefaultSignalProtocolClient` | `relayConnectionState` | `signalProtocolRelayConnectionState` |
+| `SignalProtocolClient`, `DefaultSignalProtocolClient` | `subscribeRelayConnectionState` | `subscribeSignalProtocolRelayConnectionState` |
+| `SignalProtocolClient`, `DefaultSignalProtocolClient` | `startRelaySubscription` | `startSignalProtocolRelaySubscription` |
+| `SignalProtocolClient`, `DefaultSignalProtocolClient` | `stopRelaySubscription` | `stopSignalProtocolRelaySubscription` |
+| `SignalProtocolRelayServer`, `InMemorySignalProtocolRelayServer`, `ConvexSignalProtocolRelayServer` | `relayConnectionState` | `signalProtocolRelayConnectionState` |
+| `SignalProtocolRelayServer`, `InMemorySignalProtocolRelayServer`, `ConvexSignalProtocolRelayServer` | `subscribeRelayConnectionState` | `subscribeSignalProtocolRelayConnectionState` |
+| `SignalProtocolClientConfig` | `relay` | `signalProtocolRelay` |
+| `SignalProtocolClientAdapterConfig` | `relay` | `signalProtocolRelay` |
+| `SignalProtocolClientContext` | `relay` | `signalProtocolRelay` |
+| `SealedSenderConfig` | `relayScopeId` | `signalProtocolRelayScopeId` |
+| `GroupAuthorityFields` | `relayScopeId` | `signalProtocolRelayScopeId` |
+| `SignalProtocolClientHooks` | `onRelayProtocolError` | `onSignalProtocolRelayProtocolError` |
+| `SignalProtocolContentAdapter` | `setRelayBatching` | `setSignalProtocolRelayBatching` |
+| `OutgoingMessageError` | `relayRetryable` | `signalProtocolRelayRetryable` |
+| `HostedSignalProtocolRelayBootstrapResult` | `relay` | `signalProtocolRelay` |
+| `HostedSignalProtocolRelayBootstrapResult` | `relayScopeId` | `signalProtocolRelayScopeId` |
+| `HostedSignalProtocolClientOptions` | `hosted.relayUrl` | `hosted.signalProtocolRelayUrl` |
+| `HostedSignalProtocolResumeOptions` | `hosted.relayUrl` | `hosted.signalProtocolRelayUrl` |
+| `HostedSignalProtocolRelayManagedDeviceLinkOptions` | `hosted.relayUrl` | `hosted.signalProtocolRelayUrl` |
+| `HostedSignalProtocolRelayIdentityMigrationOptions` | `relayUrl` | `signalProtocolRelayUrl` |
+| `CreateTestClientOptions` | `sharedRelay` | `sharedSignalProtocolRelay` |
+| `TestClientResult` | `relay` | `signalProtocolRelay` |
+| `SignalProtocolClientInternals` | `relay` | `signalProtocolRelay` |
+| `SignalProtocolServiceCipher` | `setRelayProtocolErrorReporter` | `setSignalProtocolRelayProtocolErrorReporter` |
+
+#### Upgrade steps
+
+1. Replace each earlier name in the table with its new name where your code
+   reads a member or sets an option. Code that keeps an earlier name compiles
+   and runs unchanged in this release. The TypeScript tools mark the earlier
+   name as deprecated.
+2. Set each option by one name only. If your code sets both names, for example
+   during a migration, give them the same value or remove the earlier name.
+3. In a class or object that implements `SignalProtocolRelayServer`,
+   `SignalProtocolContentAdapter`, or `HostedSignalProtocolRelayBootstrapResult`,
+   add the new member and keep the earlier member. This release requires the
+   earlier member. Let one member forward to the other, or give both the same
+   value. SDK 15.0.0 requires the new member and removes the earlier member.
+4. Find each read of `relayScopeId` or `relayUrl` from your own
+   `SealedSenderConfig`, `GroupAuthorityFields`, or
+   `HostedSignalProtocolRelayIdentityMigrationOptions` object. This release
+   makes the field optional, so the type of the read includes `undefined`.
+   With the TypeScript `strict` option, this function compiles with SDK 14.1.0
+   only:
+
+   <!-- doc-snippet:skip requires-external-context -->
+   ```ts
+   import type { SealedSenderConfig } from '@open-e2ee/signal-protocol-sdk';
+
+   function scopeOf(config: SealedSenderConfig): Uint8Array {
+     return config.relayScopeId;
+   }
+   ```
+
+   Read the new name first and the earlier name second, and handle
+   `undefined`. This function compiles with this release:
+
+   <!-- doc-snippet:skip requires-external-context -->
+   ```ts
+   import type { SealedSenderConfig } from '@open-e2ee/signal-protocol-sdk';
+
+   function scopeOf(config: SealedSenderConfig): Uint8Array {
+     const scope = config.signalProtocolRelayScopeId ?? config.relayScopeId;
+     if (scope === undefined) {
+       throw new Error('The sealed sender configuration has no Relay scope.');
+     }
+     return scope;
+   }
+   ```
+
+   When your code sets only `signalProtocolRelayScopeId`, remove
+   `?? config.relayScopeId`. SDK 15.0.0 removes the earlier name. Do the same
+   for `relayUrl` with `signalProtocolRelayUrl`.
+
 ## 14.1.0
 
 ### Added

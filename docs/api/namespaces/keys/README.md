@@ -109,7 +109,7 @@ Re-exports [KyberPreKey](../../interfaces/KyberPreKey.md)
 
 ### PreKeyBundle
 
-Renames and re-exports [RelayPreKeyBundle](../../interfaces/RelayPreKeyBundle.md)
+Re-exports [PreKeyBundle](../../interfaces/PreKeyBundle.md)
 
 ***
 

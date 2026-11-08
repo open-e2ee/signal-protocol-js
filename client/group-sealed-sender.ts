@@ -1,4 +1,4 @@
-import type { GroupMemberDevice } from '../remote/relay/types';
+import type { GroupMemberDevice } from '../remote/signal-relay/types';
 import type { SignalProtocolLocalStore, Base64 } from '../types';
 import { ProtocolAddress } from '../types/address';
 import { base64ToBytes, bytesToBase64 } from '../internal/crypto';

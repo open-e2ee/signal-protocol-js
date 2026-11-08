@@ -29,10 +29,14 @@ export {
   type UseGroupMembershipResult,
 } from './use-group-membership';
 export {
+  useSignalProtocolRelayConnectionState,
   useRelayConnectionState,
+  type UseSignalProtocolRelayConnectionStateOptions,
   type UseRelayConnectionStateOptions,
-} from './use-relay-connection-state';
+} from './use-signal-relay-connection-state';
 export {
+  useSignalProtocolRelayLifecycle,
   useRelayLifecycle,
+  type UseSignalProtocolRelayLifecycleOptions,
   type UseRelayLifecycleOptions,
-} from './use-relay-lifecycle';
+} from './use-signal-relay-lifecycle';

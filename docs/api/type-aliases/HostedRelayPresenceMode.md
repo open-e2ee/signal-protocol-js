@@ -4,8 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / HostedRelayPresenceMode
 
-# Type Alias: HostedRelayPresenceMode
+# ~~Type Alias: HostedRelayPresenceMode~~
 
-> **HostedRelayPresenceMode** = `"off"` \| `"default-on"` \| `"default-off"` \| `"forced"`
+> **HostedRelayPresenceMode** = [`HostedSignalProtocolRelayPresenceMode`](HostedSignalProtocolRelayPresenceMode.md)
 
-Who controls presence in the project.
+## Deprecated
+
+Use `HostedSignalProtocolRelayPresenceMode`. SDK 15.0.0 removes this name.

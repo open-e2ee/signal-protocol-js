@@ -24,21 +24,21 @@ npm install react react-native
 
 ```tsx
 import {
-  useRelayConnectionState,
-  useRelayLifecycle,
+  useSignalProtocolRelayConnectionState,
+  useSignalProtocolRelayLifecycle,
   useSessionHealth,
-  type UseRelayLifecycleOptions,
-  type UseRelayConnectionStateOptions,
+  type UseSignalProtocolRelayLifecycleOptions,
+  type UseSignalProtocolRelayConnectionStateOptions,
   type UseSessionHealthOptions,
 } from "@open-e2ee/signal-protocol-sdk/hooks";
 
-function SignalLifecycle({ signal }: Pick<UseRelayLifecycleOptions, "signal">) {
-  useRelayLifecycle({ signal });
+function SignalLifecycle({ signal }: Pick<UseSignalProtocolRelayLifecycleOptions, "signal">) {
+  useSignalProtocolRelayLifecycle({ signal });
   return null;
 }
 
-function OwnConnectionDot({ signal }: Pick<UseRelayConnectionStateOptions, "signal">) {
-  const { state } = useRelayConnectionState({ signal });
+function OwnConnectionDot({ signal }: Pick<UseSignalProtocolRelayConnectionStateOptions, "signal">) {
+  const { state } = useSignalProtocolRelayConnectionState({ signal });
   return <Dot online={state === "connected"} />;
 }
 
@@ -51,7 +51,7 @@ function ConversationStatus({ signal, userId }: Pick<UseSessionHealthOptions, "s
 
 ## Relay connection state
 
-`useRelayConnectionState({ signal })` returns the `RelayConnectionState` of
+`useSignalProtocolRelayConnectionState({ signal })` returns the `SignalProtocolRelayConnectionState` of
 the relay subscription on this device. The component renders again on each
 transition, and the hook unsubscribes when the component unmounts. The state
 is `stopped`, `connecting`, `connected`, or `reconnecting`. A `reason` tells
@@ -60,7 +60,7 @@ is not presence and does not tell you about other users.
 
 ## Relay lifecycle
 
-`useRelayLifecycle({ signal })` stops the relay subscription when a React
+`useSignalProtocolRelayLifecycle({ signal })` stops the relay subscription when a React
 Native app goes to the background and starts it again when the app becomes
 active. The stop closes the socket with code 1000, so the Relay records a
 client close. The Relay replays retained messages when the app becomes active.
@@ -69,7 +69,7 @@ a hidden desktop tab keeps its socket open by itself.
 
 Set `keepOpenInBackground: true` to keep the socket open in the background,
 for example while an Android foreground service runs. Outside React, call
-`bindRelayLifecycle(signal, AppState)` from
+`bindSignalProtocolRelayLifecycle(signal, AppState)` from
 `@open-e2ee/signal-protocol-sdk/client`.
 
 Do not call these hooks outside React components or custom hooks. Event callbacks from

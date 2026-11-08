@@ -28,7 +28,7 @@ const storage = await webSqliteStore();
 
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay },
+  adapters: { storage, signalProtocolRelay },
 });
 ```
 
@@ -107,7 +107,7 @@ To recover, delete the file and link the device again:
    file, creates a new key, and returns the open, empty store. The identity
    and the sessions of the device go with the file.
 3. Put the account identity into the new store, then call
-   `linkHostedRelayDevice()` with it. This needs another device that holds the
+   `linkHostedSignalProtocolRelayDevice()` with it. This needs another device that holds the
    account identity. See
    [Link a device](../../../device/README.md#link-a-device).
 

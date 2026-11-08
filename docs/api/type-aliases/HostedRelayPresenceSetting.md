@@ -4,8 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / HostedRelayPresenceSetting
 
-# Type Alias: HostedRelayPresenceSetting
+# ~~Type Alias: HostedRelayPresenceSetting~~
 
-> **HostedRelayPresenceSetting** = `"unset"` \| `"visible"` \| `"hidden"`
+> **HostedRelayPresenceSetting** = [`HostedSignalProtocolRelayPresenceSetting`](HostedSignalProtocolRelayPresenceSetting.md)
 
-An account's own choice. `unset` takes the project default.
+## Deprecated
+
+Use `HostedSignalProtocolRelayPresenceSetting`. SDK 15.0.0 removes this name.

@@ -18,7 +18,7 @@ The hosted client configures this transport for the OpenE2EE Signal Protocol Rel
 ## Example
 
 ```typescript
-const relay: SignalProtocolRelayServer = appRelayTransport;
+const relay: SignalProtocolRelayServer = appSignalProtocolRelayTransport;
 
 // Subscribe to incoming envelopes
 const unsubscribe = relay.subscribe(userId, deviceId, (envelope) => {
@@ -44,20 +44,34 @@ await relay.send({
 
 ### groupServer?
 
-> `readonly` `optional` **groupServer?**: [`RelayGroupServer`](RelayGroupServer.md)
+> `readonly` `optional` **groupServer?**: [`SignalProtocolRelayGroupServer`](SignalProtocolRelayGroupServer.md)
 
 Optional conforming Group System transport and issuance capability.
 
 ***
 
-### relayConnectionState
+### ~~relayConnectionState~~
 
-> `readonly` **relayConnectionState**: [`RelayConnectionState`](RelayConnectionState.md)
+> `readonly` **relayConnectionState**: [`SignalProtocolRelayConnectionState`](SignalProtocolRelayConnectionState.md)
+
+#### Deprecated
+
+Use `signalProtocolRelayConnectionState`. SDK 15.0.0 requires `signalProtocolRelayConnectionState` and removes this name.
+
+***
+
+### signalProtocolRelayConnectionState?
+
+> `readonly` `optional` **signalProtocolRelayConnectionState?**: [`SignalProtocolRelayConnectionState`](SignalProtocolRelayConnectionState.md)
 
 The connection state of this device's envelope subscription.
 
 It reads `stopped` before `subscribe` and after its unsubscribe. The value
 is replaced on each transition and is stable between transitions.
+
+SDK 14 makes this member optional and requires the deprecated
+`relayConnectionState`. When an implementation supplies both, the SDK
+reads this member. SDK 15.0.0 requires this member.
 
 ## Methods
 
@@ -132,7 +146,7 @@ ZK auth credential for anonymous group access
 
 ### fetchPreKeyBundle()
 
-> **fetchPreKeyBundle**(`userId`, `deviceId`, `fetcherUserId?`, `identityType?`): `Promise`\<[`RelayPreKeyBundle`](RelayPreKeyBundle.md) \| `null`\>
+> **fetchPreKeyBundle**(`userId`, `deviceId`, `fetcherUserId?`, `identityType?`): `Promise`\<[`PreKeyBundle`](PreKeyBundle.md) \| `null`\>
 
 Fetch prekey bundle for session establishment.
 
@@ -167,7 +181,7 @@ Deprecated, ignored. The server derives fetcher identity from auth.
 
 #### Returns
 
-`Promise`\<[`RelayPreKeyBundle`](RelayPreKeyBundle.md) \| `null`\>
+`Promise`\<[`PreKeyBundle`](PreKeyBundle.md) \| `null`\>
 
 Prekey bundle or null if device not found
 
@@ -951,14 +965,38 @@ Unsubscribe function
 
 ***
 
-### subscribeRelayConnectionState()
+### ~~subscribeRelayConnectionState()~~
 
 > **subscribeRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
 
-Subscribe to transitions of `relayConnectionState`.
+#### Parameters
+
+##### listener
+
+(`state`) => `void`
+
+#### Returns
+
+[`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+#### Deprecated
+
+Use `subscribeSignalProtocolRelayConnectionState`. SDK 15.0.0 requires `subscribeSignalProtocolRelayConnectionState` and removes this name.
+
+***
+
+### subscribeSignalProtocolRelayConnectionState()?
+
+> `optional` **subscribeSignalProtocolRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+Subscribe to transitions of `signalProtocolRelayConnectionState`.
 
 The listener receives each new state once. It does not receive the
 current state when it subscribes.
+
+SDK 14 makes this member optional and requires the deprecated
+`subscribeRelayConnectionState`. When an implementation supplies both,
+the SDK calls this member. SDK 15.0.0 requires this member.
 
 #### Parameters
 

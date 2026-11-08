@@ -1,4 +1,26 @@
 /**
+ * The Relay scope of a sealed sender configuration. The new name wins, and
+ * two different values fail.
+ *
+ * @throws SignalProtocolRelayNameConflictError when both names hold different
+ *   values.
+ * @throws Error when neither name holds a value.
+ */
+export function sealedSenderSignalProtocolRelayScopeId(
+  config: Pick<SealedSenderConfig, 'signalProtocolRelayScopeId' | 'relayScopeId'>
+): Uint8Array {
+  const scopeId = readRenamedOption(config.signalProtocolRelayScopeId, config.relayScopeId, {
+    newName: 'signalProtocolRelayScopeId',
+    earlierName: 'relayScopeId',
+    operation: 'sealedSender',
+  });
+  if (scopeId === undefined) {
+    throw new Error('sealedSender.signalProtocolRelayScopeId is required');
+  }
+  return scopeId;
+}
+
+/**
  * Sealed Sender Client Boundary
  *
  * Provides seal/unseal wrapping for the message send/receive pipeline.
@@ -8,10 +30,11 @@
  */
 
 import type { SealedSenderConfig, SealedSenderDeliveryMode } from './config';
-import type { Envelope, SealedSenderAuth } from '../remote/relay/types';
+import type { Envelope, SealedSenderAuth } from '../remote/signal-relay/types';
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import type { Base64, SignalProtocolLocalStore } from '../types';
 import { ContentHint } from '../types/messages';
+import { readRenamedOption } from '../types/renamed-member';
 import { ProtocolAddress } from '../types/address';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { base64ToBytes, bytesToBase64 } from '../internal/crypto';
@@ -51,7 +74,7 @@ export interface ResolvedSealedSenderContext {
 export interface SealedSenderResolutionContext {
   storage: SignalProtocolLocalStore;
   deliveryMode: SealedSenderDeliveryMode;
-  relaySupportsUnidentified: boolean;
+  signalProtocolRelaySupportsUnidentified: boolean;
   provider?: SealedSenderProvider;
   contactProfileStateStore?: ContactProfileStateStore;
   endorsementManager?: EndorsementManager;
@@ -127,7 +150,7 @@ export async function resolveSealedSenderContext(
   groupId?: string
 ): Promise<ResolvedSealedSenderContext | null> {
   if (context.deliveryMode === 'disabled') return null;
-  if (!context.provider || !context.relaySupportsUnidentified) {
+  if (!context.provider || !context.signalProtocolRelaySupportsUnidentified) {
     return context.useIdentifiedDeliveryOrThrow(
       recipientUserId,
       'anonymous relay capability is not configured'
@@ -268,7 +291,7 @@ export async function resolveSealedSenderContext(
  * @param recipientUuid - Recipient's user ID (for self-send detection)
  * @param recipientDeviceId - Recipient's device ID
  * @param config - Sealed sender config with trust roots
- * @param relayEnqueueTime - Immutable time when Relay accepted the message
+ * @param signalRelayEnqueueTime - Immutable time when Relay accepted the message
  * @returns Unsealed envelope info with sender identity, inner ciphertext and content hint
  */
 export async function unsealMessage(
@@ -277,7 +300,7 @@ export async function unsealMessage(
   recipientUuid: string,
   recipientDeviceId: number,
   config: SealedSenderConfig,
-  relayEnqueueTime: number | undefined,
+  signalRelayEnqueueTime: number | undefined,
   providedLogger?: Logger
 ): Promise<{
   senderUserId: string;
@@ -287,9 +310,9 @@ export async function unsealMessage(
   contentHint: ContentHint;
 }> {
   if (
-    typeof relayEnqueueTime !== 'number' ||
-    !Number.isSafeInteger(relayEnqueueTime) ||
-    relayEnqueueTime <= 0
+    typeof signalRelayEnqueueTime !== 'number' ||
+    !Number.isSafeInteger(signalRelayEnqueueTime) ||
+    signalRelayEnqueueTime <= 0
   ) {
     throw new Error('Sealed sender verification requires an immutable Relay enqueue time');
   }
@@ -310,7 +333,7 @@ export async function unsealMessage(
       recipientUuid,
       recipientDeviceId,
       config,
-      relayEnqueueTime,
+      signalRelayEnqueueTime,
       logger
     );
   }
@@ -330,7 +353,7 @@ async function unsealReceivedMessage(
   recipientUuid: string,
   recipientDeviceId: number,
   config: SealedSenderConfig,
-  relayEnqueueTime: number,
+  signalRelayEnqueueTime: number,
   logger: Required<Logger>
 ): Promise<{
   senderUserId: string;
@@ -364,7 +387,7 @@ async function unsealReceivedMessage(
   // 4. Build trust roots as Base64 strings
   const trustRoots: Base64[] = config.trustRoots.map((root) => bytesToBase64(root) as Base64);
   const certificatePolicy = {
-    expectedRelayScopeId: bytesToBase64(config.relayScopeId) as Base64,
+    expectedRelayScopeId: bytesToBase64(sealedSenderSignalProtocolRelayScopeId(config)) as Base64,
     revokedIssuerKeyIds: config.revokedIssuerKeyIds,
   };
 
@@ -376,7 +399,7 @@ async function unsealReceivedMessage(
     recipientServiceId: recipientUuid,
     recipientDeviceId,
     trustRoots,
-    currentTime: relayEnqueueTime,
+    currentTime: signalRelayEnqueueTime,
     certificatePolicy,
   });
 

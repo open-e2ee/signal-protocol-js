@@ -36,7 +36,7 @@ import type { EcSignedPreKey, IdentityKeyPair, KyberPreKey } from '../keys';
 import { generateEcSignedPreKey, generateKyberLastResortPreKey } from '../keys';
 import type { IdentityType } from '../keys/types';
 import type { PublicKey, PrivateKey, Signature } from '../keys/branded';
-import type { PreKeyInventory, PreKeyUpload, SignalProtocolRelayServer } from '../remote/relay/types';
+import type { PreKeyInventory, PreKeyUpload, SignalProtocolRelayServer } from '../remote/signal-relay/types';
 import { getErrorMessage } from '../utils/errors';
 import {
   getActiveIdentityTypes,
@@ -271,7 +271,7 @@ export function oneTimePreKeysDue(inventory: PreKeyInventory, threshold: number)
  * @see https://signal.org/docs/specifications/pqxdh/#publishing-keys
  */
 export async function rotatePreKeysCore(
-  relay: SignalProtocolRelayServer,
+  signalProtocolRelay: SignalProtocolRelayServer,
   userId: string,
   deviceId: number,
   providedStorage?: SignalProtocolLocalStore,
@@ -298,7 +298,7 @@ export async function rotatePreKeysCore(
       deviceId,
       identityType,
       () =>
-        rotatePreKeysForIdentity(relay, userId, deviceId, storage, identityType, {
+        rotatePreKeysForIdentity(signalProtocolRelay, userId, deviceId, storage, identityType, {
           refreshIntervalMs,
           threshold,
           preKeyMaintenance,
@@ -327,7 +327,7 @@ export async function rotatePreKeysCore(
  * publication returns.
  */
 async function rotatePreKeysForIdentity(
-  relay: SignalProtocolRelayServer,
+  signalProtocolRelay: SignalProtocolRelayServer,
   userId: string,
   deviceId: number,
   storage: SignalProtocolLocalStore,
@@ -338,7 +338,7 @@ async function rotatePreKeysForIdentity(
   const { refreshIntervalMs, threshold, preKeyMaintenance, logger } = options;
   const planned: PlannedKeys = { signed: null, kyber: null, refill: null };
 
-  await relay.publishPlannedPreKeys(
+  await signalProtocolRelay.publishPlannedPreKeys(
     userId,
     deviceId,
     async (inventory) => {
@@ -468,7 +468,7 @@ export interface PreKeySendCheckResult {
  * rotation. If rotation fails, the caller must block sending to maintain
  * security.
  *
- * @param relay - Signal Protocol relay server interface
+ * @param signalProtocolRelay - Signal Protocol relay server interface
  * @param userId - User identifier
  * @param deviceId - Device identifier
  * @param storage - Optional storage instance
@@ -490,7 +490,7 @@ export interface PreKeySendCheckResult {
  * @see https://signal.org/docs/specifications/pqxdh/#publishing-keys
  */
 export async function ensurePreKeysValid(
-  relay: SignalProtocolRelayServer,
+  signalProtocolRelay: SignalProtocolRelayServer,
   userId: string,
   deviceId: number,
   storage?: SignalProtocolLocalStore,
@@ -499,7 +499,7 @@ export async function ensurePreKeysValid(
   logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<PreKeySendCheckResult> {
   // One inventory read gives both signed-key records for the identity type.
-  const inventory = await relay.getPreKeyInventory(userId, deviceId, identityType);
+  const inventory = await signalProtocolRelay.getPreKeyInventory(userId, deviceId, identityType);
   const { ecSignedPreKey: signedMetadata, kemLastResortPreKey: kyberMetadata } = inventory;
   const signedExpired = signedMetadata ? isPreKeyExpired(signedMetadata.createdAt, maxAgeMs) : true;
   const kyberExpired = kyberMetadata ? isPreKeyExpired(kyberMetadata.createdAt, maxAgeMs) : true;
@@ -530,7 +530,7 @@ export async function ensurePreKeysValid(
   });
 
   // An expired key is older than the refresh interval, so the rotation finds it due.
-  const rotation = await rotatePreKeysCore(relay, userId, deviceId, storage, {
+  const rotation = await rotatePreKeysCore(signalProtocolRelay, userId, deviceId, storage, {
     identityTypes: [identityType],
     logger,
   });

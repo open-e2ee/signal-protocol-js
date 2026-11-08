@@ -29,7 +29,7 @@
  * request without a ratchet key names a failed sender-key message.
  */
 
-import type { Envelope, SignalProtocolRelayServer } from '../remote/relay/types';
+import type { Envelope, SignalProtocolRelayServer } from '../remote/signal-relay/types';
 import { SealedSenderAuthError } from '../types/errors';
 import type { SealedReceipt } from './types';
 import { RetryReason, type RetryRequest } from '../internal/sesame/types';
@@ -52,12 +52,12 @@ import {
 } from '../local/store/reliability';
 import {
   classifyRetryRequestPostFailure,
-  relayHoldsMessageId,
-  relayOperationRefusal,
+  signalRelayHoldsMessageId,
+  signalRelayOperationRefusal,
   type RetryRequestPostFailure,
-} from './relay-acceptance';
-import { rethrowRelayWorkStopped } from './relay-work';
-import { isStaleDeviceRefusal } from './relay-device-refusal';
+} from './signal-relay-acceptance';
+import { rethrowSignalProtocolRelayWorkStopped } from './signal-relay-work';
+import { isStaleDeviceRefusal } from './signal-relay-device-refusal';
 import { MAX_RETRY_RESPONSES_PER_MESSAGE } from './constants';
 
 /** The payload version that this client writes and reads. */
@@ -226,7 +226,7 @@ export type SealRetryRequest = (
  * outage, so the next post refreshes again.
  *
  * @param seal - Seals the payload. Without it, each post is identified.
- * @param relay - Posts the sealed envelope.
+ * @param signalProtocolRelay - Posts the sealed envelope.
  * @param sendIdentified - Posts the identified envelope.
  * @param registrationOf - The registration ID of the current session with
  *   the target device. The identified envelope names it, as the sealed body
@@ -238,7 +238,7 @@ export type SealRetryRequest = (
  */
 export function retryRequestPost(
   seal: SealRetryRequest | undefined,
-  relay: Pick<SignalProtocolRelayServer, 'sendMultiRecipientUnidentified'> | undefined,
+  signalProtocolRelay: Pick<SignalProtocolRelayServer, 'sendMultiRecipientUnidentified'> | undefined,
   sendIdentified: (envelope: Envelope) => Promise<unknown>,
   registrationOf?: (userId: string, deviceId: number) => Promise<number | undefined>,
   refreshStaleSession?: (userId: string, deviceId: number) => Promise<boolean>
@@ -251,11 +251,11 @@ export function retryRequestPost(
     const sealed = await seal?.(envelope.targetUserId, envelope.targetDeviceId, payloadBase64);
     if (sealed) {
       // The seal resolves only when the relay has anonymous delivery.
-      if (!relay?.sendMultiRecipientUnidentified) {
+      if (!signalProtocolRelay?.sendMultiRecipientUnidentified) {
         throw new Error('Relay has no anonymous delivery for a sealed retry request');
       }
       try {
-        return await relay.sendMultiRecipientUnidentified(
+        return await signalProtocolRelay.sendMultiRecipientUnidentified(
           sealed.sentMessageBase64,
           sealed.auth,
           envelope.timestamp,
@@ -552,10 +552,10 @@ function retryRequestAttempts(
     try {
       await send(record.envelope!);
     } catch (error) {
-      rethrowRelayWorkStopped(error);
-      const refusal = relayOperationRefusal(error);
+      rethrowSignalProtocolRelayWorkStopped(error);
+      const refusal = signalRelayOperationRefusal(error);
       if (refusal === 'OPERATION_EXPIRED') return end(record, 'posting-deadline');
-      if (!relayHoldsMessageId(error)) {
+      if (!signalRelayHoldsMessageId(error)) {
         const failure: RetryRequestPostFailure = classifyRetryRequestPostFailure(error);
         if ('terminal' in failure) {
           await update(record, {

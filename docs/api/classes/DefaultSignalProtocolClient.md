@@ -105,32 +105,56 @@ Whether the client enables and configures sealed sender.
 
 ***
 
-### relayConnectionState
+### ~~relayConnectionState~~
 
 #### Get Signature
 
-> **get** **relayConnectionState**(): [`RelayConnectionState`](../interfaces/RelayConnectionState.md)
+> **get** **relayConnectionState**(): [`SignalProtocolRelayConnectionState`](../interfaces/SignalProtocolRelayConnectionState.md)
+
+##### Deprecated
+
+Use `signalProtocolRelayConnectionState`. SDK 15.0.0 removes this name.
+
+##### Returns
+
+[`SignalProtocolRelayConnectionState`](../interfaces/SignalProtocolRelayConnectionState.md)
+
+#### Deprecated
+
+Use `signalProtocolRelayConnectionState`. SDK 15.0.0 removes this name.
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`relayConnectionState`](../interfaces/SignalProtocolClient.md#relayconnectionstate)
+
+***
+
+### signalProtocolRelayConnectionState
+
+#### Get Signature
+
+> **get** **signalProtocolRelayConnectionState**(): [`SignalProtocolRelayConnectionState`](../interfaces/SignalProtocolRelayConnectionState.md)
 
 The connection state of the relay subscription. Reads `stopped` when no
 relay is configured.
 
 ##### See
 
-SignalProtocolClient.relayConnectionState
+SignalProtocolClient.signalProtocolRelayConnectionState
 
 ##### Returns
 
-[`RelayConnectionState`](../interfaces/RelayConnectionState.md)
+[`SignalProtocolRelayConnectionState`](../interfaces/SignalProtocolRelayConnectionState.md)
 
 The connection state of the relay subscription.
 
-It reads `stopped` before `startRelaySubscription()`, after
-`stopRelaySubscription()`, and when no relay is configured. Use it for a
-local indicator of this device's connection.
+It reads `stopped` before `startSignalProtocolRelaySubscription()`, after
+`stopSignalProtocolRelaySubscription()`, and when no relay is configured.
+Use it for a local indicator of this device's connection.
 
 #### Implementation of
 
-[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`relayConnectionState`](../interfaces/SignalProtocolClient.md#relayconnectionstate)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`signalProtocolRelayConnectionState`](../interfaces/SignalProtocolClient.md#signalprotocolrelayconnectionstate)
 
 ***
 
@@ -1184,7 +1208,7 @@ Partner's protocol address (userId + deviceId)
 
 ##### prekeyBundle
 
-[`RelayPreKeyBundle`](../interfaces/RelayPreKeyBundle.md)
+[`PreKeyBundle`](../interfaces/PreKeyBundle.md)
 
 Partner's prekey bundle (fetched from server)
 
@@ -1990,7 +2014,7 @@ and never gives to onMessageDecrypted.
 
 The content reaches onMessageDecrypted in a later pass of the receive
 queue, after this call returns. After `stop()`, the content waits for
-the next start of the queue from `startRelaySubscription`, or for
+the next start of the queue from `startSignalProtocolRelaySubscription`, or for
 `processPendingReceives`.
 
 #### Parameters
@@ -2043,7 +2067,7 @@ The callback function to invoke
 
 ```typescript
 // In ServicesProvider: wire up ContentManager after creation
-const signal = await DefaultSignalProtocolClient.create(userId, { storage, relay });
+const signal = await DefaultSignalProtocolClient.create(userId, { storage, signalProtocolRelay });
 const content = new ContentManager({ db, signal });
 
 signal.registerHook('onMessageDecrypted', content.getDecryptionHook());
@@ -2267,13 +2291,13 @@ when the call raised a refusal (a thrown refusal or a refusal in the
 receipt of a shared body), it throws the first such refusal. Otherwise it
 throws an `Error` with the stored code of the first refused device that
 has one, in the order of the destinations. Otherwise it throws
-`SendNeverAcceptedByRelayError` with code `SEND_NEVER_ACCEPTED`. A send
+`SendNeverAcceptedBySignalProtocolRelayError` with code `SEND_NEVER_ACCEPTED`. A send
 error before the deadline gives `deadlineAt`, and `retryable` is true
 when a replay can still post the send.
 
 A backdated `timestamp` shortens the deadline. A send with a timestamp
 23 hours old has at most 1 hour to post. A send with a timestamp 24 hours
-old posts nothing and throws `SendNeverAcceptedByRelayError`.
+old posts nothing and throws `SendNeverAcceptedBySignalProtocolRelayError`.
 
 #### Parameters
 
@@ -2429,9 +2453,27 @@ Uses the same privacy gate as read receipts.
 
 ***
 
-### startRelaySubscription()
+### ~~startRelaySubscription()~~
 
 > **startRelaySubscription**(): `void`
+
+#### Returns
+
+`void`
+
+#### Deprecated
+
+Use `startSignalProtocolRelaySubscription`. SDK 15.0.0 removes this name.
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`startRelaySubscription`](../interfaces/SignalProtocolClient.md#startrelaysubscription)
+
+***
+
+### startSignalProtocolRelaySubscription()
+
+> **startSignalProtocolRelaySubscription**(): `void`
 
 Start relay subscription for automatic message decryption
 
@@ -2455,11 +2497,11 @@ resolves.
 
 #### See
 
-SignalProtocolClient.startRelaySubscription
+SignalProtocolClient.startSignalProtocolRelaySubscription
 
 #### Implementation of
 
-[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`startRelaySubscription`](../interfaces/SignalProtocolClient.md#startrelaysubscription)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`startSignalProtocolRelaySubscription`](../interfaces/SignalProtocolClient.md#startsignalprotocolrelaysubscription)
 
 ***
 
@@ -2480,7 +2522,7 @@ receipt. At the end of each wait, stop() sends the batches that wait and
 waits for those sends until the same deadline. It does this again while
 the deadline is not past. stop() holds the receipt batches from its
 first flush until it clears its tracking state. During the hold,
-stopRelaySubscription() does not send them, and stop() drops a receipt
+stopSignalProtocolRelaySubscription() does not send them, and stop() drops a receipt
 batched after its last flush. At the deadline it stops each receipt
 send that is left: a send that waits in an app hook stops, and that
 receipt is not sent. A send that is in its relay call at the deadline
@@ -2495,7 +2537,7 @@ and viewed receipt sends. When a hook returns after stop(), the SDK drops
 the work after the hook and writes nothing more. The relay delivers the
 envelope again after the next start.
 
-A call to startRelaySubscription() while stop() runs is refused and
+A call to startSignalProtocolRelaySubscription() while stop() runs is refused and
 logged; start again after stop() resolves. A stop() call that overlaps a
 running stop() waits for it and settles as it settles.
 
@@ -2516,14 +2558,32 @@ await signal.stop();
 
 ***
 
-### stopRelaySubscription()
+### ~~stopRelaySubscription()~~
 
 > **stopRelaySubscription**(): `void`
+
+#### Returns
+
+`void`
+
+#### Deprecated
+
+Use `stopSignalProtocolRelaySubscription`. SDK 15.0.0 removes this name.
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`stopRelaySubscription`](../interfaces/SignalProtocolClient.md#stoprelaysubscription)
+
+***
+
+### stopSignalProtocolRelaySubscription()
+
+> **stopSignalProtocolRelaySubscription**(): `void`
 
 Stop the relay subscription
 
 Pauses message processing via the relay subscription without destroying
-DefaultSignalProtocolClient state. startRelaySubscription() restarts the subscription.
+DefaultSignalProtocolClient state. startSignalProtocolRelaySubscription() restarts the subscription.
 
 Use this when the app backgrounds to let the background task handle messages.
 Resume when the app foregrounds for real-time message delivery.
@@ -2534,17 +2594,41 @@ Resume when the app foregrounds for real-time message delivery.
 
 #### See
 
-SignalProtocolClient.stopRelaySubscription
+SignalProtocolClient.stopSignalProtocolRelaySubscription
 
 #### Implementation of
 
-[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`stopRelaySubscription`](../interfaces/SignalProtocolClient.md#stoprelaysubscription)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`stopSignalProtocolRelaySubscription`](../interfaces/SignalProtocolClient.md#stopsignalprotocolrelaysubscription)
 
 ***
 
-### subscribeRelayConnectionState()
+### ~~subscribeRelayConnectionState()~~
 
 > **subscribeRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+#### Parameters
+
+##### listener
+
+(`state`) => `void`
+
+#### Returns
+
+[`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+#### Deprecated
+
+Use `subscribeSignalProtocolRelayConnectionState`. SDK 15.0.0 removes this name.
+
+#### Implementation of
+
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`subscribeRelayConnectionState`](../interfaces/SignalProtocolClient.md#subscriberelayconnectionstate)
+
+***
+
+### subscribeSignalProtocolRelayConnectionState()
+
+> **subscribeSignalProtocolRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
 
 Subscribe to relay connection transitions. Without a relay, the listener
 never runs.
@@ -2561,11 +2645,11 @@ never runs.
 
 #### See
 
-SignalProtocolClient.subscribeRelayConnectionState
+SignalProtocolClient.subscribeSignalProtocolRelayConnectionState
 
 #### Implementation of
 
-[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`subscribeRelayConnectionState`](../interfaces/SignalProtocolClient.md#subscriberelayconnectionstate)
+[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`subscribeSignalProtocolRelayConnectionState`](../interfaces/SignalProtocolClient.md#subscribesignalprotocolrelayconnectionstate)
 
 ***
 
@@ -3024,10 +3108,10 @@ const signal = await DefaultSignalProtocolClient.create('user-123', {
 });
 
 // With an application-owned authenticated relay transport.
-const relay = appRelayTransport;
+const signalProtocolRelay = appSignalProtocolRelayTransport;
 const signal = await DefaultSignalProtocolClient.create('user-123', {
   storage,
-  relay,
+  signalProtocolRelay,
   onProgress: ({ stage, percent, message }) => {
     console.log(`${stage}: ${percent}% - ${message}`);
   }
@@ -3037,7 +3121,7 @@ const signal = await DefaultSignalProtocolClient.create('user-123', {
 const signal = await DefaultSignalProtocolClient.create('user-123', {
   deviceId: 1,
   storage,
-  relay,
+  signalProtocolRelay,
   protocol: { postQuantum: 'required', braid: 'required' },
   onProgress,
   enableDebugLogging: true,

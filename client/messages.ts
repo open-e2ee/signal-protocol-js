@@ -8,16 +8,16 @@
 import type { Ciphertext } from '../keys';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { ProtocolAddress } from '../types/address';
-import type { Envelope } from '../remote/relay/types';
+import type { Envelope } from '../remote/signal-relay/types';
 import type { ReceiveWorkSeed } from '../types/api';
 import { isRemovedDevice } from '../internal/sesame/types';
 import { SealedSenderAuthError } from '../types/errors';
 import { callHook, type DeliveredEvent } from './event-hooks';
-import { rethrowRelayWorkStopped } from './relay-work';
-import { isStaleDeviceRefusal } from './relay-device-refusal';
+import { rethrowSignalProtocolRelayWorkStopped } from './signal-relay-work';
+import { isStaleDeviceRefusal } from './signal-relay-device-refusal';
 import {
-  HostedRelayDeviceRevokedError,
-  HostedRelayDeviceUnknownError,
+  HostedSignalProtocolRelayDeviceRevokedError,
+  HostedSignalProtocolRelayDeviceUnknownError,
 } from './hosted-device-standing';
 import type { ParsedReceiptContent, ParsedTypingContent } from './content-adapter';
 import type { SealedReceipt, SignalProtocolClientContext } from './types';
@@ -79,10 +79,10 @@ export async function encryptMessage(
   const sessionId = ProtocolAddress.toString(remoteAddress);
   try {
     // Check prekey age and rotate before advancing any send state.
-    if (ctx.relay) {
+    if (ctx.signalProtocolRelay) {
       const maxAgeMs = ctx.config.maxPreKeyAgeMs;
       const preKeyCheck = await ensurePreKeysValid(
-        ctx.relay,
+        ctx.signalProtocolRelay,
         ctx.userId,
         ctx.deviceId,
         ctx.storage,
@@ -110,7 +110,7 @@ export async function encryptMessage(
 
     return ciphertext;
   } catch (error) {
-    rethrowRelayWorkStopped(error);
+    rethrowSignalProtocolRelayWorkStopped(error);
     // Call hook: encryption error
     await callHook(ctx.hooks, 'onEncryptionError', sessionId, error as Error);
 
@@ -320,7 +320,7 @@ export async function sendTypingIndicator(
     },
   });
 
-  if (!ctx.relay) {
+  if (!ctx.signalProtocolRelay) {
     ctx.logger.debug('Cannot send typing indicator: relay not configured', {
       category: 'E2EE',
     });
@@ -357,7 +357,7 @@ export async function sendTypingIndicator(
 
     // Send as ciphertext. Typing indicators are encrypted Content inside
     // a ciphertext envelope. The relay contract carries only the outer type.
-    await ctx.relay.send({
+    await ctx.signalProtocolRelay.send({
       targetUserId: recipientUserId,
       targetDeviceId: recipientDeviceId,
       senderUserId: ctx.userId,
@@ -402,7 +402,7 @@ export async function sendTypingIndicator(
  *
  * @param ctx - Client context with dependencies
  * @param envelope - The original envelope containing sender info
- * @param typingMsg - The inspected typing content from relay-subscription
+ * @param typingMsg - The inspected typing content from signal-relay-subscription
  */
 export async function handleTypingIndicator(
   ctx: SignalProtocolClientContext,
@@ -456,7 +456,7 @@ export async function handleTypingIndicator(
       action
     );
   } catch (error) {
-    rethrowRelayWorkStopped(error);
+    rethrowSignalProtocolRelayWorkStopped(error);
     ctx.logger.warn('Failed to process typing indicator', {
       category: 'E2EE',
       data: {
@@ -507,7 +507,7 @@ export async function sendReceipt(
     },
   });
 
-  if (!ctx.relay) {
+  if (!ctx.signalProtocolRelay) {
     ctx.logger.debug(`Cannot send ${receiptTypeName} receipt: relay not configured`, {
       category: 'E2EE',
     });
@@ -584,7 +584,7 @@ async function sendReceiptToDevice(
     const { envelope, sealed } = prepared;
     if (sealed) {
       try {
-        await ctx.relay!.sendMultiRecipientUnidentified!(
+        await ctx.signalProtocolRelay!.sendMultiRecipientUnidentified!(
           sealed.sentMessageBase64,
           sealed.auth,
           envelope.timestamp,
@@ -602,7 +602,7 @@ async function sendReceiptToDevice(
         prepared = { envelope };
       }
     }
-    await ctx.relay!.send(envelope);
+    await ctx.signalProtocolRelay!.send(envelope);
   };
   const sendOrRefresh = async () => {
     try {
@@ -631,7 +631,7 @@ async function sendReceiptToDevice(
   try {
     await sendOrRefresh();
   } catch (error) {
-    rethrowRelayWorkStopped(error);
+    rethrowSignalProtocolRelayWorkStopped(error);
     // The Relay refused this device, so the same send fails again.
     if (isStaleDeviceRefusal(error)) {
       ctx.logger.warn(`Receipt send refused for a stale device, no retry`, {
@@ -641,8 +641,8 @@ async function sendReceiptToDevice(
       return;
     }
     if (
-      error instanceof HostedRelayDeviceRevokedError ||
-      error instanceof HostedRelayDeviceUnknownError
+      error instanceof HostedSignalProtocolRelayDeviceRevokedError ||
+      error instanceof HostedSignalProtocolRelayDeviceUnknownError
     ) {
       ctx.logger.warn(`Receipt send refused for this device, no retry`, {
         category: 'E2EE',
@@ -747,7 +747,7 @@ async function prepareReceiptToDevice(
  *
  * @param ctx - Client context with dependencies
  * @param envelope - The original envelope containing sender info
- * @param receiptMsg - The inspected receipt content from relay-subscription
+ * @param receiptMsg - The inspected receipt content from signal-relay-subscription
  */
 export async function handleDeliveryReceipt(
   ctx: SignalProtocolClientContext,
@@ -852,7 +852,7 @@ export async function handleDeliveryReceipt(
         )) ?? [];
     }
   } catch (error) {
-    rethrowRelayWorkStopped(error);
+    rethrowSignalProtocolRelayWorkStopped(error);
     ctx.logger.warn('Failed to process receipt', {
       category: 'E2EE',
       data: {

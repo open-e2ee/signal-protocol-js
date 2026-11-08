@@ -1,5 +1,5 @@
 /* Checks packed client cryptography with runtime code generation disabled.
- * The internal checkout also runs its development-relay round trip.
+ * The internal checkout also runs its round trip through the development Relay.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -33,7 +33,7 @@ const quickStart = existsSync(privateRoundTrip)
   ? readFileSync(privateRoundTrip, 'utf8')
   : `
 import assert from 'node:assert/strict';
-import { keys, createDefaultSignalProtocolContentAdapter, hostedRelaySandboxIdentity } from '@open-e2ee/signal-protocol-sdk';
+import { keys, createDefaultSignalProtocolContentAdapter, hostedSignalProtocolRelaySandboxIdentity } from '@open-e2ee/signal-protocol-sdk';
 import { inMemoryStore } from '@open-e2ee/signal-protocol-sdk/local/store/memory';
 import { deriveGroupSecretParams, encryptBlob, decryptBlob } from '@open-e2ee/signal-protocol-sdk/zk/groups';
 const identity = await keys.generateIdentityKeyPair();
@@ -44,7 +44,7 @@ const ciphertext = encryptBlob(group, crypto.getRandomValues(new Uint8Array(32))
 assert.deepEqual(decryptBlob(group, ciphertext), plaintext);
 const content = createDefaultSignalProtocolContentAdapter();
 assert.ok(content.serializeDataMessage({ body: 'client crypto', timestamp: 1 }).length > 0);
-const assertion = await hostedRelaySandboxIdentity(inMemoryStore())({
+const assertion = await hostedSignalProtocolRelaySandboxIdentity(inMemoryStore())({
   environment: 'sandbox',
   publishableKey: 'csp-smoke-key',
   purpose: 'register',

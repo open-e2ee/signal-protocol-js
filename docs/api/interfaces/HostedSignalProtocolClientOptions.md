@@ -16,7 +16,7 @@ Compact, runtime-neutral Signal Protocol Relay client configuration.
 
 ### adapters
 
-> `readonly` **adapters**: `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md)\[`"adapters"`\], `"relay"` \| `"remoteObjectStore"`\>
+> `readonly` **adapters**: `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md)\[`"adapters"`\], `"relay"` \| `"signalProtocolRelay"` \| `"remoteObjectStore"`\>
 
 ***
 
@@ -178,7 +178,7 @@ device. `recover` registers through an account recovery.
 
 `reregister` registers this device again with its stored identity and
 device key, and skips the stored session. Use it only after a
-`HostedRelayDeviceUnknownError` and after the user confirms it. It asks
+`HostedSignalProtocolRelayDeviceUnknownError` and after the user confirms it. It asks
 for a `register` assertion. The Relay can give a new device ID, so the
 messages queued for the old device are lost.
 
@@ -192,11 +192,11 @@ messages queued for the old device are lost.
 
 #### onProgress?
 
-> `readonly` `optional` **onProgress?**: [`HostedRelayIdentityProgressCallback`](../type-aliases/HostedRelayIdentityProgressCallback.md)
+> `readonly` `optional` **onProgress?**: [`HostedSignalProtocolRelayIdentityProgressCallback`](../type-aliases/HostedSignalProtocolRelayIdentityProgressCallback.md)
 
 #### profileKeys?
 
-> `readonly` `optional` **profileKeys?**: [`HostedRelayProfileKeys`](HostedRelayProfileKeys.md)
+> `readonly` `optional` **profileKeys?**: [`HostedSignalProtocolRelayProfileKeys`](HostedSignalProtocolRelayProfileKeys.md)
 
 Carries this account's profile key in each end-to-end encrypted 1:1
 message and keeps the key that each contact sends. The SDK then
@@ -211,15 +211,24 @@ and carry this account's profile key. The SDK also registers the access
 key that it derives from this account's profile key, so a contact that
 holds the profile key can send sealed messages to this account.
 
-#### relayUrl
+#### ~~relayUrl?~~
 
-> `readonly` **relayUrl**: `string`
+> `readonly` `optional` **relayUrl?**: `string`
 
-Public environment-scoped Signal Protocol Relay connection URL.
+##### Deprecated
+
+Use `signalProtocolRelayUrl`. SDK 15.0.0 removes this name.
 
 #### sealedSenderAccessMode?
 
 > `readonly` `optional` **sealedSenderAccessMode?**: `SealedSenderAccessMode`
+
+#### signalProtocolRelayUrl?
+
+> `readonly` `optional` **signalProtocolRelayUrl?**: `string`
+
+Public environment-scoped Signal Protocol Relay connection URL. Set this
+member or the deprecated `relayUrl`.
 
 ***
 
@@ -383,7 +392,7 @@ and app database ownership.
 ```typescript
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay, remoteObjectStore },
+  adapters: { storage, signalProtocolRelay, remoteObjectStore },
   media: {
     preparedUploads: appPreparedUploads,
     loadLocalAttachment: async ({ localMediaId }) => appDrafts.readBytes(localMediaId),
@@ -503,7 +512,7 @@ Receives updates during:
 ```typescript
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay },
+  adapters: { storage, signalProtocolRelay },
   onProgress: ({ stage, percent, message }) => {
     console.log(`${stage}: ${percent}% - ${message}`);
   }

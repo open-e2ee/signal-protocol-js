@@ -189,7 +189,7 @@ import { reactNativeStore } from '@open-e2ee/signal-protocol-sdk/local/store/rea
 
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage: await reactNativeStore(), relay },
+  adapters: { storage: await reactNativeStore(), signalProtocolRelay },
 });
 ```
 

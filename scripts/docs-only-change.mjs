@@ -2,10 +2,14 @@
 /*
  * Decides which jobs of a workflow a pull request needs. The workflows skip
  * their heavy jobs for a change that cannot affect them and run them for
- * every other change. A change has one of four verdicts:
+ * every other change. A change has one of five verdicts:
  *
  * - `docs-only`: each file is documentation that no check reads. Every
  *   workflow skips its heavy jobs.
+ * - `snippet-documents`: each file is documentation, and at least one file is
+ *   a snippet document: a document whose code snippets the examples job runs,
+ *   and that no other heavy job reads. The build and the examples run, and
+ *   the other heavy jobs skip.
  * - `workflows-only`: each file is a workflow in `.github/workflows/`. A
  *   workflow runs its heavy jobs only when the change includes its own file.
  * - `fixture-only`: each file is below a fixture root of the allowlist. No
@@ -26,8 +30,11 @@
  * The one argument is the `changed_files` count of the pull request. Standard
  * input holds one JSON object per line. `WORKFLOW_REF` is the
  * `github.workflow_ref` of the workflow that asks, and names its file.
- * Standard output gets `code=true` or `code=false` for `$GITHUB_OUTPUT`, and
- * standard error gets the verdict and the reason.
+ * Standard output gets two lines for `$GITHUB_OUTPUT`: `code=true` or
+ * `code=false`, then `examples=true` or `examples=false`. `code` is true when
+ * the workflow must run its heavy jobs. `examples` is true when it must run
+ * the build and the examples, which `code` implies. Standard error gets the
+ * verdict and the reason.
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -52,15 +59,18 @@ const WORKFLOW_REF_FORMAT = /^[^/@]+\/[^/@]+\/([^@]+)@[^@]+$/;
 
 /**
  * Reads the allowlist: `files` names exact paths, `markdownRoots` names
- * directories whose Markdown files are all documentation, and `fixtureRoots`
- * names directories whose files only a fixture reads. Returns null when the
- * repository has no allowlist.
+ * directories whose Markdown files are all documentation, `fixtureRoots`
+ * names directories whose files only a fixture reads, and `snippetDocuments`
+ * names exact paths that only the build, the examples, and the checks that
+ * always run read. Returns null when the repository has no allowlist. Throws
+ * when a snippet document is also of another kind, because the other kind
+ * would skip the examples that read it.
  */
 export function readDocumentPaths(root = repoRoot) {
   const path = join(root, DOCUMENT_PATHS_FILE);
   if (!existsSync(path)) return null;
   const paths = JSON.parse(readFileSync(path, 'utf8'));
-  for (const key of ['files', 'markdownRoots', 'fixtureRoots']) {
+  for (const key of ['files', 'markdownRoots', 'fixtureRoots', 'snippetDocuments']) {
     const list = paths?.[key];
     const valid = Array.isArray(list) && list.every((entry) => typeof entry === 'string');
     if (!valid) {
@@ -72,11 +82,18 @@ export function readDocumentPaths(root = repoRoot) {
       }
     }
   }
-  return {
+  const result = {
     files: paths.files,
     markdownRoots: paths.markdownRoots,
     fixtureRoots: paths.fixtureRoots,
+    snippetDocuments: paths.snippetDocuments,
   };
+  for (const entry of result.snippetDocuments) {
+    if (isDocument(entry, result) || isFixture(entry, result) || isWorkflow(entry)) {
+      throw new Error(`${DOCUMENT_PATHS_FILE}: snippet document "${entry}" is also of another kind`);
+    }
+  }
+  return result;
 }
 
 /**
@@ -87,6 +104,12 @@ export function isDocument(path, paths) {
   if (typeof path !== 'string' || UNSAFE_PATH.test(path)) return false;
   if (paths.files.includes(path)) return true;
   return path.endsWith('.md') && paths.markdownRoots.some((root) => path.startsWith(`${root}/`));
+}
+
+/** True when the allowlist names `path` as a snippet document, exactly. */
+export function isSnippetDocument(path, paths) {
+  if (typeof path !== 'string' || UNSAFE_PATH.test(path)) return false;
+  return paths.snippetDocuments.includes(path);
 }
 
 /** True when `path` is a workflow file that GitHub reads. */
@@ -120,8 +143,9 @@ export function workflowFromRef(ref) {
  * only when both of its names have it. `workflow` is the file of the workflow
  * that asks, or null when it is unknown.
  *
- * Returns `{ verdict, code, reason }`: `code` is true when the workflow must
- * run its heavy jobs. Throws on malformed input.
+ * Returns `{ verdict, code, examples, reason }`: `code` is true when the
+ * workflow must run its heavy jobs, and `examples` is true when it must run
+ * the build and the examples. Throws on malformed input.
  */
 export function classifyChange(entries, expectedCount, paths, workflow = null) {
   if (!Array.isArray(entries)) throw new Error('the changed files must be an array');
@@ -142,7 +166,7 @@ export function classifyChange(entries, expectedCount, paths, workflow = null) {
     }
     return [filename, previous];
   });
-  const full = (reason) => ({ verdict: 'full', code: true, reason });
+  const full = (reason) => ({ verdict: 'full', code: true, examples: true, reason });
 
   if (paths === null) {
     return full(`${DOCUMENT_PATHS_FILE} is absent, so every change is code`);
@@ -160,7 +184,20 @@ export function classifyChange(entries, expectedCount, paths, workflow = null) {
     return {
       verdict: 'docs-only',
       code: false,
+      examples: false,
       reason: `all ${count} changed files are documentation`,
+    };
+  }
+  if (names.every((name) => isDocument(name, paths) || isSnippetDocument(name, paths))) {
+    const snippets = entries.filter(
+      ({ filename, previous_filename: previous }) =>
+        isSnippetDocument(filename, paths) || isSnippetDocument(previous, paths)
+    ).length;
+    return {
+      verdict: 'snippet-documents',
+      code: false,
+      examples: true,
+      reason: `all ${count} changed files are documentation, and ${snippets} of them are snippet documents, which the examples read`,
     };
   }
   if (names.every(isWorkflow)) {
@@ -168,6 +205,7 @@ export function classifyChange(entries, expectedCount, paths, workflow = null) {
       return {
         verdict: 'workflows-only',
         code: true,
+        examples: true,
         reason: `all ${count} changed files are workflows, and the asking workflow is unknown`,
       };
     }
@@ -175,6 +213,7 @@ export function classifyChange(entries, expectedCount, paths, workflow = null) {
     return {
       verdict: 'workflows-only',
       code: own,
+      examples: own,
       reason: `all ${count} changed files are workflows, and ${workflow} is ${own ? '' : 'not '}one of them`,
     };
   }
@@ -182,11 +221,16 @@ export function classifyChange(entries, expectedCount, paths, workflow = null) {
     return {
       verdict: 'fixture-only',
       code: true,
+      examples: true,
       reason: `all ${count} changed files are below a fixture root, and no job here runs them`,
     };
   }
   const other = names.find(
-    (name) => !isDocument(name, paths) && !isWorkflow(name) && !isFixture(name, paths)
+    (name) =>
+      !isDocument(name, paths) &&
+      !isSnippetDocument(name, paths) &&
+      !isWorkflow(name) &&
+      !isFixture(name, paths)
   );
   return full(
     other === undefined
@@ -222,14 +266,14 @@ if (
     if (count === undefined || extra.length > 0 || !/^\d+$/.test(count)) {
       throw new Error('usage: docs-only-change.mjs <changed-file-count> < files.jsonl');
     }
-    const { verdict, code, reason } = classifyChange(
+    const { verdict, code, examples, reason } = classifyChange(
       parseEntries(readFileSync(0, 'utf8')),
       Number(count),
       readDocumentPaths(),
       workflowFromRef(process.env.WORKFLOW_REF)
     );
     process.stderr.write(`${verdict}: ${reason}\n`);
-    process.stdout.write(`code=${code}\n`);
+    process.stdout.write(`code=${code}\nexamples=${examples}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : error}\n`);
     process.exit(1);

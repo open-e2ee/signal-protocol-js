@@ -1,5 +1,5 @@
 import { sha256, bytesToBase64 } from '../../internal/crypto';
-import type { Envelope } from '../../remote/relay/types';
+import type { Envelope } from '../../remote/signal-relay/types';
 
 /**
  * Bind recovery to the device that consumed an envelope, and to the

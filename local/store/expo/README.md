@@ -171,7 +171,7 @@ import { expoStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
 
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage: await expoStore(), relay },
+  adapters: { storage: await expoStore(), signalProtocolRelay },
 });
 ```
 

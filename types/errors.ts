@@ -16,9 +16,10 @@
  *         ├── PQXDHRequiredError        which post-quantum key the peer is missing
  *         ├── StorageQuotaExceededError the store that ran out of room
  *         ├── SecureRandomUnavailableError the runtime has no secure random source
+ *         ├── SignalProtocolRelayNameConflictError a new member name and its earlier name with different values
  *         ├── InvalidSendTimestampError the refused send timestamp and the accepted window
  *         ├── SendAcceptanceUnknownError the devices of an ended send whose acceptance is not known
- *         └── SendNeverAcceptedByRelayError the devices of an ended send that the Relay never accepted and that have no refusal code
+ *         └── SendNeverAcceptedBySignalProtocolRelayError the devices of an ended send that the Relay never accepted and that have no refusal code
  * ```
  *
  * A code or a subclass belongs here only if production code can produce it. An
@@ -177,7 +178,7 @@ export enum EncryptionErrorCode {
    * The posting deadline of a send ended, the call raised no refusal (a
    * thrown refusal or a refusal in the receipt of a shared body), and no
    * refused device has a stored refusal code. The SDK throws
-   * `SendNeverAcceptedByRelayError` and posts nothing more for the send.
+   * `SendNeverAcceptedBySignalProtocolRelayError` and posts nothing more for the send.
    */
   SEND_NEVER_ACCEPTED = 'SEND_NEVER_ACCEPTED',
 
@@ -330,6 +331,14 @@ export enum EncryptionErrorCode {
    * provider: react-native-get-random-values 2.x or react-native-quick-crypto.
    */
   SECURE_RANDOM_UNAVAILABLE = 'SECURE_RANDOM_UNAVAILABLE',
+
+  /**
+   * An object sets a member by its Signal Protocol Relay name and by its
+   * deprecated earlier name, with different values.
+   *
+   * Set only the new name, such as `signalProtocolRelay`.
+   */
+  SIGNAL_PROTOCOL_RELAY_NAME_CONFLICT = 'SIGNAL_PROTOCOL_RELAY_NAME_CONFLICT',
 
   // ===== Protocol Strategy Errors =====
 
@@ -742,6 +751,44 @@ export class SecureRandomUnavailableError extends EncryptionError {
 }
 
 /**
+ * Error thrown when an option or a member is set by its Signal Protocol Relay
+ * name and by its deprecated earlier name, with different values.
+ *
+ * SDK 14 accepts each earlier name, such as `relay` for
+ * `signalProtocolRelay`. When an object sets both names, the SDK uses the
+ * value only if the two values are the same. Set only `newName`.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   signal = await createSignalProtocolClient(config);
+ * } catch (error) {
+ *   if (isSignalProtocolRelayNameConflictError(error)) {
+ *     reportSetupError(`Set only ${error.newName}`);
+ *   }
+ * }
+ * ```
+ */
+export class SignalProtocolRelayNameConflictError extends EncryptionError {
+  override readonly name = 'SignalProtocolRelayNameConflictError';
+
+  /** The Signal Protocol Relay name of the member. */
+  public readonly newName: string;
+  /** The deprecated earlier name of the member. SDK 15.0.0 removes it. */
+  public readonly earlierName: string;
+
+  constructor(newName: string, earlierName: string, operation: string) {
+    super(
+      `${earlierName} and ${newName} name the same option and hold different values. Set only ${newName}.`,
+      EncryptionErrorCode.SIGNAL_PROTOCOL_RELAY_NAME_CONFLICT,
+      { operation }
+    );
+    this.newName = newName;
+    this.earlierName = earlierName;
+  }
+}
+
+/**
  * Why a new send cannot get a valid unique timestamp, either the
  * application-supplied value or the value that the SDK moved to.
  */
@@ -980,13 +1027,13 @@ export function isSendAcceptanceUnknownError(error: unknown): error is SendAccep
  * try {
  *   await signal.send(recipientId, { body }, { clientMessageId });
  * } catch (error) {
- *   if (isSendNeverAcceptedByRelayError(error)) {
+ *   if (isSendNeverAcceptedBySignalProtocolRelayError(error)) {
  *     showNotDelivered(error.refusedDevices);
  *   }
  * }
  * ```
  */
-export class SendNeverAcceptedByRelayError extends EncryptionError {
+export class SendNeverAcceptedBySignalProtocolRelayError extends EncryptionError {
   override readonly name = 'SendNeverAcceptedByRelayError';
 
   /** The logical-send identifier of the send. */
@@ -1019,15 +1066,27 @@ export class SendNeverAcceptedByRelayError extends EncryptionError {
 }
 
 /**
- * Type guard to check if an error is a SendNeverAcceptedByRelayError.
+ * Type guard to check if an error is a SendNeverAcceptedBySignalProtocolRelayError.
  *
  * @param error - Error to check
- * @returns true if error is SendNeverAcceptedByRelayError
+ * @returns true if error is SendNeverAcceptedBySignalProtocolRelayError
  */
-export function isSendNeverAcceptedByRelayError(
+export function isSendNeverAcceptedBySignalProtocolRelayError(
   error: unknown
-): error is SendNeverAcceptedByRelayError {
-  return error instanceof SendNeverAcceptedByRelayError;
+): error is SendNeverAcceptedBySignalProtocolRelayError {
+  return error instanceof SendNeverAcceptedBySignalProtocolRelayError;
+}
+
+/**
+ * Type guard to check if an error is a SignalProtocolRelayNameConflictError.
+ *
+ * @param error - Error to check
+ * @returns true if error is SignalProtocolRelayNameConflictError
+ */
+export function isSignalProtocolRelayNameConflictError(
+  error: unknown
+): error is SignalProtocolRelayNameConflictError {
+  return error instanceof SignalProtocolRelayNameConflictError;
 }
 
 /**
@@ -1076,3 +1135,11 @@ export function isUntrustedIdentityError(error: unknown): error is UntrustedIden
 export function isEncryptionError(error: unknown): error is EncryptionError {
   return error instanceof EncryptionError;
 }
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `isSendNeverAcceptedBySignalProtocolRelayError`. SDK 15.0.0 removes this name. */
+export const isSendNeverAcceptedByRelayError = isSendNeverAcceptedBySignalProtocolRelayError;
+/** @deprecated Use `SendNeverAcceptedBySignalProtocolRelayError`. SDK 15.0.0 removes this name. */
+export const SendNeverAcceptedByRelayError = SendNeverAcceptedBySignalProtocolRelayError;
+/** @deprecated Use `SendNeverAcceptedBySignalProtocolRelayError`. SDK 15.0.0 removes this name. */
+export type SendNeverAcceptedByRelayError = SendNeverAcceptedBySignalProtocolRelayError;

@@ -1,7 +1,7 @@
-import { HostedRelayResumeError } from './hosted-resume-error';
+import { HostedSignalProtocolRelayResumeError } from './hosted-resume-error';
 import { hostedAssertionIdentifier } from "./hosted-assertion-id";
-import { HostedRelayHttpError } from "./hosted-http-error";
-import { submitHostedRelayDeviceLink } from "./hosted-device-link-transport";
+import { HostedSignalProtocolRelayHttpError } from "./hosted-http-error";
+import { submitHostedSignalProtocolRelayDeviceLink } from "./hosted-device-link-transport";
 import { utf8Decode, websocketUrl } from "../internal/platform";
 import type {
   AccountIdentityProvisioning,
@@ -15,15 +15,15 @@ import type {
   GroupChangePage,
   GroupMemberDevice,
   SignalProtocolRelayServer,
-  RelayGroupServer,
+  SignalProtocolRelayGroupServer,
   PreKeyBundle,
   PreKeyInventory,
   PreKeyPublicationPlan,
   PreKeyUpload,
-  RelayConnectionState,
+  SignalProtocolRelayConnectionState,
   SealedSenderAuth,
   Unsubscribe,
-} from "../remote/relay/types";
+} from "../remote/signal-relay/types";
 import AsyncLock from "async-lock";
 import type { GroupAuthorization } from "../internal/groups/manager";
 import type { CompositeIdentityV1, IdentityType } from "../keys/types";
@@ -46,13 +46,13 @@ import {
 import type { Base64, SignalProtocolLocalStore } from "../types";
 import type { PublicKey, Signature } from "../keys";
 import type { IncomingEnvelope } from "./types";
-import type { HostedRelayConnection } from "./hosted-connection";
+import type { HostedSignalProtocolRelayConnection } from "./hosted-connection";
 import type {
-  HostedRelayDeviceAuthentication,
-  HostedRelayRegistrationPreKey,
-  HostedRelayRegistrationPreKeys,
-  HostedRelayManagedDeviceLinkRequest,
-  HostedRelayManagedDeviceLinkResult,
+  HostedSignalProtocolRelayDeviceAuthentication,
+  HostedSignalProtocolRelayRegistrationPreKey,
+  HostedSignalProtocolRelayRegistrationPreKeys,
+  HostedSignalProtocolRelayManagedDeviceLinkRequest,
+  HostedSignalProtocolRelayManagedDeviceLinkResult,
 } from "./hosted";
 import type {
   RemoteObjectDownload,
@@ -63,16 +63,16 @@ import type {
   SignalProtocolRemoteObjectStore,
 } from "../remote/object-store";
 import { RemoteObjectUploadError } from "../remote/object-store";
-import { RelayConnectionStateOwner } from "../remote/relay/connection-state";
+import { SignalProtocolRelayConnectionStateOwner } from "../remote/signal-relay/connection-state";
 import type {
   HostedMailboxPage,
-  HostedRelayPushRegistration,
-  HostedRelayPushRuntime,
+  HostedSignalProtocolRelayPushRegistration,
+  HostedSignalProtocolRelayPushRuntime,
 } from "./hosted-push";
-import type { HostedRelayPresenceRuntime } from "./hosted-presence";
+import type { HostedSignalProtocolRelayPresenceRuntime } from "./hosted-presence";
 import {
   presenceHttpBody,
-  type HostedRelayPresenceRequest,
+  type HostedSignalProtocolRelayPresenceRequest,
 } from "./hosted-presence-frames";
 import {
   subscribeHostedMailbox,
@@ -83,12 +83,12 @@ import {
 import { HostedGroupServer } from "./hosted-groups";
 import {
   RELAY_PROTOCOL_VERSION,
-  markRelayAnswerVersion,
-  relayProtocolHeadersFor,
+  markSignalProtocolRelayAnswerVersion,
+  signalRelayProtocolHeadersFor,
   throwIfUpgradeRequired,
-} from "./relay-protocol";
+} from "./signal-relay-protocol";
 import {
-  HostedRelayDeviceUnknownError,
+  HostedSignalProtocolRelayDeviceUnknownError,
   throwIfDeviceRevoked,
 } from "./hosted-device-standing";
 import {
@@ -96,8 +96,8 @@ import {
   HostedAnonymousDeliveryError,
   decodeHostedAnonymousEnvelope,
 } from "./hosted-anonymous-delivery";
-import { createAdapterRelayFanOut, rethrowRelayWorkStopped } from "./relay-work";
-import { withRelayRequestDeadline } from "./relay-request-deadline";
+import { createAdapterSignalProtocolRelayFanOut, rethrowSignalProtocolRelayWorkStopped } from "./signal-relay-work";
+import { withSignalProtocolRelayRequestDeadline } from "./signal-relay-request-deadline";
 import type { BoundedFanOut } from "../utils/bounded-fan-out";
 import {
   applyPreKeyUploads,
@@ -115,33 +115,43 @@ import {
 } from "./hosted-prekey-publication";
 import {
   declareRefusesRemovedDevices,
-  markRelayDeviceRefusal,
-} from "./relay-device-refusal";
-import { onePeriodClosedRetry } from "./relay-period-close";
+  markSignalProtocolRelayDeviceRefusal,
+} from "./signal-relay-device-refusal";
+import { onePeriodClosedRetry } from "./signal-relay-period-close";
 import {
   declareComparesDeviceSets,
   deviceSetRefusal,
   markDeviceSetRefusal,
   parseDeviceSetRefusal,
   type DeviceSetRefusal,
-} from "../remote/relay/device-set";
+} from "../remote/signal-relay/device-set";
 import {
   admitRepeatRequest,
   markAfterRepeatedRequest,
   type RepeatRequest,
-} from "../remote/relay/request-admission";
+} from "../remote/signal-relay/request-admission";
 import {
-  RelayReceiptInbox,
-  declareRelayReceiptIntake,
-  decodeRelayDeliveryReceipts,
-  type RelayDeliveryReceipt,
-} from "./relay-receipt-intake";
+  SignalProtocolRelayReceiptInbox,
+  declareSignalProtocolRelayReceiptIntake,
+  decodeSignalProtocolRelayDeliveryReceipts,
+  type SignalProtocolRelayDeliveryReceipt,
+} from "./signal-relay-receipt-intake";
 import {
-  RelayReceiptJoin,
-  declareRelayReceiptJoin,
-} from "./relay-receipt-join";
+  SignalProtocolRelayReceiptJoin,
+  declareSignalProtocolRelayReceiptJoin,
+} from "./signal-relay-receipt-join";
+import {
+  hostedStoreRecordKey,
+  readHostedStoreRecord,
+  writeHostedStoreRecord,
+  type HostedStoreRecordKey,
+  type HostedStoreRecordPrefix,
+} from "./hosted-store-records";
 
-const SESSION_METADATA_PREFIX = "hostedRelay.session.v1:";
+const SESSION_METADATA_PREFIX: HostedStoreRecordPrefix = {
+  current: "signalRelay.session.v2:",
+  earlier: "hostedRelay.session.v1:",
+};
 const DEVICE_TOKEN_REFRESH_SECONDS = 60;
 const MAXIMUM_RESPONSE_BYTES = 1024 * 1024;
 const PREKEY_EXPIRY_MILLISECONDS = 30 * 24 * 60 * 60 * 1000;
@@ -164,7 +174,7 @@ const TOKEN_REFRESH_CHALLENGE_LABEL = stringToBytes(
 
 type JsonRecord = Record<string, unknown>;
 
-interface StoredHostedRelaySession {
+interface StoredHostedSignalProtocolRelaySession {
   canonicalAccountId: string;
   deviceId: number;
   deviceToken: string;
@@ -216,25 +226,29 @@ interface HostedDeliveryWireEnvelope {
   version: typeof DELIVERY_WIRE_VERSION;
 }
 
-export interface HostedRelayTransportBootstrapRequest {
+export interface HostedSignalProtocolRelayTransportBootstrapRequest {
   readonly assertion: string;
   readonly assertionPurpose: "register" | "recover";
-  readonly connection: HostedRelayConnection;
-  readonly deviceAuthentication: HostedRelayDeviceAuthentication;
+  readonly connection: HostedSignalProtocolRelayConnection;
+  readonly deviceAuthentication: HostedSignalProtocolRelayDeviceAuthentication;
   readonly operationId: string;
   readonly registrationId: number;
-  readonly registrationPreKeys: HostedRelayRegistrationPreKeys;
+  readonly registrationPreKeys: HostedSignalProtocolRelayRegistrationPreKeys;
   readonly signalIdentity: CompositeIdentityV1;
   readonly storage: SignalProtocolLocalStore;
 }
 
-export interface HostedRelayTransportResult {
+export interface HostedSignalProtocolRelayTransportResult {
   readonly canonicalAccountId: string;
   readonly deviceId: number;
+  readonly signalProtocolRelay: SignalProtocolRelayServer;
+  /** @deprecated Use `signalProtocolRelay`. SDK 15.0.0 removes this name. */
   readonly relay: SignalProtocolRelayServer;
+  readonly signalProtocolRelayScopeId: Uint8Array;
+  /** @deprecated Use `signalProtocolRelayScopeId`. SDK 15.0.0 removes this name. */
   readonly relayScopeId: Uint8Array;
   readonly remoteObjectStore: SignalProtocolRemoteObjectStore;
-  readonly transport: HostedRelayHttpTransport;
+  readonly transport: HostedSignalProtocolRelayHttpTransport;
 }
 
 /**
@@ -255,7 +269,7 @@ const CONCLUSIVE_REFUSAL_CODES: ReadonlySet<string> = new Set([
  */
 function isConclusiveRefusal(error: unknown): boolean {
   return (
-    error instanceof HostedRelayHttpError &&
+    error instanceof HostedSignalProtocolRelayHttpError &&
     !error.retryable &&
     CONCLUSIVE_REFUSAL_CODES.has(error.code)
   );
@@ -279,7 +293,7 @@ async function withOneUncertainRetry<T>(
   } catch (error) {
     if (
       deliveryClass === "ephemeral" ||
-      !(error instanceof HostedRelayHttpError) ||
+      !(error instanceof HostedSignalProtocolRelayHttpError) ||
       error.code !== "DELIVERY_UNCERTAIN"
     ) {
       throw error;
@@ -351,22 +365,22 @@ function decodeBase64Url(value: string, label: string): Uint8Array {
   }
 }
 
-function relayScopeId(connection: HostedRelayConnection): string {
+function signalProtocolRelayScopeId(connection: HostedSignalProtocolRelayConnection): string {
   return bytesToUrlSafeBase64(connection.relayScopeId);
 }
 
-function identifiedEndpoint(connection: HostedRelayConnection): string {
+function identifiedEndpoint(connection: HostedSignalProtocolRelayConnection): string {
   return connection.protocolEndpoint.replace(/\/$/u, "");
 }
 
 /**
  * Read the body of a Relay answer. An error answer throws, and the error
- * records `relayProtocolVersion`, the protocol version of the request that
+ * records `signalRelayProtocolVersion`, the protocol version of the request that
  * it answers.
  */
 async function parseResponse(
   response: Response,
-  relayProtocolVersion: number,
+  signalRelayProtocolVersion: number,
 ): Promise<unknown> {
   const body = await response.text();
   if (body.length > MAXIMUM_RESPONSE_BYTES) {
@@ -387,11 +401,11 @@ async function parseResponse(
   if (!response.ok) {
     // `UPGRADE_REQUIRED` and `DEVICE_REVOKED` are terminal at any error
     // status, so `authenticatedPost` and every other retry, which matches only
-    // a `HostedRelayHttpError`, never repeat them. `PROTOCOL_UNSUPPORTED`
-    // stays a `HostedRelayHttpError` whose `retryable` is true: the Relay
+    // a `HostedSignalProtocolRelayHttpError`, never repeat them. `PROTOCOL_UNSUPPORTED`
+    // stays a `HostedSignalProtocolRelayHttpError` whose `retryable` is true: the Relay
     // sends it for a version above the newest one that it serves, which
     // happens only after a Relay rollback.
-    throwIfUpgradeRequired(response.status, parsed, relayProtocolVersion);
+    throwIfUpgradeRequired(response.status, parsed, signalRelayProtocolVersion);
     throwIfDeviceRevoked(response.status, parsed);
     const error = record(parsed) && record(parsed.error) ? parsed.error : {};
     const code = typeof error.code === "string" ? error.code : "UNKNOWN";
@@ -401,12 +415,12 @@ async function parseResponse(
         : "Signal Protocol Relay request failed";
     // A refused declared post names the devices of each account in
     // `details`. The error keeps them for the device-set reconciliation.
-    throw markRelayAnswerVersion(
-      new HostedRelayHttpError(response.status, code, message, {
+    throw markSignalProtocolRelayAnswerVersion(
+      new HostedSignalProtocolRelayHttpError(response.status, code, message, {
         ...(record(error.details) ? { data: { details: error.details } } : {}),
         retryable: error.retryable === true,
       }),
-      relayProtocolVersion,
+      signalRelayProtocolVersion,
     );
   }
   return parsed;
@@ -417,15 +431,15 @@ async function parseResponse(
  * generation names it. The Relay refuses such a device as NOT_FOUND.
  */
 function missingDestination(userId: string, deviceId: number): Error {
-  return markRelayDeviceRefusal(
+  return markSignalProtocolRelayDeviceRefusal(
     new Error("Signal Protocol Relay destination device does not exist"),
     { code: "NOT_FOUND", userId, deviceId },
   );
 }
 
 async function postJson(
-  connection: HostedRelayConnection,
-  relayProtocolVersion: number,
+  connection: HostedSignalProtocolRelayConnection,
+  signalRelayProtocolVersion: number,
   path: string,
   body: JsonRecord,
   token?: string,
@@ -433,10 +447,10 @@ async function postJson(
   const headers = new Headers({
     accept: "application/json",
     "content-type": "application/json",
-    ...relayProtocolHeadersFor(relayProtocolVersion),
+    ...signalRelayProtocolHeadersFor(signalRelayProtocolVersion),
   });
   if (token !== undefined) headers.set("authorization", `Bearer ${token}`);
-  return withRelayRequestDeadline(async (signal) => {
+  return withSignalProtocolRelayRequestDeadline(async (signal) => {
     let response: Response;
     try {
       response = await fetch(`${identifiedEndpoint(connection)}${path}`, {
@@ -450,11 +464,11 @@ async function postJson(
     } catch (cause) {
       throw new Error("Signal Protocol Relay request could not be completed", { cause });
     }
-    return parseResponse(response, relayProtocolVersion);
+    return parseResponse(response, signalRelayProtocolVersion);
   });
 }
 
-function serializedPreKey(prekey: HostedRelayRegistrationPreKey): JsonRecord {
+function serializedPreKey(prekey: HostedSignalProtocolRelayRegistrationPreKey): JsonRecord {
   return {
     algorithm: prekey.algorithm,
     keyId: prekey.keyId,
@@ -468,7 +482,7 @@ function serializedPreKey(prekey: HostedRelayRegistrationPreKey): JsonRecord {
 function signalRegistration(
   identity: CompositeIdentityV1,
   registrationId: number,
-  prekeys: HostedRelayRegistrationPreKeys,
+  prekeys: HostedSignalProtocolRelayRegistrationPreKeys,
 ): JsonRecord {
   return {
     identity,
@@ -481,7 +495,7 @@ function signalRegistration(
 async function registrationMaterialFingerprint(
   identity: CompositeIdentityV1,
   registrationId: number,
-  prekeys: HostedRelayRegistrationPreKeys,
+  prekeys: HostedSignalProtocolRelayRegistrationPreKeys,
 ): Promise<string> {
   const entries = [
     ...prekeys.signedPreKeys.map((prekey) => ({
@@ -518,14 +532,14 @@ async function registrationMaterialFingerprint(
 }
 
 async function registrationChallenge(
-  request: HostedRelayTransportBootstrapRequest,
+  request: HostedSignalProtocolRelayTransportBootstrapRequest,
 ): Promise<Uint8Array> {
   return sha256(
     concatBytes(
       request.assertionPurpose === "recover"
         ? RECOVERY_CHALLENGE_LABEL
         : REGISTRATION_CHALLENGE_LABEL,
-      text(relayScopeId(request.connection)),
+      text(signalProtocolRelayScopeId(request.connection)),
       text(
         await hostedAssertionIdentifier(
           request.assertion,
@@ -546,23 +560,26 @@ async function registrationChallenge(
 }
 
 async function sessionMetadataKey(
-  connection: HostedRelayConnection,
-): Promise<string> {
-  return `${SESSION_METADATA_PREFIX}${bytesToUrlSafeBase64(
-    await sha256(
-      concatBytes(
-        stringToBytes(connection.publishableKey),
-        new Uint8Array([0]),
-        connection.relayScopeId,
+  connection: HostedSignalProtocolRelayConnection,
+): Promise<HostedStoreRecordKey> {
+  return hostedStoreRecordKey(
+    SESSION_METADATA_PREFIX,
+    bytesToUrlSafeBase64(
+      await sha256(
+        concatBytes(
+          stringToBytes(connection.publishableKey),
+          new Uint8Array([0]),
+          connection.relayScopeId,
+        ),
       ),
     ),
-  )}`;
+  );
 }
 
 function parseSession(
   value: string,
-  connection: HostedRelayConnection,
-): StoredHostedRelaySession {
+  connection: HostedSignalProtocolRelayConnection,
+): StoredHostedSignalProtocolRelaySession {
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
@@ -583,7 +600,7 @@ function parseSession(
     (parsed.generation as number) < 0 ||
     !Number.isSafeInteger(parsed.mailboxGeneration) ||
     (parsed.mailboxGeneration as number) < 0 ||
-    parsed.relayScopeId !== relayScopeId(connection)
+    parsed.relayScopeId !== signalProtocolRelayScopeId(connection)
   ) {
     throw new Error("Stored Signal Protocol Relay session is invalid");
   }
@@ -601,9 +618,22 @@ function parseSession(
   };
 }
 
+/**
+ * The scope claim of a device token. Protocol version 3 names the claim
+ * `signal_relay_scope_id`, and protocol versions 1 and 2 name it
+ * `relay_scope_id`. A token that carries both claims with different values
+ * has no scope.
+ */
+function deviceTokenScopeId(claims: JsonRecord): unknown {
+  const scope = claims.signal_relay_scope_id;
+  const earlierScope = claims.relay_scope_id;
+  if (scope === undefined) return earlierScope;
+  return earlierScope === undefined || earlierScope === scope ? scope : undefined;
+}
+
 function tokenExpiration(
   token: string,
-  session: StoredHostedRelaySession,
+  session: StoredHostedSignalProtocolRelaySession,
 ): number {
   const parts = token.split(".");
   if (parts.length !== 3) return 0;
@@ -617,7 +647,7 @@ function tokenExpiration(
       claims.device_id !== session.deviceId ||
       claims.generation !== session.generation ||
       claims.mailbox_generation !== session.mailboxGeneration ||
-      claims.relay_scope_id !== session.relayScopeId ||
+      deviceTokenScopeId(claims) !== session.relayScopeId ||
       !Number.isSafeInteger(claims.exp)
     ) {
       return 0;
@@ -628,7 +658,23 @@ function tokenExpiration(
   }
 }
 
-function assertLinkToken(session: StoredHostedRelaySession): void {
+/**
+ * The issuer and audience pairs of a device token. Protocol versions 1 and 2
+ * issue the first pair, and protocol version 3 issues the second. The SDK
+ * accepts each pair until the Relay retires versions 1 and 2.
+ */
+const SIGNAL_RELAY_DEVICE_TOKEN_ISSUERS = [
+  { issuer: 'open-e2ee-relay', audience: 'open-e2ee-relay-device' },
+  { issuer: 'signal-relay', audience: 'signal-relay-device' },
+] as const;
+
+function isSignalRelayDeviceTokenIssuer(issuer: unknown, audience: unknown): boolean {
+  return SIGNAL_RELAY_DEVICE_TOKEN_ISSUERS.some(
+    (pair) => pair.issuer === issuer && pair.audience === audience,
+  );
+}
+
+function assertLinkToken(session: StoredHostedSignalProtocolRelaySession): void {
   const parts = session.deviceToken.split('.');
   if (parts.length !== 3) throw new Error('Signal Protocol Relay returned an invalid link token');
   const header: unknown = JSON.parse(utf8Decode(decodeBase64Url(parts[0]!, 'Device token header')));
@@ -637,7 +683,7 @@ function assertLinkToken(session: StoredHostedRelaySession): void {
       header.alg !== 'EdDSA' || header.typ !== 'JWT' || typeof header.kid !== 'string' || !header.kid ||
       decodeBase64Url(parts[2]!, 'Device token signature').length !== 64 ||
       !record(claims) || typeof claims.jti !== 'string' || !claims.jti ||
-      claims.iss !== 'open-e2ee-relay' || claims.aud !== 'open-e2ee-relay-device' || claims.token_use !== 'device' ||
+      !isSignalRelayDeviceTokenIssuer(claims.iss, claims.aud) || claims.token_use !== 'device' ||
       typeof claims.account_state_id !== 'string' || !claims.account_state_id ||
       !Number.isSafeInteger(claims.iat) || (claims.iat as number) < 0 ||
       tokenExpiration(session.deviceToken, session) <= (claims.iat as number))
@@ -717,14 +763,14 @@ function decodeDeliveryWire(value: Uint8Array): HostedDeliveryWireEnvelope {
   };
 }
 
-export class HostedRelayHttpTransport
+export class HostedSignalProtocolRelayHttpTransport
   implements
     SignalProtocolRelayServer,
-    HostedRelayPushRuntime,
-    HostedRelayPresenceRuntime
+    HostedSignalProtocolRelayPushRuntime,
+    HostedSignalProtocolRelayPresenceRuntime
 {
   private readonly groups: HostedGroupServer;
-  public readonly groupServer: RelayGroupServer;
+  public readonly groupServer: SignalProtocolRelayGroupServer;
   private readonly anonymousDelivery: HostedAnonymousDelivery;
   // The relay request bound of the client that uses this transport
   private readonly fanOut: BoundedFanOut;
@@ -734,24 +780,24 @@ export class HostedRelayHttpTransport
   private readonly ephemeralAcknowledgments = new Set<string>();
   private subscription?: MailboxSubscriptionHandle;
   private subscriptionGeneration = 0;
-  private readonly connectionState = new RelayConnectionStateOwner();
+  private readonly connectionState = new SignalProtocolRelayConnectionStateOwner();
   private readonly presenceListeners = new Set<
     (event: PresenceSocketEvent) => void
   >();
-  private readonly receiptInbox = new RelayReceiptInbox();
-  private readonly receiptJoin = new RelayReceiptJoin();
+  private readonly receiptInbox = new SignalProtocolRelayReceiptInbox();
+  private readonly receiptJoin = new SignalProtocolRelayReceiptJoin();
 
   public constructor(
-    private readonly connection: HostedRelayConnection,
+    private readonly connection: HostedSignalProtocolRelayConnection,
     private readonly storage: SignalProtocolLocalStore,
-    private readonly deviceAuthentication: HostedRelayDeviceAuthentication,
-    private session: StoredHostedRelaySession,
+    private readonly deviceAuthentication: HostedSignalProtocolRelayDeviceAuthentication,
+    private session: StoredHostedSignalProtocolRelaySession,
     private readonly persistRefreshedToken = true,
     /**
      * @internal The Relay protocol version of the client that owns this
      * transport. Every carrier of the client sends it.
      */
-    public readonly relayProtocolVersion: number = RELAY_PROTOCOL_VERSION,
+    public readonly signalRelayProtocolVersion: number = RELAY_PROTOCOL_VERSION,
   ) {
     // The Relay refuses a removed device's mailbox on every send path before
     // its device list shows the removal, so a direct send may post first.
@@ -762,16 +808,16 @@ export class HostedRelayHttpTransport
     declareComparesDeviceSets(this);
     // The Relay sends Relay delivery receipts to the sender, and replies to
     // each acknowledgment with the messages whose receipt it owns.
-    declareRelayReceiptIntake(this, this.receiptInbox);
-    declareRelayReceiptJoin(this, this.receiptJoin);
-    this.groups = new HostedGroupServer(connection, relayProtocolVersion);
+    declareSignalProtocolRelayReceiptIntake(this, this.receiptInbox);
+    declareSignalProtocolRelayReceiptJoin(this, this.receiptJoin);
+    this.groups = new HostedGroupServer(connection, signalRelayProtocolVersion);
     this.groupServer = {
       server: this.groups,
       issueAuthCredential: (userId, authorityKeyId) => this.issueAuthCredential(userId, authorityKeyId),
       issueProfileKeyCredential: (userId, request, authorityKeyId) => this.issueProfileKeyCredential(userId, request, authorityKeyId),
       setUnidentifiedAccessKey: (userId, accessKey) => this.setUnidentifiedAccessKey(userId, accessKey),
     };
-    this.fanOut = createAdapterRelayFanOut(this);
+    this.fanOut = createAdapterSignalProtocolRelayFanOut(this);
     this.anonymousDelivery = new HostedAnonymousDelivery(
       connection,
       this.fanOut,
@@ -793,7 +839,7 @@ export class HostedRelayHttpTransport
       },
       (clientMessageId, request) =>
         admitRepeatRequest(this, clientMessageId, request),
-      relayProtocolVersion,
+      signalRelayProtocolVersion,
       ({ accountAddress, deviceId, generation }) =>
         this.destinationRecovered(accountAddress, deviceId, generation, true),
     );
@@ -841,7 +887,7 @@ export class HostedRelayHttpTransport
         return await this.commitObjectUpload(objectId);
       } catch (error) {
         if (
-          error instanceof HostedRelayHttpError &&
+          error instanceof HostedSignalProtocolRelayHttpError &&
           error.code === "UPLOAD_INCOMPLETE"
         )
           return null;
@@ -860,7 +906,7 @@ export class HostedRelayHttpTransport
     error: unknown,
     phase: "admission" | "settlement",
   ): unknown {
-    if (!(error instanceof HostedRelayHttpError)) return error;
+    if (!(error instanceof HostedSignalProtocolRelayHttpError)) return error;
     switch (error.code) {
       case "UPLOAD_EXPIRED":
         return new RemoteObjectUploadError("upload-expired");
@@ -885,7 +931,8 @@ export class HostedRelayHttpTransport
   }
 
   private async persistSession(): Promise<void> {
-    await this.storage.setMetadata(
+    await writeHostedStoreRecord(
+      this.storage,
       await sessionMetadataKey(this.connection),
       JSON.stringify(this.session),
     );
@@ -938,7 +985,7 @@ export class HostedRelayHttpTransport
     const proof = await this.deviceAuthentication.signChallenge(challenge);
     let value: unknown;
     try {
-      value = await postJson(this.connection, this.relayProtocolVersion, "/identity/token", {
+      value = await postJson(this.connection, this.signalRelayProtocolVersion, "/identity/token", {
         accountAddress: this.session.canonicalAccountId,
         // The Relay checks this key against the keys that a recovery revoked.
         deviceAuthenticationPublicKey: bytesToBase64(
@@ -952,10 +999,10 @@ export class HostedRelayHttpTransport
       });
     } catch (error) {
       // A token refusal names this device, so it is not a
-      // `HostedRelayHttpError`. A catch that reads `NOT_FOUND` as a missing
+      // `HostedSignalProtocolRelayHttpError`. A catch that reads `NOT_FOUND` as a missing
       // destination cannot take it.
-      if (error instanceof HostedRelayHttpError && error.code === "NOT_FOUND")
-        throw new HostedRelayDeviceUnknownError(error.status, error.message);
+      if (error instanceof HostedSignalProtocolRelayHttpError && error.code === "NOT_FOUND")
+        throw new HostedSignalProtocolRelayDeviceUnknownError(error.status, error.message);
       throw error;
     }
     if (!record(value) || typeof value.deviceToken !== "string") {
@@ -994,9 +1041,9 @@ export class HostedRelayHttpTransport
 
   /** Private-package link capability. Detached active authority never persists. */
   public async linkDevice(
-    request: HostedRelayManagedDeviceLinkRequest,
+    request: HostedSignalProtocolRelayManagedDeviceLinkRequest,
     storage: SignalProtocolLocalStore,
-  ): Promise<HostedRelayTransportResult & HostedRelayManagedDeviceLinkResult> {
+  ): Promise<HostedSignalProtocolRelayTransportResult & HostedSignalProtocolRelayManagedDeviceLinkResult> {
     const materialFingerprint = await registrationMaterialFingerprint(
       request.signalIdentity, request.registrationId, request.registrationPreKeys,
     );
@@ -1006,25 +1053,25 @@ export class HostedRelayHttpTransport
         throw new Error('Signal Protocol Relay returned an invalid device token');
       return body(claims.jti);
     };
-    const value = await submitHostedRelayDeviceLink(request, {
+    const value = await submitHostedSignalProtocolRelayDeviceLink(request, {
       relayScopeId: this.session.relayScopeId,
       materialFingerprint,
       signalRegistration: signalRegistration(request.signalIdentity, request.registrationId, request.registrationPreKeys),
       post: async (body) => {
         let token = await this.token();
         try {
-          return await postJson(this.connection, this.relayProtocolVersion, '/identity/devices/link', await bodyFor(body, token), token);
+          return await postJson(this.connection, this.signalRelayProtocolVersion, '/identity/devices/link', await bodyFor(body, token), token);
         } catch (error) {
-          if (!(error instanceof HostedRelayHttpError) || error.code !== 'TOKEN_INVALID') throw error;
+          if (!(error instanceof HostedSignalProtocolRelayHttpError) || error.code !== 'TOKEN_INVALID') throw error;
           token = await this.token(true);
-          return postJson(this.connection, this.relayProtocolVersion, '/identity/devices/link', await bodyFor(body, token), token);
+          return postJson(this.connection, this.signalRelayProtocolVersion, '/identity/devices/link', await bodyFor(body, token), token);
         }
       },
     });
     if (!record(value) || value.accountPreserved !== true || value.protocolStateCopied !== false)
       throw new Error('Signal Protocol Relay returned an invalid managed device link');
     const generation = requiredNumber(value, 'deviceAuthorizationGeneration');
-    let session: StoredHostedRelaySession = {
+    let session: StoredHostedSignalProtocolRelaySession = {
       canonicalAccountId: requiredString(value, 'canonicalAccountId'),
       deviceId: requiredNumber(value, 'deviceId'),
       deviceToken: requiredString(value, 'deviceToken'),
@@ -1041,7 +1088,7 @@ export class HostedRelayHttpTransport
       throw new Error('Signal Protocol Relay returned an invalid managed device link');
     assertLinkToken(session);
     const key = await sessionMetadataKey(this.connection);
-    const stored = await storage.getMetadata(key);
+    const stored = await readHostedStoreRecord(storage, key);
     if (stored !== null) {
       const existing = parseSession(stored, this.connection);
       assertLinkToken(existing);
@@ -1055,21 +1102,23 @@ export class HostedRelayHttpTransport
         throw new Error('Stored Signal Protocol Relay link session conflicts with the retained attempt');
       session = existing;
     }
-    const transport = new HostedRelayHttpTransport(this.connection, storage, request.newDeviceAuthentication, session, true, this.relayProtocolVersion);
+    const transport = new HostedSignalProtocolRelayHttpTransport(this.connection, storage, request.newDeviceAuthentication, session, true, this.signalRelayProtocolVersion);
     // Persist the complete shape before synchronization or token renewal can fail.
     try {
-      await storage.setMetadata(key, JSON.stringify(session));
+      await writeHostedStoreRecord(storage, key, JSON.stringify(session));
       await transport.ensureAuthenticated();
     } catch (error) {
       // A renewal refusal cannot prove that the accepted link had no effect.
-      if (error instanceof HostedRelayHttpError && !error.retryable &&
+      if (error instanceof HostedSignalProtocolRelayHttpError && !error.retryable &&
           (error.code === 'KEY_PROOF_INVALID' || error.code === 'CONFLICT'))
         throw new Error('Signal Protocol Relay accepted the link but session adoption failed', { cause: error });
       throw error;
     }
+    const scopeId = this.connection.relayScopeId.slice();
     return {
       canonicalAccountId: session.canonicalAccountId, deviceId: session.deviceId,
-      relayScopeId: this.connection.relayScopeId.slice(), relay: transport,
+      signalProtocolRelayScopeId: scopeId, relayScopeId: scopeId,
+      signalProtocolRelay: transport, relay: transport,
       remoteObjectStore: transport.objectStore, transport,
       accountPreserved: true, protocolStateCopied: false,
     };
@@ -1087,10 +1136,10 @@ export class HostedRelayHttpTransport
   ): Promise<unknown> {
     let token = await this.token();
     try {
-      return await postJson(this.connection, this.relayProtocolVersion, path, body, token);
+      return await postJson(this.connection, this.signalRelayProtocolVersion, path, body, token);
     } catch (error) {
       if (
-        !(error instanceof HostedRelayHttpError) ||
+        !(error instanceof HostedSignalProtocolRelayHttpError) ||
         error.code !== "TOKEN_INVALID"
       ) {
         throw error;
@@ -1101,7 +1150,7 @@ export class HostedRelayHttpTransport
       } catch {
         throw error;
       }
-      return postJson(this.connection, this.relayProtocolVersion, path, body, token);
+      return postJson(this.connection, this.signalRelayProtocolVersion, path, body, token);
     }
   }
 
@@ -1158,7 +1207,7 @@ export class HostedRelayHttpTransport
         ? this.fanOut.request(() => this.directory(userId))
         : this.directory(userId));
     } catch (error) {
-      rethrowRelayWorkStopped(error);
+      rethrowSignalProtocolRelayWorkStopped(error);
       return false;
     }
     const listed = this.destinationGenerations.get(
@@ -1240,7 +1289,7 @@ export class HostedRelayHttpTransport
         ? this.session.mailboxGeneration
         : this.destinationGenerations.get(key);
       if (generation === undefined) {
-        throw new HostedRelayHttpError(
+        throw new HostedSignalProtocolRelayHttpError(
           404,
           "NOT_FOUND",
           "Signal Protocol Relay destination device does not exist",
@@ -1259,7 +1308,7 @@ export class HostedRelayHttpTransport
     } catch (error) {
       if (
         !cached ||
-        !(error instanceof HostedRelayHttpError) ||
+        !(error instanceof HostedSignalProtocolRelayHttpError) ||
         error.code !== "NOT_FOUND"
       ) {
         throw error;
@@ -1317,7 +1366,7 @@ export class HostedRelayHttpTransport
     plan: PreKeyPublicationPlan,
   ): Promise<void> {
     await hostedPreKeyPublicationLock.acquire(
-      await sessionMetadataKey(this.connection),
+      (await sessionMetadataKey(this.connection)).current,
       async () => {
         const current = await this.currentIdentity();
         let status = await this.prekeyStatus(
@@ -1492,7 +1541,7 @@ export class HostedRelayHttpTransport
       receipts:
         value.receipts === undefined
           ? []
-          : decodeRelayDeliveryReceipts(value.receipts),
+          : decodeSignalProtocolRelayDeliveryReceipts(value.receipts),
       ...(value.nextCursor === undefined
         ? {}
         : { nextCursor: value.nextCursor }),
@@ -1580,7 +1629,7 @@ export class HostedRelayHttpTransport
       try {
         const result = await postJson(
           this.connection,
-          this.relayProtocolVersion,
+          this.signalRelayProtocolVersion,
           "/certificates/issue",
           {
             publishableKey: this.connection.publishableKey,
@@ -1600,7 +1649,7 @@ export class HostedRelayHttpTransport
       } catch (error) {
         if (
           attempt > 0 ||
-          !(error instanceof HostedRelayHttpError) ||
+          !(error instanceof HostedSignalProtocolRelayHttpError) ||
           error.code !== "TOKEN_INVALID"
         )
           throw error;
@@ -1756,7 +1805,7 @@ export class HostedRelayHttpTransport
   }
 
   public async registerPush(
-    registration: HostedRelayPushRegistration,
+    registration: HostedSignalProtocolRelayPushRegistration,
   ): Promise<void> {
     const value = await this.authenticatedPost("/push/register", {
       ...registration,
@@ -1803,7 +1852,7 @@ export class HostedRelayHttpTransport
   }
 
   /** Posts one presence request, for a wake client with no socket. */
-  public postPresence(request: HostedRelayPresenceRequest): Promise<unknown> {
+  public postPresence(request: HostedSignalProtocolRelayPresenceRequest): Promise<unknown> {
     return this.authenticatedPost(
       "/presence",
       presenceHttpBody(this.connection.publishableKey, request),
@@ -1837,7 +1886,7 @@ export class HostedRelayHttpTransport
       );
   }
 
-  public receiveRelayReceipt(receipt: RelayDeliveryReceipt): Promise<void> {
+  public receiveSignalProtocolRelayReceipt(receipt: SignalProtocolRelayDeliveryReceipt): Promise<void> {
     return this.receiptInbox.handOff(receipt);
   }
 
@@ -1891,7 +1940,7 @@ export class HostedRelayHttpTransport
       expiresAt: tokenExpiration(token, this.session) * 1_000,
       headers: {
         authorization: `Bearer ${token}`,
-        ...relayProtocolHeadersFor(this.relayProtocolVersion),
+        ...signalRelayProtocolHeadersFor(this.signalRelayProtocolVersion),
         "x-open-e2ee-publishable-key": this.connection.publishableKey,
         "x-open-e2ee-object-id": input.objectId,
         "x-open-e2ee-attachment-capability": input.readCapability,
@@ -1920,7 +1969,7 @@ export class HostedRelayHttpTransport
     }
     if (generation === undefined && envelope.declaredDeviceIds !== undefined) {
       throw markDeviceSetRefusal(
-        new HostedRelayHttpError(
+        new HostedSignalProtocolRelayHttpError(
           409,
           "DEVICE_SET_MISMATCH",
           "The declared device set differs from the device directory",
@@ -1990,17 +2039,17 @@ export class HostedRelayHttpTransport
         userId: envelope.targetUserId,
         deviceId: envelope.targetDeviceId,
       };
-      if (deviceSets !== undefined && error instanceof HostedRelayHttpError) {
+      if (deviceSets !== undefined && error instanceof HostedSignalProtocolRelayHttpError) {
         const refusal = parseDeviceSetRefusal(error.code, error.data?.details);
         if (refusal !== undefined) {
           this.forgetDestinationGenerations(refusal.accounts);
           throw answer(markDeviceSetRefusal(error, refusal));
         }
       }
-      const staleDevice = (stale: HostedRelayHttpError) =>
+      const staleDevice = (stale: HostedSignalProtocolRelayHttpError) =>
         answer(
-          markRelayDeviceRefusal(
-            new HostedRelayHttpError(stale.status, "STALE_DEVICE", stale.message, {
+          markSignalProtocolRelayDeviceRefusal(
+            new HostedSignalProtocolRelayHttpError(stale.status, "STALE_DEVICE", stale.message, {
               data: {
                 code: "STALE_DEVICE",
                 message: stale.message,
@@ -2013,14 +2062,14 @@ export class HostedRelayHttpTransport
           ),
         );
       if (
-        error instanceof HostedRelayHttpError &&
+        error instanceof HostedSignalProtocolRelayHttpError &&
         error.code === "STALE_DEVICE"
       ) {
         throw staleDevice(error);
       }
       // Only the Relay's own error body names NOT_FOUND. A 404 without it
       // fails to parse or carries no code, so it is not a device refusal.
-      if (error instanceof HostedRelayHttpError && error.code === "NOT_FOUND") {
+      if (error instanceof HostedSignalProtocolRelayHttpError && error.code === "NOT_FOUND") {
         // A recovery retired the posted generation. As for a stale device,
         // the send archives the session and posts to the recovered device.
         // A declared post gets the declared STALE_DEVICE that the Relay
@@ -2047,7 +2096,7 @@ export class HostedRelayHttpTransport
               });
         }
         throw answer(
-          markRelayDeviceRefusal(error, { code: "NOT_FOUND", ...device }),
+          markSignalProtocolRelayDeviceRefusal(error, { code: "NOT_FOUND", ...device }),
         );
       }
       throw answer(error);
@@ -2098,7 +2147,7 @@ export class HostedRelayHttpTransport
     const generation = ++this.subscriptionGeneration;
     const subscription = subscribeHostedMailbox({
       ...options,
-      relayProtocolVersion: this.relayProtocolVersion,
+      signalRelayProtocolVersion: this.signalRelayProtocolVersion,
       onConnectionState: (state, reason) => {
         if (generation === this.subscriptionGeneration)
           this.connectionState.move(state, reason);
@@ -2174,14 +2223,26 @@ export class HostedRelayHttpTransport
     };
   }
 
-  public get relayConnectionState(): RelayConnectionState {
+  public get signalProtocolRelayConnectionState(): SignalProtocolRelayConnectionState {
     return this.connectionState.current;
   }
 
-  public subscribeRelayConnectionState(
-    listener: (state: RelayConnectionState) => void,
+  public subscribeSignalProtocolRelayConnectionState(
+    listener: (state: SignalProtocolRelayConnectionState) => void,
   ): Unsubscribe {
     return this.connectionState.subscribe(listener);
+  }
+
+  /** @deprecated Use `signalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
+  public get relayConnectionState(): SignalProtocolRelayConnectionState {
+    return this.signalProtocolRelayConnectionState;
+  }
+
+  /** @deprecated Use `subscribeSignalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
+  public subscribeRelayConnectionState(
+    listener: (state: SignalProtocolRelayConnectionState) => void,
+  ): Unsubscribe {
+    return this.subscribeSignalProtocolRelayConnectionState(listener);
   }
 
   /**
@@ -2251,7 +2312,7 @@ export class HostedRelayHttpTransport
           .identityPublicMaterial,
       );
     } catch (error) {
-      if (error instanceof HostedRelayHttpError && error.code === "NOT_FOUND")
+      if (error instanceof HostedSignalProtocolRelayHttpError && error.code === "NOT_FOUND")
         return null;
       throw error;
     }
@@ -2283,7 +2344,7 @@ export class HostedRelayHttpTransport
         identityType,
       );
     } catch (error) {
-      if (error instanceof HostedRelayHttpError && error.code === "NOT_FOUND")
+      if (error instanceof HostedSignalProtocolRelayHttpError && error.code === "NOT_FOUND")
         return null;
       throw error;
     }
@@ -2519,9 +2580,9 @@ export class HostedRelayHttpTransport
   }
 }
 
-export async function bootstrapHostedRelayTransport(
-  request: HostedRelayTransportBootstrapRequest,
-): Promise<HostedRelayTransportResult> {
+export async function bootstrapHostedSignalProtocolRelayTransport(
+  request: HostedSignalProtocolRelayTransportBootstrapRequest,
+): Promise<HostedSignalProtocolRelayTransportResult> {
   const proof = await request.deviceAuthentication.signChallenge(
     await registrationChallenge(request),
   );
@@ -2562,7 +2623,7 @@ export async function bootstrapHostedRelayTransport(
       ? "deviceAuthorizationGeneration"
       : "generation",
   );
-  const session: StoredHostedRelaySession = {
+  const session: StoredHostedSignalProtocolRelaySession = {
     canonicalAccountId: requiredString(value, "canonicalAccountId"),
     deviceId: requiredNumber(value, "deviceId"),
     deviceToken: requiredString(value, "deviceToken"),
@@ -2579,7 +2640,7 @@ export async function bootstrapHostedRelayTransport(
     relayScopeId: requiredString(value, "relayScopeId"),
   };
   if (
-    session.relayScopeId !== relayScopeId(request.connection) ||
+    session.relayScopeId !== signalProtocolRelayScopeId(request.connection) ||
     session.deviceId < 1 ||
     session.generation < 0 ||
     session.mailboxGeneration < 0 ||
@@ -2588,41 +2649,45 @@ export async function bootstrapHostedRelayTransport(
   ) {
     throw new Error("Signal Protocol Relay returned an invalid registration");
   }
-  await request.storage.setMetadata(
+  await writeHostedStoreRecord(
+    request.storage,
     await sessionMetadataKey(request.connection),
     JSON.stringify(session),
   );
-  const transport = new HostedRelayHttpTransport(
+  const transport = new HostedSignalProtocolRelayHttpTransport(
     request.connection,
     request.storage,
     request.deviceAuthentication,
     session,
   );
+  const scopeId = request.connection.relayScopeId.slice();
   return {
     canonicalAccountId: session.canonicalAccountId,
     deviceId: session.deviceId,
+    signalProtocolRelay: transport,
     relay: transport,
-    relayScopeId: request.connection.relayScopeId.slice(),
+    signalProtocolRelayScopeId: scopeId,
+    relayScopeId: scopeId,
     remoteObjectStore: transport.objectStore,
     transport,
   };
 }
 
-export async function resumeHostedRelayTransport(options: {
-  readonly connection: HostedRelayConnection;
-  readonly deviceAuthentication: HostedRelayDeviceAuthentication;
+export async function resumeHostedSignalProtocolRelayTransport(options: {
+  readonly connection: HostedSignalProtocolRelayConnection;
+  readonly deviceAuthentication: HostedSignalProtocolRelayDeviceAuthentication;
   readonly storage: SignalProtocolLocalStore;
   /** @internal Strict resume refuses absence before any authentication. */
   readonly requireExisting?: boolean;
   /** @internal Reports actual entry into authentication, after local validation. */
   readonly onAuthenticating?: () => void;
-}): Promise<HostedRelayTransportResult | undefined> {
+}): Promise<HostedSignalProtocolRelayTransportResult | undefined> {
   let stored: string | null;
   try {
-    stored = await options.storage.getMetadata(await sessionMetadataKey(options.connection));
+    stored = await readHostedStoreRecord(options.storage, await sessionMetadataKey(options.connection));
   } catch (cause) {
     if (options.requireExisting) {
-      throw new HostedRelayResumeError(
+      throw new HostedSignalProtocolRelayResumeError(
         'RETAINED_STATE_UNREADABLE', 'reading-local-state', { cause }
       );
     }
@@ -2630,22 +2695,22 @@ export async function resumeHostedRelayTransport(options: {
   }
   if (!stored) {
     if (options.requireExisting) {
-      throw new HostedRelayResumeError('RETAINED_SESSION_UNAVAILABLE', 'reading-local-state');
+      throw new HostedSignalProtocolRelayResumeError('RETAINED_SESSION_UNAVAILABLE', 'reading-local-state');
     }
     return undefined;
   }
-  let session: StoredHostedRelaySession;
+  let session: StoredHostedSignalProtocolRelaySession;
   try {
     session = parseSession(stored, options.connection);
   } catch (cause) {
     if (options.requireExisting) {
-      throw new HostedRelayResumeError(
+      throw new HostedSignalProtocolRelayResumeError(
         'RETAINED_SESSION_UNAVAILABLE', 'reading-local-state', { cause }
       );
     }
     throw cause;
   }
-  const transport = new HostedRelayHttpTransport(
+  const transport = new HostedSignalProtocolRelayHttpTransport(
     options.connection,
     options.storage,
     options.deviceAuthentication,
@@ -2653,26 +2718,29 @@ export async function resumeHostedRelayTransport(options: {
   );
   options.onAuthenticating?.();
   await transport.ensureAuthenticated(true);
+  const scopeId = options.connection.relayScopeId.slice();
   return {
     canonicalAccountId: session.canonicalAccountId,
     deviceId: session.deviceId,
+    signalProtocolRelay: transport,
     relay: transport,
-    relayScopeId: options.connection.relayScopeId.slice(),
+    signalProtocolRelayScopeId: scopeId,
+    relayScopeId: scopeId,
     remoteObjectStore: transport.objectStore,
     transport,
   };
 }
 
 /** Compose a link using a detached active session without publication writes. */
-export async function linkHostedRelayTransport(options: {
-  readonly connection: HostedRelayConnection;
+export async function linkHostedSignalProtocolRelayTransport(options: {
+  readonly connection: HostedSignalProtocolRelayConnection;
   readonly activeStorage: SignalProtocolLocalStore;
   readonly storage: SignalProtocolLocalStore;
-  readonly request: HostedRelayManagedDeviceLinkRequest;
-}): Promise<HostedRelayTransportResult & HostedRelayManagedDeviceLinkResult> {
-  const stored = await options.activeStorage.getMetadata(await sessionMetadataKey(options.connection));
+  readonly request: HostedSignalProtocolRelayManagedDeviceLinkRequest;
+}): Promise<HostedSignalProtocolRelayTransportResult & HostedSignalProtocolRelayManagedDeviceLinkResult> {
+  const stored = await readHostedStoreRecord(options.activeStorage, await sessionMetadataKey(options.connection));
   if (!stored) throw new Error('Signal Protocol Relay device link requires an active hosted session');
-  const active = new HostedRelayHttpTransport(
+  const active = new HostedSignalProtocolRelayHttpTransport(
     options.connection, options.activeStorage, options.request.activeDeviceAuthentication,
     parseSession(stored, options.connection), false,
   );

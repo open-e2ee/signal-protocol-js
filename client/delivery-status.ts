@@ -28,12 +28,14 @@
 import type { SignalProtocolLocalStore } from '../types';
 import {
   getSentClientMessageIds,
+  reportedDeliverySource,
   updateDeliveryStatus,
   type StoredDeliveryStatus,
   type StoredOutgoingMessageIntent,
+  type WrittenDeliverySource,
 } from '../local/store/reliability';
-import type { DeliveredEvent, DeliverySource, SignalProtocolClientHooks } from './event-hooks';
-import type { RelayDeliveryReceipt } from './relay-receipt-intake';
+import type { DeliveredEvent, SignalProtocolClientHooks } from './event-hooks';
+import type { SignalProtocolRelayDeliveryReceipt } from './signal-relay-receipt-intake';
 
 type DeliveryStatusStore = Pick<
   SignalProtocolLocalStore,
@@ -59,7 +61,7 @@ function unannounced(
   for (const [recipientId, devices] of Object.entries(status.devices)) {
     for (const [deviceId, delivery] of Object.entries(devices)) {
       for (let index = delivery.announced; index < delivery.sources.length; index++) {
-        const sources = delivery.sources.slice(0, index + 1);
+        const sources = delivery.sources.slice(0, index + 1).map(reportedDeliverySource);
         events.push({
           clientMessageId: status.clientMessageId,
           recipientId,
@@ -96,7 +98,7 @@ export class DeliveryStatusTracker {
   }
 
   /** Apply one Relay delivery receipt. Resolves to the events to announce. */
-  public async applyRelayReceipt(receipt: RelayDeliveryReceipt): Promise<DeliveredEvent[]> {
+  public async applySignalProtocolRelayReceipt(receipt: SignalProtocolRelayDeliveryReceipt): Promise<DeliveredEvent[]> {
     const events: DeliveredEvent[] = [];
     for (const clientMessageId of new Set(receipt.messageIds)) {
       events.push(
@@ -191,9 +193,14 @@ export class DeliveryStatusTracker {
     });
   }
 
+  // The source is the stored value. This release stores and reports
+  // 'relay' for a Relay receipt. The public DeliverySource also accepts
+  // 'signal-relay', the value of SDK 15.0.0, which the client does not emit.
+  // A status that a later release wrote can hold 'signal-relay'. It is the
+  // same source as 'relay', and the client keeps the stored value.
   private async apply(
     clientMessageId: string,
-    source: DeliverySource,
+    source: WrittenDeliverySource,
     recipientId: string,
     recipientDeviceId: number,
     deliveredAt: number
@@ -209,7 +216,9 @@ export class DeliveryStatusTracker {
         });
         // A replay of a source adds nothing. It still announces each source
         // whose hook did not return.
-        if (!delivery.sources.includes(source)) delivery.sources.push(source);
+        if (!delivery.sources.some((stored) => reportedDeliverySource(stored) === source)) {
+          delivery.sources.push(source);
+        }
         if (!intent.result || this.sending.has(clientMessageId)) return [];
         return unannounced(status, intent);
       })) ?? []

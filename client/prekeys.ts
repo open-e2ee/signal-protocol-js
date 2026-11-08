@@ -5,7 +5,7 @@
  * Handles prekey bundle upload, verification, and regeneration.
  */
 
-import type { PreKeyUpload } from '../remote/relay/types';
+import type { PreKeyUpload } from '../remote/signal-relay/types';
 import { EncryptionError, EncryptionErrorCode, ONE_TIME_PREKEY_BATCH_SIZE } from '../types';
 
 import { generateEcSignedPreKey, generateKyberLastResortPreKey } from '../keys';
@@ -163,7 +163,7 @@ async function isServerInSyncForIdentity(
   ctx: SignalProtocolClientContext,
   identityType: IdentityType
 ): Promise<boolean> {
-  if (!ctx.relay) return false;
+  if (!ctx.signalProtocolRelay) return false;
 
   const [localSignedPreKey, localKyberPreKey] = await Promise.all([
     ctx.storage.getEcSignedPreKey(undefined, identityType),
@@ -180,7 +180,7 @@ async function isServerInSyncForIdentity(
     kemLastResortPreKey: serverKyberMeta,
     ecOneTimePreKeyCount: serverEcCount,
     kemOneTimePreKeyCount: serverKemCount,
-  } = await ctx.relay.getPreKeyInventory(ctx.userId, ctx.deviceId, identityType);
+  } = await ctx.signalProtocolRelay.getPreKeyInventory(ctx.userId, ctx.deviceId, identityType);
 
   if (!serverSignedMeta || !serverKyberMeta) {
     return false;
@@ -202,7 +202,7 @@ async function isServerInSyncForIdentity(
 async function isServerInSyncForAllActiveIdentities(
   ctx: SignalProtocolClientContext
 ): Promise<boolean> {
-  if (!ctx.relay) return false;
+  if (!ctx.signalProtocolRelay) return false;
 
   for (const identityType of getActiveIdentityTypes(ctx.config)) {
     const inSync = await isServerInSyncForIdentity(ctx, identityType);
@@ -240,7 +240,7 @@ export async function syncToServer(
   onProgress?: ProgressCallback,
   options?: { force?: boolean }
 ): Promise<void> {
-  if (!ctx.relay) {
+  if (!ctx.signalProtocolRelay) {
     throw new EncryptionError(
       'Relay server not configured',
       EncryptionErrorCode.INITIALIZATION_FAILED
@@ -365,7 +365,7 @@ export async function syncIdentityToServer(
     kemLastResortPreKey: serverKyberMeta,
     ecOneTimePreKeyCount: serverEcCount,
     kemOneTimePreKeyCount: serverKemCount,
-  } = await ctx.relay!.getPreKeyInventory(ctx.userId, ctx.deviceId, identityType);
+  } = await ctx.signalProtocolRelay!.getPreKeyInventory(ctx.userId, ctx.deviceId, identityType);
 
   const signedKeyMatches =
     serverSignedMeta &&
@@ -398,7 +398,7 @@ export async function syncIdentityToServer(
 
   // Provision this device against the account identity. A different tuple must
   // go through the relay's explicit compare-and-swap rotation operation.
-  await ctx.relay!.provisionIdentityKey({
+  await ctx.signalProtocolRelay!.provisionIdentityKey({
     userId: ctx.userId,
     deviceId: ctx.deviceId,
     identity: createCompositeIdentityV1(identityKey),
@@ -435,7 +435,7 @@ export async function syncIdentityToServer(
   // exact fresh batch, never an arbitrary prefix of the private-key store.
   if (pendingOneTimeUploads === null) {
     // Re-fetch the KEM count because a concurrent consumer may have changed it.
-    const serverKemPreKeyCount = await ctx.relay!.getPreKeyCount(
+    const serverKemPreKeyCount = await ctx.signalProtocolRelay!.getPreKeyCount(
       ctx.userId,
       ctx.deviceId,
       'kem',
@@ -498,7 +498,7 @@ export async function syncIdentityToServer(
     message: 'Syncing keys to your account...',
   });
 
-  await ctx.relay!.uploadPreKeys(ctx.userId, ctx.deviceId, preKeyUploads, identityType);
+  await ctx.signalProtocolRelay!.uploadPreKeys(ctx.userId, ctx.deviceId, preKeyUploads, identityType);
   if (oneTimeUploads.length > 0) {
     await ctx.storage.deleteMetadata(publicationCandidateKey(ctx, identityType));
   }
@@ -551,7 +551,7 @@ export async function regeneratePreKeysWithFreshIds(
   ctx: SignalProtocolClientContext,
   identityType: IdentityType = 'aci'
 ): Promise<void> {
-  if (!ctx.relay) {
+  if (!ctx.signalProtocolRelay) {
     throw new EncryptionError(
       'Cannot regenerate prekeys: relay not configured',
       EncryptionErrorCode.INITIALIZATION_FAILED
@@ -618,7 +618,7 @@ export async function regeneratePreKeysWithFreshIds(
 
   // Clear stale KEM one-time prekeys before uploading fresh bundle
   // Prevents PQXDH §4.13 identifier collisions (old one-time keys with stale IDs)
-  const clearResult = await ctx.relay.clearStaleKemPreKeys(ctx.userId, ctx.deviceId, identityType);
+  const clearResult = await ctx.signalProtocolRelay.clearStaleKemPreKeys(ctx.userId, ctx.deviceId, identityType);
   if (clearResult.cleared > 0) {
     ctx.logger.info('Cleared stale KEM one-time prekeys before rotation', {
       category: 'E2EE',
@@ -627,7 +627,7 @@ export async function regeneratePreKeysWithFreshIds(
   }
 
   // Upload to server
-  await ctx.relay.uploadPreKeys(ctx.userId, ctx.deviceId, preKeyUploads, identityType);
+  await ctx.signalProtocolRelay.uploadPreKeys(ctx.userId, ctx.deviceId, preKeyUploads, identityType);
 
   // Verify server has correct keys
   await verifyServerKeys(
@@ -682,7 +682,7 @@ export async function forceCompleteKeyReset(
   ctx: SignalProtocolClientContext,
   identityType: IdentityType = 'aci'
 ): Promise<ForceKeyResetResult> {
-  if (!ctx.relay) {
+  if (!ctx.signalProtocolRelay) {
     throw new EncryptionError(
       'Cannot force key reset: relay not configured',
       EncryptionErrorCode.INITIALIZATION_FAILED
@@ -743,7 +743,7 @@ export async function forceCompleteKeyReset(
   ];
 
   // Clear stale KEM one-time prekeys before uploading fresh bundle
-  const clearResult = await ctx.relay.clearStaleKemPreKeys(ctx.userId, ctx.deviceId, identityType);
+  const clearResult = await ctx.signalProtocolRelay.clearStaleKemPreKeys(ctx.userId, ctx.deviceId, identityType);
   if (clearResult.cleared > 0) {
     ctx.logger.info('Cleared stale KEM one-time prekeys during key reset', {
       category: 'E2EE',
@@ -752,7 +752,7 @@ export async function forceCompleteKeyReset(
   }
 
   // Upload to server
-  await ctx.relay.uploadPreKeys(ctx.userId, ctx.deviceId, preKeyUploads, identityType);
+  await ctx.signalProtocolRelay.uploadPreKeys(ctx.userId, ctx.deviceId, preKeyUploads, identityType);
 
   // Verify server has correct keys
   await verifyServerKeys(
@@ -799,7 +799,7 @@ export async function verifyServerKeys(
   operation: string,
   identityType: IdentityType = 'aci'
 ): Promise<void> {
-  if (!ctx.relay) {
+  if (!ctx.signalProtocolRelay) {
     throw new EncryptionError(
       'Cannot verify server keys: relay not configured',
       EncryptionErrorCode.INITIALIZATION_FAILED
@@ -807,7 +807,7 @@ export async function verifyServerKeys(
   }
 
   // Verify signed prekey
-  const serverSignedMetadata = await ctx.relay.getEcSignedPreKeyMetadata(
+  const serverSignedMetadata = await ctx.signalProtocolRelay.getEcSignedPreKeyMetadata(
     ctx.userId,
     ctx.deviceId,
     identityType
@@ -837,7 +837,7 @@ export async function verifyServerKeys(
 
   // Verify Kyber prekey if provided
   if (kyberPreKey) {
-    const serverKyberMetadata = await ctx.relay.getKemLastResortPreKeyMetadata(
+    const serverKyberMetadata = await ctx.signalProtocolRelay.getKemLastResortPreKeyMetadata(
       ctx.userId,
       ctx.deviceId,
       identityType

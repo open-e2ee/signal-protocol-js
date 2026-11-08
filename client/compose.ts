@@ -1,9 +1,10 @@
 import { DefaultSignalProtocolClient } from './client';
 import type { SignalProtocolClientConfig, SignalProtocolConfig } from './config';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
-import type { SignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolRelayServer } from '../remote/signal-relay/types';
 import type { SignalProtocolLocalStore, SignalProtocolManager } from '../types/api';
 import type { ServiceId } from '../internal/protocol/zk/groups/uid-struct';
+import { readRenamedOption } from '../types/renamed-member';
 
 /**
  * Stable identity inputs for one Signal Protocol client instance.
@@ -33,6 +34,8 @@ export interface SignalProtocolClientAdapterConfig {
   /** Required local protocol store for the current runtime. */
   storage: SignalProtocolLocalStore;
   /** Optional relay for server sync, prekeys, fanout, and subscriptions. */
+  signalProtocolRelay?: SignalProtocolRelayServer;
+  /** @deprecated Use `signalProtocolRelay`. SDK 15.0.0 removes this name. */
   relay?: SignalProtocolRelayServer;
   /** Optional brokered remote object store for encrypted attachments. */
   remoteObjectStore?: SignalProtocolRemoteObjectStore;
@@ -64,7 +67,7 @@ export interface SignalProtocolClientAdapterConfig {
  * ```typescript
  * const signal = await createSignalProtocolClient({
  *   identity: { userId },
- *   adapters: { storage, relay },
+ *   adapters: { storage, signalProtocolRelay },
  *   hooks: {
  *     onMessageDecrypted: async (message) => {
  *       await appMessages.insert({
@@ -77,7 +80,7 @@ export interface SignalProtocolClientAdapterConfig {
  * });
  *
  * await signal.syncToServer();
- * signal.startRelaySubscription();
+ * signal.startSignalProtocolRelaySubscription();
  * ```
  */
 export interface SignalProtocolClientCompositionOptions extends Omit<
@@ -90,6 +93,7 @@ export interface SignalProtocolClientCompositionOptions extends Omit<
   | 'protocolManager'
   | 'protocolStrategy'
   | 'relay'
+  | 'signalProtocolRelay'
   | 'pni'
   | 'storage'
 > {
@@ -118,7 +122,11 @@ export function createSignalProtocolClientConfig(
     protocolManager: adapters.protocolManager,
     protocol,
     pni: identity.pni,
-    relay: adapters.relay,
+    signalProtocolRelay: readRenamedOption(adapters.signalProtocolRelay, adapters.relay, {
+      newName: 'adapters.signalProtocolRelay',
+      earlierName: 'adapters.relay',
+      operation: 'createSignalProtocolClientConfig',
+    }),
     storage: adapters.storage,
   };
 }
@@ -134,7 +142,7 @@ export function createSignalProtocolClientConfig(
  *
  * const signal = await createSignalProtocolClient({
  *   identity: { userId },
- *   adapters: { storage, relay },
+ *   adapters: { storage, signalProtocolRelay },
  * });
  *
  * await signal.send('bob', 'hello');

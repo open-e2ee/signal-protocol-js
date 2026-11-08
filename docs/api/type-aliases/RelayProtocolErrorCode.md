@@ -4,8 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / RelayProtocolErrorCode
 
-# Type Alias: RelayProtocolErrorCode
+# ~~Type Alias: RelayProtocolErrorCode~~
 
-> **RelayProtocolErrorCode** = `"DEVICE_SET_UNCHECKED"`
+> **RelayProtocolErrorCode** = [`SignalProtocolRelayProtocolErrorCode`](SignalProtocolRelayProtocolErrorCode.md)
 
-The code of a Relay answer that does not follow the device-set contract.
+## Deprecated
+
+Use `SignalProtocolRelayProtocolErrorCode`. SDK 15.0.0 removes this name.

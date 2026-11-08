@@ -1,13 +1,13 @@
 import {
   deviceSetRefusal,
   type DeviceSetRefusal,
-} from '../remote/relay/device-set';
+} from '../remote/signal-relay/device-set';
 import {
   isConflictAcceptance,
-  relayOperationRefusal,
-  type RelayPostAcceptance,
-} from './relay-acceptance';
-import { RelayWorkStopped } from './relay-work';
+  signalRelayOperationRefusal,
+  type SignalProtocolRelayPostAcceptance,
+} from './signal-relay-acceptance';
+import { RelayWorkStopped } from './signal-relay-work';
 import { isPostingDeadlineReached } from './send-deadline';
 
 /**
@@ -86,7 +86,7 @@ export interface DeviceSetUnresolved {
  * the outbox keeps the send as terminal with its `outcome`, and the SDK does
  * not post it again. A later `send()` with the same `clientMessageId` throws
  * the stored-end class of its outcome, `SendAcceptanceUnknownError` or
- * `SendNeverAcceptedByRelayError`, and posts nothing.
+ * `SendNeverAcceptedBySignalProtocolRelayError`, and posts nothing.
  *
  * `isOutgoingMessageError` is true for this error.
  */
@@ -138,60 +138,60 @@ export class DeviceSetReconciliationError extends Error {
  * a sealed post to one device. `anonymous-group`: the shared sealed post of a
  * group send.
  */
-export type RelayProtocolRoute = 'identified-direct' | 'anonymous-direct' | 'anonymous-group';
+export type SignalProtocolRelayProtocolRoute = 'identified-direct' | 'anonymous-direct' | 'anonymous-group';
 
 /** The code of a Relay answer that does not follow the device-set contract. */
-export type RelayProtocolErrorCode = 'DEVICE_SET_UNCHECKED';
+export type SignalProtocolRelayProtocolErrorCode = 'DEVICE_SET_UNCHECKED';
 
 /**
  * A Relay accepted a declared post without the `deviceSetChecked` mark. The
  * send is delivered and its result does not change, because a second post
  * could deliver the message twice. The client reports the error once for the
- * send through `onRelayProtocolError`. A sync payload of a method such as
+ * send through `onSignalProtocolRelayProtocolError`. A sync payload of a method such as
  * `syncReadToLinkedDevices` has no send ID, so its error has no
  * `clientMessageId`.
  */
-export class RelayProtocolError extends Error {
+export class SignalProtocolRelayProtocolError extends Error {
   override readonly name = 'RelayProtocolError';
 
   constructor(
-    readonly code: RelayProtocolErrorCode,
+    readonly code: SignalProtocolRelayProtocolErrorCode,
     readonly clientMessageId: string | undefined,
-    readonly route: RelayProtocolRoute
+    readonly route: SignalProtocolRelayProtocolRoute
   ) {
     super('The Relay accepted a declared post without comparing its device set');
   }
 }
 
-const relayProtocolErrors = new WeakMap<object, RelayProtocolError>();
+const signalRelayProtocolErrors = new WeakMap<object, SignalProtocolRelayProtocolError>();
 
 /** Mark a send result with the protocol error of its send. */
-export function markRelayProtocolError<T extends object>(result: T, error: RelayProtocolError): T {
-  if (!relayProtocolErrors.has(result)) relayProtocolErrors.set(result, error);
+export function markSignalProtocolRelayProtocolError<T extends object>(result: T, error: SignalProtocolRelayProtocolError): T {
+  if (!signalRelayProtocolErrors.has(result)) signalRelayProtocolErrors.set(result, error);
   return result;
 }
 
 /** The protocol error that a send result is marked with, if any. */
-export function relayProtocolErrorOf(result: unknown): RelayProtocolError | undefined {
+export function signalRelayProtocolErrorOf(result: unknown): SignalProtocolRelayProtocolError | undefined {
   return result !== null && typeof result === 'object'
-    ? relayProtocolErrors.get(result)
+    ? signalRelayProtocolErrors.get(result)
     : undefined;
 }
 
 /** The receipt of one accepted declared post and the route of the post. */
-export type DeclaredPostReceipt = readonly [RelayPostAcceptance, RelayProtocolRoute];
+export type DeclaredPostReceipt = readonly [SignalProtocolRelayPostAcceptance, SignalProtocolRelayProtocolRoute];
 
 /** The end of the declared sync phase of a send. */
 export interface DeclaredSyncOutcome {
   /** True when every sync post was accepted. */
   readonly synced: boolean;
   /** The receipt of each accepted sync post of every pass. */
-  readonly accepted: readonly RelayPostAcceptance[];
+  readonly accepted: readonly SignalProtocolRelayPostAcceptance[];
 }
 
 /** The receipts of accepted sync posts. A sync copy is an identified post to an own device. */
 export function syncPostReceipts(
-  accepted: readonly RelayPostAcceptance[]
+  accepted: readonly SignalProtocolRelayPostAcceptance[]
 ): DeclaredPostReceipt[] {
   return accepted.map((acceptance) => [acceptance, 'identified-direct'] as const);
 }
@@ -205,12 +205,12 @@ export function syncPostReceipts(
 export function uncheckedDeclaredPost(
   receipts: readonly DeclaredPostReceipt[],
   clientMessageId: string | undefined
-): RelayProtocolError | undefined {
+): SignalProtocolRelayProtocolError | undefined {
   const unchecked = receipts.find(
     ([acceptance]) => acceptance.deviceSetChecked !== true && !isConflictAcceptance(acceptance)
   );
   return unchecked
-    ? new RelayProtocolError('DEVICE_SET_UNCHECKED', clientMessageId, unchecked[1])
+    ? new SignalProtocolRelayProtocolError('DEVICE_SET_UNCHECKED', clientMessageId, unchecked[1])
     : undefined;
 }
 
@@ -395,7 +395,7 @@ export async function runDeviceSetPhase<T>(
     if (stopped) throw stopped.error;
     if (
       restarts > 0 &&
-      failures.some((failure) => relayOperationRefusal(failure.error) === 'OPERATION_EXPIRED')
+      failures.some((failure) => signalRelayOperationRefusal(failure.error) === 'OPERATION_EXPIRED')
     ) {
       return unresolve('expired', posts, []);
     }
@@ -461,3 +461,13 @@ export function waitUnlessStopped(milliseconds: number, stopSignal?: AbortSignal
     stopSignal?.addEventListener('abort', onAbort, { once: true });
   });
 }
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `SignalProtocolRelayProtocolError`. SDK 15.0.0 removes this name. */
+export const RelayProtocolError = SignalProtocolRelayProtocolError;
+/** @deprecated Use `SignalProtocolRelayProtocolError`. SDK 15.0.0 removes this name. */
+export type RelayProtocolError = SignalProtocolRelayProtocolError;
+/** @deprecated Use `SignalProtocolRelayProtocolErrorCode`. SDK 15.0.0 removes this name. */
+export type RelayProtocolErrorCode = SignalProtocolRelayProtocolErrorCode;
+/** @deprecated Use `SignalProtocolRelayProtocolRoute`. SDK 15.0.0 removes this name. */
+export type RelayProtocolRoute = SignalProtocolRelayProtocolRoute;

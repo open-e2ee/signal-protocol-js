@@ -189,13 +189,7 @@ export async function storeKyberPreKey(
 export async function getKyberPreKey(
   ctx: KeyStorageContext,
   identityType: IdentityType
-): Promise<{
-  keyId: number;
-  publicKey: string;
-  privateKey: string;
-  signature: string;
-  timestamp: number;
-} | null> {
+): Promise<KyberPreKey | null> {
   try {
     const prekey = await getCurrentKyberPreKey(ctx.db, identityType);
     if (!prekey) {
@@ -215,7 +209,7 @@ export async function getKyberPreKeyById(
   try {
     const prekey = await getKyberPreKeyByKeyId(ctx.db, keyId, identityType);
     return prekey
-      ? { preKey: prekey.toKyberPreKey() as KyberPreKey, instanceId: prekey.instanceId }
+      ? { preKey: prekey.toKyberPreKey(), instanceId: prekey.instanceId }
       : null;
   } catch (error) {
     throw keyStorageError(`Failed to retrieve Kyber prekey ${keyId}`, error);

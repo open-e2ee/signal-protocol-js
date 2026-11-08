@@ -5,7 +5,7 @@
  * Handles retry request creation, sending, and response handling.
  */
 
-import type { Envelope, SignalProtocolRelayServer } from '../remote/relay/types';
+import type { Envelope, SignalProtocolRelayServer } from '../remote/signal-relay/types';
 import type { PreKeyBundle } from '../keys';
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { ContentHint } from '../types/messages';
@@ -255,15 +255,15 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
  */
 async function markMessageDeliveredSilently(
   messageId: string | undefined,
-  relay: SignalProtocolRelayServer | undefined,
+  signalProtocolRelay: SignalProtocolRelayServer | undefined,
   logger: RetryContext['logger'],
   options?: ProcessEnvelopeOptions
 ): Promise<void> {
   if (!messageId) return;
 
   try {
-    if (relay?.markDelivered) {
-      await relay.markDelivered(messageId);
+    if (signalProtocolRelay?.markDelivered) {
+      await signalProtocolRelay.markDelivered(messageId);
     } else if (options?.markDelivered) {
       await options.markDelivered(messageId);
     }
@@ -478,7 +478,7 @@ export async function sendRetryRequestInternal(
         },
       });
 
-      await markMessageDeliveredSilently(envelope.id, ctx.relay, ctx.logger, options);
+      await markMessageDeliveredSilently(envelope.id, ctx.signalProtocolRelay, ctx.logger, options);
       return;
     }
 
@@ -511,18 +511,18 @@ export async function sendRetryRequestInternal(
     const retryReason = determineRetryReason(error);
 
     // Send via relay (foreground) or callback (background)
-    const relay = ctx.relay;
+    const signalProtocolRelay = ctx.signalProtocolRelay;
     // The seal also applies to the background callback. With no relay it
     // has no anonymous delivery, so the request goes identified only when
     // the sealed sender delivery mode permits it.
-    const sendIdentified = relay
-      ? (request: Envelope) => relay.send(request)
+    const sendIdentified = signalProtocolRelay
+      ? (request: Envelope) => signalProtocolRelay.send(request)
       : options?.sendRetryRequest;
     const send =
       sendIdentified &&
       retryRequestPost(
         ctx.sealRetryRequest,
-        relay,
+        signalProtocolRelay,
         sendIdentified,
         ctx.recipientRegistrationId,
         (userId, deviceId) => ctx.refreshStaleSession?.(ctx, userId, deviceId) ?? Promise.resolve(false)
@@ -542,7 +542,7 @@ export async function sendRetryRequestInternal(
 
         if (timeSinceLastRotation > config.keyRotationDebounceMs || timeSinceLastRotation < 0) {
           try {
-            if (ctx.relay) {
+            if (ctx.signalProtocolRelay) {
               await callbacks.forcePreKeyRotation();
               rateLimitState.lastPreKeyRotationTime = Date.now();
               ctx.logger.info('Forced prekey rotation before retry (relay)', {
@@ -641,8 +641,8 @@ export async function sendRetryRequestInternal(
     if (!acknowledgesRetryRequest(outcome, family.member !== undefined)) return;
 
     // Mark failed message as delivered so it does not reappear
-    if (ctx.relay?.markDelivered) {
-      await ctx.relay.markDelivered(envelope.id).catch((err) => {
+    if (ctx.signalProtocolRelay?.markDelivered) {
+      await ctx.signalProtocolRelay.markDelivered(envelope.id).catch((err) => {
         ctx.logger.warn('Failed to mark message delivered after retry request (relay)', {
           category: 'E2EE',
           data: { messageId: envelope.id, error: (err as Error).message },
@@ -1552,11 +1552,11 @@ async function startAnswerSession(
     retryRequest.requesterDeviceId
   );
   // Fetch prekey bundle and create new initiating session
-  if (!ctx.relay) {
+  if (!ctx.signalProtocolRelay) {
     throw new Error('Relay not configured - cannot fetch prekey bundle');
   }
 
-  const bundle = await ctx.relay.fetchPreKeyBundle(
+  const bundle = await ctx.signalProtocolRelay.fetchPreKeyBundle(
     retryRequest.requesterUserId,
     retryRequest.requesterDeviceId
   );

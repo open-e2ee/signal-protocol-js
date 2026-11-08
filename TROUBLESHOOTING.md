@@ -86,7 +86,7 @@ Make sure the prekey bundle is fresh and valid:
 <!-- doc-snippet:skip requires-external-context -->
 ```typescript
 import { ProtocolAddress, type DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
-import type { SignalProtocolRelayServer } from '@open-e2ee/signal-protocol-sdk/remote/relay';
+import type { SignalProtocolRelayServer } from '@open-e2ee/signal-protocol-sdk/remote/signal-relay';
 
 export async function establishBobSession(
   signal: DefaultSignalProtocolClient,

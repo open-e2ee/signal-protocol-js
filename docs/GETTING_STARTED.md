@@ -20,14 +20,17 @@ The [adapter guide](../ADAPTERS.md) lists the supported stores.
 
 - A Relay project and its environment connection URL. In the application
   directory, `oe new` creates the project and its Sandbox environment, and it
-  writes the connection URL to `.env.local` as `OPEN_E2EE_RELAY_URL`. In a
-  Next.js, Expo, or Vite application, the name has the public prefix of the
-  framework, for example `EXPO_PUBLIC_OPEN_E2EE_RELAY_URL`.
+  writes the connection URL to `.env.local` as `OPEN_E2EE_SIGNAL_RELAY_URL`. In
+  a Next.js, Expo, or Vite application, the name has the public prefix of the
+  framework, for example `EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL`. An `oe`
+  release before 5.0.0 wrote the earlier name, such as
+  `EXPO_PUBLIC_OPEN_E2EE_RELAY_URL`. The examples read the new name first and
+  the earlier name second.
 - A `getIdentityAssertion` callback that returns a short-lived signed assertion.
 - Device-local storage for private keys, sessions, and delivery state.
 - Application storage for decrypted messages and attachment bytes.
 
-A Sandbox environment uses device-owned identity. `hostedRelaySandboxIdentity`
+A Sandbox environment uses device-owned identity. `hostedSignalProtocolRelaySandboxIdentity`
 creates its `getIdentityAssertion` callback. The callback keeps a key in the device-local store. It signs each assertion
 with that key. The device gets the same account each time it registers.
 
@@ -36,17 +39,20 @@ A device that loses its store loses that Sandbox account. The helper works only 
 Production supports application-bound and explicitly configured device-owned
 accounts. For application-bound accounts, `getIdentityAssertion` returns a
 short-lived Relay-specific assertion from your backend after it verifies the
-server session and current application membership.
+server session and current application membership. With a
+[native Clerk or Firebase profile](./RECIPES.md#native-provider-profiles),
+`getIdentityAssertion` returns the provider token instead, and no backend
+assertion is needed.
 
 Device-owned accounts prove possession of a persistent account key. They do
 not bind to an application login, and provider sign-in cannot recover a lost
 account key. For device-owned accounts, pass
-`hostedRelayDeviceOwnedIdentity(storage)` as `getIdentityAssertion`. The SDK
+`hostedSignalProtocolRelayDeviceOwnedIdentity(storage)` as `getIdentityAssertion`. The SDK
 does not supply an identity provider or a relay server implementation.
-See [identity and authentication](https://docs.open-e2ee.dev/relay/identity)
+See [identity and authentication](https://docs.open-e2ee.dev/signal-relay/identity)
 for Production configuration.
 
-For a tested backend path, see the [Better Auth recipe](https://docs.open-e2ee.dev/relay/better-auth)
+For a tested backend path, see the [Better Auth recipe](https://docs.open-e2ee.dev/signal-relay/better-auth)
 and the [application callback recipe](./RECIPES.md#application-bound-identity-callback).
 
 ## Setup Sequence
@@ -54,7 +60,7 @@ and the [application callback recipe](./RECIPES.md#application-bound-identity-ca
 1. Run `oe new` to create the Relay project and its Sandbox environment.
 2. Open the device-local store for the device.
 3. Create the client with `createHostedSignalProtocolClient()`. In a Sandbox
-   environment, pass `hostedRelaySandboxIdentity(storage)` as
+   environment, pass `hostedSignalProtocolRelaySandboxIdentity(storage)` as
    `hosted.getIdentityAssertion`.
 4. Register a receive handler that persists decrypted messages.
 5. Start the relay subscription.
@@ -62,12 +68,12 @@ and the [application callback recipe](./RECIPES.md#application-bound-identity-ca
 The hosted factory authenticates and registers the current device, then publishes
 its public prekeys. A linked device gets the account identity by device
 transfer or by a channel that the application owns, then joins the account
-with `linkHostedRelayDevice()`. That call runs in one process that holds the
+with `linkHostedSignalProtocolRelayDevice()`. That call runs in one process that holds the
 active device's store and the new device's store. It copies each group master
 key from the active device and gives the new device its own registration ID.
 
 It refuses a new device's store that already lists a group, with
-`HostedRelayDeviceLinkError`. See the [device guide](../device/README.md). The
+`HostedSignalProtocolRelayDeviceLinkError`. See the [device guide](../device/README.md). The
 default policy requires post-quantum session establishment and Braid
 ratcheting.
 
@@ -83,7 +89,7 @@ Retry with the same stores to retain the original operation and prekeys.
 ```ts
 import {
   createHostedSignalProtocolClient,
-  hostedRelaySandboxIdentity,
+  hostedSignalProtocolRelaySandboxIdentity,
 } from "@open-e2ee/signal-protocol-sdk";
 import { expoStore } from "@open-e2ee/signal-protocol-sdk/local/store/expo";
 
@@ -91,9 +97,9 @@ const storage = await expoStore();
 const signal = await createHostedSignalProtocolClient({
   adapters: { storage },
   hosted: {
-    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    signalProtocolRelayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
     // Sandbox only. Select the Production identity mode explicitly.
-    getIdentityAssertion: hostedRelaySandboxIdentity(storage),
+    getIdentityAssertion: hostedSignalProtocolRelaySandboxIdentity(storage),
   },
 });
 ```
@@ -128,7 +134,7 @@ signal.registerHook("onMessageDecrypted", async (message) => {
 });
 
 // Subscribing starts encrypted envelope delivery and local decryption.
-signal.startRelaySubscription();
+signal.startSignalProtocolRelaySubscription();
 ```
 
 The package does not own your product database or UI state. It decrypts messages
@@ -202,7 +208,7 @@ save attachment references and downloaded bytes.
 import { createHostedSignalProtocolClient, media } from "@open-e2ee/signal-protocol-sdk";
 
 const signal = await createHostedSignalProtocolClient({
-  hosted: { relayUrl, getIdentityAssertion },
+  hosted: { signalProtocolRelayUrl, getIdentityAssertion },
   adapters: {
     storage,
   },

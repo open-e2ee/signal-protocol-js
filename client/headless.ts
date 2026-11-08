@@ -11,7 +11,7 @@
  * import { expoStore } from '@open-e2ee/signal-protocol-sdk/local/store/expo';
  *
  * // Any SignalProtocolRelayServer the app composes, authenticated for this user.
- * const relay = createAuthenticatedRelay({ authToken, userId });
+ * const relay = createAuthenticatedSignalProtocolRelay({ authToken, userId });
  * const storage = await expoStore();
  *
  * const result = await rotateKeysHeadless(relay, userId, deviceId, { storage });
@@ -21,7 +21,7 @@
 
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import type { PreKeyRotationResult, SignalProtocolLocalStore } from '../types';
-import type { SignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolRelayServer } from '../remote/signal-relay/types';
 import type { IdentityType } from '../keys/types';
 import { MAX_UNACKNOWLEDGED_SESSION_AGE_MS, type PreKeyMaintenanceStore } from './config';
 import { oneTimePreKeysDue, rotatePreKeysCore, shouldRotateKey } from './key-rotation-core';
@@ -61,7 +61,7 @@ export interface HeadlessRotationOptions {
  * - Handles errors gracefully (returns partial success)
  * - Logs all operations for debugging
  *
- * @param relay - Signal Protocol relay server interface
+ * @param signalProtocolRelay - Signal Protocol relay server interface
  * @param userId - User identifier
  * @param deviceId - Device identifier
  * @param options - Optional configuration (storage, identityTypes)
@@ -70,7 +70,7 @@ export interface HeadlessRotationOptions {
  * @see https://signal.org/docs/specifications/pqxdh/#publishing-keys
  */
 export async function rotateKeysHeadless(
-  relay: SignalProtocolRelayServer,
+  signalProtocolRelay: SignalProtocolRelayServer,
   userId: string,
   deviceId: number,
   options?: HeadlessRotationOptions
@@ -90,7 +90,7 @@ export async function rotateKeysHeadless(
     );
   }
 
-  const result = await rotatePreKeysCore(relay, userId, deviceId, storage, {
+  const result = await rotatePreKeysCore(signalProtocolRelay, userId, deviceId, storage, {
     identityTypes,
     preKeyMaintenance,
     logger,
@@ -131,13 +131,13 @@ export async function rotateKeysHeadless(
  * One inventory read that does not rotate anything.
  * Useful for deciding whether to run the full rotation.
  *
- * @param relay - Signal Protocol relay server interface
+ * @param signalProtocolRelay - Signal Protocol relay server interface
  * @param userId - User identifier
  * @param deviceId - Device identifier
  * @returns Object indicating which keys need rotation
  */
 export async function checkRotationNeeded(
-  relay: SignalProtocolRelayServer,
+  signalProtocolRelay: SignalProtocolRelayServer,
   userId: string,
   deviceId: number
 ): Promise<{
@@ -145,7 +145,7 @@ export async function checkRotationNeeded(
   kyberPreKeyNeeded: boolean;
   oneTimePreKeysNeeded: boolean;
 }> {
-  const inventory = await relay.getPreKeyInventory(userId, deviceId);
+  const inventory = await signalProtocolRelay.getPreKeyInventory(userId, deviceId);
   const { ecSignedPreKey: signedMeta, kemLastResortPreKey: kyberMeta } = inventory;
 
   return {

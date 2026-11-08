@@ -126,11 +126,13 @@ request that fall back the same way are not reported.
 
 ***
 
-### relayScopeId
+### ~~relayScopeId?~~
 
-> **relayScopeId**: `Uint8Array`
+> `optional` **relayScopeId?**: `Uint8Array`\<`ArrayBufferLike`\>
 
-Opaque 16-byte Relay project-environment scope pinned by the application.
+#### Deprecated
+
+Use `signalProtocolRelayScopeId`. SDK 15.0.0 removes this name.
 
 #### Inherited from
 
@@ -147,6 +149,21 @@ Issuer key IDs revoked by this deployment's operator.
 #### Inherited from
 
 `SealedSenderConfigBase.revokedIssuerKeyIds`
+
+***
+
+### signalProtocolRelayScopeId?
+
+> `optional` **signalProtocolRelayScopeId?**: `Uint8Array`\<`ArrayBufferLike`\>
+
+Opaque 16-byte Relay project-environment scope pinned by the application.
+
+Set this member or the deprecated `relayScopeId`. The client requires one
+of the two.
+
+#### Inherited from
+
+`SealedSenderConfigBase.signalProtocolRelayScopeId`
 
 ***
 

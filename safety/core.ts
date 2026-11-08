@@ -244,7 +244,7 @@ function encodeCompositeSafetyIdentifier(userId: string, identityType: IdentityT
 /**
  * Compute one side of the independently versioned composite safety number.
  * The input is the locally derived commitment to both identity components, not
- * either raw component and not a relay-supplied commitment.
+ * either raw component and not a commitment that the relay supplies.
  */
 export function computeCompositeIndividualFingerprint(
   identity: CompositeIdentityV1,

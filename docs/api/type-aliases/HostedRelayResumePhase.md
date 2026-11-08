@@ -4,8 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / HostedRelayResumePhase
 
-# Type Alias: HostedRelayResumePhase
+# ~~Type Alias: HostedRelayResumePhase~~
 
-> **HostedRelayResumePhase** = `"reading-local-state"` \| `"authenticating"` \| `"initializing"` \| `"complete"`
+> **HostedRelayResumePhase** = [`HostedSignalProtocolRelayResumePhase`](HostedSignalProtocolRelayResumePhase.md)
 
-Failures of strict hosted resume, without application or key payloads.
+## Deprecated
+
+Use `HostedSignalProtocolRelayResumePhase`. SDK 15.0.0 removes this name.

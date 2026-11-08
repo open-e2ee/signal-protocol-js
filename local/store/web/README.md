@@ -29,7 +29,7 @@ const storage = await indexedDbStore();
 
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay },
+  adapters: { storage, signalProtocolRelay },
 });
 ```
 

@@ -12,7 +12,7 @@ Require the existing permanent identities, device key and scoped hosted session.
 Renews the token and starts the ordinary client, including prekey maintenance and
 automatic subscription. Never requests assertions or registers a replacement.
 The caller owns the already-open store and must not use it concurrently.
-On an unresolved stop, the thrown HostedRelayResumeError owns retryCleanup().
+On an unresolved stop, the thrown HostedSignalProtocolRelayResumeError owns retryCleanup().
 
 ## Parameters
 

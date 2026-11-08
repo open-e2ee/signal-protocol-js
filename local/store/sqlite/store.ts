@@ -236,12 +236,7 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
     direction: TrustDirection,
     identityType?: IdentityType
   ): Promise<boolean> {
-    return await this.storage.isTrustedIdentity(
-      address,
-      identity,
-      direction as unknown as number,
-      identityType
-    );
+    return await this.storage.isTrustedIdentity(address, identity, direction, identityType);
   }
 
   // ============================================================================
@@ -290,8 +285,7 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
   }
 
   async getKyberPreKey(identityType?: IdentityType): Promise<KyberPreKey | null> {
-    const result = await this.storage.getKyberPreKey(identityType);
-    return result as KyberPreKey | null;
+    return await this.storage.getKyberPreKey(identityType);
   }
 
   async getKyberPreKeyById(

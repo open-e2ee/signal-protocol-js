@@ -21,7 +21,7 @@ The store gets random bytes from the global `crypto.getRandomValues`. Install
 it at app startup before the first SDK call. Without a global source, the SDK
 throws `SecureRandomUnavailableError`. The store needs no `crypto.subtle`
 polyfill. AES-256-GCM uses Web Crypto when `crypto.subtle` exists and the
-bundled Noble implementation otherwise. The [README](../../../README.md#use-your-apps-storage-and-relay)
+bundled Noble implementation otherwise. The [README](../../../README.md#use-your-apps-storage-and-message-delivery)
 lists the supported React Native versions.
 
 The store also needs a `SignalProtocolLocalSecretVault` backed by the platform
@@ -47,7 +47,7 @@ const storage = await keyValueStore({ storage: keyValueStorage, vault });
 
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay },
+  adapters: { storage, signalProtocolRelay },
 });
 ```
 

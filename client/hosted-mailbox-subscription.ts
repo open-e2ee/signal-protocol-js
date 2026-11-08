@@ -1,37 +1,37 @@
 import type {
   Envelope,
-  RelayConnectionReason,
-  RelayConnectionState,
+  SignalProtocolRelayConnectionReason,
+  SignalProtocolRelayConnectionState,
   Unsubscribe,
-} from "../remote/relay/types";
+} from "../remote/signal-relay/types";
 import {
-  HostedRelayPresenceError,
+  HostedSignalProtocolRelayPresenceError,
   decodePresenceAnswer,
   decodePresenceUpdate,
   encodePresenceFrame,
   isPresenceAnswerType,
   isPresenceUpdateType,
-  type HostedRelayPresenceRequest,
-  type HostedRelayPresenceUpdate,
+  type HostedSignalProtocolRelayPresenceRequest,
+  type HostedSignalProtocolRelayPresenceUpdate,
 } from "./hosted-presence-frames";
 import {
   MAXIMUM_RECEIPTS_PER_FRAME,
-  decodeRelayDeliveryReceipts,
-  type RelayDeliveryReceipt,
-} from "./relay-receipt-intake";
+  decodeSignalProtocolRelayDeliveryReceipts,
+  type SignalProtocolRelayDeliveryReceipt,
+} from "./signal-relay-receipt-intake";
 import {
-  HostedRelayUpgradeRequiredError,
+  HostedSignalProtocolRelayUpgradeRequiredError,
   RELAY_AUTH_PROTOCOL_PREFIX,
-  relayProtocolToken,
-} from "./relay-protocol";
+  signalRelayProtocolToken,
+} from "./signal-relay-protocol";
 import {
-  HostedRelayDeviceRevokedError,
-  HostedRelayDeviceUnknownError,
+  HostedSignalProtocolRelayDeviceRevokedError,
+  HostedSignalProtocolRelayDeviceUnknownError,
 } from "./hosted-device-standing";
 
 /** The stop reason for each Relay refusal that every retry would repeat. */
-type RelayRefusalReason = Extract<
-  RelayConnectionReason,
+type SignalProtocolRelayRefusalReason = Extract<
+  SignalProtocolRelayConnectionReason,
   | "upgrade-required"
   | "device-revoked"
   | "device-unknown"
@@ -40,15 +40,15 @@ type RelayRefusalReason = Extract<
 
 /**
  * The stop reason that a typed Relay refusal names, or undefined for any other
- * error. A conclusive `HostedRelayHttpError` refusal is not typed. The
+ * error. A conclusive `HostedSignalProtocolRelayHttpError` refusal is not typed. The
  * subscription asks `isConclusiveRefusal` for it.
  */
-function relayRefusalReason(
+function signalRelayRefusalReason(
   error: unknown,
-): Exclude<RelayRefusalReason, "authority-refused"> | undefined {
-  if (error instanceof HostedRelayUpgradeRequiredError) return "upgrade-required";
-  if (error instanceof HostedRelayDeviceRevokedError) return "device-revoked";
-  if (error instanceof HostedRelayDeviceUnknownError) return "device-unknown";
+): Exclude<SignalProtocolRelayRefusalReason, "authority-refused"> | undefined {
+  if (error instanceof HostedSignalProtocolRelayUpgradeRequiredError) return "upgrade-required";
+  if (error instanceof HostedSignalProtocolRelayDeviceRevokedError) return "device-revoked";
+  if (error instanceof HostedSignalProtocolRelayDeviceUnknownError) return "device-unknown";
   return undefined;
 }
 
@@ -132,7 +132,7 @@ const UPGRADE_REQUIRED_CLOSE_REASON = "UPGRADE_REQUIRED";
  */
 export type PresenceSocketEvent =
   | { readonly type: "open" }
-  | { readonly type: "update"; readonly update: HostedRelayPresenceUpdate };
+  | { readonly type: "update"; readonly update: HostedSignalProtocolRelayPresenceUpdate };
 
 /**
  * One HTTP pull page: the retained messages, then, on a page of fewer than
@@ -141,7 +141,7 @@ export type PresenceSocketEvent =
  */
 export interface MailboxPage {
   readonly messages: readonly Envelope[];
-  readonly receipts: readonly RelayDeliveryReceipt[];
+  readonly receipts: readonly SignalProtocolRelayDeliveryReceipt[];
   /**
    * The opaque Relay cursor after the last message of a page that is not
    * empty. A pull with it starts after that message.
@@ -175,7 +175,7 @@ export interface MailboxAcknowledgment {
 
 interface MailboxSubscription {
   /** The Relay protocol version of the client that owns the subscription. */
-  relayProtocolVersion: number;
+  signalRelayProtocolVersion: number;
   /**
    * Gets the socket address and a device token. `refreshed` is true when the
    * call got a new device token from the Relay. The Relay reads the token
@@ -213,7 +213,7 @@ interface MailboxSubscription {
    * Hands one Relay delivery receipt off. The receipt is acknowledged after
    * the hand-off resolves. A rejection leaves it in the mailbox for a replay.
    */
-  receiveReceipt(receipt: RelayDeliveryReceipt): Promise<void>;
+  receiveReceipt(receipt: SignalProtocolRelayDeliveryReceipt): Promise<void>;
   /**
    * Receives the reply to the acknowledgment of each message that this
    * subscription acknowledged. `receipted` is true only when the reply lists
@@ -234,8 +234,8 @@ interface MailboxSubscription {
    * token renewal is not a transition, because it keeps the socket.
    */
   onConnectionState(
-    state: RelayConnectionState["state"],
-    reason?: RelayConnectionReason,
+    state: SignalProtocolRelayConnectionState["state"],
+    reason?: SignalProtocolRelayConnectionReason,
   ): void;
   /**
    * Receives each presence event. A token renewal keeps the socket and its
@@ -261,17 +261,17 @@ export interface MailboxSubscriptionHandle {
   acknowledgeOverHttp<T>(send: () => Promise<T>): Promise<T>;
   /**
    * Sends one presence request frame on the live socket and resolves with the
-   * `result` of its answer. It rejects with a `HostedRelayPresenceError`: the
+   * `result` of its answer. It rejects with a `HostedSignalProtocolRelayPresenceError`: the
    * Relay's error, or `NOT_CONNECTED`, `TIMEOUT`, `BUSY`, or
    * `FRAME_REJECTED`. There is no HTTP fallback.
    */
-  presence(request: HostedRelayPresenceRequest): Promise<unknown>;
+  presence(request: HostedSignalProtocolRelayPresenceRequest): Promise<unknown>;
 }
 
 /** One item of the durable queue, in mailbox order. */
 type DurableWork =
   | { readonly message: Envelope }
-  | { readonly receipt: RelayDeliveryReceipt };
+  | { readonly receipt: SignalProtocolRelayDeliveryReceipt };
 
 /** The ids that the batch of one pull page acknowledged. */
 interface PageAcknowledgment {
@@ -281,12 +281,12 @@ interface PageAcknowledgment {
 
 interface PendingPresence {
   readonly resolve: (result: unknown) => void;
-  readonly reject: (error: HostedRelayPresenceError) => void;
+  readonly reject: (error: HostedSignalProtocolRelayPresenceError) => void;
   readonly timer: ReturnType<typeof setTimeout>;
 }
 
-function notConnected(): HostedRelayPresenceError {
-  return new HostedRelayPresenceError(
+function notConnected(): HostedSignalProtocolRelayPresenceError {
+  return new HostedSignalProtocolRelayPresenceError(
     "NOT_CONNECTED",
     "The mailbox socket is not connected",
     true,
@@ -321,7 +321,7 @@ export function subscribeHostedMailbox(
   options: MailboxSubscription,
 ): MailboxSubscriptionHandle {
   /** The subprotocol token that the socket offers and the Relay must echo. */
-  const protocolToken = relayProtocolToken(options.relayProtocolVersion);
+  const protocolToken = signalRelayProtocolToken(options.signalRelayProtocolVersion);
   let active = true;
   /**
    * True after the Relay refused the protocol version of this SDK, refused
@@ -442,7 +442,7 @@ export function subscribeHostedMailbox(
     active && socket?.readyState === 1 ? socket : undefined;
 
   /** Settles every pending presence request with one error. */
-  const rejectPresence = (error: HostedRelayPresenceError) => {
+  const rejectPresence = (error: HostedSignalProtocolRelayPresenceError) => {
     const pending = [...presenceRequests.values()];
     presenceRequests.clear();
     for (const request of pending) {
@@ -937,7 +937,7 @@ export function subscribeHostedMailbox(
       // after a lost acknowledgment, so a lasting failure backs off. A pull
       // that was requested while the acknowledgment ran waits for that head
       // pull and does not run at once.
-      const refusal = relayRefusalReason(error);
+      const refusal = signalRelayRefusalReason(error);
       if (refusal !== undefined) stop(refusal);
       else if (acknowledging) {
         recoverFailedWork(true);
@@ -1002,7 +1002,7 @@ export function subscribeHostedMailbox(
    * acknowledged either. The Relay keeps their messages and receipts, and each
    * queued message gets the reply `receipted` false.
    */
-  const stop = (reason: RelayRefusalReason) => {
+  const stop = (reason: SignalProtocolRelayRefusalReason) => {
     if (!active) return;
     active = false;
     refused = true;
@@ -1021,7 +1021,7 @@ export function subscribeHostedMailbox(
   };
 
   const retryConnection = (
-    reason: Exclude<RelayConnectionReason, RelayRefusalReason>,
+    reason: Exclude<SignalProtocolRelayConnectionReason, SignalProtocolRelayRefusalReason>,
   ) => {
     if (!active) return;
     const replayed = socketOpened;
@@ -1056,7 +1056,7 @@ export function subscribeHostedMailbox(
   };
 
   const queueReceipts = (candidate: WebSocket, frame: unknown) => {
-    const receipts = decodeRelayDeliveryReceipts(
+    const receipts = decodeSignalProtocolRelayDeliveryReceipts(
       frame,
       MAXIMUM_RECEIPTS_PER_FRAME,
     );
@@ -1214,7 +1214,7 @@ export function subscribeHostedMailbox(
         // version comes back when the newer Relay does, so the socket retries.
         if (event.code === POLICY_VIOLATION_CLOSE_CODE)
           rejectPresence(
-            new HostedRelayPresenceError(
+            new HostedSignalProtocolRelayPresenceError(
               "FRAME_REJECTED",
               "The Relay closed the mailbox socket on a refused frame",
               false,
@@ -1228,7 +1228,7 @@ export function subscribeHostedMailbox(
     } catch (error) {
       if (!active || generation !== connectionGeneration) return;
       authenticating = false;
-      const refusal = relayRefusalReason(error);
+      const refusal = signalRelayRefusalReason(error);
       if (refusal !== undefined) stop(refusal);
       else if (options.isConclusiveRefusal(error)) stop("authority-refused");
       else {
@@ -1264,7 +1264,7 @@ export function subscribeHostedMailbox(
       if (live === undefined) return Promise.reject(notConnected());
       if (presenceRequests.size >= MAXIMUM_PENDING_PRESENCE_REQUESTS)
         return Promise.reject(
-          new HostedRelayPresenceError(
+          new HostedSignalProtocolRelayPresenceError(
             "BUSY",
             "Too many presence requests wait for an answer",
             true,
@@ -1282,7 +1282,7 @@ export function subscribeHostedMailbox(
         const timer = setTimeout(() => {
           if (!presenceRequests.delete(id)) return;
           reject(
-            new HostedRelayPresenceError(
+            new HostedSignalProtocolRelayPresenceError(
               "TIMEOUT",
               "The Relay did not answer the presence request",
               true,

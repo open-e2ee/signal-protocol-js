@@ -2,7 +2,7 @@ import AsyncLock from 'async-lock';
 import type { SignalProtocolLocalStore } from '../types';
 import { extractGroupId } from '../internal/groups/group-id';
 import { originLockScope, withOriginLock } from '../utils/origin-lock';
-import { acquireUntilStopped, RelayWorkStopped } from './relay-work';
+import { acquireUntilStopped, RelayWorkStopped } from './signal-relay-work';
 
 const storageLocks = new WeakMap<SignalProtocolLocalStore, AsyncLock>();
 

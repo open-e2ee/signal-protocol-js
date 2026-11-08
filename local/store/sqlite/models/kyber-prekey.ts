@@ -341,22 +341,18 @@ export class KyberPreKey {
   // ============================================================================
 
   /**
-   * Convert to KyberPreKey type (for API compatibility).
+   * Convert to the KyberPreKey type. The row holds the Base64 strings that
+   * storeKyberPreKey wrote, so this is where they take their key brands again.
    */
-  toKyberPreKey(): {
-    keyId: number;
-    publicKey: string;
-    privateKey: string;
-    signature: string;
-    timestamp: number;
-  } {
+  toKyberPreKey(): KyberPreKeyType {
     return {
       keyId: this.keyId,
       publicKey: this.publicKey,
       privateKey: this.privateKey,
+      // NULL is an empty signature. As in Signal, the sender verifies it (pqxdh.ts).
       signature: this.signature ?? '',
       timestamp: this.timestamp,
-    };
+    } as KyberPreKeyType;
   }
 
   // ============================================================================
@@ -388,10 +384,11 @@ export class KyberPreKey {
             keyId: this.data.prekeyId,
             publicKey: existing.publicKey,
             privateKey: existing.privateKey,
+            // NULL is an empty signature. As in Signal, the sender verifies it (pqxdh.ts).
             signature: existing.signature ?? '',
             timestamp: existing.timestamp,
           } as KyberPreKeyType,
-          this.toKyberPreKey() as KyberPreKeyType,
+          this.toKyberPreKey(),
           identityType
         );
         this.data.instanceId = existing.instanceId;

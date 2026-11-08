@@ -4,8 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / HostedRelayPresenceLastSeenPolicy
 
-# Type Alias: HostedRelayPresenceLastSeenPolicy
+# ~~Type Alias: HostedRelayPresenceLastSeenPolicy~~
 
-> **HostedRelayPresenceLastSeenPolicy** = `"exact"` \| `"approximate"` \| `"hidden"`
+> **HostedRelayPresenceLastSeenPolicy** = [`HostedSignalProtocolRelayPresenceLastSeenPolicy`](HostedSignalProtocolRelayPresenceLastSeenPolicy.md)
 
-How much of the last-seen time a reader gets.
+## Deprecated
+
+Use `HostedSignalProtocolRelayPresenceLastSeenPolicy`. SDK 15.0.0 removes this name.

@@ -26,19 +26,26 @@ import {
 import { asBase64 } from "../types/utils";
 import type { DefaultSignalProtocolClient } from "./client";
 import {
-  HostedRelayPresenceError,
+  HostedSignalProtocolRelayPresenceError,
   derivePresenceKey,
-  hostedRelayPresence,
-  type HostedRelayPresenceRuntime,
+  hostedSignalProtocolRelayPresence,
+  type HostedSignalProtocolRelayPresenceRuntime,
 } from "./hosted-presence";
-import { HostedRelayHttpError } from "./hosted-http-error";
+import { HostedSignalProtocolRelayHttpError } from "./hosted-http-error";
+import {
+  hostedStoreRecordKey,
+  readHostedStoreRecord,
+  writeHostedStoreRecord,
+  type HostedStoreRecordKey,
+  type HostedStoreRecordPrefix,
+} from "./hosted-store-records";
 import {
   PROFILE_KEY_UPDATE_FLAG,
   bindProfileKeyExchange,
 } from "./profile-key-exchange";
 
 /** The profile keys that a hosted client carries in its 1:1 messages. */
-export interface HostedRelayProfileKeys {
+export interface HostedSignalProtocolRelayProfileKeys {
   /**
    * Returns this account's 32-byte profile key, or null when it has none. The
    * SDK reads it before each 1:1 send and when the mailbox socket connects,
@@ -58,13 +65,16 @@ export interface HostedRelayProfileKeys {
 }
 
 /** @internal The Relay operations that the profile key exchange uses. */
-export interface HostedRelayProfileKeyRuntime extends HostedRelayPresenceRuntime {
+export interface HostedSignalProtocolRelayProfileKeyRuntime extends HostedSignalProtocolRelayPresenceRuntime {
   readonly accountId: string;
   /** Registers the key that a contact must show to send a sealed message. */
   setUnidentifiedAccessKey(userId: string, accessKey: Uint8Array): Promise<void>;
 }
 
-const DELIVERED_METADATA_PREFIX = "hostedRelay.profileKeyDelivered.v1:";
+const DELIVERED_METADATA_PREFIX: HostedStoreRecordPrefix = {
+  current: "signalRelay.profileKeyDelivered.v2:",
+  earlier: "hostedRelay.profileKeyDelivered.v1:",
+};
 
 interface OwnProfileKey {
   readonly bytes: Uint8Array;
@@ -76,7 +86,7 @@ interface OwnProfileKey {
 }
 
 /** @internal Throws unless the option has the members that the SDK calls. */
-export function assertHostedRelayProfileKeys(keys: HostedRelayProfileKeys): void {
+export function assertHostedSignalProtocolRelayProfileKeys(keys: HostedSignalProtocolRelayProfileKeys): void {
   if (
     typeof keys?.getOwnProfileKey !== "function" ||
     typeof keys.contacts?.storeContactProfileKey !== "function" ||
@@ -112,14 +122,14 @@ export function hostedSealedSenderContacts(
 }
 
 /** @internal Bind the presence key exchange of a hosted client. */
-export function bindHostedRelayProfileKeys(
+export function bindHostedSignalProtocolRelayProfileKeys(
   client: DefaultSignalProtocolClient,
-  runtime: HostedRelayProfileKeyRuntime,
-  keys: HostedRelayProfileKeys,
+  runtime: HostedSignalProtocolRelayProfileKeyRuntime,
+  keys: HostedSignalProtocolRelayProfileKeys,
   logger: Required<Logger>,
 ): void {
-  assertHostedRelayProfileKeys(keys);
-  const presence = hostedRelayPresence(client);
+  assertHostedSignalProtocolRelayProfileKeys(keys);
+  const presence = hostedSignalProtocolRelayPresence(client);
   /** The presence key that the Relay holds from this client. */
   let registered: string | undefined;
   /** A presence key that the Relay refused. The client does not send it again. */
@@ -147,8 +157,11 @@ export function bindHostedRelayProfileKeys(
     return { bytes, profileKey: bytesToBase64(bytes), presenceKey, accessKey };
   };
 
-  const deliveredMetadataKey = (recipient: string): string =>
-    `${DELIVERED_METADATA_PREFIX}${runtime.presenceScope}:${recipient}`;
+  const deliveredMetadataKey = (recipient: string): HostedStoreRecordKey =>
+    hostedStoreRecordKey(
+      DELIVERED_METADATA_PREFIX,
+      `${runtime.presenceScope}:${recipient}`,
+    );
 
   /**
    * Registers the access key once for each client and again after each
@@ -169,7 +182,7 @@ export function bindHostedRelayProfileKeys(
           accessRegistered = key.accessKey;
         },
         (error: unknown) => {
-          if (error instanceof HostedRelayHttpError && !error.retryable)
+          if (error instanceof HostedSignalProtocolRelayHttpError && !error.retryable)
             accessRefused = key.accessKey;
           warn("Signal Protocol Relay access key registration failed", error);
         },
@@ -188,7 +201,7 @@ export function bindHostedRelayProfileKeys(
       registering !== undefined ||
       key.presenceKey === registered ||
       key.presenceKey === refused ||
-      runtime.relayConnectionState.state !== "connected"
+      runtime.signalProtocolRelayConnectionState.state !== "connected"
     )
       return;
     registering = presence
@@ -198,7 +211,7 @@ export function bindHostedRelayProfileKeys(
           registered = key.presenceKey;
         },
         (error: unknown) => {
-          if (!(error instanceof HostedRelayPresenceError) || !error.retryable)
+          if (!(error instanceof HostedSignalProtocolRelayPresenceError) || !error.retryable)
             refused = key.presenceKey;
           warn("Signal Protocol Relay presence key registration failed", error);
         },
@@ -213,7 +226,7 @@ export function bindHostedRelayProfileKeys(
     registerPresence(key);
   };
 
-  runtime.subscribeRelayConnectionState((state) => {
+  runtime.subscribeSignalProtocolRelayConnectionState((state) => {
     if (state.state !== "connected") return;
     own().then(
       (key) => {
@@ -241,8 +254,8 @@ export function bindHostedRelayProfileKeys(
           base64ToBytes(asBase64(profileKey)),
         );
         const metadataKey = deliveredMetadataKey(recipient);
-        if ((await runtime.presenceStore.getMetadata(metadataKey)) !== presenceKey)
-          await runtime.presenceStore.setMetadata(metadataKey, presenceKey);
+        if ((await readHostedStoreRecord(runtime.presenceStore, metadataKey)) !== presenceKey)
+          await writeHostedStoreRecord(runtime.presenceStore, metadataKey, presenceKey);
       } catch (error) {
         warn("Signal Protocol profile key delivery was not recorded", error);
       }
@@ -254,7 +267,8 @@ export function bindHostedRelayProfileKeys(
         const key = await own();
         if (key === undefined) return;
         register(key);
-        const delivered = await runtime.presenceStore.getMetadata(
+        const delivered = await readHostedStoreRecord(
+          runtime.presenceStore,
           deliveredMetadataKey(recipient),
         );
         if (delivered === key.presenceKey) return;
@@ -287,3 +301,7 @@ export function bindHostedRelayProfileKeys(
     },
   });
 }
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `HostedSignalProtocolRelayProfileKeys`. SDK 15.0.0 removes this name. */
+export type HostedRelayProfileKeys = HostedSignalProtocolRelayProfileKeys;

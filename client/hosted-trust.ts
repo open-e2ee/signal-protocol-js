@@ -1,7 +1,7 @@
 import type { Base64 } from '../types';
 
 /** Build-pinned verification roots. Bootstrap documents cannot select or replace them. */
-export const MANAGED_RELAY_PROFILES = {
+export const MANAGED_SIGNAL_RELAY_PROFILES = {
   prod: {
     environment: 'production',
     origin: 'https://relay.open-e2ee.dev',

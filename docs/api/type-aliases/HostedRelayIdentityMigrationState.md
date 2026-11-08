@@ -4,6 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / HostedRelayIdentityMigrationState
 
-# Type Alias: HostedRelayIdentityMigrationState
+# ~~Type Alias: HostedRelayIdentityMigrationState~~
 
-> **HostedRelayIdentityMigrationState** = `"abandoned"` \| `"prepared"` \| `"cutover"` \| `"rolled-back"` \| `"finalized"`
+> **HostedRelayIdentityMigrationState** = [`HostedSignalProtocolRelayIdentityMigrationState`](HostedSignalProtocolRelayIdentityMigrationState.md)
+
+## Deprecated
+
+Use `HostedSignalProtocolRelayIdentityMigrationState`. SDK 15.0.0 removes this name.

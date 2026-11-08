@@ -5,7 +5,7 @@
  * and the extracted operation modules.
  */
 
-import type { SealedSenderAuth, SignalProtocolRelayServer } from '../remote/relay/types';
+import type { SealedSenderAuth, SignalProtocolRelayServer } from '../remote/signal-relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import type { SignalProtocolLocalStore, SignalProtocolManager } from '../types';
 import type { SignalProtocolClientConfig } from './config';
@@ -51,6 +51,9 @@ export interface SignalProtocolClientContext {
   readonly storage: SignalProtocolLocalStore;
 
   /** Optional relay server for server sync */
+  readonly signalProtocolRelay?: SignalProtocolRelayServer;
+
+  /** @deprecated Use `signalProtocolRelay`. SDK 15.0.0 removes this name. */
   readonly relay?: SignalProtocolRelayServer;
 
   /** Optional brokered remote object store for encrypted attachments. */
@@ -493,6 +496,8 @@ export interface OutgoingMessageError extends Error {
    */
   readonly retryable?: boolean;
   /** The Relay's own `retryable` hint, when the SDK set `retryable`. */
+  readonly signalProtocolRelayRetryable?: boolean;
+  /** @deprecated Use `signalProtocolRelayRetryable`. SDK 15.0.0 removes this name. */
   readonly relayRetryable?: boolean;
   /** The devices that the Relay accepted, when the send ended at its deadline. */
   readonly acceptedDevices?: readonly { readonly userId: string; readonly deviceId: number }[];
@@ -807,7 +812,7 @@ export interface ProcessEnvelopeOptions {
    * it. The client calls the callback only when the sealed sender delivery
    * mode permits identified delivery, so `'required'` never calls it.
    */
-  sendRetryRequest?: (envelope: import('../remote/relay/types').Envelope) => Promise<void>;
+  sendRetryRequest?: (envelope: import('../remote/signal-relay/types').Envelope) => Promise<void>;
 
   /**
    * Callback that acknowledges an envelope when no relay is available.
@@ -893,8 +898,13 @@ export interface PendingReceive {
    * `completeReceive`. `decrypted` when it waits for its group state.
    */
   stage: 'decrypted' | 'awaiting-completion';
-  /** `caller` for an envelope that the application gave. */
-  origin: 'relay' | 'caller';
+  /**
+   * `relay` for a Relay message, `caller` for an envelope that the
+   * application gave. `signal-relay` is the same origin as `relay`. SDK
+   * 15.0.0 reports a Relay message with `signal-relay`. This release reports
+   * `relay`, so code that compares the origin must accept both values.
+   */
+  origin: 'relay' | 'signal-relay' | 'caller';
   /** The time of the first decrypt. */
   receivedAt: number;
   senderId?: string;

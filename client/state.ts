@@ -13,8 +13,8 @@
  */
 
 import type { RetryResponseState, RetryRateLimitState } from './retry';
-import type { ReceiptAccumulator, RelaySubscriptionState } from './relay-subscription';
-import { RelayWorkTracker } from './relay-work';
+import type { ReceiptAccumulator, SignalProtocolRelaySubscriptionState } from './signal-relay-subscription';
+import { SignalProtocolRelayWorkTracker } from './signal-relay-work';
 
 export {};
 
@@ -56,7 +56,7 @@ export class SignalProtocolClientState {
    * relay calls its handlers without waiting for them, so stop() settles
    * them here before the app can close the store.
    */
-  readonly relayWork = new RelayWorkTracker();
+  readonly signalRelayWork = new SignalProtocolRelayWorkTracker();
 
   // ============================================================================
   // Retry Response Counting State
@@ -131,7 +131,7 @@ export class SignalProtocolClientState {
   /**
    * Get combined state for relay subscription operations
    */
-  getRelaySubscriptionState(): RelaySubscriptionState {
+  getSignalProtocolRelaySubscriptionState(): SignalProtocolRelaySubscriptionState {
     return {
       lastPreKeyRotationTime: this.lastPreKeyRotationTime,
       retryRateLimitCounts: this.retryRateLimitCounts,

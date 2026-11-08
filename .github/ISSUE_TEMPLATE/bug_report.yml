@@ -41,7 +41,7 @@ body:
       label: Minimal reproduction
       description: |
         The smallest code that shows the problem. The in-memory adapters
-        (`local/store/memory`, `remote/relay/memory`) usually make a
+        (`local/store/memory`, `remote/signal-relay/memory`) usually make a
         single-file reproduction possible.
       render: ts
     validations:

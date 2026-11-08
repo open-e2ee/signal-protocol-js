@@ -1,7 +1,7 @@
-import type { PreKeyUpload } from '../remote/relay/types';
+import type { PreKeyUpload } from '../remote/signal-relay/types';
 import type {
-  HostedRelayRegistrationPreKey,
-  HostedRelayRegistrationPreKeys,
+  HostedSignalProtocolRelayRegistrationPreKey,
+  HostedSignalProtocolRelayRegistrationPreKeys,
 } from './hosted';
 import { base64ToBytes, bytesToBase64 } from '../internal/crypto';
 import type { Base64 } from '../types';
@@ -37,14 +37,14 @@ export interface HostedPreKeyStatus {
   currentOperationId: string;
   identityPublicMaterial: Uint8Array;
   materialFingerprint: string;
-  oneTimePreKeys: readonly HostedRelayRegistrationPreKey[];
+  oneTimePreKeys: readonly HostedSignalProtocolRelayRegistrationPreKey[];
   oneTimePreKeyCounts: Readonly<Record<string, number>>;
   publicationRevision: number;
   profile: string;
   registrationId: number;
   signedPreKeys: readonly {
     acceptedAtMilliseconds: number;
-    algorithm: HostedRelayRegistrationPreKey['algorithm'];
+    algorithm: HostedSignalProtocolRelayRegistrationPreKey['algorithm'];
     keyId: number;
     publicKey: Uint8Array;
     signature: Uint8Array;
@@ -77,7 +77,7 @@ function requiredString(object: JsonRecord, key: string): string {
 }
 
 export function storedPreKey(
-  prekey: HostedRelayRegistrationPreKey,
+  prekey: HostedSignalProtocolRelayRegistrationPreKey,
 ): StoredHostedPreKey {
   return {
     algorithm: prekey.algorithm,
@@ -115,7 +115,7 @@ function parseStoredPreKeys(value: unknown): readonly StoredHostedPreKey[] {
 
 export function registrationPreKey(
   prekey: StoredHostedPreKey,
-): HostedRelayRegistrationPreKey {
+): HostedSignalProtocolRelayRegistrationPreKey {
   return {
     algorithm: prekey.algorithm,
     keyId: prekey.keyId,
@@ -139,7 +139,7 @@ export function storedPublication(
   materialFingerprint: string,
   operationId: string,
   revision: number,
-  prekeys: HostedRelayRegistrationPreKeys,
+  prekeys: HostedSignalProtocolRelayRegistrationPreKeys,
 ): StoredHostedPreKeyPublication {
   return {
     authorityGeneration,
@@ -219,7 +219,7 @@ export function parseHostedPreKeyStatus(value: unknown): HostedPreKeyStatus {
   const parsePreKey = (
     candidate: unknown,
     kind: 'one-time' | 'signed',
-  ): HostedRelayRegistrationPreKey => {
+  ): HostedSignalProtocolRelayRegistrationPreKey => {
     if (!record(candidate))
       throw new Error('Signal Protocol Relay returned invalid prekey status');
     const algorithm = requiredString(candidate, 'algorithm');
@@ -280,7 +280,7 @@ export function parseHostedPreKeyStatus(value: unknown): HostedPreKeyStatus {
 
 export function statusPreKeys(
   status: HostedPreKeyStatus,
-): HostedRelayRegistrationPreKeys {
+): HostedSignalProtocolRelayRegistrationPreKeys {
   return {
     oneTimePreKeys: status.oneTimePreKeys,
     signedPreKeys: status.signedPreKeys.map((prekey) => ({
@@ -306,7 +306,7 @@ export function publicationMatchesStatus(
 
 function registrationPreKeyUpload(
   upload: PreKeyUpload,
-): HostedRelayRegistrationPreKey {
+): HostedSignalProtocolRelayRegistrationPreKey {
   if (!Number.isSafeInteger(upload.keyId) || upload.keyId < 0)
     throw new Error('Signal Protocol Relay prekey upload is invalid');
   const signature =
@@ -331,9 +331,9 @@ function registrationPreKeyUpload(
 }
 
 export function applyPreKeyUploads(
-  current: HostedRelayRegistrationPreKeys,
+  current: HostedSignalProtocolRelayRegistrationPreKeys,
   uploads: readonly PreKeyUpload[],
-): HostedRelayRegistrationPreKeys {
+): HostedSignalProtocolRelayRegistrationPreKeys {
   const oneTimePreKeys = [...current.oneTimePreKeys];
   const signedPreKeys = [...current.signedPreKeys];
   for (const type of [

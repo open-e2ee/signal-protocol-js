@@ -4,8 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / HostedRelayPresenceVisibility
 
-# Type Alias: HostedRelayPresenceVisibility
+# ~~Type Alias: HostedRelayPresenceVisibility~~
 
-> **HostedRelayPresenceVisibility** = `"visible"` \| `"hidden"`
+> **HostedRelayPresenceVisibility** = [`HostedSignalProtocolRelayPresenceVisibility`](HostedSignalProtocolRelayPresenceVisibility.md)
 
-The choice that an account can write.
+## Deprecated
+
+Use `HostedSignalProtocolRelayPresenceVisibility`. SDK 15.0.0 removes this name.

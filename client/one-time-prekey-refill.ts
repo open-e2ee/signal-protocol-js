@@ -21,7 +21,7 @@ import { defaultSignalProtocolLogger, type Logger } from '../logger';
 import type { SignalProtocolLocalStore } from '../types';
 import { ONE_TIME_PREKEY_BATCH_SIZE } from '../types';
 import type { IdentityType } from '../keys/types';
-import type { PreKeyUpload } from '../remote/relay/types';
+import type { PreKeyUpload } from '../remote/signal-relay/types';
 import { generateEcOneTimePreKeys, generateKemOneTimePreKeys } from '../keys';
 import type { PreKeyMaintenanceStore } from './config';
 

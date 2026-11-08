@@ -44,8 +44,8 @@ export async function rotatePreKeys(ctx: SignalProtocolClientContext): Promise<P
   const refreshIntervalMs = ctx.config.keyRefreshIntervalMs ?? KEY_REFRESH_INTERVAL_MS_DEFAULT;
 
   // With relay: delegate to the core for the inventory-based rotation decision
-  if (ctx.relay) {
-    const result = await rotatePreKeysCore(ctx.relay, ctx.userId, ctx.deviceId, ctx.storage, {
+  if (ctx.signalProtocolRelay) {
+    const result = await rotatePreKeysCore(ctx.signalProtocolRelay, ctx.userId, ctx.deviceId, ctx.storage, {
       refreshIntervalMs,
       identityTypes: getActiveIdentityTypes(ctx.config),
       preKeyMaintenance: ctx.config.preKeyMaintenance,

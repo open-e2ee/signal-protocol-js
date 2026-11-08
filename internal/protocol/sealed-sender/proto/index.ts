@@ -68,7 +68,7 @@ export interface SenderCertificateData {
   expires: number;
   identityKey: Uint8Array;
   signerCertificate: Uint8Array; // serialized ServerCertificate proto bytes
-  relayScopeId: Uint8Array;
+  signalRelayScopeId: Uint8Array;
 }
 
 /**
@@ -133,7 +133,7 @@ const SENDER_CERTIFICATE_DATA = {
   identityKey: 4,
   signerCertificate: 5,
   senderUuid: 6,
-  relayScopeId: 7,
+  signalRelayScopeId: 7,
 } as const;
 
 /** `SenderCertificate`: the outer wrapper carrying the signature. */
@@ -241,7 +241,7 @@ export function decodeSenderCertificateData(bytes: Uint8Array): SenderCertificat
   let expires = 0;
   let identityKey = emptyBytes();
   let signerCertificate = emptyBytes();
-  let relayScopeId = emptyBytes();
+  let signalRelayScopeId = emptyBytes();
 
   while (reader.hasMore()) {
     const { fieldNumber } = reader.readTag();
@@ -267,8 +267,8 @@ export function decodeSenderCertificateData(bytes: Uint8Array): SenderCertificat
       case SENDER_CERTIFICATE_DATA.senderUuid:
         senderUuid = reader.readString();
         break;
-      case SENDER_CERTIFICATE_DATA.relayScopeId:
-        relayScopeId = reader.readBytes();
+      case SENDER_CERTIFICATE_DATA.signalRelayScopeId:
+        signalRelayScopeId = reader.readBytes();
         break;
       default:
         reader.skipField();
@@ -283,7 +283,7 @@ export function decodeSenderCertificateData(bytes: Uint8Array): SenderCertificat
     expires,
     identityKey,
     signerCertificate,
-    relayScopeId,
+    signalRelayScopeId,
   };
 }
 

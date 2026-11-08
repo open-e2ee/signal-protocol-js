@@ -1,5 +1,5 @@
-import { deviceSetRefusal } from '../remote/relay/device-set';
-import { followedRepeatedRequest, type RepeatRequest } from '../remote/relay/request-admission';
+import { deviceSetRefusal } from '../remote/signal-relay/device-set';
+import { followedRepeatedRequest, type RepeatRequest } from '../remote/signal-relay/request-admission';
 import {
   outgoingDestinationProgressKey,
   outgoingMessageDeadlineAt,
@@ -13,18 +13,18 @@ import {
 import {
   SealedSenderAuthError,
   SendAcceptanceUnknownError,
-  SendNeverAcceptedByRelayError,
+  SendNeverAcceptedBySignalProtocolRelayError,
 } from '../types/errors';
 import {
   conflictAcceptance,
   isConflictAcceptance,
-  relayHoldsMessageId,
-  relayOperationRefusal,
-  type RelayPostAcceptance,
-} from './relay-acceptance';
+  signalRelayHoldsMessageId,
+  signalRelayOperationRefusal,
+  type SignalProtocolRelayPostAcceptance,
+} from './signal-relay-acceptance';
 import type { SendOutcomeEvent } from './event-hooks';
-import { markRelayDeviceRefusal, relayDeviceRefusal } from './relay-device-refusal';
-import { isPeriodClosed } from './relay-period-close';
+import { markSignalProtocolRelayDeviceRefusal, signalRelayDeviceRefusal } from './signal-relay-device-refusal';
+import { isPeriodClosed } from './signal-relay-period-close';
 
 /**
  * The posting deadline of a direct or group send: the time after which the
@@ -129,7 +129,7 @@ interface DestinationEvidence {
   entry?: StoredDestinationProgress;
   requests: number;
   answers: AnswerClass[];
-  acceptance?: RelayPostAcceptance;
+  acceptance?: SignalProtocolRelayPostAcceptance;
   /** True when the last answer was OPERATION_EXPIRED. */
   expired: boolean;
   /** True when a transport repeat followed an uncertain answer. */
@@ -204,7 +204,7 @@ export function provenRefused(entry: StoredDestinationProgress | undefined): boo
 export function storedAcceptance(
   entry: StoredDestinationProgress,
   clock: () => number
-): RelayPostAcceptance {
+): SignalProtocolRelayPostAcceptance {
   const acceptance = conflictAcceptance(
     entry.messageId ?? entry.postMessageId,
     entry.enqueuedAt ?? clock()
@@ -215,7 +215,7 @@ export function storedAcceptance(
 }
 
 /** The stored fields of an accepted answer. A conflict acceptance has no receipt. */
-function acceptedAnswer(acceptance: RelayPostAcceptance): DestinationProgressUpdate & {
+function acceptedAnswer(acceptance: SignalProtocolRelayPostAcceptance): DestinationProgressUpdate & {
   answer: 'accepted';
 } {
   const receipt = isConflictAcceptance(acceptance) ? undefined : acceptance;
@@ -237,7 +237,7 @@ function destinationKey({ device, postMessageId }: SendDestination): string {
 }
 
 /** The relay answer of one shared post, which names refused accounts and devices. */
-interface SharedPostAnswer extends RelayPostAcceptance {
+interface SharedPostAnswer extends SignalProtocolRelayPostAcceptance {
   uuids404: string[];
   refusals?: readonly { userId: string; deviceId: number; code: string }[];
 }
@@ -334,8 +334,8 @@ export class SendCallEvidence {
    */
   async post(
     destination: SendDestination,
-    post: (onRequest: (repeat?: RepeatRequest['after']) => void) => Promise<RelayPostAcceptance>
-  ): Promise<RelayPostAcceptance> {
+    post: (onRequest: (repeat?: RepeatRequest['after']) => void) => Promise<SignalProtocolRelayPostAcceptance>
+  ): Promise<SignalProtocolRelayPostAcceptance> {
     const key = destinationKey(destination);
     const evidence = this.evidenceAt(key);
     if (evidence.entry?.state === 'accepted') {
@@ -348,7 +348,7 @@ export class SendCallEvidence {
       postMessageId: destination.postMessageId,
     };
     let requests = 0;
-    let acceptance: RelayPostAcceptance;
+    let acceptance: SignalProtocolRelayPostAcceptance;
     try {
       acceptance = await post((repeat) => {
         requests += 1;
@@ -368,7 +368,7 @@ export class SendCallEvidence {
         return conflict;
       }
       evidence.answers.push(answer);
-      evidence.expired = relayOperationRefusal(error) === 'OPERATION_EXPIRED';
+      evidence.expired = signalRelayOperationRefusal(error) === 'OPERATION_EXPIRED';
       this.keepTerminalAnswer(error);
       if (answer === 'refused' && !this.hasRefusal) {
         this.hasRefusal = true;
@@ -450,7 +450,7 @@ export class SendCallEvidence {
       });
     } catch (error) {
       if (requests === 0) throw error;
-      const expired = relayOperationRefusal(error) === 'OPERATION_EXPIRED';
+      const expired = signalRelayOperationRefusal(error) === 'OPERATION_EXPIRED';
       const conflict = conflictAcceptance(this.options.clientMessageId, this.options.clock());
       let accepted = 0;
       for (const target of targets) {
@@ -533,8 +533,8 @@ export class SendCallEvidence {
     check: () => Promise<void>,
     post: (
       gate: (postMessageId: string | undefined) => () => Promise<void>
-    ) => Promise<RelayPostAcceptance | undefined>
-  ): Promise<RelayPostAcceptance | undefined> {
+    ) => Promise<SignalProtocolRelayPostAcceptance | undefined>
+  ): Promise<SignalProtocolRelayPostAcceptance | undefined> {
     const key = outgoingDestinationProgressKey(destination.postMessageId, destination.device);
     let entry = this.options.progress?.[key];
     if (entry?.state === 'accepted') return storedAcceptance(entry, this.options.clock);
@@ -553,7 +553,7 @@ export class SendCallEvidence {
         (await this.options.recordProgress?.(key, { ...stored(), request: true })) ?? entry;
       requests += 1;
     };
-    let acceptance: RelayPostAcceptance | undefined;
+    let acceptance: SignalProtocolRelayPostAcceptance | undefined;
     try {
       acceptance = await post(gate);
     } catch (error) {
@@ -736,7 +736,7 @@ export class SendCallEvidence {
     return evidence;
   }
 
-  private accept(evidence: DestinationEvidence, acceptance: RelayPostAcceptance): void {
+  private accept(evidence: DestinationEvidence, acceptance: SignalProtocolRelayPostAcceptance): void {
     evidence.answers.push('accepted');
     evidence.expired = false;
     evidence.acceptance ??= acceptance;
@@ -758,16 +758,16 @@ export class SendCallEvidence {
     error: unknown
   ): AnswerClass {
     if (followedRepeatedRequest(error)) return 'uncertain';
-    if (relayHoldsMessageId(error)) {
+    if (signalRelayHoldsMessageId(error)) {
       return this.options.progressFromStart && !entry?.repaired
         ? 'accepted'
         : 'uncertain';
     }
     if (error === null || typeof error !== 'object') return 'uncertain';
     if (
-      relayOperationRefusal(error) === 'OPERATION_EXPIRED' ||
+      signalRelayOperationRefusal(error) === 'OPERATION_EXPIRED' ||
       deviceSetRefusal(error) !== undefined ||
-      relayDeviceRefusal(error) !== undefined ||
+      signalRelayDeviceRefusal(error) !== undefined ||
       error instanceof SealedSenderAuthError ||
       this.options.refusesDevice?.(error) === true
     ) {
@@ -821,7 +821,7 @@ function receiptRefusal(device: SendDevice, code: string): Error {
     { code }
   );
   if (code === 'NOT_FOUND' || code === 'STALE_DEVICE') {
-    markRelayDeviceRefusal(error, { code, userId: device.userId, deviceId: device.deviceId });
+    markSignalProtocolRelayDeviceRefusal(error, { code, userId: device.userId, deviceId: device.deviceId });
   }
   return error;
 }
@@ -851,10 +851,10 @@ function refusalCode(
   error: unknown,
   refusesDevice: ((error: unknown) => boolean) | undefined
 ): string | undefined {
-  const operation = relayOperationRefusal(error);
+  const operation = signalRelayOperationRefusal(error);
   if (operation !== undefined) return operation;
   if (deviceSetRefusal(error) !== undefined) return 'device-set';
-  const device = relayDeviceRefusal(error);
+  const device = signalRelayDeviceRefusal(error);
   if (device !== undefined) return device.code;
   if (error instanceof SealedSenderAuthError) return 'sealed-sender-auth';
   const code = error !== null && typeof error === 'object' ? errorCode(error) : undefined;
@@ -939,7 +939,7 @@ export function storedSendEndError(intent: StoredOutgoingMessageIntent): Error {
  *    code also gives the refusal mark of its device. The store clears the
  *    code when a later request or answer supersedes the refusal, and a code
  *    on an entry in another state does not count.
- * 3. With no such entry, the error is `SendNeverAcceptedByRelayError`.
+ * 3. With no such entry, the error is `SendNeverAcceptedBySignalProtocolRelayError`.
  *
  * The end stores the code of each refusal on the entry of its destination,
  * so a replay gives the code that the call threw only when the thrown
@@ -971,7 +971,7 @@ function failedEndError(
   }
   return firstRefusal
     ? attachTerminalFailure(receiptRefusal(firstRefusal.device, firstRefusal.code), details)
-    : new SendNeverAcceptedByRelayError(details);
+    : new SendNeverAcceptedBySignalProtocolRelayError(details);
 }
 
 /**
@@ -994,13 +994,26 @@ function defineSendField(error: object, name: string, value: unknown): void {
   });
 }
 
-/** Keep the Relay's own `retryable` hint in `relayRetryable`. */
-function keepRelayRetryable(error: object): void {
-  const { retryable, relayRetryable } = error as {
+/**
+ * Keep the Relay's own `retryable` hint in `signalProtocolRelayRetryable`. The
+ * deprecated `relayRetryable` field holds the same value until SDK 15.0.0.
+ */
+function keepSignalProtocolRelayRetryable(error: object): void {
+  const { retryable, signalProtocolRelayRetryable, relayRetryable } = error as {
     retryable?: unknown;
+    signalProtocolRelayRetryable?: unknown;
     relayRetryable?: unknown;
   };
-  if (relayRetryable === undefined && typeof retryable === 'boolean') {
+  const hint = signalProtocolRelayRetryable ?? relayRetryable;
+  if (hint !== undefined) {
+    if (signalProtocolRelayRetryable === undefined) {
+      defineSendField(error, 'signalProtocolRelayRetryable', hint);
+    }
+    if (relayRetryable === undefined) defineSendField(error, 'relayRetryable', hint);
+    return;
+  }
+  if (typeof retryable === 'boolean') {
+    defineSendField(error, 'signalProtocolRelayRetryable', retryable);
     defineSendField(error, 'relayRetryable', retryable);
   }
 }
@@ -1009,7 +1022,7 @@ function keepRelayRetryable(error: object): void {
  * Mark an error of a send that failed before its posting deadline. The send
  * stays open, so a replay with the same `clientMessageId` before `deadlineAt`
  * can post it: `retryable` is true. The Relay's own hint moves to
- * `relayRetryable`. An error that keeps its own retry rule, such as
+ * `signalProtocolRelayRetryable`. An error that keeps its own retry rule, such as
  * UPGRADE_REQUIRED or DEVICE_REVOKED, does not change.
  */
 export function attachSendDeadline<T>(error: T, deadlineAt: number): T {
@@ -1017,13 +1030,13 @@ export function attachSendDeadline<T>(error: T, deadlineAt: number): T {
   if (
     error instanceof PostingDeadlineReachedError ||
     error instanceof SendAcceptanceUnknownError ||
-    error instanceof SendNeverAcceptedByRelayError
+    error instanceof SendNeverAcceptedBySignalProtocolRelayError
   ) {
     return error;
   }
   const code = (error as { code?: unknown }).code;
   if (typeof code === 'string' && OWN_RETRY_CODES.has(code)) return error;
-  keepRelayRetryable(error);
+  keepSignalProtocolRelayRetryable(error);
   defineSendField(error, 'deadlineAt', deadlineAt);
   defineSendField(error, 'retryable', true);
   return error;
@@ -1042,7 +1055,7 @@ export function attachTerminalFailure<T extends Error>(
     readonly deadlineAt: number;
   }
 ): T {
-  keepRelayRetryable(error);
+  keepSignalProtocolRelayRetryable(error);
   defineSendField(error, 'acceptedDevices', details.acceptedDevices);
   defineSendField(error, 'refusedDevices', details.refusedDevices);
   defineSendField(error, 'deadlineAt', details.deadlineAt);

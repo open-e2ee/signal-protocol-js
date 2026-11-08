@@ -1,21 +1,21 @@
 import { parseUrl, type ParsedUrl } from '../internal/platform';
 import type { DefaultSignalProtocolClient } from './client';
 import type { IncomingEnvelope } from './types';
-import type { RelayDeliveryReceipt } from './relay-receipt-intake';
+import type { SignalProtocolRelayDeliveryReceipt } from './signal-relay-receipt-intake';
 
 const PUSH_TOKEN_MAXIMUM_LENGTH = 4_096;
 const PUSH_ENDPOINT_MAXIMUM_LENGTH = 2_048;
 
-export type HostedRelayPushProfile =
+export type HostedSignalProtocolRelayPushProfile =
   'background-only' | 'visible-alert' | 'nse-visible' | 'nse-filtering';
 
-export type HostedRelayPushPlatform = 'android' | 'ios' | 'web';
+export type HostedSignalProtocolRelayPushPlatform = 'android' | 'ios' | 'web';
 
 /** Native or Expo provider token registered for this authenticated device. */
-export type HostedRelayTokenPushRegistration =
+export type HostedSignalProtocolRelayTokenPushRegistration =
   | {
       readonly platform: 'ios';
-      readonly profile: HostedRelayPushProfile;
+      readonly profile: HostedSignalProtocolRelayPushProfile;
       readonly provider: 'apns' | 'expo';
       readonly token: string;
     }
@@ -27,7 +27,7 @@ export type HostedRelayTokenPushRegistration =
     };
 
 /** Browser Push API subscription registered for this authenticated device. */
-export interface HostedRelayWebPushRegistration {
+export interface HostedSignalProtocolRelayWebPushRegistration {
   readonly endpoint: string;
   readonly keys: {
     readonly auth: string;
@@ -39,8 +39,8 @@ export interface HostedRelayWebPushRegistration {
 }
 
 /** Supported best-effort wake and generic-alert registration shapes. */
-export type HostedRelayPushRegistration =
-  HostedRelayTokenPushRegistration | HostedRelayWebPushRegistration;
+export type HostedSignalProtocolRelayPushRegistration =
+  HostedSignalProtocolRelayTokenPushRegistration | HostedSignalProtocolRelayWebPushRegistration;
 
 /**
  * @internal One mailbox pull: the retained messages, then the retained Relay
@@ -48,7 +48,7 @@ export type HostedRelayPushRegistration =
  */
 export interface HostedMailboxPage {
   readonly messages: readonly IncomingEnvelope[];
-  readonly receipts: readonly RelayDeliveryReceipt[];
+  readonly receipts: readonly SignalProtocolRelayDeliveryReceipt[];
   /**
    * The opaque Relay cursor after the last message of a page that is not
    * empty. A pull with it starts after that message.
@@ -72,7 +72,7 @@ export interface HostedMailboxPage {
 }
 
 /** @internal SDK-owned transport for one authenticated hosted client. */
-export interface HostedRelayPushRuntime {
+export interface HostedSignalProtocolRelayPushRuntime {
   acknowledgeMailbox(
     messageIds: readonly string[],
     receiptIds: readonly string[],
@@ -80,12 +80,12 @@ export interface HostedRelayPushRuntime {
   /** Pulls the page after `cursor`, or the head page without one. */
   pullMailbox(cursor?: string): Promise<HostedMailboxPage>;
   /** Hands one Relay receipt off. A rejection leaves it unacknowledged. */
-  receiveRelayReceipt(receipt: RelayDeliveryReceipt): Promise<void>;
-  registerPush(registration: HostedRelayPushRegistration): Promise<void>;
+  receiveSignalProtocolRelayReceipt(receipt: SignalProtocolRelayDeliveryReceipt): Promise<void>;
+  registerPush(registration: HostedSignalProtocolRelayPushRegistration): Promise<void>;
   removePush(): Promise<void>;
 }
 
-export interface HostedRelayWakeClient {
+export interface HostedSignalProtocolRelayWakeClient {
   receiveIncomingEnvelopes(
     envelopes: IncomingEnvelope[],
   ): ReturnType<DefaultSignalProtocolClient['receiveIncomingEnvelopes']>;
@@ -94,8 +94,8 @@ export interface HostedRelayWakeClient {
   ): ReturnType<DefaultSignalProtocolClient['processPendingReceives']>;
 }
 
-export interface HostedRelayWakeOptions {
-  readonly client: HostedRelayWakeClient;
+export interface HostedSignalProtocolRelayWakeOptions {
+  readonly client: HostedSignalProtocolRelayWakeClient;
   /**
    * The time in milliseconds that the stored receives may take after the
    * acknowledgment. The pass stops between records at the deadline, and
@@ -104,7 +104,7 @@ export interface HostedRelayWakeOptions {
   readonly deadlineMs?: number;
 }
 
-export interface HostedRelayWakeResult {
+export interface HostedSignalProtocolRelayWakeResult {
   readonly acknowledgedMessageIds: readonly string[];
   readonly failedMessageIds: readonly string[];
   readonly pulled: number;
@@ -118,22 +118,22 @@ export interface HostedRelayWakeResult {
   readonly retainedWork?: boolean;
 }
 
-const hostedRuntimes = new WeakMap<object, HostedRelayPushRuntime>();
+const hostedRuntimes = new WeakMap<object, HostedSignalProtocolRelayPushRuntime>();
 /**
  * The pull cursor of each runtime. It lives in memory only, so a new runtime
  * pulls from the head of the mailbox.
  */
-const pullCursors = new WeakMap<HostedRelayPushRuntime, string>();
+const pullCursors = new WeakMap<HostedSignalProtocolRelayPushRuntime, string>();
 
 /** @internal Bind the SDK-owned transport to the client that uses it. */
-export function bindHostedRelayPushRuntime(
-  client: HostedRelayWakeClient,
-  runtime: HostedRelayPushRuntime,
+export function bindHostedSignalProtocolRelayPushRuntime(
+  client: HostedSignalProtocolRelayWakeClient,
+  runtime: HostedSignalProtocolRelayPushRuntime,
 ): void {
   hostedRuntimes.set(client, runtime);
 }
 
-function hostedRuntime(client: HostedRelayWakeClient): HostedRelayPushRuntime {
+function hostedRuntime(client: HostedSignalProtocolRelayWakeClient): HostedSignalProtocolRelayPushRuntime {
   const runtime = hostedRuntimes.get(client);
   if (runtime === undefined) {
     throw new Error('The client is not connected to the OpenE2EE Signal Protocol Relay');
@@ -149,8 +149,8 @@ function assertToken(token: string): string {
 }
 
 function validatedRegistration(
-  registration: HostedRelayPushRegistration,
-): HostedRelayPushRegistration {
+  registration: HostedSignalProtocolRelayPushRegistration,
+): HostedSignalProtocolRelayPushRegistration {
   if (
     registration.profile !== 'background-only' &&
     registration.profile !== 'visible-alert' &&
@@ -219,17 +219,17 @@ function validatedRegistration(
 }
 
 /** Register a best-effort wake profile for this hosted client's device. */
-export async function registerHostedRelayPush(options: {
-  readonly client: HostedRelayWakeClient;
-  readonly registration: HostedRelayPushRegistration;
+export async function registerHostedSignalProtocolRelayPush(options: {
+  readonly client: HostedSignalProtocolRelayWakeClient;
+  readonly registration: HostedSignalProtocolRelayPushRegistration;
 }): Promise<void> {
   const registration = validatedRegistration(options.registration);
   await hostedRuntime(options.client).registerPush(registration);
 }
 
 /** Remove the wake destination for this hosted client's device. */
-export async function removeHostedRelayPush(options: {
-  readonly client: HostedRelayWakeClient;
+export async function removeHostedSignalProtocolRelayPush(options: {
+  readonly client: HostedSignalProtocolRelayWakeClient;
 }): Promise<void> {
   await hostedRuntime(options.client).removePush();
 }
@@ -241,7 +241,7 @@ export async function removeHostedRelayPush(options: {
  * its `receiveIncomingEnvelopes` does.
  */
 async function commitHeld(
-  client: HostedRelayWakeClient,
+  client: HostedSignalProtocolRelayWakeClient,
   envelopes: IncomingEnvelope[],
 ): Promise<{
   readonly processedMessageIds: readonly string[];
@@ -280,9 +280,9 @@ async function commitHeld(
  * One call makes one pull. The result copies `retainedWork` from the Relay
  * page. When it is true, the caller runs the next pass.
  */
-export async function pullHostedRelayAfterWake(
-  options: HostedRelayWakeOptions,
-): Promise<HostedRelayWakeResult> {
+export async function pullHostedSignalProtocolRelayAfterWake(
+  options: HostedSignalProtocolRelayWakeOptions,
+): Promise<HostedSignalProtocolRelayWakeResult> {
   const runtime = hostedRuntime(options.client);
   // A wake that fails anywhere leaves the cursor cleared, so the next wake
   // pulls from the head. This includes a Relay refusal of the cursor.
@@ -322,7 +322,7 @@ export async function pullHostedRelayAfterWake(
     const receiptIds: string[] = [];
     for (const receipt of receipts) {
       try {
-        await runtime.receiveRelayReceipt(receipt);
+        await runtime.receiveSignalProtocolRelayReceipt(receipt);
         receiptIds.push(receipt.receiptId);
       } catch {
         // The Relay replays it on the next pull or connect.
@@ -361,3 +361,27 @@ export async function pullHostedRelayAfterWake(
     ...(retainedWork === undefined ? {} : { retainedWork }),
   };
 }
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `HostedSignalProtocolRelayPushPlatform`. SDK 15.0.0 removes this name. */
+export type HostedRelayPushPlatform = HostedSignalProtocolRelayPushPlatform;
+/** @deprecated Use `HostedSignalProtocolRelayPushProfile`. SDK 15.0.0 removes this name. */
+export type HostedRelayPushProfile = HostedSignalProtocolRelayPushProfile;
+/** @deprecated Use `HostedSignalProtocolRelayPushRegistration`. SDK 15.0.0 removes this name. */
+export type HostedRelayPushRegistration = HostedSignalProtocolRelayPushRegistration;
+/** @deprecated Use `HostedSignalProtocolRelayTokenPushRegistration`. SDK 15.0.0 removes this name. */
+export type HostedRelayTokenPushRegistration = HostedSignalProtocolRelayTokenPushRegistration;
+/** @deprecated Use `HostedSignalProtocolRelayWakeClient`. SDK 15.0.0 removes this name. */
+export type HostedRelayWakeClient = HostedSignalProtocolRelayWakeClient;
+/** @deprecated Use `HostedSignalProtocolRelayWakeOptions`. SDK 15.0.0 removes this name. */
+export type HostedRelayWakeOptions = HostedSignalProtocolRelayWakeOptions;
+/** @deprecated Use `HostedSignalProtocolRelayWakeResult`. SDK 15.0.0 removes this name. */
+export type HostedRelayWakeResult = HostedSignalProtocolRelayWakeResult;
+/** @deprecated Use `HostedSignalProtocolRelayWebPushRegistration`. SDK 15.0.0 removes this name. */
+export type HostedRelayWebPushRegistration = HostedSignalProtocolRelayWebPushRegistration;
+/** @deprecated Use `pullHostedSignalProtocolRelayAfterWake`. SDK 15.0.0 removes this name. */
+export const pullHostedRelayAfterWake = pullHostedSignalProtocolRelayAfterWake;
+/** @deprecated Use `registerHostedSignalProtocolRelayPush`. SDK 15.0.0 removes this name. */
+export const registerHostedRelayPush = registerHostedSignalProtocolRelayPush;
+/** @deprecated Use `removeHostedSignalProtocolRelayPush`. SDK 15.0.0 removes this name. */
+export const removeHostedRelayPush = removeHostedSignalProtocolRelayPush;

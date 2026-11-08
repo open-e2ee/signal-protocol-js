@@ -6,32 +6,32 @@ import {
   urlSafeToBase64,
 } from '../internal/crypto';
 import type { Base64 } from '../types';
-import { MANAGED_RELAY_PROFILES } from './hosted-trust';
-import { withRelayRequestDeadline } from './relay-request-deadline';
+import { MANAGED_SIGNAL_RELAY_PROFILES } from './hosted-trust';
+import { withSignalProtocolRelayRequestDeadline } from './signal-relay-request-deadline';
 
-export interface HostedRelayCertificateTrust {
+export interface HostedSignalProtocolRelayCertificateTrust {
   readonly revokedIssuerKeyIds: readonly number[];
   readonly trustRoots: readonly Uint8Array[];
 }
 
-export interface HostedRelayConnection {
-  readonly certificateTrust: HostedRelayCertificateTrust;
+export interface HostedSignalProtocolRelayConnection {
+  readonly certificateTrust: HostedSignalProtocolRelayCertificateTrust;
   readonly configurationVersion: number;
   readonly environment: 'sandbox' | 'production';
   readonly protocolEndpoint: string;
   readonly publishableKey: string;
   readonly relayScopeId: Uint8Array;
-  readonly relayUrl: string;
+  readonly signalProtocolRelayUrl: string;
 }
 
-type ManagedRelayProfile = keyof typeof MANAGED_RELAY_PROFILES;
+type ManagedSignalProtocolRelayProfile = keyof typeof MANAGED_SIGNAL_RELAY_PROFILES;
 const CONNECTION_PATH = /^\/signal\/v1\/connection\/([A-Za-z0-9_-]{1,255})$/u;
 const CONNECTION_FRESH_MILLISECONDS = 5 * 60 * 1_000;
 const CONNECTION_STALE_MILLISECONDS = 60 * 60 * 1_000;
 const CONNECTION_DOCUMENT_MAXIMUM_BYTES = 8 * 1_024;
 const connectionCache = new Map<
   string,
-  { readonly connection: HostedRelayConnection; readonly resolvedAt: number }
+  { readonly connection: HostedSignalProtocolRelayConnection; readonly resolvedAt: number }
 >();
 const CONNECTION_DOCUMENT_KEYS = [
   'configurationVersion',
@@ -46,11 +46,11 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseRelayUrl(value: string): {
-  environment: HostedRelayConnection['environment'];
+function parseSignalProtocolRelayUrl(value: string): {
+  environment: HostedSignalProtocolRelayConnection['environment'];
   locator: string;
-  profile: ManagedRelayProfile;
-  relayUrl: string;
+  profile: ManagedSignalProtocolRelayProfile;
+  signalProtocolRelayUrl: string;
 } {
   let url: ParsedUrl;
   try {
@@ -58,9 +58,9 @@ function parseRelayUrl(value: string): {
   } catch {
     throw new Error('Signal Protocol Relay connection URL is invalid');
   }
-  const profile = Object.entries(MANAGED_RELAY_PROFILES).find(
+  const profile = Object.entries(MANAGED_SIGNAL_RELAY_PROFILES).find(
     ([, candidate]) => url.origin === candidate.origin,
-  )?.[0] as ManagedRelayProfile | undefined;
+  )?.[0] as ManagedSignalProtocolRelayProfile | undefined;
   const locator = CONNECTION_PATH.exec(url.pathname)?.[1];
   if (
     profile === undefined ||
@@ -71,24 +71,24 @@ function parseRelayUrl(value: string): {
     throw new Error('Signal Protocol Relay connection URL is invalid');
   }
   return {
-    environment: MANAGED_RELAY_PROFILES[profile].environment,
+    environment: MANAGED_SIGNAL_RELAY_PROFILES[profile].environment,
     locator,
     profile,
-    relayUrl: url.href,
+    signalProtocolRelayUrl: url.href,
   };
 }
 
 function compiledCertificateTrust(
-  profile: ManagedRelayProfile,
-): HostedRelayCertificateTrust {
-  const trust = MANAGED_RELAY_PROFILES[profile];
+  profile: ManagedSignalProtocolRelayProfile,
+): HostedSignalProtocolRelayCertificateTrust {
+  const trust = MANAGED_SIGNAL_RELAY_PROFILES[profile];
   return {
     revokedIssuerKeyIds: [...trust.revokedIssuerKeyIds],
     trustRoots: trust.trustRoots.map((root) => base64ToBytes(root)),
   };
 }
 
-function parseRelayScopeId(value: unknown): Uint8Array | undefined {
+function parseSignalProtocolRelayScopeId(value: unknown): Uint8Array | undefined {
   if (
     typeof value !== 'string' ||
     !/^[A-Za-z0-9_-]{22}$/u.test(value)
@@ -106,8 +106,8 @@ function parseRelayScopeId(value: unknown): Uint8Array | undefined {
 }
 
 function cloneConnection(
-  connection: HostedRelayConnection,
-): HostedRelayConnection {
+  connection: HostedSignalProtocolRelayConnection,
+): HostedSignalProtocolRelayConnection {
   return {
     ...connection,
     certificateTrust: {
@@ -202,11 +202,11 @@ async function boundedJson(response: Response): Promise<unknown> {
 }
 
 /** Resolve one public environment-scoped Signal Protocol Relay connection. */
-export async function resolveHostedRelayConnection(
+export async function resolveHostedSignalProtocolRelayConnection(
   value: string,
-): Promise<HostedRelayConnection> {
-  const input = parseRelayUrl(value);
-  const cached = connectionCache.get(input.relayUrl);
+): Promise<HostedSignalProtocolRelayConnection> {
+  const input = parseSignalProtocolRelayUrl(value);
+  const cached = connectionCache.get(input.signalProtocolRelayUrl);
   if (
     cached !== undefined &&
     Date.now() - cached.resolvedAt <= CONNECTION_FRESH_MILLISECONDS
@@ -215,10 +215,10 @@ export async function resolveHostedRelayConnection(
   }
   // A Relay that cannot be reached, or that does not answer before the
   // deadline, gives no document. A stale cached connection then still applies.
-  const document = await withRelayRequestDeadline(async (signal) => {
+  const document = await withSignalProtocolRelayRequestDeadline(async (signal) => {
     let response: Response;
     try {
-      response = await fetch(input.relayUrl, {
+      response = await fetch(input.signalProtocolRelayUrl, {
         credentials: 'omit',
         headers: { accept: 'application/json' },
         method: 'GET',
@@ -244,35 +244,35 @@ export async function resolveHostedRelayConnection(
     }
     throw new Error('Signal Protocol Relay connection could not be resolved');
   }
-  const valueFromRelay = document.value;
-  const expectedOrigin = MANAGED_RELAY_PROFILES[input.profile].origin;
-  const relayScopeId = record(valueFromRelay)
-    ? parseRelayScopeId(valueFromRelay.relayScopeId)
+  const valueFromSignalProtocolRelay = document.value;
+  const expectedOrigin = MANAGED_SIGNAL_RELAY_PROFILES[input.profile].origin;
+  const signalProtocolRelayScopeId = record(valueFromSignalProtocolRelay)
+    ? parseSignalProtocolRelayScopeId(valueFromSignalProtocolRelay.relayScopeId)
     : undefined;
   if (
-    !record(valueFromRelay) ||
-    Object.keys(valueFromRelay).sort().join(',') !==
+    !record(valueFromSignalProtocolRelay) ||
+    Object.keys(valueFromSignalProtocolRelay).sort().join(',') !==
       [...CONNECTION_DOCUMENT_KEYS].sort().join(',') ||
-    valueFromRelay.schemaVersion !== 1 ||
-    !Number.isSafeInteger(valueFromRelay.configurationVersion) ||
-    (valueFromRelay.configurationVersion as number) < 1 ||
-    valueFromRelay.environment !== input.environment ||
-    valueFromRelay.protocolEndpoint !== `${expectedOrigin}/signal/v1` ||
-    valueFromRelay.publishableKey !== input.locator ||
-    relayScopeId === undefined
+    valueFromSignalProtocolRelay.schemaVersion !== 1 ||
+    !Number.isSafeInteger(valueFromSignalProtocolRelay.configurationVersion) ||
+    (valueFromSignalProtocolRelay.configurationVersion as number) < 1 ||
+    valueFromSignalProtocolRelay.environment !== input.environment ||
+    valueFromSignalProtocolRelay.protocolEndpoint !== `${expectedOrigin}/signal/v1` ||
+    valueFromSignalProtocolRelay.publishableKey !== input.locator ||
+    signalProtocolRelayScopeId === undefined
   ) {
     throw new Error('Signal Protocol Relay returned an invalid connection');
   }
-  const connection: HostedRelayConnection = {
+  const connection: HostedSignalProtocolRelayConnection = {
     certificateTrust: compiledCertificateTrust(input.profile),
-    configurationVersion: valueFromRelay.configurationVersion as number,
+    configurationVersion: valueFromSignalProtocolRelay.configurationVersion as number,
     environment: input.environment,
-    protocolEndpoint: valueFromRelay.protocolEndpoint,
-    publishableKey: valueFromRelay.publishableKey,
-    relayScopeId,
-    relayUrl: input.relayUrl,
+    protocolEndpoint: valueFromSignalProtocolRelay.protocolEndpoint,
+    publishableKey: valueFromSignalProtocolRelay.publishableKey,
+    relayScopeId: signalProtocolRelayScopeId,
+    signalProtocolRelayUrl: input.signalProtocolRelayUrl,
   };
-  connectionCache.set(input.relayUrl, {
+  connectionCache.set(input.signalProtocolRelayUrl, {
     connection,
     resolvedAt: Date.now(),
   });

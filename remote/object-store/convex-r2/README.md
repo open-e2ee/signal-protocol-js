@@ -29,7 +29,7 @@ const client = await createSignalProtocolClient({
   identity: { userId },
   adapters: {
     storage,
-    relay,
+    signalProtocolRelay,
     remoteObjectStore: convexR2ObjectStore({
       convex,
       api: api.signalObjectStore,

@@ -20,7 +20,7 @@ Additional context for a purpose-aware assertion request.
 
 > `readonly` **environment**: `"sandbox"` \| `"production"`
 
-The environment kind of the Relay connection in `relayUrl`.
+The environment kind of the Relay connection in `signalProtocolRelayUrl`.
 
 ***
 
@@ -30,7 +30,7 @@ The environment kind of the Relay connection in `relayUrl`.
 
 #### action
 
-> `readonly` **action**: [`HostedRelayIdentityMigrationAction`](../type-aliases/HostedRelayIdentityMigrationAction.md)
+> `readonly` **action**: [`HostedSignalProtocolRelayIdentityMigrationAction`](../type-aliases/HostedSignalProtocolRelayIdentityMigrationAction.md)
 
 #### providerRole
 
@@ -42,7 +42,7 @@ The environment kind of the Relay connection in `relayUrl`.
 
 > `readonly` **publishableKey**: `string`
 
-The publishable key in `relayUrl`. It identifies one Relay environment.
+The publishable key in `signalProtocolRelayUrl`. It identifies one Relay environment.
 
 ***
 

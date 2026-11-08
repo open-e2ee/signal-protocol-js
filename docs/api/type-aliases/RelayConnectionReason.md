@@ -4,28 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / RelayConnectionReason
 
-# Type Alias: RelayConnectionReason
+# ~~Type Alias: RelayConnectionReason~~
 
-> **RelayConnectionReason** = `"handshake"` \| `"protocol"` \| `"closed"` \| `"error"` \| `"frame"` \| `"authentication"` \| `"silent"` \| `"upgrade-required"` \| `"authority-refused"` \| `"device-revoked"` \| `"device-unknown"`
+> **RelayConnectionReason** = [`SignalProtocolRelayConnectionReason`](SignalProtocolRelayConnectionReason.md)
 
-The transition site that moved a relay connection to `reconnecting`, or to
-`stopped` without a call to stop it.
+## Deprecated
 
-- `handshake`: the socket did not open within 10 seconds.
-- `protocol`: the socket opened with a subprotocol other than the mailbox one.
-- `closed`: the socket closed.
-- `error`: the socket reported an error, or a frame could not be sent.
-- `frame`: the socket delivered a frame that the client refuses.
-- `authentication`: the device token for the socket could not be issued.
-- `silent`: the Relay did not answer a ping before the next one was due.
-- `upgrade-required`: the Relay no longer serves the protocol version of
-  this SDK. The state is `stopped`, and the subscription does not retry.
-  Only a newer SDK can connect again.
-- `authority-refused`: the Relay refused the device token refresh or a
-  pull in a way that a retry gets again, for example for a deleted account.
-  The state is `stopped`, and the subscription does not retry.
-- `device-revoked`: an account recovery revoked this device. The state is
-  `stopped`, and the subscription does not retry.
-- `device-unknown`: the Relay has no device for the stored session. The
-  state is `stopped`, and the subscription does not retry. Only an explicit
-  re-registration can connect this device again.
+Use `SignalProtocolRelayConnectionReason`. SDK 15.0.0 removes this name.

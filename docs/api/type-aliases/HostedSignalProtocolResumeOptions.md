@@ -42,4 +42,4 @@ Existing hosted options without any registration/assertion authority.
 
 ##### onProgress?
 
-> `readonly` `optional` **onProgress?**: [`HostedRelayResumeProgressCallback`](HostedRelayResumeProgressCallback.md)
+> `readonly` `optional` **onProgress?**: [`HostedSignalProtocolRelayResumeProgressCallback`](HostedSignalProtocolRelayResumeProgressCallback.md)

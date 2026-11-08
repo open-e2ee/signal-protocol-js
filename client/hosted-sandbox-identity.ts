@@ -10,8 +10,8 @@
  * store loses the account. Another device of the account joins through device
  * linking, not with a copy of this key.
  *
- * The helpers sign only registration assertions. `hostedRelaySandboxIdentity`
- * serves only a Sandbox connection. `hostedRelayDeviceOwnedIdentity` serves a
+ * The helpers sign only registration assertions. `hostedSignalProtocolRelaySandboxIdentity`
+ * serves only a Sandbox connection. `hostedSignalProtocolRelayDeviceOwnedIdentity` serves a
  * Sandbox connection or a device-owned Production connection. An
  * application-bound Production project needs an application callback. Recovery
  * and provider migration need an identity provider that authenticates the user.
@@ -30,13 +30,23 @@ import {
 import type { PrivateKey, PublicKey } from '../keys';
 import type { Base64, SignalProtocolLocalStore } from '../types';
 import type { GetIdentityAssertion, IdentityAssertionRequest } from './hosted';
+import {
+  hostedStoreRecordKey,
+  readHostedStoreRecord,
+  writeHostedStoreRecord,
+  type HostedStoreRecordKey,
+  type HostedStoreRecordPrefix,
+} from './hosted-store-records';
 
 /**
- * The metadata key prefix of the stored device-owned key. It is a persisted
- * format that both helpers keep. A new prefix would orphan the existing keys,
- * and so the existing accounts.
+ * The metadata key prefixes of the stored device-owned key. They are a
+ * persisted format that both helpers keep. A read that skipped the earlier
+ * prefix would orphan the existing keys, and so the existing accounts.
  */
-const SANDBOX_IDENTITY_METADATA_PREFIX = 'hostedRelay.sandboxIdentity.v1:';
+const SANDBOX_IDENTITY_METADATA_PREFIX: HostedStoreRecordPrefix = {
+  current: 'signalRelay.sandboxIdentity.v2:',
+  earlier: 'hostedRelay.sandboxIdentity.v1:',
+};
 const DEVICE_OWNED_ISSUER = 'https://relay.open-e2ee.dev/device-owned';
 /** The Relay accepts a lifetime of up to 600 seconds. */
 const ASSERTION_LIFETIME_SECONDS = 300;
@@ -88,10 +98,11 @@ function decodeStoredKey(value: string): StoredSandboxIdentityKey {
   };
 }
 
-async function metadataKey(publishableKey: string): Promise<string> {
-  return `${SANDBOX_IDENTITY_METADATA_PREFIX}${bytesToBase64(
-    await sha256(stringToBytes(publishableKey)),
-  )}`;
+async function metadataKey(publishableKey: string): Promise<HostedStoreRecordKey> {
+  return hostedStoreRecordKey(
+    SANDBOX_IDENTITY_METADATA_PREFIX,
+    bytesToBase64(await sha256(stringToBytes(publishableKey))),
+  );
 }
 
 async function loadOrCreateKey(
@@ -99,10 +110,10 @@ async function loadOrCreateKey(
   publishableKey: string,
 ): Promise<StoredSandboxIdentityKey> {
   const key = await metadataKey(publishableKey);
-  const stored = await storage.getMetadata(key);
+  const stored = await readHostedStoreRecord(storage, key);
   if (stored) return decodeStoredKey(stored);
   const created = await generateSigningKeyPair();
-  await storage.setMetadata(key, JSON.stringify(created));
+  await writeHostedStoreRecord(storage, key, JSON.stringify(created));
   return created;
 }
 
@@ -226,15 +237,20 @@ function deviceOwnedIdentity(
  * The callback rejects a request for a production environment, for recovery,
  * for provider migration, or for recent or step-up assurance. This helper is
  * the Sandbox-only guard, and it is not deprecated. For a Production project in
- * device-owned mode, use {@link hostedRelayDeviceOwnedIdentity}. For a
+ * device-owned mode, use {@link hostedSignalProtocolRelayDeviceOwnedIdentity}. For a
  * Production project in application-bound mode, supply a `getIdentityAssertion`
  * callback that returns an assertion from your backend.
  *
- * The key is stored under the metadata key
- * `'hostedRelay.sandboxIdentity.v1:'` followed by the base64 SHA-256 digest of
- * the publishable key. This is a persisted format that both helpers keep. A
- * new prefix would orphan existing Sandbox accounts. So for the same store and
- * publishable key, both helpers sign with the same key.
+ * The key is stored under a metadata key prefix followed by the base64
+ * SHA-256 digest of the publishable key. The helper reads the prefix
+ * `'signalRelay.sandboxIdentity.v2:'` first and the prefix
+ * `'hostedRelay.sandboxIdentity.v1:'` second. This release stores a new key
+ * under `'hostedRelay.sandboxIdentity.v1:'`, the prefix that SDK 14.1.0 and
+ * earlier read and write. A later release stores a new key under
+ * `'signalRelay.sandboxIdentity.v2:'`. SDK 15 still reads the earlier prefix,
+ * so an existing Sandbox account keeps its key. Both helpers keep this
+ * persisted format. So for the same store and publishable key, both helpers
+ * sign with the same key.
  *
  * @example
  * ```ts
@@ -242,13 +258,13 @@ function deviceOwnedIdentity(
  * const client = await createHostedSignalProtocolClient({
  *   adapters: { storage },
  *   hosted: {
- *     relayUrl: process.env.OPEN_E2EE_RELAY_URL!,
- *     getIdentityAssertion: hostedRelaySandboxIdentity(storage),
+ *     signalProtocolRelayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
+ *     getIdentityAssertion: hostedSignalProtocolRelaySandboxIdentity(storage),
  *   },
  * });
  * ```
  */
-export function hostedRelaySandboxIdentity(
+export function hostedSignalProtocolRelaySandboxIdentity(
   storage: SignalProtocolLocalStore,
 ): GetIdentityAssertion {
   return deviceOwnedIdentity(storage, SANDBOX_SCOPE);
@@ -289,12 +305,17 @@ export function hostedRelaySandboxIdentity(
  * `ASSERTION_INVALID`. For that mode, supply a `getIdentityAssertion` callback
  * that returns an assertion from your backend.
  *
- * The key is stored under the metadata key
- * `'hostedRelay.sandboxIdentity.v1:'` followed by the base64 SHA-256 digest of
- * the publishable key. This is a persisted format that both helpers keep. A
- * new prefix would orphan existing Sandbox accounts. So for the same store
- * and publishable key, this helper and {@link hostedRelaySandboxIdentity} sign
- * with the same key, and the Relay returns the same account.
+ * The key is stored under a metadata key prefix followed by the base64
+ * SHA-256 digest of the publishable key. The helper reads the prefix
+ * `'signalRelay.sandboxIdentity.v2:'` first and the prefix
+ * `'hostedRelay.sandboxIdentity.v1:'` second. This release stores a new key
+ * under `'hostedRelay.sandboxIdentity.v1:'`, the prefix that SDK 14.1.0 and
+ * earlier read and write. A later release stores a new key under
+ * `'signalRelay.sandboxIdentity.v2:'`. SDK 15 still reads the earlier prefix,
+ * so an existing account keeps its key. Both helpers keep this persisted
+ * format. So for the same store and publishable key, this helper and
+ * {@link hostedSignalProtocolRelaySandboxIdentity} sign with the same key, and
+ * the Relay returns the same account.
  *
  * @example
  * ```ts
@@ -302,14 +323,20 @@ export function hostedRelaySandboxIdentity(
  * const client = await createHostedSignalProtocolClient({
  *   adapters: { storage },
  *   hosted: {
- *     relayUrl: process.env.OPEN_E2EE_RELAY_URL!,
- *     getIdentityAssertion: hostedRelayDeviceOwnedIdentity(storage),
+ *     signalProtocolRelayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
+ *     getIdentityAssertion: hostedSignalProtocolRelayDeviceOwnedIdentity(storage),
  *   },
  * });
  * ```
  */
-export function hostedRelayDeviceOwnedIdentity(
+export function hostedSignalProtocolRelayDeviceOwnedIdentity(
   storage: SignalProtocolLocalStore,
 ): GetIdentityAssertion {
   return deviceOwnedIdentity(storage, DEVICE_OWNED_SCOPE);
 }
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `hostedSignalProtocolRelayDeviceOwnedIdentity`. SDK 15.0.0 removes this name. */
+export const hostedRelayDeviceOwnedIdentity = hostedSignalProtocolRelayDeviceOwnedIdentity;
+/** @deprecated Use `hostedSignalProtocolRelaySandboxIdentity`. SDK 15.0.0 removes this name. */
+export const hostedRelaySandboxIdentity = hostedSignalProtocolRelaySandboxIdentity;
