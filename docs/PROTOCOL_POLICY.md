@@ -32,7 +32,7 @@ the current app.
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay },
+  adapters: { storage, signalProtocolRelay },
   protocol: { postQuantum: 'required', braid: 'required' },
 });
 ```
@@ -60,7 +60,7 @@ No setting allows downgrade recovery:
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay },
+  adapters: { storage, signalProtocolRelay },
   protocol: { postQuantum: 'required', braid: 'required' },
 });
 ```
@@ -78,7 +78,7 @@ See [Deviations §4.1](./DEVIATIONS.md#41-the-hek-operand-order-diverges).
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay },
+  adapters: { storage, signalProtocolRelay },
   protocol: { postQuantum: 'required', braid: 'disabled' },
 });
 ```
@@ -97,7 +97,7 @@ import { BraidPolicy, PostQuantumPolicy, createSignalProtocolClient } from '@ope
 
 await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay },
+  adapters: { storage, signalProtocolRelay },
   protocol: {
     postQuantum: PostQuantumPolicy.Required,
     braid: BraidPolicy.Required,

@@ -64,8 +64,13 @@ message SenderCertificate {
     optional ServerCertificate signer = 5;
     /** Sender's UUID (required) */
     optional string senderUuid = 6;
-    /** Opaque 16-byte Relay project-environment scope */
-    optional bytes relayScopeId = 7;
+    /**
+     * Opaque 16-byte Relay project-environment scope.
+     *
+     * The wire carries field number 7, not the name. A rename keeps the
+     * number, so every SDK version reads the same bytes.
+     */
+    optional bytes signalRelayScopeId = 7;
   }
 
   /** Serialized Certificate message */

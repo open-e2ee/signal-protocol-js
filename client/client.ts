@@ -15,7 +15,7 @@
  * // Supply a device-local store and the configured identity-provider callback.
  * const signal = await createHostedSignalProtocolClient({
  *   adapters: { storage },
- *   hosted: { relayUrl, getIdentityAssertion },
+ *   hosted: { signalProtocolRelayUrl, getIdentityAssertion },
  * });
  *
  * await signal.send(recipientUserId, 'Hello!');
@@ -25,7 +25,7 @@
  * ```typescript
  * const signal = await createSignalProtocolClient({
  *   identity: { userId },
- *   adapters: { storage, relay },
+ *   adapters: { storage, signalProtocolRelay },
  *   protocol: { postQuantum: 'required', braid: 'required' },
  * });
  * ```
@@ -36,7 +36,7 @@
  *
  * const signal = await DefaultSignalProtocolClient.create(userId, {
  *   storage,
- *   relay,
+ *   signalProtocolRelay,
  * });
  * ```
  */
@@ -50,9 +50,9 @@ import type { GroupAuthority } from './group-authority';
 import type {
   SignalProtocolRelayServer,
   Envelope,
-  RelayConnectionState,
+  SignalProtocolRelayConnectionState,
   Unsubscribe,
-} from '../remote/relay/types';
+} from '../remote/signal-relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import { DefaultSignalProtocolManager } from '../internal/manager';
 import { DefaultSesameManager } from '../internal/sesame';
@@ -78,13 +78,16 @@ import {
 } from '../internal/protocol/sealed-sender';
 import {
   assertHookName,
+  assertRenamedHooks,
   callHook,
+  currentHookName,
   deferHooks,
   type SignalProtocolClientHooks,
 } from './event-hooks';
-import { relayProtocolErrorOf } from './device-set-reconciliation';
+import { readRenamedImplementation, readRenamedOption } from '../types/renamed-member';
+import { signalRelayProtocolErrorOf } from './device-set-reconciliation';
 import { DeliveryStatusTracker } from './delivery-status';
-import { relayReceiptIntakeOf, type RelayDeliveryReceipt } from './relay-receipt-intake';
+import { signalRelayReceiptIntakeOf, type SignalProtocolRelayDeliveryReceipt } from './signal-relay-receipt-intake';
 import { ProtocolAddress } from '../types/address';
 import {
   getActiveIdentityTypes,
@@ -142,7 +145,12 @@ import {
 } from './signal-service-cipher';
 import { establishMultiDeviceSessions } from '../internal/sesame/device-registry';
 import { isPartialCommitKyberPreKeyUse, isRetryableDecryptionError } from './retry-utils';
-import { envelopeTypeForContent, SealedRetryRequestReceived, unsealMessage } from './sealed-sender';
+import {
+  envelopeTypeForContent,
+  SealedRetryRequestReceived,
+  sealedSenderSignalProtocolRelayScopeId,
+  unsealMessage,
+} from './sealed-sender';
 import { ResendableContent } from './resendable-content';
 import {
   decideContentRecovery,
@@ -205,7 +213,11 @@ import {
   type SendTimestampOriginKind,
 } from './send-timestamp';
 import { deliveredEnvelopeFingerprint } from '../local/store/received-content';
-import { RECEIVE_WORK_DEFAULT_LIMIT } from '../local/store/receive-work';
+import {
+  isSignalProtocolRelayOrigin,
+  RECEIVE_WORK_DEFAULT_LIMIT,
+  reportedReceiveWorkOrigin,
+} from '../local/store/receive-work';
 import {
   awaitReceiveCompletion,
   blockReceiveWork,
@@ -216,16 +228,16 @@ import {
 import { receiveExpiresAt } from './receive-expiry';
 import { boundReceiveHooks } from './receive-hook-bound';
 import { createReceiveCommit } from './receive-work-seed';
-import * as RelaySubscriptionOps from './relay-subscription';
-import { relayReceiptJoinOf } from './relay-receipt-join';
+import * as SignalProtocolRelaySubscriptionOps from './signal-relay-subscription';
+import { signalRelayReceiptJoinOf } from './signal-relay-receipt-join';
 import { SignalProtocolClientState, SIGNAL_PROTOCOL_CLIENT_CONSTANTS } from './state';
 import {
-  clientRelayFanOut,
-  rethrowRelayWorkStopped,
+  clientSignalProtocolRelayFanOut,
+  rethrowSignalProtocolRelayWorkStopped,
   RelayWorkStopped,
-  type RelayWork,
-} from './relay-work';
-import { StaleSessionRefreshError } from './relay-device-refusal';
+  type SignalProtocolRelayWork,
+} from './signal-relay-work';
+import { StaleSessionRefreshError } from './signal-relay-device-refusal';
 import type { BoundedFanOut } from '../utils/bounded-fan-out';
 import {
   deleteMediaAttachment,
@@ -258,6 +270,70 @@ const storageLock = new AsyncLock({
   timeout: 30000, // 30 second timeout for storage initialization
   maxPending: 100, // Limit pending operations
 });
+
+/**
+ * The connection state of a relay, read through `readRenamedImplementation`.
+ */
+function signalProtocolRelayConnectionStateOf(
+  signalProtocolRelay: SignalProtocolRelayServer
+): SignalProtocolRelayConnectionState | undefined {
+  return readRenamedImplementation(
+    signalProtocolRelay,
+    'signalProtocolRelayConnectionState',
+    'relayConnectionState'
+  );
+}
+
+/**
+ * Subscribe to the connection transitions of a relay, through
+ * `readRenamedImplementation`. A relay with neither member gives no
+ * subscription.
+ */
+function subscribeSignalProtocolRelayConnectionStateOf(
+  signalProtocolRelay: SignalProtocolRelayServer,
+  listener: (state: SignalProtocolRelayConnectionState) => void
+): Unsubscribe | undefined {
+  return readRenamedImplementation(
+    signalProtocolRelay,
+    'subscribeSignalProtocolRelayConnectionState',
+    'subscribeRelayConnectionState'
+  )?.(listener);
+}
+
+/**
+ * Give each renamed option of a client configuration its new name.
+ *
+ * @throws SignalProtocolRelayNameConflictError when an option and its
+ *   deprecated name hold different values.
+ */
+function withSignalProtocolRelayNames(config: SignalProtocolClientConfig): SignalProtocolClientConfig {
+  const operation = 'DefaultSignalProtocolClient.create';
+  const { relay: earlierSignalProtocolRelay, ...rest } = config;
+  const signalProtocolRelay = readRenamedOption(config.signalProtocolRelay, earlierSignalProtocolRelay, {
+    newName: 'signalProtocolRelay',
+    earlierName: 'relay',
+    operation,
+  });
+  if (config.hooks) assertRenamedHooks(config.hooks, operation);
+  const sealedSender = config.sealedSender;
+  let resolvedSealedSender = sealedSender;
+  if (sealedSender && sealedSender.relayScopeId !== undefined) {
+    const { relayScopeId: earlierScopeId, ...sealedRest } = sealedSender;
+    resolvedSealedSender = {
+      ...sealedRest,
+      signalProtocolRelayScopeId: readRenamedOption(sealedSender.signalProtocolRelayScopeId, earlierScopeId, {
+        newName: 'sealedSender.signalProtocolRelayScopeId',
+        earlierName: 'sealedSender.relayScopeId',
+        operation,
+      }),
+    };
+  }
+  return {
+    ...rest,
+    ...(signalProtocolRelay === undefined ? {} : { signalProtocolRelay }),
+    ...(resolvedSealedSender === undefined ? {} : { sealedSender: resolvedSealedSender }),
+  };
+}
 
 /** The reason of a `denied` receive outcome. */
 function receiveDenialReason(error: Error): string {
@@ -320,7 +396,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
   private readonly manager: SignalProtocolManager;
   private readonly _storage: SignalProtocolLocalStore;
-  private readonly relay?: SignalProtocolRelayServer;
+  private readonly signalProtocolRelay?: SignalProtocolRelayServer;
   private readonly remoteObjectStore?: SignalProtocolRemoteObjectStore;
   private readonly config: SignalProtocolClientConfig;
   private readonly _userId: string;
@@ -404,7 +480,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     return this._contentRecoveryStatus;
   }
 
-  private readonly stoppedRelayConnection: RelayConnectionState = {
+  private readonly stoppedSignalProtocolRelayConnection: SignalProtocolRelayConnectionState = {
     state: 'stopped',
     since: Date.now(),
   };
@@ -413,25 +489,43 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * The connection state of the relay subscription. Reads `stopped` when no
    * relay is configured.
    *
-   * @see SignalProtocolClient.relayConnectionState
+   * @see SignalProtocolClient.signalProtocolRelayConnectionState
    */
-  get relayConnectionState(): RelayConnectionState {
-    return this.relay?.relayConnectionState ?? this.stoppedRelayConnection;
+  get signalProtocolRelayConnectionState(): SignalProtocolRelayConnectionState {
+    return (
+      (this.signalProtocolRelay && signalProtocolRelayConnectionStateOf(this.signalProtocolRelay)) ??
+      this.stoppedSignalProtocolRelayConnection
+    );
+  }
+
+  /** @deprecated Use `signalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
+  get relayConnectionState(): SignalProtocolRelayConnectionState {
+    return this.signalProtocolRelayConnectionState;
   }
 
   /**
    * Subscribe to relay connection transitions. Without a relay, the listener
    * never runs.
    *
-   * @see SignalProtocolClient.subscribeRelayConnectionState
+   * @see SignalProtocolClient.subscribeSignalProtocolRelayConnectionState
    */
-  public subscribeRelayConnectionState(
-    listener: (state: RelayConnectionState) => void
+  public subscribeSignalProtocolRelayConnectionState(
+    listener: (state: SignalProtocolRelayConnectionState) => void
   ): Unsubscribe {
-    return this.relay?.subscribeRelayConnectionState(listener) ?? (() => undefined);
+    return (
+      (this.signalProtocolRelay && subscribeSignalProtocolRelayConnectionStateOf(this.signalProtocolRelay, listener)) ??
+      (() => undefined)
+    );
   }
 
-  private relayUnsubscribe?: Unsubscribe;
+  /** @deprecated Use `subscribeSignalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
+  public subscribeRelayConnectionState(
+    listener: (state: SignalProtocolRelayConnectionState) => void
+  ): Unsubscribe {
+    return this.subscribeSignalProtocolRelayConnectionState(listener);
+  }
+
+  private signalProtocolRelayUnsubscribe?: Unsubscribe;
 
   /**
    * Cached sender certificate for sealed sender.
@@ -448,35 +542,35 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
   /**
    * The delivery receipt sends in progress, from a batch timer, the batch
-   * bound, stopRelaySubscription(), or stop(): the relay work item of each
+   * bound, stopSignalProtocolRelaySubscription(), or stop(): the relay work item of each
    * send, and the promise that settles when the send finishes. While stop()
    * holds the batches, only stop() starts a send. stop() waits until its
    * receipt deadline for the sends that are in progress when it starts,
    * except a send that an earlier stop() stopped, and for the sends that it
    * starts. It does not stop them before then.
    */
-  private readonly deliveryReceiptSends = new Map<RelayWork, Promise<void>>();
+  private readonly deliveryReceiptSends = new Map<SignalProtocolRelayWork, Promise<void>>();
 
   /**
    * Posts the stored retry requests at their next attempt times, ends them
    * at their deadlines, and calls `onRetryTerminal`. create() and
-   * startRelaySubscription() start it when a relay is configured, and stop()
+   * startSignalProtocolRelaySubscription() start it when a relay is configured, and stop()
    * stops it. Each pass is relay work, so its hooks run through that work.
    */
-  private readonly retryRequests = new RetryRequestScheduler(this.state.relayWork, (work) => {
-    const relay = this.relay;
-    const context = { ...this.relayWorkContext(work), stopSignal: work.stopSignal };
+  private readonly retryRequests = new RetryRequestScheduler(this.state.signalRelayWork, (work) => {
+    const signalProtocolRelay = this.signalProtocolRelay;
+    const context = { ...this.signalRelayWorkContext(work), stopSignal: work.stopSignal };
     return {
       storage: this._storage,
       logger: this.logger,
       hooks: work.wrapHooks(this.hooks),
       local: { userId: this.userId, deviceId: this.deviceId },
-      send: relay
+      send: signalProtocolRelay
         ? retryRequestPost(
             (recipientUserId, recipientDeviceId, payloadBase64) =>
               this.cipher.sealRetryRequest(recipientUserId, recipientDeviceId, payloadBase64),
-            relay,
-            (envelope) => relay.send(envelope),
+            signalProtocolRelay,
+            (envelope) => signalProtocolRelay.send(envelope),
             (recipientUserId, recipientDeviceId) =>
               this.cipher.recipientRegistrationId(recipientUserId, recipientDeviceId),
             (recipientUserId, recipientDeviceId) =>
@@ -493,8 +587,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * transition to connected, and stop() stops it. Each pass is relay work,
    * so its hooks run through that work.
    */
-  private readonly resendJobs = new ResendJobDriver(this.state.relayWork, (work) => {
-    const ctx = this.relayWorkContext(work) as RetryOps.RetryContext;
+  private readonly resendJobs = new ResendJobDriver(this.state.signalRelayWork, (work) => {
+    const ctx = this.signalRelayWorkContext(work) as RetryOps.RetryContext;
     return {
       storage: this._storage,
       logger: this.logger,
@@ -568,9 +662,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     this.contentAdapter = config.contentAdapter ?? createDefaultSignalProtocolContentAdapter();
 
     // Dependency injection: use the provided relay adapter when configured.
-    this.relay = config.relay;
+    this.signalProtocolRelay = config.signalProtocolRelay;
     // A relay adapter that sends relay requests itself shares its bound.
-    this.fanOut = clientRelayFanOut(config.relay);
+    this.fanOut = clientSignalProtocolRelayFanOut(config.signalProtocolRelay);
 
     // Dependency injection: use the remote object store for encrypted attachments.
     this.remoteObjectStore = config.remoteObjectStore;
@@ -581,11 +675,11 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     }
     this._storage = config.storage;
     this.sendIntents = new SendIntentDriver(
-      this.state.relayWork,
+      this.state.signalRelayWork,
       this._storage,
       this.logger,
       (work) => {
-        const context = this.relayWorkContext(work);
+        const context = this.signalRelayWorkContext(work);
         return {
           end: (clientMessageId, report) =>
             this.cipher.endPastDeadlineIntent(clientMessageId, report),
@@ -621,7 +715,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     // Each queue pass runs as relay work, so its hooks call the app through
     // that work and a stop ends it. Each hook runs under the receive hook bound.
     this.receiveQueue = new ReceiveQueue(
-      this.state.relayWork,
+      this.state.signalRelayWork,
       resolveReceiveQueuePolicy(config.protocol?.receiveQueue),
       (work) => {
         const ctx = this.receivePassContext(work);
@@ -632,8 +726,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
             receiveQueue: this.receiveQueue,
             stopSignal: work.stopSignal,
           },
-          state: this.relaySubscriptionState,
-          callbacks: this.relaySubscriptionCallbacks(ctx, work.stopSignal),
+          state: this.signalRelaySubscriptionState,
+          callbacks: this.signalRelaySubscriptionCallbacks(ctx, work.stopSignal),
         };
       },
       () => this.cleanupStaleDeviceRecords()
@@ -727,7 +821,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       this.groupSessionFor = (authority) => {
         const cached = sessions.get(authority);
         if (cached) return cached;
-        const capability = this.relay?.groupServer;
+        const capability = this.signalProtocolRelay?.groupServer;
         const server = groupConfig.server ?? capability?.server;
         const issueCredential =
           groupConfig.issueCredential ??
@@ -804,7 +898,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       this.sesameManager,
       this.senderKeyManager,
       this._storage,
-      this.relay,
+      this.signalProtocolRelay,
       this.remoteObjectStore,
       this.contentAdapter,
       this.logger,
@@ -817,8 +911,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     }
 
     // The client applies each Relay delivery receipt of its relay.
-    if (this.relay) {
-      relayReceiptIntakeOf(this.relay)?.subscribe((receipt) => this.receiveRelayReceipt(receipt));
+    if (this.signalProtocolRelay) {
+      signalRelayReceiptIntakeOf(this.signalProtocolRelay)?.subscribe((receipt) => this.receiveSignalProtocolRelayReceipt(receipt));
     }
 
     // Set up auto-session establishment and stale-session refresh.
@@ -826,8 +920,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     const sessions = this.sendSessionCallbacks(() => this.ctx);
     if (sessions) this.cipher.setSessionCallbacks(sessions);
     // A sync payload has no send result, so the cipher reports its error.
-    this.cipher.setRelayProtocolErrorReporter((error) =>
-      callHook(this.hooks, 'onRelayProtocolError', error)
+    this.cipher.setSignalProtocolRelayProtocolErrorReporter((error) =>
+      callHook(this.hooks, 'onSignalProtocolRelayProtocolError', error)
     );
 
     if (config?.sealedSender) {
@@ -885,7 +979,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         hasBlockedContent: async (groupId) =>
           (await this._storage.receiveWorkUsage({ groupId })).items > 0,
         onFetched: (groupId) => this.receiveQueue.wake(groupId),
-        runInBackground: (pass) => this.state.relayWork.run(() => pass()),
+        runInBackground: (pass) => this.state.signalRelayWork.run(() => pass()),
         logger: this.logger,
       });
       this.groupFetcher = fetcher;
@@ -897,7 +991,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         ownDevices: () => this.cipher.localOwnSyncDevices(),
         send: (input, deviceIds, stopSignal) =>
           this.cipher.sendGroupKeySyncToLocalOtherDevices(input, deviceIds, stopSignal),
-        runInBackground: (job) => this.state.relayWork.run((work) => job(work.stopSignal)),
+        runInBackground: (job) => this.state.signalRelayWork.run((work) => job(work.stopSignal)),
         logger: this.logger,
       });
       this.groupKeySync = keySync;
@@ -946,12 +1040,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     if (
       config?.groups?.endorsementManager &&
       this.groupStore &&
-      this.relay?.refreshGroupSendEndorsements &&
+      this.signalProtocolRelay?.refreshGroupSendEndorsements &&
       this.groupManager
     ) {
       const groupConfig = config.groups;
       const groupStore = this.groupStore;
-      const relay = this.relay;
+      const signalProtocolRelay = this.signalProtocolRelay;
       const selfUserId = this._userId;
 
       this.cipher.setEndorsementRefresher(async (groupId: string, memberUserIds: string[]) => {
@@ -969,7 +1063,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         const groupIdBytes = getGroupPublicParams(secretParams).groupId;
 
         // 4. Fetch fresh endorsements from server
-        const { endorsements } = await relay.refreshGroupSendEndorsements!(
+        const { endorsements } = await signalProtocolRelay.refreshGroupSendEndorsements!(
           groupIdBytes,
           authorization
         );
@@ -1046,7 +1140,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       deviceId: this.deviceId,
       manager: this.manager,
       storage: this._storage,
-      relay: this.relay,
+      signalProtocolRelay: this.signalProtocolRelay,
+      relay: this.signalProtocolRelay,
       remoteObjectStore: this.remoteObjectStore,
       config: this.config,
       logger: this.logger,
@@ -1076,11 +1171,11 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * `onDelivered` hook. The replay announces each delivery whose hook did not
    * return.
    */
-  private async receiveRelayReceipt(receipt: RelayDeliveryReceipt): Promise<void> {
+  private async receiveSignalProtocolRelayReceipt(receipt: SignalProtocolRelayDeliveryReceipt): Promise<void> {
     let announced = false;
-    await this.state.relayWork.run(async (work) => {
+    await this.state.signalRelayWork.run(async (work) => {
       work.proceed();
-      const events = await this.deliveries.applyRelayReceipt(receipt);
+      const events = await this.deliveries.applySignalProtocolRelayReceipt(receipt);
       await this.deliveries.announce(work.wrapHooks(this.hooks), events);
       announced = true;
     });
@@ -1093,7 +1188,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * the next receipt for the message announces it again.
    */
   private releaseDeliveries(clientMessageId: string): void {
-    void this.state.relayWork
+    void this.state.signalRelayWork
       .run(async (work) => {
         work.proceed();
         const events = await this.deliveries.release(clientMessageId);
@@ -1144,8 +1239,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     let certBase64: string;
     if (sealedSender.certificateProvider) {
       certBase64 = await sealedSender.certificateProvider();
-    } else if (this.relay?.fetchSenderCertificate) {
-      certBase64 = await this.relay.fetchSenderCertificate(this.deviceId);
+    } else if (this.signalProtocolRelay?.fetchSenderCertificate) {
+      certBase64 = await this.signalProtocolRelay.fetchSenderCertificate(this.deviceId);
     } else {
       throw new EncryptionError(
         'No sender certificate provider configured. Set sealedSender.certificateProvider or use a relay that supports fetchSenderCertificate.',
@@ -1161,7 +1256,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         sealedSender.trustRoots.map((root) => bytesToBase64(root) as Base64),
         now,
         {
-          expectedRelayScopeId: bytesToBase64(sealedSender.relayScopeId) as Base64,
+          expectedRelayScopeId: bytesToBase64(sealedSenderSignalProtocolRelayScopeId(sealedSender)) as Base64,
           revokedIssuerKeyIds: sealedSender.revokedIssuerKeyIds,
         }
       );
@@ -1264,10 +1359,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   }
 
   /**
-   * Get relay subscription state (passed to relay-subscription module)
+   * Get relay subscription state (passed to signal-relay-subscription module)
    */
-  private get relaySubscriptionState(): RelaySubscriptionOps.RelaySubscriptionState {
-    return this.state.getRelaySubscriptionState();
+  private get signalRelaySubscriptionState(): SignalProtocolRelaySubscriptionOps.SignalProtocolRelaySubscriptionState {
+    return this.state.getSignalProtocolRelaySubscriptionState();
   }
 
   /**
@@ -1277,17 +1372,17 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * its own. A retry request runs in the current work, so a stop of that work
    * reaches the receive route, and the route keeps the request envelope.
    */
-  private relaySubscriptionCallbacks(
+  private signalRelaySubscriptionCallbacks(
     ctx: SignalProtocolClientContext,
     stopSignal?: AbortSignal
-  ): RelaySubscriptionOps.RelaySubscriptionCallbacks {
+  ): SignalProtocolRelaySubscriptionOps.SignalProtocolRelaySubscriptionCallbacks {
     return {
       forcePreKeyRotation: () => this.regeneratePreKeysWithFreshIds(),
       handleDeliveryReceipt: (envelope, receipt) =>
         this.handleDeliveryReceipt(envelope, receipt, ctx),
       handleTypingIndicator: (envelope, typing) =>
         this.handleTypingIndicator(envelope, typing, ctx),
-      sendDeliveryReceipt: (userId, timestamps) => this.sendDeliveryReceiptAsRelayWork(userId, timestamps),
+      sendDeliveryReceipt: (userId, timestamps) => this.sendDeliveryReceiptAsSignalProtocolRelayWork(userId, timestamps),
       handleRetryRequest: (request, retry) =>
         RetryOps.handleRetryRequestAndResend(
           ctx as RetryOps.RetryContext,
@@ -1310,15 +1405,15 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    *   so the receive queue keeps the receipt and sends it after the next
    *   start
    */
-  private async sendDeliveryReceiptAsRelayWork(
+  private async sendDeliveryReceiptAsSignalProtocolRelayWork(
     userId: string,
     timestamps: number[]
   ): Promise<void> {
     let sent = false;
-    await this.state.relayWork.run(async (work) => {
+    await this.state.signalRelayWork.run(async (work) => {
       const send = this.sendDeliveryReceipt(userId, timestamps, {
-        ...this.relayWorkContext(work),
-        stopSignal: this.state.relayWork.stopSignal,
+        ...this.signalRelayWorkContext(work),
+        stopSignal: this.state.signalRelayWork.stopSignal,
       });
       this.deliveryReceiptSends.set(work, send);
       try {
@@ -1337,9 +1432,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * promises settle when the sends finish. They never reject.
    */
   private flushPendingDeliveryReceipts(): Promise<void>[] {
-    return RelaySubscriptionOps.flushPendingReceipts(
-      this.relaySubscriptionState.receiptAccumulator,
-      (userId, timestamps) => this.sendDeliveryReceiptAsRelayWork(userId, timestamps),
+    return SignalProtocolRelaySubscriptionOps.flushPendingReceipts(
+      this.signalRelaySubscriptionState.receiptAccumulator,
+      (userId, timestamps) => this.sendDeliveryReceiptAsSignalProtocolRelayWork(userId, timestamps),
       this.logger
     );
   }
@@ -1369,8 +1464,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   private retryTerminalReset(
     context: SignalProtocolClientContext
   ): RetryTerminalResetSteps | undefined {
-    const relay = this.relay;
-    if (!relay) return undefined;
+    const signalProtocolRelay = this.signalProtocolRelay;
+    if (!signalProtocolRelay) return undefined;
     const { stopSignal } = context;
     return {
       archiveSession: ({ userId, deviceId }) =>
@@ -1395,7 +1490,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         const address = ProtocolAddress.create(userId, deviceId);
         if (!(await SessionOps.hasSession(context, address))) {
           const bundle = await this.fanOut.request(
-            () => relay.fetchPreKeyBundle(userId, deviceId),
+            () => signalProtocolRelay.fetchPreKeyBundle(userId, deviceId),
             stopSignal
           );
           if (!bundle) throw new Error('No prekey bundle for the device of a session reset');
@@ -1431,12 +1526,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     recipientUserId: string,
     recipientDeviceId: number
   ): Promise<boolean> {
-    const relay = this.relay;
-    if (!relay) return false;
+    const signalProtocolRelay = this.signalProtocolRelay;
+    if (!signalProtocolRelay) return false;
     const address = ProtocolAddress.create(recipientUserId, recipientDeviceId);
     try {
       const freshBundle = await this.fanOut.request(
-        () => relay.fetchPreKeyBundle(recipientUserId, recipientDeviceId),
+        () => signalProtocolRelay.fetchPreKeyBundle(recipientUserId, recipientDeviceId),
         context.stopSignal
       );
       if (!freshBundle) {
@@ -1465,7 +1560,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       });
       return true;
     } catch (error) {
-      rethrowRelayWorkStopped(error);
+      rethrowSignalProtocolRelayWorkStopped(error);
       this.logger.warn('Failed to refresh stale session, the post retries', {
         category: 'E2EE',
         data: { recipientUserId, recipientDeviceId, error: (error as Error).message },
@@ -1475,7 +1570,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   }
 
   /** Client context whose hooks call the app through the given relay work. */
-  private relayWorkContext(work: RelayWork): SignalProtocolClientContext {
+  private signalRelayWorkContext(work: SignalProtocolRelayWork): SignalProtocolClientContext {
     return { ...this.ctx, hooks: work.wrapHooks(this.hooks) };
   }
 
@@ -1484,7 +1579,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * hook bound, inside the given relay work, so the work stops waiting in the
    * app at a timeout.
    */
-  private receivePassContext(work: RelayWork): SignalProtocolClientContext {
+  private receivePassContext(work: SignalProtocolRelayWork): SignalProtocolClientContext {
     const bound = boundReceiveHooks(
       this.hooks,
       this.receiveQueue.policy.receiveHookTimeoutMs,
@@ -1503,15 +1598,15 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     context: () => SignalProtocolClientContext,
     stopSignal?: AbortSignal
   ): SendSessionCallbacks | undefined {
-    const relay = this.relay;
-    if (!relay) return undefined;
+    const signalProtocolRelay = this.signalProtocolRelay;
+    if (!signalProtocolRelay) return undefined;
     const establishSession = (address: ProtocolAddress, bundle: PreKeyBundle) =>
       SessionOps.establishSession(context(), this.sesameManager, address, bundle);
     return {
       establishSessions: (recipientUserId, listedDevices) =>
-        establishMultiDeviceSessions(this, relay, recipientUserId, {
+        establishMultiDeviceSessions(this, signalProtocolRelay, recipientUserId, {
           establishSession,
-          rethrowFatal: rethrowRelayWorkStopped,
+          rethrowFatal: rethrowSignalProtocolRelayWorkStopped,
           fanOut: this.fanOut,
           stopSignal,
           ...(listedDevices && { listedDevices }),
@@ -1533,7 +1628,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
           // 2. Fetch fresh prekey bundle
           const freshBundle = await this.fanOut.request(
-            () => relay.fetchPreKeyBundle(recipientUserId, recipientDeviceId),
+            () => signalProtocolRelay.fetchPreKeyBundle(recipientUserId, recipientDeviceId),
             stopSignal
           );
 
@@ -1560,7 +1655,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
           return true;
         } catch (error) {
-          rethrowRelayWorkStopped(error);
+          rethrowSignalProtocolRelayWorkStopped(error);
           this.logger.error('Failed to refresh stale session', {
             category: 'E2EE',
             data: {
@@ -1599,7 +1694,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   /**
    * Get relay subscription config
    */
-  private get relaySubscriptionConfig(): RelaySubscriptionOps.RelaySubscriptionConfig {
+  private get signalRelaySubscriptionConfig(): SignalProtocolRelaySubscriptionOps.SignalProtocolRelaySubscriptionConfig {
     return {
       keyRotationDebounceMs: SIGNAL_PROTOCOL_CLIENT_CONSTANTS.KEY_ROTATION_DEBOUNCE_MS,
     };
@@ -1635,10 +1730,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * });
    *
    * // With an application-owned authenticated relay transport.
-   * const relay = appRelayTransport;
+   * const signalProtocolRelay = appSignalProtocolRelayTransport;
    * const signal = await DefaultSignalProtocolClient.create('user-123', {
    *   storage,
-   *   relay,
+   *   signalProtocolRelay,
    *   onProgress: ({ stage, percent, message }) => {
    *     console.log(`${stage}: ${percent}% - ${message}`);
    *   }
@@ -1648,7 +1743,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * const signal = await DefaultSignalProtocolClient.create('user-123', {
    *   deviceId: 1,
    *   storage,
-   *   relay,
+   *   signalProtocolRelay,
    *   protocol: { postQuantum: 'required', braid: 'required' },
    *   onProgress,
    *   enableDebugLogging: true,
@@ -1674,6 +1769,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     config: SignalProtocolClientConfig,
     retained?: RetainedIdentities,
   ): Promise<DefaultSignalProtocolClient> {
+    config = withSignalProtocolRelayNames(config);
     const deviceId = config?.deviceId ?? 1; // Default to primary device
 
     // Use locking to prevent race conditions when multiple create() calls happen concurrently.
@@ -1755,7 +1851,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
         // Auto-sync to server if relay provided
         let syncFailed = false;
-        if (finalConfig?.relay) {
+        if (finalConfig?.signalProtocolRelay) {
           try {
             await client.syncToServer(finalConfig.onProgress);
           } catch (e) {
@@ -1766,12 +1862,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
             syncFailed = true;
           }
         }
-        client._syncStatus = finalConfig?.relay ? (syncFailed ? 'failed' : 'synced') : 'none';
+        client._syncStatus = finalConfig?.signalProtocolRelay ? (syncFailed ? 'failed' : 'synced') : 'none';
 
         // Start relay subscription if relay is configured with onMessageDecrypted hook
         // Only subscribe if sync succeeded - subscriptions require a valid server session
-        if (!syncFailed && finalConfig?.relay && finalConfig?.hooks?.onMessageDecrypted) {
-          client.startRelaySubscription();
+        if (!syncFailed && finalConfig?.signalProtocolRelay && finalConfig?.hooks?.onMessageDecrypted) {
+          client.startSignalProtocolRelaySubscription();
         }
 
         // Post the stored retry requests whose next attempt time has come, and
@@ -1779,7 +1875,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         // The passes run in the background.
         // The receive queue resumes the stored receive records first. With no
         // relay, it serves the helper receives alone.
-        if (finalConfig?.relay) client.startRetryRequests();
+        if (finalConfig?.signalProtocolRelay) client.startRetryRequests();
         else void client.receiveQueue.start();
 
         // Validate sender keys config and warn on extreme values
@@ -1879,7 +1975,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     expectedCurrentCommitment: Uint8Array,
     identityType: IdentityType = 'aci'
   ): Promise<void> {
-    if (!this.config.relay) {
+    if (!this.config.signalProtocolRelay) {
       throw new EncryptionError(
         'Relay server not configured',
         EncryptionErrorCode.INITIALIZATION_FAILED
@@ -1895,7 +1991,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
     this._syncStatus = 'failed';
     try {
-      await this.config.relay.rotateIdentityKey({
+      await this.config.signalProtocolRelay.rotateIdentityKey({
         userId: this.userId,
         deviceId: this.deviceId,
         identity: createCompositeIdentityV1(replacement),
@@ -2050,7 +2146,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   private async regeneratePreKeysWithFreshIds(): Promise<void> {
     await PreKeyOps.regeneratePreKeysWithFreshIds(this.ctx);
     const now = Date.now();
-    // Update debounce timestamp so concurrent call sites (relay-subscription + retry.ts)
+    // Update debounce timestamp so concurrent call sites (signal-relay-subscription + retry.ts)
     // do not both trigger rotation for the same stale prekey event.
     this.state.setLastPreKeyRotationTime(now);
     // Persist the debounce timestamp across application restarts.
@@ -2223,8 +2319,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   ): Promise<void> {
     if (!envelopeId) return;
 
-    if (this.relay?.markDelivered) {
-      await this.relay.markDelivered(envelopeId).catch((_error) => {
+    if (this.signalProtocolRelay?.markDelivered) {
+      await this.signalProtocolRelay.markDelivered(envelopeId).catch((_error) => {
         this.logger.warn('Failed to mark delivered', {
           category: 'E2EE',
           data: { envelopeId },
@@ -2529,7 +2625,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     }
     let commit: Awaited<ReturnType<SignalProtocolServiceCipher['commitEnvelope']>>;
     try {
-      commit = await this.cipher.commitEnvelope(this.relayEnvelopeOf(envelope), {
+      commit = await this.cipher.commitEnvelope(this.signalRelayEnvelopeOf(envelope), {
         sealedSender: this.config.sealedSender,
       });
     } catch (error) {
@@ -2564,7 +2660,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   }
 
   /** The Relay envelope of an envelope that the application passed. */
-  private relayEnvelopeOf(envelope: IncomingEnvelope): Envelope {
+  private signalRelayEnvelopeOf(envelope: IncomingEnvelope): Envelope {
     return {
       ...envelope,
       targetUserId: this.userId,
@@ -2630,7 +2726,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         return { outcome: { kind: 'duplicate' } };
       }
       // The receive queue delivers a Relay record to onMessageDecrypted.
-      if (record.origin === 'relay') {
+      if (isSignalProtocolRelayOrigin(record.origin)) {
         return {
           outcome: { kind: 'pending', messageId: record.messageId, reason: 'queued' },
         };
@@ -2678,7 +2774,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       content:
         content.inspected.senderKeyDistribution === undefined ||
         content.inspected.senderKeyDistributionOnly === false,
-      ...RelaySubscriptionOps.groupOfFulfill(content),
+      ...SignalProtocolRelaySubscriptionOps.groupOfFulfill(content),
     });
     // A GroupKeySync from an own device is SDK content, so the caller
     // never gets it.
@@ -2822,7 +2918,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     const failure = { reported: false };
     let admitted: { value: string } | null;
     try {
-      const seed = handle.commit.seed(this.relayEnvelopeOf(inner), arrivedSealed);
+      const seed = handle.commit.seed(this.signalRelayEnvelopeOf(inner), arrivedSealed);
       if (inner.messageType === 'sender_key') {
         // `sender_key` says the payload is a framed SenderKeyMessage. It
         // does not say which group, so the group comes from the frame's
@@ -2954,7 +3050,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     return {
       messageId: record.messageId,
       stage: ready ? 'awaiting-completion' : 'decrypted',
-      origin: record.origin,
+      origin: reportedReceiveWorkOrigin(record.origin),
       receivedAt: record.receivedAt,
       senderId: record.senderUserId,
       senderDeviceId: record.senderDeviceId,
@@ -3037,7 +3133,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    *
    * The content reaches onMessageDecrypted in a later pass of the receive
    * queue, after this call returns. After `stop()`, the content waits for
-   * the next start of the queue from `startRelaySubscription`, or for
+   * the next start of the queue from `startSignalProtocolRelaySubscription`, or for
    * `processPendingReceives`.
    */
   async receiveIncomingEnvelopes(envelopes: IncomingEnvelope[]): Promise<{
@@ -3080,12 +3176,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
           )
         );
         try {
-          const processed = await RelaySubscriptionOps.processRelayMessage(
+          const processed = await SignalProtocolRelaySubscriptionOps.processSignalProtocolRelayMessage(
             context,
-            this.relayEnvelopeOf(envelope),
-            this.relaySubscriptionState,
-            this.relaySubscriptionCallbacks(context),
-            { ...this.relaySubscriptionConfig, acknowledgeFailures: false }
+            this.signalRelayEnvelopeOf(envelope),
+            this.signalRelaySubscriptionState,
+            this.signalRelaySubscriptionCallbacks(context),
+            { ...this.signalRelaySubscriptionConfig, acknowledgeFailures: false }
           );
           (processed ? processedMessageIds : failedMessageIds).push(envelope.id);
         } catch {
@@ -3245,13 +3341,13 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * receipt of a shared body), it throws the first such refusal. Otherwise it
    * throws an `Error` with the stored code of the first refused device that
    * has one, in the order of the destinations. Otherwise it throws
-   * `SendNeverAcceptedByRelayError` with code `SEND_NEVER_ACCEPTED`. A send
+   * `SendNeverAcceptedBySignalProtocolRelayError` with code `SEND_NEVER_ACCEPTED`. A send
    * error before the deadline gives `deadlineAt`, and `retryable` is true
    * when a replay can still post the send.
    *
    * A backdated `timestamp` shortens the deadline. A send with a timestamp
    * 23 hours old has at most 1 hour to post. A send with a timestamp 24 hours
-   * old posts nothing and throws `SendNeverAcceptedByRelayError`.
+   * old posts nothing and throws `SendNeverAcceptedBySignalProtocolRelayError`.
    *
    * @param recipientId - User ID or group ID (groups use the package group ID prefix)
    * @param content - DataMessageInput, string, or Uint8Array to encrypt and send
@@ -3462,10 +3558,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     }
     // A Relay that accepted a declared post without comparing it does not
     // change the result. The hook reports it once for the completed send.
-    const protocolError = relayProtocolErrorOf(result);
+    const protocolError = signalRelayProtocolErrorOf(result);
     this.releaseDeliveries(clientMessageId);
     if (profileKey) await profileKeys?.delivered(recipientId, profileKey);
-    if (protocolError) await callHook(context.hooks, 'onRelayProtocolError', protocolError);
+    if (protocolError) await callHook(context.hooks, 'onSignalProtocolRelayProtocolError', protocolError);
     return result;
   }
 
@@ -3609,14 +3705,14 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * ```
    */
   async markAsRead(messageId: string): Promise<void> {
-    if (!this.relay) {
+    if (!this.signalProtocolRelay) {
       throw new EncryptionError(
         'Relay server not configured',
         EncryptionErrorCode.INITIALIZATION_FAILED
       );
     }
 
-    await this.relay.markDelivered(messageId);
+    await this.signalProtocolRelay.markDelivered(messageId);
 
     this.logger.debug('Message marked as read', {
       category: 'E2EE',
@@ -3641,7 +3737,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * @example
    * ```typescript
    * // In ServicesProvider: wire up ContentManager after creation
-   * const signal = await DefaultSignalProtocolClient.create(userId, { storage, relay });
+   * const signal = await DefaultSignalProtocolClient.create(userId, { storage, signalProtocolRelay });
    * const content = new ContentManager({ db, signal });
    *
    * signal.registerHook('onMessageDecrypted', content.getDecryptionHook());
@@ -3655,7 +3751,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     callback: NonNullable<import('./event-hooks').SignalProtocolClientHooks[K]>
   ): void {
     assertHookName(name);
-    this.hooks[name] = callback as SignalProtocolClientHooks[K];
+    // A deprecated hook name registers the hook under its new name.
+    (this.hooks as Record<keyof SignalProtocolClientHooks, unknown>)[currentHookName(name)] = callback;
     // Received content waits for this hook, or failed in the hook before.
     if (name === 'onMessageDecrypted') this.receiveQueue.retryFailedHooks();
 
@@ -3666,7 +3763,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   }
 
   // ============================================================================
-  // RELAY SUBSCRIPTION (Auto-decrypt and notify ContentManager via hook)
+  // SIGNAL PROTOCOL RELAY SUBSCRIPTION (Auto-decrypt and notify ContentManager via hook)
   // ============================================================================
 
   /**
@@ -3686,10 +3783,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * A call while stop() runs is refused and logged; start again after stop()
    * resolves.
    *
-   * @see SignalProtocolClient.startRelaySubscription
+   * @see SignalProtocolClient.startSignalProtocolRelaySubscription
    */
-  public startRelaySubscription(): void {
-    if (!this.relay) {
+  public startSignalProtocolRelaySubscription(): void {
+    if (!this.signalProtocolRelay) {
       this.logger.warn('Cannot start relay subscription: relay not configured', {
         category: 'E2EE',
       });
@@ -3712,7 +3809,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     }
 
     // Avoid duplicate subscriptions
-    if (this.relayUnsubscribe) {
+    if (this.signalProtocolRelayUnsubscribe) {
       this.logger.debug('Relay subscription already active', {
         category: 'E2EE',
       });
@@ -3725,13 +3822,13 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     });
     this.startRetryRequests();
 
-    this.relayUnsubscribe = this.relay.subscribe(
+    this.signalProtocolRelayUnsubscribe = this.signalProtocolRelay.subscribe(
       this.userId,
       this.deviceId,
       (envelope) => {
-        const handled = this.state.relayWork.run((work) => {
-          const ctx = this.relayWorkContext(work);
-          return RelaySubscriptionOps.handleRelayMessage(
+        const handled = this.state.signalRelayWork.run((work) => {
+          const ctx = this.signalRelayWorkContext(work);
+          return SignalProtocolRelaySubscriptionOps.handleSignalProtocolRelayMessage(
             {
               ...ctx,
               cipher: this.cipher,
@@ -3739,9 +3836,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
               stopSignal: work.stopSignal,
             },
             envelope,
-            this.relaySubscriptionState,
-            this.relaySubscriptionCallbacks(ctx, work.stopSignal),
-            this.relaySubscriptionConfig
+            this.signalRelaySubscriptionState,
+            this.signalRelaySubscriptionCallbacks(ctx, work.stopSignal),
+            this.signalRelaySubscriptionConfig
           );
         });
         handled.catch((error) => {
@@ -3760,8 +3857,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       },
       {
         // Batching callbacks for notification coalescing
-        onBatchStart: () => this.contentAdapter.setRelayBatching(true),
-        onBatchEnd: () => this.contentAdapter.setRelayBatching(false),
+        onBatchStart: () => this.setSignalProtocolRelayBatching(true),
+        onBatchEnd: () => this.setSignalProtocolRelayBatching(false),
       }
     );
   }
@@ -3806,47 +3903,62 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     });
     void this.groupKeySync?.start();
     void this.resendJobs.start();
-    const relay = this.relay;
-    if (this.resendJobsOnConnect === undefined && relay) {
-      this.resendJobsOnConnect = relay.subscribeRelayConnectionState((connection) => {
+    const signalProtocolRelay = this.signalProtocolRelay;
+    if (this.resendJobsOnConnect === undefined && signalProtocolRelay) {
+      this.resendJobsOnConnect = subscribeSignalProtocolRelayConnectionStateOf(signalProtocolRelay, (connection) => {
         if (connection.state === 'connected') void this.resendJobs.start();
       });
     }
     void this.sendIntents.start();
-    if (this.sendDriverOnConnect === undefined && relay && this.sendIntents.enabled) {
-      this.sendDriverOnConnect = relay.subscribeRelayConnectionState((connection) => {
+    if (this.sendDriverOnConnect === undefined && signalProtocolRelay && this.sendIntents.enabled) {
+      this.sendDriverOnConnect = subscribeSignalProtocolRelayConnectionStateOf(signalProtocolRelay, (connection) => {
         if (connection.state === 'connected') void this.sendIntents.start();
       });
     }
+  }
+
+  /** Tell the content adapter that a relay batch starts or ends. */
+  private setSignalProtocolRelayBatching(active: boolean): void {
+    readRenamedImplementation(this.contentAdapter, 'setSignalProtocolRelayBatching', 'setRelayBatching')?.(active);
+  }
+
+  /** @deprecated Use `startSignalProtocolRelaySubscription`. SDK 15.0.0 removes this name. */
+  public startRelaySubscription(): void {
+    this.startSignalProtocolRelaySubscription();
   }
 
   /**
    * Stop the relay subscription
    *
    * Pauses message processing via the relay subscription without destroying
-   * DefaultSignalProtocolClient state. startRelaySubscription() restarts the subscription.
+   * DefaultSignalProtocolClient state. startSignalProtocolRelaySubscription() restarts the subscription.
    *
    * Use this when the app backgrounds to let the background task handle messages.
    * Resume when the app foregrounds for real-time message delivery.
    *
-   * @see SignalProtocolClient.stopRelaySubscription
+   * @see SignalProtocolClient.stopSignalProtocolRelaySubscription
    */
-  public stopRelaySubscription(): void {
+  public stopSignalProtocolRelaySubscription(): void {
     // Send the batched delivery receipts before unsubscribing. During the
     // hold, stop() sends the batches that wait at each of its flushes and
     // drops a batch made after its last flush.
-    if (!this.relaySubscriptionState.receiptAccumulator.held) {
+    if (!this.signalRelaySubscriptionState.receiptAccumulator.held) {
       this.flushPendingDeliveryReceipts();
     }
 
-    if (this.relayUnsubscribe) {
-      this.relayUnsubscribe();
-      this.relayUnsubscribe = undefined;
+    if (this.signalProtocolRelayUnsubscribe) {
+      this.signalProtocolRelayUnsubscribe();
+      this.signalProtocolRelayUnsubscribe = undefined;
       this.logger.debug('Relay subscription stopped', {
         category: 'E2EE',
         data: { userId: this.userId, deviceId: this.deviceId },
       });
     }
+  }
+
+  /** @deprecated Use `stopSignalProtocolRelaySubscription`. SDK 15.0.0 removes this name. */
+  public stopRelaySubscription(): void {
+    this.stopSignalProtocolRelaySubscription();
   }
 
   /**
@@ -4044,7 +4156,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * wait for the send.
    */
   private receiptContext(): SignalProtocolClientContext {
-    return { ...this.ctx, stopSignal: this.state.relayWork.stopSignal };
+    return { ...this.ctx, stopSignal: this.state.signalRelayWork.stopSignal };
   }
 
   /**
@@ -4103,7 +4215,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * waits for those sends until the same deadline. It does this again while
    * the deadline is not past. stop() holds the receipt batches from its
    * first flush until it clears its tracking state. During the hold,
-   * stopRelaySubscription() does not send them, and stop() drops a receipt
+   * stopSignalProtocolRelaySubscription() does not send them, and stop() drops a receipt
    * batched after its last flush. At the deadline it stops each receipt
    * send that is left: a send that waits in an app hook stops, and that
    * receipt is not sent. A send that is in its relay call at the deadline
@@ -4118,7 +4230,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * the work after the hook and writes nothing more. The relay delivers the
    * envelope again after the next start.
    *
-   * A call to startRelaySubscription() while stop() runs is refused and
+   * A call to startSignalProtocolRelaySubscription() while stop() runs is refused and
    * logged; start again after stop() resolves. A stop() call that overlaps a
    * running stop() waits for it and settles as it settles.
    *
@@ -4169,29 +4281,29 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     // progress, except a send that an earlier stop() stopped, and start the
     // send of the batched delivery receipts, once each, as relay work. Until
     // the end of step 6, a delivery that finishes batches its receipt with no
-    // timer, and stopRelaySubscription() does not send it. Step 5 sends the
+    // timer, and stopSignalProtocolRelaySubscription() does not send it. Step 5 sends the
     // batches that wait at the end of each wait, again while the deadline is
     // not past. A receipt batched after its last flush is dropped in step 6
-    const receiptDeadline = Date.now() + RelaySubscriptionOps.STOP_RECEIPT_FLUSH_MS;
+    const receiptDeadline = Date.now() + SignalProtocolRelaySubscriptionOps.STOP_RECEIPT_FLUSH_MS;
     const receiptSends = [
       ...[...this.deliveryReceiptSends]
         .filter(([work]) => !work.stopSignal.aborted)
         .map(([, send]) => send),
       ...this.flushPendingDeliveryReceipts(),
     ];
-    const receiptAccumulator = this.relaySubscriptionState.receiptAccumulator;
+    const receiptAccumulator = this.signalRelaySubscriptionState.receiptAccumulator;
     receiptAccumulator.held = true;
     try {
       // 2. Stop relay subscription. Clear it before the call, so a call that
       // the unsubscribe makes does not unsubscribe it again. If the call
       // throws, put it back, so the next stop() calls it again
-      const relayUnsubscribe = this.relayUnsubscribe;
-      this.relayUnsubscribe = undefined;
-      if (relayUnsubscribe) {
+      const signalProtocolRelayUnsubscribe = this.signalProtocolRelayUnsubscribe;
+      this.signalProtocolRelayUnsubscribe = undefined;
+      if (signalProtocolRelayUnsubscribe) {
         try {
-          relayUnsubscribe();
+          signalProtocolRelayUnsubscribe();
         } catch (error) {
-          this.relayUnsubscribe ??= relayUnsubscribe;
+          this.signalProtocolRelayUnsubscribe ??= signalProtocolRelayUnsubscribe;
           throw error;
         }
         this.logger.debug('Relay subscription stopped', { category: 'E2EE' });
@@ -4206,7 +4318,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       // start. A receipt send is not stopped here, because the relay has the
       // acknowledgment of its messages and does not deliver them again
       if (receiptSends.length > 0) {
-        this.state.relayWork.stopAllExcept(new Set(this.deliveryReceiptSends.keys()));
+        this.state.signalRelayWork.stopAllExcept(new Set(this.deliveryReceiptSends.keys()));
         await this.waitForStopReceiptSends(receiptSends, receiptDeadline - Date.now());
       }
 
@@ -4216,7 +4328,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       // receipt send that waits in an app hook after the deadline stops, and
       // that receipt is not sent. A receipt send that is still in its relay
       // call is waited for, and that receipt can still be sent
-      await this.state.relayWork.settle();
+      await this.state.signalRelayWork.settle();
 
       // 5. A delivery can finish during steps 3, 4, and 5, and the relay does
       // not deliver it again. A delivery that waits for the Relay reply to its
@@ -4225,13 +4337,13 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       // wait for them until the same receipt deadline, and stop what is left
       // as step 4 does. Do this again while a batch waits and the deadline
       // is not past
-      const receiptJoin = this.relay === undefined ? undefined : relayReceiptJoinOf(this.relay);
+      const receiptJoin = this.signalProtocolRelay === undefined ? undefined : signalRelayReceiptJoinOf(this.signalProtocolRelay);
       do {
         receiptJoin?.release();
         const lateReceiptSends = this.flushPendingDeliveryReceipts();
         if (lateReceiptSends.length === 0) break;
         await this.waitForStopReceiptSends(lateReceiptSends, receiptDeadline - Date.now());
-        await this.state.relayWork.settle();
+        await this.state.signalRelayWork.settle();
       } while (Date.now() < receiptDeadline);
 
       // 6. Release a delivery that started to wait for its reply after the

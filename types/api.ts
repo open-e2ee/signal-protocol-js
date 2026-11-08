@@ -23,7 +23,7 @@ import type { SenderKeyState } from '../internal/protocol/sender-keys/manager';
 import type { Logger } from '../logger';
 import type { ContentHint } from './messages';
 import type { ContentRecoveryStatus } from './protocol-config';
-import type { RelayConnectionState, Unsubscribe } from '../remote/relay/types';
+import type { SignalProtocolRelayConnectionState, Unsubscribe } from '../remote/signal-relay/types';
 import type { ReceivedMessageKey } from '../local/store/reliability';
 
 // Re-export IdentityType for consumers
@@ -118,8 +118,13 @@ export interface ReceiveWorkRecord {
   /** Increases by one on each write. A write names the revision that it replaces. */
   revision: number;
   stage: ReceiveWorkStage;
-  /** `relay` for a Relay delivery, `caller` for an envelope that the application passed. */
-  origin: 'relay' | 'caller';
+  /**
+   * `relay` for a Relay delivery, `caller` for an envelope that the
+   * application passed. `signal-relay` is the same origin as `relay`. A
+   * later release writes `signal-relay`. This release writes `relay` and
+   * reads both values, so a store must keep the value that it was given.
+   */
+  origin: 'relay' | 'signal-relay' | 'caller';
   /** The local arrival order. */
   arrivalSeq: number;
   /**
@@ -161,8 +166,18 @@ export interface ReceiveWorkRecord {
   blockedOn?: 'group-update';
   /** The acknowledgment of the envelope, written in the commit. */
   ackIntent?: { at: number; hasReceiptJoin: boolean };
-  /** The join decision of the Relay: true when the Relay sends the receipt. */
+  /**
+   * The join decision of the Relay: true when the Relay sends the receipt.
+   * This release writes the decision under this name.
+   */
   relayOwnsReceipt?: boolean;
+  /**
+   * The join decision of the Relay under its Signal Protocol Relay name. A
+   * later release writes it. This release reads both names, and the new name
+   * wins. A record that holds both names with different values is invalid:
+   * a store refuses it with `SignalProtocolRelayNameConflictError`.
+   */
+  signalProtocolRelayOwnsReceipt?: boolean;
   /**
    * The number of `onMessageDecrypted` attempts that started for the
    * content. The count is written before each attempt, so an attempt that
@@ -326,6 +341,9 @@ export interface SignalProtocolClient {
    * starts. A call while `stop()` runs is refused and logged; start again
    * after `stop()` resolves.
    */
+  startSignalProtocolRelaySubscription(): void;
+
+  /** @deprecated Use `startSignalProtocolRelaySubscription`. SDK 15.0.0 removes this name. */
   startRelaySubscription(): void;
 
   /**
@@ -334,36 +352,47 @@ export interface SignalProtocolClient {
    * Pauses message processing without destroying client state. It first
    * starts the send of the delivery receipts that wait in a batch. `stop()`
    * holds the receipt batches from its first flush until it clears its
-   * tracking state. During the hold, `stopRelaySubscription()` does not send
+   * tracking state. During the hold, `stopSignalProtocolRelaySubscription()` does not send
    * them. `stop()` sends the batches that wait at each of its flushes and
    * drops a batch made during the hold after its last flush.
    * Use when app backgrounds to let background task handle messages.
-   * Call startRelaySubscription() to resume when app foregrounds.
-   * `bindRelayLifecycle` and the `useRelayLifecycle` hook make both calls
+   * Call startSignalProtocolRelaySubscription() to resume when app foregrounds.
+   * `bindSignalProtocolRelayLifecycle` and the `useSignalProtocolRelayLifecycle` hook make both calls
    * from the app state.
    */
+  stopSignalProtocolRelaySubscription(): void;
+
+  /** @deprecated Use `stopSignalProtocolRelaySubscription`. SDK 15.0.0 removes this name. */
   stopRelaySubscription(): void;
 
   /**
    * The connection state of the relay subscription.
    *
-   * It reads `stopped` before `startRelaySubscription()`, after
-   * `stopRelaySubscription()`, and when no relay is configured. Use it for a
-   * local indicator of this device's connection.
+   * It reads `stopped` before `startSignalProtocolRelaySubscription()`, after
+   * `stopSignalProtocolRelaySubscription()`, and when no relay is configured.
+   * Use it for a local indicator of this device's connection.
    */
-  readonly relayConnectionState: RelayConnectionState;
+  readonly signalProtocolRelayConnectionState: SignalProtocolRelayConnectionState;
+
+  /** @deprecated Use `signalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
+  readonly relayConnectionState: SignalProtocolRelayConnectionState;
 
   /**
    * Subscribe to relay connection transitions.
    *
-   * The listener receives each new state once. Read `relayConnectionState` for
-   * the current state.
+   * The listener receives each new state once. Read
+   * `signalProtocolRelayConnectionState` for the current state.
    *
    * @param listener - Callback for each transition
    * @returns Unsubscribe function
    */
+  subscribeSignalProtocolRelayConnectionState(
+    listener: (state: SignalProtocolRelayConnectionState) => void
+  ): Unsubscribe;
+
+  /** @deprecated Use `subscribeSignalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
   subscribeRelayConnectionState(
-    listener: (state: RelayConnectionState) => void
+    listener: (state: SignalProtocolRelayConnectionState) => void
   ): Unsubscribe;
 
   /**
@@ -379,7 +408,7 @@ export interface SignalProtocolClient {
    * wait and waits for those sends until the same deadline. It does this
    * again while the deadline is not past. `stop()` holds the receipt batches
    * from its first flush until it clears its tracking state. During the
-   * hold, `stopRelaySubscription()` does not send them, and `stop()` drops a
+   * hold, `stopSignalProtocolRelaySubscription()` does not send them, and `stop()` drops a
    * receipt batched after its last flush. At the deadline it stops each
    * receipt send that is left: a send that waits in an app hook stops, and
    * that receipt is not sent. A send that is in its relay call at the
@@ -392,7 +421,7 @@ export interface SignalProtocolClient {
    * after `stop()`, the SDK drops the work after the hook and writes nothing
    * more. The relay delivers the envelope again after the next start.
    *
-   * A call to `startRelaySubscription()` while `stop()` runs is refused and
+   * A call to `startSignalProtocolRelaySubscription()` while `stop()` runs is refused and
    * logged; start again after `stop()` resolves. A `stop()` call that
    * overlaps a running `stop()` waits for it and settles as it settles.
    */
@@ -465,7 +494,7 @@ export interface SignalProtocolClient {
    * deadline without acceptance.
    *
    * Call it only for a send whose `send()` threw `SendAcceptanceUnknownError`
-   * or `SendNeverAcceptedByRelayError`, or whose `onSendOutcome` event gave
+   * or `SendNeverAcceptedBySignalProtocolRelayError`, or whose `onSendOutcome` event gave
    * `failed` or `acceptance-unknown`. The resend keeps the `clientMessageId`,
    * the client timestamp and the content of the send. It encrypts the content
    * again for each recipient device that the Relay did not accept, and posts
@@ -500,7 +529,7 @@ export interface SignalProtocolClient {
    *
    * @param clientMessageId - The `clientMessageId` of the send
    * @returns The result of the resend when the Relay accepted each device
-   * @throws SendAcceptanceUnknownError or SendNeverAcceptedByRelayError when
+   * @throws SendAcceptanceUnknownError or SendNeverAcceptedBySignalProtocolRelayError when
    *   the resend ends at its posting deadline
    * @throws Error when the send is unknown, still open or completed, when
    *   the Relay accepted each recipient device, when the content is gone, or
@@ -689,12 +718,12 @@ export interface SignalProtocolClient {
    *   // Background (the client has no relay)
    *   sendRetryRequest: async (envelope) => {
    *     // Post the retry_request envelope like any other envelope.
-   *     await backgroundRelay.send(envelope);
+   *     await backgroundSignalProtocolRelay.send(envelope);
    *   },
    *   // The client completes the receive when the content is stored.
    *   onPersist: (processed) => db.saveMessage(processed.messageId, processed.plaintext),
    * });
-   * if (outcome.kind !== 'refused') await backgroundRelay.acknowledge(envelope.id);
+   * if (outcome.kind !== 'refused') await backgroundSignalProtocolRelay.acknowledge(envelope.id);
    * ```
    */
   processIncomingEnvelope(

@@ -6,13 +6,13 @@
  * also throws this error with the Relay's status and code when it finds the
  * refusal before it sends the request.
  *
- * A custom `HostedRelayManagedDeviceLinkAdapter` throws this error when the
+ * A custom `HostedSignalProtocolRelayManagedDeviceLinkAdapter` throws this error when the
  * Relay refuses the link, with the Relay's `code` and `retryable`.
- * `linkHostedRelayDevice` rolls the link back only for this error, with
+ * `linkHostedSignalProtocolRelayDevice` rolls the link back only for this error, with
  * `retryable` false and the code `KEY_PROOF_INVALID` or `CONFLICT`. It keeps
  * the link state for every other error.
  */
-export class HostedRelayHttpError extends Error {
+export class HostedSignalProtocolRelayHttpError extends Error {
   /** The Relay's error code, for example `KEY_PROOF_INVALID`. */
   public readonly code: string;
   /** More values of the refusal. A refused declared post keeps the Relay's `details` here. */
@@ -22,7 +22,7 @@ export class HostedRelayHttpError extends Error {
   /**
    * The Relay's own hint that the same operation can be sent again. On an
    * error that `send()` throws before its posting deadline, the SDK sets
-   * `retryable` to true and keeps this hint in `relayRetryable`.
+   * `retryable` to true and keeps this hint in `signalProtocolRelayRetryable`.
    */
   public readonly retryable: boolean;
 
@@ -44,3 +44,9 @@ export class HostedRelayHttpError extends Error {
     this.retryable = options?.retryable ?? false;
   }
 }
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `HostedSignalProtocolRelayHttpError`. SDK 15.0.0 removes this name. */
+export const HostedRelayHttpError = HostedSignalProtocolRelayHttpError;
+/** @deprecated Use `HostedSignalProtocolRelayHttpError`. SDK 15.0.0 removes this name. */
+export type HostedRelayHttpError = HostedSignalProtocolRelayHttpError;

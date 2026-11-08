@@ -45,104 +45,104 @@ const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/u;
 const ERROR_CODE = /^[A-Z][A-Z0-9_]*$/u;
 
 /** Who controls presence in the project. */
-export type HostedRelayPresenceMode =
+export type HostedSignalProtocolRelayPresenceMode =
   | "off"
   | "default-on"
   | "default-off"
   | "forced";
 
 /** Who can read an account's presence. */
-export type HostedRelayPresenceAudience = "contacts" | "project";
+export type HostedSignalProtocolRelayPresenceAudience = "contacts" | "project";
 
 /** How much of the last-seen time a reader gets. */
-export type HostedRelayPresenceLastSeenPolicy =
+export type HostedSignalProtocolRelayPresenceLastSeenPolicy =
   | "exact"
   | "approximate"
   | "hidden";
 
 /** The project's presence policy, as the Relay resolves it. */
-export interface HostedRelayPresencePolicy {
-  readonly audience: HostedRelayPresenceAudience;
-  readonly lastSeen: HostedRelayPresenceLastSeenPolicy;
-  readonly mode: HostedRelayPresenceMode;
+export interface HostedSignalProtocolRelayPresencePolicy {
+  readonly audience: HostedSignalProtocolRelayPresenceAudience;
+  readonly lastSeen: HostedSignalProtocolRelayPresenceLastSeenPolicy;
+  readonly mode: HostedSignalProtocolRelayPresenceMode;
   /** A hidden account reads no other account's presence. */
   readonly reciprocal: boolean;
 }
 
 /** An account's own choice. `unset` takes the project default. */
-export type HostedRelayPresenceSetting = "unset" | "visible" | "hidden";
+export type HostedSignalProtocolRelayPresenceSetting = "unset" | "visible" | "hidden";
 
 /** The choice that an account can write. */
-export type HostedRelayPresenceVisibility = "visible" | "hidden";
+export type HostedSignalProtocolRelayPresenceVisibility = "visible" | "hidden";
 
 /** The local account's presence state in its project. */
-export interface HostedRelayPresenceAccount {
+export interface HostedSignalProtocolRelayPresenceAccount {
   /** The visibility that applies after the project mode. */
-  readonly effective: HostedRelayPresenceVisibility;
+  readonly effective: HostedSignalProtocolRelayPresenceVisibility;
   /** True when the account registered a presence key. */
   readonly keyRegistered: boolean;
-  readonly mode: HostedRelayPresenceMode;
-  readonly setting: HostedRelayPresenceSetting;
+  readonly mode: HostedSignalProtocolRelayPresenceMode;
+  readonly setting: HostedSignalProtocolRelayPresenceSetting;
 }
 
 /** A last-seen time that the `approximate` policy rounds to a range. */
-export type HostedRelayPresenceApproximateLastSeen =
+export type HostedSignalProtocolRelayPresenceApproximateLastSeen =
   | "recently"
   | "within-week"
   | "within-month"
   | "long-ago";
 
 /** One account's presence, as its reader may see it. */
-export interface HostedRelayPresenceStatus {
+export interface HostedSignalProtocolRelayPresenceStatus {
   /**
    * Milliseconds since the epoch under the `exact` policy, a range under
    * `approximate`, and null under `hidden` or when no device was seen.
    */
-  readonly lastSeen: number | HostedRelayPresenceApproximateLastSeen | null;
+  readonly lastSeen: number | HostedSignalProtocolRelayPresenceApproximateLastSeen | null;
   readonly online: boolean;
 }
 
 /** One account in a presence read. */
-export interface HostedRelayPresenceTarget {
+export interface HostedSignalProtocolRelayPresenceTarget {
   readonly account: string;
   /** The account's presence key. The `contacts` audience requires it. */
   readonly presenceKey?: string;
 }
 
 /** The request of each presence frame type. */
-export type HostedRelayPresenceRequest =
+export type HostedSignalProtocolRelayPresenceRequest =
   | { readonly type: "presence-policy" }
   | { readonly type: "presence-account" }
   | {
       readonly type: "presence-setting";
-      readonly setting: HostedRelayPresenceVisibility;
+      readonly setting: HostedSignalProtocolRelayPresenceVisibility;
     }
   | { readonly type: "presence-key"; readonly presenceKey: string }
   | {
       readonly type: "presence-read";
-      readonly accounts: readonly HostedRelayPresenceTarget[];
+      readonly accounts: readonly HostedSignalProtocolRelayPresenceTarget[];
     }
   | {
       /** The whole watch set of the device. No account stops the watch. */
       readonly type: "presence-watch";
-      readonly accounts: readonly HostedRelayPresenceTarget[];
+      readonly accounts: readonly HostedSignalProtocolRelayPresenceTarget[];
     };
 
 /** The decoded result of each presence request type. */
-export interface HostedRelayPresenceResults {
-  readonly "presence-policy": HostedRelayPresencePolicy;
-  readonly "presence-account": HostedRelayPresenceAccount;
-  readonly "presence-setting": HostedRelayPresenceAccount;
+export interface HostedSignalProtocolRelayPresenceResults {
+  readonly "presence-policy": HostedSignalProtocolRelayPresencePolicy;
+  readonly "presence-account": HostedSignalProtocolRelayPresenceAccount;
+  readonly "presence-setting": HostedSignalProtocolRelayPresenceAccount;
   readonly "presence-key": undefined;
-  readonly "presence-read": readonly (HostedRelayPresenceStatus | null)[];
-  readonly "presence-watch": readonly (HostedRelayPresenceStatus | null)[];
+  readonly "presence-read": readonly (HostedSignalProtocolRelayPresenceStatus | null)[];
+  readonly "presence-watch": readonly (HostedSignalProtocolRelayPresenceStatus | null)[];
 }
 
 /** One pushed socket edge of a watched account. */
-export interface HostedRelayPresenceUpdate {
+export interface HostedSignalProtocolRelayPresenceUpdate {
   /** The account address, as the watch sent it. */
   readonly account: string;
-  readonly presence: HostedRelayPresenceStatus;
+  readonly presence: HostedSignalProtocolRelayPresenceStatus;
 }
 
 /**
@@ -155,7 +155,7 @@ export interface HostedRelayPresenceUpdate {
  * requests wait for an answer, and `FRAME_REJECTED` when the Relay closed the
  * socket with 1008 because it does not accept presence frames.
  */
-export type HostedRelayPresenceErrorCode =
+export type HostedSignalProtocolRelayPresenceErrorCode =
   | "PRESENCE_SETTING_FORCED"
   | "INVALID_TRANSITION"
   | "QUOTA_EXCEEDED"
@@ -166,13 +166,13 @@ export type HostedRelayPresenceErrorCode =
   | (string & {});
 
 /** A presence request that the Relay refused or that got no answer. */
-export class HostedRelayPresenceError extends Error {
-  public readonly code: HostedRelayPresenceErrorCode;
+export class HostedSignalProtocolRelayPresenceError extends Error {
+  public readonly code: HostedSignalProtocolRelayPresenceErrorCode;
   /** True when the same request can be sent again later. */
   public readonly retryable: boolean;
 
   public constructor(
-    code: HostedRelayPresenceErrorCode,
+    code: HostedSignalProtocolRelayPresenceErrorCode,
     message: string,
     retryable: boolean,
   ) {
@@ -233,7 +233,7 @@ export function assertPresenceKey(presenceKey: unknown): string {
 }
 
 function targetFields(
-  targets: readonly HostedRelayPresenceTarget[],
+  targets: readonly HostedSignalProtocolRelayPresenceTarget[],
 ): JsonRecord[] {
   return targets.map((target) =>
     target.presenceKey === undefined
@@ -246,7 +246,7 @@ function targetFields(
 }
 
 /** The request fields after `type` and `version`, in their wire order. */
-function requestFields(request: HostedRelayPresenceRequest): JsonRecord {
+function requestFields(request: HostedSignalProtocolRelayPresenceRequest): JsonRecord {
   switch (request.type) {
     case "presence-policy":
     case "presence-account":
@@ -280,7 +280,7 @@ function requestFields(request: HostedRelayPresenceRequest): JsonRecord {
 /** The socket frame of one presence request. */
 export function encodePresenceFrame(
   id: string,
-  request: HostedRelayPresenceRequest,
+  request: HostedSignalProtocolRelayPresenceRequest,
 ): string {
   if (!REQUEST_ID.test(id))
     throw new Error("Signal Protocol Relay presence request id is invalid");
@@ -298,7 +298,7 @@ export function encodePresenceFrame(
  */
 export function presenceHttpBody(
   publishableKey: string,
-  request: HostedRelayPresenceRequest,
+  request: HostedSignalProtocolRelayPresenceRequest,
 ): JsonRecord {
   if (request.type === "presence-watch")
     throw new Error(
@@ -320,7 +320,7 @@ export function isPresenceAnswerType(type: unknown): boolean {
 /** One decoded answer frame. */
 export type PresenceAnswer =
   | { readonly id: string; readonly result: unknown }
-  | { readonly id: string; readonly error: HostedRelayPresenceError };
+  | { readonly id: string; readonly error: HostedSignalProtocolRelayPresenceError };
 
 /**
  * Decodes a `presence-result` or `presence-error` frame. A malformed answer
@@ -351,7 +351,7 @@ export function decodePresenceAnswer(frame: JsonRecord): PresenceAnswer {
     throw new Error("Invalid presence frame.");
   return {
     id: frame.id,
-    error: new HostedRelayPresenceError(
+    error: new HostedSignalProtocolRelayPresenceError(
       frame.code,
       frame.message,
       frame.retryable,
@@ -370,7 +370,7 @@ export function isPresenceUpdateType(type: unknown): boolean {
  */
 export function decodePresenceUpdate(
   frame: JsonRecord,
-): HostedRelayPresenceUpdate {
+): HostedSignalProtocolRelayPresenceUpdate {
   if (
     frame.type !== "presence-update" ||
     frame.version !== PRESENCE_FRAME_VERSION ||
@@ -380,7 +380,7 @@ export function decodePresenceUpdate(
     frame.account.length > MAXIMUM_ACCOUNT_CHARACTERS
   )
     throw new Error("Invalid presence frame.");
-  let presence: HostedRelayPresenceStatus | null;
+  let presence: HostedSignalProtocolRelayPresenceStatus | null;
   try {
     presence = decodeStatus(frame.presence);
   } catch {
@@ -406,7 +406,7 @@ const APPROXIMATE_LAST_SEEN: readonly unknown[] = [
   "long-ago",
 ];
 
-function decodePolicy(value: unknown): HostedRelayPresencePolicy {
+function decodePolicy(value: unknown): HostedSignalProtocolRelayPresencePolicy {
   if (
     !record(value) ||
     !exactKeys(value, ["audience", "lastSeen", "mode", "reciprocal"]) ||
@@ -417,14 +417,14 @@ function decodePolicy(value: unknown): HostedRelayPresencePolicy {
   )
     throw invalidResult();
   return {
-    audience: value.audience as HostedRelayPresenceAudience,
-    lastSeen: value.lastSeen as HostedRelayPresenceLastSeenPolicy,
-    mode: value.mode as HostedRelayPresenceMode,
+    audience: value.audience as HostedSignalProtocolRelayPresenceAudience,
+    lastSeen: value.lastSeen as HostedSignalProtocolRelayPresenceLastSeenPolicy,
+    mode: value.mode as HostedSignalProtocolRelayPresenceMode,
     reciprocal: value.reciprocal,
   };
 }
 
-function decodeAccount(value: unknown): HostedRelayPresenceAccount {
+function decodeAccount(value: unknown): HostedSignalProtocolRelayPresenceAccount {
   if (
     !record(value) ||
     !exactKeys(value, ["effective", "keyRegistered", "mode", "setting"]) ||
@@ -435,14 +435,14 @@ function decodeAccount(value: unknown): HostedRelayPresenceAccount {
   )
     throw invalidResult();
   return {
-    effective: value.effective as HostedRelayPresenceVisibility,
+    effective: value.effective as HostedSignalProtocolRelayPresenceVisibility,
     keyRegistered: value.keyRegistered,
-    mode: value.mode as HostedRelayPresenceMode,
-    setting: value.setting as HostedRelayPresenceSetting,
+    mode: value.mode as HostedSignalProtocolRelayPresenceMode,
+    setting: value.setting as HostedSignalProtocolRelayPresenceSetting,
   };
 }
 
-function decodeStatus(value: unknown): HostedRelayPresenceStatus | null {
+function decodeStatus(value: unknown): HostedSignalProtocolRelayPresenceStatus | null {
   if (value === null) return null;
   if (
     !record(value) ||
@@ -458,19 +458,19 @@ function decodeStatus(value: unknown): HostedRelayPresenceStatus | null {
   )
     throw invalidResult();
   return {
-    lastSeen: value.lastSeen as HostedRelayPresenceStatus["lastSeen"],
+    lastSeen: value.lastSeen as HostedSignalProtocolRelayPresenceStatus["lastSeen"],
     online: value.online,
   };
 }
 
 /** Decodes the `result` of one request, and throws on any other shape. */
 export function decodePresenceResult<
-  Request extends HostedRelayPresenceRequest,
+  Request extends HostedSignalProtocolRelayPresenceRequest,
 >(
   request: Request,
   value: unknown,
-): HostedRelayPresenceResults[Request["type"]] {
-  type Result = HostedRelayPresenceResults[Request["type"]];
+): HostedSignalProtocolRelayPresenceResults[Request["type"]] {
+  type Result = HostedSignalProtocolRelayPresenceResults[Request["type"]];
   switch (request.type) {
     case "presence-policy":
       return decodePolicy(value) as Result;
@@ -490,7 +490,7 @@ export function decodePresenceResult<
         value.results.length !== request.accounts.length
       )
         throw invalidResult();
-      const results: readonly (HostedRelayPresenceStatus | null)[] =
+      const results: readonly (HostedSignalProtocolRelayPresenceStatus | null)[] =
         value.results.map(decodeStatus);
       return results as unknown as Result;
     }
@@ -498,3 +498,29 @@ export function decodePresenceResult<
       throw invalidResult();
   }
 }
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `HostedSignalProtocolRelayPresenceAccount`. SDK 15.0.0 removes this name. */
+export type HostedRelayPresenceAccount = HostedSignalProtocolRelayPresenceAccount;
+/** @deprecated Use `HostedSignalProtocolRelayPresenceApproximateLastSeen`. SDK 15.0.0 removes this name. */
+export type HostedRelayPresenceApproximateLastSeen = HostedSignalProtocolRelayPresenceApproximateLastSeen;
+/** @deprecated Use `HostedSignalProtocolRelayPresenceAudience`. SDK 15.0.0 removes this name. */
+export type HostedRelayPresenceAudience = HostedSignalProtocolRelayPresenceAudience;
+/** @deprecated Use `HostedSignalProtocolRelayPresenceError`. SDK 15.0.0 removes this name. */
+export const HostedRelayPresenceError = HostedSignalProtocolRelayPresenceError;
+/** @deprecated Use `HostedSignalProtocolRelayPresenceError`. SDK 15.0.0 removes this name. */
+export type HostedRelayPresenceError = HostedSignalProtocolRelayPresenceError;
+/** @deprecated Use `HostedSignalProtocolRelayPresenceErrorCode`. SDK 15.0.0 removes this name. */
+export type HostedRelayPresenceErrorCode = HostedSignalProtocolRelayPresenceErrorCode;
+/** @deprecated Use `HostedSignalProtocolRelayPresenceLastSeenPolicy`. SDK 15.0.0 removes this name. */
+export type HostedRelayPresenceLastSeenPolicy = HostedSignalProtocolRelayPresenceLastSeenPolicy;
+/** @deprecated Use `HostedSignalProtocolRelayPresenceMode`. SDK 15.0.0 removes this name. */
+export type HostedRelayPresenceMode = HostedSignalProtocolRelayPresenceMode;
+/** @deprecated Use `HostedSignalProtocolRelayPresencePolicy`. SDK 15.0.0 removes this name. */
+export type HostedRelayPresencePolicy = HostedSignalProtocolRelayPresencePolicy;
+/** @deprecated Use `HostedSignalProtocolRelayPresenceSetting`. SDK 15.0.0 removes this name. */
+export type HostedRelayPresenceSetting = HostedSignalProtocolRelayPresenceSetting;
+/** @deprecated Use `HostedSignalProtocolRelayPresenceStatus`. SDK 15.0.0 removes this name. */
+export type HostedRelayPresenceStatus = HostedSignalProtocolRelayPresenceStatus;
+/** @deprecated Use `HostedSignalProtocolRelayPresenceVisibility`. SDK 15.0.0 removes this name. */
+export type HostedRelayPresenceVisibility = HostedSignalProtocolRelayPresenceVisibility;

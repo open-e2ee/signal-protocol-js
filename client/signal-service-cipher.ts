@@ -22,7 +22,7 @@ import type {
   SealedSenderAuth,
   GroupMemberDevice,
   DeliveryClass,
-} from '../remote/relay/types';
+} from '../remote/signal-relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import type {
   SignalProtocolLocalStore,
@@ -147,28 +147,29 @@ import {
   type StoredOutgoingMessageIntent,
   type StoredRetryResend,
 } from '../local/store/reliability';
+import { isSignalProtocolRelayOrigin } from '../local/store/receive-work';
 import { FanOutError, firstItemError, type BoundedFanOut } from '../utils/bounded-fan-out';
 import { withRetry } from '../utils/retry';
 import {
   acquireUntilStopped,
-  createRelayFanOut,
+  createSignalProtocolRelayFanOut,
   RelayWorkStopped,
-  relaySendsSealedUnderItsBound,
-  rethrowRelayWorkStopped,
-} from './relay-work';
+  signalRelaySendsSealedUnderItsBound,
+  rethrowSignalProtocolRelayWorkStopped,
+} from './signal-relay-work';
 import {
-  markRelayDeviceRefusal,
+  markSignalProtocolRelayDeviceRefusal,
   refusesRemovedDevices,
-  relayDeviceRefusal,
-} from './relay-device-refusal';
+  signalRelayDeviceRefusal,
+} from './signal-relay-device-refusal';
 import {
-  aggregateRelayAcceptance,
+  aggregateSignalProtocolRelayAcceptance,
   isConflictAcceptance,
-  relayHoldsMessageId,
-  relayOperationRefusal,
+  signalRelayHoldsMessageId,
+  signalRelayOperationRefusal,
   sendResultAcceptance,
-  type RelayPostAcceptance,
-} from './relay-acceptance';
+  type SignalProtocolRelayPostAcceptance,
+} from './signal-relay-acceptance';
 import {
   attachSendDeadline,
   isPostingDeadlineReached,
@@ -190,13 +191,13 @@ import {
   followedRepeatedRequest,
   markAfterRepeatedRequest,
   type RepeatRequest,
-} from '../remote/relay/request-admission';
-import { forDirectSealedRoute, usedGroupRouteFallback } from './relay-sealed-route';
-import { comparesDeviceSets, markDeviceSetRefusal } from '../remote/relay/device-set';
+} from '../remote/signal-relay/request-admission';
+import { forDirectSealedRoute, usedGroupRouteFallback } from './signal-relay-sealed-route';
+import { comparesDeviceSets, markDeviceSetRefusal } from '../remote/signal-relay/device-set';
 import {
   DeviceSetReconciliationError,
-  markRelayProtocolError,
-  RelayProtocolError,
+  markSignalProtocolRelayProtocolError,
+  SignalProtocolRelayProtocolError,
   runDeviceSetPhase,
   waitUnlessStopped,
   type DeviceSetAccountRepair,
@@ -404,7 +405,7 @@ function manualResendDestinations(resend: StoredManualResend): SendDestination[]
 function manualResendResult(
   intent: StoredOutgoingMessageIntent,
   resend: StoredManualResend,
-  acceptances: readonly RelayPostAcceptance[]
+  acceptances: readonly SignalProtocolRelayPostAcceptance[]
 ): NonNullable<StoredManualResend['result']> {
   const first = sendResultAcceptance(acceptances);
   return {
@@ -412,7 +413,7 @@ function manualResendResult(
     messageId: first?.messageId ?? resend.manualMessageId,
     timestamp: first?.serverTimestamp ?? intent.clientTimestamp,
     recipientDeviceCount: resend.messages.length,
-    ...aggregateRelayAcceptance(acceptances),
+    ...aggregateSignalProtocolRelayAcceptance(acceptances),
     ...(intent.kind === 'group' && { groupId: intent.recipientId }),
   };
 }
@@ -675,7 +676,7 @@ class DeferredPost extends Error {
 
 /** The posts of a send-first pass, by recipient device. */
 interface DirectIntentPosts {
-  readonly accepted: Map<number, RelayPostAcceptance>;
+  readonly accepted: Map<number, SignalProtocolRelayPostAcceptance>;
   readonly refused: Map<number, { error: unknown }>;
 }
 
@@ -797,13 +798,13 @@ function isConclusiveDeviceRejection(error: unknown): boolean {
   return (
     isStaleSessionError(error) ||
     error instanceof SealedSenderRecipientRejectedError ||
-    relayDeviceRefusal(error)?.code === 'STALE_DEVICE'
+    signalRelayDeviceRefusal(error)?.code === 'STALE_DEVICE'
   );
 }
 
 /** True when the relay refused this post because of the device that it names. */
 function isRefusalOfDevice(error: unknown, message: StoredOutgoingDeviceMessage): boolean {
-  const refusal = relayDeviceRefusal(error);
+  const refusal = signalRelayDeviceRefusal(error);
   return (
     refusal?.userId === message.recipientUserId && refusal.deviceId === message.recipientDeviceId
   );
@@ -1078,7 +1079,7 @@ export class SignalProtocolServiceCipher {
   private sealedSenderProvider?: SealedSenderProvider;
   private sealedSenderDeliveryMode: import('./config').SealedSenderDeliveryMode = 'preferred';
   private sealedSenderIdentifiedFallback?: import('./config').SealedSenderConfig['onIdentifiedFallback'];
-  private relayProtocolErrorReporter?: (error: RelayProtocolError) => Promise<void>;
+  private signalRelayProtocolErrorReporter?: (error: SignalProtocolRelayProtocolError) => Promise<void>;
   private ownDevicesFirstSeen?: (deviceIds: readonly number[]) => void;
   private groupKeySyncReceiver?: (
     input: GroupKeySyncInput,
@@ -1101,11 +1102,11 @@ export class SignalProtocolServiceCipher {
     private readonly sesameManager: SesameManager,
     private readonly senderKeyManager: SenderKeyManager,
     private readonly storage: SignalProtocolLocalStore,
-    private readonly relay?: SignalProtocolRelayServer,
+    private readonly signalProtocolRelay?: SignalProtocolRelayServer,
     private readonly remoteObjectStore?: SignalProtocolRemoteObjectStore,
     private readonly contentAdapter?: SignalProtocolContentAdapter,
     private readonly logger: Required<Logger> = defaultSignalProtocolLogger,
-    private readonly fanOut: BoundedFanOut = createRelayFanOut()
+    private readonly fanOut: BoundedFanOut = createSignalProtocolRelayFanOut()
   ) {
     this.groupSenderKeys = new GroupSenderKeyOperations(storage, userId, deviceId);
     this.senderKeyHandoffs = new SenderKeyHandoffLedger(storage);
@@ -1170,8 +1171,8 @@ export class SignalProtocolServiceCipher {
     target?: SyncPayloadTarget
   ): Promise<GroupKeySyncDevice[]> {
     const stopSignal = target?.stopSignal;
-    const relay = this.relay;
-    if (!relay || syncMessages.length === 0) {
+    const signalProtocolRelay = this.signalProtocolRelay;
+    if (!signalProtocolRelay || syncMessages.length === 0) {
       return [];
     }
 
@@ -1197,7 +1198,7 @@ export class SignalProtocolServiceCipher {
       prepared,
       async (message) => {
         const control = stopSignal ? { stopSignal } : {};
-        if (!(await this.postSyncMessage(relay, message, control, repair))) return undefined;
+        if (!(await this.postSyncMessage(signalProtocolRelay, message, control, repair))) return undefined;
         const copy = replacements.get(message.recipientDeviceId) ?? message;
         target?.accepted?.push(...acceptedSyncDevices([copy]));
         return copy;
@@ -1256,16 +1257,16 @@ export class SignalProtocolServiceCipher {
    *   intent, so a replay posts it again.
    */
   private async postSyncMessage(
-    relay: SignalProtocolRelayServer,
+    signalProtocolRelay: SignalProtocolRelayServer,
     message: StoredOutgoingDeviceMessage,
     control: DevicePostControl,
     repair: SyncCopyRepair,
     gate?: (postMessageId: string | undefined) => () => Promise<void>
-  ): Promise<RelayPostAcceptance | undefined> {
+  ): Promise<SignalProtocolRelayPostAcceptance | undefined> {
     const controlOf = (copy: StoredOutgoingDeviceMessage): DevicePostControl =>
       gate ? { ...control, beforeRequest: gate(copy.clientMessageId) } : control;
     try {
-      return await this.postSyncCopy(relay, message, controlOf(message));
+      return await this.postSyncCopy(signalProtocolRelay, message, controlOf(message));
     } catch (error) {
       if (!isConclusiveDeviceRejection(error)) throw error;
     }
@@ -1279,7 +1280,7 @@ export class SignalProtocolServiceCipher {
     if (replacement === 'no-transcript') return undefined;
     if (replacement) {
       try {
-        return await this.postSyncCopy(relay, replacement, controlOf(replacement));
+        return await this.postSyncCopy(signalProtocolRelay, replacement, controlOf(replacement));
       } catch (error) {
         if (!isConclusiveDeviceRejection(error)) throw error;
       }
@@ -1360,30 +1361,30 @@ export class SignalProtocolServiceCipher {
    * @returns The relay receipt of the post
    */
   private async postSyncCopy(
-    relay: SignalProtocolRelayServer,
+    signalProtocolRelay: SignalProtocolRelayServer,
     message: StoredOutgoingDeviceMessage,
     control: DevicePostControl
-  ): Promise<RelayPostAcceptance> {
+  ): Promise<SignalProtocolRelayPostAcceptance> {
     // The transport gates a repeat by the ID that the posted envelope carries.
     const release =
       control.beforeRequest && message.clientMessageId !== undefined
-        ? admitRequestsFor(relay, message.clientMessageId, control.beforeRequest)
+        ? admitRequestsFor(signalProtocolRelay, message.clientMessageId, control.beforeRequest)
         : undefined;
     try {
-      return await this.postSyncCopyRequest(relay, message, control);
+      return await this.postSyncCopyRequest(signalProtocolRelay, message, control);
     } finally {
       release?.();
     }
   }
 
   private postSyncCopyRequest(
-    relay: SignalProtocolRelayServer,
+    signalProtocolRelay: SignalProtocolRelayServer,
     message: StoredOutgoingDeviceMessage,
     control: DevicePostControl
-  ): Promise<RelayPostAcceptance> {
-    return this.postToRelay(
+  ): Promise<SignalProtocolRelayPostAcceptance> {
+    return this.postToSignalProtocolRelay(
       () =>
-        relay.send({
+        signalProtocolRelay.send({
           targetUserId: message.recipientUserId,
           targetDeviceId: message.recipientDeviceId,
           senderUserId: this.userId,
@@ -1446,7 +1447,7 @@ export class SignalProtocolServiceCipher {
    * bound. An adapter that bounds its own sealed-sender posts takes a slot of
    * the same bound, so its sealed post runs without one here.
    */
-  private postToRelay<T>(
+  private postToSignalProtocolRelay<T>(
     send: () => Promise<T>,
     sealed: boolean,
     control: DevicePostControl
@@ -1457,7 +1458,7 @@ export class SignalProtocolServiceCipher {
       control.onRequest?.();
       return send();
     };
-    if (sealed && relaySendsSealedUnderItsBound(this.relay!)) {
+    if (sealed && signalRelaySendsSealedUnderItsBound(this.signalProtocolRelay!)) {
       if (control.stopSignal?.aborted) return Promise.reject(new RelayWorkStopped());
       return new Promise<T>((resolve) => resolve(post()));
     }
@@ -1474,7 +1475,7 @@ export class SignalProtocolServiceCipher {
     timestamp: number,
     target?: SyncPayloadTarget
   ): Promise<GroupKeySyncDevice[]> {
-    if (!this.relay) {
+    if (!this.signalProtocolRelay) {
       return [];
     }
     if (this.declaresDeviceSets()) {
@@ -1657,8 +1658,13 @@ export class SignalProtocolServiceCipher {
    * Called by SignalProtocolClient after construction. A sync payload has no
    * send result, so the reporter gives its error to the app.
    */
-  setRelayProtocolErrorReporter(report: (error: RelayProtocolError) => Promise<void>): void {
-    this.relayProtocolErrorReporter = report;
+  setSignalProtocolRelayProtocolErrorReporter(report: (error: SignalProtocolRelayProtocolError) => Promise<void>): void {
+    this.signalRelayProtocolErrorReporter = report;
+  }
+
+  /** @deprecated Use `setSignalProtocolRelayProtocolErrorReporter`. SDK 15.0.0 removes this name. */
+  setRelayProtocolErrorReporter(report: (error: SignalProtocolRelayProtocolError) => Promise<void>): void {
+    this.setSignalProtocolRelayProtocolErrorReporter(report);
   }
 
   /**
@@ -2116,7 +2122,7 @@ export class SignalProtocolServiceCipher {
       // it gives the distribution to the caller only.
       const distribution = inspected.senderKeyDistribution;
       let distributionGroupId: string | null = null;
-      if (distribution && (record === null || record.origin === 'relay')) {
+      if (distribution && (record === null || isSignalProtocolRelayOrigin(record.origin))) {
         distributionGroupId = await this.installDistribution(
           envelope.senderUserId,
           envelope.senderDeviceId,
@@ -2286,7 +2292,7 @@ export class SignalProtocolServiceCipher {
     }
     const distribution = inspected.senderKeyDistribution;
     let distributionGroupId: string | null = null;
-    if (distribution && record.origin === 'relay') {
+    if (distribution && isSignalProtocolRelayOrigin(record.origin)) {
       distributionGroupId = await this.installDistribution(
         senderUserId,
         senderDeviceId,
@@ -2552,7 +2558,7 @@ export class SignalProtocolServiceCipher {
     },
     stopSignal?: AbortSignal
   ): Promise<boolean> {
-    if (!this.relay) throw new Error('Relay not configured - cannot resend');
+    if (!this.signalProtocolRelay) throw new Error('Relay not configured - cannot resend');
     const { retry } = options;
     if (content === null && retry === undefined) {
       throw new Error('A resend without content needs a stored attempt');
@@ -2564,7 +2570,7 @@ export class SignalProtocolServiceCipher {
       try {
         await this.postResend(resend, retryResendAttemptId(resend), stopSignal);
       } catch (error) {
-        if (!relayHoldsMessageId(error)) throw error;
+        if (!signalRelayHoldsMessageId(error)) throw error;
         // Only this sender posts this ID, and it posts one encryption under
         // each attempt ID. So a conflict means that the Relay holds that
         // encryption from an earlier post.
@@ -2621,7 +2627,7 @@ export class SignalProtocolServiceCipher {
             await post(stored);
             return true;
           } catch (error) {
-            if (relayOperationRefusal(error) !== 'OPERATION_EXPIRED') throw error;
+            if (signalRelayOperationRefusal(error) !== 'OPERATION_EXPIRED') throw error;
           }
           // The Relay no longer admits or replays the stored operation. It
           // can have accepted an earlier post of these bytes, so the
@@ -2658,7 +2664,7 @@ export class SignalProtocolServiceCipher {
     clientMessageId: string,
     stopSignal?: AbortSignal,
     control: Pick<DevicePostControl, 'beforeRequest' | 'onRequest'> = {}
-  ): Promise<RelayPostAcceptance> {
+  ): Promise<SignalProtocolRelayPostAcceptance> {
     const { message } = resend;
     if (
       resend.transportMode !== 'identified' &&
@@ -2777,7 +2783,7 @@ export class SignalProtocolServiceCipher {
         ? await this.resolveSealedSenderContext(recipientUserId)
         : await this.resolveDistributionSealedSender(recipientUserId, groupId);
     const directSealedSender =
-      sealedSender && this.relay?.sendMultiRecipientUnidentified ? sealedSender : null;
+      sealedSender && this.signalProtocolRelay?.sendMultiRecipientUnidentified ? sealedSender : null;
     let sealedSenderAuth: EncryptedResend['sealedSenderAuth'];
     if (directSealedSender?.auth.type === 'accessKey') {
       sealedSenderAuth = { ...directSealedSender.auth };
@@ -3099,7 +3105,7 @@ export class SignalProtocolServiceCipher {
       );
     }
 
-    if (!this.relay) {
+    if (!this.signalProtocolRelay) {
       if (hasActiveSession) return false;
       throw new EncryptionError(
         'Cannot auto-establish session: relay server not configured',
@@ -3112,7 +3118,7 @@ export class SignalProtocolServiceCipher {
       sendFirst &&
       hasActiveSession &&
       listAge < RECIPIENT_DEVICE_LIST_MAXIMUM_AGE_MILLISECONDS &&
-      refusesRemovedDevices(this.relay)
+      refusesRemovedDevices(this.signalProtocolRelay)
     ) {
       return true;
     }
@@ -3181,7 +3187,7 @@ export class SignalProtocolServiceCipher {
         }
       );
     } catch (error) {
-      rethrowRelayWorkStopped(error);
+      rethrowSignalProtocolRelayWorkStopped(error);
       if (hasActiveSession) {
         // The known devices still receive; the next send reads the list again.
         this.logger.warn('Recipient device list refresh failed, sending to known devices', {
@@ -3265,10 +3271,10 @@ export class SignalProtocolServiceCipher {
     sessions: SendSessionCallbacks | undefined,
     stopSignal: AbortSignal | undefined
   ): Promise<GroupMemberDevice[]> {
-    const relay = this.relay;
-    if (!relay) return [];
+    const signalProtocolRelay = this.signalProtocolRelay;
+    if (!signalProtocolRelay) return [];
     const listed = await this.fanOut.request(
-      () => relay.getActiveDevices(this.userId),
+      () => signalProtocolRelay.getActiveDevices(this.userId),
       stopSignal
     );
     const others = listed.filter(
@@ -3282,7 +3288,7 @@ export class SignalProtocolServiceCipher {
         // A device that fails gets no copy from this send.
         await sessions.establishSessions(this.userId, others);
       } catch (error) {
-        rethrowRelayWorkStopped(error);
+        rethrowSignalProtocolRelayWorkStopped(error);
         this.logger.warn('Could not start sessions with listed own devices', {
           category: 'E2EE',
           error: error as Error,
@@ -3476,9 +3482,9 @@ export class SignalProtocolServiceCipher {
     // and the read of a later pass would address the own devices again.
     const ownAccount = recipientUserId === this.userId;
     const sendFirst = await this.ensureSessionsForUser(recipientUserId, sessions, !ownAccount);
-    const sealedSender = this.relay ? await this.resolveSealedSenderContext(recipientUserId) : null;
+    const sealedSender = this.signalProtocolRelay ? await this.resolveSealedSenderContext(recipientUserId) : null;
     const directSealedSender =
-      sealedSender && this.relay?.sendMultiRecipientUnidentified ? sealedSender : null;
+      sealedSender && this.signalProtocolRelay?.sendMultiRecipientUnidentified ? sealedSender : null;
     const transportMode = directSealedSender
       ? directSealedSender.config.deliveryMode === 'required'
         ? 'sealed_sender_required'
@@ -3622,7 +3628,7 @@ export class SignalProtocolServiceCipher {
     message: StoredOutgoingDeviceMessage,
     control: DevicePostControl,
     evidence: SendCallEvidence
-  ): Promise<RelayPostAcceptance> {
+  ): Promise<SignalProtocolRelayPostAcceptance> {
     const [destination] = sendDestinations(intent.clientMessageId, [message]);
     const { device, postMessageId } = destination!;
     const key = outgoingDestinationProgressKey(postMessageId, device);
@@ -3651,8 +3657,8 @@ export class SignalProtocolServiceCipher {
     destination: SendDestination,
     evidence: SendCallEvidence,
     control: DevicePostControl,
-    post: (control: DevicePostControl) => Promise<RelayPostAcceptance>
-  ): Promise<RelayPostAcceptance> {
+    post: (control: DevicePostControl) => Promise<SignalProtocolRelayPostAcceptance>
+  ): Promise<SignalProtocolRelayPostAcceptance> {
     const beforeRequest = this.recordingRequests(clientMessageId, [destination], control);
     return evidence.post(destination, (onRequest) =>
       post({ ...control, beforeRequest, onRequest })
@@ -3697,7 +3703,7 @@ export class SignalProtocolServiceCipher {
    * transport starts for one destination of the body stores the request of
    * that destination.
    */
-  private postGroupRelay<T>(
+  private postGroupSignalProtocolRelay<T>(
     send: () => Promise<T>,
     sealed: boolean,
     control: DevicePostControl,
@@ -3708,7 +3714,7 @@ export class SignalProtocolServiceCipher {
     const ownRepeat = (repeat: RepeatRequest, { device }: SendDestination) =>
       repeat.userId === device.userId && repeat.deviceId === device.deviceId;
     if (!isDestinationList(destination)) {
-      const post = send as unknown as () => Promise<RelayPostAcceptance>;
+      const post = send as unknown as () => Promise<SignalProtocolRelayPostAcceptance>;
       return this.postGroupDestination(
         clientMessageId,
         destination,
@@ -3719,7 +3725,7 @@ export class SignalProtocolServiceCipher {
           // carries. Other posts of the send carry the same ID, so the gate
           // takes only a repeat of this device.
           const release = admitRequestsFor(
-            this.relay!,
+            this.signalProtocolRelay!,
             clientMessageId,
             async (repeat) => {
               if (ownRepeat(repeat, destination)) await posting.beforeRequest?.();
@@ -3729,7 +3735,7 @@ export class SignalProtocolServiceCipher {
             }
           );
           try {
-            return await this.postToRelay(post, sealed, posting);
+            return await this.postToSignalProtocolRelay(post, sealed, posting);
           } finally {
             release();
           }
@@ -3737,14 +3743,14 @@ export class SignalProtocolServiceCipher {
       ) as unknown as Promise<T>;
     }
     const destinations = destination;
-    const shared = send as unknown as () => Promise<RelayPostAcceptance & { uuids404: string[] }>;
+    const shared = send as unknown as () => Promise<SignalProtocolRelayPostAcceptance & { uuids404: string[] }>;
     const beforeRequest = this.recordingRequests(clientMessageId, destinations, control);
     return evidence.postShared(destinations, async (onRequest) => {
       // The transport gates a repeat of the body once for each destination
       // device. Each gate stores the request of its device, and the repeat
       // counts once, at the first destination.
       const release = admitRequestsFor(
-        this.relay!,
+        this.signalProtocolRelay!,
         clientMessageId,
         async (repeat) => {
           const target = destinations.filter((candidate) => ownRepeat(repeat, candidate));
@@ -3755,7 +3761,7 @@ export class SignalProtocolServiceCipher {
         }
       );
       try {
-        return await this.postToRelay(shared, sealed, { ...control, beforeRequest, onRequest });
+        return await this.postToSignalProtocolRelay(shared, sealed, { ...control, beforeRequest, onRequest });
       } finally {
         release();
       }
@@ -3856,7 +3862,7 @@ export class SignalProtocolServiceCipher {
       recipientDeviceCount: group
         ? (intent.groupRecipientDeviceCount ?? intent.deviceMessages.length)
         : intent.deviceMessages.length,
-      ...aggregateRelayAcceptance(acceptances),
+      ...aggregateSignalProtocolRelayAcceptance(acceptances),
       ...(group && { groupId: intent.recipientId }),
     };
     const syncPending = intent.syncMessages.some((message) => {
@@ -3948,7 +3954,7 @@ export class SignalProtocolServiceCipher {
     stopSignal: AbortSignal | undefined,
     operation: () => Promise<T>
   ): Promise<T> {
-    if (!this.relay) throw new Error('Relay not configured - cannot resend');
+    if (!this.signalProtocolRelay) throw new Error('Relay not configured - cannot resend');
     const stored = await getOutgoingMessageIntent(this.storage, clientMessageId);
     if (!stored) throw new Error('No stored send has this clientMessageId');
     return acquireUntilStopped(
@@ -4110,7 +4116,7 @@ export class SignalProtocolServiceCipher {
     const evidence = this.manualResendEvidence(intent, resend);
     const destinations = manualResendDestinations(resend);
     let skippedRefusal = false;
-    let acceptances: RelayPostAcceptance[];
+    let acceptances: SignalProtocolRelayPostAcceptance[];
     try {
       const posted = await this.sendPhase(
         resend.messages.map((stored, index) => ({
@@ -4119,7 +4125,7 @@ export class SignalProtocolServiceCipher {
           stored,
           destination: destinations[index]!,
         })),
-        async ({ stored, destination }): Promise<RelayPostAcceptance | undefined> => {
+        async ({ stored, destination }): Promise<SignalProtocolRelayPostAcceptance | undefined> => {
           const { device, postMessageId } = destination;
           const key = outgoingDestinationProgressKey(postMessageId, device);
           if (provenRefused(resend.destinationProgress?.[key])) {
@@ -4391,7 +4397,7 @@ export class SignalProtocolServiceCipher {
     plaintextBytes: Uint8Array,
     sessions: SendSessionCallbacks | undefined
   ): Promise<StoredOutgoingMessageIntent> {
-    if (!intent.reconcilePending || !sessions || !this.relay) return intent;
+    if (!intent.reconcilePending || !sessions || !this.signalProtocolRelay) return intent;
     const list = await this.readRecipientDeviceList(
       intent.recipientId,
       sessions,
@@ -4461,7 +4467,7 @@ export class SignalProtocolServiceCipher {
     sessions: SendSessionCallbacks | undefined,
     stopSignal: AbortSignal | undefined
   ): Promise<StoredOutgoingMessageIntent> {
-    if (!this.relay) return intent;
+    if (!this.signalProtocolRelay) return intent;
     const listed = await this.readOwnDeviceList(sessions, stopSignal);
     const { unlisted, added } = listedOwnDeviceChange(
       intent.syncMessages,
@@ -4624,7 +4630,7 @@ export class SignalProtocolServiceCipher {
     intent: StoredOutgoingMessageIntent,
     message: StoredOutgoingDeviceMessage,
     control: DevicePostControl
-  ): Promise<RelayPostAcceptance> {
+  ): Promise<SignalProtocolRelayPostAcceptance> {
     if (
       intent.transportMode !== 'identified' &&
       (!message.sealedSenderMessage || !intent.sealedSenderAuth)
@@ -4670,7 +4676,7 @@ export class SignalProtocolServiceCipher {
     control: DevicePostControl,
     evidence: SendCallEvidence,
     refusal?: { error: unknown }
-  ): Promise<RelayPostAcceptance> {
+  ): Promise<SignalProtocolRelayPostAcceptance> {
     let rejection: unknown;
     if (refusal) {
       rejection = refusal.error;
@@ -4714,7 +4720,7 @@ export class SignalProtocolServiceCipher {
     posts?: DirectIntentPosts
   ): Promise<SendResult> {
     if (intent.kind !== 'direct') throw new Error('Expected a direct outbox intent');
-    if (!this.relay) {
+    if (!this.signalProtocolRelay) {
       const result = {
         clientMessageId: intent.clientMessageId,
         messageId: `local-${intent.clientTimestamp}`,
@@ -4725,15 +4731,15 @@ export class SignalProtocolServiceCipher {
       return { ...result, clientTimestamp: intent.clientTimestamp };
     }
 
-    const relay = this.relay;
+    const signalProtocolRelay = this.signalProtocolRelay;
     const control = this.postingControl(evidence, { ...(stopSignal && { stopSignal }) });
 
-    let results: RelayPostAcceptance[];
+    let results: SignalProtocolRelayPostAcceptance[];
     let skippedRefusal = false;
     try {
       const posted = await this.sendPhase(
         intent.deviceMessages,
-        async (msg): Promise<RelayPostAcceptance | undefined> => {
+        async (msg): Promise<SignalProtocolRelayPostAcceptance | undefined> => {
           const accepted = posts?.accepted.get(msg.recipientDeviceId);
           if (accepted) return accepted;
           const refusal = posts?.refused.get(msg.recipientDeviceId);
@@ -4778,7 +4784,7 @@ export class SignalProtocolServiceCipher {
         const destination = syncDestination(intent.clientMessageId, message);
         try {
           await evidence.postSync(destination, stop.check, (gate) =>
-            this.postSyncMessage(relay, message, control, syncRepair, gate)
+            this.postSyncMessage(signalProtocolRelay, message, control, syncRepair, gate)
           );
         } catch (error) {
           if (!stop.stopped()) throw error;
@@ -4794,7 +4800,7 @@ export class SignalProtocolServiceCipher {
       messageId: first?.messageId ?? `local-${intent.clientTimestamp}`,
       timestamp: first?.serverTimestamp ?? intent.clientTimestamp,
       recipientDeviceCount: intent.deviceMessages.length,
-      ...aggregateRelayAcceptance(results),
+      ...aggregateSignalProtocolRelayAcceptance(results),
     };
     await completeOutgoingMessageIntent(this.storage, intent.clientMessageId, result, {
       syncPending,
@@ -4805,7 +4811,7 @@ export class SignalProtocolServiceCipher {
 
   /** True when the relay compares declared device sets, so each send declares them. */
   private declaresDeviceSets(): boolean {
-    return this.relay !== undefined && this.relay !== null && comparesDeviceSets(this.relay);
+    return this.signalProtocolRelay !== undefined && this.signalProtocolRelay !== null && comparesDeviceSets(this.signalProtocolRelay);
   }
 
   /**
@@ -5138,7 +5144,7 @@ export class SignalProtocolServiceCipher {
         try {
           refreshed = await sessions.refreshStaleSession(userId, deviceId);
         } catch (error) {
-          rethrowRelayWorkStopped(error);
+          rethrowSignalProtocolRelayWorkStopped(error);
           this.logger.warn('Could not refresh the session of a stale device', {
             category: 'E2EE',
             error: error as Error,
@@ -5166,12 +5172,12 @@ export class SignalProtocolServiceCipher {
       const held = unremovedDeviceIds(record).filter((id) => !own(id));
       const handled = new Set(ready.map((device) => device.deviceId));
       const remainingIds = held.filter((id) => !handled.has(id));
-      const relay = this.relay;
+      const signalProtocolRelay = this.signalProtocolRelay;
       if (remainingIds.length > 0) {
         await establish(remainingIds, false);
-      } else if (relay && held.length === 0) {
+      } else if (signalProtocolRelay && held.length === 0) {
         const listed = await this.fanOut.request(
-          () => relay.getActiveDevices(userId),
+          () => signalProtocolRelay.getActiveDevices(userId),
           options.stopSignal
         );
         const deviceIds = listed
@@ -5188,7 +5194,7 @@ export class SignalProtocolServiceCipher {
    * Mark a send result whose relay accepted a declared post without the
    * `deviceSetChecked` mark. The send is delivered, and a second post could
    * deliver it twice, so the result does not change. The client reports the
-   * error once through `onRelayProtocolError`.
+   * error once through `onSignalProtocolRelayProtocolError`.
    */
   private markUncheckedDeclaredPosts<T extends object>(
     result: T,
@@ -5196,7 +5202,7 @@ export class SignalProtocolServiceCipher {
     clientMessageId: string
   ): T {
     const error = this.uncheckedDeclaredPostError(receipts, clientMessageId);
-    return error ? markRelayProtocolError(result, error) : result;
+    return error ? markSignalProtocolRelayProtocolError(result, error) : result;
   }
 
   /**
@@ -5206,7 +5212,7 @@ export class SignalProtocolServiceCipher {
   private uncheckedDeclaredPostError(
     receipts: readonly DeclaredPostReceipt[],
     clientMessageId: string | undefined
-  ): RelayProtocolError | undefined {
+  ): SignalProtocolRelayProtocolError | undefined {
     const error = uncheckedDeclaredPost(receipts, clientMessageId);
     if (error) {
       this.logger.warn('The Relay accepted a declared post without comparing its device set', {
@@ -5325,7 +5331,7 @@ export class SignalProtocolServiceCipher {
     const control = this.postingControl(evidence, { ...(stopSignal && { stopSignal }) });
     let sealedSender: ResolvedSealedSenderContext | null | undefined;
     let skippedRefusal = false;
-    const recipient = await this.runDeclaredPhase<RelayPostAcceptance | undefined>({
+    const recipient = await this.runDeclaredPhase<SignalProtocolRelayPostAcceptance | undefined>({
       phase: 'recipient',
       clientMessageId: intent.clientMessageId,
       intentId: intent.clientMessageId,
@@ -5373,7 +5379,7 @@ export class SignalProtocolServiceCipher {
       messageId: first?.messageId ?? `local-${intent.clientTimestamp}`,
       timestamp: first?.serverTimestamp ?? intent.clientTimestamp,
       recipientDeviceCount: recipient.messages.length,
-      ...aggregateRelayAcceptance(accepted),
+      ...aggregateSignalProtocolRelayAcceptance(accepted),
     };
 
     // The sync phase runs when a recipient receipt sets needsSync or the
@@ -5451,12 +5457,12 @@ export class SignalProtocolServiceCipher {
     beforeRequest?: () => Promise<void>,
     evidence?: SendCallEvidence
   ): Promise<DeclaredSyncOutcome> {
-    const relay = this.relay!;
+    const signalProtocolRelay = this.signalProtocolRelay!;
     const control: DevicePostControl = {
       ...(stopSignal && { stopSignal }),
       ...(beforeRequest && { beforeRequest }),
     };
-    const accepted: RelayPostAcceptance[] = [];
+    const accepted: SignalProtocolRelayPostAcceptance[] = [];
     try {
       await this.runDeclaredPhase<void>({
         phase: 'sync',
@@ -5468,14 +5474,14 @@ export class SignalProtocolServiceCipher {
         post: async (message, declaredDeviceIds) => {
           const copy: DevicePostControl = { ...control, declaredDeviceIds };
           if (!evidence) {
-            accepted.push(await this.postSyncCopy(relay, message, copy));
+            accepted.push(await this.postSyncCopy(signalProtocolRelay, message, copy));
             return;
           }
           const acceptance = await evidence.postSync(
             syncDestination(intent.clientMessageId, message),
             beforeRequest ?? (async () => {}),
             (gate) =>
-              this.postSyncCopy(relay, message, {
+              this.postSyncCopy(signalProtocolRelay, message, {
                 ...copy,
                 beforeRequest: gate(message.clientMessageId),
               })
@@ -5522,7 +5528,7 @@ export class SignalProtocolServiceCipher {
     timestamp: number,
     target?: SyncPayloadTarget
   ): Promise<GroupKeySyncDevice[]> {
-    const relay = this.relay!;
+    const signalProtocolRelay = this.signalProtocolRelay!;
     let ownDevices = await this.localOwnDevices();
     if (ownDevices.length === 0 && target?.readOwnListWithoutRecord) {
       await this.readOwnDeviceList(this.sessionCallbacks, target.stopSignal);
@@ -5540,7 +5546,7 @@ export class SignalProtocolServiceCipher {
     const operationId = await CryptoUtils.generateUuidV4();
     const prepare = (message: SesameMessage) =>
       this.prepareStoredSyncMessage(message, syncMessageId(operationId, message));
-    const accepted: RelayPostAcceptance[] = [];
+    const accepted: SignalProtocolRelayPostAcceptance[] = [];
     // The last accepted copy of each device.
     const delivered = new Map<number, StoredOutgoingDeviceMessage>();
     try {
@@ -5555,7 +5561,7 @@ export class SignalProtocolServiceCipher {
             declaredDeviceIds,
             ...(target?.stopSignal && { stopSignal: target.stopSignal }),
           };
-          accepted.push(await this.postSyncCopy(relay, message, control));
+          accepted.push(await this.postSyncCopy(signalProtocolRelay, message, control));
           delivered.set(message.recipientDeviceId, message);
           target?.accepted?.push(...acceptedSyncDevices([message]));
         },
@@ -5577,7 +5583,7 @@ export class SignalProtocolServiceCipher {
       // The payload is delivered to each accepted device, also when the
       // phase fails. The app knows no clientMessageId for the payload.
       const error = this.uncheckedDeclaredPostError(syncPostReceipts(accepted), undefined);
-      if (error) await this.relayProtocolErrorReporter?.(error);
+      if (error) await this.signalRelayProtocolErrorReporter?.(error);
     }
     return acceptedSyncDevices([...delivered.values()]);
   }
@@ -5615,7 +5621,7 @@ export class SignalProtocolServiceCipher {
         endRecipientPhase: (intent, error) =>
           this.endOrRethrow(intent, boundGroupEvidence(), error),
         storage: this.storage,
-        ...(this.relay && { relay: this.relay }),
+        ...(this.signalProtocolRelay && { signalProtocolRelay: this.signalProtocolRelay }),
         senderUserId: this.userId,
         senderDeviceId: this.deviceId,
         deliveryMode: this.sealedSenderDeliveryMode,
@@ -5650,7 +5656,7 @@ export class SignalProtocolServiceCipher {
             this.sealedSenderDeliveryMode === 'disabled' ||
             !this.sealedSenderProvider ||
             !this.endorsementManager ||
-            !this.relay?.sendMultiRecipientUnidentified
+            !this.signalProtocolRelay?.sendMultiRecipientUnidentified
           ) {
             return undefined;
           }
@@ -5676,7 +5682,7 @@ export class SignalProtocolServiceCipher {
         resolveOwnDevices: () =>
           declared ? this.localOwnDevices() : this.readOwnDeviceList(sessions, stopSignal),
         prepareSyncMessages: async (groupId, bytes, timestamp, clientMessageId, ownDevices) => {
-          if (!this.relay || ownDevices.length === 0) return [];
+          if (!this.signalProtocolRelay || ownDevices.length === 0) return [];
           const syncPayload = this.buildSentSyncTranscript(groupId, bytes, timestamp);
           const prepared = await this.sesameManager.sendToLocalOtherDevices(syncPayload, {
             clientTimestamp: timestamp,
@@ -5698,7 +5704,7 @@ export class SignalProtocolServiceCipher {
               stop.check,
               (gate) =>
                 this.postSyncMessage(
-                  this.relay!,
+                  this.signalProtocolRelay!,
                   message,
                   control,
                   { sessions: repair.sessions, intentId: intent.clientMessageId, rebuild },
@@ -5756,14 +5762,14 @@ export class SignalProtocolServiceCipher {
             throw firstItemError(error);
           }),
         sendPhase: (messages, task, phase) => this.sendPhase(messages, task, phase, stopSignal),
-        postToRelay: <T>(
+        postToSignalProtocolRelay: <T>(
           send: () => Promise<T>,
           sealed: boolean,
           destination?: SendDestination | readonly SendDestination[]
         ) =>
           destination === undefined
-            ? this.postToRelay(send, sealed, control)
-            : this.postGroupRelay(
+            ? this.postToSignalProtocolRelay(send, sealed, control)
+            : this.postGroupSignalProtocolRelay(
                 send,
                 sealed,
                 control,
@@ -5915,7 +5921,7 @@ export class SignalProtocolServiceCipher {
     );
     if (registrationId !== undefined) stored.recipientRegistrationId = registrationId;
     const sealedSender = await this.resolveSealedSenderContext(member.userId, groupId);
-    if (!sealedSender || !this.relay?.sendMultiRecipientUnidentified) return stored;
+    if (!sealedSender || !this.signalProtocolRelay?.sendMultiRecipientUnidentified) return stored;
     return this.sealStoredDeviceMessage(
       stored,
       sealedSender,
@@ -5990,7 +5996,7 @@ export class SignalProtocolServiceCipher {
       message.recipientUserId,
       groupId
     );
-    if (!sealedSender || !this.relay?.sendMultiRecipientUnidentified) {
+    if (!sealedSender || !this.signalProtocolRelay?.sendMultiRecipientUnidentified) {
       if (required) {
         throw new EncryptionError(
           'Required group sealed-sender authorization is unavailable',
@@ -6025,7 +6031,7 @@ export class SignalProtocolServiceCipher {
     { message, auth }: PreMessageTransport,
     required: boolean,
     control: DevicePostControl
-  ): Promise<RelayPostAcceptance> {
+  ): Promise<SignalProtocolRelayPostAcceptance> {
     if (auth?.type !== 'accessKey' || !message.sealedSenderMessage) {
       return this.postStoredPreMessage(intent, message, auth, required, control);
     }
@@ -6103,7 +6109,7 @@ export class SignalProtocolServiceCipher {
     auth: SealedSenderAuth | undefined,
     required: boolean,
     control: DevicePostControl
-  ): Promise<RelayPostAcceptance> {
+  ): Promise<SignalProtocolRelayPostAcceptance> {
     return this.sendToDevice(
       message,
       message.ciphertext,
@@ -6163,7 +6169,7 @@ export class SignalProtocolServiceCipher {
       return { message: transport.message, outcome: 'accepted' };
     } catch (error) {
       // The evidence did not accept this answer, so the post rejected.
-      if (relayHoldsMessageId(error)) {
+      if (signalRelayHoldsMessageId(error)) {
         return { message: transport.message, outcome: 'held' };
       }
       if (await this.isRemovedDeviceRefusal(error, transport.message, control)) {
@@ -6186,7 +6192,7 @@ export class SignalProtocolServiceCipher {
     try {
       await post(repaired.transport);
     } catch (error) {
-      if (relayHoldsMessageId(error)) {
+      if (signalRelayHoldsMessageId(error)) {
         return { message: repaired.transport.message, outcome: 'held', refreshed: true };
       }
       if (!(await this.isRemovedDeviceRefusal(error, repaired.transport.message, control))) {
@@ -6264,11 +6270,11 @@ export class SignalProtocolServiceCipher {
     message: StoredOutgoingDeviceMessage,
     control: DevicePostControl
   ): Promise<boolean> {
-    if (relayDeviceRefusal(error)?.code !== 'NOT_FOUND' || !isRefusalOfDevice(error, message)) {
+    if (signalRelayDeviceRefusal(error)?.code !== 'NOT_FOUND' || !isRefusalOfDevice(error, message)) {
       return false;
     }
     const listed = await this.fanOut.request(
-      () => this.relay!.getActiveDevices(message.recipientUserId),
+      () => this.signalProtocolRelay!.getActiveDevices(message.recipientUserId),
       control.stopSignal
     );
     if (listed.some(({ deviceId }) => deviceId === message.recipientDeviceId)) return false;
@@ -6532,7 +6538,7 @@ export class SignalProtocolServiceCipher {
     if (
       this.sealedSenderDeliveryMode === 'disabled' ||
       !this.sealedSenderProvider ||
-      !this.relay?.sendMultiRecipientUnidentified
+      !this.signalProtocolRelay?.sendMultiRecipientUnidentified
     ) {
       return;
     }
@@ -6616,7 +6622,7 @@ export class SignalProtocolServiceCipher {
       {
         storage: this.storage,
         deliveryMode: this.sealedSenderDeliveryMode,
-        relaySupportsUnidentified: Boolean(this.relay?.sendMultiRecipientUnidentified),
+        signalProtocolRelaySupportsUnidentified: Boolean(this.signalProtocolRelay?.sendMultiRecipientUnidentified),
         ...(this.sealedSenderProvider && {
           provider: this.sealedSenderProvider,
         }),
@@ -6759,7 +6765,7 @@ export class SignalProtocolServiceCipher {
       deliveryMode: 'preferred' | 'required';
     },
     control: DevicePostControl = {}
-  ): Promise<RelayPostAcceptance> {
+  ): Promise<SignalProtocolRelayPostAcceptance> {
     const effectiveClientMessageId = msg.clientMessageId ?? clientMessageId;
     // The transport gates a repeat by the ID that the posted envelope carries.
     // The devices of one intent share that ID, so only a repeat to this
@@ -6771,7 +6777,7 @@ export class SignalProtocolServiceCipher {
     const release =
       (beforeRequest || onRequest) && effectiveClientMessageId !== undefined
         ? admitRequestsFor(
-            this.relay!,
+            this.signalProtocolRelay!,
             effectiveClientMessageId,
             beforeRequest
               ? (repeat) => (ownRepeat(repeat) ? beforeRequest() : Promise.resolve())
@@ -6787,7 +6793,7 @@ export class SignalProtocolServiceCipher {
     let identifiedControl = control;
     let fallbackFrom: SealedSenderAuthError | undefined;
     try {
-      if (preparedSealedSender && !this.relay!.sendMultiRecipientUnidentified) {
+      if (preparedSealedSender && !this.signalProtocolRelay!.sendMultiRecipientUnidentified) {
         if (preparedSealedSender.deliveryMode === 'required') {
           throw new EncryptionError(
             'Required sealed-sender relay capability is unavailable',
@@ -6800,7 +6806,7 @@ export class SignalProtocolServiceCipher {
       // Sealed sender path: use the V2 upload format for one recipient. V2 has
       // no two-recipient minimum; its recipient-count field permits this exact
       // direct-delivery shape.
-      if ((sealedSender || preparedSealedSender) && this.relay!.sendMultiRecipientUnidentified) {
+      if ((sealedSender || preparedSealedSender) && this.signalProtocolRelay!.sendMultiRecipientUnidentified) {
         // The sealed body names the registration of its device, as the
         // identified post does.
         const prepared =
@@ -6842,10 +6848,10 @@ export class SignalProtocolServiceCipher {
         };
         const declaredDeviceIds = control.declaredDeviceIds;
         try {
-          const result = await this.postToRelay(
+          const result = await this.postToSignalProtocolRelay(
             () =>
               declaredDeviceIds
-                ? this.relay!.sendMultiRecipientUnidentified!(
+                ? this.signalProtocolRelay!.sendMultiRecipientUnidentified!(
                     prepared.sentMessageBase64,
                     sealedAuth,
                     msg.timestamp,
@@ -6856,7 +6862,7 @@ export class SignalProtocolServiceCipher {
                     undefined,
                     [{ userId: msg.recipientUserId, deviceIds: declaredDeviceIds }]
                   )
-                : this.relay!.sendMultiRecipientUnidentified!(
+                : this.signalProtocolRelay!.sendMultiRecipientUnidentified!(
                     prepared.sentMessageBase64,
                     sealedAuth,
                     msg.timestamp,
@@ -6898,7 +6904,7 @@ export class SignalProtocolServiceCipher {
                 refusal.deviceId === msg.recipientDeviceId
             )
           ) {
-            throw markRelayDeviceRefusal(new Error('Recipient device registration changed'), {
+            throw markSignalProtocolRelayDeviceRefusal(new Error('Recipient device registration changed'), {
               code: 'STALE_DEVICE',
               userId: msg.recipientUserId,
               deviceId: msg.recipientDeviceId,
@@ -6924,9 +6930,9 @@ export class SignalProtocolServiceCipher {
 
       // Identified sender path: standard relay send
       try {
-        return await this.postToRelay(
+        return await this.postToSignalProtocolRelay(
           () =>
-            this.relay!.send({
+            this.signalProtocolRelay!.send({
               targetUserId: msg.recipientUserId,
               targetDeviceId: msg.recipientDeviceId,
               senderUserId: this.userId,
@@ -6987,7 +6993,7 @@ export class SignalProtocolServiceCipher {
     const deviceResults = await this.fanOut
       .all(
         options.groupMemberUserIds,
-        (userId) => this.fanOut.request(() => this.relay!.getActiveDevices(userId), stopSignal),
+        (userId) => this.fanOut.request(() => this.signalProtocolRelay!.getActiveDevices(userId), stopSignal),
         stopSignal
       )
       .catch((error: unknown) => {
@@ -7051,7 +7057,7 @@ export class SignalProtocolServiceCipher {
       encrypted = await this.encryptWithCurrentDistribution(actualGroupId, plaintextBytes);
     }
     const { distribution, ciphertext } = encrypted;
-    if (!this.relay) return { ciphertext, preMessages: [] };
+    if (!this.signalProtocolRelay) return { ciphertext, preMessages: [] };
 
     // The distribution is at the chain index of this message, so a device
     // that installs it decrypts this message. The bytes hold the chain key:
@@ -7168,7 +7174,7 @@ export class SignalProtocolServiceCipher {
             otherMembers.filter((member) => member.userId === recipientUserId),
             sessions
           );
-          return this.relay?.sendMultiRecipientUnidentified
+          return this.signalProtocolRelay?.sendMultiRecipientUnidentified
             ? this.resolveDistributionSealedSender(recipientUserId, groupId)
             : this.useIdentifiedDeliveryOrThrow(
                 recipientUserId,
@@ -7383,7 +7389,7 @@ export class SignalProtocolServiceCipher {
     sessions: SendSessionCallbacks | undefined,
     stopSignal: AbortSignal | undefined
   ): Promise<SendResult> {
-    if (!this.relay) {
+    if (!this.signalProtocolRelay) {
       throw new EncryptionError(
         'Relay server not configured. Cannot send attachments without server connection.',
         EncryptionErrorCode.INITIALIZATION_FAILED

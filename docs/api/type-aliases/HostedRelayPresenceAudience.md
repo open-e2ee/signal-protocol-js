@@ -4,8 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / HostedRelayPresenceAudience
 
-# Type Alias: HostedRelayPresenceAudience
+# ~~Type Alias: HostedRelayPresenceAudience~~
 
-> **HostedRelayPresenceAudience** = `"contacts"` \| `"project"`
+> **HostedRelayPresenceAudience** = [`HostedSignalProtocolRelayPresenceAudience`](HostedSignalProtocolRelayPresenceAudience.md)
 
-Who can read an account's presence.
+## Deprecated
+
+Use `HostedSignalProtocolRelayPresenceAudience`. SDK 15.0.0 removes this name.

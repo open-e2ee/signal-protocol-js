@@ -4,18 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / HostedRelayIdentityProgressCallback
 
-# Type Alias: HostedRelayIdentityProgressCallback
+# ~~Type Alias: HostedRelayIdentityProgressCallback~~
 
-> **HostedRelayIdentityProgressCallback** = (`progress`) => `void`
+> **HostedRelayIdentityProgressCallback** = [`HostedSignalProtocolRelayIdentityProgressCallback`](HostedSignalProtocolRelayIdentityProgressCallback.md)
 
-Receives typed progress without receiving assertions or private key material.
+## Deprecated
 
-## Parameters
-
-### progress
-
-[`HostedRelayIdentityProgress`](HostedRelayIdentityProgress.md)
-
-## Returns
-
-`void`
+Use `HostedSignalProtocolRelayIdentityProgressCallback`. SDK 15.0.0 removes this name.

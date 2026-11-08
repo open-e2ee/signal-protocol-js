@@ -66,7 +66,7 @@ import { ProtocolAddress } from '../types/address';
 import type { SignalProtocolLocalStore } from '../types/api';
 import { asBase64 } from '../types/utils';
 import type { SendOutcomeEvent } from './event-hooks';
-import { rethrowRelayWorkStopped, type RelayWork, type RelayWorkTracker } from './relay-work';
+import { rethrowSignalProtocolRelayWorkStopped, type SignalProtocolRelayWork, type SignalProtocolRelayWorkTracker } from './signal-relay-work';
 import {
   manualResendOutcomeEvent,
   sendOutcomeEvent,
@@ -132,10 +132,10 @@ export class SendIntentDriver {
   private readonly contentRequired = new Set<string>();
 
   constructor(
-    private readonly relayWork: RelayWorkTracker,
+    private readonly signalRelayWork: SignalProtocolRelayWorkTracker,
     private readonly storage: SendIntentStore,
     private readonly logger: Required<Logger>,
-    private readonly pass: (work: RelayWork) => SendIntentPass
+    private readonly pass: (work: SignalProtocolRelayWork) => SendIntentPass
   ) {}
 
   /**
@@ -199,7 +199,7 @@ export class SendIntentDriver {
           this.again = false;
           if (this.stopped) return;
           // A pass logs its own failures. RelayWorkStopped ends the run.
-          await this.relayWork.run((work) => this.runPass(work)).catch(() => undefined);
+          await this.signalRelayWork.run((work) => this.runPass(work)).catch(() => undefined);
         } while (this.again);
       } finally {
         // Cleared on the tick of the last check of `again`, so a trigger
@@ -212,14 +212,14 @@ export class SendIntentDriver {
     return running;
   }
 
-  private async runPass(work: RelayWork): Promise<void> {
+  private async runPass(work: SignalProtocolRelayWork): Promise<void> {
     const pass = this.pass(work);
     const { logger } = this;
     let intents: StoredOutgoingMessageIntent[] | undefined;
     try {
       intents = await listOpenOutgoingIntents(this.storage);
     } catch (error) {
-      rethrowRelayWorkStopped(error);
+      rethrowSignalProtocolRelayWorkStopped(error);
       logger.warn('The send driver failed to list the open sends', {
         category: 'E2EE',
         data: { behavior: 'SEND_DRIVER_RETRY', error: (error as Error).message },
@@ -236,7 +236,7 @@ export class SendIntentDriver {
           next = deadlineAt;
         }
       } catch (error) {
-        rethrowRelayWorkStopped(error);
+        rethrowSignalProtocolRelayWorkStopped(error);
         logger.warn('A send of the send driver failed and stays open', {
           category: 'E2EE',
           data: {
@@ -293,7 +293,7 @@ export class SendIntentDriver {
     try {
       await pass.replay(intent, content, report);
     } catch (error) {
-      rethrowRelayWorkStopped(error);
+      rethrowSignalProtocolRelayWorkStopped(error);
       // An end of the replay throws its error. The end is reported below.
       if (!report.ended) throw error;
     }
@@ -323,7 +323,7 @@ export class SendIntentDriver {
     try {
       await pass.resend(intent.clientMessageId, report);
     } catch (error) {
-      rethrowRelayWorkStopped(error);
+      rethrowSignalProtocolRelayWorkStopped(error);
       // An end of the resend throws its error. The end is reported below.
       if (!report.ended) throw error;
     }

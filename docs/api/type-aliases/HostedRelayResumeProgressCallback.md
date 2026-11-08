@@ -4,16 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / HostedRelayResumeProgressCallback
 
-# Type Alias: HostedRelayResumeProgressCallback
+# ~~Type Alias: HostedRelayResumeProgressCallback~~
 
-> **HostedRelayResumeProgressCallback** = (`progress`) => `void`
+> **HostedRelayResumeProgressCallback** = [`HostedSignalProtocolRelayResumeProgressCallback`](HostedSignalProtocolRelayResumeProgressCallback.md)
 
-## Parameters
+## Deprecated
 
-### progress
-
-[`HostedRelayResumeProgress`](../interfaces/HostedRelayResumeProgress.md)
-
-## Returns
-
-`void`
+Use `HostedSignalProtocolRelayResumeProgressCallback`. SDK 15.0.0 removes this name.

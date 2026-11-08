@@ -1,4 +1,4 @@
-import type { Envelope } from '../../remote/relay/types';
+import type { Envelope } from '../../remote/signal-relay/types';
 import type { SignalProtocolLocalStore } from '../../types';
 import type { ContentHint } from '../../types/messages';
 import { InvalidSendTimestampError } from '../../types/errors';
@@ -1975,8 +1975,20 @@ export async function recordReceivedTimestamp(
   await serializeMutation(store, () => writeReceivedTimestamp(store, key, now));
 }
 
-/** A source that tells that a recipient device has a message. */
-export type StoredDeliverySource = 'relay' | 'e2ee';
+/**
+ * A source that tells that a recipient device has a message. `signal-relay`
+ * is the same source as `relay`. A later release writes `signal-relay`. This
+ * release writes `relay` and reads both values.
+ */
+export type StoredDeliverySource = 'relay' | 'signal-relay' | 'e2ee';
+
+/** A source that this release writes. */
+export type WrittenDeliverySource = Exclude<StoredDeliverySource, 'signal-relay'>;
+
+/** The source that this release reports for a stored source: `signal-relay` reads as `relay`. */
+export function reportedDeliverySource(source: StoredDeliverySource): WrittenDeliverySource {
+  return source === 'signal-relay' ? 'relay' : source;
+}
 
 /** The delivery of one message to one recipient device. */
 export interface StoredDeviceDelivery {

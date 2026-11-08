@@ -7,7 +7,7 @@ import type {
   GroupMemberDevice,
   SignalProtocolRelayServer,
   SealedSenderAuth,
-} from '../remote/relay/types';
+} from '../remote/signal-relay/types';
 import {
   completeOutgoingMessageIntent,
   completeOutgoingSyncPhase,
@@ -28,7 +28,7 @@ import {
   type StoredOutgoingDeviceMessage,
   type StoredOutgoingMessageIntent,
 } from '../local/store/reliability';
-import { deviceSetRefusal, markDeviceSetRefusal } from '../remote/relay/device-set';
+import { deviceSetRefusal, markDeviceSetRefusal } from '../remote/signal-relay/device-set';
 import {
   runDeviceSetPhase,
   type DeviceSetAccountRepair,
@@ -36,12 +36,12 @@ import {
   type DeviceSetPost,
   type DeviceSetReconciliationError,
   type DeviceSetUnresolved,
-  type RelayProtocolRoute,
+  type SignalProtocolRelayProtocolRoute,
   syncPostReceipts,
   type DeclaredPostReceipt,
   type DeclaredSyncOutcome,
 } from './device-set-reconciliation';
-import { isStaleDeviceRefusal } from './relay-device-refusal';
+import { isStaleDeviceRefusal } from './signal-relay-device-refusal';
 import {
   releaseNewSendTimestamp,
   reserveNewSendTimestamp,
@@ -56,11 +56,11 @@ import {
   sharedBodyDevices,
 } from './group-device-set';
 import {
-  aggregateRelayAcceptance,
+  aggregateSignalProtocolRelayAcceptance,
   isConflictAcceptance,
   sendResultAcceptance,
-  type RelayPostAcceptance,
-} from './relay-acceptance';
+  type SignalProtocolRelayPostAcceptance,
+} from './signal-relay-acceptance';
 import {
   SEND_END_REPORT,
   sendDestinations,
@@ -180,7 +180,7 @@ export type SyncCopyRebuild = StoredOutgoingDeviceMessage | undefined | 'no-tran
  */
 export interface GroupOutboxContext {
   storage: SignalProtocolLocalStore;
-  relay?: SignalProtocolRelayServer;
+  signalProtocolRelay?: SignalProtocolRelayServer;
   senderUserId: string;
   senderDeviceId: number;
   deliveryMode: 'preferred' | 'required' | 'disabled';
@@ -368,7 +368,7 @@ export interface GroupOutboxContext {
     message: StoredOutgoingDeviceMessage,
     auth: SealedSenderAuth,
     declaredDeviceIds?: readonly number[]
-  ): Promise<RelayPostAcceptance>;
+  ): Promise<SignalProtocolRelayPostAcceptance>;
   /**
    * Run local work for each item at the same time. It rejects after every
    * item settles, with the error of the first failed item in input order. A
@@ -391,13 +391,13 @@ export interface GroupOutboxContext {
    * answer of the device. With a list, the post is a shared body, and its one
    * answer is recorded on each destination of the list.
    */
-  postToRelay<T>(send: () => Promise<T>, sealed: boolean): Promise<T>;
-  postToRelay<T extends RelayPostAcceptance>(
+  postToSignalProtocolRelay<T>(send: () => Promise<T>, sealed: boolean): Promise<T>;
+  postToSignalProtocolRelay<T extends SignalProtocolRelayPostAcceptance>(
     send: () => Promise<T>,
     sealed: boolean,
     destination: SendDestination
-  ): Promise<RelayPostAcceptance>;
-  postToRelay<T extends RelayPostAcceptance & { uuids404: string[] }>(
+  ): Promise<SignalProtocolRelayPostAcceptance>;
+  postToSignalProtocolRelay<T extends SignalProtocolRelayPostAcceptance & { uuids404: string[] }>(
     send: () => Promise<T>,
     sealed: boolean,
     destinations: readonly SendDestination[]
@@ -416,7 +416,7 @@ export interface GroupOutboxContext {
  */
 interface DevicePostDeclaration {
   deviceIds: readonly number[];
-  routes: Map<RelayPostAcceptance, RelayProtocolRoute>;
+  routes: Map<SignalProtocolRelayPostAcceptance, SignalProtocolRelayProtocolRoute>;
 }
 
 /**
@@ -432,10 +432,10 @@ async function sendStoredDeviceMessage(
   message: StoredOutgoingDeviceMessage,
   forceIdentified = false,
   declaration?: DevicePostDeclaration
-): Promise<RelayPostAcceptance> {
-  const relay = context.relay;
-  if (!relay) throw new Error('Relay is required for a stored group transmission');
-  if (message.sealedSenderMessage && !relay.sendMultiRecipientUnidentified) {
+): Promise<SignalProtocolRelayPostAcceptance> {
+  const signalProtocolRelay = context.signalProtocolRelay;
+  if (!signalProtocolRelay) throw new Error('Relay is required for a stored group transmission');
+  if (message.sealedSenderMessage && !signalProtocolRelay.sendMultiRecipientUnidentified) {
     if (message.sealedSenderDeliveryMode === 'required') {
       throw new EncryptionError(
         'Required group sealed-sender transport is unavailable',
@@ -446,9 +446,9 @@ async function sendStoredDeviceMessage(
     return sendStoredDeviceMessage(context, intent, message, true, declaration);
   }
   if (forceIdentified || !message.sealedSenderMessage) {
-    const acceptance = await context.postToRelay(
+    const acceptance = await context.postToSignalProtocolRelay(
       () =>
-        relay.send({
+        signalProtocolRelay.send({
           targetUserId: message.recipientUserId,
           targetDeviceId: message.recipientDeviceId,
           senderUserId: context.senderUserId,
@@ -521,7 +521,7 @@ async function sendGroupDeviceMessage(
   forceIdentified: boolean,
   required: boolean,
   refused = false
-): Promise<RelayPostAcceptance | undefined> {
+): Promise<SignalProtocolRelayPostAcceptance | undefined> {
   if (!refused || message.messageType !== 'sender_key') {
     try {
       return await sendStoredDeviceMessage(context, intent, message, forceIdentified);
@@ -793,8 +793,8 @@ async function sendStoredGroupIntent(
   if (intent.kind !== 'group') throw new Error('Expected a group outbox intent');
   const groupCiphertext = intent.groupCiphertext;
   if (!groupCiphertext) throw new Error('Corrupt group outbox intent');
-  const relay = context.relay;
-  if (!relay) {
+  const signalProtocolRelay = context.signalProtocolRelay;
+  if (!signalProtocolRelay) {
     const localResult = {
       clientMessageId: intent.clientMessageId,
       messageId: `local-${intent.clientTimestamp}`,
@@ -814,7 +814,7 @@ async function sendStoredGroupIntent(
   let refusedDestinationCount: number | undefined;
   let sharedRefusals: readonly { userId: string; deviceId: number; code: string }[] = [];
   // The relay's answer to each post of the group message, for the send's acceptance.
-  const acceptances: RelayPostAcceptance[] = [];
+  const acceptances: SignalProtocolRelayPostAcceptance[] = [];
 
   // The privacy policy of the pre-messages is checked before any post. A
   // required send posts no pre-message that names the sender, and a send
@@ -855,7 +855,7 @@ async function sendStoredGroupIntent(
 
     if (
       intent.groupSharedMessage?.deliveryMode === 'required' &&
-      !relay.sendMultiRecipientUnidentified
+      !signalProtocolRelay.sendMultiRecipientUnidentified
     ) {
       throw new EncryptionError(
         'Required group sealed-sender transport is unavailable',
@@ -864,7 +864,7 @@ async function sendStoredGroupIntent(
       );
     }
 
-    if (intent.groupSharedMessage && relay.sendMultiRecipientUnidentified) {
+    if (intent.groupSharedMessage && signalProtocolRelay.sendMultiRecipientUnidentified) {
       const auth = await context.resolveGroupAuthorization(
         intent.groupSharedMessage.groupId,
         intent.groupSharedMessage.recipientUserIds
@@ -876,9 +876,9 @@ async function sendStoredGroupIntent(
       } else {
         const shared = intent.groupSharedMessage;
         try {
-          const result = await context.postToRelay(
+          const result = await context.postToSignalProtocolRelay(
             () =>
-              relay.sendMultiRecipientUnidentified!(
+              signalProtocolRelay.sendMultiRecipientUnidentified!(
                 shared.sentMessageBase64,
                 auth,
                 intent.clientTimestamp,
@@ -1058,7 +1058,7 @@ async function sendStoredGroupIntent(
     messageId,
     timestamp,
     recipientDeviceCount: intent.groupRecipientDeviceCount ?? intent.deviceMessages.length,
-    ...aggregateRelayAcceptance(acceptances),
+    ...aggregateSignalProtocolRelayAcceptance(acceptances),
     ...(refusedDestinationCount !== undefined && { refusedDestinationCount }),
     groupId: intent.recipientId,
   };
@@ -1177,8 +1177,8 @@ async function sendDeclaredGroupIntent(
   if (intent.kind !== 'group') throw new Error('Expected a group outbox intent');
   const groupCiphertext = intent.groupCiphertext;
   if (!groupCiphertext) throw new Error('Corrupt group outbox intent');
-  const relay = context.relay;
-  if (!relay) throw new Error('Relay is required for a declared group send');
+  const signalProtocolRelay = context.signalProtocolRelay;
+  if (!signalProtocolRelay) throw new Error('Relay is required for a declared group send');
   const clientMessageId = intent.clientMessageId;
   const groupId = intent.recipientId;
 
@@ -1191,7 +1191,7 @@ async function sendDeclaredGroupIntent(
   let forceIdentified = false;
   // The route of each declared acceptance of the last pass. A pass that
   // reuses the body receipt records its route again.
-  const routes = new Map<RelayPostAcceptance, RelayProtocolRoute>();
+  const routes = new Map<SignalProtocolRelayPostAcceptance, SignalProtocolRelayProtocolRoute>();
   // The registration that each post of the last pass named, for the repair.
   let posted = new Map<string, number | undefined>();
   // The listed devices with no prekey bundle at the last repair. The intent
@@ -1201,7 +1201,7 @@ async function sendDeclaredGroupIntent(
   let unpostedAccounts = new Set<string>();
   const bodyOpen = () => Boolean(intent.groupSharedMessage && !sharedReceipt && !forceIdentified);
 
-  const pass = async (): Promise<DeviceSetPost<RelayPostAcceptance>[]> => {
+  const pass = async (): Promise<DeviceSetPost<SignalProtocolRelayPostAcceptance>[]> => {
     routes.clear();
     posted = new Map();
     const required = requiresSealedSender(context, intent);
@@ -1261,20 +1261,20 @@ async function sendDeclaredGroupIntent(
       }
     }
 
-    const posts: DeviceSetPost<RelayPostAcceptance>[] = [];
+    const posts: DeviceSetPost<SignalProtocolRelayPostAcceptance>[] = [];
     let bodyDevices = new Map<string, number>();
     const body = intent.groupSharedMessage;
-    if (body?.deliveryMode === 'required' && !relay.sendMultiRecipientUnidentified) {
+    if (body?.deliveryMode === 'required' && !signalProtocolRelay.sendMultiRecipientUnidentified) {
       throw new EncryptionError(
         'Required group sealed-sender transport is unavailable',
         EncryptionErrorCode.SEALED_SENDER_REQUIRED,
         { groupId }
       );
     }
-    if (body && !relay.sendMultiRecipientUnidentified) forceIdentified = true;
+    if (body && !signalProtocolRelay.sendMultiRecipientUnidentified) forceIdentified = true;
     if (body && !forceIdentified) {
       bodyDevices = sharedBodyDevices(body);
-      const bodyPosts = (outcome: DeviceSetPost<RelayPostAcceptance>['outcome']) => {
+      const bodyPosts = (outcome: DeviceSetPost<SignalProtocolRelayPostAcceptance>['outcome']) => {
         for (const key of bodyDevices.keys()) {
           const [userId, deviceId] = key.split('\u0000') as [string, string];
           posts.push({ device: { userId, deviceId: Number(deviceId) }, outcome });
@@ -1303,9 +1303,9 @@ async function sendDeclaredGroupIntent(
             deviceIds: deviceIds.sort((a, b) => a - b),
           }));
           try {
-            const receipt = await context.postToRelay(
+            const receipt = await context.postToSignalProtocolRelay(
               () =>
-                relay.sendMultiRecipientUnidentified!(
+                signalProtocolRelay.sendMultiRecipientUnidentified!(
                   body.sentMessageBase64,
                   auth,
                   intent.clientTimestamp,
@@ -1356,7 +1356,7 @@ async function sendDeclaredGroupIntent(
     posts.push(
       ...(await context.sendPhase(
         devicePosts,
-        async (message): Promise<DeviceSetPost<RelayPostAcceptance>> => {
+        async (message): Promise<DeviceSetPost<SignalProtocolRelayPostAcceptance>> => {
           const device = messageDevice(message);
           try {
             const value = await sendStoredDeviceMessage(context, posting, message, forceIdentified, {
@@ -1470,9 +1470,9 @@ async function sendDeclaredGroupIntent(
   // The recipient phase ends here when it fails at or after the posting
   // deadline with an open destination, or when every open destination got
   // OPERATION_EXPIRED. Before that, the error is thrown with the deadline.
-  let posts: readonly DeviceSetPost<RelayPostAcceptance>[];
+  let posts: readonly DeviceSetPost<SignalProtocolRelayPostAcceptance>[];
   try {
-    posts = await runDeviceSetPhase<RelayPostAcceptance>({
+    posts = await runDeviceSetPhase<SignalProtocolRelayPostAcceptance>({
       phase: 'recipient',
       clientMessageId,
       restarts: intent.deviceSetRestarts?.recipient ?? 0,
@@ -1499,7 +1499,7 @@ async function sendDeclaredGroupIntent(
     messageId: first?.messageId ?? `group-${groupId}-${String(intent.clientTimestamp)}`,
     timestamp: first?.serverTimestamp ?? intent.clientTimestamp,
     recipientDeviceCount: intent.groupRecipientDeviceCount ?? intent.deviceMessages.length,
-    ...aggregateRelayAcceptance(accepted),
+    ...aggregateSignalProtocolRelayAcceptance(accepted),
     ...(sharedReceipt?.refusedDestinationCount !== undefined && {
       refusedDestinationCount: sharedReceipt.refusedDestinationCount,
     }),
@@ -1698,7 +1698,7 @@ async function rereadStoredGroupDevices(
   intent: StoredOutgoingMessageIntent,
   transcript: SentTranscript
 ): Promise<StoredOutgoingMessageIntent> {
-  if (!context.relay) return intent;
+  if (!context.signalProtocolRelay) return intent;
   const members = await rereadMemberDevices(context, intent);
   const own = await rereadOwnDevices(context, intent, transcript);
   if (!members && !own) return intent;
@@ -1962,7 +1962,7 @@ export async function sendGroupWithExactOutbox(
       context.bindEvidence(existing);
       // One transcript read serves every site of the replay.
       const transcript = sentTranscript(context, existing, plaintextBytes);
-      if (context.deviceSets && context.relay) {
+      if (context.deviceSets && context.signalProtocolRelay) {
         return replayDeclaredGroupIntent(context, context.deviceSets, existing, transcript);
       }
       // An undeclared intent completes with syncPending only when the posting
@@ -2007,7 +2007,7 @@ export async function sendGroupWithExactOutbox(
     }
     context.bindEvidence(intent);
     const transcript = sentTranscript(context, intent, plaintextBytes);
-    if (context.deviceSets && context.relay) {
+    if (context.deviceSets && context.signalProtocolRelay) {
       return sendDeclaredGroupIntent(context, context.deviceSets, intent, transcript);
     }
     return sendStoredGroupIntent(context, intent, transcript);
@@ -2040,7 +2040,7 @@ async function storeNewGroupIntent(
     readMembers
   );
   const encryptedMessageBase64 = preparedPayload.ciphertext;
-  const members = context.relay ? await readMembers() : [];
+  const members = context.signalProtocolRelay ? await readMembers() : [];
   const otherMembers = members.filter((member) => member.userId !== context.senderUserId);
   const groupSharedMessage = await context.prepareSharedMessage(
     groupId,
@@ -2057,7 +2057,7 @@ async function storeNewGroupIntent(
       options.contentHint
     )
   );
-  const syncMessages = context.relay
+  const syncMessages = context.signalProtocolRelay
     ? await context.prepareSyncMessages(
         groupId,
         contentBytes,

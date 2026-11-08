@@ -34,10 +34,12 @@ const signal = await createSignalProtocolClient({
 the environment connection URL to your application configuration.
 `getIdentityAssertion` returns a short-lived signed assertion. The hosted
 factory uses it for device registration and authentication. In a Sandbox
-environment, `hostedRelaySandboxIdentity(storage)` supplies it. In a production
-project in device-owned mode, `hostedRelayDeviceOwnedIdentity(storage)`
+environment, `hostedSignalProtocolRelaySandboxIdentity(storage)` supplies it. In a production
+project in device-owned mode, `hostedSignalProtocolRelayDeviceOwnedIdentity(storage)`
 supplies it. In a production project in application-bound mode, it returns an
-assertion for the signed-in user from your backend.
+assertion for the signed-in user from your backend. With a
+[native Clerk or Firebase profile](./RECIPES.md#native-provider-profiles), it
+returns the provider token instead.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
@@ -51,7 +53,7 @@ const signal = await createHostedSignalProtocolClient({
   },
   hosted: {
     // The environment-scoped connection URL from the OpenE2EE console.
-    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    signalProtocolRelayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
     // Returns a short-lived signed assertion for the signed-in user.
     getIdentityAssertion,
   },
@@ -70,7 +72,7 @@ const signal = await createSignalProtocolClient({
   identity: { userId },
   adapters: {
     storage,
-    relay,
+    signalProtocolRelay,
     // Brokered remote storage of encrypted byte objects.
     remoteObjectStore: convexR2ObjectStore({
       convex,
@@ -112,9 +114,9 @@ developer-facing protocol config:
 import { DefaultSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 
 const signal = await DefaultSignalProtocolClient.create(userId, {
-  // Low-level creation uses the same storage/relay/protocol concepts.
+  // Low-level creation uses the same storage, Relay, and protocol concepts.
   storage,
-  relay,
+  signalProtocolRelay,
   protocol: { postQuantum: "required", braid: "required" },
 });
 ```
@@ -147,7 +149,7 @@ store-by-store wiring exercise:
   `createExpoDeviceStorage({ database, files })`
 - a message-first receive path shaped like
   `signal.messages.subscribe({ conversationId }, handler)` in place of hook
-  registration plus manual `startRelaySubscription()`
+  registration plus manual `startSignalProtocolRelaySubscription()`
 
 Low-level hooks would remain for advanced integrations. When this lands it will
 be a breaking change and this guide will lead with it. Until then, wire the

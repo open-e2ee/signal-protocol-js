@@ -68,11 +68,13 @@ The devices that the Relay refused, when the send ended at its deadline.
 
 ***
 
-### relayRetryable?
+### ~~relayRetryable?~~
 
 > `readonly` `optional` **relayRetryable?**: `boolean`
 
-The Relay's own `retryable` hint, when the SDK set `retryable`.
+#### Deprecated
+
+Use `signalProtocolRelayRetryable`. SDK 15.0.0 removes this name.
 
 ***
 
@@ -83,3 +85,11 @@ The Relay's own `retryable` hint, when the SDK set `retryable`.
 True on a send error before `deadlineAt` that leaves a device open: a
 replay with the same `clientMessageId` can post it. False when the send
 ended at its deadline. Absent on an error that keeps its own retry rule.
+
+***
+
+### signalProtocolRelayRetryable?
+
+> `readonly` `optional` **signalProtocolRelayRetryable?**: `boolean`
+
+The Relay's own `retryable` hint, when the SDK set `retryable`.

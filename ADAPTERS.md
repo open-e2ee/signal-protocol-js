@@ -143,7 +143,7 @@ const signal = await createHostedSignalProtocolClient({
   },
   hosted: {
     // The environment-scoped connection URL from the OpenE2EE console.
-    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    signalProtocolRelayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
     // Returns a short-lived signed assertion for the signed-in user.
     getIdentityAssertion,
   },
@@ -158,8 +158,8 @@ database and SQLCipher bootstrap.
 `oe new` writes a Sandbox connection URL to `.env.local`. Use it with the
 hosted client. The device-local storage contracts are the same in Sandbox. A
 Sandbox environment uses device-owned identity:
-`hostedRelaySandboxIdentity(storage)` supplies `hosted.getIdentityAssertion`.
-See the [client guide](./client/README.md#with-relay).
+`hostedSignalProtocolRelaySandboxIdentity(storage)` supplies `hosted.getIdentityAssertion`.
+See the [client guide](./client/README.md#with-the-signal-protocol-relay).
 
 ## Security Expectations
 
@@ -199,7 +199,7 @@ Use the public interfaces:
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
 import { createSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
-import type { SignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/relay";
+import type { SignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/signal-relay";
 import type { SignalProtocolRemoteObjectStore } from "@open-e2ee/signal-protocol-sdk/remote/object-store";
 import type { SignalProtocolLocalStore } from "@open-e2ee/signal-protocol-sdk/local/store";
 ```
@@ -212,7 +212,7 @@ const signal = await createSignalProtocolClient({
   identity: { userId },
   adapters: {
     storage: customStorage,
-    relay: customRelay,
+    signalProtocolRelay: customSignalRelay,
     remoteObjectStore: customObjectStorage,
   },
 });

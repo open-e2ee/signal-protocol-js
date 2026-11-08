@@ -1,7 +1,7 @@
 import { newGroupReceiveRecord } from "../internal/groups/receive-record";
 import type { GroupStateStore } from "../internal/groups/manager";
 import type { SignalProtocolLocalStore } from "../types";
-import { HostedRelayHttpError } from "./hosted-http-error";
+import { HostedSignalProtocolRelayHttpError } from "./hosted-http-error";
 
 /**
  * The state of a managed device link in the linked store.
@@ -62,7 +62,7 @@ const PHASES: readonly HostedDeviceLinkPhase[] = [
  * Use a new, empty store for the linked device. The SDK does not retry the
  * link.
  */
-export class HostedRelayDeviceLinkError extends Error {
+export class HostedSignalProtocolRelayDeviceLinkError extends Error {
   public readonly code = "DEVICE_LINK_STORE_NOT_EMPTY";
   /** Always false: the same store is refused again. */
   public readonly retryable = false;
@@ -150,7 +150,7 @@ export async function deleteHostedDeviceLinkMarker(
  */
 export function isHostedDeviceLinkRefusal(error: unknown): boolean {
   return (
-    error instanceof HostedRelayHttpError &&
+    error instanceof HostedSignalProtocolRelayHttpError &&
     !error.retryable &&
     (error.code === "KEY_PROOF_INVALID" || error.code === "CONFLICT")
   );
@@ -170,7 +170,7 @@ export async function refuseLinkedGroupState(
   const intent = new Set(marker?.intent ?? []);
   const groupIds = await groupStore.listGroupReceiveRecords();
   if (groupIds.some((groupId) => !intent.has(groupId))) {
-    throw new HostedRelayDeviceLinkError(
+    throw new HostedSignalProtocolRelayDeviceLinkError(
       "Signal Protocol Relay linked device store already holds group state",
     );
   }
@@ -226,3 +226,9 @@ export async function finishHostedDeviceLinkRollback(
   await clearHostedDeviceLinkIntent(groupStore, marker.intent);
   await deleteHostedDeviceLinkMarker(storage);
 }
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `HostedSignalProtocolRelayDeviceLinkError`. SDK 15.0.0 removes this name. */
+export const HostedRelayDeviceLinkError = HostedSignalProtocolRelayDeviceLinkError;
+/** @deprecated Use `HostedSignalProtocolRelayDeviceLinkError`. SDK 15.0.0 removes this name. */
+export type HostedRelayDeviceLinkError = HostedSignalProtocolRelayDeviceLinkError;

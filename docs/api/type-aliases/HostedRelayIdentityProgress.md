@@ -4,8 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / HostedRelayIdentityProgress
 
-# Type Alias: HostedRelayIdentityProgress
+# ~~Type Alias: HostedRelayIdentityProgress~~
 
-> **HostedRelayIdentityProgress** = \{ `operation`: `"bootstrap"` \| `"recovery"`; `phase`: `"preparing-local-state"` \| `"requesting-assertion"` \| `"submitting"` \| `"complete"`; \} \| \{ `action`: [`HostedRelayIdentityMigrationAction`](HostedRelayIdentityMigrationAction.md); `operation`: `"migration"`; `phase`: `"requesting-assertion"` \| `"submitting"` \| `"complete"`; `providerRole?`: [`IdentityAssertionProviderRole`](IdentityAssertionProviderRole.md); `state?`: [`HostedRelayIdentityMigrationState`](HostedRelayIdentityMigrationState.md); \} \| \{ `deviceId?`: `number`; `operation`: `"device-link"`; `phase`: `"preparing-linked-device"` \| `"copying"` \| `"submitting"` \| `"complete"`; \}
+> **HostedRelayIdentityProgress** = [`HostedSignalProtocolRelayIdentityProgress`](HostedSignalProtocolRelayIdentityProgress.md)
 
-Hosted identity operation progress suitable for application UI.
+## Deprecated
+
+Use `HostedSignalProtocolRelayIdentityProgress`. SDK 15.0.0 removes this name.

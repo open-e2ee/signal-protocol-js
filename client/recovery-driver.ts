@@ -21,7 +21,7 @@ import {
   FIRST_RECONNECT_MILLISECONDS,
   MAXIMUM_RECONNECT_MILLISECONDS,
 } from './hosted-mailbox-subscription';
-import { rethrowRelayWorkStopped, type RelayWork, type RelayWorkTracker } from './relay-work';
+import { rethrowSignalProtocolRelayWorkStopped, type SignalProtocolRelayWork, type SignalProtocolRelayWorkTracker } from './signal-relay-work';
 
 /** What one pass of the driver reads and runs, for one relay work. */
 export interface ResendJobPass {
@@ -40,8 +40,8 @@ export class ResendJobDriver {
   private ceiling = FIRST_RECONNECT_MILLISECONDS;
 
   constructor(
-    private readonly relayWork: RelayWorkTracker,
-    private readonly pass: (work: RelayWork) => ResendJobPass,
+    private readonly signalRelayWork: SignalProtocolRelayWorkTracker,
+    private readonly pass: (work: SignalProtocolRelayWork) => ResendJobPass,
     private readonly random: () => number = Math.random
   ) {}
 
@@ -73,7 +73,7 @@ export class ResendJobDriver {
         this.again = false;
         if (this.stopped) return;
         // A pass logs its own failures. RelayWorkStopped ends the run.
-        await this.relayWork.run((work) => this.runPass(work)).catch(() => undefined);
+        await this.signalRelayWork.run((work) => this.runPass(work)).catch(() => undefined);
       } while (this.again);
     })().finally(() => {
       this.running = undefined;
@@ -82,7 +82,7 @@ export class ResendJobDriver {
     return running;
   }
 
-  private async runPass(work: RelayWork): Promise<void> {
+  private async runPass(work: SignalProtocolRelayWork): Promise<void> {
     const { storage, logger, run } = this.pass(work);
     let failed = false;
     try {
@@ -91,7 +91,7 @@ export class ResendJobDriver {
         try {
           await run(job.jobId);
         } catch (error) {
-          rethrowRelayWorkStopped(error);
+          rethrowSignalProtocolRelayWorkStopped(error);
           failed = true;
           logger.warn('A resend job failed and stays pending', {
             category: 'E2EE',
@@ -104,7 +104,7 @@ export class ResendJobDriver {
         }
       }
     } catch (error) {
-      rethrowRelayWorkStopped(error);
+      rethrowSignalProtocolRelayWorkStopped(error);
       failed = true;
       logger.warn('The resend job driver failed to list the pending jobs', {
         category: 'E2EE',

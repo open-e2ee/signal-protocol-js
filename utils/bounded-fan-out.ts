@@ -22,11 +22,11 @@
  */
 
 /** Relay requests that one client has in flight at most. */
-export const RELAY_REQUESTS_IN_FLIGHT = 4;
+export const SIGNAL_RELAY_REQUESTS_IN_FLIGHT = 4;
 
 /** The options of a BoundedFanOut. */
 export interface BoundedFanOutOptions {
-  /** Relay requests in flight at most. Default: RELAY_REQUESTS_IN_FLIGHT */
+  /** Relay requests in flight at most. Default: SIGNAL_RELAY_REQUESTS_IN_FLIGHT */
   limit?: number;
   /** The error for work that a stop signal ended. */
   stopped: () => Error;
@@ -77,7 +77,7 @@ export class BoundedFanOut {
   private readonly waiting: Array<() => void> = [];
 
   constructor(options: BoundedFanOutOptions) {
-    const limit = options.limit ?? RELAY_REQUESTS_IN_FLIGHT;
+    const limit = options.limit ?? SIGNAL_RELAY_REQUESTS_IN_FLIGHT;
     if (!Number.isInteger(limit) || limit < 1) {
       throw new RangeError(`The fan-out limit must be a positive integer, not ${limit}`);
     }

@@ -42,7 +42,7 @@ import type { GroupReceiveRecord } from '../internal/groups/receive-record';
 import type { DecryptedGroup } from '../internal/groups/types';
 import type { SignalProtocolLocalStore } from '../types/api';
 import type { GroupKeySyncInput } from './content-adapter';
-import { RelayWorkStopped } from './relay-work';
+import { RelayWorkStopped } from './signal-relay-work';
 
 /** An own device that this device holds a record of. */
 export interface KnownOwnDevice {

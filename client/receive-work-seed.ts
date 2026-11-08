@@ -9,7 +9,7 @@
  */
 
 import type { Logger } from '../logger';
-import type { Envelope } from '../remote/relay/types';
+import type { Envelope } from '../remote/signal-relay/types';
 import type { ReceiveWorkRecord, SignalProtocolLocalStore } from '../types/api';
 import { sizedReceiveWork } from '../local/store/receive-work';
 import type { SignalProtocolContentAdapter } from './content-adapter';
@@ -68,8 +68,12 @@ export interface ReceiveCommitOptions {
   readonly family: Pick<RetryFamilyReceive, 'bindSender' | 'fulfills'> | undefined;
   /** The delivered fingerprint of the envelope. */
   readonly workId: string;
-  /** `relay` for a Relay delivery, `caller` for an envelope that the application passed. */
-  readonly origin: ReceiveWorkRecord['origin'];
+  /**
+   * `relay` for a Relay delivery, `caller` for an envelope that the
+   * application passed. This release writes `relay`, so that an earlier SDK
+   * 14 release reads the record.
+   */
+  readonly origin: Exclude<ReceiveWorkRecord['origin'], 'signal-relay'>;
   /**
    * True when the Relay of the delivery can own the receipt: the client
    * sends receipts in `auto` mode through a Relay with a receipt join.

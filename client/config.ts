@@ -5,7 +5,7 @@
  * applications can compose the client for their own runtime.
  */
 
-import type { SignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolRelayServer } from '../remote/signal-relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import type { SignalProtocolLocalStore, SignalProtocolManager } from '../types/api';
 import type { IdentityType } from '../keys/types';
@@ -101,8 +101,16 @@ interface SealedSenderConfigBase {
    */
   trustRoots: Uint8Array[];
 
-  /** Opaque 16-byte Relay project-environment scope pinned by the application. */
-  relayScopeId: Uint8Array;
+  /**
+   * Opaque 16-byte Relay project-environment scope pinned by the application.
+   *
+   * Set this member or the deprecated `relayScopeId`. The client requires one
+   * of the two.
+   */
+  signalProtocolRelayScopeId?: Uint8Array;
+
+  /** @deprecated Use `signalProtocolRelayScopeId`. SDK 15.0.0 removes this name. */
+  relayScopeId?: Uint8Array;
 
   /** Issuer key IDs revoked by this deployment's operator. */
   revokedIssuerKeyIds: readonly number[];
@@ -231,18 +239,18 @@ export interface DoubleRatchetConfig {
  * } from '@open-e2ee/signal-protocol-sdk';
  *
  * // Advanced integration with an application-owned client transport.
- * const relay = appRelayTransport;
+ * const signalProtocolRelay = appSignalProtocolRelayTransport;
  *
  * // Preferred app-facing composition.
  * const signal = await createSignalProtocolClient({
  *   identity: { userId },
- *   adapters: { storage, relay },
+ *   adapters: { storage, signalProtocolRelay },
  * });
  *
  * // Low-level factory with the same underlying options.
  * const advancedSignalProtocol = await DefaultSignalProtocolClient.create(userId, {
  *   storage,
- *   relay,
+ *   signalProtocolRelay,
  *   onProgress,
  *   ratchetConfig: { maxSkip: 2000 },
  *   enableDebugLogging: true
@@ -324,14 +332,17 @@ export interface SignalProtocolClientConfig {
    * import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
    *
    * // Advanced integration with an application-owned client transport.
-   * const relay = appRelayTransport;
+   * const signalProtocolRelay = appSignalProtocolRelayTransport;
    *
    * const signal = await createSignalProtocolClient({
    *   identity: { userId },
-   *   adapters: { storage, relay },
+   *   adapters: { storage, signalProtocolRelay },
    * });
    * ```
    */
+  signalProtocolRelay?: SignalProtocolRelayServer;
+
+  /** @deprecated Use `signalProtocolRelay`. SDK 15.0.0 removes this name. */
   relay?: SignalProtocolRelayServer;
 
   /**
@@ -358,7 +369,7 @@ export interface SignalProtocolClientConfig {
    *
    * const signal = await createSignalProtocolClient({
    *   identity: { userId },
-   *   adapters: { storage, relay, remoteObjectStore },
+   *   adapters: { storage, signalProtocolRelay, remoteObjectStore },
    * });
    *
    * // Send file bytes
@@ -380,7 +391,7 @@ export interface SignalProtocolClientConfig {
    * ```typescript
    * const signal = await createSignalProtocolClient({
    *   identity: { userId },
-   *   adapters: { storage, relay, remoteObjectStore },
+   *   adapters: { storage, signalProtocolRelay, remoteObjectStore },
    *   media: {
    *     preparedUploads: appPreparedUploads,
    *     loadLocalAttachment: async ({ localMediaId }) => appDrafts.readBytes(localMediaId),
@@ -407,7 +418,7 @@ export interface SignalProtocolClientConfig {
    * ```typescript
    * const signal = await createSignalProtocolClient({
    *   identity: { userId },
-   *   adapters: { storage, relay },
+   *   adapters: { storage, signalProtocolRelay },
    *   onProgress: ({ stage, percent, message }) => {
    *     console.log(`${stage}: ${percent}% - ${message}`);
    *   }
@@ -785,7 +796,7 @@ export interface SignalProtocolClientConfig {
    * still verify the sender via the embedded certificate.
    *
    * Custom transports require the deployment's Ed25519 certificate root public
-   * key in `trustRoots` and its matching `relayScopeId`. Get these values through
+   * key in `trustRoots` and its matching `signalProtocolRelayScopeId`. Get these values through
    * trusted application configuration. A custom relay must not choose its own
    * validation policy at runtime.
    *
@@ -801,7 +812,7 @@ export interface SignalProtocolClientConfig {
    *   storage: customStorage,
    *   sealedSender: {
    *     trustRoots: [trustRootPublicKeyBytes],
-   *     relayScopeId: relayScopeIdBytes,
+   *     signalProtocolRelayScopeId: signalProtocolRelayScopeIdBytes,
    *     revokedIssuerKeyIds: [],
    *     certificateProvider: async () => {
    *       return await convex.mutation(api.signal.certificates.issueSenderCertificate, { deviceId: 1 });
@@ -860,7 +871,7 @@ export interface SignalProtocolClientConfig {
    * ```typescript
    * const signal = await DefaultSignalProtocolClient.create(userId, {
    *   storage: customStorage,
-   *   relay,
+   *   signalProtocolRelay,
    *   aci,
    *   pni,
    *   groups: {

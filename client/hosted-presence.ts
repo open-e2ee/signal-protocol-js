@@ -14,43 +14,61 @@
 import { bytesToUrlSafeBase64, hkdf, stringToBytes } from "../internal/crypto";
 import type { SignalProtocolLocalStore } from "../types";
 import type {
-  RelayConnectionState,
+  SignalProtocolRelayConnectionState,
   Unsubscribe,
-} from "../remote/relay/types";
+} from "../remote/signal-relay/types";
 import type { DefaultSignalProtocolClient } from "./client";
 import type {
   MailboxSubscriptionHandle,
   PresenceSocketEvent,
 } from "./hosted-mailbox-subscription";
-import type { HostedRelayWakeClient } from "./hosted-push";
-import { HostedRelayHttpError } from "./hosted-http-error";
+import type { HostedSignalProtocolRelayWakeClient } from "./hosted-push";
+import { HostedSignalProtocolRelayHttpError } from "./hosted-http-error";
 import {
-  HostedRelayPresenceError,
+  hostedStoreRecordKey,
+  readHostedStoreRecord,
+  writeHostedStoreRecord,
+  type HostedStoreRecordKey,
+  type HostedStoreRecordPrefix,
+} from "./hosted-store-records";
+import {
+  HostedSignalProtocolRelayPresenceError,
   PRESENCE_READ_LIMIT,
   PRESENCE_WATCH_LIMIT,
   assertPresenceAccount,
   assertPresenceKey,
   decodePresenceResult,
-  type HostedRelayPresenceAccount,
-  type HostedRelayPresencePolicy,
-  type HostedRelayPresenceRequest,
-  type HostedRelayPresenceResults,
-  type HostedRelayPresenceStatus,
-  type HostedRelayPresenceTarget,
-  type HostedRelayPresenceVisibility,
+  type HostedSignalProtocolRelayPresenceAccount,
+  type HostedSignalProtocolRelayPresencePolicy,
+  type HostedSignalProtocolRelayPresenceRequest,
+  type HostedSignalProtocolRelayPresenceResults,
+  type HostedSignalProtocolRelayPresenceStatus,
+  type HostedSignalProtocolRelayPresenceTarget,
+  type HostedSignalProtocolRelayPresenceVisibility,
 } from "./hosted-presence-frames";
 
 export {
+  HostedSignalProtocolRelayPresenceError,
   HostedRelayPresenceError,
+  type HostedSignalProtocolRelayPresenceAccount,
   type HostedRelayPresenceAccount,
+  type HostedSignalProtocolRelayPresenceApproximateLastSeen,
   type HostedRelayPresenceApproximateLastSeen,
+  type HostedSignalProtocolRelayPresenceAudience,
   type HostedRelayPresenceAudience,
+  type HostedSignalProtocolRelayPresenceErrorCode,
   type HostedRelayPresenceErrorCode,
+  type HostedSignalProtocolRelayPresenceLastSeenPolicy,
   type HostedRelayPresenceLastSeenPolicy,
+  type HostedSignalProtocolRelayPresenceMode,
   type HostedRelayPresenceMode,
+  type HostedSignalProtocolRelayPresencePolicy,
   type HostedRelayPresencePolicy,
+  type HostedSignalProtocolRelayPresenceSetting,
   type HostedRelayPresenceSetting,
+  type HostedSignalProtocolRelayPresenceStatus,
   type HostedRelayPresenceStatus,
+  type HostedSignalProtocolRelayPresenceVisibility,
   type HostedRelayPresenceVisibility,
 } from "./hosted-presence-frames";
 
@@ -71,25 +89,28 @@ export const PRESENCE_WATCH_RENEWAL_MILLISECONDS = 120_000;
 const PRESENCE_KEY_INFO = stringToBytes("open-e2ee-presence-key-v1");
 const PRESENCE_KEY_BYTES = 16;
 const PROFILE_KEY_BYTES = 32;
-const PRESENCE_GRANT_METADATA_PREFIX = "hostedRelay.presenceGrant.v1:";
+const PRESENCE_GRANT_METADATA_PREFIX: HostedStoreRecordPrefix = {
+  current: "signalRelay.presenceGrant.v2:",
+  earlier: "hostedRelay.presenceGrant.v1:",
+};
 
 /**
  * The presence of a hosted client with a mailbox subscription. Each request
  * needs a connected socket and otherwise fails with `NOT_CONNECTED`.
  */
-export interface HostedRelayPresence {
+export interface HostedSignalProtocolRelayPresence {
   /** The project's presence policy, so the app can show or disable its toggle. */
-  policy(): Promise<HostedRelayPresencePolicy>;
+  policy(): Promise<HostedSignalProtocolRelayPresencePolicy>;
   /** The local account's setting and the visibility that applies. */
-  setting(): Promise<HostedRelayPresenceAccount>;
+  setting(): Promise<HostedSignalProtocolRelayPresenceAccount>;
   /**
    * Writes the local account's setting. It fails with
    * `PRESENCE_SETTING_FORCED` under the `forced` mode and with
    * `INVALID_TRANSITION` under the `off` mode.
    */
   setVisibility(
-    visibility: HostedRelayPresenceVisibility,
-  ): Promise<HostedRelayPresenceAccount>;
+    visibility: HostedSignalProtocolRelayPresenceVisibility,
+  ): Promise<HostedSignalProtocolRelayPresenceAccount>;
   /**
    * Reads the presence of each account, in the order given. A null result is
    * the same for a hidden account, an unknown account, a missing or wrong
@@ -98,7 +119,7 @@ export interface HostedRelayPresence {
    */
   read(
     accounts: readonly string[],
-  ): Promise<(HostedRelayPresenceStatus | null)[]>;
+  ): Promise<(HostedSignalProtocolRelayPresenceStatus | null)[]>;
   /**
    * Calls `onChange` with the account's presence, then again after each
    * change. While the mailbox socket is connected, the client registers one
@@ -112,7 +133,7 @@ export interface HostedRelayPresence {
    */
   watch(
     account: string,
-    onChange: (status: HostedRelayPresenceStatus | null) => void,
+    onChange: (status: HostedSignalProtocolRelayPresenceStatus | null) => void,
   ): Unsubscribe;
   /**
    * Derives this account's presence key from its 32-byte profile key,
@@ -135,10 +156,10 @@ export interface HostedRelayPresence {
  * mailbox without a subscription. Each request is one authenticated HTTP
  * request. A wake client has no `watch()`.
  */
-export type HostedRelayWakePresence = Omit<HostedRelayPresence, "watch">;
+export type HostedSignalProtocolRelayWakePresence = Omit<HostedSignalProtocolRelayPresence, "watch">;
 
 /** @internal SDK-owned transport for one authenticated hosted client. */
-export interface HostedRelayPresenceRuntime {
+export interface HostedSignalProtocolRelayPresenceRuntime {
   /** The Relay scope that owns the account's stored grants. */
   readonly presenceScope: string;
   readonly presenceStore: Pick<
@@ -150,10 +171,10 @@ export interface HostedRelayPresenceRuntime {
     | Pick<MailboxSubscriptionHandle, "presence">
     | undefined;
   /** Sends one request as an authenticated HTTP request. */
-  postPresence(request: HostedRelayPresenceRequest): Promise<unknown>;
-  readonly relayConnectionState: RelayConnectionState;
-  subscribeRelayConnectionState(
-    listener: (state: RelayConnectionState) => void,
+  postPresence(request: HostedSignalProtocolRelayPresenceRequest): Promise<unknown>;
+  readonly signalProtocolRelayConnectionState: SignalProtocolRelayConnectionState;
+  subscribeSignalProtocolRelayConnectionState(
+    listener: (state: SignalProtocolRelayConnectionState) => void,
   ): Unsubscribe;
   /** Receives each new mailbox socket and each pushed presence edge. */
   subscribePresenceSocket(
@@ -161,19 +182,19 @@ export interface HostedRelayPresenceRuntime {
   ): Unsubscribe;
 }
 
-const runtimes = new WeakMap<object, HostedRelayPresenceRuntime>();
-const presences = new WeakMap<object, HostedRelayPresence>();
+const runtimes = new WeakMap<object, HostedSignalProtocolRelayPresenceRuntime>();
+const presences = new WeakMap<object, HostedSignalProtocolRelayPresence>();
 
 /** @internal Bind the SDK-owned transport to the client that uses it. */
-export function bindHostedRelayPresenceRuntime(
+export function bindHostedSignalProtocolRelayPresenceRuntime(
   client: object,
-  runtime: HostedRelayPresenceRuntime,
+  runtime: HostedSignalProtocolRelayPresenceRuntime,
 ): void {
   runtimes.set(client, runtime);
   presences.delete(client);
 }
 
-function presenceRuntime(client: object): HostedRelayPresenceRuntime {
+function presenceRuntime(client: object): HostedSignalProtocolRelayPresenceRuntime {
   const runtime = runtimes.get(client);
   if (runtime === undefined)
     throw new Error(
@@ -195,18 +216,22 @@ export async function derivePresenceKey(profileKey: Uint8Array): Promise<string>
 }
 
 function grantMetadataKey(
-  runtime: HostedRelayPresenceRuntime,
+  runtime: HostedSignalProtocolRelayPresenceRuntime,
   account: string,
-): string {
-  return `${PRESENCE_GRANT_METADATA_PREFIX}${runtime.presenceScope}:${account}`;
+): HostedStoreRecordKey {
+  return hostedStoreRecordKey(
+    PRESENCE_GRANT_METADATA_PREFIX,
+    `${runtime.presenceScope}:${account}`,
+  );
 }
 
 /** The account with the key that `grant()` stored for it, if any. */
 async function presenceTarget(
-  runtime: HostedRelayPresenceRuntime,
+  runtime: HostedSignalProtocolRelayPresenceRuntime,
   account: string,
-): Promise<HostedRelayPresenceTarget> {
-  const stored = await runtime.presenceStore.getMetadata(
+): Promise<HostedSignalProtocolRelayPresenceTarget> {
+  const stored = await readHostedStoreRecord(
+    runtime.presenceStore,
     grantMetadataKey(runtime, account),
   );
   return stored === null
@@ -214,15 +239,15 @@ async function presenceTarget(
     : { account, presenceKey: assertPresenceKey(stored) };
 }
 
-type PresenceSend = (request: HostedRelayPresenceRequest) => Promise<unknown>;
+type PresenceSend = (request: HostedSignalProtocolRelayPresenceRequest) => Promise<unknown>;
 
 function presenceOperations(
-  runtime: HostedRelayPresenceRuntime,
+  runtime: HostedSignalProtocolRelayPresenceRuntime,
   send: PresenceSend,
-): HostedRelayWakePresence {
-  const request = async <Request extends HostedRelayPresenceRequest>(
+): HostedSignalProtocolRelayWakePresence {
+  const request = async <Request extends HostedSignalProtocolRelayPresenceRequest>(
     value: Request,
-  ): Promise<HostedRelayPresenceResults[Request["type"]]> =>
+  ): Promise<HostedSignalProtocolRelayPresenceResults[Request["type"]]> =>
     decodePresenceResult(value, await send(value));
 
   const target = (account: string) => presenceTarget(runtime, account);
@@ -237,7 +262,7 @@ function presenceOperations(
         throw new Error("Signal Protocol Relay presence read is invalid");
       accounts.forEach(assertPresenceAccount);
       const targets = await Promise.all(accounts.map(target));
-      const results: (HostedRelayPresenceStatus | null)[] = [];
+      const results: (HostedSignalProtocolRelayPresenceStatus | null)[] = [];
       for (let start = 0; start < targets.length; start += PRESENCE_READ_LIMIT)
         results.push(
           ...(await request({
@@ -253,7 +278,8 @@ function presenceOperations(
       return presenceKey;
     },
     grant: async (account, presenceKey) => {
-      await runtime.presenceStore.setMetadata(
+      await writeHostedStoreRecord(
+        runtime.presenceStore,
         grantMetadataKey(runtime, assertPresenceAccount(account)),
         assertPresenceKey(presenceKey),
       );
@@ -262,19 +288,19 @@ function presenceOperations(
 }
 
 function sameStatus(
-  left: HostedRelayPresenceStatus | null,
-  right: HostedRelayPresenceStatus | null,
+  left: HostedSignalProtocolRelayPresenceStatus | null,
+  right: HostedSignalProtocolRelayPresenceStatus | null,
 ): boolean {
   if (left === null || right === null) return left === right;
   return left.online === right.online && left.lastSeen === right.lastSeen;
 }
 
-type WatchListener = (status: HostedRelayPresenceStatus | null) => void;
+type WatchListener = (status: HostedSignalProtocolRelayPresenceStatus | null) => void;
 
 interface WatchedAccount {
   readonly listeners: Set<WatchListener>;
   known: boolean;
-  status: HostedRelayPresenceStatus | null;
+  status: HostedSignalProtocolRelayPresenceStatus | null;
 }
 
 function sameAccounts(
@@ -289,7 +315,7 @@ function sameAccounts(
 
 function refused(error: unknown): boolean {
   return (
-    error instanceof HostedRelayPresenceError && error.code === "FRAME_REJECTED"
+    error instanceof HostedSignalProtocolRelayPresenceError && error.code === "FRAME_REJECTED"
   );
 }
 
@@ -339,11 +365,11 @@ class PresenceWatch {
   private stopListeners: Unsubscribe | undefined;
 
   public constructor(
-    private readonly runtime: HostedRelayPresenceRuntime,
-    private readonly read: HostedRelayPresence["read"],
+    private readonly runtime: HostedSignalProtocolRelayPresenceRuntime,
+    private readonly read: HostedSignalProtocolRelayPresence["read"],
     private readonly target: (
       account: string,
-    ) => Promise<HostedRelayPresenceTarget>,
+    ) => Promise<HostedSignalProtocolRelayPresenceTarget>,
     private readonly send: PresenceSend,
   ) {}
 
@@ -394,7 +420,7 @@ class PresenceWatch {
 
   private listen(): void {
     if (this.stopListeners !== undefined) return;
-    const stopState = this.runtime.subscribeRelayConnectionState((state) => {
+    const stopState = this.runtime.subscribeSignalProtocolRelayConnectionState((state) => {
       if (state.state === "connected") return;
       // A closed socket holds no watch. A new socket registers again.
       this.cancel();
@@ -442,7 +468,7 @@ class PresenceWatch {
   }
 
   private connected(): boolean {
-    return this.runtime.relayConnectionState.state === "connected";
+    return this.runtime.signalProtocolRelayConnectionState.state === "connected";
   }
 
   private cancel(): void {
@@ -578,7 +604,7 @@ class PresenceWatch {
   /** Notifies the listeners of a watched account when its presence changed. */
   private apply(
     account: string,
-    status: HostedRelayPresenceStatus | null,
+    status: HostedSignalProtocolRelayPresenceStatus | null,
   ): void {
     const entry = this.watched.get(account);
     if (entry === undefined || (entry.known && sameStatus(entry.status, status)))
@@ -592,7 +618,7 @@ class PresenceWatch {
 /** A listener that throws does not stop the others or the poll. */
 function notify(
   listener: WatchListener,
-  status: HostedRelayPresenceStatus | null,
+  status: HostedSignalProtocolRelayPresenceStatus | null,
 ): void {
   try {
     listener(status);
@@ -608,9 +634,9 @@ function notify(
  * goes over the socket, so start the subscription first. Each client has one
  * presence object, and its watches share one presence watch and one poll.
  */
-export function hostedRelayPresence(
+export function hostedSignalProtocolRelayPresence(
   client: DefaultSignalProtocolClient,
-): HostedRelayPresence {
+): HostedSignalProtocolRelayPresence {
   const existing = presences.get(client);
   if (existing !== undefined) return existing;
   const runtime = presenceRuntime(client);
@@ -618,7 +644,7 @@ export function hostedRelayPresence(
   const send: PresenceSend = async (request) => {
     const socket = runtime.presenceSocket;
     if (socket === undefined)
-      throw new HostedRelayPresenceError(
+      throw new HostedSignalProtocolRelayPresenceError(
         "NOT_CONNECTED",
         "The mailbox subscription is not running",
         true,
@@ -632,7 +658,7 @@ export function hostedRelayPresence(
     (account) => presenceTarget(runtime, account),
     send,
   );
-  const presence: HostedRelayPresence = {
+  const presence: HostedSignalProtocolRelayPresence = {
     ...operations,
     grant: async (account, presenceKey) => {
       await operations.grant(account, presenceKey);
@@ -646,18 +672,18 @@ export function hostedRelayPresence(
 
 /**
  * The presence of a wake client, over HTTP. Use it only where the client runs
- * no mailbox subscription, for example beside `pullHostedRelayAfterWake()`.
+ * no mailbox subscription, for example beside `pullHostedSignalProtocolRelayAfterWake()`.
  */
-export function hostedRelayWakePresence(
-  client: HostedRelayWakeClient,
-): HostedRelayWakePresence {
+export function hostedSignalProtocolRelayWakePresence(
+  client: HostedSignalProtocolRelayWakeClient,
+): HostedSignalProtocolRelayWakePresence {
   const runtime = presenceRuntime(client);
   return presenceOperations(runtime, async (request) => {
     try {
       return await runtime.postPresence(request);
     } catch (error) {
-      if (!(error instanceof HostedRelayHttpError)) throw error;
-      throw new HostedRelayPresenceError(
+      if (!(error instanceof HostedSignalProtocolRelayHttpError)) throw error;
+      throw new HostedSignalProtocolRelayPresenceError(
         error.code,
         error.message,
         error.retryable,
@@ -665,3 +691,13 @@ export function hostedRelayWakePresence(
     }
   });
 }
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `hostedSignalProtocolRelayPresence`. SDK 15.0.0 removes this name. */
+export const hostedRelayPresence = hostedSignalProtocolRelayPresence;
+/** @deprecated Use `HostedSignalProtocolRelayPresence`. SDK 15.0.0 removes this name. */
+export type HostedRelayPresence = HostedSignalProtocolRelayPresence;
+/** @deprecated Use `hostedSignalProtocolRelayWakePresence`. SDK 15.0.0 removes this name. */
+export const hostedRelayWakePresence = hostedSignalProtocolRelayWakePresence;
+/** @deprecated Use `HostedSignalProtocolRelayWakePresence`. SDK 15.0.0 removes this name. */
+export type HostedRelayWakePresence = HostedSignalProtocolRelayWakePresence;

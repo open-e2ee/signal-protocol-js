@@ -70,8 +70,8 @@ implementations are outside the published SDK.
 
 ## Integration subpaths
 
-- `@open-e2ee/signal-protocol-sdk/remote/relay`
-- `@open-e2ee/signal-protocol-sdk/remote/relay/types`
+- `@open-e2ee/signal-protocol-sdk/remote/signal-relay`
+- `@open-e2ee/signal-protocol-sdk/remote/signal-relay/types`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store/convex-r2`
 - `@open-e2ee/signal-protocol-sdk/remote/object-store/s3`
@@ -130,6 +130,16 @@ implementations are outside the published SDK.
 ### Development adapters
 
 - `@open-e2ee/signal-protocol-sdk/local/store/memory`
+
+### Deprecated subpaths
+
+Each deprecated subpath loads the same module as its replacement. SDK 15.0.0
+removes the deprecated subpaths.
+
+| Deprecated subpath | Replacement |
+| --- | --- |
+| `@open-e2ee/signal-protocol-sdk/remote/relay` | `@open-e2ee/signal-protocol-sdk/remote/signal-relay` |
+| `@open-e2ee/signal-protocol-sdk/remote/relay/types` | `@open-e2ee/signal-protocol-sdk/remote/signal-relay/types` |
 
 `internal/**` is implementation-only and not part of the supported external API.
 
@@ -260,7 +270,7 @@ implement the same `MediaAttachmentTransfer` seam.
 
 ## Resume an existing hosted device
 
-Use `resumeHostedSignalProtocolClient({ adapters: { storage }, hosted: { relayUrl } })`
+Use `resumeHostedSignalProtocolClient({ adapters: { storage }, hosted: { signalProtocolRelayUrl } })`
 when the application must preserve the device already held by its open store.
 The SDK refuses missing, unreadable or changed required identity state. It never
 falls back to registration, recovery or device linking. The default
@@ -272,7 +282,7 @@ the application configures receive hooks, still run. This API does not promise a
 store or prove that the store contains every historical message/key.
 
 The application owns the store and must not use it concurrently. A
-`HostedRelayResumeError` with `cleanupPending` retains a client that has not
+`HostedSignalProtocolRelayResumeError` with `cleanupPending` retains a client that has not
 completed `stop()`. Keep that error and call `retryCleanup()` only when cleanup is
 selected. This retries the held stop, never resume or registration, and never
 closes the application store. Preserve unresolved application operation state.

@@ -15,7 +15,7 @@ import type {
   TransferPacket,
   ProgressCallback,
   RetryConfig,
-  RelayConfig,
+  SignalProtocolRelayConfig,
 } from './types';
 import { DEFAULT_RETRY_CONFIG } from './types';
 import { bytesToHex, generateRandomBytesSync, sha256 } from '../internal/crypto';
@@ -79,17 +79,17 @@ async function withRetry<T>(
  * cleanup removes the channel. The configured operations determine the
  * backend provider and policy.
  */
-export class RelayConnection implements LocalConnection {
+export class SignalProtocolRelayConnection implements LocalConnection {
   role: ConnectionRole;
   status: ConnectionStatus = 'idle';
   error?: string;
 
-  private config: RelayConfig;
+  private config: SignalProtocolRelayConfig;
   private channelId?: string;
   private progressCallback?: ProgressCallback;
   private logger: Required<Logger>;
 
-  constructor(config: RelayConfig) {
+  constructor(config: SignalProtocolRelayConfig) {
     this.role = config.role;
     this.config = config;
     this.logger = resolveSignalProtocolLogger(config.logger);
@@ -298,8 +298,8 @@ export class RelayConnection implements LocalConnection {
 /**
  * Create a connection over application-provided relay operations.
  */
-export function createRelayConnection(config: RelayConfig): LocalConnection {
-  return new RelayConnection(config);
+export function createSignalProtocolRelayConnection(config: SignalProtocolRelayConfig): LocalConnection {
+  return new SignalProtocolRelayConnection(config);
 }
 
 /**
@@ -310,3 +310,11 @@ export function createRelayConnection(config: RelayConfig): LocalConnection {
 export function generateConnectionId(): string {
   return `device_${Date.now()}_${bytesToHex(generateRandomBytesSync(6))}`;
 }
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `createSignalProtocolRelayConnection`. SDK 15.0.0 removes this name. */
+export const createRelayConnection = createSignalProtocolRelayConnection;
+/** @deprecated Use `SignalProtocolRelayConnection`. SDK 15.0.0 removes this name. */
+export const RelayConnection = SignalProtocolRelayConnection;
+/** @deprecated Use `SignalProtocolRelayConnection`. SDK 15.0.0 removes this name. */
+export type RelayConnection = SignalProtocolRelayConnection;

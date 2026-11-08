@@ -23,7 +23,7 @@ function prefixed(value: string): Uint8Array {
   return concatBytes(length, bytes);
 }
 
-/** Bind a challenge candidate. Relay alone verifies identity authority. */
+/** Bind a challenge candidate. The Signal Protocol Relay alone verifies identity authority. */
 export async function nativeAssertionBindingId(
   assertion: string,
   purpose: AssertionPurpose,

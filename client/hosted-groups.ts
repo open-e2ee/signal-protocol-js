@@ -8,13 +8,13 @@ import type {
 } from '../internal/groups/manager';
 import { base64ToBytes, bytesToBase64 } from '../internal/crypto';
 import type { Base64 } from '../types';
-import type { HostedRelayConnection } from './hosted-connection';
-import { withRelayRequestDeadline } from './relay-request-deadline';
+import type { HostedSignalProtocolRelayConnection } from './hosted-connection';
+import { withSignalProtocolRelayRequestDeadline } from './signal-relay-request-deadline';
 import {
   RELAY_PROTOCOL_VERSION,
-  relayProtocolHeadersFor,
+  signalRelayProtocolHeadersFor,
   throwIfUpgradeRequired,
-} from './relay-protocol';
+} from './signal-relay-protocol';
 import {
   isGroupErrorDetail,
   type GroupErrorDetail,
@@ -140,9 +140,9 @@ export class HostedGroupError extends Error {
 /** Presentation-authorized group state. Device credentials never enter this transport. */
 export class HostedGroupServer implements GroupServer {
   constructor(
-    private readonly connection: HostedRelayConnection,
+    private readonly connection: HostedSignalProtocolRelayConnection,
     /** The Relay protocol version of the client that owns this server. */
-    private readonly relayProtocolVersion: number = RELAY_PROTOCOL_VERSION,
+    private readonly signalRelayProtocolVersion: number = RELAY_PROTOCOL_VERSION,
   ) {}
 
   private async request(
@@ -153,7 +153,7 @@ export class HostedGroupServer implements GroupServer {
   ): Promise<unknown> {
     if (!authorization.authorityKeyId || !/^[A-Za-z0-9_-]{1,128}$/.test(authorization.authorityKeyId))
       throw new Error('Managed group requests require a verified authority selection');
-    return withRelayRequestDeadline(async (signal) => {
+    return withSignalProtocolRelayRequestDeadline(async (signal) => {
       const response = await fetch(
         `${this.connection.protocolEndpoint}/anonymous/groups/${operation}`,
         {
@@ -163,7 +163,7 @@ export class HostedGroupServer implements GroupServer {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            ...relayProtocolHeadersFor(this.relayProtocolVersion),
+            ...signalRelayProtocolHeadersFor(this.signalRelayProtocolVersion),
           },
           body: JSON.stringify({
             publishableKey: this.connection.publishableKey,
@@ -178,7 +178,7 @@ export class HostedGroupServer implements GroupServer {
       );
       const value = await readResponse(response);
       if (!response.ok) {
-        throwIfUpgradeRequired(response.status, value, this.relayProtocolVersion);
+        throwIfUpgradeRequired(response.status, value, this.signalRelayProtocolVersion);
         throw new HostedGroupError(response.status, value);
       }
       return value;

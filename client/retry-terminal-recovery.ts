@@ -28,7 +28,7 @@ import {
 } from '../local/store/reliability';
 import { createKeyedLocks, withKeyedLock } from '../utils/keyed-lock';
 import { callHook, type SignalProtocolClientHooks } from './event-hooks';
-import { rethrowRelayWorkStopped } from './relay-work';
+import { rethrowSignalProtocolRelayWorkStopped } from './signal-relay-work';
 
 type RetryRecordStore = Parameters<typeof getRetryRequest>[0];
 
@@ -182,7 +182,7 @@ async function sendResetNullMessage(
     await reset.sendNullMessage(device);
     return { outcome: 'sent', at: Date.now() };
   } catch (error) {
-    rethrowRelayWorkStopped(error);
+    rethrowSignalProtocolRelayWorkStopped(error);
     // The archived session stays archived, so the next ordinary message
     // starts the new session.
     context.logger.warn('The null message of a session reset failed', {

@@ -60,7 +60,7 @@ import type {
   DeviceInfo,
   GroupMemberDevice,
   PreKeyBundle,
-} from '../../remote/relay/types';
+} from '../../remote/signal-relay/types';
 import { ProtocolAddress } from '../../types/address';
 import { defaultSignalProtocolLogger, type Logger } from '../../logger';
 import { firstItemError, type BoundedFanOut } from '../../utils/bounded-fan-out';
@@ -136,17 +136,17 @@ export function createDeviceAddress(userId: string, deviceId: number): ProtocolA
  * Fetches device information from the backend to determine which devices
  * should receive messages.
  *
- * @param relay - Signal Protocol relay server interface
+ * @param signalProtocolRelay - Signal Protocol relay server interface
  * @param userId - Target user ID
  * @returns Array of active device information
  */
 export async function getActiveDevices(
-  relay: SignalProtocolRelayServer,
+  signalProtocolRelay: SignalProtocolRelayServer,
   userId: string,
   logger: Required<Logger> = defaultSignalProtocolLogger
 ): Promise<DeviceInfo[]> {
   try {
-    const devices = await relay.getDevices(userId);
+    const devices = await signalProtocolRelay.getDevices(userId);
     return devices;
   } catch (error) {
     logger.error('[MultiDevice] Failed to get active devices', {
@@ -204,7 +204,7 @@ type DeviceSessionOutcome =
  * devices. The result lists the devices in the relay's order.
  *
  * @param signal - DefaultSignalProtocolClient instance
- * @param relay - Signal Protocol relay server interface
+ * @param signalProtocolRelay - Signal Protocol relay server interface
  * @param userId - Target user ID
  * @param establishment - Establishes each session, bounds the relay requests,
  *   and names the errors that end the call
@@ -222,7 +222,7 @@ type DeviceSessionOutcome =
  */
 export async function establishMultiDeviceSessions(
   signal: DefaultSignalProtocolClient,
-  relay: SignalProtocolRelayServer,
+  signalProtocolRelay: SignalProtocolRelayServer,
   userId: string,
   establishment: DeviceSessionEstablishment
 ): Promise<MultiDeviceSessionResult> {
@@ -232,7 +232,7 @@ export async function establishMultiDeviceSessions(
     // The relay's receiving devices: registered and enabled, never soft-deleted
     const devices =
       establishment.listedDevices ??
-      (await fanOut.request(() => relay.getActiveDevices(userId), stopSignal));
+      (await fanOut.request(() => signalProtocolRelay.getActiveDevices(userId), stopSignal));
 
     // Use the current user (signal.userId) as the fetcher for rate limiting
     const fetcherUserId = signal.userId;
@@ -265,7 +265,7 @@ export async function establishMultiDeviceSessions(
 
         // Only fetch bundle for devices WITHOUT existing sessions
         const bundle = await fanOut.request(
-          () => relay.fetchPreKeyBundle(userId, deviceId, fetcherUserId),
+          () => signalProtocolRelay.fetchPreKeyBundle(userId, deviceId, fetcherUserId),
           stopSignal
         );
         if (!bundle) {
@@ -338,14 +338,14 @@ export async function establishMultiDeviceSessions(
  * Useful when a new device is linked or when re-establishing a failed session.
  *
  * @param signal - DefaultSignalProtocolClient instance
- * @param relay - Signal Protocol relay server interface
+ * @param signalProtocolRelay - Signal Protocol relay server interface
  * @param userId - Target user ID
  * @param deviceId - Target device ID
  * @returns True if session was established, false if it already existed
  */
 export async function establishDeviceSession(
   signal: DefaultSignalProtocolClient,
-  relay: SignalProtocolRelayServer,
+  signalProtocolRelay: SignalProtocolRelayServer,
   userId: string,
   deviceId: number
 ): Promise<boolean> {
@@ -365,7 +365,7 @@ export async function establishDeviceSession(
 
     // Fetch prekey bundle for this device
     // Use the current user (signal.userId) as the fetcher for rate limiting
-    const bundle = await relay.fetchPreKeyBundle(userId, deviceId, signal.userId);
+    const bundle = await signalProtocolRelay.fetchPreKeyBundle(userId, deviceId, signal.userId);
     if (!bundle) {
       throw new Error(`No prekey bundle found for user ${userId} device ${deviceId}`);
     }
@@ -402,7 +402,7 @@ export async function establishDeviceSession(
  * the message will still be encrypted for successful devices.
  *
  * @param signal - DefaultSignalProtocolClient instance
- * @param relay - Signal Protocol relay server interface
+ * @param signalProtocolRelay - Signal Protocol relay server interface
  * @param userId - Target user ID
  * @param plaintext - Message to encrypt
  * @returns Result containing encrypted messages per device
@@ -420,14 +420,14 @@ export async function establishDeviceSession(
  */
 export async function encryptForAllDevices(
   signal: DefaultSignalProtocolClient,
-  relay: SignalProtocolRelayServer,
+  signalProtocolRelay: SignalProtocolRelayServer,
   userId: string,
   plaintext: string
 ): Promise<MultiDeviceEncryptionResult> {
   const logger = signal.logger;
   try {
     // Get all active devices
-    const devices = await getActiveDevices(relay, userId, logger);
+    const devices = await getActiveDevices(signalProtocolRelay, userId, logger);
 
     // Graceful fallback: if no devices exist, return empty result instead of throwing
     // This allows single-device operations to work during initialization
@@ -463,7 +463,7 @@ export async function encryptForAllDevices(
             address: ProtocolAddress.toString(remoteAddress),
             deviceId: device.deviceId,
           });
-          await establishDeviceSession(signal, relay, userId, device.deviceId);
+          await establishDeviceSession(signal, signalProtocolRelay, userId, device.deviceId);
         }
 
         // Encrypt message
@@ -543,17 +543,17 @@ export async function encryptForDevice(
  * Check if sessions exist for all active devices
  *
  * @param signal - DefaultSignalProtocolClient instance
- * @param relay - Signal Protocol relay server interface
+ * @param signalProtocolRelay - Signal Protocol relay server interface
  * @param userId - Target user ID
  * @returns Map of device ID to session existence
  */
 export async function checkDeviceSessions(
   signal: DefaultSignalProtocolClient,
-  relay: SignalProtocolRelayServer,
+  signalProtocolRelay: SignalProtocolRelayServer,
   userId: string
 ): Promise<Map<number, boolean>> {
   const logger = signal.logger;
-  const devices = await getActiveDevices(relay, userId, logger);
+  const devices = await getActiveDevices(signalProtocolRelay, userId, logger);
   const sessionMap = new Map<number, boolean>();
 
   for (const device of devices) {
@@ -571,17 +571,17 @@ export async function checkDeviceSessions(
  * Use this when resetting encryption or removing a user from a relationship.
  *
  * @param signal - DefaultSignalProtocolClient instance
- * @param relay - Signal Protocol relay server interface
+ * @param signalProtocolRelay - Signal Protocol relay server interface
  * @param userId - Target user ID
  */
 export async function deleteAllDeviceSessions(
   signal: DefaultSignalProtocolClient,
-  relay: SignalProtocolRelayServer,
+  signalProtocolRelay: SignalProtocolRelayServer,
   userId: string
 ): Promise<void> {
   const logger = signal.logger;
   try {
-    const devices = await getActiveDevices(relay, userId, logger);
+    const devices = await getActiveDevices(signalProtocolRelay, userId, logger);
 
     for (const device of devices) {
       try {

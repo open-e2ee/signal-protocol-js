@@ -19,7 +19,7 @@ import {
 import { EncryptionError, EncryptionErrorCode } from '../types';
 import { ProtocolAddress } from '../types/address';
 import { callHook } from './event-hooks';
-import { rethrowRelayWorkStopped } from './relay-work';
+import { rethrowSignalProtocolRelayWorkStopped } from './signal-relay-work';
 import type { SafetyNumberConfirmation, SignalProtocolClientContext, SafetyNumber } from './types';
 import type { SessionHealthResult, SessionHealthIssue, SessionHealthStatus } from './types';
 import type { SesameManager } from '../internal/sesame/types';
@@ -81,7 +81,7 @@ export async function establishSession(
     // Call hook: session established
     await callHook(ctx.hooks, 'onSessionEstablished', sessionId, remoteAddress.userId);
   } catch (error) {
-    rethrowRelayWorkStopped(error);
+    rethrowSignalProtocolRelayWorkStopped(error);
     if (error instanceof EncryptionError) {
       throw error;
     }
@@ -190,7 +190,7 @@ export async function archiveSession(
     // Call hook: session archived
     await callHook(ctx.hooks, 'onSessionArchived', sessionId);
   } catch (error) {
-    rethrowRelayWorkStopped(error);
+    rethrowSignalProtocolRelayWorkStopped(error);
     throw new EncryptionError(
       `Failed to archive session for ${sessionId}`,
       EncryptionErrorCode.SESSION_CORRUPTED,
@@ -349,21 +349,21 @@ export async function verify(
 
   // The pinned tuple is the trust object. The relay is checked for consistency,
   // but is never allowed to select which tuple the user sees.
-  if (!ctx.relay) {
+  if (!ctx.signalProtocolRelay) {
     throw new EncryptionError(
       'Relay server required to verify identity',
       EncryptionErrorCode.INITIALIZATION_FAILED
     );
   }
 
-  const relayIdentity = await ctx.relay.getIdentityKey(userId, identityType);
-  if (!relayIdentity) {
+  const signalRelayIdentity = await ctx.signalProtocolRelay.getIdentityKey(userId, identityType);
+  if (!signalRelayIdentity) {
     throw new EncryptionError(
       `Identity key not found for user ${userId}`,
       EncryptionErrorCode.SESSION_NOT_FOUND
     );
   }
-  if (!compositeIdentitiesEqual(relayIdentity, trustRecord.identity)) {
+  if (!compositeIdentitiesEqual(signalRelayIdentity, trustRecord.identity)) {
     throw new EncryptionError(
       `Relay identity does not match the pinned identity for user ${userId}`,
       EncryptionErrorCode.IDENTITY_MISMATCH
@@ -448,20 +448,20 @@ export async function confirmSafetyNumber(
     );
   }
 
-  if (!ctx.relay) {
+  if (!ctx.signalProtocolRelay) {
     throw new EncryptionError(
       'Relay server required to confirm identity',
       EncryptionErrorCode.INITIALIZATION_FAILED
     );
   }
-  const relayIdentity = await ctx.relay.getIdentityKey(userId, identityType);
-  if (!relayIdentity) {
+  const signalRelayIdentity = await ctx.signalProtocolRelay.getIdentityKey(userId, identityType);
+  if (!signalRelayIdentity) {
     throw new EncryptionError(
       `Identity key not found for user ${userId}`,
       EncryptionErrorCode.SESSION_NOT_FOUND
     );
   }
-  if (!compositeIdentitiesEqual(relayIdentity, trustRecord.identity)) {
+  if (!compositeIdentitiesEqual(signalRelayIdentity, trustRecord.identity)) {
     throw new EncryptionError(
       `Relay identity changed after safety-number display for user ${userId}`,
       EncryptionErrorCode.IDENTITY_MISMATCH

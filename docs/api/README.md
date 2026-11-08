@@ -414,12 +414,6 @@ Re-exports [PlanMediaAttachmentUploadJobInput](namespaces/media/interfaces/PlanM
 
 ***
 
-### PreKeyBundle
-
-Renames and re-exports [RelayPreKeyBundle](interfaces/RelayPreKeyBundle.md)
-
-***
-
 ### prepareMediaAttachmentUpload
 
 Re-exports [prepareMediaAttachmentUpload](namespaces/media/functions/prepareMediaAttachmentUpload.md)

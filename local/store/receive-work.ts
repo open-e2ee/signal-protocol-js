@@ -4,6 +4,7 @@ import type {
   ReceiveWorkRecord,
   SignalProtocolLocalStore,
 } from '../../types/api';
+import { readRenamedOption, type RenamedMember } from '../../types/renamed-member';
 import { keyedGroupHash, keyedIndexSubkey } from './keyed-index';
 
 /** The default page size of a receive-record listing. */
@@ -22,8 +23,73 @@ export const LEGACY_RECEIVED_CONTENT_DELETED = 'LEGACY_RECEIVED_CONTENT_DELETED'
 const LEGACY_RECEIVED_CONTENT_KEY_PREFIX = 'received-content:';
 
 const STAGES = new Set(['decrypted', 'receipt-due', 'awaiting-completion']);
-const ORIGINS = new Set(['relay', 'caller']);
+const ORIGINS = new Set(['relay', 'signal-relay', 'caller']);
 const MESSAGE_TYPES = new Set(['prekey_bundle', 'ciphertext', 'sender_key']);
+
+/**
+ * The two names of the Relay receipt decision of a receive record. This
+ * release writes `relayOwnsReceipt`, so that an earlier SDK 14 release reads
+ * each record. It reads both names. A record that holds both names with
+ * different values is refused.
+ */
+const RECEIPT_DECISION: RenamedMember = {
+  newName: 'signalProtocolRelayOwnsReceipt',
+  earlierName: 'relayOwnsReceipt',
+  operation: 'receiveWork',
+};
+
+/**
+ * Tell whether a receive record holds a Relay delivery. This release writes
+ * `relay`, and it reads `relay` and `signal-relay`, the value of a later
+ * release.
+ */
+export function isSignalProtocolRelayOrigin(origin: ReceiveWorkRecord['origin']): boolean {
+  return origin !== 'caller';
+}
+
+/**
+ * The origin that this release reports for a receive record: `relay` or
+ * `caller`. A stored `signal-relay` is reported as `relay`.
+ */
+export function reportedReceiveWorkOrigin(
+  origin: ReceiveWorkRecord['origin']
+): 'relay' | 'caller' {
+  return origin === 'caller' ? 'caller' : 'relay';
+}
+
+/**
+ * The Relay receipt decision of a receive record, from either name. The new
+ * name wins. Undefined means that the record holds no decision.
+ *
+ * @throws SignalProtocolRelayNameConflictError when the two names hold
+ *   different values.
+ */
+export function signalProtocolRelayOwnsReceipt(record: ReceiveWorkRecord): boolean | undefined {
+  return readRenamedOption(
+    record.signalProtocolRelayOwnsReceipt,
+    record.relayOwnsReceipt,
+    RECEIPT_DECISION
+  );
+}
+
+/**
+ * The record with the Relay receipt decision `owned`. The record holds the
+ * decision under `relayOwnsReceipt`, and also under
+ * `signalProtocolRelayOwnsReceipt` when it already holds that name, so the
+ * two names agree.
+ */
+export function withSignalProtocolRelayOwnsReceipt(
+  record: ReceiveWorkRecord,
+  owned: boolean
+): ReceiveWorkRecord {
+  return {
+    ...record,
+    relayOwnsReceipt: owned,
+    ...(record.signalProtocolRelayOwnsReceipt !== undefined && {
+      signalProtocolRelayOwnsReceipt: owned,
+    }),
+  };
+}
 
 /** The UTF-8 size of a receive record, without its `sizeBytes` field. */
 export function receiveWorkSize(record: ReceiveWorkRecord): number {
@@ -75,6 +141,9 @@ const isReceivedKey = (value: unknown): boolean => {
 /**
  * Check the shape of one receive record. Throws on a record that a store
  * must not accept or return.
+ *
+ * @throws SignalProtocolRelayNameConflictError when `relayOwnsReceipt` and
+ *   `signalProtocolRelayOwnsReceipt` hold different values.
  */
 export function assertReceiveWork(record: ReceiveWorkRecord, workId = record.workId): void {
   const candidate = record as unknown as Record<string, unknown>;
@@ -112,6 +181,7 @@ export function assertReceiveWork(record: ReceiveWorkRecord, workId = record.wor
         isBoolean(ackIntent.hasReceiptJoin)
     ) ||
     !isOptional(candidate.relayOwnsReceipt, isBoolean) ||
+    !isOptional(candidate.signalProtocolRelayOwnsReceipt, isBoolean) ||
     !isOptional(
       candidate.hookAttempts,
       (value) => isSafeInteger(value) && (value as number) > 0
@@ -121,6 +191,7 @@ export function assertReceiveWork(record: ReceiveWorkRecord, workId = record.wor
   ) {
     throw new Error('Invalid receive-work record');
   }
+  signalProtocolRelayOwnsReceipt(record);
 }
 
 /** Parse one stored receive record. Throws on a value that is not one. */

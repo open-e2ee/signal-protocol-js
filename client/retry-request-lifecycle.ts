@@ -17,7 +17,7 @@
  */
 
 import type { Logger } from '../logger';
-import type { Envelope } from '../remote/relay/types';
+import type { Envelope } from '../remote/signal-relay/types';
 import type { RetryRequest } from '../internal/sesame/types';
 import type { ContentHint } from '../types/messages';
 import {
@@ -46,7 +46,7 @@ import {
   type RetryRequestDevice,
   type RetryRequestFailure,
 } from './retry-request-envelope';
-import { rethrowRelayWorkStopped, type RelayWork, type RelayWorkTracker } from './relay-work';
+import { rethrowSignalProtocolRelayWorkStopped, type SignalProtocolRelayWork, type SignalProtocolRelayWorkTracker } from './signal-relay-work';
 import {
   resetRetryTerminalSession,
   type RetryTerminalResetContext,
@@ -386,8 +386,8 @@ export class RetryRequestScheduler {
   private stopped = true;
 
   constructor(
-    private readonly relayWork: RelayWorkTracker,
-    private readonly pass: (work: RelayWork) => RetryRequestPass
+    private readonly signalRelayWork: SignalProtocolRelayWorkTracker,
+    private readonly pass: (work: SignalProtocolRelayWork) => RetryRequestPass
   ) {}
 
   /** Run a pass now, and arm the timer after it. The promise never rejects. */
@@ -435,7 +435,7 @@ export class RetryRequestScheduler {
         this.again = false;
         if (this.stopped) return;
         // A pass logs its own failures. RelayWorkStopped ends the run.
-        await this.relayWork.run((work) => this.runPass(work)).catch(() => undefined);
+        await this.signalRelayWork.run((work) => this.runPass(work)).catch(() => undefined);
       } while (this.again);
     })().finally(() => {
       this.running = undefined;
@@ -444,14 +444,14 @@ export class RetryRequestScheduler {
     return running;
   }
 
-  private async runPass(work: RelayWork): Promise<void> {
+  private async runPass(work: SignalProtocolRelayWork): Promise<void> {
     const pass = this.pass(work);
     const { storage, logger } = pass;
     let ids: string[];
     try {
       ids = await listRetryRequestIds(storage);
     } catch (error) {
-      rethrowRelayWorkStopped(error);
+      rethrowSignalProtocolRelayWorkStopped(error);
       logger.warn('The retry request scheduler failed to list the stored requests', {
         category: 'E2EE',
         data: { behavior: 'RETRY_REQUEST_SCHEDULE_FAILED', error: (error as Error).message },
@@ -467,7 +467,7 @@ export class RetryRequestScheduler {
         );
         next = Math.min(next, at);
       } catch (error) {
-        rethrowRelayWorkStopped(error);
+        rethrowSignalProtocolRelayWorkStopped(error);
         logger.warn('A stored retry request failed in the scheduler', {
           category: 'E2EE',
           data: {
@@ -573,7 +573,7 @@ function hookFailed(
   hook: 'onDeliveryError' | 'onDeliveryRecovered',
   error: unknown
 ): void {
-  rethrowRelayWorkStopped(error);
+  rethrowSignalProtocolRelayWorkStopped(error);
   pass.logger.warn(`The ${hook} hook failed`, {
     category: 'E2EE',
     data: {

@@ -40,7 +40,7 @@ const signal = await createHostedSignalProtocolClient({
   },
   hosted: {
     // The environment-scoped connection URL from the OpenE2EE console.
-    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    signalProtocolRelayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
     // Returns a short-lived signed assertion for the signed-in user.
     getIdentityAssertion,
   },
@@ -101,7 +101,7 @@ import { api } from "../convex/_generated/api";
 
 const signal = await DefaultSignalProtocolClient.create(userId, {
   storage,
-  relay,
+  signalProtocolRelay,
   remoteObjectStore: convexR2ObjectStore({
     convex,
     api: api.signalObjectStore,
@@ -149,7 +149,7 @@ needed to authorize and construct short-lived operations.
 `oe new` writes a Sandbox connection URL to `.env.local`. Pass it to
 `createHostedSignalProtocolClient()` with the device-local store that your
 application uses for production. A Sandbox environment uses device-owned
-identity, so pass `hostedRelaySandboxIdentity(storage)` as
+identity, so pass `hostedSignalProtocolRelaySandboxIdentity(storage)` as
 `hosted.getIdentityAssertion`.
 
 ## Related Docs
@@ -157,5 +157,5 @@ identity, so pass `hostedRelaySandboxIdentity(storage)` as
 - [README](../README.md)
 - [ADAPTERS](../ADAPTERS.md)
 - [local/store/README.md](../local/store/README.md)
-- [Relay Guide](./relay/README.md)
+- [Relay Guide](./signal-relay/README.md)
 - [Object Store Guide](./object-store/README.md)

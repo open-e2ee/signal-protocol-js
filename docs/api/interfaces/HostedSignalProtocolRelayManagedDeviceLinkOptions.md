@@ -1,0 +1,642 @@
+[**@open-e2ee/signal-protocol-sdk**](../README.md)
+
+***
+
+[@open-e2ee/signal-protocol-sdk](../README.md) / HostedSignalProtocolRelayManagedDeviceLinkOptions
+
+# Interface: HostedSignalProtocolRelayManagedDeviceLinkOptions
+
+## Extends
+
+- `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md), `"adapters"` \| `"identity"` \| `"sealedSender"` \| `"groups"`\>
+
+## Properties
+
+### activeDeviceStorage
+
+> `readonly` **activeDeviceStorage**: [`SignalProtocolLocalStore`](SignalProtocolLocalStore.md)
+
+***
+
+### activeGroupStore?
+
+> `readonly` `optional` **activeGroupStore?**: [`GroupStateStore`](GroupStateStore.md)
+
+The group store of the active device. The link copies the master key of
+each group that it lists. Default: the SDK group store on
+`activeDeviceStorage`.
+
+The SDK group store serializes its writes per store instance. If a client
+runs on the active device during the link, pass that client's group
+store here, or stop that client before the link.
+
+***
+
+### adapters
+
+> `readonly` **adapters**: `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md)\[`"adapters"`\], `"relay"` \| `"signalProtocolRelay"`\>
+
+***
+
+### contentAdapter?
+
+> `optional` **contentAdapter?**: [`SignalProtocolContentAdapter`](SignalProtocolContentAdapter.md)
+
+Application-provided content adapter.
+
+This is the boundary between the protocol layer and app-specific content,
+notification batching, and privacy preference policy.
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`contentAdapter`](SignalProtocolClientConfig.md#contentadapter)
+
+***
+
+### deliveryReceipts?
+
+> `optional` **deliveryReceipts?**: `"auto"` \| `"always"` \| `"off"`
+
+When the client sends an end-to-end encrypted delivery receipt for a
+received message that asks for one.
+
+- `'auto'`, the default, leaves the receipt to the Signal Protocol Relay
+  when the Relay can send one. The client acknowledges each identified
+  message to the Relay, and sends no end-to-end receipt for a message that
+  the Relay reply lists as receipted. The client sends the end-to-end
+  receipt when the reply omits the message, when the acknowledgment fails,
+  when no reply comes in 30 seconds, or when the connection closes first.
+  A sealed message always gets the end-to-end receipt, because the Relay
+  does not know its sender. On any other relay, `'auto'` sends the same
+  receipts as `'always'`.
+- `'always'` sends an end-to-end receipt for each such message, sealed
+  or identified.
+- `'off'` sends no receipt, so no sender can see that a message reached
+  this device.
+
+A receipt is a message to each device of the sender. The relay cannot read
+it, but it sees when the receipt is sent, and it sees the sender of a
+receipt that is not sealed. The client seals a receipt when it holds the
+access key of the sender, and sends it identified otherwise. Read receipts
+are not affected.
+
+The sender gets each receipt through the `onDelivered` hook. A Relay
+receipt states only that the recipient device acknowledged the message to
+the Relay. It does not state that the device decrypted it.
+
+The sender keeps a copy of each message that it sends, plaintext included,
+to send it again on a retry request. An end-to-end receipt from a device
+deletes that copy for that device. A Relay receipt does not delete it.
+A message that gets no receipt keeps its copy on the sender device until
+the copy is 14 days old. Only client creation and `stop()` delete such old
+copies.
+
+#### Default
+
+```ts
+'auto'
+```
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`deliveryReceipts`](SignalProtocolClientConfig.md#deliveryreceipts)
+
+***
+
+### enableDebugLogging?
+
+> `optional` **enableDebugLogging?**: `boolean`
+
+Enable debug logging
+Default: false
+Recommended: Enable in development, disable in production
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`enableDebugLogging`](SignalProtocolClientConfig.md#enabledebuglogging)
+
+***
+
+### groups?
+
+> `readonly` `optional` **groups?**: `HostedGroupOptions`
+
+***
+
+### hooks?
+
+> `optional` **hooks?**: [`SignalProtocolClientHooks`](SignalProtocolClientHooks.md)
+
+Event hooks for Signal Protocol lifecycle events
+
+Provides integration points for applications to react to:
+- Session establishment/deletion
+- Key rotation
+- Message encryption/decryption
+- Errors and cleanup operations
+
+All hooks are optional and support both sync and async implementations.
+Hook errors are caught internally and will not affect core functionality.
+
+Common use cases:
+- Cache invalidation (ContentManager, React Query)
+- Analytics and monitoring (Sentry, DataDog)
+- State management integration (Redux, Zustand)
+- User notifications
+
+#### Examples
+
+**Basic usage**
+
+```typescript
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  hooks: {
+    onSessionEstablished: (sessionId) => {
+      ContentManager.invalidateSession(sessionId);
+    },
+    onKeyRotated: (keyType) => {
+      analytics.track('Key Rotated', { keyType });
+    }
+  }
+});
+```
+
+**Error tracking**
+
+```typescript
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  hooks: {
+    onDecryptionError: (sessionId, error) => {
+      Sentry.captureException(error, {
+        tags: { sessionId }
+      });
+    }
+  }
+});
+```
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`hooks`](SignalProtocolClientConfig.md#hooks)
+
+***
+
+### hosted
+
+> `readonly` **hosted**: `object`
+
+#### adapter?
+
+> `readonly` `optional` **adapter?**: [`HostedSignalProtocolRelayManagedDeviceLinkAdapter`](HostedSignalProtocolRelayManagedDeviceLinkAdapter.md)
+
+Override the default authenticated device-link transport.
+
+#### onProgress?
+
+> `readonly` `optional` **onProgress?**: [`HostedSignalProtocolRelayIdentityProgressCallback`](../type-aliases/HostedSignalProtocolRelayIdentityProgressCallback.md)
+
+#### ~~relayUrl?~~
+
+> `readonly` `optional` **relayUrl?**: `string`
+
+##### Deprecated
+
+Use `signalProtocolRelayUrl`. SDK 15.0.0 removes this name.
+
+#### sealedSenderAccessMode?
+
+> `readonly` `optional` **sealedSenderAccessMode?**: `SealedSenderAccessMode`
+
+#### signalProtocolRelayUrl?
+
+> `readonly` `optional` **signalProtocolRelayUrl?**: `string`
+
+Public environment-scoped Signal Protocol Relay connection URL. Set this
+member or the deprecated `relayUrl`.
+
+***
+
+### keyRefreshIntervalMs?
+
+> `optional` **keyRefreshIntervalMs?**: `number`
+
+Key refresh interval in milliseconds.
+
+Controls how often the client rotates signed prekeys and Kyber (last-resort) prekeys.
+Per PQXDH specification Section 3.2, both key types use the same rotation
+schedule for synchronized post-quantum security.
+
+#### Default
+
+```ts
+172800000 (2 days)
+```
+
+#### Examples
+
+**Default rotation interval**
+
+```typescript
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  keyRefreshIntervalMs: 2 * 24 * 60 * 60 * 1000 // 2 days
+});
+```
+
+**Weekly rotation (lower bandwidth)**
+
+```typescript
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  keyRefreshIntervalMs: 7 * 24 * 60 * 60 * 1000 // 7 days
+});
+```
+
+#### See
+
+https://signal.org/docs/specifications/pqxdh/#publishing-keys
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`keyRefreshIntervalMs`](SignalProtocolClientConfig.md#keyrefreshintervalms)
+
+***
+
+### logger?
+
+> `optional` **logger?**: [`Logger`](Logger.md)
+
+Custom logger implementation
+
+Default: Environment-aware console logging
+- Development: verbose (debug, info, warn, error, breadcrumb)
+- Production: minimal (warn, error only)
+
+#### Examples
+
+**Using custom logger**
+
+```typescript
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  logger: {
+    info: (msg, data) => myLogger.log('info', msg, data),
+    error: (msg, err) => myLogger.log('error', msg, err),
+    warn: (msg, data) => myLogger.log('warn', msg, data)
+  }
+});
+```
+
+**Using console directly**
+
+```typescript
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  logger: console // Works directly!
+});
+```
+
+**Using pino**
+
+```typescript
+import pino from 'pino';
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  logger: pino({ level: 'info' })
+});
+```
+
+**Silent mode**
+
+```typescript
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  logger: {} // All methods optional
+});
+```
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`logger`](SignalProtocolClientConfig.md#logger)
+
+***
+
+### maxPreKeyAgeMs?
+
+> `optional` **maxPreKeyAgeMs?**: `number`
+
+Maximum allowed prekey age in milliseconds.
+
+If prekeys exceed this age, the app should block message sending to force
+key rotation. Provides a safety buffer above keyRefreshIntervalMs.
+
+With the default two-day refresh interval, the default maximum age leaves
+a twelve-day recovery window.
+
+#### Default
+
+```ts
+1209600000 (14 days)
+```
+
+#### Example
+
+**Default maximum age**
+
+```typescript
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  maxPreKeyAgeMs: 14 * 24 * 60 * 60 * 1000 // 14 days
+});
+```
+
+#### See
+
+https://signal.org/docs/specifications/pqxdh/#publishing-keys
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`maxPreKeyAgeMs`](SignalProtocolClientConfig.md#maxprekeyagems)
+
+***
+
+### media?
+
+> `optional` **media?**: [`SignalProtocolClientMediaConfig`](SignalProtocolClientMediaConfig.md)
+
+App-owned media lifecycle callbacks for the SignalProtocolClient media queue.
+
+The existing Signal Protocol local storage adapter persists the queue
+itself. These callbacks keep local bytes, plaintext caches, and product
+state in the app layer. There they can share file permissions, UI state,
+and app database ownership.
+
+#### Example
+
+```typescript
+const signal = await createSignalProtocolClient({
+  identity: { userId },
+  adapters: { storage, signalProtocolRelay, remoteObjectStore },
+  media: {
+    preparedUploads: appPreparedUploads,
+    loadLocalAttachment: async ({ localMediaId }) => appDrafts.readBytes(localMediaId),
+    saveUploadedAttachment: async ({ localMediaId, attachment }) =>
+      appPointers.save(localMediaId, attachment),
+    saveDownloadedAttachment: async ({ attachmentId, downloaded }) =>
+      appMediaCache.save(attachmentId, downloaded.data),
+    deleteLocalAttachment: async ({ attachmentId }) => appMediaCache.delete(attachmentId),
+  },
+});
+```
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`media`](SignalProtocolClientConfig.md#media)
+
+***
+
+### onGroupSenderKeyRotated?
+
+> `optional` **onGroupSenderKeyRotated?**: (`groupId`, `newGeneration`) => `void`
+
+Runs after the client rotates a group sender key.
+
+Useful for logging, analytics, or triggering UI updates when
+the client rotates sender keys after membership changes.
+
+#### Parameters
+
+##### groupId
+
+`string`
+
+The raw ID of the group whose sender key changed, without
+  the `open-e2ee:group:` prefix
+
+##### newGeneration
+
+`number`
+
+The new generation number of the sender key
+
+#### Returns
+
+`void`
+
+#### Example
+
+```typescript
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  onGroupSenderKeyRotated: (groupId, newGeneration) => {
+    console.log(`Group ${groupId} sender key rotated to gen ${newGeneration}`);
+    analytics.track('sender_key_rotated', { groupId, newGeneration });
+  }
+});
+```
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`onGroupSenderKeyRotated`](SignalProtocolClientConfig.md#ongroupsenderkeyrotated)
+
+***
+
+### onPreKeyLow?
+
+> `optional` **onPreKeyLow?**: (`remaining`) => `void`
+
+Callback for the moment one-time prekeys run low
+
+Called when prekey count drops below the threshold (default: 50).
+Use this to trigger prekey replenishment to prevent session
+establishment failures.
+
+#### Parameters
+
+##### remaining
+
+`number`
+
+#### Returns
+
+`void`
+
+#### Example
+
+```typescript
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  onPreKeyLow: (remaining) => {
+    console.warn(`Only ${remaining} prekeys remaining, replenishment needed`);
+    // Trigger server-side prekey generation
+    backend.replenishPrekeys(userId);
+  }
+});
+```
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`onPreKeyLow`](SignalProtocolClientConfig.md#onprekeylow)
+
+***
+
+### onProgress?
+
+> `optional` **onProgress?**: [`ProgressCallback`](../type-aliases/ProgressCallback.md)
+
+Progress callback for initialization and relay sync operations.
+
+Receives updates during:
+- Key generation
+- Prekey bundle generation
+- Relay upload
+
+#### Example
+
+```typescript
+const signal = await createSignalProtocolClient({
+  identity: { userId },
+  adapters: { storage, signalProtocolRelay },
+  onProgress: ({ stage, percent, message }) => {
+    console.log(`${stage}: ${percent}% - ${message}`);
+  }
+});
+```
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`onProgress`](SignalProtocolClientConfig.md#onprogress)
+
+***
+
+### preKeyCheckThrottleMs?
+
+> `optional` **preKeyCheckThrottleMs?**: `number`
+
+Prekey check throttle interval in milliseconds.
+
+Controls how often the client checks the prekey count on app activation.
+Prevents unnecessary server queries when the app is repeatedly foregrounded.
+
+#### Default
+
+```ts
+43200000 (12 hours)
+```
+
+#### See
+
+https://signal.org/docs/specifications/pqxdh/#publishing-keys
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`preKeyCheckThrottleMs`](SignalProtocolClientConfig.md#prekeycheckthrottlems)
+
+***
+
+### preKeyLowThreshold?
+
+> `optional` **preKeyLowThreshold?**: `number`
+
+Threshold for prekey low warning
+Default: 50 (warn when fewer than 50 one-time prekeys remain)
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`preKeyLowThreshold`](SignalProtocolClientConfig.md#prekeylowthreshold)
+
+***
+
+### preKeyMaintenance?
+
+> `optional` **preKeyMaintenance?**: [`PreKeyMaintenanceStore`](PreKeyMaintenanceStore.md)
+
+App-provided prekey bookkeeping store.
+
+Needed for SQLite-backed adapters that track replaced prekeys separately
+from the protocol-facing local store interface.
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`preKeyMaintenance`](SignalProtocolClientConfig.md#prekeymaintenance)
+
+***
+
+### protocol?
+
+> `optional` **protocol?**: [`SignalProtocolConfig`](SignalProtocolConfig.md)
+
+#### Inherited from
+
+[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md).[`protocol`](SignalProtocolClientCompositionOptions.md#protocol)
+
+***
+
+### ratchetConfig?
+
+> `optional` **ratchetConfig?**: [`DoubleRatchetConfig`](DoubleRatchetConfig.md)
+
+Double Ratchet algorithm configuration.
+
+`maxSkip` sets the skip limit of the protocol manager that the client
+creates. A `protocolManager` that the caller supplies keeps its own limit.
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`ratchetConfig`](SignalProtocolClientConfig.md#ratchetconfig)
+
+***
+
+### senderKeys?
+
+> `optional` **senderKeys?**: [`SenderKeysConfig`](SenderKeysConfig.md)
+
+Sender Keys (group messaging) configuration.
+
+Controls HKDF info strings, DoS protection limits, and out-of-order
+message handling for group encryption.
+
+#### Examples
+
+**Custom protocol branding**
+
+```typescript
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  senderKeys: {
+    hkdfInfoString: 'MyApp Group V1'
+  }
+});
+```
+
+**Production-recommended limits (these are the defaults)**
+
+```typescript
+const signal = await DefaultSignalProtocolClient.create(userId, {
+  storage: customStorage,
+  senderKeys: {
+    maxChainAdvance: 2000,      // DoS protection
+    maxSkippedKeys: 2000        // Memory limit
+  }
+});
+```
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`senderKeys`](SignalProtocolClientConfig.md#senderkeys)
+
+***
+
+### throwDetailedErrors?
+
+> `optional` **throwDetailedErrors?**: `boolean`
+
+Throw detailed errors instead of generic messages
+Default: false (generic error messages for security)
+Recommended: Enable in development for debugging
+
+#### Inherited from
+
+[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md).[`throwDetailedErrors`](SignalProtocolClientConfig.md#throwdetailederrors)

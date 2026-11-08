@@ -1,5 +1,5 @@
 import { bytesToBase64, concatBytes, sha256, stringToBytes } from '../internal/crypto';
-import type { HostedRelayManagedDeviceLinkRequest } from './hosted';
+import type { HostedSignalProtocolRelayManagedDeviceLinkRequest } from './hosted';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -9,8 +9,8 @@ function lengthPrefixed(value: Uint8Array): Uint8Array {
 }
 
 /** Compose the existing link protocol under a private current-token capability. */
-export async function submitHostedRelayDeviceLink(
-  request: HostedRelayManagedDeviceLinkRequest,
+export async function submitHostedSignalProtocolRelayDeviceLink(
+  request: HostedSignalProtocolRelayManagedDeviceLinkRequest,
   protocol: {
     readonly relayScopeId: string;
     readonly materialFingerprint: string;

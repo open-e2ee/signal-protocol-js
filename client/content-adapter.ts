@@ -293,6 +293,15 @@ export interface SignalProtocolContentAdapter {
   inspectContent(plaintext: string): InspectedSignalProtocolContent;
   areReadReceiptsEnabled(): Promise<boolean>;
   areTypingIndicatorsEnabled(): Promise<boolean>;
+  /**
+   * Tells the adapter that a relay batch starts or ends.
+   *
+   * SDK 14 makes this member optional and requires the deprecated
+   * `setRelayBatching`. When an adapter supplies both, the client calls this
+   * member. SDK 15.0.0 requires this member.
+   */
+  setSignalProtocolRelayBatching?(active: boolean): void;
+  /** @deprecated Use `setSignalProtocolRelayBatching`. SDK 15.0.0 requires `setSignalProtocolRelayBatching` and removes this name. */
   setRelayBatching(active: boolean): void;
 }
 
@@ -1066,6 +1075,13 @@ export function createDefaultSignalProtocolContentAdapter(): SignalProtocolConte
       return true;
     },
 
+    // The new name forwards to the earlier name, so an adapter spread from
+    // this one that overrides only `setRelayBatching` keeps its override.
+    setSignalProtocolRelayBatching(active: boolean) {
+      this.setRelayBatching(active);
+    },
+
+    /** @deprecated Use `setSignalProtocolRelayBatching`. SDK 15.0.0 requires `setSignalProtocolRelayBatching` and removes this name. */
     setRelayBatching() {
       // No-op for the protocol-default adapter.
     },

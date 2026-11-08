@@ -31,16 +31,18 @@ const bob = ProtocolAddress.create('bob', 1);
 await signal.encryptMessage(bob, 'hello');
 ```
 
-### With relay
+### With the Signal Protocol Relay
 
 Run `oe new` in the application directory. It creates the Relay project and
 its Sandbox environment, and it writes the connection URL to `.env.local`. In
-a Sandbox environment, `hostedRelaySandboxIdentity(storage)` supplies
+a Sandbox environment, `hostedSignalProtocolRelaySandboxIdentity(storage)` supplies
 `getIdentityAssertion` from a key in the device-local store. In a production
-project in device-owned mode, `hostedRelayDeviceOwnedIdentity(storage)`
+project in device-owned mode, `hostedSignalProtocolRelayDeviceOwnedIdentity(storage)`
 supplies it from the same kind of key. In a production project in
 application-bound mode, supply `getIdentityAssertion` from your backend. It
-returns a short-lived signed assertion for the signed-in user.
+returns a short-lived signed assertion for the signed-in user. With a
+[native Clerk or Firebase profile](../docs/RECIPES.md#native-provider-profiles),
+it returns the provider token instead.
 
 The hosted factory registers the device and publishes its public prekeys.
 The published SDK contains client code and transport contracts. Relay server
@@ -58,7 +60,7 @@ const signal = await createHostedSignalProtocolClient({
   },
   hosted: {
     // The environment-scoped connection URL from the OpenE2EE console.
-    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    signalProtocolRelayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
     // Returns a short-lived signed assertion for the signed-in user.
     getIdentityAssertion,
   },
@@ -71,16 +73,16 @@ database-binding and SQLCipher bootstrap.
 ### Unknown or revoked device
 
 The hosted factory resumes the stored session. It throws
-`HostedRelayDeviceUnknownError` when the Relay has no device for that session.
-It throws `HostedRelayDeviceRevokedError` when an account recovery revoked the
+`HostedSignalProtocolRelayDeviceUnknownError` when the Relay has no device for that session.
+It throws `HostedSignalProtocolRelayDeviceRevokedError` when an account recovery revoked the
 device. It never registers a new device in their place, and it does not retry.
 
 After an unknown device, ask the user to confirm. Then call the factory again
 with `assertionPurpose: 'reregister'`. It registers the same identity and
 device key again. The Relay can give a new device ID, so the messages queued
 for the old device are lost. A Relay that recorded the revocation of a device
-refuses its registration with `HostedRelayDeviceRevokedError`. See
-[Relay Device Errors](../docs/ERROR_HANDLING.md#relay-device-errors).
+refuses its registration with `HostedSignalProtocolRelayDeviceRevokedError`. See
+[Signal Protocol Relay Device Errors](../docs/ERROR_HANDLING.md#signal-protocol-relay-device-errors).
 
 ### Protocol policy
 
@@ -90,7 +92,7 @@ Use product/security terms at the client boundary:
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay },
+  adapters: { storage, signalProtocolRelay },
   protocol: { postQuantum: 'required', braid: 'required' },
 });
 ```
@@ -106,7 +108,7 @@ Use direct SPQR only as an explicit product-reviewed escape hatch:
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, relay },
+  adapters: { storage, signalProtocolRelay },
   protocol: { postQuantum: 'required', braid: 'disabled' },
 });
 ```
@@ -165,7 +167,7 @@ const rotation = await signal.rotatePreKeys();
 
 ### Hosted mailbox receive
 
-Register `onMessageDecrypted` before calling `pullHostedRelayAfterWake()`.
+Register `onMessageDecrypted` before calling `pullHostedSignalProtocolRelayAfterWake()`.
 The handler must persist application content before it resolves. Use the message
 ID for idempotent application writes.
 
@@ -223,7 +225,10 @@ application calls `completeReceive()`.
 
 After the `onMessageDecrypted` handler resolves for a message that asks for a
 receipt, the client sends an end-to-end encrypted delivery receipt to each
-device of the sender. The `deliveryReceipts` option selects the messages:
+device of the sender. A message asks for a receipt when the sender passes a
+`DataMessageInput` with a `message` text. String or byte content, as in
+`send(userId, 'hello')`, asks for no end-to-end receipt. The `deliveryReceipts`
+option selects the messages:
 
 | Value              | Receipt                                                     |
 | ------------------ | ----------------------------------------------------------- |
@@ -248,6 +253,12 @@ source and recipient device:
 | `'relay'` | The Signal Protocol Relay | `false`               |
 | `'e2ee'`  | The recipient device      | `true`                |
 
+SDK 15.0.0 reports the Relay source as `'signal-relay'`. This release reports
+`'relay'`, and the `DeliverySource` type accepts both values. Code that
+compares the source must accept both values until it requires the new major
+release. In that release, the `origin` of `ReceiveExpiredEvent` and of a
+pending receive also changes from `'relay'` to `'signal-relay'`.
+
 The status of a device only moves forward. `sources` holds each source that the
 device has given so far, so an `'e2ee'` event after a `'relay'` event carries
 both. A receipt for a send that has not resolved yet comes after the send
@@ -270,15 +281,15 @@ and `stop()` delete such old copies.
 
 ### Hosted presence
 
-`hostedRelayPresence(client)` reads and writes presence over the mailbox
+`hostedSignalProtocolRelayPresence(client)` reads and writes presence over the mailbox
 socket, so start the subscription first. A request without a connected
 socket fails with `NOT_CONNECTED`, and the SDK does not send it over HTTP.
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import { hostedRelayPresence } from '@open-e2ee/signal-protocol-sdk';
+import { hostedSignalProtocolRelayPresence } from '@open-e2ee/signal-protocol-sdk';
 
-const presence = hostedRelayPresence(client);
+const presence = hostedSignalProtocolRelayPresence(client);
 const policy = await presence.policy(); // show or disable the toggle
 await presence.setVisibility('hidden');
 
@@ -296,7 +307,7 @@ const client = await createHostedSignalProtocolClient({
   adapters,
   hosted: {
     getIdentityAssertion,
-    relayUrl,
+    signalProtocolRelayUrl,
     profileKeys: {
       getOwnProfileKey: async () => profileKey, // 32 bytes, or null
       contacts, // a MutableContactProfileStateStore
@@ -319,12 +330,12 @@ registers when the socket connects, at each change of that set, and again
 every 120 s. The Relay then pushes each change of a watched account. The
 client reads the other accounts every 30 s. After a watch fails, or has no
 answer in 10 s, it reads every account every 30 s until a watch answers
-again. It calls the listener only on a change. With `bindRelayLifecycle`, the
+again. It calls the listener only on a change. With `bindSignalProtocolRelayLifecycle`, the
 socket closes in the background, so the watch and the poll stop there. On
 web, a hidden tab keeps its watch and renews it.
 
-A wake client has no socket. Use `hostedRelayWakePresence(client)` beside
-`pullHostedRelayAfterWake()`. It has the same members without `watch()`, and
+A wake client has no socket. Use `hostedSignalProtocolRelayWakePresence(client)` beside
+`pullHostedSignalProtocolRelayAfterWake()`. It has the same members without `watch()`, and
 it sends each request as one authenticated HTTP request.
 
 ### Group init status
@@ -355,7 +366,7 @@ import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 
 const client = await createSignalProtocolClient({
   identity,
-  adapters: { storage, relay },
+  adapters: { storage, signalProtocolRelay },
   groups,
   hooks: {
     onGroupInitStatus: (groupId, status) => groupList.setInitStatus(groupId, status),

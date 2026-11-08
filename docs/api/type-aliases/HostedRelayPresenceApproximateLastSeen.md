@@ -4,8 +4,10 @@
 
 [@open-e2ee/signal-protocol-sdk](../README.md) / HostedRelayPresenceApproximateLastSeen
 
-# Type Alias: HostedRelayPresenceApproximateLastSeen
+# ~~Type Alias: HostedRelayPresenceApproximateLastSeen~~
 
-> **HostedRelayPresenceApproximateLastSeen** = `"recently"` \| `"within-week"` \| `"within-month"` \| `"long-ago"`
+> **HostedRelayPresenceApproximateLastSeen** = [`HostedSignalProtocolRelayPresenceApproximateLastSeen`](HostedSignalProtocolRelayPresenceApproximateLastSeen.md)
 
-A last-seen time that the `approximate` policy rounds to a range.
+## Deprecated
+
+Use `HostedSignalProtocolRelayPresenceApproximateLastSeen`. SDK 15.0.0 removes this name.

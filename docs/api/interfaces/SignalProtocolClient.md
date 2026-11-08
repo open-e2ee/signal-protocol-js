@@ -53,15 +53,25 @@ This is the client-scoped logger used throughout the Signal Protocol runtime.
 
 ***
 
-### relayConnectionState
+### ~~relayConnectionState~~
 
-> `readonly` **relayConnectionState**: [`RelayConnectionState`](RelayConnectionState.md)
+> `readonly` **relayConnectionState**: [`SignalProtocolRelayConnectionState`](SignalProtocolRelayConnectionState.md)
+
+#### Deprecated
+
+Use `signalProtocolRelayConnectionState`. SDK 15.0.0 removes this name.
+
+***
+
+### signalProtocolRelayConnectionState
+
+> `readonly` **signalProtocolRelayConnectionState**: [`SignalProtocolRelayConnectionState`](SignalProtocolRelayConnectionState.md)
 
 The connection state of the relay subscription.
 
-It reads `stopped` before `startRelaySubscription()`, after
-`stopRelaySubscription()`, and when no relay is configured. Use it for a
-local indicator of this device's connection.
+It reads `stopped` before `startSignalProtocolRelaySubscription()`, after
+`stopSignalProtocolRelaySubscription()`, and when no relay is configured.
+Use it for a local indicator of this device's connection.
 
 ***
 
@@ -516,7 +526,7 @@ Remote party's protocol address (userId:deviceId)
 
 ##### prekeyBundle
 
-[`RelayPreKeyBundle`](RelayPreKeyBundle.md)
+[`PreKeyBundle`](PreKeyBundle.md)
 
 Remote party's prekey bundle from server
 
@@ -903,12 +913,12 @@ const outcome = await signal.processIncomingEnvelope(envelope, {
   // Background (the client has no relay)
   sendRetryRequest: async (envelope) => {
     // Post the retry_request envelope like any other envelope.
-    await backgroundRelay.send(envelope);
+    await backgroundSignalProtocolRelay.send(envelope);
   },
   // The client completes the receive when the content is stored.
   onPersist: (processed) => db.saveMessage(processed.messageId, processed.plaintext),
 });
-if (outcome.kind !== 'refused') await backgroundRelay.acknowledge(envelope.id);
+if (outcome.kind !== 'refused') await backgroundSignalProtocolRelay.acknowledge(envelope.id);
 ```
 
 ***
@@ -987,7 +997,7 @@ Post a send again, as a new message, after it ended at its posting
 deadline without acceptance.
 
 Call it only for a send whose `send()` threw `SendAcceptanceUnknownError`
-or `SendNeverAcceptedByRelayError`, or whose `onSendOutcome` event gave
+or `SendNeverAcceptedBySignalProtocolRelayError`, or whose `onSendOutcome` event gave
 `failed` or `acceptance-unknown`. The resend keeps the `clientMessageId`,
 the client timestamp and the content of the send. It encrypts the content
 again for each recipient device that the Relay did not accept, and posts
@@ -1036,7 +1046,7 @@ The result of the resend when the Relay accepted each device
 
 #### Throws
 
-SendAcceptanceUnknownError or SendNeverAcceptedByRelayError when
+SendAcceptanceUnknownError or SendNeverAcceptedBySignalProtocolRelayError when
   the resend ends at its posting deadline
 
 #### Throws
@@ -1270,9 +1280,23 @@ attachments. This follows the same privacy gate as read receipts.
 
 ***
 
-### startRelaySubscription()
+### ~~startRelaySubscription()~~
 
 > **startRelaySubscription**(): `void`
+
+#### Returns
+
+`void`
+
+#### Deprecated
+
+Use `startSignalProtocolRelaySubscription`. SDK 15.0.0 removes this name.
+
+***
+
+### startSignalProtocolRelaySubscription()
+
+> **startSignalProtocolRelaySubscription**(): `void`
 
 Start the relay subscription for receiving encrypted messages.
 
@@ -1302,7 +1326,7 @@ its receipt. At the end of each wait, `stop()` sends the batches that
 wait and waits for those sends until the same deadline. It does this
 again while the deadline is not past. `stop()` holds the receipt batches
 from its first flush until it clears its tracking state. During the
-hold, `stopRelaySubscription()` does not send them, and `stop()` drops a
+hold, `stopSignalProtocolRelaySubscription()` does not send them, and `stop()` drops a
 receipt batched after its last flush. At the deadline it stops each
 receipt send that is left: a send that waits in an app hook stops, and
 that receipt is not sent. A send that is in its relay call at the
@@ -1315,7 +1339,7 @@ does not wait for read and viewed receipt sends. When a hook returns
 after `stop()`, the SDK drops the work after the hook and writes nothing
 more. The relay delivers the envelope again after the next start.
 
-A call to `startRelaySubscription()` while `stop()` runs is refused and
+A call to `startSignalProtocolRelaySubscription()` while `stop()` runs is refused and
 logged; start again after `stop()` resolves. A `stop()` call that
 overlaps a running `stop()` waits for it and settles as it settles.
 
@@ -1325,21 +1349,35 @@ overlaps a running `stop()` waits for it and settles as it settles.
 
 ***
 
-### stopRelaySubscription()
+### ~~stopRelaySubscription()~~
 
 > **stopRelaySubscription**(): `void`
+
+#### Returns
+
+`void`
+
+#### Deprecated
+
+Use `stopSignalProtocolRelaySubscription`. SDK 15.0.0 removes this name.
+
+***
+
+### stopSignalProtocolRelaySubscription()
+
+> **stopSignalProtocolRelaySubscription**(): `void`
 
 Stop the relay subscription
 
 Pauses message processing without destroying client state. It first
 starts the send of the delivery receipts that wait in a batch. `stop()`
 holds the receipt batches from its first flush until it clears its
-tracking state. During the hold, `stopRelaySubscription()` does not send
+tracking state. During the hold, `stopSignalProtocolRelaySubscription()` does not send
 them. `stop()` sends the batches that wait at each of its flushes and
 drops a batch made during the hold after its last flush.
 Use when app backgrounds to let background task handle messages.
-Call startRelaySubscription() to resume when app foregrounds.
-`bindRelayLifecycle` and the `useRelayLifecycle` hook make both calls
+Call startSignalProtocolRelaySubscription() to resume when app foregrounds.
+`bindSignalProtocolRelayLifecycle` and the `useSignalProtocolRelayLifecycle` hook make both calls
 from the app state.
 
 #### Returns
@@ -1348,14 +1386,34 @@ from the app state.
 
 ***
 
-### subscribeRelayConnectionState()
+### ~~subscribeRelayConnectionState()~~
 
 > **subscribeRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
 
+#### Parameters
+
+##### listener
+
+(`state`) => `void`
+
+#### Returns
+
+[`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+#### Deprecated
+
+Use `subscribeSignalProtocolRelayConnectionState`. SDK 15.0.0 removes this name.
+
+***
+
+### subscribeSignalProtocolRelayConnectionState()
+
+> **subscribeSignalProtocolRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
 Subscribe to relay connection transitions.
 
-The listener receives each new state once. Read `relayConnectionState` for
-the current state.
+The listener receives each new state once. Read
+`signalProtocolRelayConnectionState` for the current state.
 
 #### Parameters
 

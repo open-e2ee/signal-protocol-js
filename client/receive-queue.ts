@@ -225,7 +225,7 @@
  */
 
 import { extractGroupId } from '../internal/groups';
-import type { Envelope } from '../remote/relay/types';
+import type { Envelope } from '../remote/signal-relay/types';
 import type { ReceiveWorkQuery, ReceiveWorkRecord } from '../types/api';
 import {
   completeReceiveRecord,
@@ -239,7 +239,13 @@ import {
   type ReceiveCompletionWrite,
   type ReceivedMessageKey,
 } from '../local/store/reliability';
-import { RECEIVE_WORK_DEFAULT_LIMIT, sizedReceiveWork } from '../local/store/receive-work';
+import {
+  RECEIVE_WORK_DEFAULT_LIMIT,
+  reportedReceiveWorkOrigin,
+  signalProtocolRelayOwnsReceipt,
+  sizedReceiveWork,
+  withSignalProtocolRelayOwnsReceipt,
+} from '../local/store/receive-work';
 import { reportDeliveryRecovered, reportReceiveDenial } from './delivery-error';
 import {
   callHook,
@@ -250,20 +256,20 @@ import { classifyGroupContent, groupOfContext } from './group-receive-authorizat
 import { ReceiptSendTerminalError } from './messages';
 import { isReceiveExpired, receiveExpiresAt } from './receive-expiry';
 import { ReceiveHookTimeout } from './receive-hook-bound';
-import { RELAY_RECEIPT_REPLY_MS } from './relay-receipt-join';
+import { SIGNAL_RELAY_RECEIPT_REPLY_MS } from './signal-relay-receipt-join';
 import { raiseArrivalSeq } from './receive-work-seed';
 import {
   accumulateDeliveryReceipt,
-  type RelaySubscriptionCallbacks,
-  type RelaySubscriptionContext,
-  type RelaySubscriptionState,
-} from './relay-subscription';
+  type SignalProtocolRelaySubscriptionCallbacks,
+  type SignalProtocolRelaySubscriptionContext,
+  type SignalProtocolRelaySubscriptionState,
+} from './signal-relay-subscription';
 import {
   RelayWorkStopped,
-  rethrowRelayWorkStopped,
-  type RelayWork,
-  type RelayWorkTracker,
-} from './relay-work';
+  rethrowSignalProtocolRelayWorkStopped,
+  type SignalProtocolRelayWork,
+  type SignalProtocolRelayWorkTracker,
+} from './signal-relay-work';
 import type {
   CommittedContent,
   CommittedSender,
@@ -298,9 +304,9 @@ const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
 /** The context of one queue pass. Its hooks call the app through the pass work. */
 export interface ReceiveQueuePass {
-  readonly ctx: RelaySubscriptionContext;
-  readonly state: RelaySubscriptionState;
-  readonly callbacks: RelaySubscriptionCallbacks;
+  readonly ctx: SignalProtocolRelaySubscriptionContext;
+  readonly state: SignalProtocolRelaySubscriptionState;
+  readonly callbacks: SignalProtocolRelaySubscriptionCallbacks;
 }
 
 /** The result of `processPendingReceives`. */
@@ -577,7 +583,7 @@ async function reportResendRecovered(
       reportDeliveryRecovered(ctx.storage, ctx.hooks, failedEnvelopeId)
     );
   } catch (error) {
-    rethrowRelayWorkStopped(error);
+    rethrowSignalProtocolRelayWorkStopped(error);
     // The receive hook bound logged its timeout.
     if (error instanceof ReceiveHookTimeout) return;
     ctx.logger.warn('The onDeliveryRecovered hook failed', {
@@ -706,7 +712,7 @@ async function expireReceiveWork(
     reason: 'max-age',
     receivedAt: record.receivedAt,
     stage: record.stage === 'awaiting-completion' ? 'awaiting-completion' : 'decrypted',
-    origin: record.origin,
+    origin: reportedReceiveWorkOrigin(record.origin),
     messageId: record.messageId,
     senderId: record.senderUserId,
     senderDeviceId: record.senderDeviceId,
@@ -779,10 +785,10 @@ export class ReceiveQueue {
   private readonly offeredAtCap = new Set<string>();
 
   constructor(
-    private readonly relayWork: RelayWorkTracker,
+    private readonly signalRelayWork: SignalProtocolRelayWorkTracker,
     /** The resolved `protocol.receiveQueue` policy. */
     readonly policy: ResolvedReceiveQueuePolicy,
-    private readonly pass: (work: RelayWork) => ReceiveQueuePass,
+    private readonly pass: (work: SignalProtocolRelayWork) => ReceiveQueuePass,
     /**
      * Runs once in each run of the queue, after its resume and before its
      * first pass, which expires the records past their age. The client
@@ -925,17 +931,19 @@ export class ReceiveQueue {
     // The write runs between passes, so a pass never acts on a revision that
     // this write replaced.
     void this.exclusive(() =>
-      this.relayWork.run(async (work) => {
+      this.signalRelayWork.run(async (work) => {
         const { storage } = this.pass(work).ctx;
         const record = await storage.getReceiveWork(workId);
         work.proceed();
         // The record keeps the decision once it is durable, or it completed.
-        if (!record || record.relayOwnsReceipt !== undefined) {
+        if (!record || signalProtocolRelayOwnsReceipt(record) !== undefined) {
           this.decisions.delete(workId);
           return;
         }
         const written = await storage.putReceiveWork(
-          sizedReceiveWork({ ...record, revision: record.revision + 1, relayOwnsReceipt: owned }),
+          sizedReceiveWork(
+            withSignalProtocolRelayOwnsReceipt({ ...record, revision: record.revision + 1 }, owned)
+          ),
           record.revision
         );
         if (written) this.decisions.delete(workId);
@@ -957,7 +965,7 @@ export class ReceiveQueue {
       // them arms the capped retry again.
       this.cappedRetryDue = false;
       let result: ReceiveQueuePassResult = { processed: 0, remaining: 0 };
-      await this.relayWork.run(async (work) => {
+      await this.signalRelayWork.run(async (work) => {
         result = await this.runPass(work, deadline, 'all');
       });
       return result;
@@ -967,7 +975,7 @@ export class ReceiveQueue {
   /** @param endSeeding - Settles `seeded()` of the run after the first attempt. */
   private async resumeThenRun(endSeeding?: () => void): Promise<void> {
     let resumed = false;
-    await this.relayWork
+    await this.signalRelayWork
       .run(async (work) => {
         resumed = await this.resume(work);
       })
@@ -1002,7 +1010,7 @@ export class ReceiveQueue {
    *
    * @returns False when a store step failed. The failure is logged.
    */
-  private async resume(work: RelayWork): Promise<boolean> {
+  private async resume(work: SignalProtocolRelayWork): Promise<boolean> {
     const { storage, logger } = this.pass(work).ctx;
     try {
       let after: ReceiveWorkQuery['after'];
@@ -1027,7 +1035,7 @@ export class ReceiveQueue {
         if (page.length < RECEIVE_WORK_DEFAULT_LIMIT) return true;
       }
     } catch (error) {
-      rethrowRelayWorkStopped(error);
+      rethrowSignalProtocolRelayWorkStopped(error);
       logger.warn('The receive queue failed to resume the stored resends', {
         category: 'E2EE',
         data: { behavior: 'RECEIVE_RESUME_FAILED', error: (error as Error).message },
@@ -1083,7 +1091,7 @@ export class ReceiveQueue {
       const retryCapped = this.cappedRetryDue;
       this.cappedRetryDue = false;
       // A pass logs its own failures. RelayWorkStopped ends the pass.
-      await this.relayWork
+      await this.signalRelayWork
         .run((work) =>
           this.runPass(work, Infinity, retryCapped ? 'unoffered' : 'none').then(() => undefined)
         )
@@ -1096,7 +1104,7 @@ export class ReceiveQueue {
    *   also retries.
    */
   private async runPass(
-    work: RelayWork,
+    work: SignalProtocolRelayWork,
     deadline: number,
     cappedRetry: CappedRetry
   ): Promise<ReceiveQueuePassResult> {
@@ -1129,7 +1137,7 @@ export class ReceiveQueue {
       try {
         step = await this.step(pass, work, record, blocked, woken, cappedRetry);
       } catch (error) {
-        rethrowRelayWorkStopped(error);
+        rethrowSignalProtocolRelayWorkStopped(error);
         logger.warn('A receive record failed in the receive queue', {
           category: 'E2EE',
           data: {
@@ -1201,7 +1209,7 @@ export class ReceiveQueue {
   /** Handle one record. */
   private async step(
     pass: ReceiveQueuePass,
-    work: RelayWork,
+    work: SignalProtocolRelayWork,
     record: ReceiveWorkRecord,
     blocked: BlockedConversations,
     woken: ReadonlySet<string>,
@@ -1270,7 +1278,7 @@ export class ReceiveQueue {
   /** Decide on the group of one decrypted record and deliver its content. */
   private async processRecord(
     pass: ReceiveQueuePass,
-    work: RelayWork,
+    work: SignalProtocolRelayWork,
     record: ReceiveWorkRecord,
     blocked: BlockedConversations,
     now: number,
@@ -1354,7 +1362,7 @@ export class ReceiveQueue {
     try {
       delivery = await this.deliver(pass, attempted, content, decision.groupId, receive);
     } catch (error) {
-      rethrowRelayWorkStopped(error);
+      rethrowSignalProtocolRelayWorkStopped(error);
       // The registration of onMessageDecrypted wakes the queue. See
       // "Missing hook" in the module comment.
       if (error instanceof ReceiveHookMissing) {
@@ -1396,17 +1404,19 @@ export class ReceiveQueue {
     const { senderTimestamp: _envelopeTimestamp, ...withoutTimestamp } =
       withoutContent(attempted);
     const decided = this.decisions.get(record.workId);
-    const due = sizedReceiveWork({
+    const dueRecord: ReceiveWorkRecord = {
       ...withoutTimestamp,
       revision: attempted.revision + 1,
       stage: 'receipt-due',
       // The receipt names the content timestamp, or receivedAt.
       ...(typeof contentTimestamp === 'number' &&
         Number.isSafeInteger(contentTimestamp) && { senderTimestamp: contentTimestamp }),
-      dueAt: record.ackIntent?.hasReceiptJoin ? record.ackIntent.at + RELAY_RECEIPT_REPLY_MS : at,
-      ...(decided !== undefined && { relayOwnsReceipt: decided }),
+      dueAt: record.ackIntent?.hasReceiptJoin ? record.ackIntent.at + SIGNAL_RELAY_RECEIPT_REPLY_MS : at,
       ...(received !== undefined && { received }),
-    });
+    };
+    const due = sizedReceiveWork(
+      decided === undefined ? dueRecord : withSignalProtocolRelayOwnsReceipt(dueRecord, decided)
+    );
     if (!(await ctx.storage.putReceiveWork(due, attempted.revision))) return DONE;
     // The key is recorded right after the receipt-due write, and again with
     // the completion of the receipt record, which carries it. A stop before
@@ -1501,7 +1511,7 @@ export class ReceiveQueue {
     return {
       owesReceipt:
         inspected.shouldSendDeliveryReceipt &&
-        ctx.relay !== undefined &&
+        ctx.signalProtocolRelay !== undefined &&
         receipts !== 'off' &&
         Boolean(decrypted.timestamp),
       ...(received !== undefined && { received }),
@@ -1519,7 +1529,7 @@ export class ReceiveQueue {
     now: number
   ): Promise<RecordStep> {
     const { ctx, state, callbacks } = pass;
-    const owned = record.relayOwnsReceipt ?? this.decisions.get(record.workId);
+    const owned = signalProtocolRelayOwnsReceipt(record) ?? this.decisions.get(record.workId);
     if (owned === true) {
       await completeReceiveWork(ctx, record);
       this.forget(record.workId);
@@ -1528,7 +1538,7 @@ export class ReceiveQueue {
     const { workId, senderUserId } = record;
     const receipts = ctx.config.deliveryReceipts ?? 'auto';
     const batchReceipt =
-      ctx.relay !== undefined && receipts !== 'off'
+      ctx.signalProtocolRelay !== undefined && receipts !== 'off'
         ? (): void => {
             accumulateDeliveryReceipt(
               state.receiptAccumulator,
@@ -1549,10 +1559,10 @@ export class ReceiveQueue {
       owned === undefined &&
       intent?.hasReceiptJoin === true &&
       intent.at >= this.startedAt &&
-      now < intent.at + RELAY_RECEIPT_REPLY_MS
+      now < intent.at + SIGNAL_RELAY_RECEIPT_REPLY_MS
     ) {
       if (batchReceipt !== undefined) this.joinWaits.set(workId, batchReceipt);
-      return WAIT(intent.at + RELAY_RECEIPT_REPLY_MS);
+      return WAIT(intent.at + SIGNAL_RELAY_RECEIPT_REPLY_MS);
     }
     this.joinWaits.delete(workId);
     if (this.receiptsInFlight.has(workId)) return WAIT(Infinity);
@@ -1589,7 +1599,7 @@ export class ReceiveQueue {
       // reads the record again.
       void this.exclusive(async () => {
         let owesReceipt = true;
-        await this.relayWork
+        await this.signalRelayWork
           .run(async (work) => {
             const { ctx } = this.pass(work);
             const record = await ctx.storage.getReceiveWork(workId);
@@ -1618,7 +1628,7 @@ export class ReceiveQueue {
     // next start.
     void this.exclusive(async () => {
       let retryAt: number | undefined;
-      await this.relayWork
+      await this.signalRelayWork
         .run(async (work) => {
           const { ctx } = this.pass(work);
           const record = await ctx.storage.getReceiveWork(workId);

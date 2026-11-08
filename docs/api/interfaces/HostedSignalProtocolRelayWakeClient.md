@@ -1,0 +1,41 @@
+[**@open-e2ee/signal-protocol-sdk**](../README.md)
+
+***
+
+[@open-e2ee/signal-protocol-sdk](../README.md) / HostedSignalProtocolRelayWakeClient
+
+# Interface: HostedSignalProtocolRelayWakeClient
+
+## Methods
+
+### processPendingReceives()
+
+> **processPendingReceives**(`options?`): `Promise`\<\{ `processed`: `number`; `remaining`: `number`; \}\>
+
+#### Parameters
+
+##### options?
+
+###### deadlineMs?
+
+`number`
+
+#### Returns
+
+`Promise`\<\{ `processed`: `number`; `remaining`: `number`; \}\>
+
+***
+
+### receiveIncomingEnvelopes()
+
+> **receiveIncomingEnvelopes**(`envelopes`): `Promise`\<\{ `failedMessageIds`: `string`[]; `processedMessageIds`: `string`[]; \}\>
+
+#### Parameters
+
+##### envelopes
+
+[`IncomingEnvelope`](IncomingEnvelope.md)[]
+
+#### Returns
+
+`Promise`\<\{ `failedMessageIds`: `string`[]; `processedMessageIds`: `string`[]; \}\>

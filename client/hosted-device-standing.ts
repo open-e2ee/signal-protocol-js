@@ -4,9 +4,9 @@
  * A device that the Relay no longer lists cannot get a device token. Two
  * refusals name that state, and both are terminal for the stored session:
  *
- * - `HostedRelayDeviceUnknownError`: the Relay has no device for the stored
+ * - `HostedSignalProtocolRelayDeviceUnknownError`: the Relay has no device for the stored
  *   session. The device token request answered `NOT_FOUND`.
- * - `HostedRelayDeviceRevokedError`: an account recovery revoked this device.
+ * - `HostedSignalProtocolRelayDeviceRevokedError`: an account recovery revoked this device.
  *   Any identity route can answer `DEVICE_REVOKED`.
  *
  * The SDK never retries either request and never registers again on its own.
@@ -25,7 +25,7 @@ const DEVICE_REVOKED_MESSAGE = "The device was revoked by an account recovery.";
  * this device, call `createHostedSignalProtocolClient` with the
  * `assertionPurpose` `reregister` after the user confirms it.
  */
-export class HostedRelayDeviceUnknownError extends Error {
+export class HostedSignalProtocolRelayDeviceUnknownError extends Error {
   public readonly code = "NOT_FOUND";
   /** The HTTP status of the refusal, 404 from a current Relay. */
   public readonly status: number;
@@ -44,7 +44,7 @@ export class HostedRelayDeviceUnknownError extends Error {
  * device token request and on a registration, so both fail the same way. The
  * SDK does not retry the request.
  */
-export class HostedRelayDeviceRevokedError extends Error {
+export class HostedSignalProtocolRelayDeviceRevokedError extends Error {
   public readonly code = "DEVICE_REVOKED";
   /** The HTTP status of the refusal, 403 from a current Relay. */
   public readonly status: number;
@@ -59,7 +59,7 @@ export class HostedRelayDeviceRevokedError extends Error {
 }
 
 /**
- * Throws `HostedRelayDeviceRevokedError` when a Relay error body has the code
+ * Throws `HostedSignalProtocolRelayDeviceRevokedError` when a Relay error body has the code
  * `DEVICE_REVOKED`, at any error status. The body code is the contract, not
  * the status.
  */
@@ -78,5 +78,15 @@ export function throwIfDeviceRevoked(status: number, body: unknown): void {
     "message" in body.error && typeof body.error.message === "string"
       ? body.error.message
       : undefined;
-  throw new HostedRelayDeviceRevokedError(status, message);
+  throw new HostedSignalProtocolRelayDeviceRevokedError(status, message);
 }
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `HostedSignalProtocolRelayDeviceRevokedError`. SDK 15.0.0 removes this name. */
+export const HostedRelayDeviceRevokedError = HostedSignalProtocolRelayDeviceRevokedError;
+/** @deprecated Use `HostedSignalProtocolRelayDeviceRevokedError`. SDK 15.0.0 removes this name. */
+export type HostedRelayDeviceRevokedError = HostedSignalProtocolRelayDeviceRevokedError;
+/** @deprecated Use `HostedSignalProtocolRelayDeviceUnknownError`. SDK 15.0.0 removes this name. */
+export const HostedRelayDeviceUnknownError = HostedSignalProtocolRelayDeviceUnknownError;
+/** @deprecated Use `HostedSignalProtocolRelayDeviceUnknownError`. SDK 15.0.0 removes this name. */
+export type HostedRelayDeviceUnknownError = HostedSignalProtocolRelayDeviceUnknownError;

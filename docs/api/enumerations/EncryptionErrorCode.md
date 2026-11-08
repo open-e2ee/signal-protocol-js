@@ -335,7 +335,7 @@ throws `SendAcceptanceUnknownError` and posts nothing more for the send.
 The posting deadline of a send ended, the call raised no refusal (a
 thrown refusal or a refusal in the receipt of a shared body), and no
 refused device has a stored refusal code. The SDK throws
-`SendNeverAcceptedByRelayError` and posts nothing more for the send.
+`SendNeverAcceptedBySignalProtocolRelayError` and posts nothing more for the send.
 
 ***
 
@@ -374,6 +374,17 @@ multiple attempts. May indicate network issues.
 > **SESSION\_NOT\_FOUND**: `"SESSION_NOT_FOUND"`
 
 Session not found for the given address
+
+***
+
+### SIGNAL\_PROTOCOL\_RELAY\_NAME\_CONFLICT
+
+> **SIGNAL\_PROTOCOL\_RELAY\_NAME\_CONFLICT**: `"SIGNAL_PROTOCOL_RELAY_NAME_CONFLICT"`
+
+An object sets a member by its Signal Protocol Relay name and by its
+deprecated earlier name, with different values.
+
+Set only the new name, such as `signalProtocolRelay`.
 
 ***
 

@@ -1,0 +1,44 @@
+[**@open-e2ee/signal-protocol-sdk**](../README.md)
+
+***
+
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolRelayLifecycleAppState
+
+# Interface: SignalProtocolRelayLifecycleAppState
+
+The part of an app state source that `bindSignalProtocolRelayLifecycle` reads.
+
+React Native's `AppState` satisfies it. The client entry does not import
+react-native, so any source with this shape can drive the binding.
+
+## Properties
+
+### currentState
+
+> `readonly` **currentState**: `string` \| `null` \| `undefined`
+
+The state at bind time, for example `active` or `background`. React
+Native reports `null` when its native AppState module is not available.
+The binding then acts only on a change.
+
+## Methods
+
+### addEventListener()
+
+> **addEventListener**(`type`, `listener`): \{ `remove`: `void`; \} \| (() => `void`)
+
+Returns a subscription with `remove()`, or a function that removes the listener.
+
+#### Parameters
+
+##### type
+
+`"change"`
+
+##### listener
+
+(`state`) => `void`
+
+#### Returns
+
+\{ `remove`: `void`; \} \| (() => `void`)

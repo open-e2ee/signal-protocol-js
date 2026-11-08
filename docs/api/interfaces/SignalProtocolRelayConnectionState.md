@@ -1,0 +1,38 @@
+[**@open-e2ee/signal-protocol-sdk**](../README.md)
+
+***
+
+[@open-e2ee/signal-protocol-sdk](../README.md) / SignalProtocolRelayConnectionState
+
+# Interface: SignalProtocolRelayConnectionState
+
+The local device's relay connection, as its envelope subscription sees it.
+
+- `stopped`: no subscription is running.
+- `connecting`: the subscription started and has not connected yet.
+- `connected`: the subscription has a live connection.
+- `reconnecting`: the connection failed and the subscription retries it.
+
+`reason` names the transition site of the last move to `reconnecting`. On a
+`stopped` state that the Relay caused, it is `upgrade-required`,
+`authority-refused`, `device-revoked`, or `device-unknown`. It is never an
+error message. `since` is the Unix time in milliseconds of the transition. A
+token renewal keeps the live connection and is not a transition.
+
+## Properties
+
+### reason?
+
+> `readonly` `optional` **reason?**: [`SignalProtocolRelayConnectionReason`](../type-aliases/SignalProtocolRelayConnectionReason.md)
+
+***
+
+### since
+
+> `readonly` **since**: `number`
+
+***
+
+### state
+
+> `readonly` **state**: `"stopped"` \| `"connecting"` \| `"connected"` \| `"reconnecting"`

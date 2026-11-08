@@ -15,35 +15,35 @@ import type {
   ContentKind,
   DeliveryClass,
   SealedSenderAuth,
-} from "../remote/relay/types";
+} from "../remote/signal-relay/types";
 import type { Base64 } from "../types";
 import { SealedSenderAuthError } from "../types/errors";
 import { FanOutError, type BoundedFanOut } from "../utils/bounded-fan-out";
-import type { HostedRelayConnection } from "./hosted-connection";
-import { aggregateRelayAcceptance } from "./relay-acceptance";
-import { markRelayDeviceRefusal } from "./relay-device-refusal";
-import { markPeriodClosed, onePeriodClosedRetry } from "./relay-period-close";
+import type { HostedSignalProtocolRelayConnection } from "./hosted-connection";
+import { aggregateSignalProtocolRelayAcceptance } from "./signal-relay-acceptance";
+import { markSignalProtocolRelayDeviceRefusal } from "./signal-relay-device-refusal";
+import { markPeriodClosed, onePeriodClosedRetry } from "./signal-relay-period-close";
 import {
   deviceSetRefusal,
   markDeviceSetRefusal,
   parseDeviceSetRefusal,
   type DeviceSetMismatchAccount,
-} from "../remote/relay/device-set";
+} from "../remote/signal-relay/device-set";
 import {
   markAfterRepeatedRequest,
   type RepeatRequest,
-} from "../remote/relay/request-admission";
+} from "../remote/signal-relay/request-admission";
 import {
   markGroupRouteFallback,
   takesDirectSealedRoute,
-} from "./relay-sealed-route";
+} from "./signal-relay-sealed-route";
 import {
   RELAY_PROTOCOL_VERSION,
-  markRelayAnswerVersion,
-  relayProtocolHeadersFor,
+  markSignalProtocolRelayAnswerVersion,
+  signalRelayProtocolHeadersFor,
   throwIfUpgradeRequired,
-} from "./relay-protocol";
-import { withRelayRequestDeadline } from "./relay-request-deadline";
+} from "./signal-relay-protocol";
+import { withSignalProtocolRelayRequestDeadline } from "./signal-relay-request-deadline";
 
 const FRAME_VERSION = 1;
 const FRAME_HEADER_BYTES = 9;
@@ -160,7 +160,7 @@ function markDestinationRefusal(
     error instanceof HostedAnonymousDeliveryError &&
     (error.code === "NOT_FOUND" || error.code === "STALE_DEVICE")
   )
-    markRelayDeviceRefusal(error, {
+    markSignalProtocolRelayDeviceRefusal(error, {
       code: error.code,
       userId: destination.accountAddress,
       deviceId: destination.deviceId,
@@ -208,7 +208,7 @@ async function responseObject(response: Response): Promise<JsonRecord> {
 /** Anonymous requests never carry the authenticated transport's token or cookies. */
 export class HostedAnonymousDelivery {
   public constructor(
-    private readonly connection: HostedRelayConnection,
+    private readonly connection: HostedSignalProtocolRelayConnection,
     private readonly fanOut: BoundedFanOut,
     /**
      * The destination of one device. `declaredDeviceIds` is the declared
@@ -231,7 +231,7 @@ export class HostedAnonymousDelivery {
       request: RepeatRequest,
     ) => Promise<void> = async () => {},
     /** The Relay protocol version of the client that owns this delivery. */
-    private readonly relayProtocolVersion: number = RELAY_PROTOCOL_VERSION,
+    private readonly signalRelayProtocolVersion: number = RELAY_PROTOCOL_VERSION,
     /**
      * Runs after the Relay refuses a direct post as NOT_FOUND. True when the
      * device directory lists the device at another mailbox generation than
@@ -291,7 +291,7 @@ export class HostedAnonymousDelivery {
   }
 
   private post(path: string, body: JsonRecord): Promise<JsonRecord> {
-    return withRelayRequestDeadline(async (signal) => {
+    return withSignalProtocolRelayRequestDeadline(async (signal) => {
       let response: Response;
       try {
         response = await fetch(
@@ -303,7 +303,7 @@ export class HostedAnonymousDelivery {
             headers: {
               accept: "application/json",
               "content-type": "application/json",
-              ...relayProtocolHeadersFor(this.relayProtocolVersion),
+              ...signalRelayProtocolHeadersFor(this.signalRelayProtocolVersion),
             },
             body: JSON.stringify({
               ...body,
@@ -319,7 +319,7 @@ export class HostedAnonymousDelivery {
       }
       const value = await responseObject(response);
       if (!response.ok) {
-        throwIfUpgradeRequired(response.status, value, this.relayProtocolVersion);
+        throwIfUpgradeRequired(response.status, value, this.signalRelayProtocolVersion);
         const code = record(value.error) ? value.error.code : undefined;
         // Each route answers a rejected credential with the code of its
         // type. A Relay without the endorsement on the direct route answers
@@ -360,13 +360,13 @@ export class HostedAnonymousDelivery {
             : undefined;
         // The meaning of DELIVERY_ALREADY_ACCEPTED depends on the protocol
         // version of the request, so the error records it.
-        const error = markRelayAnswerVersion(
+        const error = markSignalProtocolRelayAnswerVersion(
           new HostedAnonymousDeliveryError(
             response.status,
             safeCode,
             details === undefined ? undefined : { details },
           ),
-          this.relayProtocolVersion,
+          this.signalRelayProtocolVersion,
         );
         // The public code stays DELIVERY_FAILED. The mark lets the send
         // repeat the post once and keep the device pending.
@@ -795,7 +795,7 @@ export class HostedAnonymousDelivery {
       serverTimestamp:
         receipts[receipts.length - 1]?.enqueuedAt ?? operation.timestamp,
       uuids404: [],
-      ...aggregateRelayAcceptance(receipts),
+      ...aggregateSignalProtocolRelayAcceptance(receipts),
       ...(receipts.length > 0 &&
         receipts.every((receipt) => receipt.deviceSetChecked) && {
           deviceSetChecked: true,

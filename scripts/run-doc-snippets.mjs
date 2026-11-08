@@ -1,6 +1,5 @@
 import { spawnSync } from 'node:child_process';
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -12,6 +11,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { transformSync } from 'esbuild';
 
+import { docSnippetSources } from './doc-snippet-sources.mjs';
 import {
   analyzeSnippet,
   buildProbeModule,
@@ -31,18 +31,7 @@ if (!tarballArgument) {
 }
 
 const tarballPath = resolve(tarballArgument);
-const packageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
-const internalMarkdownSources = [
-  'docs/DEVICE_LIFECYCLE.md',
-  'docs/PREKEY_ARCHITECTURE.md',
-  'docs/RELAY_CONNECTION.md',
-];
-const markdownSources = [
-  ...new Set([
-    ...packageJson.files.filter((path) => path.endsWith('.md')),
-    ...internalMarkdownSources,
-  ]),
-].filter((path) => existsSync(join(repoRoot, path)));
+const markdownSources = docSnippetSources(repoRoot);
 const infrastructureLabel =
   'Real protocol and cryptography; simulated in-memory infrastructure.';
 

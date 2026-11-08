@@ -13,7 +13,7 @@
  * // Supply a device-local store and the configured identity-provider callback.
  * const signal = await createHostedSignalProtocolClient({
  *   adapters: { storage },
- *   hosted: { relayUrl, getIdentityAssertion },
+ *   hosted: { signalProtocolRelayUrl, getIdentityAssertion },
  * });
  *
  * await signal.send(recipientUserId, 'Hello!');
@@ -58,7 +58,7 @@
  *
  * const signal = await createSignalProtocolClient({
  *   identity: { userId },
- *   adapters: { storage, relay },
+ *   adapters: { storage, signalProtocolRelay },
  * });
  * await signal.send('bob', 'Hello!');
  * ```
@@ -66,10 +66,13 @@
 export {};
 export { DefaultSignalProtocolClient } from "./client";
 export {
+  bindSignalProtocolRelayLifecycle,
   bindRelayLifecycle,
+  type SignalProtocolRelayLifecycleAppState,
   type RelayLifecycleAppState,
+  type SignalProtocolRelayLifecycleOptions,
   type RelayLifecycleOptions,
-} from "./client/relay-lifecycle";
+} from "./client/signal-relay-lifecycle";
 export {
   BraidPolicy,
   GroupReceiveRefusedError,
@@ -77,23 +80,38 @@ export {
   GroupReceiveUnavailableError,
   type GroupReceiveUnavailability,
   GroupResendDeferredError,
+  HostedSignalProtocolRelayDeviceLinkError,
   HostedRelayDeviceLinkError,
+  HostedSignalProtocolRelayDeviceRevokedError,
   HostedRelayDeviceRevokedError,
+  HostedSignalProtocolRelayDeviceUnknownError,
   HostedRelayDeviceUnknownError,
+  HostedSignalProtocolRelayHttpError,
   HostedRelayHttpError,
+  HostedSignalProtocolRelayPresenceError,
   HostedRelayPresenceError,
+  HostedSignalProtocolRelayUpgradeRequiredError,
   HostedRelayUpgradeRequiredError,
+  advanceHostedSignalProtocolRelayIdentityMigration,
   advanceHostedRelayIdentityMigration,
   createHostedSignalProtocolClient,
   createSignalProtocolClient,
   createSignalProtocolClientConfig,
+  hostedSignalProtocolRelayDeviceOwnedIdentity,
   hostedRelayDeviceOwnedIdentity,
+  hostedSignalProtocolRelayPresence,
   hostedRelayPresence,
+  hostedSignalProtocolRelaySandboxIdentity,
   hostedRelaySandboxIdentity,
+  hostedSignalProtocolRelayWakePresence,
   hostedRelayWakePresence,
+  linkHostedSignalProtocolRelayDevice,
   linkHostedRelayDevice,
+  pullHostedSignalProtocolRelayAfterWake,
   pullHostedRelayAfterWake,
+  registerHostedSignalProtocolRelayPush,
   registerHostedRelayPush,
+  removeHostedSignalProtocolRelayPush,
   removeHostedRelayPush,
   PostQuantumPolicy,
 } from "./client";
@@ -102,42 +120,79 @@ export type {
   SignalProtocolClientCompositionOptions,
   SignalProtocolClientIdentityConfig,
   GetIdentityAssertion,
+  HostedSignalProtocolRelayBootstrapAdapter,
   HostedRelayBootstrapAdapter,
+  HostedSignalProtocolRelayBootstrapRequest,
   HostedRelayBootstrapRequest,
+  HostedSignalProtocolRelayBootstrapResult,
   HostedRelayBootstrapResult,
+  HostedSignalProtocolRelayDeviceAuthentication,
   HostedRelayDeviceAuthentication,
+  HostedSignalProtocolRelayIdentityMigrationAction,
   HostedRelayIdentityMigrationAction,
+  HostedSignalProtocolRelayIdentityMigrationAdapter,
   HostedRelayIdentityMigrationAdapter,
+  HostedSignalProtocolRelayIdentityMigrationOptions,
   HostedRelayIdentityMigrationOptions,
+  HostedSignalProtocolRelayIdentityMigrationRequest,
   HostedRelayIdentityMigrationRequest,
+  HostedSignalProtocolRelayIdentityMigrationSnapshot,
   HostedRelayIdentityMigrationSnapshot,
+  HostedSignalProtocolRelayIdentityMigrationState,
   HostedRelayIdentityMigrationState,
+  HostedSignalProtocolRelayIdentityProgress,
   HostedRelayIdentityProgress,
+  HostedSignalProtocolRelayIdentityProgressCallback,
   HostedRelayIdentityProgressCallback,
+  HostedSignalProtocolRelayManagedDeviceLinkAdapter,
   HostedRelayManagedDeviceLinkAdapter,
+  HostedSignalProtocolRelayManagedDeviceLinkOptions,
   HostedRelayManagedDeviceLinkOptions,
+  HostedSignalProtocolRelayManagedDeviceLinkRequest,
   HostedRelayManagedDeviceLinkRequest,
+  HostedSignalProtocolRelayManagedDeviceLinkResult,
   HostedRelayManagedDeviceLinkResult,
+  HostedSignalProtocolRelayPresence,
   HostedRelayPresence,
+  HostedSignalProtocolRelayPresenceAccount,
   HostedRelayPresenceAccount,
+  HostedSignalProtocolRelayPresenceApproximateLastSeen,
   HostedRelayPresenceApproximateLastSeen,
+  HostedSignalProtocolRelayPresenceAudience,
   HostedRelayPresenceAudience,
+  HostedSignalProtocolRelayPresenceErrorCode,
   HostedRelayPresenceErrorCode,
+  HostedSignalProtocolRelayPresenceLastSeenPolicy,
   HostedRelayPresenceLastSeenPolicy,
+  HostedSignalProtocolRelayPresenceMode,
   HostedRelayPresenceMode,
+  HostedSignalProtocolRelayPresencePolicy,
   HostedRelayPresencePolicy,
+  HostedSignalProtocolRelayPresenceSetting,
   HostedRelayPresenceSetting,
+  HostedSignalProtocolRelayPresenceStatus,
   HostedRelayPresenceStatus,
+  HostedSignalProtocolRelayPresenceVisibility,
   HostedRelayPresenceVisibility,
+  HostedSignalProtocolRelayProfileKeys,
   HostedRelayProfileKeys,
+  HostedSignalProtocolRelayPushRegistration,
   HostedRelayPushRegistration,
+  HostedSignalProtocolRelayRegistrationPreKey,
   HostedRelayRegistrationPreKey,
+  HostedSignalProtocolRelayRegistrationPreKeys,
   HostedRelayRegistrationPreKeys,
+  HostedSignalProtocolRelayTokenPushRegistration,
   HostedRelayTokenPushRegistration,
+  HostedSignalProtocolRelayWakeClient,
   HostedRelayWakeClient,
+  HostedSignalProtocolRelayWakeOptions,
   HostedRelayWakeOptions,
+  HostedSignalProtocolRelayWakePresence,
   HostedRelayWakePresence,
+  HostedSignalProtocolRelayWakeResult,
   HostedRelayWakeResult,
+  HostedSignalProtocolRelayWebPushRegistration,
   HostedRelayWebPushRegistration,
   HostedSignalProtocolClientOptions,
   IdentityAssertionAssurance,
@@ -225,6 +280,7 @@ export type {
 export { isOutgoingMessageError } from "./client/types";
 export {
   DeviceSetReconciliationError,
+  SignalProtocolRelayProtocolError,
   RelayProtocolError,
   type DeviceSetDevice,
   type DeviceSetLastRefusal,
@@ -232,7 +288,9 @@ export {
   type DeviceSetRefusalAccount,
   type DeviceSetUnresolved,
   type DeviceSetUnresolvedReason,
+  type SignalProtocolRelayProtocolErrorCode,
   type RelayProtocolErrorCode,
+  type SignalProtocolRelayProtocolRoute,
   type RelayProtocolRoute,
 } from "./client/device-set-reconciliation";
 export type {
@@ -500,17 +558,18 @@ export type { GroupId, GroupTrustRoot } from "./internal/groups";
  * function createClient(
  *   userId: string,
  *   storage: SignalProtocolLocalStore,
- *   relay: SignalProtocolRelayServer,
+ *   signalProtocolRelay: SignalProtocolRelayServer,
  *   remoteObjectStore: SignalProtocolRemoteObjectStore,
  * ) {
  *   return createSignalProtocolClient({
  *     identity: { userId },
- *     adapters: { storage, relay, remoteObjectStore },
+ *     adapters: { storage, signalProtocolRelay, remoteObjectStore },
  *   });
  * }
  * ```
  */
 export type {
+  SignalProtocolRelayGroupServer,
   RelayGroupServer,
   SignalProtocolRelayServer,
   ContentKind,
@@ -520,7 +579,6 @@ export type {
   DeviceType,
   DeviceRegistration,
   PreKeyUpload,
-  PreKeyBundle as RelayPreKeyBundle, // Alias to avoid conflict with keys/PreKeyBundle
   PreKeyInventory,
   PreKeyMetadata,
   AccountIdentityProvisioning,
@@ -528,11 +586,20 @@ export type {
   GroupChangeEntry,
   GroupMemberDevice,
   PreKeyPublicationPlan,
+  SignalProtocolRelayConnectionReason,
   RelayConnectionReason,
+  SignalProtocolRelayConnectionState,
   RelayConnectionState,
   SealedSenderAuth,
   Unsubscribe,
-} from "./remote/relay/types";
+} from "./remote/signal-relay/types";
+/**
+ * The previous name of `PreKeyBundle`. The Signal Protocol Relay serves the
+ * same `PreKeyBundle` type that the root exports.
+ *
+ * @deprecated Use `PreKeyBundle`. SDK 15.0.0 removes this name.
+ */
+export type RelayPreKeyBundle = keys.PreKeyBundle;
 export type {
   RemoteObjectCompleteUploadRequest,
   RemoteObjectDeleteRequest,
@@ -760,6 +827,7 @@ export {
 // Sender-key type re-export for boundary-safe composition
 export type { SenderKeyDistributionMessage } from "./internal/protocol/sender-keys";
 
-export { resumeHostedSignalProtocolClient, HostedRelayResumeError } from './client';
-export type { HostedSignalProtocolResumeOptions, HostedRelayResumeErrorCode, HostedRelayResumePhase,
-  HostedRelayResumeProgress, HostedRelayResumeProgressCallback } from './client';
+export { resumeHostedSignalProtocolClient, HostedSignalProtocolRelayResumeError, HostedRelayResumeError } from './client';
+export type { HostedSignalProtocolResumeOptions, HostedSignalProtocolRelayResumeErrorCode, HostedRelayResumeErrorCode, HostedSignalProtocolRelayResumePhase, HostedRelayResumePhase,
+  HostedSignalProtocolRelayResumeProgress,
+  HostedRelayResumeProgress, HostedSignalProtocolRelayResumeProgressCallback, HostedRelayResumeProgressCallback } from './client';

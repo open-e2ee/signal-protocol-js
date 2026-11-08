@@ -1,4 +1,4 @@
-import { HostedRelayResumeError } from './hosted-resume-error';
+import { HostedSignalProtocolRelayResumeError } from './hosted-resume-error';
 import type { PrivateKey } from '../keys';
 import {
   generateEcOneTimePreKeys,
@@ -21,32 +21,41 @@ import {
   stringToBytes,
   urlSafeToBase64,
 } from '../internal/crypto';
-import type { SignalProtocolRelayServer } from '../remote/relay/types';
+import type { SignalProtocolRelayServer } from '../remote/signal-relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import type { SignalProtocolLocalStore, Base64 } from '../types';
+import { readRenamedOption } from '../types/renamed-member';
 import { DefaultSignalProtocolClient } from './client';
 import { nextOneTimePreKeyId } from './one-time-prekey-refill';
+import {
+  deleteHostedStoreRecord,
+  hostedStoreRecordKey,
+  readHostedStoreRecord,
+  writeHostedStoreRecord,
+  type HostedStoreRecordKey,
+  type HostedStoreRecordPrefix,
+} from './hosted-store-records';
 import type { SignalProtocolClientCompositionOptions } from './compose';
 import { createSignalProtocolClientConfig } from './compose';
 import type { SealedSenderAccessMode } from './config';
 import {
-  resolveHostedRelayConnection,
-  type HostedRelayCertificateTrust,
-  type HostedRelayConnection,
+  resolveHostedSignalProtocolRelayConnection,
+  type HostedSignalProtocolRelayCertificateTrust,
+  type HostedSignalProtocolRelayConnection,
 } from './hosted-connection';
 import {
-  bootstrapHostedRelayTransport,
-  linkHostedRelayTransport,
-  resumeHostedRelayTransport,
-  type HostedRelayTransportResult,
+  bootstrapHostedSignalProtocolRelayTransport,
+  linkHostedSignalProtocolRelayTransport,
+  resumeHostedSignalProtocolRelayTransport,
+  type HostedSignalProtocolRelayTransportResult,
 } from './hosted-transport';
-import { bindHostedRelayPushRuntime } from './hosted-push';
-import { bindHostedRelayPresenceRuntime } from './hosted-presence';
+import { bindHostedSignalProtocolRelayPushRuntime } from './hosted-push';
+import { bindHostedSignalProtocolRelayPresenceRuntime } from './hosted-presence';
 import {
-  assertHostedRelayProfileKeys,
-  bindHostedRelayProfileKeys,
+  assertHostedSignalProtocolRelayProfileKeys,
+  bindHostedSignalProtocolRelayProfileKeys,
   hostedSealedSenderContacts,
-  type HostedRelayProfileKeys,
+  type HostedSignalProtocolRelayProfileKeys,
 } from './hosted-profile-keys';
 import { resolveSignalProtocolLogger } from '../logger';
 import {
@@ -59,7 +68,7 @@ import {
   clearHostedDeviceLinkIntent,
   copyHostedDeviceLinkGroups,
   finishHostedDeviceLinkRollback,
-  HostedRelayDeviceLinkError,
+  HostedSignalProtocolRelayDeviceLinkError,
   isHostedDeviceLinkRefusal,
   readHostedDeviceLinkMarker,
   refuseLinkedGroupState,
@@ -68,59 +77,95 @@ import {
 } from './hosted-device-link';
 
 export {
+  pullHostedSignalProtocolRelayAfterWake,
   pullHostedRelayAfterWake,
+  registerHostedSignalProtocolRelayPush,
   registerHostedRelayPush,
+  removeHostedSignalProtocolRelayPush,
   removeHostedRelayPush,
 } from './hosted-push';
 export {
+  HostedSignalProtocolRelayPresenceError,
   HostedRelayPresenceError,
+  hostedSignalProtocolRelayPresence,
   hostedRelayPresence,
+  hostedSignalProtocolRelayWakePresence,
   hostedRelayWakePresence,
 } from './hosted-presence';
 export {
+  HostedSignalProtocolRelayDeviceRevokedError,
   HostedRelayDeviceRevokedError,
+  HostedSignalProtocolRelayDeviceUnknownError,
   HostedRelayDeviceUnknownError,
 } from './hosted-device-standing';
-export { HostedRelayDeviceLinkError } from './hosted-device-link';
-export { HostedRelayHttpError } from './hosted-http-error';
-export { HostedRelayUpgradeRequiredError } from './relay-protocol';
+export { HostedSignalProtocolRelayDeviceLinkError, HostedRelayDeviceLinkError } from './hosted-device-link';
+export { HostedSignalProtocolRelayHttpError, HostedRelayHttpError } from './hosted-http-error';
+export { HostedSignalProtocolRelayUpgradeRequiredError, HostedRelayUpgradeRequiredError } from './signal-relay-protocol';
 export type {
+  HostedSignalProtocolRelayPresence,
   HostedRelayPresence,
+  HostedSignalProtocolRelayPresenceAccount,
   HostedRelayPresenceAccount,
+  HostedSignalProtocolRelayPresenceApproximateLastSeen,
   HostedRelayPresenceApproximateLastSeen,
+  HostedSignalProtocolRelayPresenceAudience,
   HostedRelayPresenceAudience,
+  HostedSignalProtocolRelayPresenceErrorCode,
   HostedRelayPresenceErrorCode,
+  HostedSignalProtocolRelayPresenceLastSeenPolicy,
   HostedRelayPresenceLastSeenPolicy,
+  HostedSignalProtocolRelayPresenceMode,
   HostedRelayPresenceMode,
+  HostedSignalProtocolRelayPresencePolicy,
   HostedRelayPresencePolicy,
+  HostedSignalProtocolRelayPresenceSetting,
   HostedRelayPresenceSetting,
+  HostedSignalProtocolRelayPresenceStatus,
   HostedRelayPresenceStatus,
+  HostedSignalProtocolRelayPresenceVisibility,
   HostedRelayPresenceVisibility,
+  HostedSignalProtocolRelayWakePresence,
   HostedRelayWakePresence,
 } from './hosted-presence';
-export type { HostedRelayProfileKeys } from './hosted-profile-keys';
+export type { HostedSignalProtocolRelayProfileKeys, HostedRelayProfileKeys } from './hosted-profile-keys';
 export {
+  hostedSignalProtocolRelayDeviceOwnedIdentity,
   hostedRelayDeviceOwnedIdentity,
+  hostedSignalProtocolRelaySandboxIdentity,
   hostedRelaySandboxIdentity,
 } from './hosted-sandbox-identity';
 export type {
+  HostedSignalProtocolRelayPushPlatform,
   HostedRelayPushPlatform,
+  HostedSignalProtocolRelayPushProfile,
   HostedRelayPushProfile,
+  HostedSignalProtocolRelayPushRegistration,
   HostedRelayPushRegistration,
+  HostedSignalProtocolRelayTokenPushRegistration,
   HostedRelayTokenPushRegistration,
+  HostedSignalProtocolRelayWakeClient,
   HostedRelayWakeClient,
+  HostedSignalProtocolRelayWakeOptions,
   HostedRelayWakeOptions,
+  HostedSignalProtocolRelayWakeResult,
   HostedRelayWakeResult,
+  HostedSignalProtocolRelayWebPushRegistration,
   HostedRelayWebPushRegistration,
 } from './hosted-push';
 
-const DEVICE_AUTHENTICATION_METADATA_PREFIX =
-  'hostedRelay.deviceAuthentication.v1:';
-const REGISTRATION_SNAPSHOT_METADATA_PREFIX =
-  'hostedRelay.registrationSnapshot.v1:';
+const DEVICE_AUTHENTICATION_METADATA_PREFIX: HostedStoreRecordPrefix = {
+  current: 'signalRelay.deviceAuthentication.v2:',
+  earlier: 'hostedRelay.deviceAuthentication.v1:',
+};
+const REGISTRATION_SNAPSHOT_METADATA_PREFIX: HostedStoreRecordPrefix = {
+  current: 'signalRelay.registrationSnapshot.v2:',
+  earlier: 'hostedRelay.registrationSnapshot.v1:',
+};
 /** The pending snapshot of a re-registration that the Relay has not confirmed. */
-const REREGISTRATION_SNAPSHOT_METADATA_PREFIX =
-  'hostedRelay.reregistrationSnapshot.v1:';
+const REREGISTRATION_SNAPSHOT_METADATA_PREFIX: HostedStoreRecordPrefix = {
+  current: 'signalRelay.reregistrationSnapshot.v2:',
+  earlier: 'hostedRelay.reregistrationSnapshot.v1:',
+};
 const HOSTED_REGISTRATION_ONE_TIME_PREKEY_COUNT = 10;
 const DEVICE_AUTHENTICATION_SIGNATURE_LABEL = stringToBytes(
   'OpenE2EE Relay device authentication v1\0',
@@ -139,12 +184,12 @@ export type IdentityAssertionProviderRole = 'source' | 'target';
 export interface IdentityAssertionRequest {
   readonly purpose: IdentityAssertionPurpose;
   readonly assurance?: IdentityAssertionAssurance;
-  /** The environment kind of the Relay connection in `relayUrl`. */
+  /** The environment kind of the Relay connection in `signalProtocolRelayUrl`. */
   readonly environment: 'sandbox' | 'production';
-  /** The publishable key in `relayUrl`. It identifies one Relay environment. */
+  /** The publishable key in `signalProtocolRelayUrl`. It identifies one Relay environment. */
   readonly publishableKey: string;
   readonly migration?: {
-    readonly action: HostedRelayIdentityMigrationAction;
+    readonly action: HostedSignalProtocolRelayIdentityMigrationAction;
     readonly providerRole: IdentityAssertionProviderRole;
   };
 }
@@ -155,7 +200,7 @@ export type GetIdentityAssertion = (
 ) => Promise<string>;
 
 /** Hosted identity operation progress suitable for application UI. */
-export type HostedRelayIdentityProgress =
+export type HostedSignalProtocolRelayIdentityProgress =
   | {
       readonly operation: 'bootstrap' | 'recovery';
       readonly phase:
@@ -166,10 +211,10 @@ export type HostedRelayIdentityProgress =
     }
   | {
       readonly operation: 'migration';
-      readonly action: HostedRelayIdentityMigrationAction;
+      readonly action: HostedSignalProtocolRelayIdentityMigrationAction;
       readonly phase: 'requesting-assertion' | 'submitting' | 'complete';
       readonly providerRole?: IdentityAssertionProviderRole;
-      readonly state?: HostedRelayIdentityMigrationState;
+      readonly state?: HostedSignalProtocolRelayIdentityMigrationState;
     }
   | {
       readonly operation: 'device-link';
@@ -182,12 +227,12 @@ export type HostedRelayIdentityProgress =
     };
 
 /** Receives typed progress without receiving assertions or private key material. */
-export type HostedRelayIdentityProgressCallback = (
-  progress: HostedRelayIdentityProgress,
+export type HostedSignalProtocolRelayIdentityProgressCallback = (
+  progress: HostedSignalProtocolRelayIdentityProgress,
 ) => void;
 
 /** A device proof signer whose private key never leaves the SDK-owned local store. */
-export interface HostedRelayDeviceAuthentication {
+export interface HostedSignalProtocolRelayDeviceAuthentication {
   readonly publicKey: Uint8Array;
   /**
    * Sign a Relay challenge with domain separation and publishable-key binding.
@@ -199,7 +244,7 @@ export interface HostedRelayDeviceAuthentication {
 }
 
 /** Public prekey material sent during one atomic Signal Protocol Relay registration. */
-export interface HostedRelayRegistrationPreKey {
+export interface HostedSignalProtocolRelayRegistrationPreKey {
   readonly algorithm: 'ec-x25519' | 'kem-ml-kem-1024';
   readonly keyId: number;
   readonly publicKey: Uint8Array;
@@ -207,13 +252,13 @@ export interface HostedRelayRegistrationPreKey {
 }
 
 /** Complete EC/PQ inventory bound to the hosted device registration. */
-export interface HostedRelayRegistrationPreKeys {
-  readonly oneTimePreKeys: readonly HostedRelayRegistrationPreKey[];
-  readonly signedPreKeys: readonly HostedRelayRegistrationPreKey[];
+export interface HostedSignalProtocolRelayRegistrationPreKeys {
+  readonly oneTimePreKeys: readonly HostedSignalProtocolRelayRegistrationPreKey[];
+  readonly signedPreKeys: readonly HostedSignalProtocolRelayRegistrationPreKey[];
 }
 
 /** Request passed to a Signal Protocol Relay bootstrap transport. */
-export interface HostedRelayBootstrapRequest {
+export interface HostedSignalProtocolRelayBootstrapRequest {
   readonly protocolEndpoint: string;
   readonly publishableKey: string;
   readonly assertion: string;
@@ -222,25 +267,36 @@ export interface HostedRelayBootstrapRequest {
   readonly registrationId: number;
   /** Stable for exact retries and changes when the public registration material changes. */
   readonly operationId: string;
-  readonly registrationPreKeys: HostedRelayRegistrationPreKeys;
-  readonly deviceAuthentication: HostedRelayDeviceAuthentication;
+  readonly registrationPreKeys: HostedSignalProtocolRelayRegistrationPreKeys;
+  readonly deviceAuthentication: HostedSignalProtocolRelayDeviceAuthentication;
 }
 
-/** Canonical identity and authenticated Relay returned by hosted bootstrap. */
-export interface HostedRelayBootstrapResult {
+/**
+ * Canonical identity and authenticated Relay returned by hosted bootstrap.
+ *
+ * SDK 14 makes each new member optional and requires its deprecated earlier
+ * name. When an adapter sets both names, the SDK reads the new member, and
+ * two different values fail with `SignalProtocolRelayNameConflictError`.
+ * SDK 15.0.0 requires the new members.
+ */
+export interface HostedSignalProtocolRelayBootstrapResult {
   readonly canonicalAccountId: string;
   readonly deviceId: number;
+  readonly signalProtocolRelayScopeId?: Uint8Array;
+  /** @deprecated Use `signalProtocolRelayScopeId`. SDK 15.0.0 requires `signalProtocolRelayScopeId` and removes this name. */
   readonly relayScopeId: Uint8Array;
+  readonly signalProtocolRelay?: SignalProtocolRelayServer;
+  /** @deprecated Use `signalProtocolRelay`. SDK 15.0.0 requires `signalProtocolRelay` and removes this name. */
   readonly relay: SignalProtocolRelayServer;
 }
 
-export type HostedRelayIdentityMigrationAction =
+export type HostedSignalProtocolRelayIdentityMigrationAction =
   'prepare' | 'inspect' | 'cutover' | 'rollback' | 'finalize';
 
-export type HostedRelayIdentityMigrationState =
+export type HostedSignalProtocolRelayIdentityMigrationState =
   'abandoned' | 'prepared' | 'cutover' | 'rolled-back' | 'finalized';
 
-export interface HostedRelayIdentityMigrationSnapshot {
+export interface HostedSignalProtocolRelayIdentityMigrationSnapshot {
   readonly accountPreserved: true;
   readonly collision: false;
   readonly expiresAt: number;
@@ -249,11 +305,11 @@ export interface HostedRelayIdentityMigrationSnapshot {
   readonly primaryProvider: IdentityAssertionProviderRole;
   readonly proof: 'active-device' | 'dual-assertion';
   readonly rollbackDeadline?: number;
-  readonly state: HostedRelayIdentityMigrationState;
+  readonly state: HostedSignalProtocolRelayIdentityMigrationState;
 }
 
-export interface HostedRelayIdentityMigrationRequest {
-  readonly action: HostedRelayIdentityMigrationAction;
+export interface HostedSignalProtocolRelayIdentityMigrationRequest {
+  readonly action: HostedSignalProtocolRelayIdentityMigrationAction;
   readonly protocolEndpoint: string;
   readonly publishableKey: string;
   readonly operationId: string;
@@ -261,7 +317,7 @@ export interface HostedRelayIdentityMigrationRequest {
   readonly authorization:
     | {
         readonly kind: 'active-device';
-        readonly deviceAuthentication: HostedRelayDeviceAuthentication;
+        readonly deviceAuthentication: HostedSignalProtocolRelayDeviceAuthentication;
       }
     | {
         readonly kind: 'assertion';
@@ -270,18 +326,18 @@ export interface HostedRelayIdentityMigrationRequest {
   readonly targetAssertion?: string;
 }
 
-export interface HostedRelayManagedDeviceLinkRequest {
+export interface HostedSignalProtocolRelayManagedDeviceLinkRequest {
   readonly protocolEndpoint: string;
   readonly publishableKey: string;
   readonly signalIdentity: CompositeIdentityV1;
   readonly registrationId: number;
   readonly operationId: string;
-  readonly registrationPreKeys: HostedRelayRegistrationPreKeys;
-  readonly activeDeviceAuthentication: HostedRelayDeviceAuthentication;
-  readonly newDeviceAuthentication: HostedRelayDeviceAuthentication;
+  readonly registrationPreKeys: HostedSignalProtocolRelayRegistrationPreKeys;
+  readonly activeDeviceAuthentication: HostedSignalProtocolRelayDeviceAuthentication;
+  readonly newDeviceAuthentication: HostedSignalProtocolRelayDeviceAuthentication;
 }
 
-export interface HostedRelayManagedDeviceLinkResult extends HostedRelayBootstrapResult {
+export interface HostedSignalProtocolRelayManagedDeviceLinkResult extends HostedSignalProtocolRelayBootstrapResult {
   readonly accountPreserved: true;
   readonly protocolStateCopied: false;
 }
@@ -296,24 +352,24 @@ export interface HostedRelayManagedDeviceLinkResult extends HostedRelayBootstrap
  * supplies would weaken the managed trust boundary. Self-hosted trust stays in
  * its separate explicit configuration.
  */
-export interface HostedRelayBootstrapAdapter {
+export interface HostedSignalProtocolRelayBootstrapAdapter {
   bootstrap(
-    request: HostedRelayBootstrapRequest,
-  ): Promise<HostedRelayBootstrapResult>;
+    request: HostedSignalProtocolRelayBootstrapRequest,
+  ): Promise<HostedSignalProtocolRelayBootstrapResult>;
 }
 
 /** Transport boundary for the Signal Protocol Relay identity-migration state machine. */
-export interface HostedRelayIdentityMigrationAdapter {
+export interface HostedSignalProtocolRelayIdentityMigrationAdapter {
   migrate(
-    request: HostedRelayIdentityMigrationRequest,
-  ): Promise<HostedRelayIdentityMigrationSnapshot>;
+    request: HostedSignalProtocolRelayIdentityMigrationRequest,
+  ): Promise<HostedSignalProtocolRelayIdentityMigrationSnapshot>;
 }
 
 /** Transport boundary for canonical managed device linking. */
-export interface HostedRelayManagedDeviceLinkAdapter extends HostedRelayBootstrapAdapter {
+export interface HostedSignalProtocolRelayManagedDeviceLinkAdapter extends HostedSignalProtocolRelayBootstrapAdapter {
   linkDevice(
-    request: HostedRelayManagedDeviceLinkRequest,
-  ): Promise<HostedRelayManagedDeviceLinkResult>;
+    request: HostedSignalProtocolRelayManagedDeviceLinkRequest,
+  ): Promise<HostedSignalProtocolRelayManagedDeviceLinkResult>;
 }
 
 /** Compact, runtime-neutral Signal Protocol Relay client configuration. */
@@ -324,11 +380,16 @@ export interface HostedSignalProtocolClientOptions extends Omit<
   readonly groups?: HostedGroupOptions;
   readonly adapters: Omit<
     SignalProtocolClientCompositionOptions['adapters'],
-    'relay' | 'remoteObjectStore'
+    'relay' | 'signalProtocolRelay' | 'remoteObjectStore'
   >;
   readonly hosted: {
-    /** Public environment-scoped Signal Protocol Relay connection URL. */
-    readonly relayUrl: string;
+    /**
+     * Public environment-scoped Signal Protocol Relay connection URL. Set this
+     * member or the deprecated `relayUrl`.
+     */
+    readonly signalProtocolRelayUrl?: string;
+    /** @deprecated Use `signalProtocolRelayUrl`. SDK 15.0.0 removes this name. */
+    readonly relayUrl?: string;
     readonly getIdentityAssertion: GetIdentityAssertion;
     /**
      * `register` (the default) resumes the stored session or registers a new
@@ -336,7 +397,7 @@ export interface HostedSignalProtocolClientOptions extends Omit<
      *
      * `reregister` registers this device again with its stored identity and
      * device key, and skips the stored session. Use it only after a
-     * `HostedRelayDeviceUnknownError` and after the user confirms it. It asks
+     * `HostedSignalProtocolRelayDeviceUnknownError` and after the user confirms it. It asks
      * for a `register` assertion. The Relay can give a new device ID, so the
      * messages queued for the old device are lost.
      */
@@ -344,7 +405,7 @@ export interface HostedSignalProtocolClientOptions extends Omit<
       | Exclude<IdentityAssertionPurpose, 'refresh'>
       | 'reregister';
     readonly assurance?: IdentityAssertionAssurance;
-    readonly onProgress?: HostedRelayIdentityProgressCallback;
+    readonly onProgress?: HostedSignalProtocolRelayIdentityProgressCallback;
     readonly sealedSenderAccessMode?: SealedSenderAccessMode;
     /**
      * Carries this account's profile key in each end-to-end encrypted 1:1
@@ -360,19 +421,24 @@ export interface HostedSignalProtocolClientOptions extends Omit<
      * key that it derives from this account's profile key, so a contact that
      * holds the profile key can send sealed messages to this account.
      */
-    readonly profileKeys?: HostedRelayProfileKeys;
+    readonly profileKeys?: HostedSignalProtocolRelayProfileKeys;
   };
 }
 
-export interface HostedRelayIdentityMigrationOptions {
-  readonly action: HostedRelayIdentityMigrationAction;
-  readonly adapter: HostedRelayIdentityMigrationAdapter;
+export interface HostedSignalProtocolRelayIdentityMigrationOptions {
+  readonly action: HostedSignalProtocolRelayIdentityMigrationAction;
+  readonly adapter: HostedSignalProtocolRelayIdentityMigrationAdapter;
   readonly getIdentityAssertion: GetIdentityAssertion;
   readonly manifestVersion?: number;
   readonly operationId: string;
-  readonly onProgress?: HostedRelayIdentityProgressCallback;
-  /** Public environment-scoped Signal Protocol Relay connection URL. */
-  readonly relayUrl: string;
+  readonly onProgress?: HostedSignalProtocolRelayIdentityProgressCallback;
+  /**
+   * Public environment-scoped Signal Protocol Relay connection URL. Set this
+   * member or the deprecated `relayUrl`.
+   */
+  readonly signalProtocolRelayUrl?: string;
+  /** @deprecated Use `signalProtocolRelayUrl`. SDK 15.0.0 removes this name. */
+  readonly relayUrl?: string;
   readonly authorization:
     | {
         readonly kind: 'active-device';
@@ -384,14 +450,14 @@ export interface HostedRelayIdentityMigrationOptions {
       };
 }
 
-export interface HostedRelayManagedDeviceLinkOptions extends Omit<
+export interface HostedSignalProtocolRelayManagedDeviceLinkOptions extends Omit<
   SignalProtocolClientCompositionOptions,
   'adapters' | 'identity' | 'sealedSender' | 'groups'
 > {
   readonly groups?: HostedGroupOptions;
   readonly adapters: Omit<
     SignalProtocolClientCompositionOptions['adapters'],
-    'relay'
+    'relay' | 'signalProtocolRelay'
   >;
   readonly activeDeviceStorage: SignalProtocolLocalStore;
   /**
@@ -405,11 +471,16 @@ export interface HostedRelayManagedDeviceLinkOptions extends Omit<
    */
   readonly activeGroupStore?: GroupStateStore;
   readonly hosted: {
-    /** Public environment-scoped Signal Protocol Relay connection URL. */
-    readonly relayUrl: string;
+    /**
+     * Public environment-scoped Signal Protocol Relay connection URL. Set this
+     * member or the deprecated `relayUrl`.
+     */
+    readonly signalProtocolRelayUrl?: string;
+    /** @deprecated Use `signalProtocolRelayUrl`. SDK 15.0.0 removes this name. */
+    readonly relayUrl?: string;
     /** Override the default authenticated device-link transport. */
-    readonly adapter?: HostedRelayManagedDeviceLinkAdapter;
-    readonly onProgress?: HostedRelayIdentityProgressCallback;
+    readonly adapter?: HostedSignalProtocolRelayManagedDeviceLinkAdapter;
+    readonly onProgress?: HostedSignalProtocolRelayIdentityProgressCallback;
     readonly sealedSenderAccessMode?: SealedSenderAccessMode;
   };
 }
@@ -420,7 +491,7 @@ interface StoredDeviceAuthentication {
 }
 
 interface StoredHostedRegistrationPreKey {
-  algorithm: HostedRelayRegistrationPreKey['algorithm'];
+  algorithm: HostedSignalProtocolRelayRegistrationPreKey['algorithm'];
   keyId: number;
   publicKey: Base64;
   signature?: Base64;
@@ -450,7 +521,7 @@ function lengthPrefixed(value: Uint8Array): Uint8Array {
 async function deriveHostedRegistrationOperationId(
   identity: CompositeIdentityV1,
   registrationId: number,
-  prekeys: HostedRelayRegistrationPreKeys,
+  prekeys: HostedSignalProtocolRelayRegistrationPreKeys,
 ): Promise<string> {
   const entries = [
     ...prekeys.signedPreKeys.map((prekey) => ({ ...prekey, kind: 1 })),
@@ -489,7 +560,7 @@ async function deriveHostedRegistrationOperationId(
 }
 
 function encodeRegistrationPreKey(
-  prekey: HostedRelayRegistrationPreKey,
+  prekey: HostedSignalProtocolRelayRegistrationPreKey,
 ): StoredHostedRegistrationPreKey {
   return {
     algorithm: prekey.algorithm,
@@ -504,7 +575,7 @@ function encodeRegistrationPreKey(
 function decodeRegistrationPreKey(
   value: unknown,
   kind: 'one-time' | 'signed',
-): HostedRelayRegistrationPreKey {
+): HostedSignalProtocolRelayRegistrationPreKey {
   if (
     typeof value !== 'object' ||
     value === null ||
@@ -553,7 +624,7 @@ async function decodeRegistrationSnapshot(
   registrationId: number,
 ): Promise<{
   operationId: string;
-  registrationPreKeys: HostedRelayRegistrationPreKeys;
+  registrationPreKeys: HostedSignalProtocolRelayRegistrationPreKeys;
 }> {
   let parsed: unknown;
   try {
@@ -613,35 +684,38 @@ type StoredIdentityKeyPair = NonNullable<
 
 interface HostedRegistrationSnapshot {
   operationId: string;
-  registrationPreKeys: HostedRelayRegistrationPreKeys;
+  registrationPreKeys: HostedSignalProtocolRelayRegistrationPreKeys;
 }
 
 async function registrationSnapshotMetadataKey(
-  prefix: string,
+  prefix: HostedStoreRecordPrefix,
   publishableKey: string,
   identity: CompositeIdentityV1,
   registrationId: number,
-): Promise<string> {
-  return `${prefix}${bytesToBase64(
-    await sha256(
-      concatBytes(
-        stringToBytes(publishableKey),
-        new Uint8Array([0]),
-        uint32be(registrationId),
-        base64ToBytes(identity.x25519PublicKey),
-        base64ToBytes(identity.ed25519PublicKey),
+): Promise<HostedStoreRecordKey> {
+  return hostedStoreRecordKey(
+    prefix,
+    bytesToBase64(
+      await sha256(
+        concatBytes(
+          stringToBytes(publishableKey),
+          new Uint8Array([0]),
+          uint32be(registrationId),
+          base64ToBytes(identity.x25519PublicKey),
+          base64ToBytes(identity.ed25519PublicKey),
+        ),
       ),
     ),
-  )}`;
+  );
 }
 
 /** Derives the operation ID of a prekey set and stores the set under `metadataKey`. */
 async function storeRegistrationSnapshot(
   storage: SignalProtocolLocalStore,
-  metadataKey: string,
+  metadataKey: HostedStoreRecordKey,
   identity: CompositeIdentityV1,
   registrationId: number,
-  registrationPreKeys: HostedRelayRegistrationPreKeys,
+  registrationPreKeys: HostedSignalProtocolRelayRegistrationPreKeys,
 ): Promise<HostedRegistrationSnapshot> {
   const operationId = await deriveHostedRegistrationOperationId(
     identity,
@@ -659,7 +733,7 @@ async function storeRegistrationSnapshot(
       encodeRegistrationPreKey,
     ),
   };
-  await storage.setMetadata(metadataKey, JSON.stringify(snapshot));
+  await writeHostedStoreRecord(storage, metadataKey, JSON.stringify(snapshot));
   return { operationId, registrationPreKeys };
 }
 
@@ -676,7 +750,7 @@ async function getOrCreateRegistrationSnapshot(
     identity,
     registrationId,
   );
-  const stored = await storage.getMetadata(metadataKey);
+  const stored = await readHostedStoreRecord(storage, metadataKey);
   if (stored) {
     return decodeRegistrationSnapshot(stored, identity, registrationId);
   }
@@ -718,7 +792,7 @@ async function getOrCreateReregistrationSnapshot(
       ),
     ),
   );
-  const stored = await storage.getMetadata(pendingKey!);
+  const stored = await readHostedStoreRecord(storage, pendingKey!);
   const snapshot = stored
     ? await decodeRegistrationSnapshot(stored, identity, registrationId)
     : await storeRegistrationSnapshot(
@@ -731,9 +805,9 @@ async function getOrCreateReregistrationSnapshot(
   return {
     ...snapshot,
     async promote() {
-      const pending = await storage.getMetadata(pendingKey!);
-      if (pending) await storage.setMetadata(registeredKey!, pending);
-      await storage.deleteMetadata(pendingKey!);
+      const pending = await readHostedStoreRecord(storage, pendingKey!);
+      if (pending) await writeHostedStoreRecord(storage, registeredKey!, pending);
+      await deleteHostedStoreRecord(storage, pendingKey!);
     },
   };
 }
@@ -741,7 +815,7 @@ async function getOrCreateReregistrationSnapshot(
 async function getOrCreateSignedRegistrationPreKeys(
   storage: SignalProtocolLocalStore,
   identity: StoredIdentityKeyPair,
-): Promise<HostedRelayRegistrationPreKeys['signedPreKeys']> {
+): Promise<HostedSignalProtocolRelayRegistrationPreKeys['signedPreKeys']> {
   let signedPreKey = await storage.getEcSignedPreKey(undefined, 'aci');
   if (!signedPreKey) {
     signedPreKey = await generateEcSignedPreKey(identity);
@@ -775,7 +849,7 @@ function registrationOneTimePreKeys(
   kemOneTimePreKeys: Awaited<
     ReturnType<SignalProtocolLocalStore['getKemOneTimePreKeys']>
   >,
-): HostedRelayRegistrationPreKeys['oneTimePreKeys'] {
+): HostedSignalProtocolRelayRegistrationPreKeys['oneTimePreKeys'] {
   return [
     ...ecOneTimePreKeys.map((prekey) => ({
       algorithm: 'ec-x25519' as const,
@@ -794,7 +868,7 @@ function registrationOneTimePreKeys(
 async function getOrCreateRegistrationPreKeys(
   storage: SignalProtocolLocalStore,
   identity: StoredIdentityKeyPair,
-): Promise<HostedRelayRegistrationPreKeys> {
+): Promise<HostedSignalProtocolRelayRegistrationPreKeys> {
   const signedPreKeys = await getOrCreateSignedRegistrationPreKeys(
     storage,
     identity,
@@ -832,7 +906,7 @@ async function getOrCreateRegistrationPreKeys(
 async function createReregistrationPreKeys(
   storage: SignalProtocolLocalStore,
   identity: StoredIdentityKeyPair,
-): Promise<HostedRelayRegistrationPreKeys> {
+): Promise<HostedSignalProtocolRelayRegistrationPreKeys> {
   const signedPreKeys = await getOrCreateSignedRegistrationPreKeys(
     storage,
     identity,
@@ -884,15 +958,15 @@ function decodeStoredDeviceAuthentication(
 async function getOrCreateDeviceAuthentication(
   storage: SignalProtocolLocalStore,
   publishableKey: string,
-): Promise<HostedRelayDeviceAuthentication> {
+): Promise<HostedSignalProtocolRelayDeviceAuthentication> {
   const metadataKey = await deviceAuthenticationMetadataKey(publishableKey);
-  const stored = await storage.getMetadata(metadataKey);
+  const stored = await readHostedStoreRecord(storage, metadataKey);
   let keyPair: StoredDeviceAuthentication;
   if (stored) {
     keyPair = decodeStoredDeviceAuthentication(stored);
   } else {
     keyPair = await generateSigningKeyPair();
-    await storage.setMetadata(metadataKey, JSON.stringify(keyPair));
+    await writeHostedStoreRecord(storage, metadataKey, JSON.stringify(keyPair));
   }
   return deviceAuthenticationSigner(keyPair, publishableKey);
 }
@@ -902,13 +976,13 @@ export async function getExistingDeviceAuthentication(
   storage: SignalProtocolLocalStore,
   publishableKey: string,
   strict = false,
-): Promise<HostedRelayDeviceAuthentication> {
+): Promise<HostedSignalProtocolRelayDeviceAuthentication> {
   let stored: string | null;
   try {
-    stored = await storage.getMetadata(await deviceAuthenticationMetadataKey(publishableKey));
+    stored = await readHostedStoreRecord(storage, await deviceAuthenticationMetadataKey(publishableKey));
   } catch (cause) {
     if (strict) {
-      throw new HostedRelayResumeError(
+      throw new HostedSignalProtocolRelayResumeError(
         'RETAINED_STATE_UNREADABLE', 'reading-local-state', { cause }
       );
     }
@@ -916,7 +990,7 @@ export async function getExistingDeviceAuthentication(
   }
   if (!stored) {
     if (strict) {
-      throw new HostedRelayResumeError('RETAINED_DEVICE_AUTHENTICATION_UNAVAILABLE', 'reading-local-state');
+      throw new HostedSignalProtocolRelayResumeError('RETAINED_DEVICE_AUTHENTICATION_UNAVAILABLE', 'reading-local-state');
     }
     throw new Error('Signal Protocol Relay active device authentication key is not registered');
   }
@@ -924,7 +998,7 @@ export async function getExistingDeviceAuthentication(
     return deviceAuthenticationSigner(decodeStoredDeviceAuthentication(stored), publishableKey);
   } catch (cause) {
     if (strict) {
-      throw new HostedRelayResumeError(
+      throw new HostedSignalProtocolRelayResumeError(
         'RETAINED_DEVICE_AUTHENTICATION_UNAVAILABLE', 'reading-local-state', { cause }
       );
     }
@@ -934,16 +1008,17 @@ export async function getExistingDeviceAuthentication(
 
 async function deviceAuthenticationMetadataKey(
   publishableKey: string,
-): Promise<string> {
-  return `${DEVICE_AUTHENTICATION_METADATA_PREFIX}${bytesToBase64(
-    await sha256(stringToBytes(publishableKey)),
-  )}`;
+): Promise<HostedStoreRecordKey> {
+  return hostedStoreRecordKey(
+    DEVICE_AUTHENTICATION_METADATA_PREFIX,
+    bytesToBase64(await sha256(stringToBytes(publishableKey))),
+  );
 }
 
 function deviceAuthenticationSigner(
   keyPair: StoredDeviceAuthentication,
   publishableKey: string,
-): HostedRelayDeviceAuthentication {
+): HostedSignalProtocolRelayDeviceAuthentication {
   return {
     publicKey: base64ToBytes(keyPair.publicKey),
     signCertificateRequest: async (tokenId, nonce) => {
@@ -976,10 +1051,62 @@ function deviceAuthenticationSigner(
   };
 }
 
+/**
+ * @internal The Relay URL of hosted options. The new name wins, and two
+ * different values fail. A missing URL reads as empty, so the connection
+ * parser refuses it.
+ */
+export function hostedSignalProtocolRelayUrl(
+  options: {
+    readonly signalProtocolRelayUrl?: string;
+    readonly relayUrl?: string;
+  },
+  operation: string,
+): string {
+  return (
+    readRenamedOption(options.signalProtocolRelayUrl, options.relayUrl, {
+      newName: 'signalProtocolRelayUrl',
+      earlierName: 'relayUrl',
+      operation,
+    }) ?? ''
+  );
+}
+
+/** A bootstrap result that holds each value under its new name. */
+interface HostedBootstrapBinding {
+  readonly canonicalAccountId: string;
+  readonly deviceId: number;
+  readonly signalProtocolRelayScopeId: Uint8Array | undefined;
+  readonly signalProtocolRelay: SignalProtocolRelayServer | undefined;
+}
+
+function hostedBootstrapBinding(
+  result: HostedSignalProtocolRelayBootstrapResult,
+): HostedBootstrapBinding {
+  const operation = 'hostedBootstrap';
+  return {
+    canonicalAccountId: result.canonicalAccountId,
+    deviceId: result.deviceId,
+    signalProtocolRelayScopeId: readRenamedOption(
+      result.signalProtocolRelayScopeId,
+      result.relayScopeId,
+      { newName: 'signalProtocolRelayScopeId', earlierName: 'relayScopeId', operation },
+    ),
+    signalProtocolRelay: readRenamedOption(result.signalProtocolRelay, result.relay, {
+      newName: 'signalProtocolRelay',
+      earlierName: 'relay',
+      operation,
+    }),
+  };
+}
+
 function assertHostedBootstrapResult(
-  result: HostedRelayBootstrapResult,
-  certificateTrust: HostedRelayCertificateTrust,
-): void {
+  result: HostedBootstrapBinding,
+  certificateTrust: HostedSignalProtocolRelayCertificateTrust,
+): asserts result is HostedBootstrapBinding & {
+  readonly signalProtocolRelayScopeId: Uint8Array;
+  readonly signalProtocolRelay: SignalProtocolRelayServer;
+} {
   if (!result.canonicalAccountId || result.canonicalAccountId.length > 512) {
     throw new Error(
       'Signal Protocol Relay returned an invalid canonical account binding',
@@ -989,14 +1116,14 @@ function assertHostedBootstrapResult(
     throw new Error('Signal Protocol Relay returned an invalid device binding');
   }
   if (
-    !(result.relayScopeId instanceof Uint8Array) ||
-    result.relayScopeId.length !== 16
+    !(result.signalProtocolRelayScopeId instanceof Uint8Array) ||
+    result.signalProtocolRelayScopeId.length !== 16
   ) {
     throw new Error(
       'Signal Protocol Relay returned an invalid project-environment scope',
     );
   }
-  if (!result.relay) {
+  if (!result.signalProtocolRelay) {
     throw new Error(
       'Signal Protocol Relay bootstrap did not return an authenticated Relay',
     );
@@ -1061,11 +1188,11 @@ function hostedAccountAci(accountId: string) {
 
 /** @internal Shared hosted composition; caller retains failure cleanup custody. */
 export async function createClientFromHostedResult(
-  result: HostedRelayBootstrapResult,
-  connection: HostedRelayConnection,
+  bootstrapResult: HostedSignalProtocolRelayBootstrapResult,
+  connection: HostedSignalProtocolRelayConnection,
   adapters: Omit<
     SignalProtocolClientCompositionOptions['adapters'],
-    'relay' | 'remoteObjectStore'
+    'relay' | 'signalProtocolRelay' | 'remoteObjectStore'
   >,
   clientOptions: Omit<
     HostedSignalProtocolClientOptions,
@@ -1073,11 +1200,12 @@ export async function createClientFromHostedResult(
   >,
   sealedSenderAccessMode?: SealedSenderAccessMode,
   remoteObjectStore?: SignalProtocolRemoteObjectStore,
-  hostedTransport?: HostedRelayTransportResult['transport'],
-  profileKeys?: HostedRelayProfileKeys,
+  hostedTransport?: HostedSignalProtocolRelayTransportResult['transport'],
+  profileKeys?: HostedSignalProtocolRelayProfileKeys,
   createClient: typeof DefaultSignalProtocolClient.create = DefaultSignalProtocolClient.create,
 ): Promise<DefaultSignalProtocolClient> {
   const { certificateTrust } = connection;
+  const result = hostedBootstrapBinding(bootstrapResult);
   assertHostedBootstrapResult(result, certificateTrust);
   const { groups, ...rest } = clientOptions;
   const aci =
@@ -1090,7 +1218,7 @@ export async function createClientFromHostedResult(
       : await resolveHostedGroupOptions(
           connection,
           groups,
-          hostedTransport?.relayProtocolVersion,
+          hostedTransport?.signalRelayProtocolVersion,
         );
   const config = createSignalProtocolClientConfig({
     ...rest,
@@ -1110,7 +1238,7 @@ export async function createClientFromHostedResult(
       : {}),
     adapters: {
       ...adapters,
-      relay: result.relay,
+      signalProtocolRelay: result.signalProtocolRelay,
       ...(remoteObjectStore === undefined ? {} : { remoteObjectStore }),
     },
     identity: {
@@ -1120,7 +1248,7 @@ export async function createClientFromHostedResult(
     },
     sealedSender: {
       accessMode: sealedSenderAccessMode,
-      relayScopeId: result.relayScopeId,
+      signalProtocolRelayScopeId: result.signalProtocolRelayScopeId,
       revokedIssuerKeyIds: certificateTrust.revokedIssuerKeyIds,
       trustModel: 'hosted',
       trustRoots: certificateTrust.trustRoots.map(
@@ -1133,10 +1261,10 @@ export async function createClientFromHostedResult(
   });
   const client = await createClient(result.canonicalAccountId, config);
   if (hostedTransport !== undefined) {
-    bindHostedRelayPushRuntime(client, hostedTransport);
-    bindHostedRelayPresenceRuntime(client, hostedTransport);
+    bindHostedSignalProtocolRelayPushRuntime(client, hostedTransport);
+    bindHostedSignalProtocolRelayPresenceRuntime(client, hostedTransport);
     if (profileKeys !== undefined)
-      bindHostedRelayProfileKeys(
+      bindHostedSignalProtocolRelayProfileKeys(
         client,
         hostedTransport,
         profileKeys,
@@ -1153,10 +1281,12 @@ export async function createClientFromHostedResult(
  * callback used by hosted bootstrap. The transport owns device-token storage
  * and the HTTP representation.
  */
-export async function advanceHostedRelayIdentityMigration(
-  options: HostedRelayIdentityMigrationOptions,
-): Promise<HostedRelayIdentityMigrationSnapshot> {
-  const connection = await resolveHostedRelayConnection(options.relayUrl);
+export async function advanceHostedSignalProtocolRelayIdentityMigration(
+  options: HostedSignalProtocolRelayIdentityMigrationOptions,
+): Promise<HostedSignalProtocolRelayIdentityMigrationSnapshot> {
+  const connection = await resolveHostedSignalProtocolRelayConnection(
+    hostedSignalProtocolRelayUrl(options, 'advanceHostedSignalProtocolRelayIdentityMigration'),
+  );
   const { protocolEndpoint, publishableKey } = connection;
   const operationId = assertOperationId(options.operationId);
   if (
@@ -1266,15 +1396,16 @@ async function chooseLinkRegistration(
     identity.registrationId,
   );
   let registrationId: number;
-  if (await storage.getMetadata(snapshotKey)) {
+  if (await readHostedStoreRecord(storage, snapshotKey)) {
     registrationId = identity.registrationId;
   } else {
     if (
-      await storage.getMetadata(
+      await readHostedStoreRecord(
+        storage,
         await deviceAuthenticationMetadataKey(publishableKey),
       )
     ) {
-      throw new HostedRelayDeviceLinkError(
+      throw new HostedSignalProtocolRelayDeviceLinkError(
         'Signal Protocol Relay linked device store already holds a device key',
       );
     }
@@ -1342,7 +1473,7 @@ async function storeLinkedIdentityRegistration(
  * earlier release wrote, and that the active device has not read since, is not
  * listed and is not copied. Read each group once on the active device before
  * the link to copy it. A linked group store that lists a group that the link
- * did not write is refused with `HostedRelayDeviceLinkError` before any write.
+ * did not write is refused with `HostedSignalProtocolRelayDeviceLinkError` before any write.
  * The copied keys live in the linked device's group store. The SDK does not
  * move them again. A later move of that store is the application's store move.
  *
@@ -1350,7 +1481,7 @@ async function storeLinkedIdentityRegistration(
  * linked store's identity records before it registers, and a held PNI record
  * gets a separate one. A link that an earlier release began keeps its stored
  * registration ID. A linked store that holds a device-authentication key with
- * no registration of this link is refused with `HostedRelayDeviceLinkError`
+ * no registration of this link is refused with `HostedSignalProtocolRelayDeviceLinkError`
  * before any write.
  *
  * The linked store keeps the state of the link. Call again with the same
@@ -1364,12 +1495,12 @@ async function storeLinkedIdentityRegistration(
  * identity records and the registration, so the next call sends the same
  * registration ID. Every other error keeps the link state and the copied
  * groups. A completed link is never rolled back. A custom
- * adapter throws `HostedRelayHttpError` with the Relay's `code` and
+ * adapter throws `HostedSignalProtocolRelayHttpError` with the Relay's `code` and
  * `retryable` when the Relay refuses the link, so that the call can roll the
  * link back.
  */
-export async function linkHostedRelayDevice(
-  options: HostedRelayManagedDeviceLinkOptions,
+export async function linkHostedSignalProtocolRelayDevice(
+  options: HostedSignalProtocolRelayManagedDeviceLinkOptions,
 ): Promise<DefaultSignalProtocolClient> {
   const {
     adapters,
@@ -1379,7 +1510,9 @@ export async function linkHostedRelayDevice(
     ...clientOptions
   } = options;
   const storage = adapters.storage;
-  const connection = await resolveHostedRelayConnection(hosted.relayUrl);
+  const connection = await resolveHostedSignalProtocolRelayConnection(
+    hostedSignalProtocolRelayUrl(hosted, 'linkHostedSignalProtocolRelayDevice'),
+  );
   const { protocolEndpoint, publishableKey } = connection;
   hosted.onProgress?.({
     operation: 'device-link',
@@ -1463,10 +1596,10 @@ export async function linkHostedRelayDevice(
     await writeHostedDeviceLinkMarker(storage, marker);
   }
   hosted.onProgress?.({ operation: 'device-link', phase: 'submitting' });
-  let result: HostedRelayManagedDeviceLinkResult;
-  let transportResult: HostedRelayTransportResult | undefined;
+  let result: HostedSignalProtocolRelayManagedDeviceLinkResult;
+  let transportResult: HostedSignalProtocolRelayTransportResult | undefined;
   try {
-    const request: HostedRelayManagedDeviceLinkRequest = {
+    const request: HostedSignalProtocolRelayManagedDeviceLinkRequest = {
       protocolEndpoint,
       publishableKey,
       signalIdentity,
@@ -1478,7 +1611,7 @@ export async function linkHostedRelayDevice(
     };
     if (hosted.adapter !== undefined) result = await hosted.adapter.linkDevice(request);
     else {
-      const linked = await linkHostedRelayTransport({ connection, activeStorage: activeDeviceStorage, storage, request });
+      const linked = await linkHostedSignalProtocolRelayTransport({ connection, activeStorage: activeDeviceStorage, storage, request });
       result = linked;
       transportResult = linked;
     }
@@ -1529,9 +1662,9 @@ export async function linkHostedRelayDevice(
  * The Relay verifies the assertion and device proof, then returns the canonical
  * account, registered device, scope, and authenticated transport used by the client.
  *
- * In a Sandbox environment, {@link hostedRelaySandboxIdentity} supplies the
+ * In a Sandbox environment, {@link hostedSignalProtocolRelaySandboxIdentity} supplies the
  * assertion. The Sandbox helper cannot serve Production. A Production project
- * in device-owned identity mode uses {@link hostedRelayDeviceOwnedIdentity}. A
+ * in device-owned identity mode uses {@link hostedSignalProtocolRelayDeviceOwnedIdentity}. A
  * Production project in application-bound mode needs an application callback
  * that returns an assertion from your backend. Recovery and provider migration
  * need an identity provider that authenticates the user.
@@ -1542,8 +1675,8 @@ export async function linkHostedRelayDevice(
  * const client = await createHostedSignalProtocolClient({
  *   adapters: { storage },
  *   hosted: {
- *     getIdentityAssertion: hostedRelaySandboxIdentity(storage),
- *     relayUrl: process.env.OPEN_E2EE_RELAY_URL!,
+ *     getIdentityAssertion: hostedSignalProtocolRelaySandboxIdentity(storage),
+ *     signalProtocolRelayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
  *   },
  * });
  * ```
@@ -1552,7 +1685,7 @@ export async function createHostedSignalProtocolClient(
   options: HostedSignalProtocolClientOptions,
 ): Promise<DefaultSignalProtocolClient> {
   const { adapters, hosted, ...clientOptions } = options;
-  if (hosted.profileKeys !== undefined) assertHostedRelayProfileKeys(hosted.profileKeys);
+  if (hosted.profileKeys !== undefined) assertHostedSignalProtocolRelayProfileKeys(hosted.profileKeys);
   const storage = adapters.storage;
   const reregister = hosted.assertionPurpose === 'reregister';
   let identity = await storage.getIdentityKey('aci');
@@ -1562,7 +1695,9 @@ export async function createHostedSignalProtocolClient(
       'Signal Protocol Relay re-registration requires the stored identity',
     );
   }
-  const connection = await resolveHostedRelayConnection(hosted.relayUrl);
+  const connection = await resolveHostedSignalProtocolRelayConnection(
+    hostedSignalProtocolRelayUrl(hosted, 'createHostedSignalProtocolClient'),
+  );
   const { publishableKey } = connection;
   const operation =
     hosted.assertionPurpose === 'recover' ? 'recovery' : 'bootstrap';
@@ -1577,7 +1712,7 @@ export async function createHostedSignalProtocolClient(
     : await getOrCreateDeviceAuthentication(storage, publishableKey);
   const resumed = hosted.assertionPurpose === 'recover' || reregister
     ? undefined
-    : await resumeHostedRelayTransport({
+    : await resumeHostedSignalProtocolRelayTransport({
         connection,
         deviceAuthentication,
         storage,
@@ -1631,7 +1766,7 @@ export async function createHostedSignalProtocolClient(
   assertIdentityAssertion(assertion);
 
   hosted.onProgress?.({ operation, phase: 'submitting' });
-  const result = await bootstrapHostedRelayTransport({
+  const result = await bootstrapHostedSignalProtocolRelayTransport({
     connection,
     storage,
     assertion,
@@ -1660,3 +1795,45 @@ export async function createHostedSignalProtocolClient(
   hosted.onProgress?.({ operation, phase: 'complete' });
   return client;
 }
+
+// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
+/** @deprecated Use `advanceHostedSignalProtocolRelayIdentityMigration`. SDK 15.0.0 removes this name. */
+export const advanceHostedRelayIdentityMigration = advanceHostedSignalProtocolRelayIdentityMigration;
+/** @deprecated Use `HostedSignalProtocolRelayBootstrapAdapter`. SDK 15.0.0 removes this name. */
+export type HostedRelayBootstrapAdapter = HostedSignalProtocolRelayBootstrapAdapter;
+/** @deprecated Use `HostedSignalProtocolRelayBootstrapRequest`. SDK 15.0.0 removes this name. */
+export type HostedRelayBootstrapRequest = HostedSignalProtocolRelayBootstrapRequest;
+/** @deprecated Use `HostedSignalProtocolRelayBootstrapResult`. SDK 15.0.0 removes this name. */
+export type HostedRelayBootstrapResult = HostedSignalProtocolRelayBootstrapResult;
+/** @deprecated Use `HostedSignalProtocolRelayDeviceAuthentication`. SDK 15.0.0 removes this name. */
+export type HostedRelayDeviceAuthentication = HostedSignalProtocolRelayDeviceAuthentication;
+/** @deprecated Use `HostedSignalProtocolRelayIdentityMigrationAction`. SDK 15.0.0 removes this name. */
+export type HostedRelayIdentityMigrationAction = HostedSignalProtocolRelayIdentityMigrationAction;
+/** @deprecated Use `HostedSignalProtocolRelayIdentityMigrationAdapter`. SDK 15.0.0 removes this name. */
+export type HostedRelayIdentityMigrationAdapter = HostedSignalProtocolRelayIdentityMigrationAdapter;
+/** @deprecated Use `HostedSignalProtocolRelayIdentityMigrationOptions`. SDK 15.0.0 removes this name. */
+export type HostedRelayIdentityMigrationOptions = HostedSignalProtocolRelayIdentityMigrationOptions;
+/** @deprecated Use `HostedSignalProtocolRelayIdentityMigrationRequest`. SDK 15.0.0 removes this name. */
+export type HostedRelayIdentityMigrationRequest = HostedSignalProtocolRelayIdentityMigrationRequest;
+/** @deprecated Use `HostedSignalProtocolRelayIdentityMigrationSnapshot`. SDK 15.0.0 removes this name. */
+export type HostedRelayIdentityMigrationSnapshot = HostedSignalProtocolRelayIdentityMigrationSnapshot;
+/** @deprecated Use `HostedSignalProtocolRelayIdentityMigrationState`. SDK 15.0.0 removes this name. */
+export type HostedRelayIdentityMigrationState = HostedSignalProtocolRelayIdentityMigrationState;
+/** @deprecated Use `HostedSignalProtocolRelayIdentityProgress`. SDK 15.0.0 removes this name. */
+export type HostedRelayIdentityProgress = HostedSignalProtocolRelayIdentityProgress;
+/** @deprecated Use `HostedSignalProtocolRelayIdentityProgressCallback`. SDK 15.0.0 removes this name. */
+export type HostedRelayIdentityProgressCallback = HostedSignalProtocolRelayIdentityProgressCallback;
+/** @deprecated Use `HostedSignalProtocolRelayManagedDeviceLinkAdapter`. SDK 15.0.0 removes this name. */
+export type HostedRelayManagedDeviceLinkAdapter = HostedSignalProtocolRelayManagedDeviceLinkAdapter;
+/** @deprecated Use `HostedSignalProtocolRelayManagedDeviceLinkOptions`. SDK 15.0.0 removes this name. */
+export type HostedRelayManagedDeviceLinkOptions = HostedSignalProtocolRelayManagedDeviceLinkOptions;
+/** @deprecated Use `HostedSignalProtocolRelayManagedDeviceLinkRequest`. SDK 15.0.0 removes this name. */
+export type HostedRelayManagedDeviceLinkRequest = HostedSignalProtocolRelayManagedDeviceLinkRequest;
+/** @deprecated Use `HostedSignalProtocolRelayManagedDeviceLinkResult`. SDK 15.0.0 removes this name. */
+export type HostedRelayManagedDeviceLinkResult = HostedSignalProtocolRelayManagedDeviceLinkResult;
+/** @deprecated Use `HostedSignalProtocolRelayRegistrationPreKey`. SDK 15.0.0 removes this name. */
+export type HostedRelayRegistrationPreKey = HostedSignalProtocolRelayRegistrationPreKey;
+/** @deprecated Use `HostedSignalProtocolRelayRegistrationPreKeys`. SDK 15.0.0 removes this name. */
+export type HostedRelayRegistrationPreKeys = HostedSignalProtocolRelayRegistrationPreKeys;
+/** @deprecated Use `linkHostedSignalProtocolRelayDevice`. SDK 15.0.0 removes this name. */
+export const linkHostedRelayDevice = linkHostedSignalProtocolRelayDevice;

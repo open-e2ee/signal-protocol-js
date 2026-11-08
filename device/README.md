@@ -17,7 +17,7 @@ separate operations do that work:
   encrypted device-to-device channel. The receiving device generates fresh
   prekeys and sessions after import. The application can also put the account
   identity into the new device's store by a channel that it owns.
-- **The managed device link** is `linkHostedRelayDevice()` from the package
+- **The managed device link** is `linkHostedSignalProtocolRelayDevice()` from the package
   root. It joins a store that already holds the account identity to the Relay
   account. It runs in one process that holds the active device's store and the
   new device's store. It sends no private key to the Relay.
@@ -102,12 +102,12 @@ Relay account:
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
-import { linkHostedRelayDevice } from "@open-e2ee/signal-protocol-sdk";
+import { linkHostedSignalProtocolRelayDevice } from "@open-e2ee/signal-protocol-sdk";
 
-const client = await linkHostedRelayDevice({
+const client = await linkHostedSignalProtocolRelayDevice({
   adapters: { storage: linkedStorage },
   activeDeviceStorage,
-  hosted: { relayUrl },
+  hosted: { signalProtocolRelayUrl },
 });
 ```
 
@@ -143,7 +143,7 @@ on the new device from its first group message.
 If a client runs on the active device during the link, pass its group store as
 `activeGroupStore`, or stop that client first. The new device's store must hold
 no group state. The link refuses a store that lists a group with
-`HostedRelayDeviceLinkError`.
+`HostedSignalProtocolRelayDeviceLinkError`.
 
 The copied keys live in the new device's group store. The SDK does not move
 them again. A later move of that store is the application's store move.

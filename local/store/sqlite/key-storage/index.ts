@@ -35,7 +35,7 @@ import type {
 } from '../../../../types';
 import { ProtocolAddress } from '../../../../types/address';
 import type { SessionRecord } from '../../../../types/session';
-import type { IdentityKeyChange } from '../../../../types/trust';
+import type { IdentityKeyChange, TrustDirection } from '../../../../types/trust';
 import { resolveSignalProtocolLogger, type Logger } from '../../../../logger';
 import type { SqliteExecutor } from '../driver';
 import * as account from './account';
@@ -129,13 +129,7 @@ export class SqliteKeyStorage {
     return signed.storeKyberPreKey(this.context, kyberPreKey, identityType);
   }
 
-  getKyberPreKey(identityType: IdentityType = 'aci'): Promise<{
-    keyId: number;
-    publicKey: string;
-    privateKey: string;
-    signature: string;
-    timestamp: number;
-  } | null> {
+  getKyberPreKey(identityType: IdentityType = 'aci'): Promise<KyberPreKey | null> {
     return signed.getKyberPreKey(this.context, identityType);
   }
 
@@ -405,7 +399,7 @@ export class SqliteKeyStorage {
   isTrustedIdentity(
     address: PeerAddress,
     identityKey: CompositeIdentityV1,
-    _direction: number,
+    _direction: TrustDirection,
     identityType: IdentityType = 'aci'
   ): Promise<boolean> {
     return contacts.isTrustedIdentity(this.context, address, identityKey, identityType);

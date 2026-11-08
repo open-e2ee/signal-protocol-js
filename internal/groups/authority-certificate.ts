@@ -13,12 +13,33 @@ import {
   decodeServerCertificateData,
 } from '../protocol/sealed-sender/proto';
 import { decodeGroupTrustRoot } from './trust-root';
+import { readRenamedOption } from '../../types/renamed-member';
 
-const DOMAIN = 'OpenE2EE Relay group authority v1';
+/**
+ * The domain of the certificates that the Relay issues under protocol
+ * versions 1 and 2. Recipients of every SDK version verify it. It keeps its
+ * bytes until the last certificate under it expires.
+ */
+const SIGNAL_RELAY_GROUP_AUTHORITY_DOMAIN_V1 = 'OpenE2EE Relay group authority v1';
+
+/** The domain of the certificates that the Relay issues under protocol version 3. */
+const SIGNAL_RELAY_GROUP_AUTHORITY_DOMAIN_V2 = 'signal-relay-group-authority-v2';
+
+/** The domains that a certificate can carry. The SDK verifies each one. */
+const SIGNAL_RELAY_GROUP_AUTHORITY_DOMAINS: readonly string[] = [
+  SIGNAL_RELAY_GROUP_AUTHORITY_DOMAIN_V1,
+  SIGNAL_RELAY_GROUP_AUTHORITY_DOMAIN_V2,
+];
 const MAXIMUM_CERTIFICATE_BYTES = 4096;
 
 export interface GroupAuthorityFields {
-  readonly relayScopeId: Uint8Array;
+  /**
+   * The 16-byte Relay project-environment scope. Set this member or the
+   * deprecated `relayScopeId`. The encoder requires one of the two.
+   */
+  readonly signalProtocolRelayScopeId?: Uint8Array;
+  /** @deprecated Use `signalProtocolRelayScopeId`. SDK 15.0.0 removes this name. */
+  readonly relayScopeId?: Uint8Array;
   readonly keyId: string;
   readonly notBeforeMilliseconds: number;
   readonly notAfterMilliseconds: number;
@@ -45,8 +66,25 @@ function bytes(value: unknown, maximum: number): Uint8Array {
 
 /** Canonical domain-separated public authority fields. No private material is accepted. */
 export function encodeGroupAuthority(fields: GroupAuthorityFields): Uint8Array {
+  return encodeGroupAuthorityUnder(SIGNAL_RELAY_GROUP_AUTHORITY_DOMAIN_V1, fields);
+}
+
+function encodeGroupAuthorityUnder(
+  domain: string,
+  fields: GroupAuthorityFields
+): Uint8Array {
+  const signalProtocolRelayScopeId = readRenamedOption(
+    fields.signalProtocolRelayScopeId,
+    fields.relayScopeId,
+    {
+      newName: 'signalProtocolRelayScopeId',
+      earlierName: 'relayScopeId',
+      operation: 'encodeGroupAuthority',
+    },
+  );
   if (
-    fields.relayScopeId.length !== 16 ||
+    !(signalProtocolRelayScopeId instanceof Uint8Array) ||
+    signalProtocolRelayScopeId.length !== 16 ||
     !/^[A-Za-z0-9_-]{1,128}$/.test(fields.keyId) ||
     !Number.isSafeInteger(fields.notBeforeMilliseconds) ||
     !Number.isSafeInteger(fields.notAfterMilliseconds) ||
@@ -57,8 +95,8 @@ export function encodeGroupAuthority(fields: GroupAuthorityFields): Uint8Array {
     fail();
   return new TextEncoder().encode(
     JSON.stringify([
-      DOMAIN,
-      bytesToBase64(fields.relayScopeId),
+      domain,
+      bytesToBase64(signalProtocolRelayScopeId),
       fields.keyId,
       fields.notBeforeMilliseconds,
       fields.notAfterMilliseconds,
@@ -99,7 +137,8 @@ export async function verifyGroupAuthority(
     if (
       !Array.isArray(decoded) ||
       decoded.length !== 6 ||
-      decoded[0] !== DOMAIN ||
+      typeof decoded[0] !== 'string' ||
+      !SIGNAL_RELAY_GROUP_AUTHORITY_DOMAINS.includes(decoded[0]) ||
       typeof decoded[2] !== 'string' ||
       typeof decoded[3] !== 'number' ||
       typeof decoded[4] !== 'number'
@@ -113,7 +152,10 @@ export async function verifyGroupAuthority(
       trustRoot: bytes(decoded[5], 1024),
     };
     if (
-      !constantTimeEqual(certificate, encodeGroupAuthority(fields)) ||
+      !constantTimeEqual(
+        certificate,
+        encodeGroupAuthorityUnder(decoded[0], fields)
+      ) ||
       !constantTimeEqual(fields.relayScopeId, policy.relayScopeId) ||
       policy.nowMilliseconds < fields.notBeforeMilliseconds ||
       policy.nowMilliseconds >= fields.notAfterMilliseconds

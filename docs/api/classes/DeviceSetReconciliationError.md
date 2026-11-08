@@ -11,7 +11,7 @@ devices in `acceptedDevices` stay accepted. After a recipient-phase end,
 the outbox keeps the send as terminal with its `outcome`, and the SDK does
 not post it again. A later `send()` with the same `clientMessageId` throws
 the stored-end class of its outcome, `SendAcceptanceUnknownError` or
-`SendNeverAcceptedByRelayError`, and posts nothing.
+`SendNeverAcceptedBySignalProtocolRelayError`, and posts nothing.
 
 `isOutgoingMessageError` is true for this error.
 

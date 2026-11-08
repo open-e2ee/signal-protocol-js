@@ -85,7 +85,7 @@ holds each member to a production construction site.
 | `ENCRYPTION_FAILED` | The SDK could not encrypt the message. | Inspect the session state and `originalError`. |
 | `INVALID_SEND_TIMESTAMP` | A new send carries a `timestamp`, or a sync to linked devices carries an application time, that is not a safe positive integer, or that is more than 5 minutes ahead of or more than 24 hours behind the SDK clock. A new send also gets it for a `timestamp` that a different send of the device used. The SDK's own sends, the profile key offer and the sender key distribution, reserve from the same index of the device, so an application that passes `timestamp: Date.now()` can get `already_used` when it did not use the value again itself. The SDK throws `InvalidSendTimestampError` from `@open-e2ee/signal-protocol-sdk/types` and stores or posts nothing for the send. The `reason` is `not_safe_positive_integer`, `too_far_ahead`, `too_old` or `already_used`. `earliest` and `latest` give the window, and are absent for `already_used`. | Omit `timestamp`, so that the SDK picks a free value. On `already_used`, send again with no timestamp. Otherwise send again with a timestamp in the window that no other send used. |
 | `SEND_ACCEPTANCE_UNKNOWN` | The posting deadline of a direct or group send ended, and the Relay acceptance of a device is not known. The SDK throws `SendAcceptanceUnknownError` from `@open-e2ee/signal-protocol-sdk/types`. The message might have arrived. | Tell the user that the message might already have arrived. Do not replay the send. |
-| `SEND_NEVER_ACCEPTED` | The posting deadline of a direct or group send ended, the call raised no refusal (a thrown refusal or a refusal in the receipt of a shared body), and no refused device has a stored refusal code. The SDK throws `SendNeverAcceptedByRelayError` from `@open-e2ee/signal-protocol-sdk/types`. | Tell the user which devices did not get the message. |
+| `SEND_NEVER_ACCEPTED` | The posting deadline of a direct or group send ended, the call raised no refusal (a thrown refusal or a refusal in the receipt of a shared body), and no refused device has a stored refusal code. The SDK throws `SendNeverAcceptedBySignalProtocolRelayError` from `@open-e2ee/signal-protocol-sdk/types`. | Tell the user which devices did not get the message. |
 | `MESSAGE_DUPLICATE` | The session processed this message before. | Discard the duplicate. |
 | `TOO_MANY_SKIPPED_MESSAGES` | The message exceeded the skipped-key bound. | Reset the affected session. |
 | `REPLAY_DETECTED` | Envelope and encrypted-content timestamps differ. | Reject the message as a replay. |
@@ -162,7 +162,7 @@ that set. Neither is an `EncryptionError`.
 
 | Error | Cause | Application response |
 |---|---|---|
-| `HostedRelayUpgradeRequiredError` | The Relay no longer serves the version that the client sent. The message names that version. `code` is `UPGRADE_REQUIRED`, `status` is the HTTP status (426), and `retryable` is false. | Ship a newer SDK. The same request fails again, so do not retry it. |
+| `HostedSignalProtocolRelayUpgradeRequiredError` | The Relay no longer serves the version that the client sent. The message names that version. `code` is `UPGRADE_REQUIRED`, `status` is the HTTP status (426), and `retryable` is false. | Ship a newer SDK. The same request fails again, so do not retry it. |
 | `PROTOCOL_UNSUPPORTED` | The Relay does not serve version 2. The request fails with status 400, the `code` `PROTOCOL_UNSUPPORTED`, and `retryable` true. A send keeps the device open until its posting deadline. | Retry later. The Relay never rolls back below a version that a published SDK sends, so this is a transient fault, not a planned state. |
 
 Version 2 adds one Relay code, `DELIVERY_ALREADY_ACCEPTED`. The Relay gives it
@@ -185,7 +185,7 @@ cannot count the answer as an acceptance. Handle it as `RETRY_CONFLICT`.
 
 The SDK does not retry an HTTP request that `UPGRADE_REQUIRED` refuses. Each
 Relay route that answers with a JSON body throws
-`HostedRelayUpgradeRequiredError`. An attachment download does not read the
+`HostedSignalProtocolRelayUpgradeRequiredError`. An attachment download does not read the
 response body, so it reports the 426 as a
 [`MediaAttachmentError`](./api/namespaces/media/classes/MediaAttachmentError.md)
 with the code `download-failed` and the `status` 426.
@@ -193,7 +193,7 @@ with the code `download-failed` and the `status` 426.
 The mailbox subscription stops for the same refusal on its socket, with the
 state `stopped` and the reason `upgrade-required`. It does not reconnect and
 does not pull. For `PROTOCOL_UNSUPPORTED` on its socket, the subscription
-reconnects with its usual backoff. See [`RelayConnectionReason`](./api/type-aliases/RelayConnectionReason.md).
+reconnects with its usual backoff. See [`SignalProtocolRelayConnectionReason`](./api/type-aliases/SignalProtocolRelayConnectionReason.md).
 
 The subscription also stops when the Relay refuses its socket token request or
 a pull conclusively. The refusal has `retryable` false and the code
@@ -201,8 +201,8 @@ a pull conclusively. The refusal has `retryable` false and the code
 and the reason is `authority-refused`. A refusal with `retryable` true, for
 example a missing Relay binding, goes to the retry schedule. A `NOT_FOUND` on
 the socket token request is a refusal of this device instead, as
-[Relay Device Errors](#relay-device-errors) describes. See
-[`RelayConnectionState`](./api/interfaces/RelayConnectionState.md).
+[Signal Protocol Relay Device Errors](#signal-protocol-relay-device-errors) describes. See
+[`SignalProtocolRelayConnectionState`](./api/interfaces/SignalProtocolRelayConnectionState.md).
 
 A client call can wrap the error in an `EncryptionError`. It is then the
 `originalError`.
@@ -211,14 +211,14 @@ A client call can wrap the error in an `EncryptionError`. It is then the
 ```typescript
 import {
   EncryptionError,
-  HostedRelayUpgradeRequiredError,
+  HostedSignalProtocolRelayUpgradeRequiredError,
 } from '@open-e2ee/signal-protocol-sdk';
 
 function upgradeRequired(error: unknown): boolean {
   return (
-    error instanceof HostedRelayUpgradeRequiredError ||
+    error instanceof HostedSignalProtocolRelayUpgradeRequiredError ||
     (error instanceof EncryptionError &&
-      error.originalError instanceof HostedRelayUpgradeRequiredError)
+      error.originalError instanceof HostedSignalProtocolRelayUpgradeRequiredError)
   );
 }
 
@@ -335,7 +335,7 @@ hours after the SDK first stores the send and 24 hours after its timestamp. A
 replay or a restart never moves it. At or after `deadlineAt`, the SDK starts
 no Relay request for the send. A request that started before it still counts
 when its answer arrives later. Before `deadlineAt`, a send error that leaves a
-device open has `retryable: true`, and `relayRetryable` keeps the hint of the
+device open has `retryable: true`, and `signalProtocolRelayRetryable` keeps the hint of the
 Relay. With a store that implements `listMetadataKeys`, as every built-in
 store does, the SDK replays the send at start and on reconnect until
 `deadlineAt`. It reports the end once through `onSendOutcome`. An internal
@@ -366,7 +366,7 @@ the rule below. The two deadline classes come from
 | Error | Cause | Application response |
 |---|---|---|
 | `SendAcceptanceUnknownError` | The Relay acceptance of a device is not known. An answer was lost, or it followed an uncertain request | Tell the user that the message might already have arrived. Do not replay the send |
-| `SendNeverAcceptedByRelayError` | The Relay accepted no request for an open device, the call raised no refusal, and no refused device has a stored refusal code. No request started before the deadline, or each answer was a refusal for now, such as `QUOTA_EXCEEDED` | Tell the user which devices did not get the message |
+| `SendNeverAcceptedBySignalProtocolRelayError` | The Relay accepted no request for an open device, the call raised no refusal, and no refused device has a stored refusal code. No request started before the deadline, or each answer was a refusal for now, such as `QUOTA_EXCEEDED` | Tell the user which devices did not get the message |
 
 When no device has an unknown acceptance, the send ends failed, and one rule
 gives its error:
@@ -377,7 +377,7 @@ gives its error:
    receipt is an `Error` with the `code` of that refusal.
 2. Otherwise, the error is an `Error` with the stored `code` of the first
    refused device that has one, in the order of the destinations.
-3. Otherwise, the error is `SendNeverAcceptedByRelayError` with code
+3. Otherwise, the error is `SendNeverAcceptedBySignalProtocolRelayError` with code
    `SEND_NEVER_ACCEPTED`.
 
 A replay of the ended send raises no refusal, so its error comes from case 2
@@ -433,8 +433,8 @@ device, the replay completes the send and returns the result without
 The Relay marks each accepted declared post with `deviceSetChecked`. When an
 accepted post has no mark, the Relay did not compare its device set. The send
 is delivered and its result does not change. The client reports a
-[`RelayProtocolError`](./api/classes/RelayProtocolError.md) with the code
-`DEVICE_SET_UNCHECKED` once for the send through the `onRelayProtocolError`
+[`SignalProtocolRelayProtocolError`](./api/classes/SignalProtocolRelayProtocolError.md) with the code
+`DEVICE_SET_UNCHECKED` once for the send through the `onSignalProtocolRelayProtocolError`
 hook. Its `route` names the post route. A sync copy to another own device is
 an `identified-direct` post. A sync payload of a method such as
 `syncReadToLinkedDevices` reports the error once, with no `clientMessageId`.
@@ -446,7 +446,7 @@ A relay that does not compare device sets gets no declaration. The Convex
 relay is one. With it, the SDK reads the device lists as before, and none of
 these errors occur.
 
-## Relay Device Errors
+## Signal Protocol Relay Device Errors
 
 The Relay can refuse this device, and a managed device link can refuse its
 linked store. Three errors name these refusals. None is an `EncryptionError`,
@@ -454,16 +454,16 @@ and the SDK retries none of them.
 
 | Error | Cause | Application response |
 |---|---|---|
-| [`HostedRelayDeviceRevokedError`](./api/classes/HostedRelayDeviceRevokedError.md) | An account recovery revoked this device. `code` is `DEVICE_REVOKED`, `status` is 403, and `retryable` is false. | Sign the user out of this device. The Relay refuses a registration with the revoked key, so a re-registration fails too. |
-| [`HostedRelayDeviceUnknownError`](./api/classes/HostedRelayDeviceUnknownError.md) | The Relay has no device for the stored session. `code` is `NOT_FOUND`, `status` is 404, and `retryable` is false. The message is the Relay's own message. | Ask the user to confirm a re-registration of this device. Do not re-register without that confirmation. |
-| [`HostedRelayDeviceLinkError`](./api/classes/HostedRelayDeviceLinkError.md) | `linkHostedRelayDevice` found state in the linked store that the link did not write: a group in the linked group store, or a device-authentication key for this Relay connection with no registration of this link. `code` is `DEVICE_LINK_STORE_NOT_EMPTY`, and `retryable` is false. The link wrote nothing. | Link the device again with a new, empty store. The same store is refused again. |
+| [`HostedSignalProtocolRelayDeviceRevokedError`](./api/classes/HostedSignalProtocolRelayDeviceRevokedError.md) | An account recovery revoked this device. `code` is `DEVICE_REVOKED`, `status` is 403, and `retryable` is false. | Sign the user out of this device. The Relay refuses a registration with the revoked key, so a re-registration fails too. |
+| [`HostedSignalProtocolRelayDeviceUnknownError`](./api/classes/HostedSignalProtocolRelayDeviceUnknownError.md) | The Relay has no device for the stored session. `code` is `NOT_FOUND`, `status` is 404, and `retryable` is false. The message is the Relay's own message. | Ask the user to confirm a re-registration of this device. Do not re-register without that confirmation. |
+| [`HostedSignalProtocolRelayDeviceLinkError`](./api/classes/HostedSignalProtocolRelayDeviceLinkError.md) | `linkHostedSignalProtocolRelayDevice` found state in the linked store that the link did not write: a group in the linked group store, or a device-authentication key for this Relay connection with no registration of this link. `code` is `DEVICE_LINK_STORE_NOT_EMPTY`, and `retryable` is false. The link wrote nothing. | Link the device again with a new, empty store. The same store is refused again. |
 
 `createHostedSignalProtocolClient` throws the first two errors when the stored
 session cannot get a device token. It does not register a new device in their
 place. A running client throws them from its Relay calls. A client call can
 wrap them in an `EncryptionError`, as the `originalError`. The mailbox subscription
 stops with the reason `device-revoked` or `device-unknown`. See
-[`RelayConnectionReason`](./api/type-aliases/RelayConnectionReason.md).
+[`SignalProtocolRelayConnectionReason`](./api/type-aliases/SignalProtocolRelayConnectionReason.md).
 
 To re-register, create the client again with `assertionPurpose: 'reregister'`.
 It keeps the stored identity and device key, and it asks for a `register`
@@ -485,18 +485,18 @@ A re-registration has these effects:
 <!-- doc-snippet:skip requires-existing-client -->
 ```typescript
 import {
-  HostedRelayDeviceRevokedError,
-  HostedRelayDeviceUnknownError,
+  HostedSignalProtocolRelayDeviceRevokedError,
+  HostedSignalProtocolRelayDeviceUnknownError,
   createHostedSignalProtocolClient,
 } from '@open-e2ee/signal-protocol-sdk';
 
 try {
   signal = await createHostedSignalProtocolClient(options);
 } catch (error) {
-  if (error instanceof HostedRelayDeviceRevokedError) {
+  if (error instanceof HostedSignalProtocolRelayDeviceRevokedError) {
     signOutThisDevice();
   } else if (
-    error instanceof HostedRelayDeviceUnknownError &&
+    error instanceof HostedSignalProtocolRelayDeviceUnknownError &&
     (await confirmReregistration())
   ) {
     signal = await createHostedSignalProtocolClient({
@@ -718,7 +718,7 @@ import { DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 
 const signal = await DefaultSignalProtocolClient.create(userId, {
   storage,
-  relay,
+  signalProtocolRelay,
   logger: {
     debug: console.debug,
     info: console.info,
