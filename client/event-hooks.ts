@@ -17,7 +17,7 @@
  *
  * const signal = await createSignalProtocolClient({
  *   identity: { userId },
- *   adapters: { storage, signalProtocolRelay },
+ *   adapters: { storage, relay },
  *   hooks: {
  *     onMessageDecrypted: async (envelope) => {
  *       // Store decrypted content in your app database.
@@ -756,20 +756,15 @@ export interface SignalProtocolClientHooks {
    *
    * @example
    * ```typescript
-   * onSignalProtocolRelayProtocolError: (error) => {
+   * onRelayProtocolError: (error) => {
    *   monitoring.report('relay-protocol', { code: error.code, route: error.route });
    * }
    * ```
    */
-  onSignalProtocolRelayProtocolError?: (error: SignalProtocolRelayProtocolError) => void | Promise<void>;
-
-  /**
-   * @deprecated Use `onSignalProtocolRelayProtocolError`. SDK 15.0.0 removes this name.
-   *
-   * The client calls this hook only when `onSignalProtocolRelayProtocolError`
-   * is not set.
-   */
   onRelayProtocolError?: (error: SignalProtocolRelayProtocolError) => void | Promise<void>;
+
+  /** @deprecated Use `onRelayProtocolError`. SDK 15.0.0 removes this name. */
+  onSignalProtocolRelayProtocolError?: (error: SignalProtocolRelayProtocolError) => void | Promise<void>;
 
   /**
    * Runs when the client receives a read receipt
@@ -868,19 +863,23 @@ const HOOK_NAMES = {
   onTypingIndicatorReceived: true,
 } as const satisfies Record<HookName, true>;
 
-/** The new name of each hook that has a deprecated earlier name. */
+/**
+ * The deprecated `signalProtocolRelay*` name of each hook that has two names,
+ * keyed by its role name. The client keeps the hook under the deprecated name
+ * until SDK 15.0.0 removes it.
+ */
 const RENAMED_HOOKS = {
   onRelayProtocolError: 'onSignalProtocolRelayProtocolError',
 } as const satisfies Partial<Record<HookName, HookName>>;
 
-/** The deprecated earlier name of each renamed hook. */
+/** The role name of each hook that has two names. */
 const EARLIER_HOOK_NAMES: Partial<Record<HookName, HookName>> = Object.fromEntries(
   Object.entries(RENAMED_HOOKS).map(([earlier, current]) => [current, earlier])
 );
 
 /**
- * The name under which the client keeps a hook. A deprecated name gives its
- * new name.
+ * The name under which the client keeps a hook. A role name gives its
+ * deprecated `signalProtocolRelay*` name.
  *
  * @internal
  */
@@ -889,7 +888,7 @@ export function currentHookName(name: HookName): HookName {
 }
 
 /**
- * Throw when a hook and its deprecated name hold different functions.
+ * Throw when the two names of a hook hold different functions.
  *
  * @throws SignalProtocolRelayNameConflictError
  * @internal
@@ -929,7 +928,8 @@ export async function callHook<T extends HookName>(
   hookName: T,
   ...args: Parameters<NonNullable<SignalProtocolClientHooks[T]>>
 ): Promise<void> {
-  // A renamed hook runs under its new name, or else under its earlier name.
+  // A hook with two names runs under its deprecated name, or else under its
+  // role name. The conflict check makes the two the same function.
   const earlierName = EARLIER_HOOK_NAMES[hookName];
   const hook = hooks?.[hookName] ?? (earlierName === undefined ? undefined : hooks?.[earlierName]);
   if (!hook) {

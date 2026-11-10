@@ -16,7 +16,7 @@
  *         ├── PQXDHRequiredError        which post-quantum key the peer is missing
  *         ├── StorageQuotaExceededError the store that ran out of room
  *         ├── SecureRandomUnavailableError the runtime has no secure random source
- *         ├── SignalProtocolRelayNameConflictError a new member name and its earlier name with different values
+ *         ├── SignalProtocolRelayNameConflictError the two names of a member with different values
  *         ├── InvalidSendTimestampError the refused send timestamp and the accepted window
  *         ├── SendAcceptanceUnknownError the devices of an ended send whose acceptance is not known
  *         └── SendNeverAcceptedBySignalProtocolRelayError the devices of an ended send that the Relay never accepted and that have no refusal code
@@ -333,10 +333,10 @@ export enum EncryptionErrorCode {
   SECURE_RANDOM_UNAVAILABLE = 'SECURE_RANDOM_UNAVAILABLE',
 
   /**
-   * An object sets a member by its Signal Protocol Relay name and by its
-   * deprecated earlier name, with different values.
+   * An object sets a member by its role name and by its deprecated
+   * `signalProtocolRelay*` name, with different values.
    *
-   * Set only the new name, such as `signalProtocolRelay`.
+   * Set only the role name, such as `relay`.
    */
   SIGNAL_PROTOCOL_RELAY_NAME_CONFLICT = 'SIGNAL_PROTOCOL_RELAY_NAME_CONFLICT',
 
@@ -751,12 +751,16 @@ export class SecureRandomUnavailableError extends EncryptionError {
 }
 
 /**
- * Error thrown when an option or a member is set by its Signal Protocol Relay
- * name and by its deprecated earlier name, with different values.
+ * Error thrown when an option or a member is set by its role name and by its
+ * deprecated `signalProtocolRelay*` name, with different values.
  *
- * SDK 14 accepts each earlier name, such as `relay` for
- * `signalProtocolRelay`. When an object sets both names, the SDK uses the
- * value only if the two values are the same. Set only `newName`.
+ * SDK 14 accepts both names, such as `relay` and `signalProtocolRelay`. When
+ * an object sets both names, the SDK uses the value only if the two values
+ * are the same. Set only the role name, which `earlierName` holds.
+ *
+ * The two fields keep the order in which the names came: SDK 14.1.0 has the
+ * role name, and SDK 14.2.0 added the `signalProtocolRelay*` name. SDK 14.3.0
+ * deprecates the `signalProtocolRelay*` name, and SDK 15.0.0 removes it.
  *
  * @example
  * ```typescript
@@ -764,7 +768,7 @@ export class SecureRandomUnavailableError extends EncryptionError {
  *   signal = await createSignalProtocolClient(config);
  * } catch (error) {
  *   if (isSignalProtocolRelayNameConflictError(error)) {
- *     reportSetupError(`Set only ${error.newName}`);
+ *     reportSetupError(`Set only ${error.earlierName}`);
  *   }
  * }
  * ```
@@ -772,14 +776,17 @@ export class SecureRandomUnavailableError extends EncryptionError {
 export class SignalProtocolRelayNameConflictError extends EncryptionError {
   override readonly name = 'SignalProtocolRelayNameConflictError';
 
-  /** The Signal Protocol Relay name of the member. */
+  /**
+   * The deprecated `signalProtocolRelay*` name of the member, such as
+   * `signalProtocolRelay`. SDK 15.0.0 removes it.
+   */
   public readonly newName: string;
-  /** The deprecated earlier name of the member. SDK 15.0.0 removes it. */
+  /** The role name of the member, such as `relay`. Set only this name. */
   public readonly earlierName: string;
 
   constructor(newName: string, earlierName: string, operation: string) {
     super(
-      `${earlierName} and ${newName} name the same option and hold different values. Set only ${newName}.`,
+      `${earlierName} and ${newName} name the same option and hold different values. Set only ${earlierName}.`,
       EncryptionErrorCode.SIGNAL_PROTOCOL_RELAY_NAME_CONFLICT,
       { operation }
     );

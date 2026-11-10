@@ -28,7 +28,7 @@ const storage = await webSqliteStore();
 
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
 });
 ```
 

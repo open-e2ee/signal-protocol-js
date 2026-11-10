@@ -335,7 +335,7 @@ hours after the SDK first stores the send and 24 hours after its timestamp. A
 replay or a restart never moves it. At or after `deadlineAt`, the SDK starts
 no Relay request for the send. A request that started before it still counts
 when its answer arrives later. Before `deadlineAt`, a send error that leaves a
-device open has `retryable: true`, and `signalProtocolRelayRetryable` keeps the hint of the
+device open has `retryable: true`, and `relayRetryable` keeps the hint of the
 Relay. With a store that implements `listMetadataKeys`, as every built-in
 store does, the SDK replays the send at start and on reconnect until
 `deadlineAt`. It reports the end once through `onSendOutcome`. An internal
@@ -434,7 +434,7 @@ The Relay marks each accepted declared post with `deviceSetChecked`. When an
 accepted post has no mark, the Relay did not compare its device set. The send
 is delivered and its result does not change. The client reports a
 [`SignalProtocolRelayProtocolError`](./api/classes/SignalProtocolRelayProtocolError.md) with the code
-`DEVICE_SET_UNCHECKED` once for the send through the `onSignalProtocolRelayProtocolError`
+`DEVICE_SET_UNCHECKED` once for the send through the `onRelayProtocolError`
 hook. Its `route` names the post route. A sync copy to another own device is
 an `identified-direct` post. A sync payload of a method such as
 `syncReadToLinkedDevices` reports the error once, with no `clientMessageId`.
@@ -718,7 +718,7 @@ import { DefaultSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 
 const signal = await DefaultSignalProtocolClient.create(userId, {
   storage,
-  signalProtocolRelay,
+  relay,
   logger: {
     debug: console.debug,
     info: console.info,

@@ -8,10 +8,10 @@
 
 Canonical identity and authenticated Relay returned by hosted bootstrap.
 
-SDK 14 makes each new member optional and requires its deprecated earlier
-name. When an adapter sets both names, the SDK reads the new member, and
+SDK 14 also accepts the deprecated `signalProtocolRelayScopeId` and
+`signalProtocolRelay` names. When an adapter sets both names of a member,
 two different values fail with `SignalProtocolRelayNameConflictError`.
-SDK 15.0.0 requires the new members.
+SDK 15.0.0 removes the deprecated names.
 
 ## Extended by
 
@@ -31,32 +31,32 @@ SDK 15.0.0 requires the new members.
 
 ***
 
-### ~~relay~~
+### relay
 
 > `readonly` **relay**: [`SignalProtocolRelayServer`](SignalProtocolRelayServer.md)
 
-#### Deprecated
-
-Use `signalProtocolRelay`. SDK 15.0.0 requires `signalProtocolRelay` and removes this name.
-
 ***
 
-### ~~relayScopeId~~
+### relayScopeId
 
 > `readonly` **relayScopeId**: `Uint8Array`
 
-#### Deprecated
-
-Use `signalProtocolRelayScopeId`. SDK 15.0.0 requires `signalProtocolRelayScopeId` and removes this name.
-
 ***
 
-### signalProtocolRelay?
+### ~~signalProtocolRelay?~~
 
 > `readonly` `optional` **signalProtocolRelay?**: [`SignalProtocolRelayServer`](SignalProtocolRelayServer.md)
 
+#### Deprecated
+
+Use `relay`. SDK 15.0.0 removes this name.
+
 ***
 
-### signalProtocolRelayScopeId?
+### ~~signalProtocolRelayScopeId?~~
 
 > `readonly` `optional` **signalProtocolRelayScopeId?**: `Uint8Array`\<`ArrayBufferLike`\>
+
+#### Deprecated
+
+Use `relayScopeId`. SDK 15.0.0 removes this name.

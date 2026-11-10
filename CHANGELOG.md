@@ -1,5 +1,95 @@
 # Changelog
 
+## 14.3.0
+
+### Changed
+
+- The Expo example moves to the Expo SDK 58 line. It uses React Native
+  0.88.1, React 19.3.0, and TypeScript 6.0 as Expo recommends. Its dependency
+  tree no longer contains `deepmerge`. Its `app.json` no longer sets
+  `jsEngine`, because Hermes is the default.
+- Internal CI also adds the packed package to an Expo SDK 58 project. It
+  builds the Expo example's Hermes bundle on Expo SDK 55 and 58.
+
+### Changed: role names are the member and option names to use
+
+- **The role names are not deprecated.** Each of the 24 members and options
+  in the 14.2.0 table "Deprecated: members and options without the Signal
+  Protocol prefix" keeps its role name, such as `relay`, `relayUrl`, and
+  `startRelaySubscription`. SDK 15.0.0 keeps these names.
+- **The `signalProtocolRelay*` names are deprecated.** SDK 14.2.0 added these
+  names, such as `signalProtocolRelay` and
+  `startSignalProtocolRelaySubscription`. SDK 15.0.0 removes them. See step 1.
+
+This change applies only to the names of members, methods, and option keys of
+objects that the SDK owns. It does not change export names, type names, file
+names, subpaths, URLs, wire values, or stored keys. Those names keep the
+`SignalProtocolRelay` form, for example `SignalProtocolRelayServer` and
+`createHostedSignalProtocolClient`.
+
+Both names of each member and option work in this release, as in SDK 14.2.0.
+An option accepts either name. When a call sets both names to different
+values, it fails with `SignalProtocolRelayNameConflictError`. This release
+does not change the behavior of the SDK, the wire, signed bytes, or stored
+bytes.
+
+`SignalProtocolRelayNameConflictError` keeps its public shape. `newName` holds
+the deprecated `signalProtocolRelay*` name, because SDK 14.2.0 added it after
+the role name. `earlierName` holds the role name. The error message now tells
+you to set only the role name, for example `relay and signalProtocolRelay name
+the same option and hold different values. Set only relay.` Code that reads
+`newName` to find the name to keep must read `earlierName`. See step 3.
+
+Each interface that your code implements keeps the role-name member required
+and the `signalProtocolRelay*` member optional. This applies to
+`SignalProtocolRelayServer`, `SignalProtocolContentAdapter`, and
+`HostedSignalProtocolRelayBootstrapResult`. An implementation with only the
+role-name members compiles and works in SDK 14 and in SDK 15.0.0. See step 2.
+
+| Type | Name to use | Deprecated name |
+| --- | --- | --- |
+| `SignalProtocolClient`, `DefaultSignalProtocolClient` | `relayConnectionState` | `signalProtocolRelayConnectionState` |
+| `SignalProtocolClient`, `DefaultSignalProtocolClient` | `subscribeRelayConnectionState` | `subscribeSignalProtocolRelayConnectionState` |
+| `SignalProtocolClient`, `DefaultSignalProtocolClient` | `startRelaySubscription` | `startSignalProtocolRelaySubscription` |
+| `SignalProtocolClient`, `DefaultSignalProtocolClient` | `stopRelaySubscription` | `stopSignalProtocolRelaySubscription` |
+| `SignalProtocolRelayServer`, `InMemorySignalProtocolRelayServer`, `ConvexSignalProtocolRelayServer` | `relayConnectionState` | `signalProtocolRelayConnectionState` |
+| `SignalProtocolRelayServer`, `InMemorySignalProtocolRelayServer`, `ConvexSignalProtocolRelayServer` | `subscribeRelayConnectionState` | `subscribeSignalProtocolRelayConnectionState` |
+| `SignalProtocolClientConfig` | `relay` | `signalProtocolRelay` |
+| `SignalProtocolClientAdapterConfig` | `relay` | `signalProtocolRelay` |
+| `SignalProtocolClientContext` | `relay` | `signalProtocolRelay` |
+| `SealedSenderConfig` | `relayScopeId` | `signalProtocolRelayScopeId` |
+| `GroupAuthorityFields` | `relayScopeId` | `signalProtocolRelayScopeId` |
+| `SignalProtocolClientHooks` | `onRelayProtocolError` | `onSignalProtocolRelayProtocolError` |
+| `SignalProtocolContentAdapter` | `setRelayBatching` | `setSignalProtocolRelayBatching` |
+| `OutgoingMessageError` | `relayRetryable` | `signalProtocolRelayRetryable` |
+| `HostedSignalProtocolRelayBootstrapResult` | `relay` | `signalProtocolRelay` |
+| `HostedSignalProtocolRelayBootstrapResult` | `relayScopeId` | `signalProtocolRelayScopeId` |
+| `HostedSignalProtocolClientOptions` | `hosted.relayUrl` | `hosted.signalProtocolRelayUrl` |
+| `HostedSignalProtocolResumeOptions` | `hosted.relayUrl` | `hosted.signalProtocolRelayUrl` |
+| `HostedSignalProtocolRelayManagedDeviceLinkOptions` | `hosted.relayUrl` | `hosted.signalProtocolRelayUrl` |
+| `HostedSignalProtocolRelayIdentityMigrationOptions` | `relayUrl` | `signalProtocolRelayUrl` |
+| `CreateTestClientOptions` | `sharedRelay` | `sharedSignalProtocolRelay` |
+| `TestClientResult` | `relay` | `signalProtocolRelay` |
+| `SignalProtocolClientInternals` | `relay` | `signalProtocolRelay` |
+| `SignalProtocolServiceCipher` | `setRelayProtocolErrorReporter` | `setSignalProtocolRelayProtocolErrorReporter` |
+
+#### Upgrade steps
+
+Code that did not change for SDK 14.2.0 needs no change. Code that keeps the
+role names compiles and runs in this release and in SDK 15.0.0.
+
+1. If you changed your code to a `signalProtocolRelay*` name in the table for
+   SDK 14.2.0, change it back to the role name. Code that keeps a
+   `signalProtocolRelay*` name compiles and runs unchanged in this release.
+   The TypeScript tools mark it as deprecated. Complete this step before
+   SDK 15.0.0, which removes these names.
+2. If you added a `signalProtocolRelay*` member to a class or object that
+   implements `SignalProtocolRelayServer`, `SignalProtocolContentAdapter`, or
+   `HostedSignalProtocolRelayBootstrapResult`, remove it. Keep the role-name
+   member, which this release requires.
+3. If your code reads `newName` from a `SignalProtocolRelayNameConflictError`
+   to tell the user which name to keep, read `earlierName`.
+
 ## 14.2.0
 
 ### Deprecated

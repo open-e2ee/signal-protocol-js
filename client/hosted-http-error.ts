@@ -22,7 +22,7 @@ export class HostedSignalProtocolRelayHttpError extends Error {
   /**
    * The Relay's own hint that the same operation can be sent again. On an
    * error that `send()` throws before its posting deadline, the SDK sets
-   * `retryable` to true and keeps this hint in `signalProtocolRelayRetryable`.
+   * `retryable` to true and keeps this hint in `relayRetryable`.
    */
   public readonly retryable: boolean;
 

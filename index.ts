@@ -11,9 +11,10 @@
  * import { createHostedSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
  *
  * // Supply a device-local store and the configured identity-provider callback.
+ * const signalRelayUrl = process.env.OPEN_E2EE_SIGNAL_RELAY_URL!;
  * const signal = await createHostedSignalProtocolClient({
  *   adapters: { storage },
- *   hosted: { signalProtocolRelayUrl, getIdentityAssertion },
+ *   hosted: { relayUrl: signalRelayUrl, getIdentityAssertion },
  * });
  *
  * await signal.send(recipientUserId, 'Hello!');
@@ -58,7 +59,7 @@
  *
  * const signal = await createSignalProtocolClient({
  *   identity: { userId },
- *   adapters: { storage, signalProtocolRelay },
+ *   adapters: { storage, relay },
  * });
  * await signal.send('bob', 'Hello!');
  * ```
@@ -558,12 +559,12 @@ export type { GroupId, GroupTrustRoot } from "./internal/groups";
  * function createClient(
  *   userId: string,
  *   storage: SignalProtocolLocalStore,
- *   signalProtocolRelay: SignalProtocolRelayServer,
+ *   relay: SignalProtocolRelayServer,
  *   remoteObjectStore: SignalProtocolRemoteObjectStore,
  * ) {
  *   return createSignalProtocolClient({
  *     identity: { userId },
- *     adapters: { storage, signalProtocolRelay, remoteObjectStore },
+ *     adapters: { storage, relay, remoteObjectStore },
  *   });
  * }
  * ```

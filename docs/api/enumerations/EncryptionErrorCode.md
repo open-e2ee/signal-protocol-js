@@ -381,10 +381,10 @@ Session not found for the given address
 
 > **SIGNAL\_PROTOCOL\_RELAY\_NAME\_CONFLICT**: `"SIGNAL_PROTOCOL_RELAY_NAME_CONFLICT"`
 
-An object sets a member by its Signal Protocol Relay name and by its
-deprecated earlier name, with different values.
+An object sets a member by its role name and by its deprecated
+`signalProtocolRelay*` name, with different values.
 
-Set only the new name, such as `signalProtocolRelay`.
+Set only the role name, such as `relay`.
 
 ***
 

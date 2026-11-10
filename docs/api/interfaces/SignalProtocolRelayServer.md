@@ -50,28 +50,28 @@ Optional conforming Group System transport and issuance capability.
 
 ***
 
-### ~~relayConnectionState~~
+### relayConnectionState
 
 > `readonly` **relayConnectionState**: [`SignalProtocolRelayConnectionState`](SignalProtocolRelayConnectionState.md)
-
-#### Deprecated
-
-Use `signalProtocolRelayConnectionState`. SDK 15.0.0 requires `signalProtocolRelayConnectionState` and removes this name.
-
-***
-
-### signalProtocolRelayConnectionState?
-
-> `readonly` `optional` **signalProtocolRelayConnectionState?**: [`SignalProtocolRelayConnectionState`](SignalProtocolRelayConnectionState.md)
 
 The connection state of this device's envelope subscription.
 
 It reads `stopped` before `subscribe` and after its unsubscribe. The value
 is replaced on each transition and is stable between transitions.
 
-SDK 14 makes this member optional and requires the deprecated
-`relayConnectionState`. When an implementation supplies both, the SDK
-reads this member. SDK 15.0.0 requires this member.
+SDK 14 also accepts the deprecated `signalProtocolRelayConnectionState`.
+When one level of an implementation supplies both names, SDK 14 reads the
+deprecated name. SDK 15.0.0 removes the deprecated name.
+
+***
+
+### ~~signalProtocolRelayConnectionState?~~
+
+> `readonly` `optional` **signalProtocolRelayConnectionState?**: [`SignalProtocolRelayConnectionState`](SignalProtocolRelayConnectionState.md)
+
+#### Deprecated
+
+Use `relayConnectionState`. SDK 15.0.0 removes this name.
 
 ## Methods
 
@@ -965,38 +965,19 @@ Unsubscribe function
 
 ***
 
-### ~~subscribeRelayConnectionState()~~
+### subscribeRelayConnectionState()
 
 > **subscribeRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
 
-#### Parameters
-
-##### listener
-
-(`state`) => `void`
-
-#### Returns
-
-[`Unsubscribe`](../type-aliases/Unsubscribe.md)
-
-#### Deprecated
-
-Use `subscribeSignalProtocolRelayConnectionState`. SDK 15.0.0 requires `subscribeSignalProtocolRelayConnectionState` and removes this name.
-
-***
-
-### subscribeSignalProtocolRelayConnectionState()?
-
-> `optional` **subscribeSignalProtocolRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
-
-Subscribe to transitions of `signalProtocolRelayConnectionState`.
+Subscribe to transitions of `relayConnectionState`.
 
 The listener receives each new state once. It does not receive the
 current state when it subscribes.
 
-SDK 14 makes this member optional and requires the deprecated
-`subscribeRelayConnectionState`. When an implementation supplies both,
-the SDK calls this member. SDK 15.0.0 requires this member.
+SDK 14 also accepts the deprecated
+`subscribeSignalProtocolRelayConnectionState`. When one level of an
+implementation supplies both names, SDK 14 calls the deprecated name.
+SDK 15.0.0 removes the deprecated name.
 
 #### Parameters
 
@@ -1011,6 +992,26 @@ Callback for each transition
 [`Unsubscribe`](../type-aliases/Unsubscribe.md)
 
 Unsubscribe function
+
+***
+
+### ~~subscribeSignalProtocolRelayConnectionState()?~~
+
+> `optional` **subscribeSignalProtocolRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+#### Parameters
+
+##### listener
+
+(`state`) => `void`
+
+#### Returns
+
+[`Unsubscribe`](../type-aliases/Unsubscribe.md)
+
+#### Deprecated
+
+Use `subscribeRelayConnectionState`. SDK 15.0.0 removes this name.
 
 ***
 

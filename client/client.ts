@@ -13,9 +13,10 @@
  * import { createHostedSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
  *
  * // Supply a device-local store and the configured identity-provider callback.
+ * const signalRelayUrl = process.env.OPEN_E2EE_SIGNAL_RELAY_URL!;
  * const signal = await createHostedSignalProtocolClient({
  *   adapters: { storage },
- *   hosted: { signalProtocolRelayUrl, getIdentityAssertion },
+ *   hosted: { relayUrl: signalRelayUrl, getIdentityAssertion },
  * });
  *
  * await signal.send(recipientUserId, 'Hello!');
@@ -25,7 +26,7 @@
  * ```typescript
  * const signal = await createSignalProtocolClient({
  *   identity: { userId },
- *   adapters: { storage, signalProtocolRelay },
+ *   adapters: { storage, relay },
  *   protocol: { postQuantum: 'required', braid: 'required' },
  * });
  * ```
@@ -36,7 +37,7 @@
  *
  * const signal = await DefaultSignalProtocolClient.create(userId, {
  *   storage,
- *   signalProtocolRelay,
+ *   relay,
  * });
  * ```
  */
@@ -489,8 +490,13 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * The connection state of the relay subscription. Reads `stopped` when no
    * relay is configured.
    *
-   * @see SignalProtocolClient.signalProtocolRelayConnectionState
+   * @see SignalProtocolClient.relayConnectionState
    */
+  get relayConnectionState(): SignalProtocolRelayConnectionState {
+    return this.signalProtocolRelayConnectionState;
+  }
+
+  /** @deprecated Use `relayConnectionState`. SDK 15.0.0 removes this name. */
   get signalProtocolRelayConnectionState(): SignalProtocolRelayConnectionState {
     return (
       (this.signalProtocolRelay && signalProtocolRelayConnectionStateOf(this.signalProtocolRelay)) ??
@@ -498,17 +504,19 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     );
   }
 
-  /** @deprecated Use `signalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
-  get relayConnectionState(): SignalProtocolRelayConnectionState {
-    return this.signalProtocolRelayConnectionState;
-  }
-
   /**
    * Subscribe to relay connection transitions. Without a relay, the listener
    * never runs.
    *
-   * @see SignalProtocolClient.subscribeSignalProtocolRelayConnectionState
+   * @see SignalProtocolClient.subscribeRelayConnectionState
    */
+  public subscribeRelayConnectionState(
+    listener: (state: SignalProtocolRelayConnectionState) => void
+  ): Unsubscribe {
+    return this.subscribeSignalProtocolRelayConnectionState(listener);
+  }
+
+  /** @deprecated Use `subscribeRelayConnectionState`. SDK 15.0.0 removes this name. */
   public subscribeSignalProtocolRelayConnectionState(
     listener: (state: SignalProtocolRelayConnectionState) => void
   ): Unsubscribe {
@@ -516,13 +524,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       (this.signalProtocolRelay && subscribeSignalProtocolRelayConnectionStateOf(this.signalProtocolRelay, listener)) ??
       (() => undefined)
     );
-  }
-
-  /** @deprecated Use `subscribeSignalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
-  public subscribeRelayConnectionState(
-    listener: (state: SignalProtocolRelayConnectionState) => void
-  ): Unsubscribe {
-    return this.subscribeSignalProtocolRelayConnectionState(listener);
   }
 
   private signalProtocolRelayUnsubscribe?: Unsubscribe;
@@ -542,7 +543,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
   /**
    * The delivery receipt sends in progress, from a batch timer, the batch
-   * bound, stopSignalProtocolRelaySubscription(), or stop(): the relay work item of each
+   * bound, stopRelaySubscription(), or stop(): the relay work item of each
    * send, and the promise that settles when the send finishes. While stop()
    * holds the batches, only stop() starts a send. stop() waits until its
    * receipt deadline for the sends that are in progress when it starts,
@@ -554,7 +555,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   /**
    * Posts the stored retry requests at their next attempt times, ends them
    * at their deadlines, and calls `onRetryTerminal`. create() and
-   * startSignalProtocolRelaySubscription() start it when a relay is configured, and stop()
+   * startRelaySubscription() start it when a relay is configured, and stop()
    * stops it. Each pass is relay work, so its hooks run through that work.
    */
   private readonly retryRequests = new RetryRequestScheduler(this.state.signalRelayWork, (work) => {
@@ -1730,10 +1731,10 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * });
    *
    * // With an application-owned authenticated relay transport.
-   * const signalProtocolRelay = appSignalProtocolRelayTransport;
+   * const relay = appSignalProtocolRelayTransport;
    * const signal = await DefaultSignalProtocolClient.create('user-123', {
    *   storage,
-   *   signalProtocolRelay,
+   *   relay,
    *   onProgress: ({ stage, percent, message }) => {
    *     console.log(`${stage}: ${percent}% - ${message}`);
    *   }
@@ -1743,7 +1744,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * const signal = await DefaultSignalProtocolClient.create('user-123', {
    *   deviceId: 1,
    *   storage,
-   *   signalProtocolRelay,
+   *   relay,
    *   protocol: { postQuantum: 'required', braid: 'required' },
    *   onProgress,
    *   enableDebugLogging: true,
@@ -3133,7 +3134,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    *
    * The content reaches onMessageDecrypted in a later pass of the receive
    * queue, after this call returns. After `stop()`, the content waits for
-   * the next start of the queue from `startSignalProtocolRelaySubscription`, or for
+   * the next start of the queue from `startRelaySubscription`, or for
    * `processPendingReceives`.
    */
   async receiveIncomingEnvelopes(envelopes: IncomingEnvelope[]): Promise<{
@@ -3737,7 +3738,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * @example
    * ```typescript
    * // In ServicesProvider: wire up ContentManager after creation
-   * const signal = await DefaultSignalProtocolClient.create(userId, { storage, signalProtocolRelay });
+   * const signal = await DefaultSignalProtocolClient.create(userId, { storage, relay });
    * const content = new ContentManager({ db, signal });
    *
    * signal.registerHook('onMessageDecrypted', content.getDecryptionHook());
@@ -3766,25 +3767,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   // SIGNAL PROTOCOL RELAY SUBSCRIPTION (Auto-decrypt and notify ContentManager via hook)
   // ============================================================================
 
-  /**
-   * Start relay subscription for automatic message decryption
-   *
-   * When configured with both `relay` and `onMessageDecrypted` hook, DefaultSignalProtocolClient will:
-   * 1. Subscribe to incoming envelopes from the relay
-   * 2. Decrypt messages appropriately (pairwise vs group/sender key)
-   * 3. Call onMessageDecrypted hook with DecryptedEnvelope (for ContentManager storage)
-   * 4. Mark messages as delivered on the relay
-   *
-   * This enables ContentManager to store decrypted content in an encrypted SQLite
-   * database without any knowledge of cryptography.
-   *
-   * Callers can run this manually after registering hooks via registerHook().
-   * Called automatically by create() when relay + hook configured.
-   * A call while stop() runs is refused and logged; start again after stop()
-   * resolves.
-   *
-   * @see SignalProtocolClient.startSignalProtocolRelaySubscription
-   */
+  /** @deprecated Use `startRelaySubscription`. SDK 15.0.0 removes this name. */
   public startSignalProtocolRelaySubscription(): void {
     if (!this.signalProtocolRelay) {
       this.logger.warn('Cannot start relay subscription: relay not configured', {
@@ -3922,22 +3905,30 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     readRenamedImplementation(this.contentAdapter, 'setSignalProtocolRelayBatching', 'setRelayBatching')?.(active);
   }
 
-  /** @deprecated Use `startSignalProtocolRelaySubscription`. SDK 15.0.0 removes this name. */
+  /**
+   * Start relay subscription for automatic message decryption
+   *
+   * When configured with both `relay` and `onMessageDecrypted` hook, DefaultSignalProtocolClient will:
+   * 1. Subscribe to incoming envelopes from the relay
+   * 2. Decrypt messages appropriately (pairwise vs group/sender key)
+   * 3. Call onMessageDecrypted hook with DecryptedEnvelope (for ContentManager storage)
+   * 4. Mark messages as delivered on the relay
+   *
+   * This enables ContentManager to store decrypted content in an encrypted SQLite
+   * database without any knowledge of cryptography.
+   *
+   * Callers can run this manually after registering hooks via registerHook().
+   * Called automatically by create() when relay + hook configured.
+   * A call while stop() runs is refused and logged; start again after stop()
+   * resolves.
+   *
+   * @see SignalProtocolClient.startRelaySubscription
+   */
   public startRelaySubscription(): void {
     this.startSignalProtocolRelaySubscription();
   }
 
-  /**
-   * Stop the relay subscription
-   *
-   * Pauses message processing via the relay subscription without destroying
-   * DefaultSignalProtocolClient state. startSignalProtocolRelaySubscription() restarts the subscription.
-   *
-   * Use this when the app backgrounds to let the background task handle messages.
-   * Resume when the app foregrounds for real-time message delivery.
-   *
-   * @see SignalProtocolClient.stopSignalProtocolRelaySubscription
-   */
+  /** @deprecated Use `stopRelaySubscription`. SDK 15.0.0 removes this name. */
   public stopSignalProtocolRelaySubscription(): void {
     // Send the batched delivery receipts before unsubscribing. During the
     // hold, stop() sends the batches that wait at each of its flushes and
@@ -3956,7 +3947,17 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     }
   }
 
-  /** @deprecated Use `stopSignalProtocolRelaySubscription`. SDK 15.0.0 removes this name. */
+  /**
+   * Stop the relay subscription
+   *
+   * Pauses message processing via the relay subscription without destroying
+   * DefaultSignalProtocolClient state. startRelaySubscription() restarts the subscription.
+   *
+   * Use this when the app backgrounds to let the background task handle messages.
+   * Resume when the app foregrounds for real-time message delivery.
+   *
+   * @see SignalProtocolClient.stopRelaySubscription
+   */
   public stopRelaySubscription(): void {
     this.stopSignalProtocolRelaySubscription();
   }
@@ -4215,7 +4216,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * waits for those sends until the same deadline. It does this again while
    * the deadline is not past. stop() holds the receipt batches from its
    * first flush until it clears its tracking state. During the hold,
-   * stopSignalProtocolRelaySubscription() does not send them, and stop() drops a receipt
+   * stopRelaySubscription() does not send them, and stop() drops a receipt
    * batched after its last flush. At the deadline it stops each receipt
    * send that is left: a send that waits in an app hook stops, and that
    * receipt is not sent. A send that is in its relay call at the deadline
@@ -4230,7 +4231,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * the work after the hook and writes nothing more. The relay delivers the
    * envelope again after the next start.
    *
-   * A call to startSignalProtocolRelaySubscription() while stop() runs is refused and
+   * A call to startRelaySubscription() while stop() runs is refused and
    * logged; start again after stop() resolves. A stop() call that overlaps a
    * running stop() waits for it and settles as it settles.
    *
@@ -4281,7 +4282,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     // progress, except a send that an earlier stop() stopped, and start the
     // send of the batched delivery receipts, once each, as relay work. Until
     // the end of step 6, a delivery that finishes batches its receipt with no
-    // timer, and stopSignalProtocolRelaySubscription() does not send it. Step 5 sends the
+    // timer, and stopRelaySubscription() does not send it. Step 5 sends the
     // batches that wait at the end of each wait, again while the deadline is
     // not past. A receipt batched after its last flush is dropped in step 6
     const receiptDeadline = Date.now() + SignalProtocolRelaySubscriptionOps.STOP_RECEIPT_FLUSH_MS;

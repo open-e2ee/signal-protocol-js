@@ -11,9 +11,9 @@
 Stops the relay subscription when the app goes to the background and starts
 it again when the app becomes active.
 
-- `background` calls `stopSignalProtocolRelaySubscription()`, which closes the socket with
+- `background` calls `stopRelaySubscription()`, which closes the socket with
   code 1000. The Relay records a client close.
-- `active` calls `startSignalProtocolRelaySubscription()`, but only after a stop that this
+- `active` calls `startRelaySubscription()`, but only after a stop that this
   binding made. The Relay replays retained messages over the new socket.
 - `inactive` and other states change nothing. There is no grace delay.
 - A subscription that is `stopped` stays stopped, so an app stop is kept.
@@ -23,8 +23,7 @@ Call the returned function before `stop()` on the client. It removes the
 listener and does not start or stop the subscription.
 
 An object that has only the deprecated member names, such as
-`stopRelaySubscription()`, also drives the binding. The binding reads each
-new name first.
+`stopSignalProtocolRelaySubscription()`, also drives the binding.
 
 ## Parameters
 

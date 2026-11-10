@@ -22,15 +22,14 @@ import { readRenamedImplementation } from '../types/renamed-member';
 export interface UseSignalProtocolRelayConnectionStateOptions {
   /**
    * Signal Protocol client that owns the relay subscription. An object with
-   * only the deprecated member names also works. The hook reads each new name
-   * first.
+   * only the deprecated `signalProtocolRelay*` member names also works.
    */
   signal:
+    | Pick<SignalProtocolClient, 'relayConnectionState' | 'subscribeRelayConnectionState'>
     | Pick<
         SignalProtocolClient,
         'signalProtocolRelayConnectionState' | 'subscribeSignalProtocolRelayConnectionState'
-      >
-    | Pick<SignalProtocolClient, 'relayConnectionState' | 'subscribeRelayConnectionState'>;
+      >;
 }
 
 type ConnectionStateSource = Partial<

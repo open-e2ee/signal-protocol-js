@@ -197,24 +197,24 @@ Override the default authenticated device-link transport.
 
 > `readonly` `optional` **onProgress?**: [`HostedSignalProtocolRelayIdentityProgressCallback`](../type-aliases/HostedSignalProtocolRelayIdentityProgressCallback.md)
 
-#### ~~relayUrl?~~
+#### relayUrl?
 
 > `readonly` `optional` **relayUrl?**: `string`
 
-##### Deprecated
-
-Use `signalProtocolRelayUrl`. SDK 15.0.0 removes this name.
+Public environment-scoped Signal Protocol Relay connection URL. Set this
+member or the deprecated `signalProtocolRelayUrl`.
 
 #### sealedSenderAccessMode?
 
 > `readonly` `optional` **sealedSenderAccessMode?**: `SealedSenderAccessMode`
 
-#### signalProtocolRelayUrl?
+#### ~~signalProtocolRelayUrl?~~
 
 > `readonly` `optional` **signalProtocolRelayUrl?**: `string`
 
-Public environment-scoped Signal Protocol Relay connection URL. Set this
-member or the deprecated `relayUrl`.
+##### Deprecated
+
+Use `relayUrl`. SDK 15.0.0 removes this name.
 
 ***
 
@@ -378,7 +378,7 @@ and app database ownership.
 ```typescript
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay, remoteObjectStore },
+  adapters: { storage, relay, remoteObjectStore },
   media: {
     preparedUploads: appPreparedUploads,
     loadLocalAttachment: async ({ localMediaId }) => appDrafts.readBytes(localMediaId),
@@ -498,7 +498,7 @@ Receives updates during:
 ```typescript
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
   onProgress: ({ stage, percent, message }) => {
     console.log(`${stage}: ${percent}% - ${message}`);
   }

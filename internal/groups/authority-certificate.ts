@@ -35,11 +35,12 @@ const MAXIMUM_CERTIFICATE_BYTES = 4096;
 export interface GroupAuthorityFields {
   /**
    * The 16-byte Relay project-environment scope. Set this member or the
-   * deprecated `relayScopeId`. The encoder requires one of the two.
+   * deprecated `signalProtocolRelayScopeId`. The encoder requires one of the
+   * two.
    */
-  readonly signalProtocolRelayScopeId?: Uint8Array;
-  /** @deprecated Use `signalProtocolRelayScopeId`. SDK 15.0.0 removes this name. */
   readonly relayScopeId?: Uint8Array;
+  /** @deprecated Use `relayScopeId`. SDK 15.0.0 removes this name. */
+  readonly signalProtocolRelayScopeId?: Uint8Array;
   readonly keyId: string;
   readonly notBeforeMilliseconds: number;
   readonly notAfterMilliseconds: number;

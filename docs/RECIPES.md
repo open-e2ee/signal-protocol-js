@@ -269,10 +269,11 @@ import { webSqliteStore } from "@open-e2ee/signal-protocol-sdk/local/store/web-s
 
 // An application-chosen name for this provider user, within the store name rules.
 const storage = await webSqliteStore({ name: storeName });
+const signalRelayUrl = process.env.OPEN_E2EE_SIGNAL_RELAY_URL!;
 const signal = await createHostedSignalProtocolClient({
   adapters: { storage },
   hosted: {
-    signalProtocolRelayUrl,
+    relayUrl: signalRelayUrl,
     getIdentityAssertion: firebaseIdentityAssertion(auth, uid),
   },
 });
@@ -333,7 +334,7 @@ const signal = await createHostedSignalProtocolClient({
   },
   hosted: {
     // The environment-scoped connection URL from the OpenE2EE console.
-    signalProtocolRelayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
     // The native app callback: https://docs.open-e2ee.dev/signal-relay/custom-token#native-apps-react-native-and-expo
     getIdentityAssertion,
   },
@@ -349,7 +350,7 @@ must complete the [database setup](../local/store/expo/README.md) first.
 ```ts
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
 });
 
 // Upload public prekeys before other devices need to message this device.
@@ -366,7 +367,7 @@ signal.registerHook("onMessageDecrypted", async (message) => {
 });
 
 // Subscribing starts encrypted envelope delivery and local decryption.
-signal.startSignalProtocolRelaySubscription();
+signal.startRelaySubscription();
 
 await signal.send(recipientUserId, "hello");
 ```
@@ -380,7 +381,7 @@ message storage through hooks.
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
   protocol: {
     postQuantum: "required",
     braid: "required",
@@ -401,7 +402,7 @@ agreement, so a peer that advertises no post-quantum material fails with
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
   protocol: {
     postQuantum: "required",
     braid: "disabled",

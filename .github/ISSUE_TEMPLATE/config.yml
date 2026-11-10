@@ -7,5 +7,5 @@ contact_links:
     url: https://docs.open-e2ee.dev
     about: Quickstarts, concepts, and integration guides.
   - name: OpenE2EE Signal Protocol Relay
-    url: https://open-e2ee.dev/relay
+    url: https://open-e2ee.dev/signal-relay/
     about: The relay that OpenE2EE operates for this SDK.

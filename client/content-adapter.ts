@@ -296,13 +296,13 @@ export interface SignalProtocolContentAdapter {
   /**
    * Tells the adapter that a relay batch starts or ends.
    *
-   * SDK 14 makes this member optional and requires the deprecated
-   * `setRelayBatching`. When an adapter supplies both, the client calls this
-   * member. SDK 15.0.0 requires this member.
+   * SDK 14 also accepts the deprecated `setSignalProtocolRelayBatching`. When
+   * one level of an adapter supplies both names, SDK 14 calls the deprecated
+   * name. SDK 15.0.0 removes the deprecated name.
    */
-  setSignalProtocolRelayBatching?(active: boolean): void;
-  /** @deprecated Use `setSignalProtocolRelayBatching`. SDK 15.0.0 requires `setSignalProtocolRelayBatching` and removes this name. */
   setRelayBatching(active: boolean): void;
+  /** @deprecated Use `setRelayBatching`. SDK 15.0.0 removes this name. */
+  setSignalProtocolRelayBatching?(active: boolean): void;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -1075,15 +1075,15 @@ export function createDefaultSignalProtocolContentAdapter(): SignalProtocolConte
       return true;
     },
 
-    // The new name forwards to the earlier name, so an adapter spread from
-    // this one that overrides only `setRelayBatching` keeps its override.
-    setSignalProtocolRelayBatching(active: boolean) {
-      this.setRelayBatching(active);
-    },
-
-    /** @deprecated Use `setSignalProtocolRelayBatching`. SDK 15.0.0 requires `setSignalProtocolRelayBatching` and removes this name. */
     setRelayBatching() {
       // No-op for the protocol-default adapter.
+    },
+
+    // The deprecated name forwards to `setRelayBatching`, so an adapter spread
+    // from this one that overrides only `setRelayBatching` keeps its override.
+    /** @deprecated Use `setRelayBatching`. SDK 15.0.0 removes this name. */
+    setSignalProtocolRelayBatching(active: boolean) {
+      this.setRelayBatching(active);
     },
   };
 }

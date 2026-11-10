@@ -229,34 +229,35 @@ export interface SignalProtocolRelayServer extends KeyRotationService {
    * It reads `stopped` before `subscribe` and after its unsubscribe. The value
    * is replaced on each transition and is stable between transitions.
    *
-   * SDK 14 makes this member optional and requires the deprecated
-   * `relayConnectionState`. When an implementation supplies both, the SDK
-   * reads this member. SDK 15.0.0 requires this member.
+   * SDK 14 also accepts the deprecated `signalProtocolRelayConnectionState`.
+   * When one level of an implementation supplies both names, SDK 14 reads the
+   * deprecated name. SDK 15.0.0 removes the deprecated name.
    */
-  readonly signalProtocolRelayConnectionState?: SignalProtocolRelayConnectionState;
-
-  /** @deprecated Use `signalProtocolRelayConnectionState`. SDK 15.0.0 requires `signalProtocolRelayConnectionState` and removes this name. */
   readonly relayConnectionState: SignalProtocolRelayConnectionState;
 
+  /** @deprecated Use `relayConnectionState`. SDK 15.0.0 removes this name. */
+  readonly signalProtocolRelayConnectionState?: SignalProtocolRelayConnectionState;
+
   /**
-   * Subscribe to transitions of `signalProtocolRelayConnectionState`.
+   * Subscribe to transitions of `relayConnectionState`.
    *
    * The listener receives each new state once. It does not receive the
    * current state when it subscribes.
    *
-   * SDK 14 makes this member optional and requires the deprecated
-   * `subscribeRelayConnectionState`. When an implementation supplies both,
-   * the SDK calls this member. SDK 15.0.0 requires this member.
+   * SDK 14 also accepts the deprecated
+   * `subscribeSignalProtocolRelayConnectionState`. When one level of an
+   * implementation supplies both names, SDK 14 calls the deprecated name.
+   * SDK 15.0.0 removes the deprecated name.
    *
    * @param listener - Callback for each transition
    * @returns Unsubscribe function
    */
-  subscribeSignalProtocolRelayConnectionState?(
+  subscribeRelayConnectionState(
     listener: (state: SignalProtocolRelayConnectionState) => void
   ): Unsubscribe;
 
-  /** @deprecated Use `subscribeSignalProtocolRelayConnectionState`. SDK 15.0.0 requires `subscribeSignalProtocolRelayConnectionState` and removes this name. */
-  subscribeRelayConnectionState(
+  /** @deprecated Use `subscribeRelayConnectionState`. SDK 15.0.0 removes this name. */
+  subscribeSignalProtocolRelayConnectionState?(
     listener: (state: SignalProtocolRelayConnectionState) => void
   ): Unsubscribe;
 

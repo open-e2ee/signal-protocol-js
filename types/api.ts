@@ -341,10 +341,10 @@ export interface SignalProtocolClient {
    * starts. A call while `stop()` runs is refused and logged; start again
    * after `stop()` resolves.
    */
-  startSignalProtocolRelaySubscription(): void;
-
-  /** @deprecated Use `startSignalProtocolRelaySubscription`. SDK 15.0.0 removes this name. */
   startRelaySubscription(): void;
+
+  /** @deprecated Use `startRelaySubscription`. SDK 15.0.0 removes this name. */
+  startSignalProtocolRelaySubscription(): void;
 
   /**
    * Stop the relay subscription
@@ -352,46 +352,46 @@ export interface SignalProtocolClient {
    * Pauses message processing without destroying client state. It first
    * starts the send of the delivery receipts that wait in a batch. `stop()`
    * holds the receipt batches from its first flush until it clears its
-   * tracking state. During the hold, `stopSignalProtocolRelaySubscription()` does not send
+   * tracking state. During the hold, `stopRelaySubscription()` does not send
    * them. `stop()` sends the batches that wait at each of its flushes and
    * drops a batch made during the hold after its last flush.
    * Use when app backgrounds to let background task handle messages.
-   * Call startSignalProtocolRelaySubscription() to resume when app foregrounds.
+   * Call startRelaySubscription() to resume when app foregrounds.
    * `bindSignalProtocolRelayLifecycle` and the `useSignalProtocolRelayLifecycle` hook make both calls
    * from the app state.
    */
-  stopSignalProtocolRelaySubscription(): void;
-
-  /** @deprecated Use `stopSignalProtocolRelaySubscription`. SDK 15.0.0 removes this name. */
   stopRelaySubscription(): void;
+
+  /** @deprecated Use `stopRelaySubscription`. SDK 15.0.0 removes this name. */
+  stopSignalProtocolRelaySubscription(): void;
 
   /**
    * The connection state of the relay subscription.
    *
-   * It reads `stopped` before `startSignalProtocolRelaySubscription()`, after
-   * `stopSignalProtocolRelaySubscription()`, and when no relay is configured.
+   * It reads `stopped` before `startRelaySubscription()`, after
+   * `stopRelaySubscription()`, and when no relay is configured.
    * Use it for a local indicator of this device's connection.
    */
-  readonly signalProtocolRelayConnectionState: SignalProtocolRelayConnectionState;
-
-  /** @deprecated Use `signalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
   readonly relayConnectionState: SignalProtocolRelayConnectionState;
+
+  /** @deprecated Use `relayConnectionState`. SDK 15.0.0 removes this name. */
+  readonly signalProtocolRelayConnectionState: SignalProtocolRelayConnectionState;
 
   /**
    * Subscribe to relay connection transitions.
    *
    * The listener receives each new state once. Read
-   * `signalProtocolRelayConnectionState` for the current state.
+   * `relayConnectionState` for the current state.
    *
    * @param listener - Callback for each transition
    * @returns Unsubscribe function
    */
-  subscribeSignalProtocolRelayConnectionState(
+  subscribeRelayConnectionState(
     listener: (state: SignalProtocolRelayConnectionState) => void
   ): Unsubscribe;
 
-  /** @deprecated Use `subscribeSignalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
-  subscribeRelayConnectionState(
+  /** @deprecated Use `subscribeRelayConnectionState`. SDK 15.0.0 removes this name. */
+  subscribeSignalProtocolRelayConnectionState(
     listener: (state: SignalProtocolRelayConnectionState) => void
   ): Unsubscribe;
 
@@ -408,7 +408,7 @@ export interface SignalProtocolClient {
    * wait and waits for those sends until the same deadline. It does this
    * again while the deadline is not past. `stop()` holds the receipt batches
    * from its first flush until it clears its tracking state. During the
-   * hold, `stopSignalProtocolRelaySubscription()` does not send them, and `stop()` drops a
+   * hold, `stopRelaySubscription()` does not send them, and `stop()` drops a
    * receipt batched after its last flush. At the deadline it stops each
    * receipt send that is left: a send that waits in an app hook stops, and
    * that receipt is not sent. A send that is in its relay call at the
@@ -421,7 +421,7 @@ export interface SignalProtocolClient {
    * after `stop()`, the SDK drops the work after the hook and writes nothing
    * more. The relay delivers the envelope again after the next start.
    *
-   * A call to `startSignalProtocolRelaySubscription()` while `stop()` runs is refused and
+   * A call to `startRelaySubscription()` while `stop()` runs is refused and
    * logged; start again after `stop()` resolves. A `stop()` call that
    * overlaps a running `stop()` waits for it and settles as it settles.
    */

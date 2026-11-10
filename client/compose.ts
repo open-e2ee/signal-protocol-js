@@ -34,9 +34,9 @@ export interface SignalProtocolClientAdapterConfig {
   /** Required local protocol store for the current runtime. */
   storage: SignalProtocolLocalStore;
   /** Optional relay for server sync, prekeys, fanout, and subscriptions. */
-  signalProtocolRelay?: SignalProtocolRelayServer;
-  /** @deprecated Use `signalProtocolRelay`. SDK 15.0.0 removes this name. */
   relay?: SignalProtocolRelayServer;
+  /** @deprecated Use `relay`. SDK 15.0.0 removes this name. */
+  signalProtocolRelay?: SignalProtocolRelayServer;
   /** Optional brokered remote object store for encrypted attachments. */
   remoteObjectStore?: SignalProtocolRemoteObjectStore;
   /** Advanced protocol manager override for tests and specialized integrations. */
@@ -67,7 +67,7 @@ export interface SignalProtocolClientAdapterConfig {
  * ```typescript
  * const signal = await createSignalProtocolClient({
  *   identity: { userId },
- *   adapters: { storage, signalProtocolRelay },
+ *   adapters: { storage, relay },
  *   hooks: {
  *     onMessageDecrypted: async (message) => {
  *       await appMessages.insert({
@@ -80,7 +80,7 @@ export interface SignalProtocolClientAdapterConfig {
  * });
  *
  * await signal.syncToServer();
- * signal.startSignalProtocolRelaySubscription();
+ * signal.startRelaySubscription();
  * ```
  */
 export interface SignalProtocolClientCompositionOptions extends Omit<
@@ -142,7 +142,7 @@ export function createSignalProtocolClientConfig(
  *
  * const signal = await createSignalProtocolClient({
  *   identity: { userId },
- *   adapters: { storage, signalProtocolRelay },
+ *   adapters: { storage, relay },
  * });
  *
  * await signal.send('bob', 'hello');

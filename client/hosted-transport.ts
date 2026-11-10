@@ -241,11 +241,11 @@ export interface HostedSignalProtocolRelayTransportBootstrapRequest {
 export interface HostedSignalProtocolRelayTransportResult {
   readonly canonicalAccountId: string;
   readonly deviceId: number;
+  /** @deprecated Use `relay`. SDK 15.0.0 removes this name. */
   readonly signalProtocolRelay: SignalProtocolRelayServer;
-  /** @deprecated Use `signalProtocolRelay`. SDK 15.0.0 removes this name. */
   readonly relay: SignalProtocolRelayServer;
+  /** @deprecated Use `relayScopeId`. SDK 15.0.0 removes this name. */
   readonly signalProtocolRelayScopeId: Uint8Array;
-  /** @deprecated Use `signalProtocolRelayScopeId`. SDK 15.0.0 removes this name. */
   readonly relayScopeId: Uint8Array;
   readonly remoteObjectStore: SignalProtocolRemoteObjectStore;
   readonly transport: HostedSignalProtocolRelayHttpTransport;
@@ -2223,22 +2223,22 @@ export class HostedSignalProtocolRelayHttpTransport
     };
   }
 
+  /** @deprecated Use `relayConnectionState`. SDK 15.0.0 removes this name. */
   public get signalProtocolRelayConnectionState(): SignalProtocolRelayConnectionState {
     return this.connectionState.current;
   }
 
+  /** @deprecated Use `subscribeRelayConnectionState`. SDK 15.0.0 removes this name. */
   public subscribeSignalProtocolRelayConnectionState(
     listener: (state: SignalProtocolRelayConnectionState) => void,
   ): Unsubscribe {
     return this.connectionState.subscribe(listener);
   }
 
-  /** @deprecated Use `signalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
   public get relayConnectionState(): SignalProtocolRelayConnectionState {
     return this.signalProtocolRelayConnectionState;
   }
 
-  /** @deprecated Use `subscribeSignalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
   public subscribeRelayConnectionState(
     listener: (state: SignalProtocolRelayConnectionState) => void,
   ): Unsubscribe {

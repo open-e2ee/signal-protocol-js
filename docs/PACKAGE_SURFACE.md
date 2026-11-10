@@ -270,7 +270,7 @@ implement the same `MediaAttachmentTransfer` seam.
 
 ## Resume an existing hosted device
 
-Use `resumeHostedSignalProtocolClient({ adapters: { storage }, hosted: { signalProtocolRelayUrl } })`
+Use `resumeHostedSignalProtocolClient({ adapters: { storage }, hosted: { relayUrl: signalRelayUrl } })`
 when the application must preserve the device already held by its open store.
 The SDK refuses missing, unreadable or changed required identity state. It never
 falls back to registration, recovery or device linking. The default
