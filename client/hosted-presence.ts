@@ -164,7 +164,7 @@ export interface HostedSignalProtocolRelayPresenceRuntime {
   readonly presenceScope: string;
   readonly presenceStore: Pick<
     SignalProtocolLocalStore,
-    "getMetadata" | "setMetadata"
+    "getMetadata" | "setMetadata" | "compareAndSetMetadata"
   >;
   /** The live mailbox socket, or `undefined` while no subscription runs. */
   readonly presenceSocket:

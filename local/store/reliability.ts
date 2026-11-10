@@ -1977,16 +1977,20 @@ export async function recordReceivedTimestamp(
 
 /**
  * A source that tells that a recipient device has a message. `signal-relay`
- * is the same source as `relay`. A later release writes `signal-relay`. This
- * release writes `relay` and reads both values.
+ * is the same source as `relay`. This release writes `signal-relay`. It
+ * reads both values, because a status that SDK 14.3.0 or earlier wrote holds
+ * `relay`.
  */
 export type StoredDeliverySource = 'relay' | 'signal-relay' | 'e2ee';
 
 /** A source that this release writes. */
-export type WrittenDeliverySource = Exclude<StoredDeliverySource, 'signal-relay'>;
+export type WrittenDeliverySource = Exclude<StoredDeliverySource, 'relay'>;
+
+/** A source that this release reports to the application. */
+export type ReportedDeliverySource = Exclude<StoredDeliverySource, 'signal-relay'>;
 
 /** The source that this release reports for a stored source: `signal-relay` reads as `relay`. */
-export function reportedDeliverySource(source: StoredDeliverySource): WrittenDeliverySource {
+export function reportedDeliverySource(source: StoredDeliverySource): ReportedDeliverySource {
   return source === 'signal-relay' ? 'relay' : source;
 }
 

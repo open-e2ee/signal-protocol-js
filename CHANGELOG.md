@@ -1,5 +1,75 @@
 # Changelog
 
+## 14.4.0
+
+### Changed
+
+- **The SDK speaks protocol version 3 of the OpenE2EE Signal Protocol Relay.**
+  Version 3 keeps the behavior of version 2 and uses the Signal Relay names.
+  It sends the header `x-signal-relay-protocol: 3`, and the mailbox socket
+  offers `signal-relay.v3` with `signal-relay.auth.<token>`. Each device proof
+  signs a version 3 label, for example
+  `signal-relay-device-authentication-v2\0`. The Relay issues a device token
+  with the issuer `signal-relay`, the audience `signal-relay-device`, and the
+  claim `signal_relay_scope_id`. A version 3 response names the scope
+  `signalRelayScopeId` and the receipts capability `signalRelayReceipts`. The
+  SDK reads the earlier names too, and it refuses a response that gives two
+  different values.
+- **The SDK falls back to version 2.** When the Relay refuses version 3 with
+  `PROTOCOL_UNSUPPORTED`, the client sends the refused request again with
+  version 2, and it offers version 2 until it stops. The Relay refuses the
+  version before it reads the request, so the refused request had no effect.
+  A socket that the Relay closes with 4400 reconnects with version 2 after its
+  usual backoff. A client with an explicit protocol version never falls back.
+  A Relay that predates version 3 does not refuse version 3 with
+  `PROTOCOL_UNSUPPORTED`, so the client does not fall back to version 2.
+  Use this release with a Relay that serves version 3.
+- **`HostedSignalProtocolRelayDeviceAuthentication` signs the label of a
+  protocol version.** `signChallenge` and `signCertificateRequest` take an
+  optional last argument, `protocolVersion`. A call without it signs the
+  version 1 label, which the Relay verifies on versions 1 and 2 and on a
+  request without a version. An adapter that sends the proof with
+  `x-signal-relay-protocol: 3` must pass `3`. An adapter that sends no version
+  needs no change.
+- **This release writes the Signal Relay values to the local store.** A new
+  receive record holds the origin `'signal-relay'` and the receipt decision
+  `signalProtocolRelayOwnsReceipt`. A new Relay delivery status holds the
+  source `'signal-relay'`. A hosted record goes to its `signalRelay.<record>.v2:`
+  key only. When only the earlier `.v1:` key holds a record, a read copies the
+  record to the current key and keeps the earlier key. The SDK still reports
+  `'relay'` to the application for `DeliverySource`, `PendingReceive.origin`,
+  and `ReceiveExpiredEvent.origin`, as in SDK 14.3.0.
+
+#### Store compatibility
+
+- A store that SDK 14.0.0 through 14.3.0 wrote opens with this release. This
+  release reads the origin `'relay'`, the receipt decision
+  `relayOwnsReceipt`, the source `'relay'`, and each `.v1:` key. SDK 15.0.0
+  still reads them. A record that an earlier release wrote keeps the origin
+  `'relay'` when this release changes it.
+- A return to SDK 14.2.0 or 14.3.0 is supported. Those releases read each
+  value that this release writes, and they read the current key of a hosted
+  record first.
+- A return to SDK 14.1.0 or earlier is not supported for a store that this
+  release wrote. Those releases refuse the origin `'signal-relay'`. They read
+  only the `.v1:` key of a hosted record, so they do not find a record that
+  this release created, and they read an earlier value of a record that this
+  release changed.
+- Do not ship SDK 14.1.0 or earlier to a device after it runs this release.
+  To roll back, ship SDK 14.2.0 or 14.3.0. A device that goes back to SDK
+  14.1.0 or earlier can have these failures:
+  - Messages that the device received but did not complete can stay
+    unprocessed. The receive queue fails each time it reads a stored receive
+    with the origin `'signal-relay'`.
+  - A device that registered with this release cannot resume its Relay
+    connection. The earlier release does not find the device authentication
+    key, and the resume fails with `RETAINED_DEVICE_AUTHENTICATION_UNAVAILABLE`.
+  - A device-owned identity that this release created is lost. The earlier
+    release does not find the key, so it creates a new key. The Relay binds
+    an account to that key, so the device gets a new account.
+  - A hosted record that this release changed goes back to its earlier
+    value. An example is the stored Relay session.
+
 ## 14.3.0
 
 ### Changed

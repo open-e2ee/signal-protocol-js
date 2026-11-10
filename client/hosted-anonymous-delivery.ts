@@ -38,10 +38,13 @@ import {
   takesDirectSealedRoute,
 } from "./signal-relay-sealed-route";
 import {
-  RELAY_PROTOCOL_VERSION,
   markSignalProtocolRelayAnswerVersion,
+  sendOnSignalRelayProtocol,
   signalRelayProtocolHeadersFor,
+  signalRelayProtocolOffer,
+  throwIfProtocolFallBack,
   throwIfUpgradeRequired,
+  type SignalRelayProtocolOffer,
 } from "./signal-relay-protocol";
 import { withSignalProtocolRelayRequestDeadline } from "./signal-relay-request-deadline";
 
@@ -207,6 +210,9 @@ async function responseObject(response: Response): Promise<JsonRecord> {
 
 /** Anonymous requests never carry the authenticated transport's token or cookies. */
 export class HostedAnonymousDelivery {
+  /** The Relay protocol version of the client that owns this delivery. */
+  private readonly signalRelayProtocol: SignalRelayProtocolOffer;
+
   public constructor(
     private readonly connection: HostedSignalProtocolRelayConnection,
     private readonly fanOut: BoundedFanOut,
@@ -230,8 +236,12 @@ export class HostedAnonymousDelivery {
       clientMessageId: string,
       request: RepeatRequest,
     ) => Promise<void> = async () => {},
-    /** The Relay protocol version of the client that owns this delivery. */
-    private readonly signalRelayProtocolVersion: number = RELAY_PROTOCOL_VERSION,
+    /**
+     * The selected Relay protocol version, or the offer of the client that
+     * owns this delivery. Without it, the delivery offers version 3 first
+     * and falls back to version 2.
+     */
+    signalRelayProtocol?: number | SignalRelayProtocolOffer,
     /**
      * Runs after the Relay refuses a direct post as NOT_FOUND. True when the
      * device directory lists the device at another mailbox generation than
@@ -240,7 +250,9 @@ export class HostedAnonymousDelivery {
     private readonly destinationRecovered: (
       destination: Destination,
     ) => Promise<boolean> = async () => false,
-  ) {}
+  ) {
+    this.signalRelayProtocol = signalRelayProtocolOffer(signalRelayProtocol);
+  }
 
   /**
    * Run task for each item at the same time. After every item settles, a
@@ -291,6 +303,16 @@ export class HostedAnonymousDelivery {
   }
 
   private post(path: string, body: JsonRecord): Promise<JsonRecord> {
+    return sendOnSignalRelayProtocol(this.signalRelayProtocol, (signalRelayProtocolVersion) =>
+      this.postWith(signalRelayProtocolVersion, path, body),
+    );
+  }
+
+  private postWith(
+    signalRelayProtocolVersion: number,
+    path: string,
+    body: JsonRecord,
+  ): Promise<JsonRecord> {
     return withSignalProtocolRelayRequestDeadline(async (signal) => {
       let response: Response;
       try {
@@ -303,7 +325,7 @@ export class HostedAnonymousDelivery {
             headers: {
               accept: "application/json",
               "content-type": "application/json",
-              ...signalRelayProtocolHeadersFor(this.signalRelayProtocolVersion),
+              ...signalRelayProtocolHeadersFor(signalRelayProtocolVersion),
             },
             body: JSON.stringify({
               ...body,
@@ -319,7 +341,8 @@ export class HostedAnonymousDelivery {
       }
       const value = await responseObject(response);
       if (!response.ok) {
-        throwIfUpgradeRequired(response.status, value, this.signalRelayProtocolVersion);
+        throwIfProtocolFallBack(this.signalRelayProtocol, signalRelayProtocolVersion, value);
+        throwIfUpgradeRequired(response.status, value, signalRelayProtocolVersion);
         const code = record(value.error) ? value.error.code : undefined;
         // Each route answers a rejected credential with the code of its
         // type. A Relay without the endorsement on the direct route answers
@@ -366,7 +389,7 @@ export class HostedAnonymousDelivery {
             safeCode,
             details === undefined ? undefined : { details },
           ),
-          this.signalRelayProtocolVersion,
+          signalRelayProtocolVersion,
         );
         // The public code stays DELIVERY_FAILED. The mark lets the send
         // repeat the post once and keep the device pending.

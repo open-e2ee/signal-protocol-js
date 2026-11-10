@@ -28,9 +28,9 @@ const MESSAGE_TYPES = new Set(['prekey_bundle', 'ciphertext', 'sender_key']);
 
 /**
  * The two names of the Relay receipt decision of a receive record. This
- * release writes `relayOwnsReceipt`, so that an earlier SDK 14 release reads
- * each record. It reads both names. A record that holds both names with
- * different values is refused.
+ * release writes `signalProtocolRelayOwnsReceipt`. It reads both names,
+ * because a store that SDK 14.3.0 or earlier wrote holds `relayOwnsReceipt`.
+ * A record that holds both names with different values is refused.
  */
 const RECEIPT_DECISION: RenamedMember = {
   newName: 'signalProtocolRelayOwnsReceipt',
@@ -40,8 +40,8 @@ const RECEIPT_DECISION: RenamedMember = {
 
 /**
  * Tell whether a receive record holds a Relay delivery. This release writes
- * `relay`, and it reads `relay` and `signal-relay`, the value of a later
- * release.
+ * `signal-relay`, and it reads `signal-relay` and `relay`, the value of SDK
+ * 14.3.0 and earlier.
  */
 export function isSignalProtocolRelayOrigin(origin: ReceiveWorkRecord['origin']): boolean {
   return origin !== 'caller';
@@ -74,9 +74,9 @@ export function signalProtocolRelayOwnsReceipt(record: ReceiveWorkRecord): boole
 
 /**
  * The record with the Relay receipt decision `owned`. The record holds the
- * decision under `relayOwnsReceipt`, and also under
- * `signalProtocolRelayOwnsReceipt` when it already holds that name, so the
- * two names agree.
+ * decision under `signalProtocolRelayOwnsReceipt`, and also under
+ * `relayOwnsReceipt` when it already holds that name, so the two names agree.
+ * The other values of the record keep the form that the store holds.
  */
 export function withSignalProtocolRelayOwnsReceipt(
   record: ReceiveWorkRecord,
@@ -84,10 +84,8 @@ export function withSignalProtocolRelayOwnsReceipt(
 ): ReceiveWorkRecord {
   return {
     ...record,
-    relayOwnsReceipt: owned,
-    ...(record.signalProtocolRelayOwnsReceipt !== undefined && {
-      signalProtocolRelayOwnsReceipt: owned,
-    }),
+    signalProtocolRelayOwnsReceipt: owned,
+    ...(record.relayOwnsReceipt !== undefined && { relayOwnsReceipt: owned }),
   };
 }
 

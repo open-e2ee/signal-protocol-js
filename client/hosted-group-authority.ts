@@ -3,9 +3,12 @@ import type { SignalProtocolClientCompositionOptions } from './compose';
 import type { HostedSignalProtocolRelayConnection } from './hosted-connection';
 import { withSignalProtocolRelayRequestDeadline } from './signal-relay-request-deadline';
 import {
-  RELAY_PROTOCOL_VERSION,
+  sendOnSignalRelayProtocol,
   signalRelayProtocolHeadersFor,
+  signalRelayProtocolOffer,
+  throwIfProtocolFallBack,
   throwIfUpgradeRequired,
+  type SignalRelayProtocolOffer,
 } from './signal-relay-protocol';
 import {
   EndorsementManager,
@@ -24,9 +27,10 @@ export type HostedGroupOptions = Pick<GroupOptions, 'profileKey' | 'store'> & {
 
 async function fetchAuthority(
   connection: HostedSignalProtocolRelayConnection,
-  signalRelayProtocolVersion: number
+  offer: SignalRelayProtocolOffer
 ) {
-  const buffer = await withSignalProtocolRelayRequestDeadline(async (signal) => {
+  const buffer = await sendOnSignalRelayProtocol(offer, (signalRelayProtocolVersion) =>
+    withSignalProtocolRelayRequestDeadline(async (signal) => {
     const response = await fetch(
       `${connection.protocolEndpoint}/groups/authority`,
       {
@@ -78,11 +82,12 @@ async function fetchAuthority(
       } catch {
         error = undefined;
       }
+      throwIfProtocolFallBack(offer, signalRelayProtocolVersion, error);
       throwIfUpgradeRequired(response.status, error, signalRelayProtocolVersion);
       throw new Error('Managed group authority is unavailable');
     }
     return body;
-  });
+  }));
   return verifyGroupAuthority(
     JSON.parse(utf8Decode(buffer, { fatal: true })),
     {
@@ -96,13 +101,15 @@ async function fetchAuthority(
 /**
  * Managed group keys come from a signed response under the compiled
  * environment root. Each authority request carries the Relay protocol version
- * of the client.
+ * of the client: a selected version, or the offer of the client. Without
+ * either, the requests offer version 3 first and fall back to version 2.
  */
 export async function resolveHostedGroupOptions(
   connection: HostedSignalProtocolRelayConnection,
   options: HostedGroupOptions,
-  signalRelayProtocolVersion: number = RELAY_PROTOCOL_VERSION
+  signalRelayProtocol?: number | SignalRelayProtocolOffer
 ): Promise<GroupOptions> {
+  const offer = signalRelayProtocolOffer(signalRelayProtocol);
   if (
     Object.keys(options).some(
       (key) => !['profileKey', 'store', 'endorsementCache'].includes(key)
@@ -120,7 +127,7 @@ export async function resolveHostedGroupOptions(
       return current.value;
     if (pending) return pending;
     pending = (async () => {
-      const authority = await fetchAuthority(connection, signalRelayProtocolVersion);
+      const authority = await fetchAuthority(connection, offer);
       const root = decodeGroupTrustRoot(authority.trustRoot);
       const value: GroupAuthority = {
         trustRoot: authority.trustRoot,

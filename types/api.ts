@@ -119,10 +119,11 @@ export interface ReceiveWorkRecord {
   revision: number;
   stage: ReceiveWorkStage;
   /**
-   * `relay` for a Relay delivery, `caller` for an envelope that the
-   * application passed. `signal-relay` is the same origin as `relay`. A
-   * later release writes `signal-relay`. This release writes `relay` and
-   * reads both values, so a store must keep the value that it was given.
+   * `signal-relay` or `relay` for a Relay delivery, `caller` for an envelope
+   * that the application passed. `signal-relay` is the same origin as
+   * `relay`. This release writes `signal-relay`. SDK 14.3.0 and earlier
+   * wrote `relay`. This release reads both values, so a store must keep the
+   * value that it was given.
    */
   origin: 'relay' | 'signal-relay' | 'caller';
   /** The local arrival order. */
@@ -168,14 +169,16 @@ export interface ReceiveWorkRecord {
   ackIntent?: { at: number; hasReceiptJoin: boolean };
   /**
    * The join decision of the Relay: true when the Relay sends the receipt.
-   * This release writes the decision under this name.
+   * SDK 14.3.0 and earlier wrote the decision under this name. This release
+   * reads it, and writes it only to keep it in step on a record that holds
+   * it.
    */
   relayOwnsReceipt?: boolean;
   /**
-   * The join decision of the Relay under its Signal Protocol Relay name. A
-   * later release writes it. This release reads both names, and the new name
-   * wins. A record that holds both names with different values is invalid:
-   * a store refuses it with `SignalProtocolRelayNameConflictError`.
+   * The join decision of the Relay under its Signal Protocol Relay name.
+   * This release writes it. It reads both names, and the new name wins. A
+   * record that holds both names with different values is invalid: a store
+   * refuses it with `SignalProtocolRelayNameConflictError`.
    */
   signalProtocolRelayOwnsReceipt?: boolean;
   /**
