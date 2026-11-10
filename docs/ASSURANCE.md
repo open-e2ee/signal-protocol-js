@@ -16,16 +16,16 @@ Private testing also exists in other open-source projects. [SQLite publishes som
 
 Engineering CI runs the default automated checks on pull requests that are ready for review and on changes to the main branch. Release preparation requires a passing run.
 
-Most recent full run on 2026-11-08:
+Most recent full run on 2026-11-10:
 
 | | |
 |---|---|
-| Test modules | 613 |
-| Test cases | 12,905 |
-| Passed | 12,901 |
+| Test modules | 615 |
+| Test cases | 12,967 |
+| Passed | 12,963 |
 | Skipped | 4 |
 | Failed | 0 |
-| Wall time | 479 s |
+| Wall time | 830 s |
 
 The total counts test cases. One test case can contain several assertions. Separate commands run the longer performance and endurance checks.
 
@@ -40,9 +40,9 @@ Release tooling generates this table from a completed run. It refuses results fr
 - **Storage contracts:** check persistence, concurrency, interruption, recovery, and storage pressure at adapter boundaries.
 - **Runtime behavior:** run the browser storage contracts in Chromium, Firefox, and WebKit. Run each public flow on the Hermes V1 command-line engine that React Native 0.86 uses. Use only the globals of a bare React Native app. A committed list records each flow step that fails on that engine and its error. The job fails when a result differs from that list.
 
-  Run release builds of the Expo example and the bare React Native example on an Android emulator. Both use Hermes V1. The Expo build uses Expo SDK 57 and React Native 0.86. The bare build uses React Native 0.87.1.
+  Run release builds of the Expo example and the bare React Native example on an Android emulator. Both use Hermes V1. The Expo build uses Expo SDK 58 and React Native 0.88. The bare build uses React Native 0.87.1.
 - **Public API:** check exported types, import paths, documented calls, and expected example output against the packed package.
-- **React Native hosts:** add the packed package to React Native and Expo projects without an override of peer conflicts. The projects cover React Native 0.83, 0.85, 0.86, and 0.87. They also cover the Expo SDK 55, 56, and 57 lines. Build the Expo example's Hermes bundle on Expo SDK 55 and 57.
+- **React Native hosts:** add the packed package to React Native and Expo projects without an override of peer conflicts. The projects cover React Native 0.83, 0.85, 0.86, and 0.87. They also cover the Expo SDK 55, 56, 57, and 58 lines. Build the Expo example's Hermes bundle on Expo SDK 55 and 58.
 - **Errors:** check construction sites for exported error classes and codes. Reject unresolved code forwarding.
 
 The browser storage job also runs 2,000 open, write, read, and close cycles of the IndexedDB store. It also runs a soak of the web SQLite store. Each checks for upward memory and latency drift.
@@ -92,8 +92,8 @@ The check replaced version 1.0.0 with an ad-hoc signed copy of version 1.0.1 of 
 | A conversion keeps the rows and the schema version, and leaves no pending key. A fault in the copy, after the commit point, or in the copy back leaves a store that the next open finishes. Without the option, the open fails as a key mismatch and names `convertPlaintext`. A build without SQLCipher refuses the option before any write. | Default automated checks: Linux, Node 26 | The same JavaScript layer. This check runs no SQLCipher, so it proves the steps of the conversion and not its encryption. |
 | A release build of the Expo example stores its state with SQLCipher on Android and keeps it across a process restart. | Android emulator job | A release APK on Hermes V1, run twice on an Android API 36 x86_64 emulator. Each run must log a SQLCipher version and a database header that is not the SQLite header. The second run must resume the stored identity and complete an exchange. This job runs on a change to the main branch that can reach the React Native runtime, and on demand. It does not run on a pull request. |
 | A release build of the Expo example converts a plaintext database with SQLCipher on Android. The rows and the schema version stay, the file has no SQLite header, and the vault holds one key that opens it. | Android emulator job | The release APK of the row above. Each run must log the number of rows and the schema version that the conversion kept. The same trigger rules apply. |
-| The Expo example, which imports this entry, bundles with the Hermes compiler that React Native pins. | Engineering CI | The Android bundle of the Expo example with the packed package, on Expo SDK 55 and Expo SDK 57. |
-| In an Expo web build, an encrypted open and a reset fail with `SqliteEncryptionUnavailableError` (`KEY_STORAGE_ERROR`) before they use the vault. With `encryptionAtRest: false`, the store opens and keeps its data across a page load. | Browser storage job: Chromium on Linux | An `expo export --platform web` of an Expo SDK 57 app that installs the packed package, loaded in Chromium. The page reads no `PRAGMA cipher_version` row, and Expo SecureStore reports that it is not available. The check does not open a store with `./local/store/web-sqlite` in the Expo web build. |
+| The Expo example, which imports this entry, bundles with the Hermes compiler that React Native pins. | Engineering CI | The Android bundle of the Expo example with the packed package, on Expo SDK 55 and Expo SDK 58. |
+| In an Expo web build, an encrypted open and a reset fail with `SqliteEncryptionUnavailableError` (`KEY_STORAGE_ERROR`) before they use the vault. With `encryptionAtRest: false`, the store opens and keeps its data across a page load. | Browser storage job: Chromium on Linux | An `expo export --platform web` of an Expo SDK 58 app that installs the packed package, loaded in Chromium. The page reads no `PRAGMA cipher_version` row, and Expo SecureStore reports that it is not available. The check does not open a store with `./local/store/web-sqlite` in the Expo web build. |
 
 The Hermes flow job does not load a SQLite store. Its flows use the memory and key-value stores. The Android emulator job is the only CI job that runs the Expo store on Hermes. No check runs the conversion on iOS, so no check verifies it there.
 

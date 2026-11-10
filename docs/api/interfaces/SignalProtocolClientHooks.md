@@ -511,9 +511,30 @@ onReceiveExpired: async (event) => {
 
 ***
 
-### ~~onRelayProtocolError?~~
+### onRelayProtocolError?
 
 > `optional` **onRelayProtocolError?**: (`error`) => `void` \| `Promise`\<`void`\>
+
+Runs once for a completed send whose Relay accepted a declared post
+without the `deviceSetChecked` mark. A declared post is a post to a
+recipient device or a sync copy to another device of the own account.
+
+The client declares the device set of each recipient account only to a
+Relay that compares device sets. Such a Relay marks each post that it
+compared. An accepted post without the mark is a Relay defect: the Relay
+did not check the declared devices. The send is delivered, so its result
+does not change and the client does not post it again. The error carries
+the code `DEVICE_SET_UNCHECKED`, the `clientMessageId` of the send, and
+the route of the post. The route is `identified-direct`,
+`anonymous-direct`, or `anonymous-group`. A sync copy is an
+`identified-direct` post. The client also logs one warning with the code
+and the route.
+
+The hook also runs once for a sync payload of a method such as
+`syncReadToLinkedDevices`. That error has no `clientMessageId`.
+
+The hook runs after the send completes. An error from the hook does not
+change the send result. The client logs the error.
 
 #### Parameters
 
@@ -521,16 +542,19 @@ onReceiveExpired: async (event) => {
 
 [`SignalProtocolRelayProtocolError`](../classes/SignalProtocolRelayProtocolError.md)
 
+The protocol error of the send
+
 #### Returns
 
 `void` \| `Promise`\<`void`\>
 
-#### Deprecated
+#### Example
 
-Use `onSignalProtocolRelayProtocolError`. SDK 15.0.0 removes this name.
-
-The client calls this hook only when `onSignalProtocolRelayProtocolError`
-is not set.
+```typescript
+onRelayProtocolError: (error) => {
+  monitoring.report('relay-protocol', { code: error.code, route: error.route });
+}
+```
 
 ***
 
@@ -753,30 +777,9 @@ onSessionEstablished: (sessionId, remoteAddress) => {
 
 ***
 
-### onSignalProtocolRelayProtocolError?
+### ~~onSignalProtocolRelayProtocolError?~~
 
 > `optional` **onSignalProtocolRelayProtocolError?**: (`error`) => `void` \| `Promise`\<`void`\>
-
-Runs once for a completed send whose Relay accepted a declared post
-without the `deviceSetChecked` mark. A declared post is a post to a
-recipient device or a sync copy to another device of the own account.
-
-The client declares the device set of each recipient account only to a
-Relay that compares device sets. Such a Relay marks each post that it
-compared. An accepted post without the mark is a Relay defect: the Relay
-did not check the declared devices. The send is delivered, so its result
-does not change and the client does not post it again. The error carries
-the code `DEVICE_SET_UNCHECKED`, the `clientMessageId` of the send, and
-the route of the post. The route is `identified-direct`,
-`anonymous-direct`, or `anonymous-group`. A sync copy is an
-`identified-direct` post. The client also logs one warning with the code
-and the route.
-
-The hook also runs once for a sync payload of a method such as
-`syncReadToLinkedDevices`. That error has no `clientMessageId`.
-
-The hook runs after the send completes. An error from the hook does not
-change the send result. The client logs the error.
 
 #### Parameters
 
@@ -784,19 +787,13 @@ change the send result. The client logs the error.
 
 [`SignalProtocolRelayProtocolError`](../classes/SignalProtocolRelayProtocolError.md)
 
-The protocol error of the send
-
 #### Returns
 
 `void` \| `Promise`\<`void`\>
 
-#### Example
+#### Deprecated
 
-```typescript
-onSignalProtocolRelayProtocolError: (error) => {
-  monitoring.report('relay-protocol', { code: error.code, route: error.route });
-}
-```
+Use `onRelayProtocolError`. SDK 15.0.0 removes this name.
 
 ***
 

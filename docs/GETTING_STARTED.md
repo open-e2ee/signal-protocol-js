@@ -97,7 +97,7 @@ const storage = await expoStore();
 const signal = await createHostedSignalProtocolClient({
   adapters: { storage },
   hosted: {
-    signalProtocolRelayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
     // Sandbox only. Select the Production identity mode explicitly.
     getIdentityAssertion: hostedSignalProtocolRelaySandboxIdentity(storage),
   },
@@ -134,7 +134,7 @@ signal.registerHook("onMessageDecrypted", async (message) => {
 });
 
 // Subscribing starts encrypted envelope delivery and local decryption.
-signal.startSignalProtocolRelaySubscription();
+signal.startRelaySubscription();
 ```
 
 The package does not own your product database or UI state. It decrypts messages
@@ -207,8 +207,9 @@ save attachment references and downloaded bytes.
 ```ts
 import { createHostedSignalProtocolClient, media } from "@open-e2ee/signal-protocol-sdk";
 
+const signalRelayUrl = process.env.OPEN_E2EE_SIGNAL_RELAY_URL!;
 const signal = await createHostedSignalProtocolClient({
-  hosted: { signalProtocolRelayUrl, getIdentityAssertion },
+  hosted: { relayUrl: signalRelayUrl, getIdentityAssertion },
   adapters: {
     storage,
   },

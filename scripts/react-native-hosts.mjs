@@ -37,6 +37,16 @@ export const expoLines = {
     react: '19.2.3',
     'react-native': '0.86.3',
   },
+  58: {
+    expo: '~58.0.23',
+    'expo-constants': '~58.0.15',
+    'expo-device': '~58.0.5',
+    'expo-file-system': '~58.0.13',
+    'expo-secure-store': '~58.0.2',
+    'expo-sqlite': '~58.0.15',
+    react: '19.3.0',
+    'react-native': '0.88.1',
+  },
 };
 
 const expo55Floor = {
@@ -62,6 +72,7 @@ export const installHosts = [
   { name: 'Expo SDK 55', dependencies: expoLines[55] },
   { name: 'Expo SDK 56', dependencies: expoLines[56] },
   { name: 'Expo SDK 57', dependencies: expoLines[57] },
+  { name: 'Expo SDK 58', dependencies: expoLines[58] },
   {
     name: 'React Native 0.82 (below the floor)',
     dependencies: { react: '19.1.1', 'react-native': '~0.82.1' },

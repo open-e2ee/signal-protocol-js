@@ -29,7 +29,7 @@ import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
 });
 
 await signal.send('bob', 'hello');

@@ -53,7 +53,7 @@ const signal = await createHostedSignalProtocolClient({
   },
   hosted: {
     // The environment-scoped connection URL from the OpenE2EE console.
-    signalProtocolRelayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
     // Returns a short-lived signed assertion for the signed-in user.
     getIdentityAssertion,
   },
@@ -72,7 +72,7 @@ const signal = await createSignalProtocolClient({
   identity: { userId },
   adapters: {
     storage,
-    signalProtocolRelay,
+    relay,
     // Brokered remote storage of encrypted byte objects.
     remoteObjectStore: convexR2ObjectStore({
       convex,
@@ -116,7 +116,7 @@ import { DefaultSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 const signal = await DefaultSignalProtocolClient.create(userId, {
   // Low-level creation uses the same storage, Relay, and protocol concepts.
   storage,
-  signalProtocolRelay,
+  relay,
   protocol: { postQuantum: "required", braid: "required" },
 });
 ```
@@ -149,7 +149,7 @@ store-by-store wiring exercise:
   `createExpoDeviceStorage({ database, files })`
 - a message-first receive path shaped like
   `signal.messages.subscribe({ conversationId }, handler)` in place of hook
-  registration plus manual `startSignalProtocolRelaySubscription()`
+  registration plus manual `startRelaySubscription()`
 
 Low-level hooks would remain for advanced integrations. When this lands it will
 be a breaking change and this guide will lead with it. Until then, wire the

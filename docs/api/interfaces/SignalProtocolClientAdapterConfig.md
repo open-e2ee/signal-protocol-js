@@ -21,13 +21,11 @@ Advanced protocol manager override for tests and specialized integrations.
 
 ***
 
-### ~~relay?~~
+### relay?
 
 > `optional` **relay?**: [`SignalProtocolRelayServer`](SignalProtocolRelayServer.md)
 
-#### Deprecated
-
-Use `signalProtocolRelay`. SDK 15.0.0 removes this name.
+Optional relay for server sync, prekeys, fanout, and subscriptions.
 
 ***
 
@@ -39,11 +37,13 @@ Optional brokered remote object store for encrypted attachments.
 
 ***
 
-### signalProtocolRelay?
+### ~~signalProtocolRelay?~~
 
 > `optional` **signalProtocolRelay?**: [`SignalProtocolRelayServer`](SignalProtocolRelayServer.md)
 
-Optional relay for server sync, prekeys, fanout, and subscriptions.
+#### Deprecated
+
+Use `relay`. SDK 15.0.0 removes this name.
 
 ***
 

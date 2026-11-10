@@ -1,11 +1,16 @@
 /**
- * Reads of a member that has a Signal Protocol Relay name and a deprecated
- * earlier name.
+ * Reads of a member that has a role name, such as `relay`, and a deprecated
+ * `signalProtocolRelay*` name, such as `signalProtocolRelay`.
  *
- * SDK 14 accepts the earlier name of each such option and member. An option
- * read takes the new name first and the earlier name second. A member read
- * takes the name that the nearest level of the object defines, so a subclass
- * override of either name wins. SDK 15.0.0 removes the earlier names and this
+ * SDK 14.2.0 added the `signalProtocolRelay*` names after the role names, so
+ * this module calls the `signalProtocolRelay*` name the new name and the role
+ * name the earlier name. SDK 14.3.0 deprecates the new names, and the role
+ * names are the names to use.
+ *
+ * SDK 14 accepts both names of each such option and member. An option read
+ * takes the new name first and the earlier name second. A member read takes
+ * the name that the nearest level of the object defines, so a subclass
+ * override of either name wins. SDK 15.0.0 removes the new names and this
  * module.
  *
  * The module is not in a package entry point.
@@ -15,7 +20,9 @@ import { SignalProtocolRelayNameConflictError } from './errors';
 
 /** The two names of one member, and the operation that reads it. */
 export interface RenamedMember {
+  /** The deprecated `signalProtocolRelay*` name. */
   readonly newName: string;
+  /** The role name. */
   readonly earlierName: string;
   readonly operation: string;
 }

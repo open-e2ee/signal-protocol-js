@@ -50,19 +50,19 @@
 
 ***
 
-### ~~relayUrl?~~
+### relayUrl?
 
 > `readonly` `optional` **relayUrl?**: `string`
 
-#### Deprecated
-
-Use `signalProtocolRelayUrl`. SDK 15.0.0 removes this name.
+Public environment-scoped Signal Protocol Relay connection URL. Set this
+member or the deprecated `signalProtocolRelayUrl`.
 
 ***
 
-### signalProtocolRelayUrl?
+### ~~signalProtocolRelayUrl?~~
 
 > `readonly` `optional` **signalProtocolRelayUrl?**: `string`
 
-Public environment-scoped Signal Protocol Relay connection URL. Set this
-member or the deprecated `relayUrl`.
+#### Deprecated
+
+Use `relayUrl`. SDK 15.0.0 removes this name.

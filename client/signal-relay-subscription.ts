@@ -72,7 +72,7 @@ export interface ReceiptAccumulator {
    * True from the first receipt flush of stop() to the end of the step that
    * clears its tracking state. The hold also ends when stop() throws in
    * those steps. A batch then sets no timer and does not flush at
-   * RECEIPT_BATCH_MAX, and stopSignalProtocolRelaySubscription() does not flush it. stop()
+   * RECEIPT_BATCH_MAX, and client.stopRelaySubscription() does not flush it. stop()
    * sends the batches that wait at each of its flushes and drops a batch
    * made during the hold after its last flush.
    */

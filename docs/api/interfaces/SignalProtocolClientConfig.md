@@ -22,18 +22,18 @@ import {
 } from '@open-e2ee/signal-protocol-sdk';
 
 // Advanced integration with an application-owned client transport.
-const signalProtocolRelay = appSignalProtocolRelayTransport;
+const relay = appSignalProtocolRelayTransport;
 
 // Preferred app-facing composition.
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
 });
 
 // Low-level factory with the same underlying options.
 const advancedSignalProtocol = await DefaultSignalProtocolClient.create(userId, {
   storage,
-  signalProtocolRelay,
+  relay,
   onProgress,
   ratchetConfig: { maxSkip: 2000 },
   enableDebugLogging: true
@@ -328,7 +328,7 @@ Unsigned runtime discovery cannot establish trust.
 ```typescript
 const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
-  signalProtocolRelay,
+  relay,
   aci,
   pni,
   groups: {
@@ -544,7 +544,7 @@ and app database ownership.
 ```typescript
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay, remoteObjectStore },
+  adapters: { storage, relay, remoteObjectStore },
   media: {
     preparedUploads: appPreparedUploads,
     loadLocalAttachment: async ({ localMediaId }) => appDrafts.readBytes(localMediaId),
@@ -652,7 +652,7 @@ Receives updates during:
 ```typescript
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
   onProgress: ({ stage, percent, message }) => {
     console.log(`${stage}: ${percent}% - ${message}`);
   }
@@ -821,13 +821,32 @@ creates. A `protocolManager` that the caller supplies keeps its own limit.
 
 ***
 
-### ~~relay?~~
+### relay?
 
 > `optional` **relay?**: [`SignalProtocolRelayServer`](SignalProtocolRelayServer.md)
 
-#### Deprecated
+Relay adapter for server synchronization.
 
-Use `signalProtocolRelay`. SDK 15.0.0 removes this name.
+If provided, the client will automatically:
+1. Generate prekey bundle
+2. Upload public keys to the relay server
+3. Provide progress updates via onProgress callback
+
+If omitted, client operates in local-only mode.
+
+#### Example
+
+```typescript
+import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
+
+// Advanced integration with an application-owned client transport.
+const relay = appSignalProtocolRelayTransport;
+
+const signal = await createSignalProtocolClient({
+  identity: { userId },
+  adapters: { storage, relay },
+});
+```
 
 ***
 
@@ -859,7 +878,7 @@ const remoteObjectStore = convexR2ObjectStore({
 
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay, remoteObjectStore },
+  adapters: { storage, relay, remoteObjectStore },
 });
 
 // Send file bytes
@@ -880,7 +899,7 @@ that hides the sender's identity from the server. The recipient can
 still verify the sender via the embedded certificate.
 
 Custom transports require the deployment's Ed25519 certificate root public
-key in `trustRoots` and its matching `signalProtocolRelayScopeId`. Get these values through
+key in `trustRoots` and its matching `relayScopeId`. Get these values through
 trusted application configuration. A custom relay must not choose its own
 validation policy at runtime.
 
@@ -899,7 +918,7 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   sealedSender: {
     trustRoots: [trustRootPublicKeyBytes],
-    signalProtocolRelayScopeId: signalProtocolRelayScopeIdBytes,
+    relayScopeId: signalProtocolRelayScopeIdBytes,
     revokedIssuerKeyIds: [],
     certificateProvider: async () => {
       return await convex.mutation(api.signal.certificates.issueSenderCertificate, { deviceId: 1 });
@@ -947,32 +966,13 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
 
 ***
 
-### signalProtocolRelay?
+### ~~signalProtocolRelay?~~
 
 > `optional` **signalProtocolRelay?**: [`SignalProtocolRelayServer`](SignalProtocolRelayServer.md)
 
-Relay adapter for server synchronization.
+#### Deprecated
 
-If provided, the client will automatically:
-1. Generate prekey bundle
-2. Upload public keys to the relay server
-3. Provide progress updates via onProgress callback
-
-If omitted, client operates in local-only mode.
-
-#### Example
-
-```typescript
-import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
-
-// Advanced integration with an application-owned client transport.
-const signalProtocolRelay = appSignalProtocolRelayTransport;
-
-const signal = await createSignalProtocolClient({
-  identity: { userId },
-  adapters: { storage, signalProtocolRelay },
-});
-```
+Use `relay`. SDK 15.0.0 removes this name.
 
 ***
 

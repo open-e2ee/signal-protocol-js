@@ -211,24 +211,24 @@ and carry this account's profile key. The SDK also registers the access
 key that it derives from this account's profile key, so a contact that
 holds the profile key can send sealed messages to this account.
 
-#### ~~relayUrl?~~
+#### relayUrl?
 
 > `readonly` `optional` **relayUrl?**: `string`
 
-##### Deprecated
-
-Use `signalProtocolRelayUrl`. SDK 15.0.0 removes this name.
+Public environment-scoped Signal Protocol Relay connection URL. Set this
+member or the deprecated `signalProtocolRelayUrl`.
 
 #### sealedSenderAccessMode?
 
 > `readonly` `optional` **sealedSenderAccessMode?**: `SealedSenderAccessMode`
 
-#### signalProtocolRelayUrl?
+#### ~~signalProtocolRelayUrl?~~
 
 > `readonly` `optional` **signalProtocolRelayUrl?**: `string`
 
-Public environment-scoped Signal Protocol Relay connection URL. Set this
-member or the deprecated `relayUrl`.
+##### Deprecated
+
+Use `relayUrl`. SDK 15.0.0 removes this name.
 
 ***
 
@@ -392,7 +392,7 @@ and app database ownership.
 ```typescript
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay, remoteObjectStore },
+  adapters: { storage, relay, remoteObjectStore },
   media: {
     preparedUploads: appPreparedUploads,
     loadLocalAttachment: async ({ localMediaId }) => appDrafts.readBytes(localMediaId),
@@ -512,7 +512,7 @@ Receives updates during:
 ```typescript
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
   onProgress: ({ stage, percent, message }) => {
     console.log(`${stage}: ${percent}% - ${message}`);
   }

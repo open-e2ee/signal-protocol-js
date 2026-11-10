@@ -16,7 +16,7 @@ The default policy requires post-quantum session establishment and ratcheting. T
 [![npm provenance](https://img.shields.io/badge/npm-provenance-2f6f5e)](https://www.npmjs.com/package/@open-e2ee/signal-protocol-sdk#user-content-provenance)
 [![Checks](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml/badge.svg)](https://github.com/open-e2ee/signal-protocol-js/actions/workflows/ci.yml)
 
-[Documentation](https://docs.open-e2ee.dev) · [API reference](https://docs.open-e2ee.dev/reference/api) · [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay/) · [Security](./SECURITY.md)
+[Documentation](https://docs.open-e2ee.dev) · [API reference](https://docs.open-e2ee.dev/reference/api) · [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/signal-relay/) · [Security](./SECURITY.md)
 
 ## See an encrypted round trip
 
@@ -29,13 +29,13 @@ The demonstrations use real protocol code and cryptography. Application integrat
 - **Session establishment and ratcheting.** PQXDH establishes sessions. The ML-KEM Braid ratchet adds post-quantum key updates. Required post-quantum operations fail closed.
 - **Chat features.** Multi-device messaging, groups, sealed sender, encrypted attachments, and safety-number verification use the same package.
 - **Device-local state.** Storage adapters keep identities, sessions, and message state on the device.
-- **Hosted delivery.** Connect to [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay/) with the hosted client factory. Advanced integrations can supply a custom transport. A hosted client sends a sealed 1:1 message only with `hosted.profileKeys`. It must also hold the contact's profile key.
+- **Hosted delivery.** Connect to [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/signal-relay/) with the hosted client factory. Advanced integrations can supply a custom transport. A hosted client sends a sealed 1:1 message only with `hosted.profileKeys`. It must also hold the contact's profile key.
 
 The relay never needs message plaintext or device private keys.
 
 The OpenE2EE Signal Protocol SDK implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
-Version `14.2.x`. Public APIs and persisted formats follow semantic versioning.
+Version `14.3.x`. Public APIs and persisted formats follow semantic versioning.
 
 ## Install
 
@@ -73,7 +73,7 @@ import {
 const signal = await createHostedSignalProtocolClient({
   adapters: { storage },
   hosted: {
-    signalProtocolRelayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
+    relayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
     getIdentityAssertion: hostedSignalProtocolRelaySandboxIdentity(storage),
   },
 });
@@ -96,7 +96,7 @@ before the handler resolves, and use its ID to make repeated writes idempotent.
 signal.registerHook("onMessageDecrypted", async (message) => {
   await appMessages.accept(message);
 });
-signal.startSignalProtocolRelaySubscription();
+signal.startRelaySubscription();
 await signal.send(recipientUserId, "hello");
 ```
 
@@ -107,7 +107,7 @@ See [client composition](./docs/CLIENT_COMPOSITION.md) for platform setup.
 
 ## Use your app’s storage and message delivery
 
-Choose the device-local store for your runtime. Then supply a relay that authenticates each device and implements your product's access policy, or use [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/relay/) as the managed delivery path. The SDK does not require the managed service. [Review Relay plans and exact meter definitions.](https://open-e2ee.dev/pricing/#relay-plans)
+Choose the device-local store for your runtime. Then supply a relay that authenticates each device and implements your product's access policy, or use [OpenE2EE Signal Protocol Relay](https://open-e2ee.dev/signal-relay/) as the managed delivery path. The SDK does not require the managed service. [Review Relay plans and exact meter definitions.](https://open-e2ee.dev/pricing/#signal-relay-plans)
 
 | Runtime | Storage path | Deployment boundary |
 |---|---|---|
@@ -122,9 +122,9 @@ React Native support starts at React Native 0.83.6 and Expo SDK 55. The peer ran
 
 | CI check | Versions |
 |---|---|
-| Add the packed package to a project | React Native 0.83, 0.85, 0.86, and 0.87; Expo SDK 55, 56, and 57 |
-| Build the Expo example's Hermes bundle | Expo SDK 55 and 57 |
-| Run the Expo example's release build on an Android emulator | Expo SDK 57 with React Native 0.86 |
+| Add the packed package to a project | React Native 0.83, 0.85, 0.86, and 0.87; Expo SDK 55, 56, 57, and 58 |
+| Build the Expo example's Hermes bundle | Expo SDK 55 and 58 |
+| Run the Expo example's release build on an Android emulator | Expo SDK 58 with React Native 0.88 |
 
 React Native 0.84 and later use Hermes V1 by default. React Native 0.82 and later run only on the New Architecture.
 

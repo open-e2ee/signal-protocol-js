@@ -147,7 +147,7 @@ export type SignalProtocolRelayProtocolErrorCode = 'DEVICE_SET_UNCHECKED';
  * A Relay accepted a declared post without the `deviceSetChecked` mark. The
  * send is delivered and its result does not change, because a second post
  * could deliver the message twice. The client reports the error once for the
- * send through `onSignalProtocolRelayProtocolError`. A sync payload of a method such as
+ * send through `onRelayProtocolError`. A sync payload of a method such as
  * `syncReadToLinkedDevices` has no send ID, so its error has no
  * `clientMessageId`.
  */

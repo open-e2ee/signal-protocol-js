@@ -60,7 +60,7 @@ const signal = await createHostedSignalProtocolClient({
   },
   hosted: {
     // The environment-scoped connection URL from the OpenE2EE console.
-    signalProtocolRelayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
     // Returns a short-lived signed assertion for the signed-in user.
     getIdentityAssertion,
   },
@@ -92,7 +92,7 @@ Use product/security terms at the client boundary:
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
   protocol: { postQuantum: 'required', braid: 'required' },
 });
 ```
@@ -108,7 +108,7 @@ Use direct SPQR only as an explicit product-reviewed escape hatch:
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
   protocol: { postQuantum: 'required', braid: 'disabled' },
 });
 ```
@@ -303,11 +303,12 @@ A contact's presence needs the contact's presence key. Give the hosted client
 
 <!-- doc-snippet:skip requires-external-context -->
 ```ts
+const signalRelayUrl = process.env.OPEN_E2EE_SIGNAL_RELAY_URL!;
 const client = await createHostedSignalProtocolClient({
   adapters,
   hosted: {
     getIdentityAssertion,
-    signalProtocolRelayUrl,
+    relayUrl: signalRelayUrl,
     profileKeys: {
       getOwnProfileKey: async () => profileKey, // 32 bytes, or null
       contacts, // a MutableContactProfileStateStore
@@ -366,7 +367,7 @@ import { createSignalProtocolClient } from '@open-e2ee/signal-protocol-sdk';
 
 const client = await createSignalProtocolClient({
   identity,
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
   groups,
   hooks: {
     onGroupInitStatus: (groupId, status) => groupList.setInitStatus(groupId, status),

@@ -153,7 +153,7 @@ Application code should prefer:
 ```ts
 await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
 });
 ```
 

@@ -1658,13 +1658,13 @@ export class SignalProtocolServiceCipher {
    * Called by SignalProtocolClient after construction. A sync payload has no
    * send result, so the reporter gives its error to the app.
    */
-  setSignalProtocolRelayProtocolErrorReporter(report: (error: SignalProtocolRelayProtocolError) => Promise<void>): void {
-    this.signalRelayProtocolErrorReporter = report;
-  }
-
-  /** @deprecated Use `setSignalProtocolRelayProtocolErrorReporter`. SDK 15.0.0 removes this name. */
   setRelayProtocolErrorReporter(report: (error: SignalProtocolRelayProtocolError) => Promise<void>): void {
     this.setSignalProtocolRelayProtocolErrorReporter(report);
+  }
+
+  /** @deprecated Use `setRelayProtocolErrorReporter`. SDK 15.0.0 removes this name. */
+  setSignalProtocolRelayProtocolErrorReporter(report: (error: SignalProtocolRelayProtocolError) => Promise<void>): void {
+    this.signalRelayProtocolErrorReporter = report;
   }
 
   /**
@@ -5194,7 +5194,7 @@ export class SignalProtocolServiceCipher {
    * Mark a send result whose relay accepted a declared post without the
    * `deviceSetChecked` mark. The send is delivered, and a second post could
    * deliver it twice, so the result does not change. The client reports the
-   * error once through `onSignalProtocolRelayProtocolError`.
+   * error once through `onRelayProtocolError`.
    */
   private markUncheckedDeclaredPosts<T extends object>(
     result: T,

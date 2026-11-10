@@ -51,10 +51,10 @@ export interface SignalProtocolClientContext {
   readonly storage: SignalProtocolLocalStore;
 
   /** Optional relay server for server sync */
-  readonly signalProtocolRelay?: SignalProtocolRelayServer;
-
-  /** @deprecated Use `signalProtocolRelay`. SDK 15.0.0 removes this name. */
   readonly relay?: SignalProtocolRelayServer;
+
+  /** @deprecated Use `relay`. SDK 15.0.0 removes this name. */
+  readonly signalProtocolRelay?: SignalProtocolRelayServer;
 
   /** Optional brokered remote object store for encrypted attachments. */
   readonly remoteObjectStore?: SignalProtocolRemoteObjectStore;
@@ -496,9 +496,9 @@ export interface OutgoingMessageError extends Error {
    */
   readonly retryable?: boolean;
   /** The Relay's own `retryable` hint, when the SDK set `retryable`. */
-  readonly signalProtocolRelayRetryable?: boolean;
-  /** @deprecated Use `signalProtocolRelayRetryable`. SDK 15.0.0 removes this name. */
   readonly relayRetryable?: boolean;
+  /** @deprecated Use `relayRetryable`. SDK 15.0.0 removes this name. */
+  readonly signalProtocolRelayRetryable?: boolean;
   /** The devices that the Relay accepted, when the send ended at its deadline. */
   readonly acceptedDevices?: readonly { readonly userId: string; readonly deviceId: number }[];
   /** The devices that the Relay refused, when the send ended at its deadline. */

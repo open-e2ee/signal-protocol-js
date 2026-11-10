@@ -995,8 +995,9 @@ function defineSendField(error: object, name: string, value: unknown): void {
 }
 
 /**
- * Keep the Relay's own `retryable` hint in `signalProtocolRelayRetryable`. The
- * deprecated `relayRetryable` field holds the same value until SDK 15.0.0.
+ * Keep the Relay's own `retryable` hint in `relayRetryable`. The
+ * deprecated `signalProtocolRelayRetryable` field holds the same value until
+ * SDK 15.0.0.
  */
 function keepSignalProtocolRelayRetryable(error: object): void {
   const { retryable, signalProtocolRelayRetryable, relayRetryable } = error as {
@@ -1022,7 +1023,7 @@ function keepSignalProtocolRelayRetryable(error: object): void {
  * Mark an error of a send that failed before its posting deadline. The send
  * stays open, so a replay with the same `clientMessageId` before `deadlineAt`
  * can post it: `retryable` is true. The Relay's own hint moves to
- * `signalProtocolRelayRetryable`. An error that keeps its own retry rule, such as
+ * `relayRetryable`. An error that keeps its own retry rule, such as
  * UPGRADE_REQUIRED or DEVICE_REVOKED, does not change.
  */
 export function attachSendDeadline<T>(error: T, deadlineAt: number): T {

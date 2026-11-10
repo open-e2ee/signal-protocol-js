@@ -40,7 +40,7 @@ const storage: SignalProtocolLocalStore = appProtocolStore;
 
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
 });
 ```
 
@@ -90,7 +90,7 @@ delivery, key rotation, and encrypted group coordination.
 import type { SignalProtocolRelayServer } from "@open-e2ee/signal-protocol-sdk/remote/signal-relay";
 
 // An application-owned client transport to an authenticated backend.
-const signalProtocolRelay: SignalProtocolRelayServer = appSignalProtocolRelayTransport;
+const relay: SignalProtocolRelayServer = appSignalProtocolRelayTransport;
 ```
 
 The hosted factory configures the OpenE2EE Signal Protocol Relay transport.
@@ -175,7 +175,7 @@ media lifecycle callbacks and client hooks at the client boundary:
 ```ts
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay, remoteObjectStore },
+  adapters: { storage, relay, remoteObjectStore },
   media: {
     preparedUploads: appPreparedUploads,
     maxPreparedUploadBytes: appUploadBudgetBytes,

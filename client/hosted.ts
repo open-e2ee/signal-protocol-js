@@ -184,9 +184,9 @@ export type IdentityAssertionProviderRole = 'source' | 'target';
 export interface IdentityAssertionRequest {
   readonly purpose: IdentityAssertionPurpose;
   readonly assurance?: IdentityAssertionAssurance;
-  /** The environment kind of the Relay connection in `signalProtocolRelayUrl`. */
+  /** The environment kind of the Relay connection in `relayUrl`. */
   readonly environment: 'sandbox' | 'production';
-  /** The publishable key in `signalProtocolRelayUrl`. It identifies one Relay environment. */
+  /** The publishable key in `relayUrl`. It identifies one Relay environment. */
   readonly publishableKey: string;
   readonly migration?: {
     readonly action: HostedSignalProtocolRelayIdentityMigrationAction;
@@ -274,19 +274,19 @@ export interface HostedSignalProtocolRelayBootstrapRequest {
 /**
  * Canonical identity and authenticated Relay returned by hosted bootstrap.
  *
- * SDK 14 makes each new member optional and requires its deprecated earlier
- * name. When an adapter sets both names, the SDK reads the new member, and
+ * SDK 14 also accepts the deprecated `signalProtocolRelayScopeId` and
+ * `signalProtocolRelay` names. When an adapter sets both names of a member,
  * two different values fail with `SignalProtocolRelayNameConflictError`.
- * SDK 15.0.0 requires the new members.
+ * SDK 15.0.0 removes the deprecated names.
  */
 export interface HostedSignalProtocolRelayBootstrapResult {
   readonly canonicalAccountId: string;
   readonly deviceId: number;
+  /** @deprecated Use `relayScopeId`. SDK 15.0.0 removes this name. */
   readonly signalProtocolRelayScopeId?: Uint8Array;
-  /** @deprecated Use `signalProtocolRelayScopeId`. SDK 15.0.0 requires `signalProtocolRelayScopeId` and removes this name. */
   readonly relayScopeId: Uint8Array;
+  /** @deprecated Use `relay`. SDK 15.0.0 removes this name. */
   readonly signalProtocolRelay?: SignalProtocolRelayServer;
-  /** @deprecated Use `signalProtocolRelay`. SDK 15.0.0 requires `signalProtocolRelay` and removes this name. */
   readonly relay: SignalProtocolRelayServer;
 }
 
@@ -385,11 +385,11 @@ export interface HostedSignalProtocolClientOptions extends Omit<
   readonly hosted: {
     /**
      * Public environment-scoped Signal Protocol Relay connection URL. Set this
-     * member or the deprecated `relayUrl`.
+     * member or the deprecated `signalProtocolRelayUrl`.
      */
-    readonly signalProtocolRelayUrl?: string;
-    /** @deprecated Use `signalProtocolRelayUrl`. SDK 15.0.0 removes this name. */
     readonly relayUrl?: string;
+    /** @deprecated Use `relayUrl`. SDK 15.0.0 removes this name. */
+    readonly signalProtocolRelayUrl?: string;
     readonly getIdentityAssertion: GetIdentityAssertion;
     /**
      * `register` (the default) resumes the stored session or registers a new
@@ -434,11 +434,11 @@ export interface HostedSignalProtocolRelayIdentityMigrationOptions {
   readonly onProgress?: HostedSignalProtocolRelayIdentityProgressCallback;
   /**
    * Public environment-scoped Signal Protocol Relay connection URL. Set this
-   * member or the deprecated `relayUrl`.
+   * member or the deprecated `signalProtocolRelayUrl`.
    */
-  readonly signalProtocolRelayUrl?: string;
-  /** @deprecated Use `signalProtocolRelayUrl`. SDK 15.0.0 removes this name. */
   readonly relayUrl?: string;
+  /** @deprecated Use `relayUrl`. SDK 15.0.0 removes this name. */
+  readonly signalProtocolRelayUrl?: string;
   readonly authorization:
     | {
         readonly kind: 'active-device';
@@ -473,11 +473,11 @@ export interface HostedSignalProtocolRelayManagedDeviceLinkOptions extends Omit<
   readonly hosted: {
     /**
      * Public environment-scoped Signal Protocol Relay connection URL. Set this
-     * member or the deprecated `relayUrl`.
+     * member or the deprecated `signalProtocolRelayUrl`.
      */
-    readonly signalProtocolRelayUrl?: string;
-    /** @deprecated Use `signalProtocolRelayUrl`. SDK 15.0.0 removes this name. */
     readonly relayUrl?: string;
+    /** @deprecated Use `relayUrl`. SDK 15.0.0 removes this name. */
+    readonly signalProtocolRelayUrl?: string;
     /** Override the default authenticated device-link transport. */
     readonly adapter?: HostedSignalProtocolRelayManagedDeviceLinkAdapter;
     readonly onProgress?: HostedSignalProtocolRelayIdentityProgressCallback;
@@ -1676,7 +1676,7 @@ export async function linkHostedSignalProtocolRelayDevice(
  *   adapters: { storage },
  *   hosted: {
  *     getIdentityAssertion: hostedSignalProtocolRelaySandboxIdentity(storage),
- *     signalProtocolRelayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
+ *     relayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
  *   },
  * });
  * ```

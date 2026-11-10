@@ -104,10 +104,11 @@ Relay account:
 ```ts
 import { linkHostedSignalProtocolRelayDevice } from "@open-e2ee/signal-protocol-sdk";
 
+const signalRelayUrl = process.env.OPEN_E2EE_SIGNAL_RELAY_URL!;
 const client = await linkHostedSignalProtocolRelayDevice({
   adapters: { storage: linkedStorage },
   activeDeviceStorage,
-  hosted: { signalProtocolRelayUrl },
+  hosted: { relayUrl: signalRelayUrl },
 });
 ```
 

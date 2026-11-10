@@ -33,7 +33,7 @@ const signal = await createSignalProtocolClient({
 ```typescript
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
   hooks: {
     onMessageDecrypted: async (message) => {
       await appMessages.insert({
@@ -46,7 +46,7 @@ const signal = await createSignalProtocolClient({
 });
 
 await signal.syncToServer();
-signal.startSignalProtocolRelaySubscription();
+signal.startRelaySubscription();
 ```
 
 ## Extends
@@ -285,7 +285,7 @@ Unsigned runtime discovery cannot establish trust.
 ```typescript
 const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
-  signalProtocolRelay,
+  relay,
   aci,
   pni,
   groups: {
@@ -527,7 +527,7 @@ and app database ownership.
 ```typescript
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay, remoteObjectStore },
+  adapters: { storage, relay, remoteObjectStore },
   media: {
     preparedUploads: appPreparedUploads,
     loadLocalAttachment: async ({ localMediaId }) => appDrafts.readBytes(localMediaId),
@@ -647,7 +647,7 @@ Receives updates during:
 ```typescript
 const signal = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
   onProgress: ({ stage, percent, message }) => {
     console.log(`${stage}: ${percent}% - ${message}`);
   }
@@ -745,7 +745,7 @@ that hides the sender's identity from the server. The recipient can
 still verify the sender via the embedded certificate.
 
 Custom transports require the deployment's Ed25519 certificate root public
-key in `trustRoots` and its matching `signalProtocolRelayScopeId`. Get these values through
+key in `trustRoots` and its matching `relayScopeId`. Get these values through
 trusted application configuration. A custom relay must not choose its own
 validation policy at runtime.
 
@@ -764,7 +764,7 @@ const signal = await DefaultSignalProtocolClient.create(userId, {
   storage: customStorage,
   sealedSender: {
     trustRoots: [trustRootPublicKeyBytes],
-    signalProtocolRelayScopeId: signalProtocolRelayScopeIdBytes,
+    relayScopeId: signalProtocolRelayScopeIdBytes,
     revokedIssuerKeyIds: [],
     certificateProvider: async () => {
       return await convex.mutation(api.signal.certificates.issueSenderCertificate, { deviceId: 1 });

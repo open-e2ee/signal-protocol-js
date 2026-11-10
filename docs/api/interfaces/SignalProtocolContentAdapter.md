@@ -414,9 +414,31 @@ The group master key and the revision at the send
 
 ***
 
-### ~~setRelayBatching()~~
+### setRelayBatching()
 
 > **setRelayBatching**(`active`): `void`
+
+Tells the adapter that a relay batch starts or ends.
+
+SDK 14 also accepts the deprecated `setSignalProtocolRelayBatching`. When
+one level of an adapter supplies both names, SDK 14 calls the deprecated
+name. SDK 15.0.0 removes the deprecated name.
+
+#### Parameters
+
+##### active
+
+`boolean`
+
+#### Returns
+
+`void`
+
+***
+
+### ~~setSignalProtocolRelayBatching()?~~
+
+> `optional` **setSignalProtocolRelayBatching**(`active`): `void`
 
 #### Parameters
 
@@ -430,29 +452,7 @@ The group master key and the revision at the send
 
 #### Deprecated
 
-Use `setSignalProtocolRelayBatching`. SDK 15.0.0 requires `setSignalProtocolRelayBatching` and removes this name.
-
-***
-
-### setSignalProtocolRelayBatching()?
-
-> `optional` **setSignalProtocolRelayBatching**(`active`): `void`
-
-Tells the adapter that a relay batch starts or ends.
-
-SDK 14 makes this member optional and requires the deprecated
-`setRelayBatching`. When an adapter supplies both, the client calls this
-member. SDK 15.0.0 requires this member.
-
-#### Parameters
-
-##### active
-
-`boolean`
-
-#### Returns
-
-`void`
+Use `setRelayBatching`. SDK 15.0.0 removes this name.
 
 ***
 

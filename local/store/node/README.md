@@ -292,7 +292,7 @@ import { nodeStore } from '@open-e2ee/signal-protocol-sdk/local/store/node';
 
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage: await nodeStore({ directory, vault }), signalProtocolRelay },
+  adapters: { storage: await nodeStore({ directory, vault }), relay },
 });
 ```
 

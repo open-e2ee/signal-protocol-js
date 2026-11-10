@@ -38,7 +38,7 @@ const client = await createHostedSignalProtocolClient({
   adapters: { storage },
   hosted: {
     getIdentityAssertion: hostedSignalProtocolRelaySandboxIdentity(storage),
-    signalProtocolRelayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
+    relayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
   },
 });
 ```

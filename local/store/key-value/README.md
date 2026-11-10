@@ -47,7 +47,7 @@ const storage = await keyValueStore({ storage: keyValueStorage, vault });
 
 const client = await createSignalProtocolClient({
   identity: { userId },
-  adapters: { storage, signalProtocolRelay },
+  adapters: { storage, relay },
 });
 ```
 
