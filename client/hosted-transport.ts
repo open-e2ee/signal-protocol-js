@@ -82,9 +82,14 @@ import {
 } from "./hosted-mailbox-subscription";
 import { HostedGroupServer } from "./hosted-groups";
 import {
-  RELAY_PROTOCOL_VERSION,
+  SignalRelayProtocolOffer,
   markSignalProtocolRelayAnswerVersion,
+  sendOnSignalRelayProtocol,
+  signalRelayProofLabels,
   signalRelayProtocolHeadersFor,
+  signalRelayProtocolOffer,
+  signalRelayRenamedField,
+  throwIfProtocolFallBack,
   throwIfUpgradeRequired,
 } from "./signal-relay-protocol";
 import {
@@ -156,20 +161,13 @@ const DEVICE_TOKEN_REFRESH_SECONDS = 60;
 const MAXIMUM_RESPONSE_BYTES = 1024 * 1024;
 const PREKEY_EXPIRY_MILLISECONDS = 30 * 24 * 60 * 60 * 1000;
 const DELIVERY_WIRE_VERSION = 1;
-const DEVICE_AUTHENTICATION_SIGNATURE_LABEL = stringToBytes(
-  "OpenE2EE Relay device authentication v1\0",
-);
+/**
+ * The registration material label. Every protocol version frames the
+ * material fingerprint with these bytes, and the Relay stores the
+ * fingerprint, so the label never changes.
+ */
 const REGISTRATION_MATERIAL_LABEL = stringToBytes(
   "OpenE2EE Relay registration material v1\0",
-);
-const REGISTRATION_CHALLENGE_LABEL = stringToBytes(
-  "OpenE2EE Relay registration challenge v1\0",
-);
-const RECOVERY_CHALLENGE_LABEL = stringToBytes(
-  "OpenE2EE Relay recovery challenge v1\0",
-);
-const TOKEN_REFRESH_CHALLENGE_LABEL = stringToBytes(
-  "OpenE2EE Relay device token refresh challenge v1\0",
 );
 
 type JsonRecord = Record<string, unknown>;
@@ -376,11 +374,14 @@ function identifiedEndpoint(connection: HostedSignalProtocolRelayConnection): st
 /**
  * Read the body of a Relay answer. An error answer throws, and the error
  * records `signalRelayProtocolVersion`, the protocol version of the request that
- * it answers.
+ * it answers. When the Relay refuses that version and `offer` falls back,
+ * the answer throws for `sendOnSignalRelayProtocol`, which sends the request
+ * again.
  */
 async function parseResponse(
   response: Response,
   signalRelayProtocolVersion: number,
+  offer: SignalRelayProtocolOffer,
 ): Promise<unknown> {
   const body = await response.text();
   if (body.length > MAXIMUM_RESPONSE_BYTES) {
@@ -401,10 +402,12 @@ async function parseResponse(
   if (!response.ok) {
     // `UPGRADE_REQUIRED` and `DEVICE_REVOKED` are terminal at any error
     // status, so `authenticatedPost` and every other retry, which matches only
-    // a `HostedSignalProtocolRelayHttpError`, never repeat them. `PROTOCOL_UNSUPPORTED`
+    // a `HostedSignalProtocolRelayHttpError`, never repeat them. A refused
+    // version 3 moves the offer to version 2. Any other `PROTOCOL_UNSUPPORTED`
     // stays a `HostedSignalProtocolRelayHttpError` whose `retryable` is true: the Relay
     // sends it for a version above the newest one that it serves, which
     // happens only after a Relay rollback.
+    throwIfProtocolFallBack(offer, signalRelayProtocolVersion, parsed);
     throwIfUpgradeRequired(response.status, parsed, signalRelayProtocolVersion);
     throwIfDeviceRevoked(response.status, parsed);
     const error = record(parsed) && record(parsed.error) ? parsed.error : {};
@@ -437,35 +440,56 @@ function missingDestination(userId: string, deviceId: number): Error {
   );
 }
 
+/**
+ * Post a JSON body with the version that `offer` holds. A body that signs
+ * a proof is a function of the version, because each version signs its own
+ * labels. When the Relay refuses version 3, the post runs once more with
+ * version 2.
+ */
 async function postJson(
   connection: HostedSignalProtocolRelayConnection,
-  signalRelayProtocolVersion: number,
+  offer: SignalRelayProtocolOffer,
   path: string,
-  body: JsonRecord,
+  body: JsonRecord | ((signalRelayProtocolVersion: number) => Promise<JsonRecord>),
   token?: string,
 ): Promise<unknown> {
-  const headers = new Headers({
-    accept: "application/json",
-    "content-type": "application/json",
-    ...signalRelayProtocolHeadersFor(signalRelayProtocolVersion),
+  return sendOnSignalRelayProtocol(offer, async (signalRelayProtocolVersion) => {
+    const headers = new Headers({
+      accept: "application/json",
+      "content-type": "application/json",
+      ...signalRelayProtocolHeadersFor(signalRelayProtocolVersion),
+    });
+    if (token !== undefined) headers.set("authorization", `Bearer ${token}`);
+    const json = JSON.stringify(
+      typeof body === "function" ? await body(signalRelayProtocolVersion) : body,
+    );
+    return withSignalProtocolRelayRequestDeadline(async (signal) => {
+      let response: Response;
+      try {
+        response = await fetch(`${identifiedEndpoint(connection)}${path}`, {
+          body: json,
+          headers,
+          method: "POST",
+          credentials: "omit",
+          redirect: "error",
+          signal,
+        });
+      } catch (cause) {
+        throw new Error("Signal Protocol Relay request could not be completed", { cause });
+      }
+      return parseResponse(response, signalRelayProtocolVersion, offer);
+    });
   });
-  if (token !== undefined) headers.set("authorization", `Bearer ${token}`);
-  return withSignalProtocolRelayRequestDeadline(async (signal) => {
-    let response: Response;
-    try {
-      response = await fetch(`${identifiedEndpoint(connection)}${path}`, {
-        body: JSON.stringify(body),
-        headers,
-        method: "POST",
-        credentials: "omit",
-        redirect: "error",
-        signal,
-      });
-    } catch (cause) {
-      throw new Error("Signal Protocol Relay request could not be completed", { cause });
-    }
-    return parseResponse(response, signalRelayProtocolVersion);
-  });
+}
+
+/**
+ * The scope ID of a device response. Version 3 names the field
+ * `signalRelayScopeId`, and versions 1 and 2 name it `relayScopeId`.
+ */
+function responseScopeId(value: JsonRecord, invalid: string): string {
+  const scopeId = signalRelayRenamedField(value, "signalRelayScopeId", "relayScopeId", invalid);
+  if (typeof scopeId !== "string") throw new Error(invalid);
+  return scopeId;
 }
 
 function serializedPreKey(prekey: HostedSignalProtocolRelayRegistrationPreKey): JsonRecord {
@@ -533,12 +557,14 @@ async function registrationMaterialFingerprint(
 
 async function registrationChallenge(
   request: HostedSignalProtocolRelayTransportBootstrapRequest,
+  signalRelayProtocolVersion: number,
 ): Promise<Uint8Array> {
+  const labels = signalRelayProofLabels(signalRelayProtocolVersion);
   return sha256(
     concatBytes(
       request.assertionPurpose === "recover"
-        ? RECOVERY_CHALLENGE_LABEL
-        : REGISTRATION_CHALLENGE_LABEL,
+        ? labels.recoveryChallenge
+        : labels.registrationChallenge,
       text(signalProtocolRelayScopeId(request.connection)),
       text(
         await hostedAssertionIdentifier(
@@ -771,6 +797,11 @@ export class HostedSignalProtocolRelayHttpTransport
 {
   private readonly groups: HostedGroupServer;
   public readonly groupServer: SignalProtocolRelayGroupServer;
+  /**
+   * @internal The Relay protocol version of the client that owns this
+   * transport. Every carrier of the client reads it for each request.
+   */
+  public readonly signalRelayProtocol: SignalRelayProtocolOffer;
   private readonly anonymousDelivery: HostedAnonymousDelivery;
   // The relay request bound of the client that uses this transport
   private readonly fanOut: BoundedFanOut;
@@ -794,11 +825,13 @@ export class HostedSignalProtocolRelayHttpTransport
     private session: StoredHostedSignalProtocolRelaySession,
     private readonly persistRefreshedToken = true,
     /**
-     * @internal The Relay protocol version of the client that owns this
-     * transport. Every carrier of the client sends it.
+     * @internal The selected Relay protocol version, or the offer of the
+     * client that owns this transport. Without it, the transport offers
+     * version 3 first and falls back to version 2.
      */
-    public readonly signalRelayProtocolVersion: number = RELAY_PROTOCOL_VERSION,
+    signalRelayProtocol?: number | SignalRelayProtocolOffer,
   ) {
+    this.signalRelayProtocol = signalRelayProtocolOffer(signalRelayProtocol);
     // The Relay refuses a removed device's mailbox on every send path before
     // its device list shows the removal, so a direct send may post first.
     declareRefusesRemovedDevices(this);
@@ -810,7 +843,7 @@ export class HostedSignalProtocolRelayHttpTransport
     // each acknowledgment with the messages whose receipt it owns.
     declareSignalProtocolRelayReceiptIntake(this, this.receiptInbox);
     declareSignalProtocolRelayReceiptJoin(this, this.receiptJoin);
-    this.groups = new HostedGroupServer(connection, signalRelayProtocolVersion);
+    this.groups = new HostedGroupServer(connection, this.signalRelayProtocol);
     this.groupServer = {
       server: this.groups,
       issueAuthCredential: (userId, authorityKeyId) => this.issueAuthCredential(userId, authorityKeyId),
@@ -839,10 +872,15 @@ export class HostedSignalProtocolRelayHttpTransport
       },
       (clientMessageId, request) =>
         admitRepeatRequest(this, clientMessageId, request),
-      signalRelayProtocolVersion,
+      this.signalRelayProtocol,
       ({ accountAddress, deviceId, generation }) =>
         this.destinationRecovered(accountAddress, deviceId, generation, true),
     );
+  }
+
+  /** @internal The Relay protocol version that the next request of this client sends. */
+  public get signalRelayProtocolVersion(): number {
+    return this.signalRelayProtocol.version;
   }
 
   public get accountId(): string {
@@ -970,32 +1008,34 @@ export class HostedSignalProtocolRelayHttpTransport
   private async refreshToken(): Promise<void> {
     const requestedAtSeconds = Math.floor(Date.now() / 1_000);
     const nonce = await generateRandomBytes(32);
-    const challenge = await sha256(
-      concatBytes(
-        TOKEN_REFRESH_CHALLENGE_LABEL,
-        text(this.session.relayScopeId),
-        text(this.session.canonicalAccountId),
-        uint32be(this.session.deviceId),
-        uint32be(this.session.generation),
-        uint32be(this.session.mailboxGeneration),
-        text(String(requestedAtSeconds)),
-        lengthPrefixed(nonce),
-      ),
-    );
-    const proof = await this.deviceAuthentication.signChallenge(challenge);
     let value: unknown;
     try {
-      value = await postJson(this.connection, this.signalRelayProtocolVersion, "/identity/token", {
-        accountAddress: this.session.canonicalAccountId,
-        // The Relay checks this key against the keys that a recovery revoked.
-        deviceAuthenticationPublicKey: bytesToBase64(
-          this.deviceAuthentication.publicKey,
-        ),
-        deviceId: this.session.deviceId,
-        deviceProof: bytesToBase64(proof),
-        nonce: bytesToUrlSafeBase64(nonce),
-        publishableKey: this.connection.publishableKey,
-        requestedAtSeconds,
+      value = await postJson(this.connection, this.signalRelayProtocol, "/identity/token", async (version) => {
+        const challenge = await sha256(
+          concatBytes(
+            signalRelayProofLabels(version).deviceTokenRefreshChallenge,
+            text(this.session.relayScopeId),
+            text(this.session.canonicalAccountId),
+            uint32be(this.session.deviceId),
+            uint32be(this.session.generation),
+            uint32be(this.session.mailboxGeneration),
+            text(String(requestedAtSeconds)),
+            lengthPrefixed(nonce),
+          ),
+        );
+        const proof = await this.deviceAuthentication.signChallenge(challenge, version);
+        return {
+          accountAddress: this.session.canonicalAccountId,
+          // The Relay checks this key against the keys that a recovery revoked.
+          deviceAuthenticationPublicKey: bytesToBase64(
+            this.deviceAuthentication.publicKey,
+          ),
+          deviceId: this.session.deviceId,
+          deviceProof: bytesToBase64(proof),
+          nonce: bytesToUrlSafeBase64(nonce),
+          publishableKey: this.connection.publishableKey,
+          requestedAtSeconds,
+        };
       });
     } catch (error) {
       // A token refusal names this device, so it is not a
@@ -1047,11 +1087,12 @@ export class HostedSignalProtocolRelayHttpTransport
     const materialFingerprint = await registrationMaterialFingerprint(
       request.signalIdentity, request.registrationId, request.registrationPreKeys,
     );
-    const bodyFor = async (body: (tokenId: string) => Promise<JsonRecord>, token: string) => {
+    const bodyFor = (body: (tokenId: string, version: number) => Promise<JsonRecord>, token: string) => {
       const claims: unknown = JSON.parse(utf8Decode(decodeBase64Url(token.split('.')[1]!, 'Device token')));
       if (!record(claims) || typeof claims.jti !== 'string' || !claims.jti)
         throw new Error('Signal Protocol Relay returned an invalid device token');
-      return body(claims.jti);
+      const tokenId = claims.jti;
+      return (version: number) => body(tokenId, version);
     };
     const value = await submitHostedSignalProtocolRelayDeviceLink(request, {
       relayScopeId: this.session.relayScopeId,
@@ -1060,11 +1101,11 @@ export class HostedSignalProtocolRelayHttpTransport
       post: async (body) => {
         let token = await this.token();
         try {
-          return await postJson(this.connection, this.signalRelayProtocolVersion, '/identity/devices/link', await bodyFor(body, token), token);
+          return await postJson(this.connection, this.signalRelayProtocol, '/identity/devices/link', bodyFor(body, token), token);
         } catch (error) {
           if (!(error instanceof HostedSignalProtocolRelayHttpError) || error.code !== 'TOKEN_INVALID') throw error;
           token = await this.token(true);
-          return postJson(this.connection, this.signalRelayProtocolVersion, '/identity/devices/link', await bodyFor(body, token), token);
+          return postJson(this.connection, this.signalRelayProtocol, '/identity/devices/link', bodyFor(body, token), token);
         }
       },
     });
@@ -1079,7 +1120,7 @@ export class HostedSignalProtocolRelayHttpTransport
       mailboxGeneration: requiredNumber(value, 'mailboxGeneration'),
       pendingPreKeyPublication: null,
       preKeyPublication: storedPublication(generation, materialFingerprint, request.operationId, 0, request.registrationPreKeys),
-      relayScopeId: requiredString(value, 'relayScopeId'),
+      relayScopeId: responseScopeId(value, 'Signal Protocol Relay returned an invalid managed device link'),
     };
     if (session.canonicalAccountId !== this.session.canonicalAccountId ||
         session.relayScopeId !== this.session.relayScopeId || session.deviceId < 1 ||
@@ -1102,7 +1143,7 @@ export class HostedSignalProtocolRelayHttpTransport
         throw new Error('Stored Signal Protocol Relay link session conflicts with the retained attempt');
       session = existing;
     }
-    const transport = new HostedSignalProtocolRelayHttpTransport(this.connection, storage, request.newDeviceAuthentication, session, true, this.signalRelayProtocolVersion);
+    const transport = new HostedSignalProtocolRelayHttpTransport(this.connection, storage, request.newDeviceAuthentication, session, true, this.signalRelayProtocol);
     // Persist the complete shape before synchronization or token renewal can fail.
     try {
       await writeHostedStoreRecord(storage, key, JSON.stringify(session));
@@ -1136,7 +1177,7 @@ export class HostedSignalProtocolRelayHttpTransport
   ): Promise<unknown> {
     let token = await this.token();
     try {
-      return await postJson(this.connection, this.signalRelayProtocolVersion, path, body, token);
+      return await postJson(this.connection, this.signalRelayProtocol, path, body, token);
     } catch (error) {
       if (
         !(error instanceof HostedSignalProtocolRelayHttpError) ||
@@ -1150,7 +1191,7 @@ export class HostedSignalProtocolRelayHttpTransport
       } catch {
         throw error;
       }
-      return postJson(this.connection, this.signalRelayProtocolVersion, path, body, token);
+      return postJson(this.connection, this.signalRelayProtocol, path, body, token);
     }
   }
 
@@ -1499,8 +1540,10 @@ export class HostedSignalProtocolRelayHttpTransport
   }
 
   /**
-   * One mailbox page. Its `relayReceipts` holds for this pull only: a page
-   * carries `receipts` only when it is true. With `cursor`, the page starts
+   * One mailbox page. Its receipts capability holds for this pull only: a
+   * page carries `receipts` only when it is true. Version 3 names the
+   * capability `signalRelayReceipts`, and versions 1 and 2 name it
+   * `relayReceipts`. With `cursor`, the page starts
    * after the last message of the page that issued it. The cursor is opaque.
    * A page without `retainedWork` comes from a Relay that does not report
    * it, so the retained work after the page is unknown. A page without
@@ -1512,12 +1555,19 @@ export class HostedSignalProtocolRelayHttpTransport
       publishableKey: this.connection.publishableKey,
       ...(cursor === undefined ? {} : { cursor }),
     });
+    const invalid = "Signal Protocol Relay returned an invalid mailbox page";
+    if (!record(value)) throw new Error(invalid);
+    const receiptsCapability = signalRelayRenamedField(
+      value,
+      "signalRelayReceipts",
+      "relayReceipts",
+      invalid,
+    );
     if (
-      !record(value) ||
       !Array.isArray(value.messages) ||
-      (value.relayReceipts !== undefined &&
-        typeof value.relayReceipts !== "boolean") ||
-      (value.receipts !== undefined && value.relayReceipts !== true) ||
+      (receiptsCapability !== undefined &&
+        typeof receiptsCapability !== "boolean") ||
+      (value.receipts !== undefined && receiptsCapability !== true) ||
       (value.nextCursor !== undefined &&
         (typeof value.nextCursor !== "string" || value.nextCursor === "")) ||
       (value.retainedWork !== undefined &&
@@ -1532,7 +1582,7 @@ export class HostedSignalProtocolRelayHttpTransport
               typeof entry.reason === "string",
           )))
     ) {
-      throw new Error("Signal Protocol Relay returned an invalid mailbox page");
+      throw new Error(invalid);
     }
     return {
       messages: value.messages.map((candidate) =>
@@ -1619,22 +1669,26 @@ export class HostedSignalProtocolRelayHttpTransport
         claims.jti.includes("\0")
       )
         throw new Error("Signal Protocol Relay certificate token is invalid");
+      const tokenId = claims.jti;
       const nonce = bytesToUrlSafeBase64(await generateRandomBytes(32));
-      const proof = await this.deviceAuthentication.signCertificateRequest(
-        claims.jti,
-        nonce,
-      );
-      if (proof.byteLength !== 64)
-        throw new Error("Signal Protocol Relay certificate proof is invalid");
       try {
         const result = await postJson(
           this.connection,
-          this.signalRelayProtocolVersion,
+          this.signalRelayProtocol,
           "/certificates/issue",
-          {
-            publishableKey: this.connection.publishableKey,
-            nonce,
-            deviceProof: bytesToBase64(proof),
+          async (version) => {
+            const proof = await this.deviceAuthentication.signCertificateRequest(
+              tokenId,
+              nonce,
+              version,
+            );
+            if (proof.byteLength !== 64)
+              throw new Error("Signal Protocol Relay certificate proof is invalid");
+            return {
+              publishableKey: this.connection.publishableKey,
+              nonce,
+              deviceProof: bytesToBase64(proof),
+            };
           },
           token,
         );
@@ -1831,7 +1885,7 @@ export class HostedSignalProtocolRelayHttpTransport
 
   public get presenceStore(): Pick<
     SignalProtocolLocalStore,
-    "getMetadata" | "setMetadata"
+    "getMetadata" | "setMetadata" | "compareAndSetMetadata"
   > {
     return this.storage;
   }
@@ -1940,7 +1994,7 @@ export class HostedSignalProtocolRelayHttpTransport
       expiresAt: tokenExpiration(token, this.session) * 1_000,
       headers: {
         authorization: `Bearer ${token}`,
-        ...signalRelayProtocolHeadersFor(this.signalRelayProtocolVersion),
+        ...signalRelayProtocolHeadersFor(this.signalRelayProtocol.version),
         "x-open-e2ee-publishable-key": this.connection.publishableKey,
         "x-open-e2ee-object-id": input.objectId,
         "x-open-e2ee-attachment-capability": input.readCapability,
@@ -2147,7 +2201,7 @@ export class HostedSignalProtocolRelayHttpTransport
     const generation = ++this.subscriptionGeneration;
     const subscription = subscribeHostedMailbox({
       ...options,
-      signalRelayProtocolVersion: this.signalRelayProtocolVersion,
+      signalRelayProtocol: this.signalRelayProtocol,
       onConnectionState: (state, reason) => {
         if (generation === this.subscriptionGeneration)
           this.connectionState.move(state, reason);
@@ -2583,24 +2637,27 @@ export class HostedSignalProtocolRelayHttpTransport
 export async function bootstrapHostedSignalProtocolRelayTransport(
   request: HostedSignalProtocolRelayTransportBootstrapRequest,
 ): Promise<HostedSignalProtocolRelayTransportResult> {
-  const proof = await request.deviceAuthentication.signChallenge(
-    await registrationChallenge(request),
-  );
-  // A new client starts at the default version, which the transport built
-  // below also takes.
+  // A new client starts with a new offer, which the transport built below
+  // also takes. A fallback during the registration holds for the client.
+  const signalRelayProtocol = new SignalRelayProtocolOffer();
   const value = await postJson(
     request.connection,
-    RELAY_PROTOCOL_VERSION,
+    signalRelayProtocol,
     request.assertionPurpose === "recover"
       ? "/identity/recover"
       : "/identity/register",
-    {
+    async (version) => ({
       assertion: request.assertion,
       assertionPurpose: request.assertionPurpose,
       deviceAuthenticationPublicKey: bytesToBase64(
         request.deviceAuthentication.publicKey,
       ),
-      deviceProof: bytesToBase64(proof),
+      deviceProof: bytesToBase64(
+        await request.deviceAuthentication.signChallenge(
+          await registrationChallenge(request, version),
+          version,
+        ),
+      ),
       operationId: request.operationId,
       publishableKey: request.connection.publishableKey,
       signalRegistration: signalRegistration(
@@ -2608,7 +2665,7 @@ export async function bootstrapHostedSignalProtocolRelayTransport(
         request.registrationId,
         request.registrationPreKeys,
       ),
-    },
+    }),
   );
   if (!record(value))
     throw new Error("Signal Protocol Relay returned an invalid registration");
@@ -2637,7 +2694,7 @@ export async function bootstrapHostedSignalProtocolRelayTransport(
       0,
       request.registrationPreKeys,
     ),
-    relayScopeId: requiredString(value, "relayScopeId"),
+    relayScopeId: responseScopeId(value, "Signal Protocol Relay returned an invalid registration"),
   };
   if (
     session.relayScopeId !== signalProtocolRelayScopeId(request.connection) ||
@@ -2659,6 +2716,8 @@ export async function bootstrapHostedSignalProtocolRelayTransport(
     request.storage,
     request.deviceAuthentication,
     session,
+    true,
+    signalRelayProtocol,
   );
   const scopeId = request.connection.relayScopeId.slice();
   return {

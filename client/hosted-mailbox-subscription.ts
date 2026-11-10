@@ -21,8 +21,10 @@ import {
 } from "./signal-relay-receipt-intake";
 import {
   HostedSignalProtocolRelayUpgradeRequiredError,
-  RELAY_AUTH_PROTOCOL_PREFIX,
+  signalRelayAuthProtocolPrefix,
   signalRelayProtocolToken,
+  signalRelayRenamedField,
+  type SignalRelayProtocolOffer,
 } from "./signal-relay-protocol";
 import {
   HostedSignalProtocolRelayDeviceRevokedError,
@@ -125,6 +127,12 @@ const POLICY_VIOLATION_CLOSE_CODE = 1008;
  */
 const UPGRADE_REQUIRED_CLOSE_CODE = 4426;
 const UPGRADE_REQUIRED_CLOSE_REASON = "UPGRADE_REQUIRED";
+/**
+ * The Relay closes the socket with this code and the reason
+ * `PROTOCOL_UNSUPPORTED` when it does not serve the offered protocol version.
+ */
+const PROTOCOL_UNSUPPORTED_CLOSE_CODE = 4400;
+const PROTOCOL_UNSUPPORTED_CLOSE_REASON = "PROTOCOL_UNSUPPORTED";
 
 /**
  * A presence event of the live socket: `open` when a new socket opens, which
@@ -174,8 +182,11 @@ export interface MailboxAcknowledgment {
 }
 
 interface MailboxSubscription {
-  /** The Relay protocol version of the client that owns the subscription. */
-  signalRelayProtocolVersion: number;
+  /**
+   * The Relay protocol version of the client that owns the subscription.
+   * Each socket offers the version that it holds when the socket opens.
+   */
+  signalRelayProtocol: SignalRelayProtocolOffer;
   /**
    * Gets the socket address and a device token. `refreshed` is true when the
    * call got a new device token from the Relay. The Relay reads the token
@@ -320,8 +331,6 @@ function notConnected(): HostedSignalProtocolRelayPresenceError {
 export function subscribeHostedMailbox(
   options: MailboxSubscription,
 ): MailboxSubscriptionHandle {
-  /** The subprotocol token that the socket offers and the Relay must echo. */
-  const protocolToken = signalRelayProtocolToken(options.signalRelayProtocolVersion);
   let active = true;
   /**
    * True after the Relay refused the protocol version of this SDK, refused
@@ -1083,9 +1092,12 @@ export function subscribeHostedMailbox(
       authenticating = false;
       // A new device token shows that the Relay serves this device again.
       if (authority.refreshed) endOutage();
+      const protocolVersion = options.signalRelayProtocol.version;
+      /** The subprotocol token that the socket offers and the Relay must echo. */
+      const protocolToken = signalRelayProtocolToken(protocolVersion);
       const candidate = new WebSocket(authority.url, [
         protocolToken,
-        `${RELAY_AUTH_PROTOCOL_PREFIX}${authority.token}`,
+        `${signalRelayAuthProtocolPrefix(protocolVersion)}${authority.token}`,
       ]);
       socket = candidate;
       const current = () => active && socket === candidate;
@@ -1162,8 +1174,13 @@ export function subscribeHostedMailbox(
           )
             throw new Error("Invalid mailbox frame.");
           if (frame.type === "mailbox-capabilities") {
-            const advertised = (frame as Record<string, unknown>)
-              .relayReceipts;
+            // Version 3 names the capability `signalRelayReceipts`.
+            const advertised = signalRelayRenamedField(
+              frame as Record<string, unknown>,
+              "signalRelayReceipts",
+              "relayReceipts",
+              "Invalid mailbox frame.",
+            );
             if (typeof advertised !== "boolean")
               throw new Error("Invalid mailbox frame.");
             relayReceipts = advertised;
@@ -1210,8 +1227,15 @@ export function subscribeHostedMailbox(
         }
         // A close 4400 with the reason `PROTOCOL_UNSUPPORTED` takes the
         // retry below. The Relay sends it for a version above the newest one
-        // that it serves, which happens only after a Relay rollback. The
-        // version comes back when the newer Relay does, so the socket retries.
+        // that it serves. A refused version 3 moves the offer to version 2,
+        // so the next socket offers version 2. A refused version 2 happens
+        // only after a Relay rollback. The version comes back when the newer
+        // Relay does, so the socket retries.
+        if (
+          event.code === PROTOCOL_UNSUPPORTED_CLOSE_CODE &&
+          event.reason === PROTOCOL_UNSUPPORTED_CLOSE_REASON
+        )
+          options.signalRelayProtocol.refused(protocolVersion);
         if (event.code === POLICY_VIOLATION_CLOSE_CODE)
           rejectPresence(
             new HostedSignalProtocolRelayPresenceError(

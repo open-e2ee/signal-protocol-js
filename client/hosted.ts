@@ -62,6 +62,7 @@ import {
   resolveHostedGroupOptions,
   type HostedGroupOptions,
 } from './hosted-group-authority';
+import { signalRelayProofLabels } from './signal-relay-protocol';
 import { SignalProtocolGroupStateStore } from '../internal/groups/sdk-store';
 import type { GroupStateStore } from '../internal/groups/manager';
 import {
@@ -167,9 +168,6 @@ const REREGISTRATION_SNAPSHOT_METADATA_PREFIX: HostedStoreRecordPrefix = {
   earlier: 'hostedRelay.reregistrationSnapshot.v1:',
 };
 const HOSTED_REGISTRATION_ONE_TIME_PREKEY_COUNT = 10;
-const DEVICE_AUTHENTICATION_SIGNATURE_LABEL = stringToBytes(
-  'OpenE2EE Relay device authentication v1\0',
-);
 
 /** Why the Signal Protocol Relay needs a fresh identity assertion. */
 export type IdentityAssertionPurpose = 'register' | 'refresh' | 'recover';
@@ -231,16 +229,31 @@ export type HostedSignalProtocolRelayIdentityProgressCallback = (
   progress: HostedSignalProtocolRelayIdentityProgress,
 ) => void;
 
-/** A device proof signer whose private key never leaves the SDK-owned local store. */
+/**
+ * A device proof signer whose private key never leaves the SDK-owned local store.
+ *
+ * Each Relay protocol version signs its own label. A call without
+ * `protocolVersion` signs the label of version 1, which the Relay verifies
+ * on versions 1 and 2 and on a request without a version.
+ */
 export interface HostedSignalProtocolRelayDeviceAuthentication {
   readonly publicKey: Uint8Array;
   /**
    * Sign a Relay challenge with domain separation and publishable-key binding.
    * The adapter verifies `label || publishableKey || 0x00 || challenge`.
+   * `protocolVersion` is the Relay protocol version of the request that
+   * carries the proof, and it selects the label.
    */
-  signChallenge(challenge: Uint8Array): Promise<Uint8Array>;
-  /** Sign the canonical certificate request with the SDK-owned device key. */
-  signCertificateRequest(tokenId: string, nonce: string): Promise<Uint8Array>;
+  signChallenge(challenge: Uint8Array, protocolVersion?: number): Promise<Uint8Array>;
+  /**
+   * Sign the canonical certificate request with the SDK-owned device key.
+   * `protocolVersion` selects the label, as for `signChallenge`.
+   */
+  signCertificateRequest(
+    tokenId: string,
+    nonce: string,
+    protocolVersion?: number,
+  ): Promise<Uint8Array>;
 }
 
 /** Public prekey material sent during one atomic Signal Protocol Relay registration. */
@@ -1021,14 +1034,14 @@ function deviceAuthenticationSigner(
 ): HostedSignalProtocolRelayDeviceAuthentication {
   return {
     publicKey: base64ToBytes(keyPair.publicKey),
-    signCertificateRequest: async (tokenId, nonce) => {
+    signCertificateRequest: async (tokenId, nonce, protocolVersion) => {
       if (!tokenId || tokenId.includes('\0') || !nonce || nonce.length > 256)
         throw new Error('Signal Protocol Relay certificate request is invalid');
       return base64ToBytes(
         await sign(
           keyPair.privateKey,
           concatBytes(
-            stringToBytes('OpenE2EE Relay sender certificate request v1\0'),
+            signalRelayProofLabels(protocolVersion).senderCertificateRequest,
             stringToBytes(tokenId),
             new Uint8Array([0]),
             stringToBytes(nonce),
@@ -1036,12 +1049,12 @@ function deviceAuthenticationSigner(
         ),
       );
     },
-    signChallenge: async (challenge) => {
+    signChallenge: async (challenge, protocolVersion) => {
       if (!(challenge instanceof Uint8Array) || challenge.length === 0) {
         throw new Error('Signal Protocol Relay device challenge must not be empty');
       }
       const payload = concatBytes(
-        DEVICE_AUTHENTICATION_SIGNATURE_LABEL,
+        signalRelayProofLabels(protocolVersion).deviceAuthentication,
         stringToBytes(publishableKey),
         new Uint8Array([0]),
         challenge,
@@ -1218,7 +1231,7 @@ export async function createClientFromHostedResult(
       : await resolveHostedGroupOptions(
           connection,
           groups,
-          hostedTransport?.signalRelayProtocolVersion,
+          hostedTransport?.signalRelayProtocol,
         );
   const config = createSignalProtocolClientConfig({
     ...rest,

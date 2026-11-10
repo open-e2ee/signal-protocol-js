@@ -25,16 +25,18 @@ device-owned mode, use [hostedSignalProtocolRelayDeviceOwnedIdentity](hostedSign
 Production project in application-bound mode, supply a `getIdentityAssertion`
 callback that returns an assertion from your backend.
 
-The key is stored under a metadata key prefix followed by the base64
-SHA-256 digest of the publishable key. The helper reads the prefix
+The key is stored under a metadata key prefix followed by the base64 SHA-256
+digest of the publishable key. The helper reads the prefix
 `'signalRelay.sandboxIdentity.v2:'` first and the prefix
-`'hostedRelay.sandboxIdentity.v1:'` second. This release stores a new key
-under `'hostedRelay.sandboxIdentity.v1:'`, the prefix that SDK 14.1.0 and
-earlier read and write. A later release stores a new key under
-`'signalRelay.sandboxIdentity.v2:'`. SDK 15 still reads the earlier prefix,
-so an existing Sandbox account keeps its key. Both helpers keep this
-persisted format. So for the same store and publishable key, both helpers
-sign with the same key.
+`'hostedRelay.sandboxIdentity.v1:'` second. Since SDK 14.4.0, the helper
+stores a new key only under `'signalRelay.sandboxIdentity.v2:'`. When only
+`'hostedRelay.sandboxIdentity.v1:'`, the prefix that SDK 14.3.0 and earlier
+write, holds the key, the helper copies the key to
+`'signalRelay.sandboxIdentity.v2:'` and keeps the earlier entry. SDK 14.1.0
+and earlier do not read a key that SDK 14.4.0 or later created. SDK 15 still
+reads the earlier prefix, so an existing Sandbox account keeps its key. Both
+helpers keep this persisted format. So for the same store and publishable
+key, both helpers sign with the same key.
 
 ## Parameters
 

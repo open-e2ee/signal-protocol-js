@@ -69,11 +69,11 @@ export interface ReceiveCommitOptions {
   /** The delivered fingerprint of the envelope. */
   readonly workId: string;
   /**
-   * `relay` for a Relay delivery, `caller` for an envelope that the
-   * application passed. This release writes `relay`, so that an earlier SDK
-   * 14 release reads the record.
+   * `signal-relay` for a Relay delivery, `caller` for an envelope that the
+   * application passed. This release writes `signal-relay`. SDK 14.2.0 and
+   * later read it.
    */
-  readonly origin: Exclude<ReceiveWorkRecord['origin'], 'signal-relay'>;
+  readonly origin: Exclude<ReceiveWorkRecord['origin'], 'relay'>;
   /**
    * True when the Relay of the delivery can own the receipt: the client
    * sends receipts in `auto` mode through a Relay with a receipt join.
@@ -104,7 +104,7 @@ export function createReceiveCommit(options: ReceiveCommitOptions): ReceiveCommi
       // that the decrypt authenticates.
       options.family?.bindSender(envelope);
       const now = Date.now();
-      const relay = origin === 'relay';
+      const relay = origin === 'signal-relay';
       const base = {
         workId,
         revision: 0,

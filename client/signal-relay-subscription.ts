@@ -310,7 +310,7 @@ async function handleSignalProtocolRelayMessageLocked(
     contentAdapter: ctx.contentAdapter,
     family,
     workId,
-    origin: 'relay',
+    origin: 'signal-relay',
     receiptJoin: join !== undefined,
   });
   let commit: EnvelopeCommit;

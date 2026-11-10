@@ -104,7 +104,7 @@ export class DeliveryStatusTracker {
       events.push(
         ...(await this.apply(
           clientMessageId,
-          'relay',
+          'signal-relay',
           receipt.recipient.accountId,
           receipt.recipient.deviceId,
           receipt.deliveredAt
@@ -193,11 +193,11 @@ export class DeliveryStatusTracker {
     });
   }
 
-  // The source is the stored value. This release stores and reports
-  // 'relay' for a Relay receipt. The public DeliverySource also accepts
-  // 'signal-relay', the value of SDK 15.0.0, which the client does not emit.
-  // A status that a later release wrote can hold 'signal-relay'. It is the
-  // same source as 'relay', and the client keeps the stored value.
+  // The source is the stored value. This release stores 'signal-relay' for a
+  // Relay receipt, and reports it as 'relay'. The public DeliverySource also
+  // accepts 'signal-relay', the value that SDK 15.0.0 reports. A status that
+  // SDK 14.3.0 or earlier wrote holds 'relay'. It is the same source, and
+  // the client keeps the stored value.
   private async apply(
     clientMessageId: string,
     source: WrittenDeliverySource,
@@ -216,7 +216,8 @@ export class DeliveryStatusTracker {
         });
         // A replay of a source adds nothing. It still announces each source
         // whose hook did not return.
-        if (!delivery.sources.some((stored) => reportedDeliverySource(stored) === source)) {
+        const reported = reportedDeliverySource(source);
+        if (!delivery.sources.some((stored) => reportedDeliverySource(stored) === reported)) {
           delivery.sources.push(source);
         }
         if (!intent.result || this.sending.has(clientMessageId)) return [];
