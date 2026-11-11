@@ -124,6 +124,7 @@ function isRaceConditionError(error: unknown): boolean {
  * - The Relay code UPGRADE_REQUIRED (HostedSignalProtocolRelayUpgradeRequiredError)
  * - The Relay code DEVICE_REVOKED (HostedSignalProtocolRelayDeviceRevokedError)
  * - An unknown device (HostedSignalProtocolRelayDeviceUnknownError)
+ * - The Relay code DEVICE_LINK_REQUIRED: the account already has a device
  *
  * Retryable:
  * - Network/timeout errors
@@ -149,6 +150,13 @@ export function isRetryableError(error: Error): boolean {
   // unknown device, because its code NOT_FOUND also names other failures.
   // The error keeps its earlier name until SDK 15.0.0.
   if (code === 'DEVICE_REVOKED' || error.name === 'HostedRelayDeviceUnknownError') {
+    return false;
+  }
+
+  // The account already has a device, so the Relay refuses each registration
+  // of a new identity. The device must be linked from an active device, or
+  // the account must be recovered.
+  if (code === 'DEVICE_LINK_REQUIRED') {
     return false;
   }
 

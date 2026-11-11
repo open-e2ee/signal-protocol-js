@@ -39,6 +39,13 @@ const enc = new TextEncoder();
 /** Seconds in one hour. */
 const SECONDS_PER_HOUR = 60 * 60;
 
+/**
+ * The shortest time, in seconds, that a received endorsement response can
+ * have before its expiration. A response with less time is refused, as the
+ * reference implementation refuses it, to allow for clock skew.
+ */
+export const MIN_ENDORSEMENT_RESPONSE_LIFETIME_SECONDS = 2 * SECONDS_PER_HOUR;
+
 /** Domain separation label for GroupSendEndorsement key derivation. */
 const ENDORSEMENT_LABEL = '20240215_Signal_GroupSendEndorsement';
 
@@ -183,7 +190,7 @@ function derivePublicSigningKeyFromExpiration(
   }
 
   const timeRemainingInSeconds = Math.max(0, expiration - now);
-  if (timeRemainingInSeconds < 2 * SECONDS_PER_HOUR) {
+  if (timeRemainingInSeconds < MIN_ENDORSEMENT_RESPONSE_LIFETIME_SECONDS) {
     throw new VerificationFailure();
   }
   if (timeRemainingInSeconds > 7 * SECONDS_PER_DAY) {

@@ -1416,6 +1416,10 @@ export interface IdentityKeyStore {
    * From Signal Protocol:
    * "It's safer to receive from an unknown identity than to send to one"
    *
+   * The SDK does not call this method for a device of the local user. Each
+   * linked device holds the account identity, so the SDK trusts such a
+   * device only with the local identity of the same type.
+   *
    * @param address - Contact's protocol address
    * @param identity - Complete composite identity candidate
    * @param direction - Whether the local device sends or receives

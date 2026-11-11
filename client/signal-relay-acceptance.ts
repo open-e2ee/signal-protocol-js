@@ -51,8 +51,9 @@ export function aggregateSignalProtocolRelayAcceptance(
  * RETRY_CONFLICT has three sources: the Relay holds the same operation with
  * other bytes, the same operation under another accepted class, or another
  * operation under the same message ID. A direct post that never changed its
- * bytes counts it as an earlier acceptance, under protocol version 1 and
- * version 2.
+ * ciphertext counts it as an earlier acceptance, under protocol version 1
+ * and version 2. A new seal of a stored sealed body changes only the outer
+ * layer, so it does not change the ciphertext.
  *
  * DELIVERY_ALREADY_ACCEPTED is a protocol version 2 code: the Relay already
  * holds an accepted post under the message ID, so it refused this post

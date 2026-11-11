@@ -190,6 +190,25 @@ export type SealedSenderConfig = SelfHostedSealedSenderConfig | HostedSealedSend
 export const SEALED_SENDER_CERTIFICATE_MARGIN_MS = 60 * 60 * 1000;
 
 /**
+ * The upper bound of the random time that a client subtracts from its
+ * refresh point, so that the clients of one project do not all fetch a
+ * certificate at the same time. A client refreshes a certificate at its
+ * expiry minus the margin minus a random time below this bound.
+ */
+export const SEALED_SENDER_CERTIFICATE_JITTER_MS = 10 * 60 * 1000;
+
+/**
+ * The last part of a sender certificate's life in which the client does not
+ * post a body sealed with it. A post can wait in a queue, time out, and
+ * repeat, and the receiver checks the certificate against the time at which
+ * the Relay stores the post. A certificate that expires within this time of
+ * the estimated Relay time is too short: the client waits for its expiry and
+ * fetches a new certificate, and a replay seals its stored body again with
+ * the new certificate.
+ */
+export const SEALED_SENDER_RESEAL_SKEW_MS = 5 * 60 * 1000;
+
+/**
  * Double Ratchet options for one-to-one sessions.
  *
  * The client reads `maxSkip` only.

@@ -597,6 +597,10 @@ Trust verification behavior depends on direction:
 From Signal Protocol:
 "It's safer to receive from an unknown identity than to send to one"
 
+The SDK does not call this method for a device of the local user. Each
+linked device holds the account identity, so the SDK trusts such a
+device only with the local identity of the same type.
+
 #### Parameters
 
 ##### address

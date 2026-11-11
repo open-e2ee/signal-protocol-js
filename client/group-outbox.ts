@@ -42,6 +42,8 @@ import {
   type DeclaredSyncOutcome,
 } from './device-set-reconciliation';
 import { isStaleDeviceRefusal } from './signal-relay-device-refusal';
+import { sealedBodyNeedsReseal } from './sealed-sender';
+import { estimateServerTimestamp } from '../server-clock';
 import {
   releaseNewSendTimestamp,
   reserveNewSendTimestamp,
@@ -271,6 +273,26 @@ export interface GroupOutboxContext {
     groupId: string,
     recipientUserIds: string[]
   ): Promise<Extract<SealedSenderAuth, { type: 'groupSendToken' }> | null>;
+  /**
+   * Clear the group's cached endorsements, refresh them once under the lock
+   * of the group's endorsements, and resolve the authorization again. A
+   * shared post calls it after the Relay refused its group credential.
+   * Resolves to null when no new authorization resolves.
+   */
+  renewGroupAuthorization(
+    groupId: string,
+    recipientUserIds: string[]
+  ): Promise<Extract<SealedSenderAuth, { type: 'groupSendToken' }> | null>;
+  /**
+   * Seal a stored shared body again from the stored group ciphertext, with
+   * the current sender certificate. The new body names the same accounts,
+   * devices, and registrations. Resolves to undefined when the client
+   * cannot seal it again.
+   */
+  resealSharedMessage(
+    intent: StoredOutgoingMessageIntent,
+    body: StoredGroupSharedMessage
+  ): Promise<string | undefined>;
   reportIdentifiedFallback(recipientUserId: string): Promise<void>;
   /**
    * Refresh the group's endorsements for the recipients of a dispatch before
@@ -876,18 +898,20 @@ async function sendStoredGroupIntent(
       } else {
         const shared = intent.groupSharedMessage;
         try {
-          const result = await context.postToSignalProtocolRelay(
-            () =>
-              signalProtocolRelay.sendMultiRecipientUnidentified!(
-                shared.sentMessageBase64,
-                auth,
-                intent.clientTimestamp,
-                'user-visible',
-                shared.recipientUserIds,
-                intent.clientMessageId
-              ),
-            true,
-            sharedBodyDestinations(intent.clientMessageId, sharedBodyDevices(shared))
+          const result = await postSharedBody(context, intent, shared, auth, (sentMessageBase64, credential) =>
+            context.postToSignalProtocolRelay(
+              () =>
+                signalProtocolRelay.sendMultiRecipientUnidentified!(
+                  sentMessageBase64,
+                  credential,
+                  intent.clientTimestamp,
+                  'user-visible',
+                  shared.recipientUserIds,
+                  intent.clientMessageId
+                ),
+              true,
+              sharedBodyDestinations(intent.clientMessageId, sharedBodyDevices(shared))
+            )
           );
           skippedUsers = result.uuids404;
           refusedDestinationCount = result.refusedDestinationCount;
@@ -1102,6 +1126,46 @@ function requiresSealedSender(
 }
 
 /**
+ * Post the shared body of a group send under one client message ID.
+ *
+ * The receiver checks the sender certificate against the time at which the
+ * Relay stores the post. So a stored body whose certificate expires within
+ * `SEALED_SENDER_RESEAL_SKEW_MS` of the estimated Relay time, or whose
+ * record names no expiration, is sealed again from the stored group
+ * ciphertext first. The new body keeps the message ID, the accounts, and
+ * the devices. The client does not store it, so each replay that needs a
+ * new seal makes one.
+ *
+ * The Relay stores nothing when it refuses the group credential. So after
+ * the first refusal, the post renews the group's endorsements once and
+ * posts the same body once more with the new credential. A second refusal,
+ * or no new credential, goes to the caller.
+ */
+async function postSharedBody<T>(
+  context: GroupOutboxContext,
+  intent: StoredOutgoingMessageIntent,
+  body: StoredGroupSharedMessage,
+  auth: Extract<SealedSenderAuth, { type: 'groupSendToken' }>,
+  post: (
+    sentMessageBase64: string,
+    auth: Extract<SealedSenderAuth, { type: 'groupSendToken' }>
+  ) => Promise<T>
+): Promise<T> {
+  let sentMessageBase64 = body.sentMessageBase64;
+  if (sealedBodyNeedsReseal(body.sealedSenderCertificateExpiresAt, estimateServerTimestamp())) {
+    sentMessageBase64 = (await context.resealSharedMessage(intent, body)) ?? sentMessageBase64;
+  }
+  try {
+    return await post(sentMessageBase64, auth);
+  } catch (error) {
+    if (!(error instanceof SealedSenderAuthError)) throw error;
+    const renewed = await context.renewGroupAuthorization(body.groupId, body.recipientUserIds);
+    if (!renewed) throw error;
+    return post(sentMessageBase64, renewed);
+  }
+}
+
+/**
  * Seal the shared body of a declared group send again, for the device
  * messages that the intent holds after a repair (RQ3 of the device-set
  * contract). The group ciphertext does not change, so a device post that
@@ -1303,21 +1367,23 @@ async function sendDeclaredGroupIntent(
             deviceIds: deviceIds.sort((a, b) => a - b),
           }));
           try {
-            const receipt = await context.postToSignalProtocolRelay(
-              () =>
-                signalProtocolRelay.sendMultiRecipientUnidentified!(
-                  body.sentMessageBase64,
-                  auth,
-                  intent.clientTimestamp,
-                  'user-visible',
-                  body.recipientUserIds,
-                  clientMessageId,
-                  undefined,
-                  undefined,
-                  deviceSetsOfBody
-                ),
-              true,
-              sharedBodyDestinations(clientMessageId, bodyDevices)
+            const receipt = await postSharedBody(context, intent, body, auth, (sentMessageBase64, credential) =>
+              context.postToSignalProtocolRelay(
+                () =>
+                  signalProtocolRelay.sendMultiRecipientUnidentified!(
+                    sentMessageBase64,
+                    credential,
+                    intent.clientTimestamp,
+                    'user-visible',
+                    body.recipientUserIds,
+                    clientMessageId,
+                    undefined,
+                    undefined,
+                    deviceSetsOfBody
+                  ),
+                true,
+                sharedBodyDestinations(clientMessageId, bodyDevices)
+              )
             );
             sharedReceipt = receipt;
             routes.set(receipt, 'anonymous-group');

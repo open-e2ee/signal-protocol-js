@@ -747,8 +747,11 @@ export class SendCallEvidence {
    * §3.5). An answer that followed a repeat after an uncertain answer is
    * uncertain, because the first request can have stored the post. A
    * RETRY_CONFLICT is an earlier acceptance only when the current entry of
-   * the destination has no repair mark: then the Relay holds the same bytes
-   * under the message ID. A version 2 DELIVERY_ALREADY_ACCEPTED says that
+   * the destination has no repair mark: then the Relay holds the same
+   * ciphertext under the message ID. A post of a sealed body that was sealed
+   * again with a new sender certificate has other outer bytes, but the same
+   * ciphertext, message ID, and operation epoch, so its conflict follows the
+   * same rule. A version 2 DELIVERY_ALREADY_ACCEPTED says that
    * the Relay holds an accepted post under the message ID, and it follows
    * the same rule. An intent that did not write progress from its start can
    * have had a repair that left no mark, so its answer stays uncertain.

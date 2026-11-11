@@ -29,7 +29,11 @@ export function sealedSenderSignalProtocolRelayScopeId(
  * @see https://signal.org/blog/sealed-sender/
  */
 
-import type { SealedSenderConfig, SealedSenderDeliveryMode } from './config';
+import {
+  SEALED_SENDER_RESEAL_SKEW_MS,
+  type SealedSenderConfig,
+  type SealedSenderDeliveryMode,
+} from './config';
 import type { Envelope, SealedSenderAuth } from '../remote/signal-relay/types';
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import type { Base64, SignalProtocolLocalStore } from '../types';
@@ -142,6 +146,67 @@ export async function serializeDirectSealedSenderMessage(
       base64ToBytes(sealed.messageCiphertext)
     )
   );
+}
+
+/** The signed expiration, in milliseconds, of a serialized sender certificate. */
+export function senderCertificateExpiresAt(senderCertificateBase64: string): number {
+  return deserializeSenderCertificate(base64ToBytes(senderCertificateBase64 as Base64)).expires;
+}
+
+/**
+ * True when a stored sealed body must be sealed again with a new sender
+ * certificate before its next post. That is so when its certificate expires
+ * at or before `signalRelayNow` plus `SEALED_SENDER_RESEAL_SKEW_MS`, or when the
+ * record names no expiration. The receiver checks the expiration against
+ * the time at which the Relay stores the post, so a body whose certificate
+ * expires before the post arrives is refused with no signal to the sender.
+ */
+export function sealedBodyNeedsReseal(
+  certificateExpiresAt: number | undefined,
+  signalRelayNow: number
+): boolean {
+  return (
+    certificateExpiresAt === undefined ||
+    certificateExpiresAt <= signalRelayNow + SEALED_SENDER_RESEAL_SKEW_MS
+  );
+}
+
+/**
+ * Seal one stored direct ciphertext again with the current sender
+ * certificate. The ciphertext, its type, the registration, the hint, and
+ * the authorization stay the same, so only the outer layer changes. The
+ * outer layer goes to the current identity of the recipient account.
+ *
+ * @throws Error when this client knows no identity of the recipient account.
+ */
+export async function resealDirectSealedSenderMessage(
+  storage: SignalProtocolLocalStore,
+  provider: SealedSenderProvider,
+  msg: { recipientUserId: string; recipientDeviceId: number },
+  ciphertextBase64: string,
+  messageType: 'prekey_bundle' | 'ciphertext' | 'sender_key',
+  recipientRegistrationId: number | undefined,
+  auth: SealedSenderAuth,
+  contentHint: ContentHint | undefined
+): Promise<{ sentMessageBase64: string; certificateExpiresAt: number }> {
+  const keys = await provider();
+  const identity = await storage.getContactIdentity(ProtocolAddress.create(msg.recipientUserId, 1));
+  if (!identity) throw new Error('The identity of a sealed-sender recipient is unknown');
+  return {
+    sentMessageBase64: await serializeDirectSealedSenderMessage(
+      msg,
+      ciphertextBase64,
+      messageType,
+      recipientRegistrationId,
+      {
+        ...keys,
+        recipientIdentityPublic: base64ToBytes(identity.identity.x25519PublicKey),
+        auth,
+      },
+      contentHint
+    ),
+    certificateExpiresAt: senderCertificateExpiresAt(keys.senderCertificateBase64),
+  };
 }
 
 export async function resolveSealedSenderContext(

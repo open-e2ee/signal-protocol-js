@@ -1243,8 +1243,17 @@ await signal.establishSession(remoteAddress, bundle);
 Fetch (or return cached) sender certificate for sealed sender.
 
 Uses the configured certificateProvider or relay.fetchSenderCertificate().
-Validates the fetched certificate and caches it until one hour before its
-signed expiration.
+Concurrent calls share one fetch. The client validates the certificate
+and reads its expiration against the estimated Relay time, because the
+Relay signs the expiration and the receiver checks it against the time
+at which the Relay stores the post.
+
+The client uses a certificate until its expiration minus
+`SEALED_SENDER_CERTIFICATE_MARGIN_MS` minus a random time below
+`SEALED_SENDER_CERTIFICATE_JITTER_MS`. It uses a shorter certificate
+until its expiration minus `SEALED_SENDER_RESEAL_SKEW_MS`. When a fetched
+certificate expires within that skew, the client waits until it expires
+and fetches once more.
 
 #### Returns
 
@@ -1254,7 +1263,8 @@ Base64-encoded serialized SenderCertificate
 
 #### Throws
 
-if no certificate provider is available
+if no certificate provider is available, or if the certificate
+  that the client fetches after the wait also expires within the skew
 
 ***
 

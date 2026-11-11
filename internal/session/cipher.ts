@@ -142,6 +142,7 @@ import {
   getMaxSkipForSession,
 } from './validation';
 import { sessionLockKey, type RecordLock } from './record-locks';
+import { SessionTrust } from './session-trust';
 import { SessionResolver } from './session-resolver';
 import type { DoubleRatchetState } from '../protocol/double-ratchet';
 import {
@@ -282,6 +283,9 @@ export class SessionCipher {
   /** Protocol strategy, carried for the SPQR per-message diagnostic hooks */
   private readonly protocolStrategy?: ProtocolStrategyConfig;
 
+  /** The trust decision for the remote identity of a session */
+  private readonly trust: SessionTrust;
+
   /**
    * Create a new SessionCipher instance
    *
@@ -309,6 +313,7 @@ export class SessionCipher {
     this.lock = lock;
     this.maxSkip = config.maxSkip ?? SessionCipher.DEFAULT_MAX_SKIP;
     this.protocolStrategy = config.protocolStrategy;
+    this.trust = config.trust ?? new SessionTrust(keyStorage, () => null);
     this.logger = logger;
   }
 
@@ -397,7 +402,7 @@ export class SessionCipher {
         assertValidatedSession(session, 'encrypt');
 
         // Reject untrusted identities before advancing the send chain.
-        const isTrusted = await this.keyStorage.isTrustedIdentity(
+        const isTrusted = await this.trust.isTrusted(
           remoteAddress,
           session.remoteIdentity,
           TrustDirection.SENDING,
@@ -687,7 +692,7 @@ export class SessionCipher {
           : this.wrapSession(session);
         // Commit the matched/pinned TOFU identity and advanced send state
         // together, after the outgoing ciphertext has been fully constructed.
-        await this.keyStorage.commitSessionTrust({
+        await this.trust.commit({
           address: remoteAddress,
           record: recordToStore,
           contactIdentity: session.remoteIdentity,
@@ -1027,7 +1032,7 @@ export class SessionCipher {
         }
 
         if (prekeyMessage) {
-          const isTrustedPreKeyIdentity = await this.keyStorage.isTrustedIdentity(
+          const isTrustedPreKeyIdentity = await this.trust.isTrusted(
             remoteAddress,
             prekeyMessage.senderIdentity,
             TrustDirection.RECEIVING,
@@ -1196,7 +1201,7 @@ export class SessionCipher {
             );
 
             if (skippedPlaintext !== null) {
-              const isTrustedReceivingIdentity = await this.keyStorage.isTrustedIdentity(
+              const isTrustedReceivingIdentity = await this.trust.isTrusted(
                 remoteAddress,
                 session.remoteIdentity,
                 TrustDirection.RECEIVING,
@@ -1216,7 +1221,7 @@ export class SessionCipher {
               const pendingDeletion = session.pendingPreKeyDeletion;
               if (isPreKeyMessage) {
                 delete session.pendingPreKeyDeletion;
-                await this.keyStorage.commitSessionTrust({
+                await this.trust.commit({
                   address: remoteAddress,
                   record: recordToStore,
                   receiveWork: receiveWork?.({ plaintext: skippedPlaintext }),
@@ -1241,7 +1246,7 @@ export class SessionCipher {
                   },
                 });
               } else {
-                await this.keyStorage.commitSessionTrust({
+                await this.trust.commit({
                   address: remoteAddress,
                   record: recordToStore,
                   receiveWork: receiveWork?.({ plaintext: skippedPlaintext }),
@@ -1477,7 +1482,7 @@ export class SessionCipher {
 
             // H2: Authenticate before checking receiving trust. PreKey identity
             // persistence is deferred into the atomic responder commit below.
-            const isTrustedReceivingIdentity = await this.keyStorage.isTrustedIdentity(
+            const isTrustedReceivingIdentity = await this.trust.isTrusted(
               remoteAddress,
               session.remoteIdentity,
               TrustDirection.RECEIVING,
@@ -1532,7 +1537,7 @@ export class SessionCipher {
             const pendingDeletion = session.pendingPreKeyDeletion;
             if (isPreKeyMessage) {
               delete session.pendingPreKeyDeletion;
-              await this.keyStorage.commitSessionTrust({
+              await this.trust.commit({
                 address: remoteAddress,
                 record: recordToStore,
                 receiveWork: receiveWork?.({ plaintext }),
@@ -1557,7 +1562,7 @@ export class SessionCipher {
                 },
               });
             } else {
-              await this.keyStorage.commitSessionTrust({
+              await this.trust.commit({
                 address: remoteAddress,
                 record: recordToStore,
                 receiveWork: receiveWork?.({ plaintext }),

@@ -35,7 +35,7 @@ import { EncryptionError, EncryptionErrorCode } from '../types';
 import { SealedSenderAuthError } from '../types/errors';
 import { base64ToBytes } from '../internal/crypto';
 import type { DecryptedEnvelope } from './event-hooks';
-import { recordServerClockSample } from '../server-clock';
+import { estimateServerTimestamp, recordServerClockSample } from '../server-clock';
 import { ProtocolAddress } from '../types/address';
 import {
   isRemovedDevice,
@@ -142,6 +142,7 @@ import {
   type RetryResendTarget,
   type StoredDestinationProgress,
   type StoredDeviceSetUnresolved,
+  type StoredGroupSharedMessage,
   type StoredManualResend,
   type StoredOutgoingDeviceMessage,
   type StoredOutgoingMessageIntent,
@@ -210,7 +211,8 @@ import {
   type DeclaredPostReceipt,
   type DeclaredSyncOutcome,
 } from './device-set-reconciliation';
-import { prepareGroupSharedMessage } from './group-sealed-sender';
+import { prepareGroupSharedMessage, resealGroupSharedMessage } from './group-sealed-sender';
+import { isPeriodClosed } from './signal-relay-period-close';
 import { attachFailedGroup } from './retry-terminal-recovery';
 import {
   sendGroupWithExactOutbox,
@@ -223,8 +225,11 @@ import { groupDeviceKey, listedOwnDeviceChange } from './group-device-set';
 import {
   attachUnsealedEnvelope,
   reconstructEnvelope,
+  resealDirectSealedSenderMessage,
   resolveSealedSenderContext as resolveSealedSenderSendContext,
   SealedRetryRequestReceived,
+  sealedBodyNeedsReseal,
+  senderCertificateExpiresAt,
   serializeDirectSealedSenderMessage as serializeDirectSealedSenderTransport,
   unsealMessage,
   type ResolvedSealedSenderContext,
@@ -494,6 +499,20 @@ interface DevicePostControl {
    * For a transport repeat, it gets the answer that the repeat follows.
    */
   readonly onRequest?: (repeat?: RepeatRequest['after']) => void;
+}
+
+/** The stored sealed body of one device post. */
+interface PreparedSealedBody {
+  readonly sentMessageBase64: string;
+  readonly auth: SealedSenderAuth;
+  readonly deliveryMode: 'preferred' | 'required';
+  /**
+   * The signed expiration of the sender certificate in the body. Undefined
+   * when the stored record names none.
+   */
+  readonly certificateExpiresAt: number | undefined;
+  /** The hint in the seal. A new seal of the body keeps it. */
+  readonly sealHint: ContentHint | undefined;
 }
 
 /** A distribution plaintext and the sender key that it gives. */
@@ -2572,7 +2591,8 @@ export class SignalProtocolServiceCipher {
       } catch (error) {
         if (!signalRelayHoldsMessageId(error)) throw error;
         // Only this sender posts this ID, and it posts one encryption under
-        // each attempt ID. So a conflict means that the Relay holds that
+        // each attempt ID. A new seal with a new sender certificate changes
+        // only the outer layer. So a conflict means that the Relay holds that
         // encryption from an earlier post.
         this.logger.info('The Relay holds an earlier encryption of a retry resend attempt', {
           category: 'E2EE',
@@ -2695,6 +2715,8 @@ export class SignalProtocolServiceCipher {
             sentMessageBase64: message.sealedSenderMessage!,
             auth,
             deliveryMode: required ? 'required' : 'preferred',
+            certificateExpiresAt: message.sealedSenderCertificateExpiresAt,
+            sealHint: resend.contentHint,
           },
       {
         ...(stopSignal && { stopSignal }),
@@ -4549,6 +4571,9 @@ export class SignalProtocolServiceCipher {
         sealedSender,
         contentHint
       );
+      storedMessage.sealedSenderCertificateExpiresAt = senderCertificateExpiresAt(
+        sealedSender.senderCertificateBase64
+      );
     }
     return storedMessage;
   }
@@ -4662,6 +4687,8 @@ export class SignalProtocolServiceCipher {
             auth: intent.sealedSenderAuth!,
             deliveryMode:
               intent.transportMode === 'sealed_sender_required' ? 'required' : 'preferred',
+            certificateExpiresAt: message.sealedSenderCertificateExpiresAt,
+            sealHint: intent.contentHint,
           },
           control
         );
@@ -5660,9 +5687,10 @@ export class SignalProtocolServiceCipher {
           ) {
             return undefined;
           }
+          const senderKeys = await this.sealedSenderProvider();
           const prepared = await prepareGroupSharedMessage({
             storage: this.storage,
-            senderKeys: await this.sealedSenderProvider(),
+            senderKeys,
             members,
             encryptedMessageBase64: ciphertext,
             contentHint,
@@ -5674,6 +5702,9 @@ export class SignalProtocolServiceCipher {
                 recipientUserIds: prepared.recipientUserIds,
                 deliveryMode:
                   this.sealedSenderDeliveryMode === 'required' ? 'required' : 'preferred',
+                sealedSenderCertificateExpiresAt: senderCertificateExpiresAt(
+                  senderKeys.senderCertificateBase64
+                ),
               }
             : undefined;
         },
@@ -5719,6 +5750,9 @@ export class SignalProtocolServiceCipher {
         },
         resolveGroupAuthorization: (groupId, recipients) =>
           this.resolveGroupSendAuthorization(groupId, recipients),
+        renewGroupAuthorization: (groupId, recipients) =>
+          this.resolveGroupSendAuthorization(groupId, recipients, true),
+        resealSharedMessage: (intent, body) => this.resealStoredGroupBody(intent, body),
         reportIdentifiedFallback: (recipientUserId) =>
           this.reportIdentifiedFallback(recipientUserId),
         refreshPreMessageEndorsements: (groupId, recipientUserIds) =>
@@ -5753,6 +5787,8 @@ export class SignalProtocolServiceCipher {
                   sentMessageBase64: message.sealedSenderMessage!,
                   auth,
                   deliveryMode: message.sealedSenderDeliveryMode ?? 'preferred',
+                  certificateExpiresAt: message.sealedSenderCertificateExpiresAt,
+                  sealHint: intent.contentHint,
                 },
                 posting
               )
@@ -5946,6 +5982,9 @@ export class SignalProtocolServiceCipher {
       sealedSender,
       contentHint
     );
+    sealed.sealedSenderCertificateExpiresAt = senderCertificateExpiresAt(
+      sealedSender.senderCertificateBase64
+    );
     sealed.sealedSenderDeliveryMode = deliveryMode;
     if (sealedSender.auth.type === 'accessKey') {
       sealed.sealedSenderAuthorization = 'access_key';
@@ -6123,6 +6162,8 @@ export class SignalProtocolServiceCipher {
             sentMessageBase64: message.sealedSenderMessage,
             auth,
             deliveryMode: required ? 'required' : 'preferred',
+            certificateExpiresAt: message.sealedSenderCertificateExpiresAt,
+            sealHint: undefined,
           }
         : undefined,
       { ...control, deliveryClass: 'background-sync' }
@@ -6142,7 +6183,8 @@ export class SignalProtocolServiceCipher {
    * protocol version 2, means that the Relay holds a message under the ID of
    * the post. The evidence of the call accepts it only when the stored
    * entry of the destination has no blocking repair mark: then the Relay
-   * holds the same bytes, and the pre-message counts as accepted. Each other
+   * holds the same ciphertext, also when this post sealed it again with a
+   * new sender certificate, and the pre-message counts as accepted. Each other
    * such answer leaves the destination unknown, and the pre-message counts
    * as held: it writes no handoff row, so the next send gives the key again.
    * A repair refreshes the evidence entry of its repaired post before the
@@ -6496,19 +6538,27 @@ export class SignalProtocolServiceCipher {
 
   /**
    * Refresh the group's endorsements when the cache lacks one of the
-   * recipients or expires soon. Resolves to the endorsement manager, or to
-   * null when the client has none.
+   * recipients or expires soon. With `renew`, clear the cache first, so the
+   * refresh always runs. A renewal needs the refresher, because a cleared
+   * cache with no refresher leaves the group with no endorsement. Resolves
+   * to the endorsement manager, or to null when the client has none or
+   * cannot renew.
    */
   private async refreshGroupSendEndorsements(
     groupId: string,
-    recipientUserIds: string[]
+    recipientUserIds: string[],
+    renew = false
   ): Promise<EndorsementManager | null> {
     const manager = this.endorsementManagerResolver ? await this.endorsementManagerResolver() : this.endorsementManager;
     if (!manager || recipientUserIds.length === 0) return null;
+    if (renew && !this.endorsementRefresher) return null;
     // The device posts of a send run at the same time. The lock makes them
     // check and refresh the group's endorsements one at a time, so one
     // refresh serves them all. The lock is taken before a slot.
     await this.lock.acquire(`group-send-endorsements:${groupId}`, async () => {
+      // The Relay refused a credential from the cache, so the cache cannot
+      // serve the next post.
+      if (renew) await manager.clearGroupEndorsements(groupId);
       const { needsRefresh, reason } = await manager.shouldRefreshEndorsements(
         groupId,
         recipientUserIds
@@ -6545,11 +6595,17 @@ export class SignalProtocolServiceCipher {
     await this.refreshGroupSendEndorsements(groupId, recipientUserIds);
   }
 
+  /**
+   * The group-send authorization of the recipients, from the group's
+   * endorsements. With `renew`, the endorsements are cleared and refreshed
+   * first. Resolves to null when no authorization resolves.
+   */
   private async resolveGroupSendAuthorization(
     groupId: string,
-    recipientUserIds: string[]
+    recipientUserIds: string[],
+    renew = false
   ): Promise<Extract<SealedSenderAuth, { type: 'groupSendToken' }> | null> {
-    const manager = await this.refreshGroupSendEndorsements(groupId, recipientUserIds);
+    const manager = await this.refreshGroupSendEndorsements(groupId, recipientUserIds, renew);
     if (!manager) return null;
     const groupSecretParams = this.groupSecretParamsProvider
       ? await this.groupSecretParamsProvider(groupId)
@@ -6728,6 +6784,94 @@ export class SignalProtocolServiceCipher {
   }
 
   /**
+   * Seal a stored group body again from the stored group ciphertext of its
+   * intent, with the current sender certificate. Resolves to undefined when
+   * no sealed-sender provider is configured or the intent has no group
+   * ciphertext.
+   */
+  private async resealStoredGroupBody(
+    intent: StoredOutgoingMessageIntent,
+    body: StoredGroupSharedMessage
+  ): Promise<string | undefined> {
+    if (!this.sealedSenderProvider || intent.groupCiphertext === undefined) {
+      this.logger.warn('No sealed-sender provider can seal a stored group body again', {
+        category: 'E2EE',
+        data: { groupId: body.groupId, clientMessageId: intent.clientMessageId },
+      });
+      return undefined;
+    }
+    return resealGroupSharedMessage({
+      storage: this.storage,
+      senderKeys: await this.sealedSenderProvider(),
+      sentMessageBase64: body.sentMessageBase64,
+      recipientUserIds: body.recipientUserIds,
+      encryptedMessageBase64: intent.groupCiphertext,
+      ...(intent.contentHint !== undefined && { contentHint: intent.contentHint }),
+    });
+  }
+
+  /**
+   * Seal the ciphertext of a stored sealed body again with the current
+   * sender certificate. The body keeps its authorization, its delivery mode,
+   * and the hint in its seal. The certificate fetch waits when the current
+   * certificate expires within `SEALED_SENDER_RESEAL_SKEW_MS`. Resolves to
+   * undefined when no sealed-sender provider is configured.
+   */
+  private async resealPreparedBody(
+    msg: { recipientUserId: string; recipientDeviceId: number },
+    ciphertextBase64: string,
+    messageType: 'prekey_bundle' | 'ciphertext' | 'sender_key',
+    recipientRegistrationId: number | undefined,
+    body: PreparedSealedBody
+  ): Promise<PreparedSealedBody | undefined> {
+    if (!this.sealedSenderProvider) {
+      this.logger.warn('No sealed-sender provider can seal a stored body again', {
+        category: 'E2EE',
+        data: { recipientUserId: msg.recipientUserId, recipientDeviceId: msg.recipientDeviceId },
+      });
+      return undefined;
+    }
+    return {
+      ...body,
+      ...(await resealDirectSealedSenderMessage(
+        this.storage,
+        this.sealedSenderProvider,
+        msg,
+        ciphertextBase64,
+        messageType,
+        recipientRegistrationId,
+        body.auth,
+        body.sealHint
+      )),
+    };
+  }
+
+  /**
+   * The one repeat of a sealed post after PERIOD_CLOSED, as a new seal of
+   * its ciphertext. When no new seal can be made, no repeat starts, and the
+   * PERIOD_CLOSED answer stays the answer of the post, so the send keeps the
+   * device pending.
+   */
+  private async repeatResealedAfterPeriodClosed<T>(
+    periodClosed: unknown,
+    reseal: () => Promise<PreparedSealedBody | undefined>,
+    post: (resealed: PreparedSealedBody) => Promise<T>
+  ): Promise<T> {
+    let resealed: PreparedSealedBody | undefined;
+    try {
+      resealed = await reseal();
+    } catch (error) {
+      this.logger.warn('A sealed body could not be sealed again after PERIOD_CLOSED', {
+        category: 'E2EE',
+        data: { error: error instanceof Error ? error.message : String(error) },
+      });
+      throw periodClosed;
+    }
+    if (!resealed) throw periodClosed;
+    return post(resealed);
+  }
+
+  /**
    * Send a single ciphertext to a device, optionally wrapping with sealed sender.
    *
    * When sealed sender context is available:
@@ -6759,11 +6903,7 @@ export class SignalProtocolServiceCipher {
     >,
     contentHint?: ContentHint,
     clientMessageId?: string,
-    preparedSealedSender?: {
-      sentMessageBase64: string;
-      auth: SealedSenderAuth;
-      deliveryMode: 'preferred' | 'required';
-    },
+    preparedSealedSender?: PreparedSealedBody,
     control: DevicePostControl = {}
   ): Promise<SignalProtocolRelayPostAcceptance> {
     const effectiveClientMessageId = msg.clientMessageId ?? clientMessageId;
@@ -6774,14 +6914,34 @@ export class SignalProtocolServiceCipher {
     const { beforeRequest, onRequest } = control;
     const ownRepeat = (repeat: RepeatRequest) =>
       repeat.userId === msg.recipientUserId && repeat.deviceId === msg.recipientDeviceId;
+    // The certificate expiration of the sealed body that this post sends
+    // now. Undefined while no sealed request runs, or when it is unknown.
+    let sealedExpiry: number | undefined;
+    // The gate refused the transport repeat after PERIOD_CLOSED, because the
+    // certificate of its body expires before the repeat can reach the Relay.
+    let expiringRepeatRefused = false;
+    // This post sent its one sealed repeat after PERIOD_CLOSED.
+    let periodClosedSpent = false;
     const release =
-      (beforeRequest || onRequest) && effectiveClientMessageId !== undefined
+      effectiveClientMessageId !== undefined
         ? admitRequestsFor(
             this.signalProtocolRelay!,
             effectiveClientMessageId,
-            beforeRequest
-              ? (repeat) => (ownRepeat(repeat) ? beforeRequest() : Promise.resolve())
-              : async () => {},
+            async (repeat) => {
+              if (!ownRepeat(repeat)) return;
+              if (repeat.after === 'period-closed' && sealedExpiry !== undefined) {
+                // The post repeats once after PERIOD_CLOSED, also when that
+                // repeat is a new seal of the body.
+                if (periodClosedSpent) {
+                  throw new Error('The post already repeated after PERIOD_CLOSED');
+                }
+                if (sealedBodyNeedsReseal(sealedExpiry, estimateServerTimestamp())) {
+                  expiringRepeatRefused = true;
+                  throw new Error('The sender certificate of the repeat expires before it can reach the Relay');
+                }
+              }
+              await beforeRequest?.();
+            },
             onRequest &&
               ((repeat) => {
                 if (ownRepeat(repeat)) onRequest(repeat.after);
@@ -6809,7 +6969,7 @@ export class SignalProtocolServiceCipher {
       if ((sealedSender || preparedSealedSender) && this.signalProtocolRelay!.sendMultiRecipientUnidentified) {
         // The sealed body names the registration of its device, as the
         // identified post does.
-        const prepared =
+        let prepared: PreparedSealedBody | undefined =
           preparedSealedSender ??
           (sealedSender
             ? {
@@ -6824,9 +6984,28 @@ export class SignalProtocolServiceCipher {
                 auth: sealedSender.auth,
                 deliveryMode:
                   sealedSender.config.deliveryMode === 'required' ? 'required' : 'preferred',
+                certificateExpiresAt: senderCertificateExpiresAt(
+                  sealedSender.senderCertificateBase64
+                ),
+                sealHint: contentHint,
               }
             : undefined);
         if (!prepared) throw new Error('Missing sealed-sender delivery state');
+        // A replay can post a body that was sealed long ago. The receiver
+        // checks the certificate against the time at which the Relay stores
+        // the post, so a body whose certificate expires before the post
+        // arrives is sealed again first. The new seal keeps the message ID and
+        // the operation epoch of the post.
+        if (sealedBodyNeedsReseal(prepared.certificateExpiresAt, estimateServerTimestamp())) {
+          prepared =
+            (await this.resealPreparedBody(
+              msg,
+              ciphertextBase64,
+              messageType,
+              recipientRegistrationId,
+              prepared
+            )) ?? prepared;
+        }
         // This post has one destination device, so a group endorsement takes
         // the direct sealed route.
         const sealedAuth =
@@ -6847,12 +7026,12 @@ export class SignalProtocolServiceCipher {
           ...(control.onRequest && { onRequest: control.onRequest }),
         };
         const declaredDeviceIds = control.declaredDeviceIds;
-        try {
-          const result = await this.postToSignalProtocolRelay(
+        const postSealed = (sentMessageBase64: string, posting: DevicePostControl) =>
+          this.postToSignalProtocolRelay(
             () =>
               declaredDeviceIds
                 ? this.signalProtocolRelay!.sendMultiRecipientUnidentified!(
-                    prepared.sentMessageBase64,
+                    sentMessageBase64,
                     sealedAuth,
                     msg.timestamp,
                     control.deliveryClass ?? 'user-visible',
@@ -6863,7 +7042,7 @@ export class SignalProtocolServiceCipher {
                     [{ userId: msg.recipientUserId, deviceIds: declaredDeviceIds }]
                   )
                 : this.signalProtocolRelay!.sendMultiRecipientUnidentified!(
-                    prepared.sentMessageBase64,
+                    sentMessageBase64,
                     sealedAuth,
                     msg.timestamp,
                     control.deliveryClass ?? 'user-visible',
@@ -6874,8 +7053,41 @@ export class SignalProtocolServiceCipher {
                       : ([] as const))
                   ),
             true,
-            control
+            posting
           );
+        const sealedBody = prepared;
+        try {
+          let result: Awaited<ReturnType<typeof postSealed>>;
+          sealedExpiry = sealedBody.certificateExpiresAt;
+          try {
+            result = await postSealed(sealedBody.sentMessageBase64, control);
+          } catch (error) {
+            if (!expiringRepeatRefused || !isPeriodClosed(error)) throw error;
+            // The Relay stored nothing, and the certificate of the body
+            // expires before a repeat can reach the Relay in the next period.
+            // So the one repeat is a new seal of the same ciphertext.
+            result = await this.repeatResealedAfterPeriodClosed(
+              error,
+              () =>
+                this.resealPreparedBody(
+                  msg,
+                  ciphertextBase64,
+                  messageType,
+                  recipientRegistrationId,
+                  sealedBody
+                ),
+              (resealed) => {
+                sealedExpiry = resealed.certificateExpiresAt;
+                periodClosedSpent = true;
+                return postSealed(resealed.sentMessageBase64, {
+                  ...identifiedControl,
+                  ...(onRequest && { onRequest: () => onRequest('period-closed') }),
+                });
+              }
+            );
+          } finally {
+            sealedExpiry = undefined;
+          }
           if (result.uuids404.length > 0) {
             throw new SealedSenderRecipientRejectedError();
           }

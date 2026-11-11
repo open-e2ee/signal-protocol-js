@@ -65,6 +65,13 @@ export interface StoredOutgoingDeviceMessage {
   sealedSenderAuthorization?: 'access_key' | 'group_send_token';
   sealedSenderDeliveryMode?: 'preferred' | 'required';
   /**
+   * The signed expiration, in milliseconds, of the sender certificate in
+   * `sealedSenderMessage`. A replay seals `ciphertext` again with a new
+   * certificate when this time is near or past, or when the record has no
+   * value. An earlier SDK writes no value and ignores the field.
+   */
+  sealedSenderCertificateExpiresAt?: number;
+  /**
    * The own sender key that a distribution pre-message gives. When the Relay
    * accepts the pre-message, the send records a handoff row for this key and
    * `recipientRegistrationId`. It holds no key material.
@@ -77,6 +84,13 @@ export interface StoredGroupSharedMessage {
   sentMessageBase64: string;
   recipientUserIds: string[];
   deliveryMode: 'preferred' | 'required';
+  /**
+   * The signed expiration, in milliseconds, of the sender certificate in
+   * `sentMessageBase64`. A replay seals the group ciphertext again with a
+   * new certificate when this time is near or past, or when the record has
+   * no value. An earlier SDK writes no value and ignores the field.
+   */
+  sealedSenderCertificateExpiresAt?: number;
 }
 
 export interface StoredOutgoingMessageIntent {
