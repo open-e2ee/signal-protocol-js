@@ -18,10 +18,11 @@
  * refuses the version before it reads the request, so the refused request
  * had no effect.
  *
- * A client offers version 3 first. When the Relay refuses version 3 with
- * `PROTOCOL_UNSUPPORTED`, the client offers version 2 from then on and sends
- * the refused request again. A client whose version the caller selected
- * never offers another version.
+ * A client offers `RELAY_PROTOCOL_VERSION` first. When the Relay refuses a
+ * version above 2 with `PROTOCOL_UNSUPPORTED`, the client offers the version
+ * one below it from then on and sends the refused request again. Each refusal
+ * moves the offer down one version, and the offer never goes below version
+ * 2. A client whose version the caller selected never offers another version.
  */
 import { stringToBytes } from "../internal/crypto";
 
@@ -45,7 +46,7 @@ const FIRST_RELAY_PROTOCOL_VERSION = 1;
 /** The first version that uses the signal prefix names. */
 const SIGNAL_RELAY_PROTOCOL_V3 = 3;
 
-/** The version that a client offers after the Relay refuses version 3. */
+/** The lowest version that an unselected offer moves down to. */
 const SIGNAL_RELAY_PROTOCOL_FALLBACK = 2;
 
 /** The prefix of a version 1 or 2 token. The version number follows it. */
@@ -173,18 +174,23 @@ export function signalRelayProofLabels(
 /**
  * The protocol version that one client offers. Every carrier of the client
  * reads it for each request. An unselected offer starts at
- * `RELAY_PROTOCOL_VERSION` and moves to version 2 after the Relay refuses
- * version 3 with `PROTOCOL_UNSUPPORTED`. It stays at version 2 for the
- * life of the client. A selected offer keeps its version.
+ * `RELAY_PROTOCOL_VERSION`. Each time the Relay refuses a version above 2
+ * with `PROTOCOL_UNSUPPORTED`, the offer moves to the version one below the
+ * refused one. It never moves up again in the life of the client. A selected
+ * offer keeps its version.
  */
 export class SignalRelayProtocolOffer {
   #version: number;
   readonly #selected: boolean;
 
-  /** @param version - The selected version. Without it, the offer can fall back. */
-  public constructor(version?: number) {
+  /**
+   * @param version - The selected version. Without it, the offer can fall back.
+   * @param start - The first version of an unselected offer. Only tests set
+   *   it, to start above `RELAY_PROTOCOL_VERSION`.
+   */
+  public constructor(version?: number, start: number = RELAY_PROTOCOL_VERSION) {
     this.#selected = version !== undefined;
-    this.#version = version ?? RELAY_PROTOCOL_VERSION;
+    this.#version = version ?? start;
   }
 
   /** The version that the next request offers. */
@@ -194,12 +200,14 @@ export class SignalRelayProtocolOffer {
 
   /**
    * Records that the Relay refused `sent` with `PROTOCOL_UNSUPPORTED`.
-   * Returns true when the client now offers version 2 in place of the
-   * refused version, so the caller sends the request again.
+   * Returns true when the client now offers a version below the refused
+   * one, so the caller sends the request again. The offer moves down one
+   * version. When a concurrent refusal already moved it below `sent`, it
+   * stays there.
    */
   public refused(sent: number): boolean {
-    if (this.#selected || !usesSignalRelayNames(sent)) return false;
-    this.#version = SIGNAL_RELAY_PROTOCOL_FALLBACK;
+    if (this.#selected || sent <= SIGNAL_RELAY_PROTOCOL_FALLBACK) return false;
+    this.#version = Math.min(this.#version, sent - 1);
     return true;
   }
 }
@@ -250,19 +258,22 @@ export function throwIfProtocolFallBack(
 
 /**
  * Sends one request with the version that `offer` holds. The request gets
- * the version and builds its headers and its signed fields from it. When the
- * Relay refuses version 3 and the offer falls back, the request runs once
- * more with version 2.
+ * the version and builds its headers and its signed fields from it. Each
+ * time the Relay refuses the version and the offer falls back, the request
+ * runs again with the lower version. The loop ends, because each fall-back
+ * moves the offer below the refused version, and the offer does not fall
+ * back below version 2.
  */
 export async function sendOnSignalRelayProtocol<T>(
   offer: SignalRelayProtocolOffer,
   send: (version: number) => Promise<T>,
 ): Promise<T> {
-  try {
-    return await send(offer.version);
-  } catch (error) {
-    if (!(error instanceof SignalRelayProtocolFallBack)) throw error;
-    return send(offer.version);
+  for (;;) {
+    try {
+      return await send(offer.version);
+    } catch (error) {
+      if (!(error instanceof SignalRelayProtocolFallBack)) throw error;
+    }
   }
 }
 

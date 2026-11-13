@@ -111,6 +111,7 @@ import {
 import { PREKEY_ALGORITHM_X25519, verifyPreKeySignature } from '../../keys/prekey-signature';
 import { SessionBuilder, SessionCipher } from '../session';
 import { sessionLockFor, sessionLockKey, type RecordLock } from '../session/record-locks';
+import { SessionTrust } from '../session/session-trust';
 
 /** @internal Invoke only the existing-identity initialization at this owner. */
 export function initializeManagerFromRetainedIdentities(
@@ -198,6 +199,12 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
   private sessionCipher: SessionCipher | null = null;
 
   /**
+   * The trust decision for remote identities. An own device is trusted only
+   * with the local identity.
+   */
+  private readonly trust: SessionTrust;
+
+  /**
    * Create a new DefaultSignalProtocolManager instance
    *
    * @param storage - Local protocol storage implementation.
@@ -217,6 +224,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
     this.protocolStrategy = protocolStrategy;
     this.maxSkip = maxSkip;
     this.lock = sessionLockFor(storage);
+    this.trust = new SessionTrust(storage, () => this.localUserId);
   }
 
   /**
@@ -229,7 +237,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
         this.keyStorage,
         this.establishSessionFromPreKeyMessage.bind(this),
         this.lock,
-        { protocolStrategy: this.protocolStrategy, maxSkip: this.maxSkip },
+        { protocolStrategy: this.protocolStrategy, maxSkip: this.maxSkip, trust: this.trust },
         this.logger
       );
     }
@@ -502,7 +510,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
         // Reject a known identity change before doing handshake work. The final
         // atomic commit below repeats this decision against current durable state,
         // closing the race between this pre-check and session persistence.
-        const isTrusted = await this.keyStorage.isTrustedIdentity(
+        const isTrusted = await this.trust.isTrusted(
           remoteAddress,
           prekeyBundle.identity,
           TrustDirection.SENDING,
@@ -668,7 +676,7 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
           // One Signal client replaces a session only after an archive, and the
           // archive deletes the rows. Here the bundle commit archives the
           // current session itself, so it deletes the rows too.
-          await this.keyStorage.commitSessionTrust({
+          await this.trust.commit({
             address: remoteAddress,
             record,
             contactIdentity: prekeyBundle.identity,

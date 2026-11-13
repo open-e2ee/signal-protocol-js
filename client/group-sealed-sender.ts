@@ -6,7 +6,10 @@ import {
   deserializeSenderCertificate,
   sealMultiRecipient,
 } from '../internal/protocol/sealed-sender';
-import { serializeSentMessage } from '../internal/protocol/sealed-sender/multi-recipient-message';
+import {
+  deserializeSentMessage,
+  serializeSentMessage,
+} from '../internal/protocol/sealed-sender/multi-recipient-message';
 import { SealedSenderContentType } from '../internal/protocol/sealed-sender/types';
 import type { ContentHint } from '../types/messages';
 
@@ -68,17 +71,91 @@ export async function prepareGroupSharedMessage(input: {
       };
     })
   );
+  const sealed = await sealGroupBody(
+    input.senderKeys,
+    recipients,
+    input.encryptedMessageBase64,
+    input.contentHint
+  );
+  return {
+    sentMessageBase64: sealed.sentMessageBase64,
+    recipientUserIds: sealed.recipientUserIds,
+    sharedMembers,
+    fallbackMembers,
+  };
+}
 
+/**
+ * Seal a stored group body again with new sender keys, from its stored
+ * group ciphertext. The new body names the same accounts in the same order,
+ * and the same devices with the same registrations, so the shared post
+ * declares the same destinations. The group ciphertext and the hint stay the
+ * same, so only the outer layer changes. The outer layer of each account
+ * goes to its current identity.
+ *
+ * @throws Error when this client knows no identity of an account of the body.
+ */
+export async function resealGroupSharedMessage(input: {
+  storage: SignalProtocolLocalStore;
+  senderKeys: GroupSealedSenderKeys;
+  /** The stored body. */
+  sentMessageBase64: string;
+  /** The accounts of the stored body, in the order of the body. */
+  recipientUserIds: readonly string[];
+  encryptedMessageBase64: string;
+  contentHint?: ContentHint;
+}): Promise<string> {
+  const { recipients: accounts } = deserializeSentMessage(
+    base64ToBytes(input.sentMessageBase64 as Base64)
+  );
+  if (accounts.length !== input.recipientUserIds.length) {
+    throw new Error('A stored group body does not match its accounts');
+  }
+  const recipients = [];
+  for (const [index, { devices }] of accounts.entries()) {
+    const userId = input.recipientUserIds[index]!;
+    const identityRecord = await input.storage.getContactIdentity(ProtocolAddress.create(userId, 1));
+    if (!identityRecord) throw new Error('The identity of a sealed-sender recipient is unknown');
+    const identityPublic = base64ToBytes(identityRecord.identity.x25519PublicKey);
+    for (const { deviceId, registrationId } of devices) {
+      recipients.push({ serviceId: userId, deviceId, registrationId, identityPublic });
+    }
+  }
+  const sealed = await sealGroupBody(
+    input.senderKeys,
+    recipients,
+    input.encryptedMessageBase64,
+    input.contentHint
+  );
+  return sealed.sentMessageBase64;
+}
+
+/**
+ * Seal one group ciphertext for each recipient device, and serialize the
+ * body with the devices of each account together, in the order in which
+ * each account first appears.
+ */
+async function sealGroupBody(
+  senderKeys: GroupSealedSenderKeys,
+  recipients: Array<{
+    serviceId: string;
+    deviceId: number;
+    registrationId: number;
+    identityPublic: Uint8Array;
+  }>,
+  encryptedMessageBase64: string,
+  contentHint: ContentHint | undefined
+): Promise<{ sentMessageBase64: string; recipientUserIds: string[] }> {
   const sealed = await sealMultiRecipient({
     senderCertificate: deserializeSenderCertificate(
-      base64ToBytes(input.senderKeys.senderCertificateBase64 as Base64)
+      base64ToBytes(senderKeys.senderCertificateBase64 as Base64)
     ),
-    senderIdentityPrivate: input.senderKeys.senderIdentityPrivate,
-    senderIdentityPublic: input.senderKeys.senderIdentityPublic,
+    senderIdentityPrivate: senderKeys.senderIdentityPrivate,
+    senderIdentityPublic: senderKeys.senderIdentityPublic,
     recipients,
-    signalProtocolMessage: base64ToBytes(input.encryptedMessageBase64 as Base64),
+    signalProtocolMessage: base64ToBytes(encryptedMessageBase64 as Base64),
     contentType: SealedSenderContentType.SENDERKEY_MESSAGE,
-    ...(input.contentHint !== undefined && { contentHint: input.contentHint }),
+    ...(contentHint !== undefined && { contentHint }),
   });
 
   const recipientsByUser = new Map<
@@ -123,7 +200,5 @@ export async function prepareGroupSharedMessage(input: {
       )
     ),
     recipientUserIds: [...recipientsByUser.keys()],
-    sharedMembers,
-    fallbackMembers,
   };
 }

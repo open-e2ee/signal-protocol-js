@@ -74,6 +74,10 @@ import { base64ToBytes, bytesToBase64, constantTimeEqual, generateUuidV4 } from 
 import { deriveGroupSecretParams, getGroupPublicParams } from '../internal/protocol/zk/groups';
 import { SERVICE_ID_ACI } from '../internal/protocol/zk/groups/uid-struct';
 import {
+  deserializeEndorsementsResponse,
+  MIN_ENDORSEMENT_RESPONSE_LIFETIME_SECONDS,
+} from '../internal/protocol/zk/groups/group-send-endorsement';
+import {
   deserializeSenderCertificate,
   validateSenderCertificate,
 } from '../internal/protocol/sealed-sender';
@@ -93,11 +97,14 @@ import { ProtocolAddress } from '../types/address';
 import {
   getActiveIdentityTypes,
   resolveSignalProtocolStrategy,
+  SEALED_SENDER_CERTIFICATE_JITTER_MS,
   SEALED_SENDER_CERTIFICATE_MARGIN_MS,
+  SEALED_SENDER_RESEAL_SKEW_MS,
   type ProgressCallback,
   type SignalProtocolClientConfig,
 } from './config';
 import type { SesameManager, SesameMessage, SesameStats } from '../internal/sesame/types';
+import { estimateServerTimestamp } from '../server-clock';
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import {
   SenderKeyManager,
@@ -529,11 +536,14 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   private signalProtocolRelayUnsubscribe?: Unsubscribe;
 
   /**
-   * Cached sender certificate for sealed sender.
-   * Lazily fetched and refreshed one hour before its signed expiration.
+   * Cached sender certificate for sealed sender, fetched lazily.
+   * `cachedCertificateExpiry` is the estimated Relay time until which the
+   * client uses it, not its signed expiration.
    */
   private cachedSenderCertificate: string | null = null;
   private cachedCertificateExpiry: number = 0;
+  /** The certificate fetch that concurrent sends share while it runs. */
+  private senderCertificateFetch: Promise<string> | undefined;
 
   /**
    * Centralized state management for retry/rotation tracking
@@ -1105,6 +1115,20 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
           orderedUserIds.push(userId);
         }
 
+        // The Relay ends the endorsements at the first UTC day boundary at or
+        // after the end of the project's period. Near that boundary they have
+        // less time than a client accepts. The client then keeps the
+        // endorsements that it holds, and uses them until they expire.
+        const expiration = deserializeEndorsementsResponse(endorsements).expiration;
+        const remaining = expiration - Math.floor(Date.now() / 1000);
+        if (remaining < MIN_ENDORSEMENT_RESPONSE_LIFETIME_SECONDS) {
+          this.logger.warn('The Relay issued group send endorsements that expire too soon to accept', {
+            category: 'E2EE',
+            data: { groupId, expiration, remainingSeconds: remaining },
+          });
+          return false;
+        }
+
         // 8. Process and cache endorsements
         await endorsementManager.processAndCacheEndorsements(
           groupId,
@@ -1215,19 +1239,68 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * Fetch (or return cached) sender certificate for sealed sender.
    *
    * Uses the configured certificateProvider or relay.fetchSenderCertificate().
-   * Validates the fetched certificate and caches it until one hour before its
-   * signed expiration.
+   * Concurrent calls share one fetch. The client validates the certificate
+   * and reads its expiration against the estimated Relay time, because the
+   * Relay signs the expiration and the receiver checks it against the time
+   * at which the Relay stores the post.
+   *
+   * The client uses a certificate until its expiration minus
+   * `SEALED_SENDER_CERTIFICATE_MARGIN_MS` minus a random time below
+   * `SEALED_SENDER_CERTIFICATE_JITTER_MS`. It uses a shorter certificate
+   * until its expiration minus `SEALED_SENDER_RESEAL_SKEW_MS`. When a fetched
+   * certificate expires within that skew, the client waits until it expires
+   * and fetches once more.
    *
    * @returns Base64-encoded serialized SenderCertificate
-   * @throws if no certificate provider is available
+   * @throws if no certificate provider is available, or if the certificate
+   *   that the client fetches after the wait also expires within the skew
    */
   async fetchSenderCertificate(): Promise<string> {
-    const now = Date.now();
-
-    if (this.cachedSenderCertificate && now < this.cachedCertificateExpiry) {
+    if (this.cachedSenderCertificate && estimateServerTimestamp() < this.cachedCertificateExpiry) {
       return this.cachedSenderCertificate;
     }
+    this.senderCertificateFetch ??= this.fetchUsableSenderCertificate().finally(() => {
+      this.senderCertificateFetch = undefined;
+    });
+    return this.senderCertificateFetch;
+  }
 
+  /**
+   * Fetch and validate a certificate, and cache it. Wait once for a
+   * certificate that expires within the reseal skew to expire, and fetch a
+   * new one after it.
+   */
+  private async fetchUsableSenderCertificate(): Promise<string> {
+    this.cachedSenderCertificate = null;
+    this.cachedCertificateExpiry = 0;
+    for (let attempt = 0; ; attempt += 1) {
+      const certBase64 = await this.requestSenderCertificate();
+      const signalRelayNow = estimateServerTimestamp();
+      const expires = await this.validatedSenderCertificateExpiry(certBase64, signalRelayNow);
+      const shortUseUntil = expires - SEALED_SENDER_RESEAL_SKEW_MS;
+      if (shortUseUntil > signalRelayNow) {
+        const refreshAt =
+          expires -
+          SEALED_SENDER_CERTIFICATE_MARGIN_MS -
+          Math.floor(Math.random() * SEALED_SENDER_CERTIFICATE_JITTER_MS);
+        this.cachedSenderCertificate = certBase64;
+        this.cachedCertificateExpiry = refreshAt > signalRelayNow ? refreshAt : shortUseUntil;
+        return certBase64;
+      }
+      if (attempt > 0) {
+        throw new EncryptionError(
+          'The sender certificate expires before a post can reach the Relay',
+          EncryptionErrorCode.INITIALIZATION_FAILED
+        );
+      }
+      // The Relay can cap a certificate at a period end and issue the next
+      // one only after it. The wait is at most the skew.
+      await new Promise<void>((resolve) => setTimeout(resolve, expires + 1 - signalRelayNow));
+    }
+  }
+
+  /** Request one sender certificate from the configured provider or the relay. */
+  private async requestSenderCertificate(): Promise<string> {
     const sealedSender = this.config.sealedSender;
     if (!sealedSender || sealedSender.trustRoots.length === 0) {
       throw new EncryptionError(
@@ -1235,27 +1308,28 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         EncryptionErrorCode.INITIALIZATION_FAILED
       );
     }
-
-    // Fetch from configured provider or relay
-    let certBase64: string;
-    if (sealedSender.certificateProvider) {
-      certBase64 = await sealedSender.certificateProvider();
-    } else if (this.signalProtocolRelay?.fetchSenderCertificate) {
-      certBase64 = await this.signalProtocolRelay.fetchSenderCertificate(this.deviceId);
-    } else {
-      throw new EncryptionError(
-        'No sender certificate provider configured. Set sealedSender.certificateProvider or use a relay that supports fetchSenderCertificate.',
-        EncryptionErrorCode.INITIALIZATION_FAILED
-      );
+    if (sealedSender.certificateProvider) return sealedSender.certificateProvider();
+    if (this.signalProtocolRelay?.fetchSenderCertificate) {
+      return this.signalProtocolRelay.fetchSenderCertificate(this.deviceId);
     }
+    throw new EncryptionError(
+      'No sender certificate provider configured. Set sealedSender.certificateProvider or use a relay that supports fetchSenderCertificate.',
+      EncryptionErrorCode.INITIALIZATION_FAILED
+    );
+  }
 
-    let certificate: ReturnType<typeof deserializeSenderCertificate>;
+  /**
+   * Validate a fetched certificate at `signalRelayNow` against the trust roots and
+   * the identity of this device, and return its signed expiration.
+   */
+  private async validatedSenderCertificateExpiry(certBase64: string, signalRelayNow: number): Promise<number> {
+    const sealedSender = this.config.sealedSender!;
     try {
-      certificate = deserializeSenderCertificate(base64ToBytes(certBase64 as Base64));
+      const certificate = deserializeSenderCertificate(base64ToBytes(certBase64 as Base64));
       await validateSenderCertificate(
         certificate,
         sealedSender.trustRoots.map((root) => bytesToBase64(root) as Base64),
-        now,
+        signalRelayNow,
         {
           expectedRelayScopeId: bytesToBase64(sealedSenderSignalProtocolRelayScopeId(sealedSender)) as Base64,
           revokedIssuerKeyIds: sealedSender.revokedIssuerKeyIds,
@@ -1273,23 +1347,13 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       ) {
         throw new Error('certificate binding mismatch');
       }
+      return certificate.expires;
     } catch {
       throw new EncryptionError(
         'Fetched sender certificate failed client binding validation',
         EncryptionErrorCode.INVALID_CIPHERTEXT
       );
     }
-
-    const refreshAt = certificate.expires - SEALED_SENDER_CERTIFICATE_MARGIN_MS;
-    if (refreshAt > now) {
-      this.cachedSenderCertificate = certBase64;
-      this.cachedCertificateExpiry = refreshAt;
-    } else {
-      this.cachedSenderCertificate = null;
-      this.cachedCertificateExpiry = 0;
-    }
-
-    return certBase64;
   }
 
   /**

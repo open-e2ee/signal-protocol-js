@@ -13,6 +13,7 @@
  * @see https://signal.org/docs/specifications/pqxdh/
  */
 
+import type { SessionTrust } from './session-trust';
 import type {
   IdentityKeyPair,
   PreKeyBundle,
@@ -223,4 +224,11 @@ export interface SessionCipherConfig {
    * the strategy's per-message diagnostic hooks are reported from here.
    */
   protocolStrategy?: ProtocolStrategyConfig;
+
+  /**
+   * The trust decision for the remote identity of a session. The manager
+   * passes its decision, which knows the local user. Undefined uses the
+   * trust state of the store for every address.
+   */
+  trust?: SessionTrust;
 }

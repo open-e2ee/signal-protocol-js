@@ -1227,10 +1227,10 @@ export function subscribeHostedMailbox(
         }
         // A close 4400 with the reason `PROTOCOL_UNSUPPORTED` takes the
         // retry below. The Relay sends it for a version above the newest one
-        // that it serves. A refused version 3 moves the offer to version 2,
-        // so the next socket offers version 2. A refused version 2 happens
-        // only after a Relay rollback. The version comes back when the newer
-        // Relay does, so the socket retries.
+        // that it serves. A refused version above 2 moves the offer one
+        // version down, so the next socket offers that version. A refused
+        // version 2 happens only after a Relay rollback. The version comes
+        // back when the newer Relay does, so the socket retries.
         if (
           event.code === PROTOCOL_UNSUPPORTED_CLOSE_CODE &&
           event.reason === PROTOCOL_UNSUPPORTED_CLOSE_REASON

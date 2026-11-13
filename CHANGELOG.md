@@ -1,5 +1,105 @@
 # Changelog
 
+## 14.5.0
+
+### Fixed
+
+- **A device trusts its own other devices only with the account identity.**
+  Each linked device holds the account identity. Before, a device trusted on
+  first use any identity that the Relay served for another device of its own
+  account. It pinned that identity, and it sent sync copies and group master
+  keys to that device. Now the SDK compares the identity of an own device with
+  the local identity of the same type, in constant time. A device with another
+  identity gets no session, no sync copy, and no group master key, and the
+  store pins nothing for it. The send to the recipient still succeeds, and the
+  logger reports an `UntrustedIdentityError` for the device. A PreKeyMessage
+  that names an own device with another identity fails with
+  `UntrustedIdentityError` before it uses a prekey. Contacts keep trust on
+  first use.
+- The SDK no longer calls `isTrustedIdentity` of a custom store for a device of
+  the local user.
+- On a Relay that compares device sets, a listed own device with another
+  identity stops each own-device sync while the Relay lists it. The sync
+  phase of a send stays pending, the logger reports it, and the relay accepts
+  no sync copy. The send to the recipient is not affected, and a retry with
+  the same `clientMessageId` completes the phase when the Relay no longer
+  lists the device. Group key sync, read sync, view-once open sync, media
+  attachment delete sync, configuration sync, username state sync, recipient
+  username sync, verification state sync, task notification acknowledgment
+  sync, and blocked recipients sync fail with `UntrustedIdentityError`, and
+  the relay accepts no copy. On a Relay that does not compare device sets,
+  these paths skip the device and post to the other own devices.
+- **A stale own pin no longer blocks the real own devices.** A store can hold
+  a pin of another identity under the own account: an earlier release pinned
+  the identity that a Relay served for an own device, or
+  `rotateAccountIdentity` replaced the account identity after the pin. The
+  store compares each session commit with that pin, so before, every session
+  with a real own device failed. Now, before it stores a session with an own
+  device that holds the local identity, the SDK replaces that pin with the
+  local identity through `acceptContactIdentityRotationAndDeleteSessions`.
+  That call also deletes the sessions with the own devices, which used the
+  replaced identity, and the next send starts them again.
+- **`isRetryableError` returns false for `DEVICE_LINK_REQUIRED`.** The Relay
+  sends it when an account with a device registers a new identity. The Relay
+  sends the same refusal to each repeat, so `withRetry` now gives the error to
+  the caller after one attempt. The check reads the error code, not the
+  message. The SDK does not retry its own registration. This change affects
+  only an application that calls `withRetry` or `isRetryableError` around
+  registration.
+- **A replay no longer posts a sealed message with an expired sender
+  certificate.** The receiver checks the certificate against the time at
+  which the Relay stores the post. Before, a replay posted the stored sealed
+  body again, so a body whose certificate had expired arrived, and the
+  receiver refused it with no signal to the sender. Now, before each replay
+  post, the SDK seals the stored ciphertext again with a current certificate
+  when the recorded expiration is at or before the estimated Relay time plus
+  5 minutes, or when the record has no expiration. This applies to direct
+  sealed posts, sealed resends, and shared group bodies. The new seal keeps
+  the message ID, the operation epoch, and the ciphertext, so the receiver
+  sees the same message. A `RETRY_CONFLICT` to the new seal follows the
+  existing rule: the Relay holds the same ciphertext under the message ID.
+  When the Relay answers `PERIOD_CLOSED` and the certificate expires before a
+  repeat can arrive, the one repeat is a new seal.
+- **The SDK uses a sender certificate that expires in less than 24 hours.**
+  Concurrent sends share one certificate fetch. The SDK refreshes a
+  certificate 1 hour before its expiration, less a random time below 10
+  minutes, so many clients do not refresh at the same time. It uses a shorter
+  certificate until 5 minutes before its expiration. When a fetched
+  certificate expires within those 5 minutes, the SDK waits for it to expire
+  and fetches once more. The SDK validates each certificate against the
+  estimated Relay time, not the local clock.
+- **A group send renews its endorsements once after the Relay refuses the
+  group credential.** The Relay stores nothing on that refusal. The SDK
+  clears the cached endorsements of the group, refreshes them once under the
+  endorsement lock, and posts the shared body once more. A second refusal
+  falls back to identified device posts in `preferred` mode and fails the
+  send in `required` mode, as before.
+- **A group send near the end of its endorsements no longer fails.** The
+  Relay can end new group send endorsements at a UTC day boundary less than
+  2 hours away. The SDK refuses endorsements with less than 2 hours left, so
+  before, each group send in that window failed with a verification error and
+  posted nothing. Now the SDK logs a warning, keeps the endorsements that it
+  holds, and seals with them until they expire. A group with no valid
+  endorsement uses identified device posts in `preferred` mode and fails the
+  send in `required` mode.
+- **The Relay protocol offer steps down one version at a time.** Before, a
+  refused offer went to version 2 at once. Now each `PROTOCOL_UNSUPPORTED`
+  refusal moves the offer one version down, and it never goes below version
+  2. The first version that the SDK offers does not change.
+
+#### Store compatibility
+
+- Stored sealed device messages and shared group bodies record the signed
+  expiration of their sender certificate in the optional field
+  `sealedSenderCertificateExpiresAt`. A record that an earlier SDK wrote has
+  no value, and the SDK reads it as before. An earlier SDK reads a record with
+  the field.
+- A return to SDK 14.4.0 is supported. SDK 14.4.0 posts a stored sealed body
+  again without a new seal, so a replay of a body whose sender certificate
+  expired can arrive and be refused by the receiver. The 14.4.0 rollback rule
+  still applies: do not ship SDK 14.1.0 or earlier to a device after it runs
+  SDK 14.4.0 or this release.
+
 ## 14.4.0
 
 ### Changed
