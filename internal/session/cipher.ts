@@ -105,9 +105,9 @@ import {
   EncryptionErrorCode,
   MessageType,
   DuplicatedMessageError,
-  UntrustedIdentityError,
   TrustDirection,
 } from '../../types';
+import { refuseUntrustedIdentity, type UntrustedIdentityObserver } from './untrusted-identity';
 import { ProtocolAddress } from '../../types/address';
 import { MESSAGE_FORMAT } from '../../versions';
 import * as CryptoUtils from '../crypto';
@@ -286,6 +286,9 @@ export class SessionCipher {
   /** The trust decision for the remote identity of a session */
   private readonly trust: SessionTrust;
 
+  /** Hears of each identity that the trust gate refuses. */
+  private readonly onUntrustedIdentity?: UntrustedIdentityObserver;
+
   /**
    * Create a new SessionCipher instance
    *
@@ -300,6 +303,8 @@ export class SessionCipher {
    *   Higher values allow more out-of-order messages but increase memory/CPU.
    * @param config.protocolStrategy - Protocol strategy, for the SPQR
    *   per-message diagnostic hooks.
+   * @param config.onUntrustedIdentity - Hears of each identity that the
+   *   trust gate refuses.
    */
   constructor(
     keyStorage: SignalProtocolLocalStore,
@@ -314,6 +319,7 @@ export class SessionCipher {
     this.maxSkip = config.maxSkip ?? SessionCipher.DEFAULT_MAX_SKIP;
     this.protocolStrategy = config.protocolStrategy;
     this.trust = config.trust ?? new SessionTrust(keyStorage, () => null);
+    this.onUntrustedIdentity = config.onUntrustedIdentity;
     this.logger = logger;
   }
 
@@ -409,7 +415,12 @@ export class SessionCipher {
           session.remoteIdentityType
         );
         if (!isTrusted) {
-          throw new UntrustedIdentityError(remoteAddress, session.remoteIdentity);
+          throw refuseUntrustedIdentity(this.onUntrustedIdentity, {
+            address: remoteAddress,
+            identity: session.remoteIdentity,
+            identityType: session.remoteIdentityType,
+            direction: TrustDirection.SENDING,
+          });
         }
 
         // Reject expired, unacknowledged PreKey sessions.
@@ -1039,7 +1050,12 @@ export class SessionCipher {
             'aci'
           );
           if (!isTrustedPreKeyIdentity) {
-            throw new UntrustedIdentityError(remoteAddress, prekeyMessage.senderIdentity);
+            throw refuseUntrustedIdentity(this.onUntrustedIdentity, {
+              address: remoteAddress,
+              identity: prekeyMessage.senderIdentity,
+              identityType: 'aci',
+              direction: TrustDirection.RECEIVING,
+            });
           }
 
           const matchingPreKeySession = findMatchingPreKeySession(existingRecord, prekeyMessage);
@@ -1208,7 +1224,12 @@ export class SessionCipher {
                 session.remoteIdentityType
               );
               if (!isTrustedReceivingIdentity) {
-                throw new UntrustedIdentityError(remoteAddress, session.remoteIdentity);
+                throw refuseUntrustedIdentity(this.onUntrustedIdentity, {
+                  address: remoteAddress,
+                  identity: session.remoteIdentity,
+                  identityType: session.remoteIdentityType,
+                  direction: TrustDirection.RECEIVING,
+                });
               }
 
               // H3: Mark session as acknowledged and clear unacknowledged PreKey items.
@@ -1489,7 +1510,12 @@ export class SessionCipher {
               session.remoteIdentityType
             );
             if (!isTrustedReceivingIdentity) {
-              throw new UntrustedIdentityError(remoteAddress, session.remoteIdentity);
+              throw refuseUntrustedIdentity(this.onUntrustedIdentity, {
+                address: remoteAddress,
+                identity: session.remoteIdentity,
+                identityType: session.remoteIdentityType,
+                direction: TrustDirection.RECEIVING,
+              });
             }
 
             // SESAME §3.4: Session Convergence - promote archived session to active if used

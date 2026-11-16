@@ -10,7 +10,7 @@ Signal Protocol sessions address individual devices. The application therefore
 needs a lifecycle that coordinates a locally persisted device ID with the
 authenticated backend's device registry.
 
-A linked device needs the account identity before it joins the account. Two
+A linked device needs the account identity before it joins the account. Three
 separate operations do that work:
 
 - **Transfer** sends an identity-only bundle over an application-owned
@@ -19,8 +19,35 @@ separate operations do that work:
   identity into the new device's store by a channel that it owns.
 - **The managed device link** is `linkHostedSignalProtocolRelayDevice()` from the package
   root. It joins a store that already holds the account identity to the Relay
-  account. It runs in one process that holds the active device's store and the
-  new device's store. It sends no private key to the Relay.
+  account. Only the primary device (device 1) can link a device. The call runs
+  in one process that holds the primary device's store and the new device's
+  store. It sends no private key to the Relay.
+- **The two-device link** joins a new device that has an empty store. The new
+  device calls `joinHostedSignalProtocolRelayAccount()` and shows a link code.
+  The primary device scans the code and calls
+  `approveHostedSignalProtocolRelayDeviceLink()`. Show a confirmation screen
+  on the primary device before it approves. See
+  [`joinHostedSignalProtocolRelayAccount()`](../docs/api/functions/joinHostedSignalProtocolRelayAccount.md)
+  and
+  [`approveHostedSignalProtocolRelayDeviceLink()`](../docs/api/functions/approveHostedSignalProtocolRelayDeviceLink.md).
+
+  Private keys can move between the devices of one user. They move only
+  inside an end-to-end encrypted envelope. The envelope uses hybrid X25519 and
+  post-quantum ML-KEM-768 key agreement. The Relay carries the envelope and
+  cannot decrypt it.
+
+The primary device removes a linked device with
+`removeHostedSignalProtocolRelayDevice()`, and any device can remove itself.
+Removal is a Relay revocation only. The removed device keeps the account
+identity key pair and the group master keys that it had. For a lost or stolen
+device, run an account recovery. See
+[`removeHostedSignalProtocolRelayDevice()`](../docs/api/functions/removeHostedSignalProtocolRelayDevice.md).
+
+The new device names itself with `hosted.deviceName` at the join. The primary
+device renames any device with `renameHostedSignalProtocolRelayDevice()`, and a
+linked device renames only itself. The SDK encrypts each name to the account
+identity key. See
+[`renameHostedSignalProtocolRelayDevice()`](../docs/api/functions/renameHostedSignalProtocolRelayDevice.md).
 
 The primary device uses ID `1`. The backend allocates linked device IDs from
 `2` through `5`. A client must not choose its own linked-device ID.
@@ -112,8 +139,16 @@ const client = await linkHostedSignalProtocolRelayDevice({
 });
 ```
 
-`activeDeviceStorage` is the store of a device that is already signed in. Its
-account identity must match the identity in `linkedStorage`. The call reads
+`activeDeviceStorage` is the store of the primary device (device 1). Only the
+primary device can link a device. On another device, the call throws
+`HostedSignalProtocolRelayDeviceProvisioningError` with the code
+`NOT_PRIMARY`. Without `hosted.adapter`, the call throws it before it writes to
+a store or sends a request. With a custom `hosted.adapter`, the Relay refuses
+the link, and the adapter's `HostedSignalProtocolRelayHttpError` has the code
+`NOT_PRIMARY`.
+
+The account identity in `activeDeviceStorage` must match the identity in
+`linkedStorage`. The call reads
 the device-authentication private key from each store and signs the link
 challenge in the calling process. Thus that process must hold the active
 device's store, private keys included. The adapter's `linkDevice()` gets a
@@ -196,7 +231,7 @@ durably restores the backup.
 - The transfer QR code authenticates the channel only to the extent that the
   application protects what the user scans or shares.
 - The managed device link sends no private key to the Relay. The process that
-  calls it must hold the active device's store.
+  calls it must hold the primary device's store.
 - The SDK encrypts device names for backend storage.
 - Backend authentication must bind registration, unlink, and removal to the
   owning account.

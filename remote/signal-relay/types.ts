@@ -706,8 +706,8 @@ export type Unsubscribe = () => void;
  * - `authority-refused`: the Relay refused the device token refresh or a
  *   pull in a way that a retry gets again, for example for a deleted account.
  *   The state is `stopped`, and the subscription does not retry.
- * - `device-revoked`: an account recovery revoked this device. The state is
- *   `stopped`, and the subscription does not retry.
+ * - `device-revoked`: an account recovery or a device removal revoked this
+ *   device. The state is `stopped`, and the subscription does not retry.
  * - `device-unknown`: the Relay has no device for the stored session. The
  *   state is `stopped`, and the subscription does not retry. Only an explicit
  *   re-registration can connect this device again.

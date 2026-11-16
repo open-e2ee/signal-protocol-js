@@ -50,6 +50,7 @@ import {
   acceptContactIdentityRotation as acceptRotation,
   createUnverifiedContactIdentityRecord,
   evaluateContactIdentityCandidate,
+  unverifyContactIdentityRecord,
   verifyContactIdentityRecord,
   validateContactIdentityRecord,
 } from '../../../keys/identity';
@@ -340,6 +341,20 @@ export class InMemorySignalProtocolStore implements SignalProtocolLocalStore {
     );
     this.contactIdentities.set(key, cloneStored(verified));
     return cloneProtocolState(verified);
+  }
+
+  async unverifyContactIdentity(
+    address: ProtocolAddress,
+    identity: CompositeIdentityV1,
+    identityType?: IdentityType
+  ): Promise<ContactIdentityRecord> {
+    this.failures.beforeWrite('unverifyContactIdentity');
+    const key = this.getContactIdentityKey(address, identityType);
+    const existing = this.contactIdentities.get(key);
+    if (!existing) throw new Error('Cannot clear the verification of an unseen identity');
+    const unverified = unverifyContactIdentityRecord(existing, identity, Date.now());
+    this.contactIdentities.set(key, cloneStored(unverified));
+    return cloneProtocolState(unverified);
   }
 
   async isTrustedIdentity(

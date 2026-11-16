@@ -8,6 +8,7 @@ import {
   type ParsedSenderKeyDistribution,
 } from './sender-key-distribution';
 import { PROFILE_KEY_UPDATE_FLAG } from './profile-key-exchange';
+import type { FirstSyncInput } from './first-sync-bundle';
 import {
   MediaAttachmentCleanupReason,
   MediaAttachmentMessageType,
@@ -64,9 +65,28 @@ export interface RecipientUsernameSyncInput {
   learnedAt: number;
 }
 
+/**
+ * The verification state of one contact that a device gives to the other
+ * devices of its account, as Signal's `Verified` sync message.
+ *
+ * A receiving own device applies the state to its pinned identity of
+ * `targetUserId` with `verifyContactIdentity` or `unverifyContactIdentity`.
+ * It does not apply a sync from another account, for the own account, for a
+ * contact with no pinned identity, or for an `identityKey` that is not the
+ * pinned identity. A sync never pins or rotates an identity. A store without
+ * `unverifyContactIdentity` keeps `VERIFIED` on a `default` sync. The client
+ * logs `VERIFICATION_STATE_SYNC_NOT_APPLIED` with the reason for each sync that
+ * it does not apply. The application still gets the sync content.
+ */
 export interface VerificationStateSyncInput {
+  /** The user ID of the contact. */
   targetUserId: string;
+  /**
+   * The composite identity of the contact that the state is for: the base64
+   * of `encodeCompositeIdentityV1(identity)`.
+   */
   identityKey: string;
+  /** `'verified'` marks the identity verified. `'default'` clears a verification. */
   state: 'default' | 'verified';
   changedAt: number;
 }
@@ -97,6 +117,8 @@ export interface GroupKeySyncInput {
   revision: number;
 }
 
+export type { FirstSyncInput } from './first-sync-bundle';
+
 /**
  * The sync content that `inspectContent` reads from a plaintext.
  *
@@ -109,6 +131,12 @@ export interface GroupKeySyncInput {
  * An own device on an older SDK version gives the raw group key sync to
  * `onMessageDecrypted`, so upgrade every own device of one account in one
  * release.
+ *
+ * The `type` member `'firstSync'` names the first-sync bundle that device 1
+ * gives a newly linked own device. The same three receive paths consume it
+ * and give it to `hosted.onFirstSync`, never to `onMessageDecrypted`. The
+ * raw decrypt methods return it unapplied. An own device on an older SDK
+ * version gives it to `onMessageDecrypted`.
  */
 export interface ParsedSyncContent {
   type:
@@ -122,7 +150,8 @@ export interface ParsedSyncContent {
     | 'verificationState'
     | 'taskNotificationAck'
     | 'blocked'
-    | 'groupKeySync';
+    | 'groupKeySync'
+    | 'firstSync';
   conversationId?: string;
   timestamp?: number;
   recipientUserId?: string;
@@ -136,6 +165,18 @@ export interface ParsedSyncContent {
    * its own group key sync encoding, with a 32-byte master key.
    */
   groupKey?: GroupKeySyncInput;
+  /**
+   * The bundle of a `firstSync`, with its byte fields decoded. A custom
+   * adapter must report it for its own first-sync encoding. Without it, the
+   * client consumes the sync as malformed.
+   */
+  firstSync?: FirstSyncInput;
+  /**
+   * The state of a `verificationState`. A custom adapter must report it for
+   * its own verification state encoding. Without it, the client does not
+   * apply the sync.
+   */
+  verificationState?: VerificationStateSyncInput;
 }
 
 /**
@@ -221,6 +262,15 @@ export interface SignalProtocolContentAdapter {
    * @param input - The group master key and the revision at the send
    */
   serializeGroupKeySync(input: GroupKeySyncInput): Uint8Array;
+  /**
+   * The sync content that gives a first-sync bundle to a newly linked own
+   * device. `inspectContent` must report the result as a sync of type
+   * `'firstSync'` with its `firstSync`. Without this method,
+   * `sendHostedSignalProtocolRelayFirstSync` throws a `TypeError`.
+   *
+   * @param input - The bundle with its version, bundle ID, and creation time
+   */
+  serializeFirstSync?(input: FirstSyncInput): Uint8Array;
   serializeReceipt(type: 'DELIVERY' | 'READ' | 'VIEWED', timestamps: number[]): string;
   serializeTyping(action: 'STARTED' | 'STOPPED', groupId?: string): string;
   serializeNullMessage(): string;
@@ -357,6 +407,52 @@ function decodeBase64(value: unknown): Uint8Array | null {
   } catch {
     return null;
   }
+}
+
+/** The bytes of a canonical standard base64 string, or null. */
+function decodeCanonicalBase64(value: unknown): Uint8Array | null {
+  const bytes = decodeBase64(value);
+  return bytes !== null && CryptoUtils.bytesToBase64(bytes) === value ? bytes : null;
+}
+
+/**
+ * The first-sync input of the default encoding, with each byte field
+ * decoded. Members that are not byte fields stay as they are, so the
+ * receive checks them. Undefined when a byte field is not canonical
+ * standard base64.
+ */
+function decodeFirstSync(value: JsonObject): FirstSyncInput | undefined {
+  const bytesOf = (field: unknown): Uint8Array | null | undefined =>
+    field === undefined ? undefined : decodeCanonicalBase64(field);
+  const withBytes = (object: JsonObject, names: readonly string[]): JsonObject | undefined => {
+    const decoded: Record<string, unknown> = { ...object };
+    for (const name of names) {
+      const bytes = bytesOf(object[name]);
+      if (bytes === null) return undefined;
+      if (bytes !== undefined) decoded[name] = bytes;
+    }
+    return decoded as JsonObject;
+  };
+  const decoded = withBytes(value, ['profileKey', 'applicationData']) as Record<string, unknown> | undefined;
+  if (decoded === undefined) return undefined;
+  if (Array.isArray(value.contacts)) {
+    const contacts: unknown[] = [];
+    for (const contact of value.contacts) {
+      if (contact === null || typeof contact !== 'object' || Array.isArray(contact)) {
+        contacts.push(contact);
+        continue;
+      }
+      const decodedContact = withBytes(contact as JsonObject, ['profileKey', 'applicationData']);
+      if (decodedContact === undefined) return undefined;
+      contacts.push(decodedContact);
+    }
+    decoded.contacts = contacts;
+  }
+  return decoded as unknown as FirstSyncInput;
+}
+
+function encodeFirstSyncBytes(bytes: Uint8Array | undefined): string | undefined {
+  return bytes === undefined ? undefined : CryptoUtils.bytesToBase64(bytes);
 }
 
 function encodeGroupContext(context: GroupContentContext): JsonObject {
@@ -734,6 +830,12 @@ function inspectPayload(payload: JsonObject): InspectedSignalProtocolContent {
           type: 'verificationState',
           timestamp: verificationState.changedAt,
           targetUserId: verificationState.targetUserId,
+          verificationState: {
+            targetUserId: verificationState.targetUserId,
+            identityKey: verificationState.identityKey,
+            state,
+            changedAt: verificationState.changedAt,
+          },
         };
       }
     } else if (
@@ -799,6 +901,15 @@ function inspectPayload(payload: JsonObject): InspectedSignalProtocolContent {
       ) {
         sync = { type: 'groupKeySync', groupKey: { masterKey, revision } };
       }
+    } else if (type === 'firstSync') {
+      // A first sync is SDK content in each form, so the receive consumes
+      // it. Without a decoded `firstSync`, the receive logs it as malformed.
+      const value = (syncMessage as JsonObject).firstSync;
+      const firstSync =
+        value && typeof value === 'object' && !Array.isArray(value)
+          ? decodeFirstSync(value as JsonObject)
+          : undefined;
+      sync = { type: 'firstSync', ...(firstSync !== undefined && { firstSync }) };
     }
   }
 
@@ -995,6 +1106,36 @@ export function createDefaultSignalProtocolContentAdapter(): SignalProtocolConte
             groupKeySync: {
               masterKey: CryptoUtils.bytesToBase64(input.masterKey),
               revision: input.revision,
+            },
+          },
+        })
+      );
+    },
+
+    serializeFirstSync(input) {
+      return new TextEncoder().encode(
+        JSON.stringify({
+          syncMessage: {
+            type: 'firstSync',
+            firstSync: {
+              version: input.version,
+              bundleId: input.bundleId,
+              createdAt: input.createdAt,
+              profileKey: encodeFirstSyncBytes(input.profileKey),
+              settings: input.settings && {
+                readReceipts: input.settings.readReceipts,
+                typingIndicators: input.settings.typingIndicators,
+              },
+              contacts: input.contacts?.map((contact) => ({
+                userId: contact.userId,
+                profileKey: encodeFirstSyncBytes(contact.profileKey),
+                applicationData: encodeFirstSyncBytes(contact.applicationData),
+              })),
+              blocked: input.blocked?.map((entry) => ({
+                recipientId: entry.recipientId,
+                blockedAt: entry.blockedAt,
+              })),
+              applicationData: encodeFirstSyncBytes(input.applicationData),
             },
           },
         })

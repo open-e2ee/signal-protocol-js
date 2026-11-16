@@ -74,15 +74,26 @@ database-binding and SQLCipher bootstrap.
 
 The hosted factory resumes the stored session. It throws
 `HostedSignalProtocolRelayDeviceUnknownError` when the Relay has no device for that session.
-It throws `HostedSignalProtocolRelayDeviceRevokedError` when an account recovery revoked the
-device. It never registers a new device in their place, and it does not retry.
+It throws `HostedSignalProtocolRelayDeviceRevokedError` when an account recovery or a device
+removal revoked the device. It never registers a new device in their place, and it does not retry.
 
 After an unknown device, ask the user to confirm. Then call the factory again
 with `assertionPurpose: 'reregister'`. It registers the same identity and
 device key again. The Relay can give a new device ID, so the messages queued
-for the old device are lost. A Relay that recorded the revocation of a device
-refuses its registration with `HostedSignalProtocolRelayDeviceRevokedError`. See
+for the old device are lost.
+
+The Relay refuses the registration of a revoked device with
+`HostedSignalProtocolRelayDeviceRevokedError`. When the account has a device,
+the Relay refuses the re-registration with
+`HostedSignalProtocolRelayDeviceLinkRequiredError`. See
 [Signal Protocol Relay Device Errors](../docs/ERROR_HANDLING.md#signal-protocol-relay-device-errors).
+
+A removed device can join the account again with the same store. Stop each
+client of the store, and call `resetRemovedHostedSignalProtocolRelayDevice`.
+It deletes the local account state only when the Relay refuses the device as
+revoked. Then call `joinHostedSignalProtocolRelayAccount` with the same
+store. See
+[`resetRemovedHostedSignalProtocolRelayDevice`](../docs/api/functions/resetRemovedHostedSignalProtocolRelayDevice.md).
 
 ### Protocol policy
 

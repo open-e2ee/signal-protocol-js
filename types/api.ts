@@ -1106,6 +1106,10 @@ export interface SignalProtocolClient {
    * Only explicit `verified` and cleared-to-`default` states belong here.
    * Conflict and untrusted state is still derived locally from identity-key changes.
    *
+   * Each other device of the account applies the state to its pinned identity
+   * of `targetUserId` when it receives the sync, only when `identityKey` is
+   * that pinned identity. See `VerificationStateSyncInput`.
+   *
    * The `changedAt` time is the epoch of the sync. The SDK accepts a safe positive
    * integer at most 5 minutes ahead of the SDK clock and at most 24 hours
    * behind it, and throws `InvalidSendTimestampError` for any other value
@@ -1404,6 +1408,31 @@ export interface IdentityKeyStore {
     identity: CompositeIdentityV1,
     identityType?: IdentityType,
     suppliedCommitment?: Uint8Array
+  ): Promise<ContactIdentityRecord>;
+
+  /**
+   * Clear the verification of the exact current tuple. The pin, its revision,
+   * and its rollback history stay, and the trust state becomes
+   * `UNVERIFIED_TOFU`. A record that is not verified stays unchanged.
+   * `unverifyContactIdentityRecord` from `@open-e2ee/signal-protocol-sdk/keys`
+   * computes the new record.
+   *
+   * The client calls it when another device of the own account syncs the
+   * `default` verification state for the current tuple. Each built-in store
+   * implements it. A custom store without it keeps the verification, and the
+   * client logs `VERIFICATION_STATE_SYNC_NOT_APPLIED`.
+   *
+   * @param address - Contact's protocol address
+   * @param identity - The current tuple of the contact
+   * @param identityType - ACI or PNI trust namespace
+   * @returns The record after the change
+   * @throws Error when the store holds no pin, or `identity` is not the
+   *   current tuple
+   */
+  unverifyContactIdentity?(
+    address: ProtocolAddress,
+    identity: CompositeIdentityV1,
+    identityType?: IdentityType
   ): Promise<ContactIdentityRecord>;
 
   /**

@@ -63,6 +63,7 @@ import {
   acceptContactIdentityRotation as acceptRotation,
   createUnverifiedContactIdentityRecord,
   evaluateContactIdentityCandidate,
+  unverifyContactIdentityRecord,
   validateContactIdentityRecord,
   verifyContactIdentityRecord,
 } from '../../../keys/identity';
@@ -874,6 +875,36 @@ export class IndexedDbSignalProtocolStore implements SignalProtocolLocalStore {
     });
     await tx.done;
     return verified;
+  }
+
+  async unverifyContactIdentity(
+    address: ProtocolAddress,
+    identity: CompositeIdentityV1,
+    identityType?: IdentityType
+  ): Promise<ContactIdentityRecord> {
+    this.ensureInitialized();
+    const key = this.serializeContactIdentityKey(address, identityType);
+    const existingRow = await this.db!.get('contacts', key);
+    const existing = existingRow ? await this.decodeContactRecord(existingRow.data) : null;
+    if (!existing) throw new Error('Cannot clear the verification of an unseen identity');
+    const unverified = unverifyContactIdentityRecord(existing, identity, Date.now());
+    if (unverified === existing) return existing;
+    const encrypted = await this.encrypt(JSON.stringify(unverified));
+    const tx = this.db!.transaction('contacts', 'readwrite');
+    const contacts = tx.objectStore('contacts');
+    const current = await contacts.get(key);
+    if (!current || current.revision !== existing.revision) {
+      await tx.done;
+      throw new Error('Contact identity changed concurrently while its verification was cleared');
+    }
+    await contacts.put({
+      key,
+      userId: address.userId,
+      data: encrypted,
+      revision: unverified.revision,
+    });
+    await tx.done;
+    return unverified;
   }
 
   async isTrustedIdentity(

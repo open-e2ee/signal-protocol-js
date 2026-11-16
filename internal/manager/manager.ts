@@ -84,7 +84,6 @@ import {
   EncryptionError,
   EncryptionErrorCode,
   TrustDirection,
-  UntrustedIdentityError,
 } from '../../types';
 import { DEFAULT_RATCHET_CONFIG } from '../protocol/double-ratchet';
 import { ProtocolAddress } from '../../types/address';
@@ -112,6 +111,10 @@ import { PREKEY_ALGORITHM_X25519, verifyPreKeySignature } from '../../keys/preke
 import { SessionBuilder, SessionCipher } from '../session';
 import { sessionLockFor, sessionLockKey, type RecordLock } from '../session/record-locks';
 import { SessionTrust } from '../session/session-trust';
+import {
+  refuseUntrustedIdentity,
+  type UntrustedIdentityObserver,
+} from '../session/untrusted-identity';
 
 /** @internal Invoke only the existing-identity initialization at this owner. */
 export function initializeManagerFromRetainedIdentities(
@@ -198,6 +201,9 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
    */
   private sessionCipher: SessionCipher | null = null;
 
+  /** Hears of each identity that the trust gate refuses. */
+  private readonly onUntrustedIdentity?: UntrustedIdentityObserver;
+
   /**
    * The trust decision for remote identities. An own device is trusted only
    * with the local identity.
@@ -212,17 +218,21 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
    * @param logger - Logger for protocol diagnostics.
    * @param maxSkip - Maximum message keys that the SessionCipher skips in one
    *   receiving chain. Undefined keeps the cipher default of 25000.
+   * @param options.onUntrustedIdentity - Hears of each identity that the trust
+   *   gate of the manager or of its SessionCipher refuses.
    */
   constructor(
     storage: SignalProtocolLocalStore,
     protocolStrategy?: ProtocolStrategyConfig,
     logger: Required<Logger> = defaultSignalProtocolLogger,
-    maxSkip?: number
+    maxSkip?: number,
+    options: { onUntrustedIdentity?: UntrustedIdentityObserver } = {}
   ) {
     this.logger = logger;
     this.keyStorage = storage;
     this.protocolStrategy = protocolStrategy;
     this.maxSkip = maxSkip;
+    this.onUntrustedIdentity = options.onUntrustedIdentity;
     this.lock = sessionLockFor(storage);
     this.trust = new SessionTrust(storage, () => this.localUserId);
   }
@@ -237,7 +247,12 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
         this.keyStorage,
         this.establishSessionFromPreKeyMessage.bind(this),
         this.lock,
-        { protocolStrategy: this.protocolStrategy, maxSkip: this.maxSkip, trust: this.trust },
+        {
+          protocolStrategy: this.protocolStrategy,
+          maxSkip: this.maxSkip,
+          trust: this.trust,
+          onUntrustedIdentity: this.onUntrustedIdentity,
+        },
         this.logger
       );
     }
@@ -517,7 +532,12 @@ export class DefaultSignalProtocolManager implements SignalProtocolManager {
           recipientIdentityType
         );
         if (!isTrusted) {
-          throw new UntrustedIdentityError(remoteAddress, prekeyBundle.identity);
+          throw refuseUntrustedIdentity(this.onUntrustedIdentity, {
+            address: remoteAddress,
+            identity: prekeyBundle.identity,
+            identityType: recipientIdentityType,
+            direction: TrustDirection.SENDING,
+          });
         }
 
         // Step 2: Get identity key and build session via SessionBuilder

@@ -68,14 +68,30 @@ and the [application callback recipe](./RECIPES.md#application-bound-identity-ca
 The hosted factory authenticates and registers the current device, then publishes
 its public prekeys. A linked device gets the account identity by device
 transfer or by a channel that the application owns, then joins the account
-with `linkHostedSignalProtocolRelayDevice()`. That call runs in one process that holds the
-active device's store and the new device's store. It copies each group master
-key from the active device and gives the new device its own registration ID.
+with `linkHostedSignalProtocolRelayDevice()`. Only the primary device (device 1)
+can link a device. That call runs in one process that holds the primary
+device's store and the new device's store. It copies each group master key from
+the primary device and gives the new device its own registration ID.
 
 It refuses a new device's store that already lists a group, with
 `HostedSignalProtocolRelayDeviceLinkError`. See the [device guide](../device/README.md). The
 default policy requires post-quantum session establishment and Braid
 ratcheting.
+
+A new device with an empty store can also join with the two-device link. The
+new device calls `joinHostedSignalProtocolRelayAccount()` and shows a link
+code. The primary device scans the code and calls
+`approveHostedSignalProtocolRelayDeviceLink()`. Show a confirmation screen on
+the primary device before it approves.
+
+The link token expires after 10 minutes, and an account has at most 5 devices.
+SDK 14.6.0 and later ship these calls. See
+[`joinHostedSignalProtocolRelayAccount()`](./api/functions/joinHostedSignalProtocolRelayAccount.md)
+and
+[`approveHostedSignalProtocolRelayDeviceLink()`](./api/functions/approveHostedSignalProtocolRelayDeviceLink.md).
+
+Private keys can move between the devices of one user. They move only inside an
+end-to-end encrypted envelope.
 
 Omit `hosted.adapter` when linking through the OpenE2EE Signal Protocol Relay.
 The SDK uses the active device's stored session and persists the linked session

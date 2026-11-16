@@ -56,6 +56,7 @@ export {
   createUnverifiedContactIdentityRecord,
   acceptContactIdentityRotation,
   verifyContactIdentityRecord,
+  unverifyContactIdentityRecord,
 } from './identity';
 
 export {

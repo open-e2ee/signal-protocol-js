@@ -83,6 +83,8 @@ export {
   GroupResendDeferredError,
   HostedSignalProtocolRelayDeviceLinkError,
   HostedRelayDeviceLinkError,
+  HostedSignalProtocolRelayDeviceLinkRequiredError,
+  HostedSignalProtocolRelayDeviceProvisioningError,
   HostedSignalProtocolRelayDeviceRevokedError,
   HostedRelayDeviceRevokedError,
   HostedSignalProtocolRelayDeviceUnknownError,
@@ -95,6 +97,7 @@ export {
   HostedRelayUpgradeRequiredError,
   advanceHostedSignalProtocolRelayIdentityMigration,
   advanceHostedRelayIdentityMigration,
+  approveHostedSignalProtocolRelayDeviceLink,
   createHostedSignalProtocolClient,
   createSignalProtocolClient,
   createSignalProtocolClientConfig,
@@ -106,14 +109,20 @@ export {
   hostedRelaySandboxIdentity,
   hostedSignalProtocolRelayWakePresence,
   hostedRelayWakePresence,
+  joinHostedSignalProtocolRelayAccount,
   linkHostedSignalProtocolRelayDevice,
   linkHostedRelayDevice,
+  listHostedSignalProtocolRelayDevices,
   pullHostedSignalProtocolRelayAfterWake,
   pullHostedRelayAfterWake,
   registerHostedSignalProtocolRelayPush,
   registerHostedRelayPush,
+  removeHostedSignalProtocolRelayDevice,
+  renameHostedSignalProtocolRelayDevice,
   removeHostedSignalProtocolRelayPush,
   removeHostedRelayPush,
+  resetRemovedHostedSignalProtocolRelayDevice,
+  sendHostedSignalProtocolRelayFirstSync,
   PostQuantumPolicy,
 } from "./client";
 export type {
@@ -129,6 +138,9 @@ export type {
   HostedRelayBootstrapResult,
   HostedSignalProtocolRelayDeviceAuthentication,
   HostedRelayDeviceAuthentication,
+  HostedSignalProtocolRelayDeviceLinkApprovalOptions,
+  HostedSignalProtocolRelayDeviceProvisioningErrorCode,
+  HostedSignalProtocolRelayDeviceResetOptions,
   HostedSignalProtocolRelayIdentityMigrationAction,
   HostedRelayIdentityMigrationAction,
   HostedSignalProtocolRelayIdentityMigrationAdapter,
@@ -145,6 +157,8 @@ export type {
   HostedRelayIdentityProgress,
   HostedSignalProtocolRelayIdentityProgressCallback,
   HostedRelayIdentityProgressCallback,
+  HostedSignalProtocolRelayJoinOptions,
+  HostedSignalProtocolRelayJoinResult,
   HostedSignalProtocolRelayManagedDeviceLinkAdapter,
   HostedRelayManagedDeviceLinkAdapter,
   HostedSignalProtocolRelayManagedDeviceLinkOptions,
@@ -153,6 +167,12 @@ export type {
   HostedRelayManagedDeviceLinkRequest,
   HostedSignalProtocolRelayManagedDeviceLinkResult,
   HostedRelayManagedDeviceLinkResult,
+  HostedSignalProtocolRelayOwnDevice,
+  HostedSignalProtocolRelayOwnDevicesChangedCallback,
+  HostedSignalProtocolRelayFirstSyncBundle,
+  HostedSignalProtocolRelayFirstSyncCallback,
+  HostedSignalProtocolRelayFirstSyncContact,
+  HostedSignalProtocolRelayFirstSyncOptions,
   HostedSignalProtocolRelayPresence,
   HostedRelayPresence,
   HostedSignalProtocolRelayPresenceAccount,
@@ -296,6 +316,7 @@ export {
 } from "./client/device-set-reconciliation";
 export type {
   BlockedRecipientsSyncInput,
+  FirstSyncInput,
   GroupContentContext,
   GroupKeySyncInput,
   InspectedSignalProtocolContent,
@@ -749,6 +770,16 @@ export type {
   SendOutcomeEvent,
 } from "./client/event-hooks";
 export type { GroupInitStatus } from "./client/group-init-status";
+export type { IdentityChangedEvent } from "./client/identity-change";
+export type { KeyTransparencyFailureEvent } from "./client/key-transparency/event";
+export type {
+  KeyTransparencyCheckOutcome,
+  KeyTransparencyUnavailableReason,
+} from "./client/key-transparency/verified-search";
+export {
+  KeyTransparencyVerificationError,
+  type KeyTransparencyFailureCode,
+} from "./internal/protocol/key-transparency/errors";
 
 // Error types, message types, and enums
 export {

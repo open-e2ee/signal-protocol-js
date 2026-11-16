@@ -1305,6 +1305,14 @@ export class ReceiveQueue {
       this.forget(record.workId);
       return DONE;
     }
+    // A first sync from device 1 is SDK content too. Its callback runs as
+    // app code of this work. A callback that throws leaves the record open,
+    // so the pass retries it.
+    if (await ctx.cipher.consumeFirstSync(content, work)) {
+      await completeReceiveWork(ctx, record);
+      this.forget(record.workId);
+      return DONE;
+    }
     // The pass knows the conversation of the content only now. An earlier
     // record of that conversation holds back this record before its group
     // decision, so a later record never applies a group change first. See
@@ -1318,6 +1326,10 @@ export class ReceiveQueue {
       }
       return WAIT(expiresAt);
     }
+    // A verification state sync from an own device updates the trust state
+    // of its target. The application still gets the content. A second pass
+    // of the record applies it again, with no further change.
+    await ctx.cipher.applyVerificationStateSync(content);
     const decision = await ctx.cipher.decideGroupContent(content);
     work.proceed();
     if (decision.kind === 'denied') {

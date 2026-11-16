@@ -15,6 +15,16 @@ puts it there by device transfer or by a channel that the application owns.
 Omit `hosted.adapter` to use the authenticated Signal Protocol Relay transport.
 An explicit adapter retains application-owned transport composition.
 
+Only device 1, the primary device, can link a device. `activeDeviceStorage`
+is the store of the primary device. Without `hosted.adapter`, the call reads
+the stored Relay session of `activeDeviceStorage`. When that session is not
+device 1, the call throws before it writes to a store or sends the link
+request.
+The Relay refuses a link that another device authorizes with `NOT_PRIMARY`,
+and the call then rolls the link back and throws the same error. A custom
+adapter throws `HostedSignalProtocolRelayHttpError` with the code
+`NOT_PRIMARY` for that refusal.
+
 The call reads both stores in the calling process. It signs the link
 challenge with the device-authentication private key from
 `activeDeviceStorage` and with the one from the linked store. Thus the
@@ -46,8 +56,8 @@ stores after any failure: the call sends the same registration, so the
 Relay answers with the same device. The call stops the client and rejects
 when the client's first sync fails, and the next call resumes the link.
 
-When the Relay refuses the link with `KEY_PROOF_INVALID` or `CONFLICT`, and
-the refusal is not retryable, no device holds the link. The call then
+When the Relay refuses the link with `KEY_PROOF_INVALID`, `CONFLICT`, or
+`NOT_PRIMARY`, and the refusal is not retryable, no device holds the link. The call then
 removes the link state and the copied groups, and rethrows. It keeps the
 identity records and the registration, so the next call sends the same
 registration ID. Every other error keeps the link state and the copied
@@ -65,3 +75,8 @@ link back.
 ## Returns
 
 `Promise`\<[`DefaultSignalProtocolClient`](../classes/DefaultSignalProtocolClient.md)\>
+
+## Throws
+
+HostedSignalProtocolRelayDeviceProvisioningError `NOT_PRIMARY` when
+the device of `activeDeviceStorage` is not device 1.

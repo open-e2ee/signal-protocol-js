@@ -39,6 +39,13 @@ compatibility boundary.
   explicitly accepted. A retired tuple cannot silently regain trust.
 - Authenticated safety-number comparison covers both peers' complete composite
   tuples and only promotes the exact current tuple to `VERIFIED`.
+- A verification state sync from another device of the own account changes
+  only the trust state of the exact pinned tuple. It never pins, replaces, or
+  rotates a tuple. A sync from another account is refused.
+- `onIdentityChanged` reports each refused identity of a contact. It does not
+  change the refusal.
+- `checkContactKeyTransparency()` never changes the trust state of a contact.
+  A `pass` does not set `VERIFIED`, and a `failure` does not clear it.
 
 The Ed25519 component creates ordinary RFC 8032 signatures. It does not
 implement XEdDSA and cannot consume or produce XEdDSA identity signatures.

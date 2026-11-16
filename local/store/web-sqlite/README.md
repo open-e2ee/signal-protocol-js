@@ -107,8 +107,8 @@ To recover, delete the file and link the device again:
    file, creates a new key, and returns the open, empty store. The identity
    and the sessions of the device go with the file.
 3. Put the account identity into the new store, then call
-   `linkHostedSignalProtocolRelayDevice()` with it. This needs another device that holds the
-   account identity. See
+   `linkHostedSignalProtocolRelayDevice()` with it. This needs the primary
+   device (device 1) of the account. See
    [Link a device](../../../device/README.md#link-a-device).
 
 ## Convert a plaintext store

@@ -6,15 +6,21 @@
  *
  * - `HostedSignalProtocolRelayDeviceUnknownError`: the Relay has no device for the stored
  *   session. The device token request answered `NOT_FOUND`.
- * - `HostedSignalProtocolRelayDeviceRevokedError`: an account recovery revoked this device.
- *   Any identity route can answer `DEVICE_REVOKED`.
+ * - `HostedSignalProtocolRelayDeviceRevokedError`: an account recovery or a device removal
+ *   revoked this device. Only these Relay calls answer `DEVICE_REVOKED`: the
+ *   device token refresh, a registration with a revoked key, a device link
+ *   or a link redeem with a revoked key of the new device, and a device
+ *   removal from a removed device. Each other route refuses the unexpired
+ *   device token of a removed device with `NOT_FOUND`, the refusal of a
+ *   missing device row.
  *
  * The SDK never retries either request and never registers again on its own.
  * Only the application can decide to register the device again, with the
  * `reregister` assertion purpose.
  */
 
-const DEVICE_REVOKED_MESSAGE = "The device was revoked by an account recovery.";
+const DEVICE_REVOKED_MESSAGE =
+  "The device was revoked by an account recovery or a device removal.";
 
 /**
  * The Relay has no device for the stored session, so the session cannot get
@@ -40,9 +46,10 @@ export class HostedSignalProtocolRelayDeviceUnknownError extends Error {
 }
 
 /**
- * An account recovery revoked this device. The Relay refuses its key on the
- * device token request and on a registration, so both fail the same way. The
- * SDK does not retry the request.
+ * An account recovery revoked this device, or
+ * `removeHostedSignalProtocolRelayDevice` removed it. The Relay refuses its
+ * key on the device token request and on a registration, so both fail the
+ * same way. The SDK does not retry the request.
  */
 export class HostedSignalProtocolRelayDeviceRevokedError extends Error {
   public readonly code = "DEVICE_REVOKED";

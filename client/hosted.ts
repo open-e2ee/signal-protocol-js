@@ -25,7 +25,8 @@ import type { SignalProtocolRelayServer } from '../remote/signal-relay/types';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import type { SignalProtocolLocalStore, Base64 } from '../types';
 import { readRenamedOption } from '../types/renamed-member';
-import { DefaultSignalProtocolClient } from './client';
+import { createSignalProtocolClientWithStart, DefaultSignalProtocolClient } from './client';
+import type { HostedSignalProtocolRelayFirstSyncCallback } from './first-sync-bundle';
 import { nextOneTimePreKeyId } from './one-time-prekey-refill';
 import {
   deleteHostedStoreRecord,
@@ -44,13 +45,19 @@ import {
   type HostedSignalProtocolRelayConnection,
 } from './hosted-connection';
 import {
+  assertHostedSignalProtocolRelayPrimaryDevice,
   bootstrapHostedSignalProtocolRelayTransport,
   linkHostedSignalProtocolRelayTransport,
   resumeHostedSignalProtocolRelayTransport,
   type HostedSignalProtocolRelayTransportResult,
 } from './hosted-transport';
 import { bindHostedSignalProtocolRelayPushRuntime } from './hosted-push';
+import { equalBytes, lengthPrefixed } from './hosted-registration-material';
+import { bindHostedSignalProtocolRelayDeviceManagementRuntime, rethrowDeviceLinkRefusal, watchHostedSignalProtocolRelayOwnDevices, type HostedSignalProtocolRelayOwnDevicesChangedCallback } from './hosted-device-management';
+import { HostedSignalProtocolRelayHttpError } from './hosted-http-error';
 import { bindHostedSignalProtocolRelayPresenceRuntime } from './hosted-presence';
+import { createKeyTransparencyRuntime } from './key-transparency/runtime';
+import { identityLogTrustOf } from './key-transparency/trust';
 import {
   assertHostedSignalProtocolRelayProfileKeys,
   bindHostedSignalProtocolRelayProfileKeys,
@@ -233,8 +240,7 @@ export type HostedSignalProtocolRelayIdentityProgressCallback = (
  * A device proof signer whose private key never leaves the SDK-owned local store.
  *
  * Each Relay protocol version signs its own label. A call without
- * `protocolVersion` signs the label of version 1, which the Relay verifies
- * on versions 1 and 2 and on a request without a version.
+ * `protocolVersion` signs the label of version 2.
  */
 export interface HostedSignalProtocolRelayDeviceAuthentication {
   readonly publicKey: Uint8Array;
@@ -435,6 +441,19 @@ export interface HostedSignalProtocolClientOptions extends Omit<
      * holds the profile key can send sealed messages to this account.
      */
     readonly profileKeys?: HostedSignalProtocolRelayProfileKeys;
+    /** Called when a read of the own device list finds an added or a removed own device. */
+    readonly onOwnDevicesChanged?: HostedSignalProtocolRelayOwnDevicesChangedCallback;
+    /**
+     * Applies a first-sync bundle that device 1 sends with
+     * `sendHostedSignalProtocolRelayFirstSync`. The client binds it before
+     * its first receive, so a bundle that waits in the mailbox of this
+     * device arrives at it. The device writes the apply-once record of the
+     * bundle after the callback resolves. When the callback throws, the
+     * durable local receive queue gives the bundle again, also after a
+     * restart. Without it, the device consumes each first sync and logs
+     * the warning `FIRST_SYNC_UNHANDLED`.
+     */
+    readonly onFirstSync?: HostedSignalProtocolRelayFirstSyncCallback;
   };
 }
 
@@ -525,10 +544,6 @@ function uint32be(value: number): Uint8Array {
     );
   }
   return new Uint8Array([value >>> 24, value >>> 16, value >>> 8, value]);
-}
-
-function lengthPrefixed(value: Uint8Array): Uint8Array {
-  return concatBytes(uint32be(value.length), value);
 }
 
 async function deriveHostedRegistrationOperationId(
@@ -750,7 +765,8 @@ async function storeRegistrationSnapshot(
   return { operationId, registrationPreKeys };
 }
 
-async function getOrCreateRegistrationSnapshot(
+/** @internal The registration snapshot of an identity, made once and then kept. */
+export async function getOrCreateRegistrationSnapshot(
   storage: SignalProtocolLocalStore,
   publishableKey: string,
   identity: CompositeIdentityV1,
@@ -968,7 +984,8 @@ function decodeStoredDeviceAuthentication(
   return parsed as StoredDeviceAuthentication;
 }
 
-async function getOrCreateDeviceAuthentication(
+/** @internal The device authentication key of this store, made once and then kept. */
+export async function getOrCreateDeviceAuthentication(
   storage: SignalProtocolLocalStore,
   publishableKey: string,
 ): Promise<HostedSignalProtocolRelayDeviceAuthentication> {
@@ -1170,15 +1187,6 @@ function assertIdentityAssertion(assertion: string): string {
   return assertion;
 }
 
-function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    difference |= left[index]! ^ right[index]!;
-  }
-  return difference === 0;
-}
-
 function hostedAccountAci(accountId: string) {
   if (!/^[A-Za-z0-9_-]{22}$/u.test(accountId)) {
     throw new Error('Signal Protocol Relay returned an invalid account ACI');
@@ -1197,6 +1205,19 @@ function hostedAccountAci(accountId: string) {
     throw new Error('Signal Protocol Relay returned an invalid account ACI');
   }
   return { kind: 0 as const, uuid };
+}
+
+/**
+ * @internal The client factory of a hosted start. It binds the first-sync
+ * callback before the first receive of the client.
+ */
+export function createHostedClientWithFirstSync(
+  onFirstSync: HostedSignalProtocolRelayFirstSyncCallback | undefined,
+): typeof DefaultSignalProtocolClient.create {
+  return (userId, config) =>
+    createSignalProtocolClientWithStart(userId, config, {
+      ...(onFirstSync && { firstSync: onFirstSync }),
+    });
 }
 
 /** @internal Shared hosted composition; caller retains failure cleanup custody. */
@@ -1276,6 +1297,20 @@ export async function createClientFromHostedResult(
   if (hostedTransport !== undefined) {
     bindHostedSignalProtocolRelayPushRuntime(client, hostedTransport);
     bindHostedSignalProtocolRelayPresenceRuntime(client, hostedTransport);
+    bindHostedSignalProtocolRelayDeviceManagementRuntime(client, { transport: hostedTransport, connection, storage: adapters.storage, groupStore: groups?.store, logger: resolveSignalProtocolLogger(config.logger) });
+    const transport = hostedTransport;
+    client.attachKeyTransparency((report) =>
+      createKeyTransparencyRuntime({
+        trust: identityLogTrustOf(connection),
+        environment: connection.environment,
+        scope: transport.identityLogScope,
+        ownUserId: result.canonicalAccountId,
+        store: adapters.storage,
+        transport,
+        report,
+        logger: resolveSignalProtocolLogger(config.logger),
+      }),
+    );
     if (profileKeys !== undefined)
       bindHostedSignalProtocolRelayProfileKeys(
         client,
@@ -1471,6 +1506,16 @@ async function storeLinkedIdentityRegistration(
  * Omit `hosted.adapter` to use the authenticated Signal Protocol Relay transport.
  * An explicit adapter retains application-owned transport composition.
  *
+ * Only device 1, the primary device, can link a device. `activeDeviceStorage`
+ * is the store of the primary device. Without `hosted.adapter`, the call reads
+ * the stored Relay session of `activeDeviceStorage`. When that session is not
+ * device 1, the call throws before it writes to a store or sends the link
+ * request.
+ * The Relay refuses a link that another device authorizes with `NOT_PRIMARY`,
+ * and the call then rolls the link back and throws the same error. A custom
+ * adapter throws `HostedSignalProtocolRelayHttpError` with the code
+ * `NOT_PRIMARY` for that refusal.
+ *
  * The call reads both stores in the calling process. It signs the link
  * challenge with the device-authentication private key from
  * `activeDeviceStorage` and with the one from the linked store. Thus the
@@ -1502,8 +1547,8 @@ async function storeLinkedIdentityRegistration(
  * Relay answers with the same device. The call stops the client and rejects
  * when the client's first sync fails, and the next call resumes the link.
  *
- * When the Relay refuses the link with `KEY_PROOF_INVALID` or `CONFLICT`, and
- * the refusal is not retryable, no device holds the link. The call then
+ * When the Relay refuses the link with `KEY_PROOF_INVALID`, `CONFLICT`, or
+ * `NOT_PRIMARY`, and the refusal is not retryable, no device holds the link. The call then
  * removes the link state and the copied groups, and rethrows. It keeps the
  * identity records and the registration, so the next call sends the same
  * registration ID. Every other error keeps the link state and the copied
@@ -1511,6 +1556,9 @@ async function storeLinkedIdentityRegistration(
  * adapter throws `HostedSignalProtocolRelayHttpError` with the Relay's `code` and
  * `retryable` when the Relay refuses the link, so that the call can roll the
  * link back.
+ *
+ * @throws HostedSignalProtocolRelayDeviceProvisioningError `NOT_PRIMARY` when
+ * the device of `activeDeviceStorage` is not device 1.
  */
 export async function linkHostedSignalProtocolRelayDevice(
   options: HostedSignalProtocolRelayManagedDeviceLinkOptions,
@@ -1527,6 +1575,11 @@ export async function linkHostedSignalProtocolRelayDevice(
     hostedSignalProtocolRelayUrl(hosted, 'linkHostedSignalProtocolRelayDevice'),
   );
   const { protocolEndpoint, publishableKey } = connection;
+  // A custom adapter keeps the active session, so the SDK cannot read the
+  // device ID. The Relay then refuses the link with NOT_PRIMARY.
+  if (hosted.adapter === undefined) {
+    await assertHostedSignalProtocolRelayPrimaryDevice(connection, activeDeviceStorage);
+  }
   hosted.onProgress?.({
     operation: 'device-link',
     phase: 'preparing-linked-device',
@@ -1634,6 +1687,9 @@ export async function linkHostedSignalProtocolRelayDevice(
       await writeHostedDeviceLinkMarker(storage, marker);
       await finishHostedDeviceLinkRollback(storage, groupStore, marker);
     }
+    if (error instanceof HostedSignalProtocolRelayHttpError && error.code === 'NOT_PRIMARY') {
+      rethrowDeviceLinkRefusal(error, 'SIGNAL_RELAY_UNSUPPORTED');
+    }
     throw error;
   }
   if (
@@ -1740,11 +1796,13 @@ export async function createHostedSignalProtocolClient(
       resumed.remoteObjectStore,
       resumed.transport,
       hosted.profileKeys,
+      createHostedClientWithFirstSync(hosted.onFirstSync),
     );
     if (client.syncStatus === 'failed') {
       await client.stop();
       throw new Error('OpenE2EE Signal Protocol Relay initial synchronization failed');
     }
+    await watchHostedSignalProtocolRelayOwnDevices(client, hosted.onOwnDevicesChanged);
     hosted.onProgress?.({ operation, phase: 'complete' });
     return client;
   }
@@ -1800,11 +1858,13 @@ export async function createHostedSignalProtocolClient(
     result.remoteObjectStore,
     result.transport,
     hosted.profileKeys,
+    createHostedClientWithFirstSync(hosted.onFirstSync),
   );
   if (client.syncStatus === 'failed') {
     await client.stop();
     throw new Error('OpenE2EE Signal Protocol Relay initial synchronization failed');
   }
+  await watchHostedSignalProtocolRelayOwnDevices(client, hosted.onOwnDevicesChanged);
   hosted.onProgress?.({ operation, phase: 'complete' });
   return client;
 }

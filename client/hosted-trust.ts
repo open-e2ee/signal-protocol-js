@@ -27,3 +27,19 @@ export const MANAGED_SIGNAL_RELAY_PROFILES = {
     trustRoots: ['M5x6m4m8bu1cntLDKaPmYcFwb6Vcgv+no+qGCre+r8w=' as Base64],
   },
 } as const;
+
+/** The build-pinned keys of one identity log. */
+export interface ManagedIdentityLogTrust {
+  /** The Ed25519 VRF public key of the log index. */
+  readonly vrfPublicKey: Base64;
+  /** The Ed25519 public keys that can sign a tree head. */
+  readonly headPublicKeys: readonly Base64[];
+}
+
+/**
+ * Build-pinned identity log keys of each managed profile. A profile with no
+ * entry gets no key transparency checks.
+ */
+export const MANAGED_IDENTITY_LOG_TRUST: Partial<
+  Readonly<Record<keyof typeof MANAGED_SIGNAL_RELAY_PROFILES, ManagedIdentityLogTrust>>
+> = {};

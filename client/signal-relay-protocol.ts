@@ -4,8 +4,8 @@
  * The mailbox socket offers the version as a subprotocol token, because a
  * browser `WebSocket` cannot set headers, and the Relay must echo it. Each
  * public HTTP route except the connection document carries the version in a
- * header. Versions 1 and 2 use the header `x-open-e2ee-relay-protocol`, the
- * token `open-e2ee-relay.v<N>`, and the device token entry
+ * header. Version 2 uses the header `x-open-e2ee-relay-protocol`, the token
+ * `open-e2ee-relay.v<N>`, and the device token entry
  * `open-e2ee-relay.auth.`. Version 3 and later use the header
  * `x-signal-relay-protocol`, the token `signal-relay.v<N>`, and the entry
  * `signal-relay.auth.`. Each version rides only on its own carrier.
@@ -23,6 +23,7 @@
  * one below it from then on and sends the refused request again. Each refusal
  * moves the offer down one version, and the offer never goes below version
  * 2. A client whose version the caller selected never offers another version.
+ * This SDK does not speak version 1, so a caller cannot select it.
  */
 import { stringToBytes } from "../internal/crypto";
 
@@ -32,24 +33,29 @@ import { stringToBytes } from "../internal/crypto";
  *
  * Version 2 adds `DELIVERY_ALREADY_ACCEPTED`: the Relay refuses a post
  * before it stores anything, because it already holds an accepted post
- * under the message ID. Under version 1 the Relay sends RETRY_CONFLICT for
- * the same refusal. Version 3 keeps the behavior of version 2 and uses the
+ * under the message ID. Version 3 keeps the behavior of version 2 and uses the
  * signal prefix names: its carriers, the labels of its signed proofs, the
  * response fields `signalRelayScopeId` and `signalRelayReceipts`, and the
  * device token issuer and audience.
  */
 export const RELAY_PROTOCOL_VERSION = 3;
 
-/** The first Relay protocol version. A request without the header is this version. */
+/**
+ * The first Relay protocol version. A request without the header is this
+ * version. This SDK does not speak it.
+ */
 const FIRST_RELAY_PROTOCOL_VERSION = 1;
 
 /** The first version that uses the signal prefix names. */
 const SIGNAL_RELAY_PROTOCOL_V3 = 3;
 
-/** The lowest version that an unselected offer moves down to. */
+/**
+ * The lowest version that this SDK speaks. An unselected offer moves down to
+ * it, and a selected offer cannot be below it.
+ */
 const SIGNAL_RELAY_PROTOCOL_FALLBACK = 2;
 
-/** The prefix of a version 1 or 2 token. The version number follows it. */
+/** The prefix of a version 2 token. The version number follows it. */
 const RELAY_PROTOCOL_TOKEN_PREFIX = "open-e2ee-relay.v";
 
 /** The prefix of a version 3 or later token. The version number follows it. */
@@ -57,14 +63,14 @@ const SIGNAL_RELAY_PROTOCOL_TOKEN_PREFIX = "signal-relay.v";
 
 /**
  * The prefix of the subprotocol entry that carries the device token on
- * versions 1 and 2.
+ * version 2.
  */
 export const RELAY_AUTH_PROTOCOL_PREFIX = "open-e2ee-relay.auth.";
 
 /** The prefix of the device token entry on version 3 and later. */
 const SIGNAL_RELAY_AUTH_PROTOCOL_PREFIX = "signal-relay.auth.";
 
-/** The HTTP header that carries versions 1 and 2. */
+/** The HTTP header that carries version 2. */
 export const RELAY_PROTOCOL_HEADER = "x-open-e2ee-relay-protocol";
 
 /** The HTTP header that carries version 3 and later. */
@@ -129,8 +135,8 @@ export interface SignalRelayProofLabels {
 }
 
 /**
- * The labels of versions 1 and 2. They are historical constants: a Relay
- * verifies their exact bytes until it retires both versions.
+ * The labels of version 2. They are historical constants: a Relay verifies
+ * their exact bytes until it retires version 2.
  */
 const SIGNAL_RELAY_V1_PROOF_LABELS: SignalRelayProofLabels = {
   deviceAuthentication: stringToBytes("OpenE2EE Relay device authentication v1\0"),
@@ -159,12 +165,9 @@ const SIGNAL_RELAY_V3_PROOF_LABELS: SignalRelayProofLabels = {
   ),
 };
 
-/**
- * The proof labels of a protocol version. Without a version, the labels of
- * version 1, which a Relay also reads for a request without a version.
- */
+/** The proof labels of a protocol version. Without a version, the labels of version 2. */
 export function signalRelayProofLabels(
-  version: number = FIRST_RELAY_PROTOCOL_VERSION,
+  version: number = SIGNAL_RELAY_PROTOCOL_FALLBACK,
 ): SignalRelayProofLabels {
   return usesSignalRelayNames(version)
     ? SIGNAL_RELAY_V3_PROOF_LABELS
@@ -177,7 +180,7 @@ export function signalRelayProofLabels(
  * `RELAY_PROTOCOL_VERSION`. Each time the Relay refuses a version above 2
  * with `PROTOCOL_UNSUPPORTED`, the offer moves to the version one below the
  * refused one. It never moves up again in the life of the client. A selected
- * offer keeps its version.
+ * offer keeps its version, which must be 2 or later.
  */
 export class SignalRelayProtocolOffer {
   #version: number;
@@ -187,8 +190,13 @@ export class SignalRelayProtocolOffer {
    * @param version - The selected version. Without it, the offer can fall back.
    * @param start - The first version of an unselected offer. Only tests set
    *   it, to start above `RELAY_PROTOCOL_VERSION`.
+   * @throws RangeError when `version` is below 2.
    */
   public constructor(version?: number, start: number = RELAY_PROTOCOL_VERSION) {
+    if (version !== undefined && !(version >= SIGNAL_RELAY_PROTOCOL_FALLBACK))
+      throw new RangeError(
+        `Relay protocol version ${version} is not supported. Select version ${SIGNAL_RELAY_PROTOCOL_FALLBACK} or later.`,
+      );
     this.#selected = version !== undefined;
     this.#version = version ?? start;
   }
@@ -279,7 +287,7 @@ export async function sendOnSignalRelayProtocol<T>(
 
 /**
  * The value of a response field that version 3 renamed. Version 3 sends the
- * field under `current`, and versions 1 and 2 send it under `earlier`. The
+ * field under `current`, and version 2 sends it under `earlier`. The
  * result is undefined when neither name is present. Two different values
  * under the two names throw an error with the message `invalid`.
  */

@@ -157,28 +157,27 @@ holds each member to a production construction site.
 ## Relay Protocol Errors
 
 The Relay serves a set of Relay protocol versions. This SDK speaks
-protocol version 2. It does not fall back to version 1. Two errors come from
-that set. Neither is an `EncryptionError`.
+protocol version 3, with version 2 as its fallback. It does not speak
+version 1. Two errors come from that set. Neither is an `EncryptionError`.
 
 | Error | Cause | Application response |
 |---|---|---|
 | `HostedSignalProtocolRelayUpgradeRequiredError` | The Relay no longer serves the version that the client sent. The message names that version. `code` is `UPGRADE_REQUIRED`, `status` is the HTTP status (426), and `retryable` is false. | Ship a newer SDK. The same request fails again, so do not retry it. |
 | `PROTOCOL_UNSUPPORTED` | The Relay does not serve version 2. The request fails with status 400, the `code` `PROTOCOL_UNSUPPORTED`, and `retryable` true. A send keeps the device open until its posting deadline. | Retry later. The Relay never rolls back below a version that a published SDK sends, so this is a transient fault, not a planned state. |
 
-Version 2 adds one Relay code, `DELIVERY_ALREADY_ACCEPTED`. The Relay gives it
-with HTTP status 409, `retryable` false and the `details` reason
+Versions 2 and 3 have the Relay code `DELIVERY_ALREADY_ACCEPTED`. The Relay
+gives it with HTTP status 409, `retryable` false and the `details` reason
 `message-id-held`, when it already holds an accepted post under the message
-ID of the post. The Relay stored nothing for this post.
-A Relay gives `RETRY_CONFLICT` for the same case to a version 1 request. The
-SDK reads the two answers in the same way:
+ID of the post. The Relay stored nothing for this post. The SDK reads it as
+it reads `RETRY_CONFLICT`:
 
 - A direct post, a sealed direct post, a pre-message and a group shared body
   count the answer as an earlier acceptance, under the rules of
   `RETRY_CONFLICT`. A device whose session the SDK replaced stays unknown.
   The answer has no receipt.
-- A retry request that gets `DELIVERY_ALREADY_ACCEPTED` from a version 2
-  Relay reads it as the acceptance of its stored attempt, as it reads
-  `RETRY_CONFLICT`. No replacement attempt posts.
+- A retry request that gets `DELIVERY_ALREADY_ACCEPTED` reads it as the
+  acceptance of its stored attempt, as it reads `RETRY_CONFLICT`. No
+  replacement attempt posts.
 
 A send error can carry the code `DELIVERY_ALREADY_ACCEPTED` when the SDK
 cannot count the answer as an acceptance. Handle it as `RETRY_CONFLICT`.
@@ -198,7 +197,9 @@ reconnects with its usual backoff. See [`SignalProtocolRelayConnectionReason`](.
 The subscription also stops when the Relay refuses its socket token request or
 a pull conclusively. The refusal has `retryable` false and the code
 `AUTHORITY_DENIED`, `NOT_FOUND`, or `OPERATION_EXPIRED`. The state is `stopped`
-and the reason is `authority-refused`. A refusal with `retryable` true, for
+and the reason is `authority-refused`. A conclusive `NOT_FOUND` first gets one
+device token refresh. When that refresh gets `DEVICE_REVOKED`, the reason is
+`device-revoked`. A refusal with `retryable` true, for
 example a missing Relay binding, goes to the retry schedule. A `NOT_FOUND` on
 the socket token request is a refusal of this device instead, as
 [Signal Protocol Relay Device Errors](#signal-protocol-relay-device-errors) describes. See
@@ -449,21 +450,41 @@ these errors occur.
 ## Signal Protocol Relay Device Errors
 
 The Relay can refuse this device, and a managed device link can refuse its
-linked store. Three errors name these refusals. None is an `EncryptionError`,
+linked store or its active device. Five errors name these refusals. None is an `EncryptionError`,
 and the SDK retries none of them.
 
 | Error | Cause | Application response |
 |---|---|---|
-| [`HostedSignalProtocolRelayDeviceRevokedError`](./api/classes/HostedSignalProtocolRelayDeviceRevokedError.md) | An account recovery revoked this device. `code` is `DEVICE_REVOKED`, `status` is 403, and `retryable` is false. | Sign the user out of this device. The Relay refuses a registration with the revoked key, so a re-registration fails too. |
+| [`HostedSignalProtocolRelayDeviceRevokedError`](./api/classes/HostedSignalProtocolRelayDeviceRevokedError.md) | An account recovery or a device removal revoked this device. `code` is `DEVICE_REVOKED`, `status` is 403, and `retryable` is false. | Sign the user out of this device. The Relay refuses a registration with the revoked key, so a re-registration fails too. To join the account again with the same store, stop each client, call `resetRemovedHostedSignalProtocolRelayDevice`, and then call `joinHostedSignalProtocolRelayAccount`. |
 | [`HostedSignalProtocolRelayDeviceUnknownError`](./api/classes/HostedSignalProtocolRelayDeviceUnknownError.md) | The Relay has no device for the stored session. `code` is `NOT_FOUND`, `status` is 404, and `retryable` is false. The message is the Relay's own message. | Ask the user to confirm a re-registration of this device. Do not re-register without that confirmation. |
+| [`HostedSignalProtocolRelayDeviceLinkRequiredError`](./api/classes/HostedSignalProtocolRelayDeviceLinkRequiredError.md) | The Relay refused a registration, because the account already has a device and no device of the account holds this device key. `code` is `DEVICE_LINK_REQUIRED`, `status` is 409, and `retryable` is false. The Relay registered no device. The error is a `HostedSignalProtocolRelayHttpError`. | Link this device from the primary device with `joinHostedSignalProtocolRelayAccount` and `approveHostedSignalProtocolRelayDeviceLink`. On a Relay without the device link routes, link it with `linkHostedSignalProtocolRelayDevice` from the primary device. Without the primary device, recover the account. The same registration is refused again. |
 | [`HostedSignalProtocolRelayDeviceLinkError`](./api/classes/HostedSignalProtocolRelayDeviceLinkError.md) | `linkHostedSignalProtocolRelayDevice` found state in the linked store that the link did not write: a group in the linked group store, or a device-authentication key for this Relay connection with no registration of this link. `code` is `DEVICE_LINK_STORE_NOT_EMPTY`, and `retryable` is false. The link wrote nothing. | Link the device again with a new, empty store. The same store is refused again. |
+| [`HostedSignalProtocolRelayDeviceProvisioningError`](./api/classes/HostedSignalProtocolRelayDeviceProvisioningError.md) with the code `NOT_PRIMARY` | `linkHostedSignalProtocolRelayDevice` ran with the store of a device that is not device 1, or the Relay refused the link because the device that authorized it is not device 1. Only the primary device can link a device. `retryable` is false. | Call `linkHostedSignalProtocolRelayDevice` with the store of the primary device as `activeDeviceStorage`. The call removes the link state and keeps the identity records and the registration, so the next call sends the same registration ID. |
 
-`createHostedSignalProtocolClient` throws the first two errors when the stored
-session cannot get a device token. It does not register a new device in their
-place. A running client throws them from its Relay calls. A client call can
+`createHostedSignalProtocolClient` throws `HostedSignalProtocolRelayDeviceRevokedError`
+and `HostedSignalProtocolRelayDeviceUnknownError` when the stored session
+cannot get a device token. It does not register a new device in their
+place. A running client throws them from its Relay calls.
+
+A Relay request with the unexpired device token of a removed device gets
+`NOT_FOUND` with `retryable` false. A missing destination gets the same
+refusal. So the SDK refreshes the device token one time. When the refresh
+throws one of these two errors, the call throws it. Each other result of the
+refresh, for example a new token or a network failure, gives the `NOT_FOUND`
+of the request. After a refresh succeeds, a `NOT_FOUND` in the next 60 s
+gets no refresh. After a refresh gets `DEVICE_REVOKED`, each later call of
+that client that needs the device token throws
+`HostedSignalProtocolRelayDeviceRevokedError` and sends no request.
+
+A client call can
 wrap them in an `EncryptionError`, as the `originalError`. The mailbox subscription
 stops with the reason `device-revoked` or `device-unknown`. See
 [`SignalProtocolRelayConnectionReason`](./api/type-aliases/SignalProtocolRelayConnectionReason.md).
+
+`createHostedSignalProtocolClient` throws
+`HostedSignalProtocolRelayDeviceLinkRequiredError` when it registers a new
+store, or re-registers a device, on an account that has a device. A recovery
+never throws this error.
 
 To re-register, create the client again with `assertionPurpose: 'reregister'`.
 It keeps the stored identity and device key, and it asks for a `register`
@@ -472,15 +493,17 @@ no device key. A retry after a failed call sends the same registration again.
 
 A re-registration has these effects:
 
-- The Relay can give this device a new device ID. The messages queued for the
-  old device are lost.
-- Each re-registration reserves a device ID for good. An account has five
-  device IDs, so a registration fails when all five are reserved.
+- When the account has a device, the Relay refuses the re-registration with
+  `HostedSignalProtocolRelayDeviceLinkRequiredError`. No device of the account
+  holds the device key of this store.
+- When the account has no device, the Relay gives this device a device ID.
+  The ID can be new, so the messages queued for the old device are lost.
+- For a new device ID, the Relay skips each ID that a device or an earlier
+  registration holds. An account has five device IDs. When devices and
+  earlier registrations hold all five, the registration fails with the code
+  `CONFLICT`.
 - When the account itself was deleted, the re-registration makes a new account
   address. Contacts of the old address do not reach the new one.
-- A device that a recovery revoked before the Relay recorded revoked keys reads
-  as unknown. A re-registration can then restore it. So always ask the user
-  first.
 
 <!-- doc-snippet:skip requires-existing-client -->
 ```typescript
@@ -574,6 +597,59 @@ if (outcome.kind === 'refused') {
   keepForLater(envelope);
 } else {
   acknowledge(envelope);
+}
+```
+
+## Key Transparency Errors
+
+A hosted client checks identities against the identity log of the Relay when
+the build pins the log keys of the Relay profile. A failed check gives a
+[`KeyTransparencyVerificationError`](./api/classes/KeyTransparencyVerificationError.md).
+It is not an `EncryptionError`, and no client method throws it. A background
+check gives it to the `onKeyTransparencyFailure` hook, in `event.error`.
+`checkContactKeyTransparency()` returns it in a `failure` result, in
+`outcome.error`, and runs no hook. A failure never refuses a send or a
+decrypt.
+
+`event.subject` is `contact` for the check of a contact identity that the
+client fetched, and `self` for the weekly check of the own account. A check
+that cannot get a result, such as on a network error, is not a failure and
+runs no hook.
+
+A requested check applies none of the rules in the next paragraph. It returns
+the result of one search, and a key mismatch gives `LOGGED_KEY_MISMATCH` on the
+first call.
+
+A contact key mismatch, or a contact that is not in the log, runs no hook on
+the first result. The client checks again 2 hours later. It runs the hook only
+when that check again gives a key mismatch or a not-logged result, with the
+code of the second result. When the Relay says that
+the append of the identity waits, the client checks again. It stops when the
+identity is in the log, or after 24 hours. A self failure runs the hook on the
+second consecutive failed weekly check. For the own account, a not-logged
+result is a failure, and a pending append follows the contact waits.
+
+| Code | Cause |
+|---|---|
+| `VRF_PROOF_INVALID` | The VRF proof of the log index is not valid for the pinned VRF public key and the account address. |
+| `SEARCH_POSITION_INVALID` | The position of the entry is not inside the tree of the signed head. |
+| `INCLUSION_PROOF_INVALID` | The entry, its opening, and the inclusion path do not give the root of the signed head. |
+| `TREE_HEAD_SIGNATURE_INVALID` | No pinned head key signed the head for the project of the connection. |
+| `TREE_HEAD_STALE` | The head time is more than 24 hours from the local clock. |
+| `TREE_HEAD_INCONSISTENT` | The head does not extend the last head that the client verified. |
+| `LOGGED_KEY_MISMATCH` | The latest logged key of the account is not the identity that the client has for it. |
+| `LOGGED_TOMBSTONE` | The latest log entry of the account is a deletion. |
+| `IDENTITY_NOT_LOGGED` | The Relay served the identity of a contact, but the log has no entry for it. For the self-check, the log has no entry for the own account. |
+| `LOG_APPEND_OVERDUE` | The Relay said for 24 hours that the append of an identity waits. |
+| `MALFORMED_RESPONSE` | The Relay response does not have the form of an identity log result. |
+
+Report the subject and the code to your monitoring. The error message names
+the failed step and holds no key bytes and no account address.
+
+<!-- doc-snippet:skip requires-external-context -->
+```typescript
+onKeyTransparencyFailure: (event) => {
+  monitoring.report('key-transparency', { subject: event.subject, code: event.error.code });
 }
 ```
 

@@ -304,3 +304,29 @@ export function verifyContactIdentityRecord(
     verifiedAt: now,
   };
 }
+
+/**
+ * Clear the verification of the exact current tuple. The pin, its revision,
+ * and its rollback history stay. A record that is not verified comes back
+ * unchanged.
+ *
+ * @throws Error when `candidate` is not the current tuple of `record`
+ */
+export function unverifyContactIdentityRecord(
+  record: ContactIdentityRecord,
+  candidate: CompositeIdentityV1,
+  now: number
+): ContactIdentityRecord {
+  assertTimestamp(now, 'now');
+  const status = evaluateContactIdentityCandidate(record, candidate);
+  if (status !== 'MATCH') {
+    throw new Error(`Clearing a verification requires the current tuple, got ${status}`);
+  }
+  if (record.trustState !== 'VERIFIED') return record;
+  const { verifiedAt: _verifiedAt, ...unverified } = record;
+  return {
+    ...unverified,
+    trustState: 'UNVERIFIED_TOFU',
+    lastSeenAt: Math.max(record.lastSeenAt, now),
+  };
+}

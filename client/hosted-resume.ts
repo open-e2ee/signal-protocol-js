@@ -17,6 +17,7 @@ import {
 import { resolveHostedSignalProtocolRelayConnection } from './hosted-connection';
 import { resumeHostedSignalProtocolRelayTransport } from './hosted-transport';
 import { assertHostedSignalProtocolRelayProfileKeys } from './hosted-profile-keys';
+import { watchHostedSignalProtocolRelayOwnDevices } from './hosted-device-management';
 import {
   HostedSignalProtocolRelayResumeError,
   retainHostedResumeCleanup,
@@ -112,6 +113,7 @@ export async function resumeHostedSignalProtocolClient(
           userId,
           config,
           identities,
+          hosted.onFirstSync === undefined ? undefined : { firstSync: hosted.onFirstSync },
         );
         return captured;
       },
@@ -120,6 +122,7 @@ export async function resumeHostedSignalProtocolClient(
       throw new Error(
         'OpenE2EE Signal Protocol Relay initial synchronization failed',
       );
+    await watchHostedSignalProtocolRelayOwnDevices(client, hosted.onOwnDevicesChanged);
     progress('complete');
     return client;
   } catch (caught) {

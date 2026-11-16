@@ -144,6 +144,36 @@ export {
   type IdentityAssertionRequest,
 } from "./hosted";
 export {
+  joinHostedSignalProtocolRelayAccount,
+  type HostedSignalProtocolRelayJoinOptions,
+  type HostedSignalProtocolRelayJoinResult,
+} from "./hosted-device-join";
+export {
+  approveHostedSignalProtocolRelayDeviceLink,
+  listHostedSignalProtocolRelayDevices,
+  removeHostedSignalProtocolRelayDevice,
+  renameHostedSignalProtocolRelayDevice,
+  type HostedSignalProtocolRelayDeviceLinkApprovalOptions,
+  type HostedSignalProtocolRelayOwnDevice,
+  type HostedSignalProtocolRelayOwnDevicesChangedCallback,
+} from "./hosted-device-management";
+export {
+  sendHostedSignalProtocolRelayFirstSync,
+  type HostedSignalProtocolRelayFirstSyncBundle,
+  type HostedSignalProtocolRelayFirstSyncCallback,
+  type HostedSignalProtocolRelayFirstSyncContact,
+  type HostedSignalProtocolRelayFirstSyncOptions,
+} from "./hosted-device-first-sync";
+export {
+  resetRemovedHostedSignalProtocolRelayDevice,
+  type HostedSignalProtocolRelayDeviceResetOptions,
+} from "./hosted-device-reset";
+export { HostedSignalProtocolRelayDeviceLinkRequiredError } from "./hosted-device-link-required-error";
+export {
+  HostedSignalProtocolRelayDeviceProvisioningError,
+  type HostedSignalProtocolRelayDeviceProvisioningErrorCode,
+} from "./hosted-device-provisioning-error";
+export {
   bindSignalProtocolRelayLifecycle,
   bindRelayLifecycle,
   type SignalProtocolRelayLifecycleAppState,
@@ -203,6 +233,7 @@ export {
 } from "./group-receive-authorization";
 export type {
   BlockedRecipientsSyncInput,
+  FirstSyncInput,
   GroupContentContext,
   GroupKeySyncInput,
   InspectedSignalProtocolContent,
@@ -236,6 +267,16 @@ export type {
   SignalProtocolClientHooks,
 } from "./event-hooks";
 export type { GroupInitStatus } from "./group-init-status";
+export type { IdentityChangedEvent } from "./identity-change";
+export type { KeyTransparencyFailureEvent } from "./key-transparency/event";
+export type {
+  KeyTransparencyCheckOutcome,
+  KeyTransparencyUnavailableReason,
+} from "./key-transparency/verified-search";
+export {
+  KeyTransparencyVerificationError,
+  type KeyTransparencyFailureCode,
+} from "../internal/protocol/key-transparency/errors";
 export type {
   SignalProtocolClientDeleteLocalAttachmentInput,
   SignalProtocolClientLoadedLocalAttachment,

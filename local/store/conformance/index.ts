@@ -3,7 +3,8 @@
  *
  * An application that implements `SignalProtocolLocalStore` itself runs this
  * kit against its store. The kit checks the identity overwrite, the atomic
- * session trust and sender key commits and their rollback, metadata
+ * session trust and sender key commits and their rollback, the clearing of a
+ * contact verification when the store has `unverifyContactIdentity`, metadata
  * compare-and-set, the receive records, durability after a reopen, the
  * stored bytes of a store that declares a cipher, and the protection
  * declaration. It does not check the sender key handoffs, the message

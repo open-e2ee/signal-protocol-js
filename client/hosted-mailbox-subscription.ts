@@ -200,10 +200,21 @@ interface MailboxSubscription {
   }>;
   /**
    * Returns true for a Relay refusal of a socket authentication or a pull
-   * that the same request gets again. The subscription then stops with the
-   * reason `authority-refused`. Each other failure goes to the retry schedule.
+   * that the same request gets again. The subscription then checks the
+   * device standing with `checkStanding`. Each other failure goes to the
+   * retry schedule.
    */
   isConclusiveRefusal(error: unknown): boolean;
+  /**
+   * Checks the standing of this device after a conclusive refusal. A bearer
+   * route refuses the unexpired device token of a removed device with
+   * `NOT_FOUND`, the same refusal as for a missing device row. Only the
+   * device token refresh answers `DEVICE_REVOKED`. So for a `NOT_FOUND`, the
+   * check gets one new device token, and it rejects as that refresh does.
+   * It resolves for each other refusal and when the refresh succeeds. The
+   * subscription then stops with the reason `authority-refused`.
+   */
+  checkStanding(refusal: unknown): Promise<void>;
   /** Decodes the `message` of a `durable-message` frame. */
   decodeDurable(message: unknown): Envelope;
   /**
@@ -939,7 +950,9 @@ export function subscribeHostedMailbox(
       // of a pull page failed. Retained durable work stays in the mailbox.
       // Ephemeral work can be lost. A pull that the Relay refuses for this SDK
       // or this device, or refuses conclusively, fails the same way each time,
-      // so it ends the subscription. Each other failed pull goes to the retry
+      // so it ends the subscription. A conclusive refusal ends it after the
+      // check of the device standing, unless that check fails in a way that
+      // a retry can change. Each other failed pull goes to the retry
       // schedule. A callback error is the application's, so it only
       // schedules a pull. A failed page acknowledgment can be a lost request
       // or a lost response. It schedules a head pull on the doubling wait
@@ -952,8 +965,11 @@ export function subscribeHostedMailbox(
         recoverFailedWork(true);
         pullRequested = false;
       } else if (!pulling) recoverLater();
-      else if (options.isConclusiveRefusal(error)) stop("authority-refused");
-      else retryPull();
+      else if (
+        !options.isConclusiveRefusal(error) ||
+        !(await stopAfterStandingCheck(error))
+      )
+        retryPull();
     } finally {
       draining = false;
       if (
@@ -1005,7 +1021,7 @@ export function subscribeHostedMailbox(
    * longer serves the protocol version of this SDK, `device-revoked` or
    * `device-unknown` when the Relay refuses this device, and
    * `authority-refused` after a conclusive refusal of a socket authentication
-   * or a pull. No retry
+   * or a pull that the check of the device standing does not name. No retry
    * follows. Queued acknowledgments are not sent, because the Relay refuses
    * them too. A receipt hand-off that settles after the stop is not
    * acknowledged either. The Relay keeps their messages and receipts, and each
@@ -1027,6 +1043,30 @@ export function subscribeHostedMailbox(
     acknowledgmentTimer = undefined;
     disconnect();
     options.onConnectionState("stopped", reason);
+  };
+
+  /**
+   * Stops the subscription after a conclusive refusal of a pull or a socket
+   * authentication, or returns false. The check of the device standing runs
+   * once for the refusal. A typed refusal of that check stops with its own
+   * reason, for example `device-revoked`. A conclusive refusal of the check,
+   * and a check that resolves, stop with `authority-refused`. Each other
+   * failure of the check, for example a lost request, returns false. The
+   * caller then retries, and the next conclusive refusal checks again.
+   */
+  const stopAfterStandingCheck = async (refusal: unknown) => {
+    try {
+      await options.checkStanding(refusal);
+    } catch (error) {
+      const reason = signalRelayRefusalReason(error);
+      if (reason !== undefined) {
+        stop(reason);
+        return true;
+      }
+      if (!options.isConclusiveRefusal(error)) return false;
+    }
+    stop("authority-refused");
+    return true;
   };
 
   const retryConnection = (
@@ -1253,13 +1293,19 @@ export function subscribeHostedMailbox(
       if (!active || generation !== connectionGeneration) return;
       authenticating = false;
       const refusal = signalRelayRefusalReason(error);
-      if (refusal !== undefined) stop(refusal);
-      else if (options.isConclusiveRefusal(error)) stop("authority-refused");
-      else {
-        // A failed socket authentication is a failed Relay request.
-        if (!authenticated) outage = true;
-        retryConnection(authenticated ? "error" : "authentication");
+      if (refusal !== undefined) {
+        stop(refusal);
+        return;
       }
+      if (
+        options.isConclusiveRefusal(error) &&
+        (await stopAfterStandingCheck(error))
+      )
+        return;
+      if (!active || generation !== connectionGeneration) return;
+      // A failed socket authentication is a failed Relay request.
+      if (!authenticated) outage = true;
+      retryConnection(authenticated ? "error" : "authentication");
     }
   };
 

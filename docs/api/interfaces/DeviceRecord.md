@@ -63,7 +63,9 @@ removal archives the current session and keeps the record, so a message
 that the device sent before its removal still decrypts. A removed device
 gets no fan-out. When the device list names the device again, the
 marker clears and the device returns to fan-out with no current session.
-The stale-record cleanup deletes the record when the marker is older than
+When the device starts a new session, the receive of its first message
+clears the marker and keeps that session. A message on a session that
+the record already held leaves the marker. The stale-record cleanup deletes the record when the marker is older than
 `SesameConfig.maxLatency`. Absent on a device that is listed.
 
 ***

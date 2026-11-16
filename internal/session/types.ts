@@ -27,6 +27,7 @@ import type { SignalProtocolLocalStore, PreKeyMessage, SessionState } from '../.
 import type { ProtocolAddress } from '../../types/address';
 import type { ProtocolStrategyConfig } from '../../types';
 import type { Logger } from '../../logger';
+import type { UntrustedIdentityObserver } from './untrusted-identity';
 
 // ============================================================================
 // SessionBuilder Input Types
@@ -231,4 +232,12 @@ export interface SessionCipherConfig {
    * trust state of the store for every address.
    */
   trust?: SessionTrust;
+
+  /**
+   * Hears of each identity that the trust gate of the cipher refuses, before
+   * the cipher throws `UntrustedIdentityError`.
+   *
+   * @internal
+   */
+  onUntrustedIdentity?: UntrustedIdentityObserver;
 }

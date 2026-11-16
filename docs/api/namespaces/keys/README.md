@@ -64,6 +64,7 @@ const signedPreKey = await keys.generateEcSignedPreKey(signingKey);
 - [isValidDeviceIdentityKey](functions/isValidDeviceIdentityKey.md)
 - [signMlKem1024PreKey](functions/signMlKem1024PreKey.md)
 - [signPreKey](functions/signPreKey.md)
+- [unverifyContactIdentityRecord](functions/unverifyContactIdentityRecord.md)
 - [validateContactIdentityRecord](functions/validateContactIdentityRecord.md)
 - [verifyContactIdentityRecord](functions/verifyContactIdentityRecord.md)
 - [verifyMlKem1024PreKey](functions/verifyMlKem1024PreKey.md)
