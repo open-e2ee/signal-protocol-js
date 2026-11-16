@@ -23,6 +23,10 @@ the link state for every other error.
 
 - `Error`
 
+## Extended by
+
+- [`HostedSignalProtocolRelayDeviceLinkRequiredError`](HostedSignalProtocolRelayDeviceLinkRequiredError.md)
+
 ## Constructors
 
 ### Constructor

@@ -1609,6 +1609,10 @@ Sync explicit safety-number verification state to the account's other linked dev
 Only explicit `verified` and cleared-to-`default` states belong here.
 Conflict and untrusted state is still derived locally from identity-key changes.
 
+Each other device of the account applies the state to its pinned identity
+of `targetUserId` when it receives the sync, only when `identityKey` is
+that pinned identity. See `VerificationStateSyncInput`.
+
 The `changedAt` time is the epoch of the sync. The SDK accepts a safe positive
 integer at most 5 minutes ahead of the SDK clock and at most 24 hours
 behind it, and throws `InvalidSendTimestampError` for any other value

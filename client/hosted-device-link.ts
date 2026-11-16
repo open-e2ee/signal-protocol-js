@@ -144,15 +144,16 @@ export async function deleteHostedDeviceLinkMarker(
  *
  * `KEY_PROOF_INVALID` refuses the link body or a device-authentication key
  * that a device already holds. `CONFLICT` refuses a device past the account's
- * device limit. The Relay sends each one before it links a device, and with
- * `retryable` false. Every other error can follow an earlier success, so it
- * keeps the link state.
+ * device limit. `NOT_PRIMARY` refuses a link that a device other than device 1
+ * authorizes. The Relay sends each one before it writes, and with `retryable`
+ * false. Every other error can follow an earlier success, so it keeps the link
+ * state.
  */
 export function isHostedDeviceLinkRefusal(error: unknown): boolean {
   return (
     error instanceof HostedSignalProtocolRelayHttpError &&
     !error.retryable &&
-    (error.code === "KEY_PROOF_INVALID" || error.code === "CONFLICT")
+    (error.code === "KEY_PROOF_INVALID" || error.code === "CONFLICT" || error.code === "NOT_PRIMARY")
   );
 }
 

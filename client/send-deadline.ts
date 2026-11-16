@@ -325,7 +325,7 @@ export class SendCallEvidence {
    * Run one post of a destination, record its answer, and store the class
    * of the answer. `post` gives `onRequest` to the control of the post,
    * which calls it when a request starts, also for a transport repeat and
-   * the identified fallback. A RETRY_CONFLICT, or a version 2
+   * the identified fallback. A RETRY_CONFLICT, or a
    * DELIVERY_ALREADY_ACCEPTED, resolves the post as accepted when no repair
    * replaced the message of the destination. A
    * message that the stored progress records as accepted is not posted
@@ -400,7 +400,7 @@ export class SendCallEvidence {
    *   the first one gives the terminal error of a failed end. The count
    *   `refusedDestinationCount` names no device, so it refuses no
    *   destination.
-   * - A RETRY_CONFLICT, or a version 2 DELIVERY_ALREADY_ACCEPTED, accepts
+   * - A RETRY_CONFLICT, or a DELIVERY_ALREADY_ACCEPTED, accepts
    *   each destination whose current entry has no repair mark, and it resolves the post with a conflict
    *   acceptance when each destination is accepted. A destination with a
    *   repair mark is uncertain, and the post rejects.
@@ -751,7 +751,7 @@ export class SendCallEvidence {
    * ciphertext under the message ID. A post of a sealed body that was sealed
    * again with a new sender certificate has other outer bytes, but the same
    * ciphertext, message ID, and operation epoch, so its conflict follows the
-   * same rule. A version 2 DELIVERY_ALREADY_ACCEPTED says that
+   * same rule. A DELIVERY_ALREADY_ACCEPTED says that
    * the Relay holds an accepted post under the message ID, and it follows
    * the same rule. An intent that did not write progress from its start can
    * have had a repair that left no mark, so its answer stays uncertain.

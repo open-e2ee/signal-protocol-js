@@ -230,6 +230,14 @@ export class SqliteSignalProtocolStore implements SignalProtocolLocalStore {
     );
   }
 
+  async unverifyContactIdentity(
+    address: ProtocolAddress,
+    identity: CompositeIdentityV1,
+    identityType?: IdentityType
+  ): Promise<ContactIdentityRecord> {
+    return await this.storage.unverifyContactIdentity(address, identity, identityType);
+  }
+
   async isTrustedIdentity(
     address: ProtocolAddress,
     identity: CompositeIdentityV1,

@@ -65,6 +65,7 @@ import {
   isManagedGroupId,
   type GroupReceiveEvaluator,
 } from './group-receive-authorization';
+import { applyVerificationStateSync } from './verification-state-sync';
 import { envelopeCiphertextBytes } from './delivery-error';
 import { GroupSenderKeyOperations } from './group-sender-key-operations';
 import type { PreparedAttachmentUpload, SealedReceipt, SendOptions, SendResult } from './types';
@@ -157,7 +158,12 @@ import {
   RelayWorkStopped,
   signalRelaySendsSealedUnderItsBound,
   rethrowSignalProtocolRelayWorkStopped,
+  type SignalProtocolRelayWork,
 } from './signal-relay-work';
+import {
+  consumeFirstSync,
+  type HostedSignalProtocolRelayFirstSyncCallback,
+} from './first-sync-bundle';
 import {
   markSignalProtocolRelayDeviceRefusal,
   refusesRemovedDevices,
@@ -336,6 +342,12 @@ function manualResendOrderKey(intent: Pick<StoredOutgoingMessageIntent, 'kind' |
   return intent.kind === 'group' ? extractGroupId(intent.recipientId) : intent.recipientId;
 }
 
+/** The own devices that one own device list read or repair added and removed. */
+export interface OwnDeviceListChange {
+  readonly added: readonly number[];
+  readonly removed: readonly number[];
+}
+
 /** A new manual resend that the intent lock decided on, before its encryption. */
 interface ManualResendPlan {
   intent: StoredOutgoingMessageIntent;
@@ -499,6 +511,11 @@ interface DevicePostControl {
    * For a transport repeat, it gets the answer that the repeat follows.
    */
   readonly onRequest?: (repeat?: RepeatRequest['after']) => void;
+  /**
+   * Runs before the relay request of a sync copy, and refuses the post by
+   * throwing. The error of the check rejects the send unchanged.
+   */
+  readonly checkCopy?: (copy: StoredOutgoingDeviceMessage) => void;
 }
 
 /** The stored sealed body of one device post. */
@@ -658,6 +675,14 @@ interface SyncPayloadTarget {
    * adds no device.
    */
   readonly accepted?: GroupKeySyncDevice[];
+  /**
+   * The own devices whose copy the relay accepted, by device ID only. Each
+   * accepted post adds its device, also when the copy names no
+   * registration.
+   */
+  readonly acceptedDeviceIds?: number[];
+  /** Runs before each post of a copy, and refuses the post by throwing. */
+  readonly checkCopy?: (copy: StoredOutgoingDeviceMessage) => void;
 }
 
 /** The byte length of a group master key that a `GroupKeySync` applies. */
@@ -1100,10 +1125,12 @@ export class SignalProtocolServiceCipher {
   private sealedSenderIdentifiedFallback?: import('./config').SealedSenderConfig['onIdentifiedFallback'];
   private signalRelayProtocolErrorReporter?: (error: SignalProtocolRelayProtocolError) => Promise<void>;
   private ownDevicesFirstSeen?: (deviceIds: readonly number[]) => void;
+  private ownDeviceListChanged?: (change: OwnDeviceListChange) => void;
   private groupKeySyncReceiver?: (
     input: GroupKeySyncInput,
     sender: KnownOwnDevice
   ) => Promise<void>;
+  private firstSyncReceiver?: HostedSignalProtocolRelayFirstSyncCallback;
   private contactProfileStateStore?: ContactProfileStateStore;
   private endorsementManager?: EndorsementManager;
   private endorsementManagerResolver?: () => Promise<EndorsementManager | undefined>;
@@ -1216,10 +1243,14 @@ export class SignalProtocolServiceCipher {
     const posted = await this.sendPhase(
       prepared,
       async (message) => {
-        const control = stopSignal ? { stopSignal } : {};
+        const control = {
+          ...(stopSignal && { stopSignal }),
+          ...(target?.checkCopy && { checkCopy: target.checkCopy }),
+        };
         if (!(await this.postSyncMessage(signalProtocolRelay, message, control, repair))) return undefined;
         const copy = replacements.get(message.recipientDeviceId) ?? message;
         target?.accepted?.push(...acceptedSyncDevices([copy]));
+        target?.acceptedDeviceIds?.push(copy.recipientDeviceId);
         return copy;
       },
       'sync',
@@ -1384,6 +1415,7 @@ export class SignalProtocolServiceCipher {
     message: StoredOutgoingDeviceMessage,
     control: DevicePostControl
   ): Promise<SignalProtocolRelayPostAcceptance> {
+    control.checkCopy?.(message);
     // The transport gates a repeat by the ID that the posted envelope carries.
     const release =
       control.beforeRequest && message.clientMessageId !== undefined
@@ -1567,6 +1599,56 @@ export class SignalProtocolServiceCipher {
     }
   }
 
+  /**
+   * Send a serialized first sync to one listed own device (wire contract
+   * section 11.4). The send reads the own device list first, which also
+   * opens a session with each listed own device. On a relay that compares
+   * device sets, the copy declares each recorded own device.
+   *
+   * @param payloadBytes - The serialized first-sync content
+   * @param deviceId - The own device that gets the copy
+   * @param timestamp - The epoch of the copy
+   * @returns `accepted` when the relay accepted the copy of the device,
+   *   `unlisted` when the own list does not name the device, and
+   *   `not-accepted` when the device got no accepted copy
+   * @throws RelayWorkStopped when the stop signal aborts before a request
+   * @throws The error of `checkCopy`, before the post that it refuses
+   */
+  async sendFirstSyncToOwnDevice(
+    payloadBytes: Uint8Array,
+    deviceId: number,
+    timestamp: number,
+    options: {
+      readonly stopSignal?: AbortSignal;
+      readonly checkCopy?: (copy: StoredOutgoingDeviceMessage) => void;
+    } = {}
+  ): Promise<'accepted' | 'unlisted' | 'not-accepted'> {
+    const { stopSignal, checkCopy } = options;
+    if (!this.signalProtocolRelay) return 'not-accepted';
+    if (stopSignal?.aborted) throw new RelayWorkStopped();
+    const listed = await this.readOwnDeviceList(this.sessionCallbacks, stopSignal);
+    if (!listed.some((device) => device.deviceId === deviceId)) return 'unlisted';
+    if (stopSignal?.aborted) throw new RelayWorkStopped();
+    const acceptedDeviceIds: number[] = [];
+    const target: SyncPayloadTarget = {
+      deviceIds: [deviceId],
+      acceptedDeviceIds,
+      ...(stopSignal && { stopSignal }),
+      ...(checkCopy && { checkCopy }),
+    };
+    if (this.declaresDeviceSets()) {
+      await this.sendDeclaredSyncPayload(payloadBytes, timestamp, target);
+    } else {
+      const syncMessages = await this.sesameManager.sendToLocalOtherDevices(payloadBytes, {
+        clientTimestamp: timestamp,
+        includeSyncMessages: false,
+        listedDeviceIds: [deviceId],
+      });
+      await this.uploadSyncMessages(syncMessages, payloadBytes, timestamp, target);
+    }
+    return acceptedDeviceIds.includes(deviceId) ? 'accepted' : 'not-accepted';
+  }
+
   async sendReadSyncToLocalOtherDevices(entries: ReadSyncEntryInput[]): Promise<void> {
     if (entries.length === 0) {
       return;
@@ -1696,6 +1778,34 @@ export class SignalProtocolServiceCipher {
    */
   setOwnDevicesFirstSeenListener(listener: (deviceIds: readonly number[]) => void): void {
     this.ownDevicesFirstSeen = listener;
+  }
+
+  /**
+   * Set the listener of own device list changes. An own device list read
+   * and an own repair call it once when they add or remove an own device
+   * record. The baseline is the stored device record of this account, so a
+   * restart does not hide a change. `undefined` removes the listener.
+   */
+  setOwnDeviceListListener(listener: ((change: OwnDeviceListChange) => void) | undefined): void {
+    this.ownDeviceListChanged = listener;
+  }
+
+  /** Read the own device list once, as a send does, and reconcile the records. */
+  async refreshOwnDeviceList(stopSignal: AbortSignal | undefined): Promise<void> {
+    await this.readOwnDeviceList(this.sessionCallbacks, stopSignal);
+  }
+
+  /** Give a non-empty own device list change to the listener. */
+  private reportOwnDeviceListChange(added: readonly number[], removed: readonly number[]): void {
+    if (added.length === 0 && removed.length === 0) return;
+    try {
+      this.ownDeviceListChanged?.({ added: [...added], removed: [...removed] });
+    } catch (error) {
+      this.logger.warn('Own device list listener failed', {
+        category: 'E2EE',
+        error: error as Error,
+      });
+    }
   }
 
   private async reportIdentifiedFallback(recipientUserId: string): Promise<void> {
@@ -1950,6 +2060,74 @@ export class SignalProtocolServiceCipher {
       ...(registrationId !== undefined && { registrationId }),
     });
     return true;
+  }
+
+  /**
+   * Set the callback that applies a first-sync bundle from device 1. Set it
+   * before the first receive, so no first sync arrives without it.
+   */
+  setFirstSyncReceiver(receive: HostedSignalProtocolRelayFirstSyncCallback | undefined): void {
+    this.firstSyncReceiver = receive;
+  }
+
+  /**
+   * Consume committed content that carries a first sync (wire contract
+   * section 11.4). `processIncomingEnvelope`, the Relay subscription and
+   * the receive queue call this method, so they never give that content to
+   * the application. The raw decrypt methods return it unapplied.
+   *
+   * The checks, the callback, and the apply-once record write run under
+   * one lock, so two deliveries of one bundle give one callback.
+   *
+   * The commit of the content refuses a sync message from another account
+   * (`refuseSyncFromOtherAccount`), so this method checks only that the
+   * sender is device 1.
+   *
+   * @param work - The receive work of the queue. The callback then runs as
+   *   app code of that work.
+   * @returns True when the content is a first sync, which the caller then
+   *   completes with no delivery. False for other content.
+   * @throws The error of the callback, with no record written. The caller
+   *   does not complete the content, so it arrives again.
+   */
+  async consumeFirstSync(
+    content: CommittedContent,
+    work?: SignalProtocolRelayWork
+  ): Promise<boolean> {
+    const sync = content.inspected.sync;
+    if (sync?.type !== 'firstSync') return false;
+    await acquireUntilStopped(
+      this.lock,
+      'first-sync',
+      () =>
+        consumeFirstSync({
+          storage: this.storage,
+          logger: this.logger,
+          receiver: this.firstSyncReceiver,
+          input: sync.firstSync,
+          senderDeviceId: content.senderDeviceId,
+          ...(work && { call: (receive: () => void | Promise<void>) => work.callApp(receive) }),
+        }),
+      work?.stopSignal
+    );
+    return true;
+  }
+
+  /**
+   * Apply committed content that carries a verification state sync from
+   * another own device to the pinned identity of its target. See
+   * `applyVerificationStateSync` for the rules. `processIncomingEnvelope`,
+   * the Relay subscription and the receive queue call this method. The
+   * content still goes to the application. Other content is not changed.
+   */
+  async applyVerificationStateSync(content: CommittedContent): Promise<void> {
+    await applyVerificationStateSync({
+      storage: this.storage,
+      ownUserId: this.userId,
+      senderUserId: content.senderUserId,
+      sync: content.inspected.sync,
+      logger: this.logger,
+    });
   }
 
   /**
@@ -3302,9 +3480,10 @@ export class SignalProtocolServiceCipher {
     const others = listed.filter(
       (device) => device.userId === this.userId && device.deviceId !== this.deviceId
     );
-    const recorded = this.ownDevicesFirstSeen
-      ? new Set(unremovedDeviceIds(await this.sesameManager.getUserRecord(this.userId)))
-      : undefined;
+    const recorded =
+      this.ownDevicesFirstSeen || this.ownDeviceListChanged
+        ? new Set(unremovedDeviceIds(await this.sesameManager.getUserRecord(this.userId)))
+        : undefined;
     if (others.length > 0 && sessions) {
       try {
         // A device that fails gets no copy from this send.
@@ -3320,7 +3499,7 @@ export class SignalProtocolServiceCipher {
 
     const listedIds = new Set(others.map((device) => device.deviceId));
     listedIds.add(this.deviceId);
-    await this.reconcileDeviceRecords(this.userId, listedIds);
+    const removed = await this.reconcileDeviceRecords(this.userId, listedIds);
     if (recorded) {
       // A listed device that got its first record from this read. A device
       // with no session gets no record, so a later read sees it again.
@@ -3329,6 +3508,7 @@ export class SignalProtocolServiceCipher {
         .map((device) => device.deviceId)
         .filter((deviceId) => !recorded.has(deviceId) && now.has(deviceId));
       if (seen.length > 0) this.ownDevicesFirstSeen?.(seen);
+      this.reportOwnDeviceListChange(seen, removed);
     }
     return others;
   }
@@ -5124,6 +5304,10 @@ export class SignalProtocolServiceCipher {
     const bundleMissing: DeviceSetDevice[] = [];
     // The own devices that this repair sees for the first time.
     const firstSeen: number[] = [];
+    const ownRecorded =
+      userId === this.userId && this.ownDeviceListChanged
+        ? new Set(unremovedDeviceIds(await this.sesameManager.getUserRecord(userId)))
+        : undefined;
     /**
      * Start sessions with devices that have none. A missing bundle is not an
      * error. A started session clears the removed marker of its record, so
@@ -5214,6 +5398,13 @@ export class SignalProtocolServiceCipher {
       }
     }
     if (firstSeen.length > 0) this.ownDevicesFirstSeen?.(firstSeen);
+    if (ownRecorded) {
+      const now = new Set(unremovedDeviceIds(await this.sesameManager.getUserRecord(userId)));
+      this.reportOwnDeviceListChange(
+        firstSeen,
+        [...ownRecorded].filter((deviceId) => !now.has(deviceId))
+      );
+    }
     return { removed, ready, bundleMissing };
   }
 
@@ -5587,10 +5778,12 @@ export class SignalProtocolServiceCipher {
           const control = {
             declaredDeviceIds,
             ...(target?.stopSignal && { stopSignal: target.stopSignal }),
+            ...(target?.checkCopy && { checkCopy: target.checkCopy }),
           };
           accepted.push(await this.postSyncCopy(signalProtocolRelay, message, control));
           delivered.set(message.recipientDeviceId, message);
           target?.accepted?.push(...acceptedSyncDevices([message]));
+          target?.acceptedDeviceIds?.push(message.recipientDeviceId);
         },
         encrypt: async (device) => {
           if (device.userId !== this.userId || !targeted(device.deviceId)) {

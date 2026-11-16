@@ -46,7 +46,10 @@ import {
   throwIfUpgradeRequired,
   type SignalRelayProtocolOffer,
 } from "./signal-relay-protocol";
-import { withSignalProtocolRelayRequestDeadline } from "./signal-relay-request-deadline";
+import {
+  signalProtocolRelayRequestNotCompleted,
+  withSignalProtocolRelayRequestDeadline,
+} from "./signal-relay-request-deadline";
 
 const FRAME_VERSION = 1;
 const FRAME_HEADER_BYTES = 9;
@@ -335,9 +338,7 @@ export class HostedAnonymousDelivery {
           },
         );
       } catch (cause) {
-        throw new Error("Signal Protocol Relay request could not be completed", {
-          cause,
-        });
+        throw signalProtocolRelayRequestNotCompleted(cause);
       }
       const value = await responseObject(response);
       if (!response.ok) {

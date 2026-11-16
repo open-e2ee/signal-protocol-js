@@ -70,6 +70,7 @@ import {
   acceptContactIdentityRotation as acceptRotation,
   createUnverifiedContactIdentityRecord,
   evaluateContactIdentityCandidate,
+  unverifyContactIdentityRecord,
   validateContactIdentityRecord,
   verifyContactIdentityRecord,
 } from '../../../keys/identity';
@@ -556,6 +557,28 @@ export class KeyValueSignalProtocolStore implements SignalProtocolLocalStore {
       { type: 'set', key: contactKey, value: await this.encrypt(JSON.stringify(verified)) },
     ]);
     return verified;
+  }
+
+  async unverifyContactIdentity(
+    address: ProtocolAddress,
+    identity: CompositeIdentityV1,
+    identityType?: IdentityType
+  ): Promise<ContactIdentityRecord> {
+    this.ensureInitialized();
+    const contactKey = this.getContactStorageKey(address, identityType);
+    const existingValue = await this.storageBackend.getItem(contactKey);
+    const existing = existingValue
+      ? (JSON.parse(await this.decrypt(existingValue)) as ContactIdentityRecord)
+      : null;
+    if (!existing) throw new Error('Cannot clear the verification of an unseen identity');
+    validateContactIdentityRecord(existing);
+    const unverified = unverifyContactIdentityRecord(existing, identity, Date.now());
+    if (unverified === existing) return existing;
+    await this.storageBackend.atomicWrite([
+      { type: 'check', key: contactKey, expectedValue: existingValue },
+      { type: 'set', key: contactKey, value: await this.encrypt(JSON.stringify(unverified)) },
+    ]);
+    return unverified;
   }
 
   async isTrustedIdentity(

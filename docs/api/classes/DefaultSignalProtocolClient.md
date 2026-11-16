@@ -320,6 +320,49 @@ Remote device's protocol address
 
 ***
 
+### checkContactKeyTransparency()
+
+> **checkContactKeyTransparency**(`userId`): `Promise`\<[`KeyTransparencyCheckOutcome`](../type-aliases/KeyTransparencyCheckOutcome.md)\>
+
+Check the pinned identity of a contact against the identity log of the
+Relay. The pinned identity is the one that `verify()` shows as a
+safety number. The call runs one verified search and returns its outcome.
+
+- `pass`: the latest log entry of the contact is a key entry with the
+  pinned identity.
+- `failure`: the log or a proof contradicts the pinned identity, for
+  example `LOGGED_KEY_MISMATCH` when the log holds another identity.
+- `not-logged`: the log has no entry for the contact.
+- `unavailable`: the call got no result. `reason` says why. A client with
+  no pinned identity log keys gives `not-pinned` and makes no Relay read.
+
+The call never throws a `KeyTransparencyVerificationError`, never calls
+`onKeyTransparencyFailure`, and never blocks a send. A `pass` does not
+change the trust state of the contact. Only `confirmSafetyNumber()` sets
+`VERIFIED`. At most 10 calls in each 60 s read the Relay. A further call
+gives `unavailable` with `rate-limited`.
+
+#### Parameters
+
+##### userId
+
+`string`
+
+The user ID of the contact
+
+#### Returns
+
+`Promise`\<[`KeyTransparencyCheckOutcome`](../type-aliases/KeyTransparencyCheckOutcome.md)\>
+
+#### Example
+
+```typescript
+const outcome = await signal.checkContactKeyTransparency('bob');
+if (outcome.kind === 'failure') console.warn(outcome.error.code);
+```
+
+***
+
 ### checkPreKeyStatus()
 
 > **checkPreKeyStatus**(): `Promise`\<[`PreKeyStatusResult`](../interfaces/PreKeyStatusResult.md)\>
@@ -2880,7 +2923,8 @@ Sync local safety-number verification state to our other linked devices.
 
 The client syncs only explicit `verified` and cleared-to-`default` states.
 Key-conflict/untrusted state remains local and derived from identity-key
-changes.
+changes. Each other device of the account applies the state to its pinned
+identity of the target when `identityKey` is that pinned identity.
 
 #### Parameters
 

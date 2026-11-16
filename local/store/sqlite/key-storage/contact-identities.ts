@@ -12,6 +12,7 @@ import {
   acceptContactIdentityRotation as acceptRotation,
   createUnverifiedContactIdentityRecord,
   evaluateContactIdentityCandidate,
+  unverifyContactIdentityRecord,
   validateContactIdentityRecord,
   verifyContactIdentityRecord,
 } from '../../../../keys/identity';
@@ -146,6 +147,26 @@ export async function verifyContactIdentity(
     );
     await replacePinnedRecord(tx, recipientId, identityType, verified);
     return verified;
+  });
+}
+
+export async function unverifyContactIdentity(
+  ctx: KeyStorageContext,
+  address: PeerAddress,
+  identity: CompositeIdentityV1,
+  identityType: IdentityType
+): Promise<ContactIdentityRecord> {
+  return await ctx.db.transaction(async (tx) => {
+    const recipientId = buildContactIdentityId(address.userId, identityType);
+    const existing = await requirePinnedRecord(
+      tx,
+      recipientId,
+      'Cannot clear the verification of an unseen identity'
+    );
+    const unverified = unverifyContactIdentityRecord(existing, identity, Date.now());
+    if (unverified === existing) return existing;
+    await replacePinnedRecord(tx, recipientId, identityType, unverified);
+    return unverified;
   });
 }
 

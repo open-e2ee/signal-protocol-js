@@ -174,6 +174,29 @@ The context of the group at the send
 
 ***
 
+### serializeFirstSync()?
+
+> `optional` **serializeFirstSync**(`input`): `Uint8Array`
+
+The sync content that gives a first-sync bundle to a newly linked own
+device. `inspectContent` must report the result as a sync of type
+`'firstSync'` with its `firstSync`. Without this method,
+`sendHostedSignalProtocolRelayFirstSync` throws a `TypeError`.
+
+#### Parameters
+
+##### input
+
+[`FirstSyncInput`](FirstSyncInput.md)
+
+The bundle with its version, bundle ID, and creation time
+
+#### Returns
+
+`Uint8Array`
+
+***
+
 ### serializeGroupKeySync()
 
 > **serializeGroupKeySync**(`input`): `Uint8Array`

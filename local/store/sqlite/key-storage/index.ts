@@ -396,6 +396,14 @@ export class SqliteKeyStorage {
     );
   }
 
+  unverifyContactIdentity(
+    address: PeerAddress,
+    identityKey: CompositeIdentityV1,
+    identityType: IdentityType = 'aci'
+  ): Promise<ContactIdentityRecord> {
+    return contacts.unverifyContactIdentity(this.context, address, identityKey, identityType);
+  }
+
   isTrustedIdentity(
     address: PeerAddress,
     identityKey: CompositeIdentityV1,

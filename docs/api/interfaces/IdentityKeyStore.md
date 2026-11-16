@@ -302,6 +302,54 @@ Identity key pair to store
 
 ***
 
+### unverifyContactIdentity()?
+
+> `optional` **unverifyContactIdentity**(`address`, `identity`, `identityType?`): `Promise`\<[`ContactIdentityRecord`](../namespaces/keys/interfaces/ContactIdentityRecord.md)\>
+
+Clear the verification of the exact current tuple. The pin, its revision,
+and its rollback history stay, and the trust state becomes
+`UNVERIFIED_TOFU`. A record that is not verified stays unchanged.
+`unverifyContactIdentityRecord` from `@open-e2ee/signal-protocol-sdk/keys`
+computes the new record.
+
+The client calls it when another device of the own account syncs the
+`default` verification state for the current tuple. Each built-in store
+implements it. A custom store without it keeps the verification, and the
+client logs `VERIFICATION_STATE_SYNC_NOT_APPLIED`.
+
+#### Parameters
+
+##### address
+
+[`ProtocolAddress`](ProtocolAddress.md)
+
+Contact's protocol address
+
+##### identity
+
+[`CompositeIdentityV1`](../namespaces/keys/interfaces/CompositeIdentityV1.md)
+
+The current tuple of the contact
+
+##### identityType?
+
+[`IdentityType`](../namespaces/keys/type-aliases/IdentityType.md)
+
+ACI or PNI trust namespace
+
+#### Returns
+
+`Promise`\<[`ContactIdentityRecord`](../namespaces/keys/interfaces/ContactIdentityRecord.md)\>
+
+The record after the change
+
+#### Throws
+
+Error when the store holds no pin, or `identity` is not the
+  current tuple
+
+***
+
 ### verifyContactIdentity()
 
 > **verifyContactIdentity**(`address`, `identity`, `identityType?`, `suppliedCommitment?`): `Promise`\<[`ContactIdentityRecord`](../namespaces/keys/interfaces/ContactIdentityRecord.md)\>

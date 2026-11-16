@@ -58,7 +58,7 @@ import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import { DefaultSignalProtocolManager } from '../internal/manager';
 import { DefaultSesameManager } from '../internal/sesame';
 import type { Ciphertext, IdentityType, PreKeyBundle, PublicKey } from '../keys';
-import { createCompositeIdentityV1 } from '../keys/identity';
+import { createCompositeIdentityV1, encodeCompositeIdentityV1 } from '../keys/identity';
 import type {
   PreKeyRotationResult,
   SendLogDevice,
@@ -90,6 +90,9 @@ import {
   type SignalProtocolClientHooks,
 } from './event-hooks';
 import { readRenamedImplementation, readRenamedOption } from '../types/renamed-member';
+import type { KeyTransparencyFailureEvent } from './key-transparency/event';
+import type { KeyTransparencyRuntime } from './key-transparency/runtime';
+import type { KeyTransparencyCheckOutcome } from './key-transparency/verified-search';
 import { signalRelayProtocolErrorOf } from './device-set-reconciliation';
 import { DeliveryStatusTracker } from './delivery-status';
 import { signalRelayReceiptIntakeOf, type SignalProtocolRelayDeliveryReceipt } from './signal-relay-receipt-intake';
@@ -129,6 +132,7 @@ import {
   readGroupInitStatus,
   type GroupInitStatus,
 } from './group-init-status';
+import { IdentityChangeReporter } from './identity-change';
 import { removeDistributionsFromMessageRecords } from './distribution-records';
 import { GroupSenderKeyOperations } from './group-sender-key-operations';
 import {
@@ -149,6 +153,7 @@ import {
   attachClientMessageId,
   SignalProtocolServiceCipher,
   sortEnvelopesForDecryption,
+  type OwnDeviceListChange,
   type SendSessionCallbacks,
 } from './signal-service-cipher';
 import { establishMultiDeviceSessions } from '../internal/sesame/device-registry';
@@ -202,6 +207,7 @@ import {
   migrateReceivedTimestampRecords,
   migrateRetryRequestRecords,
   type OutgoingIntentEndReport,
+  type StoredOutgoingDeviceMessage,
 } from '../local/store/reliability';
 import {
   manualResendOutcomeEvent,
@@ -246,6 +252,7 @@ import {
   type SignalProtocolRelayWork,
 } from './signal-relay-work';
 import { StaleSessionRefreshError } from './signal-relay-device-refusal';
+import type { FirstSyncInput, HostedSignalProtocolRelayFirstSyncCallback } from './first-sync-bundle';
 import type { BoundedFanOut } from '../utils/bounded-fan-out';
 import {
   deleteMediaAttachment,
@@ -365,22 +372,46 @@ function isDataMessage(
   );
 }
 
+/**
+ * @internal The receivers that a hosted start binds before the client
+ * starts. The client binds them before its first receive, so no content
+ * arrives before them.
+ */
+export interface SignalProtocolClientStart {
+  /** Applies each first-sync bundle from device 1. */
+  readonly firstSync?: HostedSignalProtocolRelayFirstSyncCallback;
+}
+
 /** @internal Same client lifecycle with an owner-enforced existing identity. */
 export function createClientWithRetainedIdentities(
   userId: string,
   config: SignalProtocolClientConfig,
   identities: RetainedIdentities,
+  start?: SignalProtocolClientStart,
 ): Promise<DefaultSignalProtocolClient> {
   if (config.protocolManager !== undefined) {
     throw new TypeError('Retained startup requires the SDK protocol manager.');
   }
-  return createRetainedClient(userId, config, identities);
+  return createRetainedClient(userId, config, identities, start);
 }
 let createRetainedClient: (
   userId: string,
   config: SignalProtocolClientConfig,
-  identities: RetainedIdentities,
+  identities: RetainedIdentities | undefined,
+  start?: SignalProtocolClientStart,
 ) => Promise<DefaultSignalProtocolClient>;
+
+/**
+ * @internal The `create` lifecycle with the receivers of a hosted start
+ * bound before the first receive.
+ */
+export function createSignalProtocolClientWithStart(
+  userId: string,
+  config: SignalProtocolClientConfig,
+  start: SignalProtocolClientStart,
+): Promise<DefaultSignalProtocolClient> {
+  return createRetainedClient(userId, config, undefined, start);
+}
 
 /**
  * Modern Signal Protocol Client
@@ -399,8 +430,8 @@ let createRetainedClient: (
  * @category Primary API
  */
 export class DefaultSignalProtocolClient implements SignalProtocolClient {
-  static #retainedFactory = (createRetainedClient = (userId, config, identities) =>
-    DefaultSignalProtocolClient.#createOwned(userId, config, identities));
+  static #retainedFactory = (createRetainedClient = (userId, config, identities, start) =>
+    DefaultSignalProtocolClient.#createOwned(userId, config, identities, start));
 
   private readonly manager: SignalProtocolManager;
   private readonly _storage: SignalProtocolLocalStore;
@@ -636,6 +667,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    */
   private stopping?: Promise<void>;
 
+  /** True from the start of the retry lifecycle until stop(). */
+  private retryLifecycleStarted = false;
+
+  /** The key transparency checks of a hosted client, or `undefined`. */
+  private keyTransparency: KeyTransparencyRuntime | undefined;
+
   /**
    * Get retry rate limiting state for retry operations
    */
@@ -769,6 +806,16 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       config: config.media,
     });
 
+    // Each identity that the trust gate refuses for a changed identity runs
+    // `onIdentityChanged` once. The refused session work does not wait for it.
+    const identityChanges = new IdentityChangeReporter({
+      storage: this._storage,
+      ownUserId: userId,
+      isObserved: () => typeof this.hooks.onIdentityChanged === 'function',
+      report: (event) => callHook(this.hooks, 'onIdentityChanged', event),
+      logger: this.logger,
+    });
+
     // Dependency injection: Use provided protocol manager or create new one with our storage,
     // protocol strategy, and skip limit. A provided manager keeps its own skip limit.
     this.manager =
@@ -777,7 +824,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         this._storage,
         config.protocolStrategy,
         this.logger,
-        config.ratchetConfig?.maxSkip
+        config.ratchetConfig?.maxSkip,
+        { onUntrustedIdentity: identityChanges.observe }
       );
 
     // Validate manager was created successfully before initializing Sesame
@@ -1833,6 +1881,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     userId: string,
     config: SignalProtocolClientConfig,
     retained?: RetainedIdentities,
+    start?: SignalProtocolClientStart,
   ): Promise<DefaultSignalProtocolClient> {
     config = withSignalProtocolRelayNames(config);
     const deviceId = config?.deviceId ?? 1; // Default to primary device
@@ -1875,6 +1924,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       }
 
       const client = new DefaultSignalProtocolClient(userId, deviceId, finalConfig);
+      client.cipher.setFirstSyncReceiver(start?.firstSync);
       try {
         await client.initialize(retained);
         await client.hydratePersistedState();
@@ -2848,6 +2898,16 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       await this.markMessageDeliveredSilently(envelope.id, options);
       return { outcome: { kind: 'null-message' } };
     }
+    // A first sync is SDK content too. A callback that throws leaves the
+    // record open, so the content arrives again.
+    if (await this.cipher.consumeFirstSync(content)) {
+      await completeReceiveWork(this.ctx, record);
+      await this.markMessageDeliveredSilently(envelope.id, options);
+      return { outcome: { kind: 'null-message' } };
+    }
+    // A verification state sync from an own device updates the trust state
+    // of its target. The application still gets the content.
+    await this.cipher.applyVerificationStateSync(content);
     const decision = await this.cipher.decideGroupContent(content);
     if (decision.kind === 'denied') {
       await denyReceiveWork(this.ctx, record, content, decision.error);
@@ -3208,6 +3268,89 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     const { release, ...results } = await this.commitIncomingEnvelopes(envelopes);
     release();
     return results;
+  }
+
+  /**
+   * @internal Set the listener of own device list changes. Each own device
+   * list read and each own repair that adds or removes an own device record
+   * calls it once. `undefined` removes it.
+   */
+  setOwnDeviceListListener(listener: ((change: OwnDeviceListChange) => void) | undefined): void {
+    this.cipher.setOwnDeviceListListener(listener);
+  }
+
+  /**
+   * @internal Attach the key transparency checks of a hosted client. They
+   * run with the retry lifecycle: from its start until stop(), and again
+   * after the next start. Each failure calls `onKeyTransparencyFailure`.
+   * A second call replaces the first runtime.
+   */
+  attachKeyTransparency(
+    create: (report: (event: KeyTransparencyFailureEvent) => Promise<void>) => KeyTransparencyRuntime
+  ): void {
+    this.keyTransparency?.stop();
+    const runtime = create((event) => callHook(this.hooks, 'onKeyTransparencyFailure', event));
+    this.keyTransparency = runtime;
+    if (this.retryLifecycleStarted) runtime.start();
+  }
+
+  /**
+   * @internal Read the own device list once as relay work, and reconcile the
+   * own device records. A stopped client reads nothing.
+   */
+  async refreshOwnDeviceList(): Promise<void> {
+    await this.state.signalRelayWork.run((work) => this.cipher.refreshOwnDeviceList(work.stopSignal));
+  }
+
+  /**
+   * @internal The first-sync serializer of the content adapter, bound to
+   * the adapter, or undefined when the adapter has none.
+   */
+  firstSyncSerializer(): ((input: FirstSyncInput) => Uint8Array) | undefined {
+    const adapter = this.contentAdapter;
+    const serialize = adapter.serializeFirstSync;
+    return serialize === undefined ? undefined : (input) => serialize.call(adapter, input);
+  }
+
+  /**
+   * @internal Send serialized first-sync content to one listed own device as
+   * relay work. See `SignalProtocolServiceCipher.sendFirstSyncToOwnDevice`.
+   *
+   * @throws RelayWorkStopped when `signal` aborts or the client stops before
+   *   the send ends
+   */
+  async sendFirstSyncToOwnDevice(
+    payload: Uint8Array,
+    deviceId: number,
+    timestamp: number,
+    options: {
+      readonly signal?: AbortSignal;
+      readonly checkCopy?: (copy: StoredOutgoingDeviceMessage) => void;
+    } = {}
+  ): Promise<'accepted' | 'unlisted' | 'not-accepted'> {
+    const { signal, checkCopy } = options;
+    if (signal?.aborted) throw new RelayWorkStopped();
+    let result: 'accepted' | 'unlisted' | 'not-accepted' | undefined;
+    await this.state.signalRelayWork.run(async (work) => {
+      // Either the stop of the client or the signal of the caller stops the send.
+      const stop = new AbortController();
+      const abort = () => stop.abort();
+      const sources = [work.stopSignal, ...(signal ? [signal] : [])];
+      for (const source of sources) {
+        if (source.aborted) stop.abort();
+        else source.addEventListener('abort', abort, { once: true });
+      }
+      try {
+        result = await this.cipher.sendFirstSyncToOwnDevice(payload, deviceId, timestamp, {
+          stopSignal: stop.signal,
+          ...(checkCopy && { checkCopy }),
+        });
+      } finally {
+        for (const source of sources) source.removeEventListener('abort', abort);
+      }
+    });
+    if (result === undefined) throw new RelayWorkStopped();
+    return result;
   }
 
   /**
@@ -3739,6 +3882,42 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     return SessionOps.verify(this.ctx, userId, identityType);
   }
 
+  /**
+   * Check the pinned identity of a contact against the identity log of the
+   * Relay. The pinned identity is the one that `verify()` shows as a
+   * safety number. The call runs one verified search and returns its outcome.
+   *
+   * - `pass`: the latest log entry of the contact is a key entry with the
+   *   pinned identity.
+   * - `failure`: the log or a proof contradicts the pinned identity, for
+   *   example `LOGGED_KEY_MISMATCH` when the log holds another identity.
+   * - `not-logged`: the log has no entry for the contact.
+   * - `unavailable`: the call got no result. `reason` says why. A client with
+   *   no pinned identity log keys gives `not-pinned` and makes no Relay read.
+   *
+   * The call never throws a `KeyTransparencyVerificationError`, never calls
+   * `onKeyTransparencyFailure`, and never blocks a send. A `pass` does not
+   * change the trust state of the contact. Only `confirmSafetyNumber()` sets
+   * `VERIFIED`. At most 10 calls in each 60 s read the Relay. A further call
+   * gives `unavailable` with `rate-limited`.
+   *
+   * @param userId - The user ID of the contact
+   *
+   * @example
+   * ```typescript
+   * const outcome = await signal.checkContactKeyTransparency('bob');
+   * if (outcome.kind === 'failure') console.warn(outcome.error.code);
+   * ```
+   */
+  async checkContactKeyTransparency(userId: string): Promise<KeyTransparencyCheckOutcome> {
+    const runtime = this.keyTransparency;
+    if (runtime === undefined) return { kind: 'unavailable', reason: 'not-pinned' };
+    return runtime.checkContact(userId, async () => {
+      const record = await this._storage.getContactIdentity(ProtocolAddress.create(userId, 1), 'aci');
+      return record === null ? undefined : encodeCompositeIdentityV1(record.identity);
+    });
+  }
+
   /** Confirm an authenticated comparison of the currently displayed tuple. */
   async confirmSafetyNumber(
     confirmation: import('./types').SafetyNumberConfirmation
@@ -3938,9 +4117,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * driver, each with a pass in the background. Each relay transition to
    * connected runs the resend jobs and the send driver again until stop().
    * On a store with no `listMetadataKeys`, the send driver logs one line and
-   * stays disabled, with no subscription.
+   * stays disabled, with no subscription. The key transparency checks start
+   * with them.
    */
   private startRetryLifecycle(): void {
+    this.retryLifecycleStarted = true;
+    this.keyTransparency?.start();
     void this.retryRequests.start();
     this.groupFetcher?.start().catch((error: unknown) => {
       this.logger.warn('The group fetcher failed to start', {
@@ -4160,7 +4342,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    *
    * The client syncs only explicit `verified` and cleared-to-`default` states.
    * Key-conflict/untrusted state remains local and derived from identity-key
-   * changes.
+   * changes. Each other device of the account applies the state to its pinned
+   * identity of the target when `identityKey` is that pinned identity.
    */
   async syncVerificationStateToLinkedDevices(
     verificationState: import('./content-adapter').VerificationStateSyncInput
@@ -4329,8 +4512,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     await Promise.resolve();
 
     // 0. Stop the retry request scheduler, the resend job driver, the send
-    // driver, the group fetcher, and the receive queue, so no pass starts.
-    // Step 4 waits for a pass in progress, as for other relay work
+    // driver, the group fetcher, the key transparency checks, and the
+    // receive queue, so no pass starts. Step 4 waits for a pass in progress,
+    // as for other relay work. A key transparency check in progress is not
+    // relay work: it completes in the background and starts no other check
+    this.retryLifecycleStarted = false;
+    this.keyTransparency?.stop();
     this.retryRequests.stop();
     this.resendJobs.stop();
     this.sendIntents.stop();

@@ -190,6 +190,25 @@ messages queued for the old device are lost.
 
 > `readonly` **getIdentityAssertion**: [`GetIdentityAssertion`](../type-aliases/GetIdentityAssertion.md)
 
+#### onFirstSync?
+
+> `readonly` `optional` **onFirstSync?**: [`HostedSignalProtocolRelayFirstSyncCallback`](../type-aliases/HostedSignalProtocolRelayFirstSyncCallback.md)
+
+Applies a first-sync bundle that device 1 sends with
+`sendHostedSignalProtocolRelayFirstSync`. The client binds it before
+its first receive, so a bundle that waits in the mailbox of this
+device arrives at it. The device writes the apply-once record of the
+bundle after the callback resolves. When the callback throws, the
+durable local receive queue gives the bundle again, also after a
+restart. Without it, the device consumes each first sync and logs
+the warning `FIRST_SYNC_UNHANDLED`.
+
+#### onOwnDevicesChanged?
+
+> `readonly` `optional` **onOwnDevicesChanged?**: [`HostedSignalProtocolRelayOwnDevicesChangedCallback`](../type-aliases/HostedSignalProtocolRelayOwnDevicesChangedCallback.md)
+
+Called when a read of the own device list finds an added or a removed own device.
+
 #### onProgress?
 
 > `readonly` `optional` **onProgress?**: [`HostedSignalProtocolRelayIdentityProgressCallback`](../type-aliases/HostedSignalProtocolRelayIdentityProgressCallback.md)

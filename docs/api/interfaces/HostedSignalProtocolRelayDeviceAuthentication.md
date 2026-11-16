@@ -9,8 +9,7 @@
 A device proof signer whose private key never leaves the SDK-owned local store.
 
 Each Relay protocol version signs its own label. A call without
-`protocolVersion` signs the label of version 1, which the Relay verifies
-on versions 1 and 2 and on a request without a version.
+`protocolVersion` signs the label of version 2.
 
 ## Properties
 

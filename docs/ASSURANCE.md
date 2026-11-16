@@ -16,16 +16,16 @@ Private testing also exists in other open-source projects. [SQLite publishes som
 
 Engineering CI runs the default automated checks on pull requests that are ready for review and on changes to the main branch. Release preparation requires a passing run.
 
-Most recent full run on 2026-11-11:
+Most recent full run on 2026-11-16:
 
 | | |
 |---|---|
-| Test modules | 618 |
-| Test cases | 13,130 |
-| Passed | 13,126 |
+| Test modules | 645 |
+| Test cases | 14,058 |
+| Passed | 14,054 |
 | Skipped | 4 |
 | Failed | 0 |
-| Wall time | 436 s |
+| Wall time | 572 s |
 
 The total counts test cases. One test case can contain several assertions. Separate commands run the longer performance and endurance checks.
 
@@ -50,6 +50,8 @@ The browser storage job also runs 2,000 open, write, read, and close cycles of t
 In Chromium, the browser storage job also builds an app with the Vite version of the browser example and the packed package. The entry module of the app completes an exchange in each direction with a top-level await. The job fails when the exchange does not finish in 30 seconds, or when a chunk of the build imports the entry chunk. A default automated check also fails when the SDK loads a module with a dynamic import and that module imports another module. Other bundlers are not checked.
 
 A storage contract check does not prove a full encrypted exchange. Internal browser and Expo examples exercise message encryption, delivery, and decryption.
+
+The device link envelope checks seal fixed known-answer values and open them. They also refuse a wrong X25519 key, a wrong ML-KEM key, changed associated data, an unknown version, and a message above the size limit. The two-device link flows run against an in-process Relay fixture. They cover link token refusals, a repeated redeem after a lost answer, a join that continues after its link token expired, and a cancelled join. A fixture check does not prove the behavior of a deployed Relay.
 
 ## SQLite store checks
 

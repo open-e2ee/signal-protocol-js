@@ -6,9 +6,10 @@
 
 # Class: HostedSignalProtocolRelayDeviceRevokedError
 
-An account recovery revoked this device. The Relay refuses its key on the
-device token request and on a registration, so both fail the same way. The
-SDK does not retry the request.
+An account recovery revoked this device, or
+`removeHostedSignalProtocolRelayDevice` removed it. The Relay refuses its
+key on the device token request and on a registration, so both fail the
+same way. The SDK does not retry the request.
 
 ## Extends
 

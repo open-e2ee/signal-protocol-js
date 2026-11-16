@@ -1,5 +1,275 @@
 # Changelog
 
+## 14.6.0
+
+### Added
+
+- **`onKeyTransparencyFailure` reports a failed key transparency check.** A
+  hosted client checks identities against the identity log of the Relay. It
+  checks each contact identity that it fetches, and its own identity once
+  each week. The event has the subject `contact` or `self` and a
+  `KeyTransparencyVerificationError` whose `code` is a
+  `KeyTransparencyFailureCode`. A failure never refuses a send or a decrypt.
+  The new types are `KeyTransparencyFailureEvent`,
+  `KeyTransparencyVerificationError`, and `KeyTransparencyFailureCode`.
+- **The key transparency checks run the hook once for each failure.** The
+  rules:
+  - A contact failure runs the hook once for each contact identity.
+  - A contact key mismatch or a contact that is not in the log gets a second
+    check 2 hours later. Only a second key mismatch or not-logged result runs
+    the hook.
+  - An identity whose log append waits for 24 hours runs the hook with
+    `LOG_APPEND_OVERDUE`.
+  - A self failure runs the hook on the second consecutive failed check, once
+    for each failing streak. An own account that is not in the log is a
+    failure with `IDENTITY_NOT_LOGGED`.
+  - A check that cannot get a result runs no hook.
+  - The client checks only when the build pins the log keys of the Relay
+    profile. This release pins no keys, so no check runs.
+- **`checkContactKeyTransparency(userId)` checks a contact on request.** The
+  method checks the pinned identity of the contact against the identity log
+  and returns a `KeyTransparencyCheckOutcome`: `pass`, `not-logged`,
+  `unavailable` with a `KeyTransparencyUnavailableReason`, or `failure` with a
+  `KeyTransparencyVerificationError`. A key mismatch gives
+  `LOGGED_KEY_MISMATCH` on the first call. The method never throws a key
+  transparency error and never runs `onKeyTransparencyFailure`. A `pass` does
+  not change the trust state of the contact. At most 10 calls in each 60 s
+  read the Relay. This release pins no keys, so each call gives `unavailable`
+  with `not-pinned`. The new types are `KeyTransparencyCheckOutcome` and
+  `KeyTransparencyUnavailableReason`.
+- **`onIdentityChanged` reports the identity change of a contact.** The hook
+  runs once for each change that the trust gate refuses, on the send path or on
+  the receive path. The event has the pinned identity, the refused identity,
+  the status `CHANGED` or `ROLLBACK`, and the trust state. The refused
+  operation still throws `UntrustedIdentityError`. A device of the own account
+  does not run the hook. The new type is `IdentityChangedEvent`.
+- **A device applies a verification state sync from another own device.** A
+  `verified` sync marks the pinned identity of the contact `VERIFIED`. A
+  `default` sync clears that verification. The device applies a sync only when
+  its `identityKey` is the pinned identity, and it never pins or rotates an
+  identity. It logs `VERIFICATION_STATE_SYNC_NOT_APPLIED` with the reason for a
+  sync that it does not apply. The application still gets the sync content.
+  `ParsedSyncContent.verificationState` carries the state. A custom content
+  adapter must report it, or the client does not apply the sync.
+- **`IdentityKeyStore.unverifyContactIdentity` clears a verification.** The
+  method is optional. The memory, key-value, IndexedDB, and SQLite stores
+  implement it. A custom store without it keeps `VERIFIED` on a `default`
+  sync. `unverifyContactIdentityRecord` in `/keys` gives the record change. The
+  local store conformance kit has the case `contact verification clearing`,
+  which it skips for a store without the method.
+- **A device link through the provisioning channel.** A new device calls
+  `joinHostedSignalProtocolRelayAccount` with an empty store. The call shows a
+  link code through `hosted.onLinkCode`, and shows a new code each time the
+  Relay ends the 90 s channel. The primary device approves the code with
+  `approveHostedSignalProtocolRelayDeviceLink(client, linkCode, options)`.
+  The approval seals the account identity, the groups, and up to 16,384
+  bytes of `applicationData` for the new device. The Relay cannot read them. Private keys can move between the
+  devices of one user. They move only inside an end-to-end encrypted
+  envelope. The envelope uses hybrid X25519 and post-quantum ML-KEM-768 key
+  agreement. Show a confirmation screen on the primary device before it
+  approves. The SDK calls `hosted.confirmAccount` with the account address
+  before the new device registers. The approval resolves only after the new
+  device has linked: it reads the link status with a wait of 500 ms that
+  doubles to 5 s, and resolves with the `deviceId` that the Relay made. When
+  the link token expires before the new device registers, the approval gives
+  `LINK_CODE_EXPIRED`. The status stays `linked` after a later removal, so
+  list the devices, or use `hosted.onOwnDevicesChanged`, to see the current
+  devices. The new device names itself with `hosted.deviceName`, 1 to 50
+  UTF-16 code units, which the join encrypts to the account identity key.
+  The `deviceName` option of the approval is deprecated and does nothing.
+  The new device registers with its own device ID, registration ID, prekeys,
+  and device key, and the call resolves with its started client. The store
+  keeps the state of the join. After a failure that follows the envelope,
+  call again with the same store, and the join continues with the same link
+  token and no new code. A redeem refusal (`ENVELOPE_INVALID` or
+  `LINK_TOKEN_REJECTED`) deletes the join state, so the next call shows a
+  new code. A redeem with no answer, a 5xx answer, or another retryable
+  answer other than 429 is sent again with the same body, at most two
+  times, before the call throws. A later call that
+  repeats the redeem gets the same answer until the token cleanup, 24 hours
+  after the link token expires. When the device token of that answer has
+  expired, the call gets a new device token with the device proof. After
+  the cleanup, the call gives `LINK_TOKEN_REJECTED`, and the device that the
+  Relay made has no owner: remove it from the primary device.
+  An `AbortSignal` stops either call with `CANCELLED`. The link token expires
+  after 10 minutes, and an account has at most 5 devices.
+- `listHostedSignalProtocolRelayDevices(client)` lists the own devices, with
+  `isPrimary`, `isCurrent`, the decrypted `name`, and `linkedAt`.
+- `removeHostedSignalProtocolRelayDevice(client, deviceId)` removes a device.
+  The primary device can remove each linked device, and a linked device can
+  remove itself. Device 1 cannot be removed: the call gives a `RangeError`.
+  A removed client stops with
+  `HostedSignalProtocolRelayDeviceRevokedError`. Removal is a Relay
+  revocation only: the removed device keeps its keys. For a lost or stolen
+  device, run an account recovery.
+- `renameHostedSignalProtocolRelayDevice(client, deviceId, name)` sets the
+  name of a device. The primary device can rename each device, and a linked
+  device can rename only itself. The call encrypts the name to the account
+  identity key, so the Relay cannot read it. A slot with no device gives
+  `DEVICE_NOT_FOUND`.
+- `resetRemovedHostedSignalProtocolRelayDevice(options)` deletes the local
+  account state of a removed device. The same store can then join the
+  account again with `joinHostedSignalProtocolRelayAccount`. Stop each client
+  of the store first. The call renews the device token. It deletes the state
+  only when the Relay refuses the renewal with `DEVICE_REVOKED`.
+
+  It deletes the identities, the sessions, the prekeys, the device key, the
+  device session, and the join marker. With `groups.store`, it also deletes
+  each group of that store. When the Relay still serves the device, the call
+  gives `DEVICE_NOT_REMOVED`. On each other failure, the call throws the
+  error unchanged. In both cases, the store does not change.
+- `hosted.onOwnDevicesChanged` on `createHostedSignalProtocolClient`,
+  `resumeHostedSignalProtocolClient`, and
+  `joinHostedSignalProtocolRelayAccount`. The client calls it with the added
+  and the removed own device IDs when a read of the own device list finds a
+  change. The client reads the list at the start and each time its Relay
+  connection opens again, so an idle device sees a change without a send.
+- `HostedSignalProtocolRelayDeviceProvisioningError`, with the `code` values
+  `LINK_CODE_INVALID`, `LINK_CODE_EXPIRED`, `DEVICE_LIMIT_REACHED`,
+  `NOT_PRIMARY`, `ENVELOPE_INVALID`, `ENVELOPE_TOO_LARGE`, `STORE_NOT_EMPTY`,
+  `LINK_TOKEN_REJECTED`, `SIGNAL_RELAY_UNSUPPORTED`, `CANCELLED`,
+  `DEVICE_NOT_REMOVED`, and `DEVICE_NOT_FOUND`. A Relay without the device link routes gives
+  `SIGNAL_RELAY_UNSUPPORTED`.
+- **Device 1 sends a first sync to a newly linked device.**
+  `sendHostedSignalProtocolRelayFirstSync(client, deviceId, bundle, options)`
+  sends one snapshot to the own device `deviceId`, and resolves with its
+  `bundleId`. The bundle has at least one of `profileKey`, `settings`,
+  `contacts`, `blocked`, and `applicationData`. Each part is a full snapshot
+  of its kind, and the SDK reads no part from its own stores. The SDK sends
+  nothing at the approval, so call it when the new device is listed, for
+  example from `hosted.onOwnDevicesChanged`. The call is not idempotent: each
+  call is a new bundle. The Relay meters the accepted copy as one message.
+
+  The call gives `NOT_PRIMARY` on a device other than device 1,
+  `DEVICE_NOT_FOUND` when the own device list does not hold the device or
+  the Relay accepts no copy for it, and `CANCELLED` when `options.signal`
+  fires or the client stops before the Relay accepts the copy. A bundle
+  value of the wrong type gives a `TypeError`, and a value out of range
+  gives a `RangeError`. Content of 140,000 bytes or less always fits, also in the
+  first message to the new device. An encrypted copy whose delivery wire is
+  above 262,144 bytes gives a `RangeError` before the post. An early check
+  refuses serialized content above 196,608 bytes with a `RangeError` before
+  the encryption, but content below that size can still fail the wire check.
+  Each size refusal names its check and the content size that always fits.
+
+  The new device gets the bundle in `hosted.onFirstSync` on
+  `joinHostedSignalProtocolRelayAccount`, `createHostedSignalProtocolClient`,
+  and `resumeHostedSignalProtocolClient`. The client binds the callback
+  before its first receive. It applies each bundle once: it writes the
+  apply-once record after the callback resolves. When the callback throws,
+  the durable local receive queue gives the bundle again, also after a
+  restart. A first sync never reaches `onMessageDecrypted`.
+  The device logs `FIRST_SYNC_NOT_FROM_PRIMARY`, `FIRST_SYNC_MALFORMED`,
+  `FIRST_SYNC_STALE`, or `FIRST_SYNC_UNHANDLED` for a first sync that it
+  does not apply. A content adapter gets the optional `serializeFirstSync`,
+  and `ParsedSyncContent` gets the type `firstSync` with the member
+  `firstSync`. A custom adapter without the method cannot send a first sync.
+
+### Changed
+
+- **A second registration on an account gives
+  `HostedSignalProtocolRelayDeviceLinkRequiredError`.** The Relay refuses,
+  with 409 `DEVICE_LINK_REQUIRED`, a registration on an account that already
+  has a device. The error extends `HostedSignalProtocolRelayHttpError`, so a
+  `code` check continues to work. Join the second device with
+  `joinHostedSignalProtocolRelayAccount`. On a Relay without the device link
+  routes, link it with `linkHostedSignalProtocolRelayDevice`, or recover the
+  account.
+- **`linkHostedSignalProtocolRelayDevice` links only from the primary
+  device.** Pass the store of device 1 as `activeDeviceStorage`. Without
+  `hosted.adapter`, the call reads the stored Relay session of that store. When
+  the session is not device 1, the call throws
+  `HostedSignalProtocolRelayDeviceProvisioningError` with the code
+  `NOT_PRIMARY`. It throws before it writes to a store or sends the link
+  request.
+
+  When the Relay refuses a link with `NOT_PRIMARY`, the call rolls the link
+  back as for `KEY_PROOF_INVALID` and throws the same error. A custom
+  `hosted.adapter` throws
+  `HostedSignalProtocolRelayHttpError` with the code `NOT_PRIMARY` for that
+  refusal. The function signature does not change.
+
+  Upgrade: call `linkHostedSignalProtocolRelayDevice` from the primary
+  device. A linked device now gets
+  `HostedSignalProtocolRelayDeviceProvisioningError` with the code
+  `NOT_PRIMARY`.
+- **The default message of `HostedSignalProtocolRelayDeviceRevokedError`
+  names a device removal.** The new default message is
+  `The device was revoked by an account recovery or a device removal.`
+  The error uses it when the Relay answer for `DEVICE_REVOKED` has no
+  message. The error keeps a message from the Relay. The `code`, `status`,
+  `retryable`, and error type do not change.
+
+### Removed
+
+- **Removed: version 1 selection and the version 1 meaning of
+  `RETRY_CONFLICT`.** The SDK does not speak Relay protocol version 1. It
+  offers version 3, with version 2 as its fallback, as before. An SDK carrier
+  that selects a version below 2 throws a `RangeError` before it sends a
+  request. `RETRY_CONFLICT` stays an earlier acceptance for its three
+  sources. A `DELIVERY_ALREADY_ACCEPTED` answer to a hosted carrier is an
+  earlier acceptance, as for `RETRY_CONFLICT`. No public export changes.
+
+  Minimum Relay release: a Relay that serves version 2. Current Relay
+  releases serve versions 2 and 3, and refuse version 1 with
+  `UPGRADE_REQUIRED`.
+
+  Upgrade: use a Relay that serves version 2.
+
+### Fixed
+
+- **A new session from a removed device returns the device to fan-out.**
+  Before, a device that a client marked removed stayed removed when a new
+  install of the device linked into the same slot and started a session. The
+  client sent the device no sync copy and no note to self until the app
+  called `refreshOwnDeviceList()`. Now the receive of the first message of
+  the new session clears the mark, and the next send includes the device.
+  The identity checks do not change: an own device must hold the account
+  identity, and a changed contact identity still needs verification. A late
+  message on an archived session of the removed device still leaves it
+  removed.
+- **A removed device stops its Relay connection with `device-revoked`.**
+  Before, a removed device whose device token was unexpired stopped with
+  `authority-refused`. The Relay refuses that token with `NOT_FOUND`, the same
+  refusal as for a missing device. Now a conclusive `NOT_FOUND` on a pull or
+  on the socket token request gets one device token refresh. The refresh gets
+  `DEVICE_REVOKED`, so the connection stops with `device-revoked`. A refresh
+  that succeeds, or another conclusive refusal, still stops with
+  `authority-refused`. A network failure of the refresh does not stop the
+  connection, and it retries on its usual schedule.
+- **A Relay call of a removed device throws
+  `HostedSignalProtocolRelayDeviceRevokedError`.** Before, a call such as
+  `listHostedSignalProtocolRelayDevices` or a message send threw
+  `HostedSignalProtocolRelayHttpError` with the code `NOT_FOUND` while the
+  device token was unexpired. Now a `NOT_FOUND` with `retryable` false gets
+  one device token refresh, and a refresh that gets `DEVICE_REVOKED` or
+  `NOT_FOUND` throws its typed error. A missing destination still throws its
+  `NOT_FOUND`. After a refresh succeeds, a `NOT_FOUND` in the next 60 s gets
+  no refresh. After `DEVICE_REVOKED`, each later call that needs the device
+  token throws the same error and sends no request.
+
+#### Store compatibility
+
+- This release changes no stored record format and no store schema. A store
+  that SDK 14.4.0 or 14.5.0 wrote opens with this release.
+- This release writes two new metadata keys. `hosted-join:v1` is the join
+  marker, and a `complete` marker stays after a join. `first-sync:v1` keeps
+  the IDs of the applied first-sync bundles. An earlier SDK does not read
+  them.
+- A `default` verification state sync sets the trust state
+  `UNVERIFIED_TOFU` and removes `verifiedAt`. The record keeps its revision.
+  A new session from a removed device removes `removedAt` from the device
+  record. An earlier SDK reads both records.
+- This release writes no key transparency record, because it pins no keys.
+- A return to SDK 14.5.0 is supported, with two limits:
+  - SDK 14.5.0 does not know a first sync. It does not apply the bundle, and
+    it has no `hosted.onFirstSync`.
+  - SDK 14.5.0 cannot continue a join that did not complete. Ship this
+    release again, and call `joinHostedSignalProtocolRelayAccount` with the
+    same store.
+- The 14.4.0 rollback rule still applies: do not ship SDK 14.1.0 or earlier
+  to a device after it runs SDK 14.4.0 or this release.
+
 ## 14.5.0
 
 ### Fixed

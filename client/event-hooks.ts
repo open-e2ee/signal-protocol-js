@@ -39,6 +39,8 @@
 import type { RetryTerminalClass } from '../local/store/reliability';
 import type { SignalProtocolRelayProtocolError } from './device-set-reconciliation';
 import type { GroupInitStatus } from './group-init-status';
+import type { IdentityChangedEvent } from './identity-change';
+import type { KeyTransparencyFailureEvent } from './key-transparency/event';
 import type { GroupId } from '../internal/groups/group-id';
 import type { SendResult } from './types';
 export type { RetryTerminalClass };
@@ -731,6 +733,74 @@ export interface SignalProtocolClientHooks {
   onGroupInitStatus?: (groupId: GroupId, status: GroupInitStatus) => void | Promise<void>;
 
   /**
+   * Runs once for each identity change of a contact that the client detects.
+   *
+   * The client detects a change when its trust gate refuses an identity that
+   * differs from the pinned identity of the user. The gate runs on the send
+   * path, for a fetched prekey bundle and for an established session, and on
+   * the receive path. The event has the pinned identity, the refused
+   * identity, and the status: `'CHANGED'` for a new identity, `'ROLLBACK'` for
+   * a retired one. A first contact and the pinned identity do not run the hook.
+   *
+   * The hook does not change the refusal. The send or the decrypt still fails
+   * with `UntrustedIdentityError`. One change runs the hook once for the life
+   * of the client, also when both paths refuse it or when it repeats. A new
+   * client runs the hook again for a change that it detects again. After
+   * `acceptIdentityRotation`, a later change runs the hook again.
+   *
+   * The hook runs after the refused operation, and the refused operation does
+   * not wait for it. An error from the hook does not change the refusal. The
+   * client logs the error. A custom `protocolManager` does not run the hook.
+   *
+   * @param event - The detected identity change
+   *
+   * @example
+   * ```typescript
+   * onIdentityChanged: async (event) => {
+   *   await audit.recordIdentityChange(event.userId, event.status, event.currentIdentity);
+   *   conversations.markIdentityChanged(event.userId);
+   * }
+   * ```
+   */
+  onIdentityChanged?: (event: IdentityChangedEvent) => void | Promise<void>;
+
+  /**
+   * Runs when a key transparency check of a hosted client fails.
+   *
+   * A hosted client checks identities against the identity log of the
+   * Relay, when the build pins the log keys of the Relay profile. The client
+   * checks each contact identity that it fetches (`subject: 'contact'`), and
+   * its own identity once each week (`subject: 'self'`). A failure means that
+   * the log does not prove the identity that the Relay served, or that a
+   * proof of the log is not valid. `event.error.code` names the step that
+   * failed.
+   *
+   * A contact failure runs the hook once for each `(userId, identity)` pair
+   * for the life of the client. A key mismatch or a not-logged result runs
+   * the hook only when a second check 2 hours later gives one of them again.
+   * A self failure runs the hook on the second consecutive failed check,
+   * once for each failing streak. For the own account, a not-logged result
+   * is a failure. An identity whose log append waits runs the hook only
+   * after 24 hours. A check that
+   * cannot get a result, such as on a network error, does not run the hook.
+   * With no pinned keys, no check runs.
+   *
+   * A failure never refuses a send or a decrypt, and no operation waits for
+   * the hook. An error from the hook does not change a check. The client
+   * logs the error.
+   *
+   * @param event - The failed check
+   *
+   * @example
+   * ```typescript
+   * onKeyTransparencyFailure: (event) => {
+   *   monitoring.report('key-transparency', { subject: event.subject, code: event.error.code });
+   * }
+   * ```
+   */
+  onKeyTransparencyFailure?: (event: KeyTransparencyFailureEvent) => void | Promise<void>;
+
+  /**
    * Runs once for a completed send whose Relay accepted a declared post
    * without the `deviceSetChecked` mark. A declared post is a post to a
    * recipient device or a sync copy to another device of the own account.
@@ -856,6 +926,8 @@ const HOOK_NAMES = {
   onDeliveryRecovered: true,
   onReceiveExpired: true,
   onGroupInitStatus: true,
+  onIdentityChanged: true,
+  onKeyTransparencyFailure: true,
   onSignalProtocolRelayProtocolError: true,
   onRelayProtocolError: true,
   onReadReceiptReceived: true,

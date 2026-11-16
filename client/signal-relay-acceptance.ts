@@ -51,15 +51,13 @@ export function aggregateSignalProtocolRelayAcceptance(
  * RETRY_CONFLICT has three sources: the Relay holds the same operation with
  * other bytes, the same operation under another accepted class, or another
  * operation under the same message ID. A direct post that never changed its
- * ciphertext counts it as an earlier acceptance, under protocol version 1
- * and version 2. A new seal of a stored sealed body changes only the outer
- * layer, so it does not change the ciphertext.
+ * ciphertext counts it as an earlier acceptance. A new seal of a stored
+ * sealed body changes only the outer layer, so it does not change the
+ * ciphertext.
  *
- * DELIVERY_ALREADY_ACCEPTED is a protocol version 2 code: the Relay already
- * holds an accepted post under the message ID, so it refused this post
- * before it stored anything. A post and a retry request both read it as
- * RETRY_CONFLICT. Under version 1 the Relay sends RETRY_CONFLICT in its
- * place, so a version 1 answer with this code is an unknown code.
+ * DELIVERY_ALREADY_ACCEPTED: the Relay already holds an accepted post under
+ * the message ID, so it refused this post before it stored anything. A post
+ * and a retry request both read it as RETRY_CONFLICT.
  */
 export type SignalProtocolRelayOperationRefusal =
   | 'OPERATION_EXPIRED'
@@ -69,9 +67,8 @@ export type SignalProtocolRelayOperationRefusal =
 const conflictAcceptances = new WeakSet<SignalProtocolRelayPostAcceptance>();
 
 /**
- * The acceptance of a post that got RETRY_CONFLICT, or DELIVERY_ALREADY_ACCEPTED
- * under protocol version 2: the Relay already holds a post under its message
- * ID. Neither answer carries a Relay receipt, so the acceptance carries only
+ * The acceptance of a post that got RETRY_CONFLICT or DELIVERY_ALREADY_ACCEPTED:
+ * the Relay already holds a post under its message ID. Neither answer carries a Relay receipt, so the acceptance carries only
  * the client message ID of the post and the time of the answer on the SDK
  * clock.
  */
@@ -102,14 +99,13 @@ export function sendResultAcceptance(
 /**
  * The operation refusal that a relay error carries as its code, if any.
  * DELIVERY_ALREADY_ACCEPTED is a refusal only when a hosted carrier marked
- * the error as the answer to a request of protocol version 2 or later. An
- * unmarked error and a version 1 answer carry it as an unknown code.
+ * the error as its answer. An unmarked error carries it as an unknown code.
  */
 export function signalRelayOperationRefusal(error: unknown): SignalProtocolRelayOperationRefusal | undefined {
   if (error === null || typeof error !== 'object') return undefined;
   const { code } = error as { code?: unknown };
   if (code === 'OPERATION_EXPIRED' || code === 'RETRY_CONFLICT') return code;
-  if (code === 'DELIVERY_ALREADY_ACCEPTED' && (signalRelayAnswerVersion(error) ?? 1) >= 2) {
+  if (code === 'DELIVERY_ALREADY_ACCEPTED' && signalRelayAnswerVersion(error) !== undefined) {
     return code;
   }
   return undefined;
@@ -117,8 +113,8 @@ export function signalRelayOperationRefusal(error: unknown): SignalProtocolRelay
 
 /**
  * True when a relay error says that the Relay already holds a post under the
- * message ID of the post: RETRY_CONFLICT, or DELIVERY_ALREADY_ACCEPTED under
- * protocol version 2. A post reads both answers in the same way.
+ * message ID of the post: RETRY_CONFLICT, or DELIVERY_ALREADY_ACCEPTED from a
+ * hosted carrier. A post reads both answers in the same way.
  */
 export function signalRelayHoldsMessageId(error: unknown): boolean {
   const refusal = signalRelayOperationRefusal(error);
@@ -161,9 +157,9 @@ const RATE_CODES: ReadonlySet<string> = new Set(['QUOTA_EXCEEDED', 'MAILBOX_FULL
  * AUTHORITY_OVERRIDE, TOKEN_INVALID, 401 or 403 is a revoked authority.
  * QUOTA_EXCEEDED, MAILBOX_FULL and 429 are a rate refusal. Every other
  * error, a network error and a lost answer included, is a transport outage.
- * The caller handles OPERATION_EXPIRED, RETRY_CONFLICT and the version 2
- * DELIVERY_ALREADY_ACCEPTED first. A version 1 DELIVERY_ALREADY_ACCEPTED is
- * an unknown code, so it is a transport outage.
+ * The caller handles OPERATION_EXPIRED, RETRY_CONFLICT and a
+ * DELIVERY_ALREADY_ACCEPTED from a hosted carrier first. An unmarked
+ * DELIVERY_ALREADY_ACCEPTED is an unknown code, so it is a transport outage.
  */
 export function classifyRetryRequestPostFailure(error: unknown): RetryRequestPostFailure {
   if (error === null || typeof error !== 'object') return { retry: 'transport-outage' };

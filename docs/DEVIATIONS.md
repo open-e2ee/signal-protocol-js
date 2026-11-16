@@ -99,6 +99,7 @@ model and what is out of scope.
 | **Receive admission bounds** | Signal's Desktop client | **Extension.** Before a decrypt, the receive queue checks `maxItems`, `maxBytes`, and the group share `blockedGroupShare`. The defaults are provisional. Desktop decrypts each envelope as it arrives and bounds stored content only by age and attempts | The SDK shares a storage budget with the application in a browser and on mobile | A refused envelope is not acknowledged. It stays at the Relay and expires there with no local hook. The messages behind it still arrive (§8.5) |
 | **Legacy received content** | Signal's job migration of a retired format | **Faithful** for unreadable rows: the open deletes them and logs a count. **Deviation** for readable rows: the open deletes each readable SDK 11 row too, and counts it in a separate field. Signal converts each readable pending item to the new format | A founder ruling deletes the readable rows. The constraint is Relay retention: the Relay keeps an undelivered envelope for at most 30 days in production, and a readable row is in a store that SDK 12.0.0 or later never opened | Where the constraint holds, the content of such a row never reaches the application. A device that received the content on SDK 11 inside the last 30 days is not covered: 13.x would complete that row on redelivery, and the sweep does not restore it. The count line holds no key and no value (§8.6) |
 | **Relay socket authentication** | Signal's Android client `OkHttpWebSocketConnection`; `libsignal` `chat.rs`; Signal's server `WebSocketDisconnectionRequestListener` | **Faithful.** The mailbox socket sends its credential once, at the handshake, and stays open until the server closes it or it fails. The Relay closes it with 4401 when the authority must be checked again, as Signal's server does. **Deviation** in detail. The handshake credential is a device token that expires after 15 minutes, and the open socket outlives it. The Relay also closes the socket with 4401 at the end of each usage period | The Relay keeps its device credential short-lived for HTTP requests, and it counts monthly activity at the handshake | A renewal touches only HTTP requests and the next reconnect. An authority change reaches an open socket only through the 4401 close (§9.1) |
+| **Key transparency** | RFC 9381 ECVRF-EDWARDS25519-SHA512-TAI; RFC 9162 Merkle proofs; `libsignal` `keytrans` | **Faithful** on the VRF suite and its 32-byte index, the commitment, and the 24-hour head window. **Deviation:** the Relay keeps one log tree with no prefix tree, a head of the same size may have another time, a larger head may have an earlier time, and a tree size is at most 2^53 − 1. **Extension:** a contact key mismatch or a not-logged result gets one recheck 2 hours later, and a pending append gets rechecks for 24 hours. **Deviation** in `checkContactKeyTransparency()`: the result names the code, the call does not retry, and at most 10 calls in each 60 s read the Relay | The Relay design keeps an append-only log of identity entries, signs the head of an unchanged tree again each hour, and appends an identity change after a delay. The SDK carries sizes and times as JavaScript numbers. The Relay limits the reads of one IP address | An inclusion proof shows that an entry is in the log, not that it is the latest entry of the account. A background failure reaches only the `onKeyTransparencyFailure` hook. A requested check returns its result and runs no hook. A failure never refuses a send (§10) |
 | **zkgroup / zkcredential** | `libsignal` `zkgroup`, `zkcredential`, `poksho` | **Faithful** port of the Ristretto255 KVAC and Sigma-protocol system, verified against `libsignal`'s known-answer vectors. **Deviation:** server parameter derivation is structured as four labeled derivations rather than one seeded derivation | Server keys are the deploying operator's own trust root (each deployment generates its own seed), not Signal Messenger's | The zero-knowledge properties are real. Credentials are not interchangeable with Signal Messenger's |
 | **Registration IDs** | `libsignal` `sealed_sender.rs` | **Faithful.** Generated in `[1, 16383]`, strictly inside the 14 bits the wire format reserves | — | — |
 | **Linked-device registration IDs** | Signal's device linking | **Faithful** for a new link: the linked device gets its own fresh registration ID. **Deviation:** a device that a 12.0.x release linked keeps the ID of its active device, and a link that a 12.0.x release began keeps its stored ID (§5.7) | A changed ID on a live device fails its next prekey sync. A fresh ID on a link already begun can reserve a second device | Two devices of one account can share a registration ID. The sender-key handoff ledger keys each row by the device, so they stay apart |
@@ -739,11 +740,13 @@ The per-user identity model is one of the two models the specification permits
 
 ### 5.1 The SDK marks a removed device and keeps it for MAXLATENCY
 
+Reviewed: 2026-11-11.
+
 §3.1 and §3.3 require an implementation to mark a removed device's record stale
 and keep it for MAXLATENCY. Messages already in flight from that device then
 still decrypt. The SDK does this. A removal sets `removedAt` on the device
 record, archives its current session, and keeps the record
-(`internal/sesame/manager.ts:417-447`). A message that the device sent before
+(`internal/sesame/manager.ts:431-472`). A message that the device sent before
 its removal therefore still decrypts against the archived session. Signal's
 Android client also archives the session of a device that the server no longer
 lists, in `SignalServiceMessageSender`. A send marks a device record in the
@@ -757,15 +760,42 @@ same way on two triggers:
   can still list such a device.
 
 A removed device gets no fan-out. One predicate, `isRemovedDevice`
-(`internal/sesame/types.ts:347-355`), states the rule, and each device
+(`internal/sesame/types.ts:350-357`), states the rule, and each device
 enumeration of the send paths applies it. When the device list names the
 device again, the marker clears, and the device returns to fan-out with no
 current session. Its archived sessions stay
-(`internal/sesame/manager.ts:449-483`).
+(`internal/sesame/manager.ts:474-504`).
+
+A new session from a removed device also clears the marker. The receive of
+the first message of that session clears it in the write that stores the new
+session (`internal/sesame/manager.ts:1858-1868`, `:2003-2009`). A new session is one
+whose base key the record did not hold before the decrypt. A late message on
+an archived session, which makes that session current again, leaves the device
+removed. The identity checks do not change: an own device must hold the
+account identity, and a changed identity sets `pendingVerification`. This
+deviates from the specification. In §3.4 the receive inserts the new session
+into the stale record, and the record stays stale. The specification also
+never reuses a device ID: a changed device is deleted and added with new
+values (§3.1). A Relay reuses the slot of a removed device for a new install.
+Signal clients do not keep such a mark. Signal Desktop sends to each device
+whose session record holds a current session
+([`ts/SignalProtocolStore.preload.ts:1554-1570`][desk-store], read by
+[`ts/textsecure/OutgoingMessage.preload.ts:310-319`][desk-out]). For a device
+that the server reports as extra, it archives the current session
+([`ts/util/handleMismatchedDevicesError.preload.ts:55-62`][desk-mismatch]).
+In `libsignal`, a received initiation becomes the current session when the
+record holds no current session ([`tahini.rs:192-198`][tahini]). The decrypt
+of the prekey message stores it there
+([`session_management.rs:435-443`][sm]). These line numbers are at Signal
+Desktop commit `5d1bbb7ee231` and `libsignal` commit `850942581c06`. Without
+this rule, a primary device that
+removed a linked device sends no sync copy to the new install in the same slot
+until it reads its own device list again. If the relay no longer lists the
+device, the next send to the account marks it removed again (§5.5).
 
 The stale-record cleanup deletes a removed record when its removal is older
-than `maxLatency`, 30 days by default (`internal/sesame/types.ts:357-369`,
-`internal/sesame/manager.ts:2251-2261`). The receive queue runs the cleanup
+than `maxLatency`, 30 days by default (`internal/sesame/types.ts:359-371`,
+`internal/sesame/manager.ts:2293-2314`). The receive queue runs the cleanup
 once in each client run, after it resumes its stored receives. Nothing orders
 the cleanup after a fetch of the whole mailbox, which §3.1 recommends.
 
@@ -815,12 +845,11 @@ longer carries the specification's meaning.
 
 ### 5.3 Device limit
 
-The SDK caps a user at 5 devices (`internal/sesame/types.ts:45-50`).
-The file `internal/sesame/manager.ts:285-290` enforces the cap. The
+The SDK caps a user at 5 devices (`internal/sesame/types.ts:48-51`).
+The file `internal/sesame/manager.ts:375-377` enforces the cap. The
 specification's §6.5 recommends *a* limit without fixing one, and `libsignal`
-permits device IDs up to 127. The cap is a
-product decision. A source comment credits it to the Signal Protocol, which is
-inaccurate.
+permits device IDs up to 127. Signal sets its limit on its server. The cap is a
+product decision of this SDK.
 
 ### 5.4 Extensions: transfer, device names
 
@@ -842,7 +871,7 @@ counterpart.
 
 **Identity-change gating.** The SDK TOFU-pins an unseen identity. A changed
 identity sets `pendingVerification` and blocks sending until the application
-accepts the rotation (`internal/sesame/manager.ts:702-706`, `:1843`). Sesame
+accepts the rotation (`internal/sesame/manager.ts:723`, `:1875`). Sesame
 rev. 2 has no such concept. This is a genuine improvement.
 
 **Not implemented:** proof of possession. Registration does not make the device
@@ -1734,6 +1763,181 @@ open socket across a renewal.
 
 ---
 
+## 10. Key transparency
+
+Reviewed: 2026-11-11.
+
+A hosted client checks identities against the identity log of the Relay
+(`internal/protocol/key-transparency/`, `client/key-transparency/`). It checks
+only when the build pins the VRF public key and the head keys of the Relay
+profile. `libsignal` verifies Signal's key transparency log in
+`rust/keytrans/`. This section states where the two follow the same rules and
+where they differ.
+
+### 10.1 The VRF and the commitment
+
+**Faithful.** The VRF is ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381), as in
+`libsignal` (`vrf.rs:6`). The verifier refuses a public key of small order
+(`vrf.rs:82-95`). It refuses a proof scalar that is not canonical
+(`vrf.rs:122-128`). It applies no small-order check to Gamma, and `libsignal`
+applies none.
+
+The log index is the first 32 bytes of the 64-byte VRF output.
+`libsignal`'s `proof_to_hash` returns the same bytes (`vrf.rs:65-73`). The
+Relay builds the leaf index from the same 32 bytes.
+
+**Faithful.** A commitment is HMAC-SHA256 under the fixed key of `libsignal`
+(`commitments.rs:10-31`). Its input is the 16-byte opening, the search key
+with a 2-byte length, and the value with a 4-byte length.
+
+Guarantee tests assert Examples 16 to 18 of the RFC 9381 vectors. They also
+assert the proofs, the outputs, and the commitments that the Relay code makes.
+
+### 10.2 The tree and its heads
+
+**Faithful.** The client refuses a head whose time is more than 24 hours
+behind or ahead of the local clock. `libsignal`'s `ALLOWED_TIMESTAMP_RANGE`
+sets the same window (`verify.rs:29-32`). The client refuses a smaller tree, a
+changed root for the same size, and a consistency proof that does not verify.
+`libsignal`'s `check_consistency_metadata` refuses the same heads
+(`verify.rs:282-337`).
+
+**Faithful.** The search result carries the consistency proof from the last
+verified head to the new head. The client sends the size of its last verified
+head in the search request. `libsignal` also gets the consistency proof in the
+search response.
+
+**Deviation.** The Relay keeps one RFC 9162 log tree. Each leaf is the 32-byte
+index and the 32-byte commitment of one entry. `libsignal` keeps a prefix tree
+and a log tree. Each of its log leaves hashes the prefix root with the
+commitment (`verify.rs:110-116`). The constraint is the Relay design, which
+appends each identity change as one entry.
+
+**Consequence:** an inclusion proof shows that an entry is in the log. It does
+not show that the entry is the latest entry of the account. The prefix tree of
+`libsignal` shows that.
+
+**Deviation.** A head of the same size must have the same root and no proof.
+Its time can be earlier or later than the time of the last verified head. The
+client keeps the head with the later time. `libsignal`'s
+`check_consistency_metadata` refuses a head of the same size with another time
+(`verify.rs:304-309`). The constraint is that the Relay signs the head of an
+unchanged tree again each hour. Two reads can get two signatures of one tree in
+either order.
+
+**Deviation.** A larger head can have an earlier time than the last verified
+head. Its consistency proof must verify. `libsignal` refuses an earlier time
+for a larger head (`verify.rs:322-326`). The constraint is the same hourly
+signature. The last verified head can carry a later time than the head of a
+larger tree that a later read gets. The 24-hour window against the local
+clock is the only time rule.
+
+**Deviation.** A tree size and a head time are JavaScript numbers. Each is at
+most 2^53 − 1. The client refuses a larger value as a malformed response.
+`libsignal` carries both as 64-bit integers.
+
+The signed head is the Relay encoding, which binds the project scope of the
+connection. It is not the `libsignal` encoding. The client keeps the last
+verified head for each Relay environment and project scope. It writes the head
+only after each check passed. When another client on the same store wrote a
+head first, the client runs the search again, at most 3 times in all.
+
+Guarantee tests assert these rules:
+
+- The inclusion proofs of the Relay code for trees of 1, 2, 3, 7, 8, 9, and 17
+  leaves.
+- The consistency proofs of the Relay code between each pair of sizes up to
+  17.
+- The refusal of a changed proof, root, size, or position.
+- The same-size rules, an earlier time at a larger size, and the 24-hour
+  window at the millisecond.
+- The heads that the Relay code signs again for one tree, in both orders.
+- A kept head when the head write fails.
+
+### 10.3 The checks and their event
+
+**Extension.** The client checks each contact identity that it fetches. It
+runs one check at a time, once for each identity. It checks its own identity
+once each week.
+
+A failure runs `onKeyTransparencyFailure`. A contact failure
+runs it once for each contact identity. A self failure runs it on the second
+consecutive failed check, once for each failing streak. A check that cannot
+get a result runs no hook.
+
+**Extension.** A contact result that a Relay delay can cause gets a recheck
+before the event. The Relay appends an identity change after a delay, so a
+contact can serve a new identity before the log has it.
+
+- A key mismatch, or a not-logged result without a pending append, gives no
+  event. The client checks the identity again 2 hours later. A second such
+  result runs the hook with the code of the second result:
+  `LOGGED_KEY_MISMATCH` or `IDENTITY_NOT_LOGGED`. A pass clears the recheck.
+- A not-logged result with a pending append gives no event. The client checks
+  again after 2 minutes, and doubles the wait to at most 1 hour. A pending
+  append 24 hours after the first gives `LOG_APPEND_OVERDUE`. A logged result
+  clears the recheck. A not-logged result without a pending append follows the
+  rule above.
+- A tombstone and each proof failure run the hook at once.
+- The store keeps the rechecks, so a restart keeps them.
+
+The self-check uses the same result words under the streak rule. A key
+mismatch is a failure with `LOGGED_KEY_MISMATCH`. A not-logged result without
+a pending append is a failure with `IDENTITY_NOT_LOGGED`. A pending append is
+not a pass and not a failure. It follows the waits above, and after 24 hours it
+runs the hook once with `LOG_APPEND_OVERDUE`.
+
+A lane gets pinned keys only after the Relay logged the existing identities
+of that lane. So a not-logged result is not the normal state of an
+identity.
+
+**Consequence:** a failure never refuses a send or a decrypt. The application
+decides what to do with the event.
+
+**Faithful.** `checkContactKeyTransparency()` checks a contact when the
+application asks, as Signal checks a contact when the user taps the safety
+number screen (`Signal-Android/.../verify/VerifyDisplayScreenViewModel.kt:144`).
+It checks the pinned ACI identity, the stored identity record of the contact in
+Signal (`VerifySafetyNumberRepository.kt:25-41`). A `pass` changes no trust
+state, as Signal changes the manual verified flag only through its own control
+(`VerifyDisplayScreenViewModel.kt:205-246`). Concurrent calls for one identity
+share one search, as iOS runs one check for each ACI at a time
+(`Signal-iOS/SignalServiceKit/KeyTransparency/KeyTransparencyManager.swift:55`).
+While the stored self-check health is `failing`, the call gives `unavailable`
+with `self-check-failing`, as Android refuses the check when its own failure
+flag is set (`VerifyDisplayScreenViewModel.kt:86`). The call reads only the
+health and runs no self-check.
+
+The requested check runs one search and applies no recheck rule. It raises no
+event, and it reads and writes no recheck. The search writes only the verified
+head.
+
+**Deviation.** The result names the outcome: `pass`, `not-logged`,
+`unavailable` with a reason, or `failure` with one of the 11 codes. Android
+shows a verification failure as unavailable
+(`VerifyDisplayScreenViewModel.kt:311-317`). The constraint is the KV3 design:
+the SDK gives the named code to the application, and the application chooses
+the words.
+
+**Deviation.** The call does not retry. A Relay 429 or a network error gives
+`unavailable` with `transport`. Android retries once after `retryAfter`
+(`VerifyDisplayScreenViewModel.kt:144-183`), and iOS retries network and
+rate-limit errors (`KeyTransparencyManager.swift:161-196`). The constraint is
+that the caller waits on the call. The application can call again.
+
+**Deviation.** At most 10 requested calls in each 60 s read the Relay. A
+further call gives `unavailable` with `rate-limited`. Signal has no cap beyond
+`retryAfter`. The constraint is the Relay limit, which applies to one IP
+address, so all clients behind it share the limit. The background checks have
+a separate window of 20 checks, so a background burst never refuses a
+requested call.
+
+**Consequence:** a call gives the result of one search. A key mismatch gives
+`LOGGED_KEY_MISMATCH` on the first call, also when the Relay appends the
+identity change later. The application decides what to show.
+
+---
+
 ## Unverified and needs review
 
 This review lists the following items rather than asserts them. It could not
@@ -1801,4 +2005,9 @@ all, because it invites exactly the assumption it exists to prevent.
 [ss]: https://github.com/signalapp/libsignal/blob/main/rust/protocol/src/sealed_sender.rs
 [sk]: https://github.com/signalapp/libsignal/blob/main/rust/protocol/src/sender_keys.rs
 [tr]: https://github.com/signalapp/libsignal/blob/main/rust/protocol/src/triple_ratchet.rs
+[tahini]: https://github.com/signalapp/libsignal/blob/850942581c06fa65c0323fd52029afa02fa1a1ba/rust/protocol/src/tahini.rs#L192-L198
+[sm]: https://github.com/signalapp/libsignal/blob/850942581c06fa65c0323fd52029afa02fa1a1ba/rust/protocol/src/session_management.rs#L435-L443
+[desk-store]: https://github.com/signalapp/Signal-Desktop/blob/5d1bbb7ee231b35cb9cc8cc449ffb819c528efc8/ts/SignalProtocolStore.preload.ts#L1554-L1570
+[desk-out]: https://github.com/signalapp/Signal-Desktop/blob/5d1bbb7ee231b35cb9cc8cc449ffb819c528efc8/ts/textsecure/OutgoingMessage.preload.ts#L310-L319
+[desk-mismatch]: https://github.com/signalapp/Signal-Desktop/blob/5d1bbb7ee231b35cb9cc8cc449ffb819c528efc8/ts/util/handleMismatchedDevicesError.preload.ts#L55-L62
 [xeddsa]: https://signal.org/docs/specifications/xeddsa/

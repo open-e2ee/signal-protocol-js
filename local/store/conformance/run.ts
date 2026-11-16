@@ -10,6 +10,7 @@
 import type { LocalStoreProtection, SignalProtocolLocalStore } from '../../../types/api';
 import { errorMessage } from './checks';
 import { ciphertextCases } from './cases/ciphertext';
+import { contactVerificationCases } from './cases/contact-verification';
 import { durabilityCases } from './cases/durability';
 import { identityCases } from './cases/identity';
 import { metadataCases } from './cases/metadata';
@@ -27,6 +28,7 @@ import type {
 const CASES: readonly LocalStoreConformanceCase[] = [
   ...identityCases,
   ...sessionTrustCases,
+  ...contactVerificationCases,
   ...senderKeyCases,
   ...metadataCases,
   ...receiveWorkCases,

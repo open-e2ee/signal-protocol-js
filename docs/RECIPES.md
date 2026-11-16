@@ -292,27 +292,37 @@ These rules apply to Clerk and Firebase profiles:
   next user the account of the previous user. To stop access on existing
   devices, follow the
   [suspension procedure](https://docs.open-e2ee.dev/signal-relay/backend-identity#suspend-an-identified-account).
-- **Reinstall or lost store.** A new store registers a new device of the same
-  account. It has a new Signal identity key, no earlier sessions, and no
-  message history. Peers must verify and accept the new key. The earlier
-  devices stay active with the old key. Until the earlier devices are removed,
-  or until recovery, peers cannot send to all devices of the account. A peer
-  that accepted the new key gets `UNTRUSTED_IDENTITY` when it sends to an
-  earlier device. A peer that has not accepted it cannot decrypt messages from
-  the new device. To keep the account identity, use device linking. Each
-  registration reserves one of the five device IDs of the account for good.
-  See [Signal Protocol Relay device errors](./ERROR_HANDLING.md#signal-protocol-relay-device-errors).
-- **Device linking.** To keep the account identity on a new device, move the
-  identity from an existing device and call `linkHostedSignalProtocolRelayDevice`. Your
-  application owns that transfer.
-- **Recovery.** Create the client with `assertionPurpose: "recover"` when no
-  device of the account remains. Recovery revokes all earlier devices of the
-  account and returns device ID 1. The device ID reservation applies to
-  registrations, so recovery starts again at device 1. Recovery does not
-  restore message plaintext or sessions. Your application decides when to
-  start it. Recovery needs a recent provider sign-in. Sign the user in again
-  before you start recovery. Relay refuses a sign-in older than the recovery
-  window with HTTP 401 `AUTHORITY_DENIED`. See
+- **Reinstall or lost store.** A new store has no identity and a new device
+  key. On an account that has a device, `createHostedSignalProtocolClient`
+  throws
+  [`HostedSignalProtocolRelayDeviceLinkRequiredError`](./api/classes/HostedSignalProtocolRelayDeviceLinkRequiredError.md).
+  Its `code` is `DEVICE_LINK_REQUIRED`, its `status` is 409, and `retryable`
+  is false. The Relay registers no device for that store. Link the new device,
+  or recover the account.
+- **Device linking.** A new device keeps the account identity only through a
+  link. The two-device link joins a device that has an empty store: the new
+  device calls `joinHostedSignalProtocolRelayAccount` and shows a link code.
+  Device 1 calls `approveHostedSignalProtocolRelayDeviceLink`. Only device 1
+  can approve. Show a confirmation screen on device 1 before it approves.
+
+  SDK 14.6.0 and later ship these calls. A Relay that does not serve
+  the two-device link gives the code `SIGNAL_RELAY_UNSUPPORTED`. For the
+  one-process link, move the identity from device 1 and call
+  `linkHostedSignalProtocolRelayDevice` with the store of device 1. Only device 1
+  can link. Your application owns that transfer.
+- **Recovery.** Create the client with `assertionPurpose: "recover"` and an
+  empty store. The Relay refuses keys that a device of the account holds,
+  with `KEY_PROOF_INVALID`. Recovery revokes every device of the account,
+  device 1 included. The new device gets ID 1 and becomes the primary device.
+  A revoked device gets `HostedSignalProtocolRelayDeviceRevokedError`.
+
+  Recovery makes a new identity key, so peers must verify and accept it.
+  Recovery does not restore message plaintext or sessions. Your application
+  decides when to start it.
+
+  Recovery needs a recent provider sign-in. Sign the user in again before you
+  start recovery. Relay refuses a sign-in older than the recovery window with HTTP 401
+  `AUTHORITY_DENIED`. See
   [device lifecycle and recovery](https://docs.open-e2ee.dev/signal-relay/device-lifecycle-and-recovery).
 - **Provider change.** A different provider, Clerk instance, or Firebase
   project gives a different issuer or subject. Relay treats it as a different
@@ -437,6 +447,59 @@ import { ProtocolAddress } from "@open-e2ee/signal-protocol-sdk";
 const bob = ProtocolAddress.create("bob", 2);
 await signal.establishSession(bob, bundle);
 await signal.encryptMessage(bob, "linked-device hello");
+```
+
+## Identity changes and verification
+
+Register `onIdentityChanged` to learn when a contact's identity changes. The
+hook runs once for each change that the trust gate refuses, on the send path
+or on the receive path. The refused send or decrypt still throws
+`UntrustedIdentityError`. A device of your own account never runs the hook.
+
+<!-- doc-snippet:skip requires-external-context -->
+```ts
+signal.registerHook("onIdentityChanged", async (event) => {
+  conversations.markIdentityChanged(event.userId, event.status);
+});
+
+// After the user compares the new safety number:
+await signal.acceptIdentityRotation(userId, identity);
+```
+
+When the user verifies or clears a safety number on one device, call
+`syncVerificationStateToLinkedDevices`. Each other device of the account
+applies the state to its pinned identity of that contact. It needs no call in
+your app. A device applies the state only when the `identityKey` of the sync is
+its pinned identity. It ignores a sync for the own account or for a contact
+with no pinned identity, and logs `VERIFICATION_STATE_SYNC_NOT_APPLIED`. A
+custom store without `unverifyContactIdentity` keeps `VERIFIED` on a `default`
+sync.
+
+On the safety number screen, `checkContactKeyTransparency` checks the pinned
+identity of the contact against the identity log of the Relay. Call it
+when the user asks for the check. The call never throws a key transparency
+error. A `pass` does not change the trust state. Only `confirmSafetyNumber`
+sets `VERIFIED`. A client whose build pins no log keys gets `unavailable` with
+`not-pinned`.
+
+<!-- doc-snippet:skip requires-external-context -->
+```ts
+const outcome = await signal.checkContactKeyTransparency(userId);
+switch (outcome.kind) {
+  case "pass":
+    safetyNumberScreen.showLogResult("pass");
+    break;
+  case "failure":
+    safetyNumberScreen.showLogResult("failure", outcome.error.code);
+    break;
+  case "not-logged":
+    safetyNumberScreen.showLogResult(outcome.appendPending ? "pending" : "not-logged");
+    break;
+  case "unavailable":
+    // For example "rate-limited" or "transport": the user can try again later.
+    safetyNumberScreen.showLogResult("unavailable", outcome.reason);
+    break;
+}
 ```
 
 ## Username and ZK helpers

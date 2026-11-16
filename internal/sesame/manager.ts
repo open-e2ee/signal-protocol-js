@@ -130,6 +130,31 @@ function isPreKeyMessage(ciphertext: string): boolean {
 }
 
 /**
+ * Whether a decrypt started a new session: the current session after the
+ * decrypt is not a session that the record held before it. A decrypt on a
+ * held session, current or archived, starts none.
+ */
+function startedNewSession(before: SessionRecord | null, after: SessionRecord | null): boolean {
+  const baseKey = after?.currentSession?.baseKey;
+  if (!baseKey) return false;
+  return before?.currentSession?.baseKey !== baseKey && !(baseKey in (before?.archivedSessions ?? {}));
+}
+
+/** Report a removed device that returned to fan-out. */
+function reportRelisted(
+  logger: Required<Logger>,
+  events: SesameEvents,
+  userId: UserID,
+  deviceId: DeviceID
+): void {
+  logger.debug('SESAME: Relisted device', {
+    category: 'E2EE',
+    data: { operation: 'sesame-relist-device', userId, deviceId },
+  });
+  events.onDeviceAdded?.(userId, deviceId);
+}
+
+/**
  * Result of PreKeyMessage handling with pending records.
  *
  * TRANSACTIONAL DESIGN: Records are NOT persisted by handlePreKeyMessage.
@@ -346,7 +371,7 @@ export class DefaultSesameManager implements SesameManager {
     deviceId: DeviceID,
     identityKey: Uint8Array
   ): Promise<void> {
-    // Validate device ID range (Signal Protocol limits to 1-5 devices per user)
+    // Validate the device ID range (this SDK's limit of 1-5 devices per user)
     if (deviceId < MIN_DEVICE_ID || deviceId > MAX_DEVICE_ID) {
       throw new SesameError(
         `Device ID must be between ${MIN_DEVICE_ID} and ${MAX_DEVICE_ID}, got ${deviceId}`,
@@ -474,11 +499,7 @@ export class DefaultSesameManager implements SesameManager {
       session: null,
       updatedAt: Date.now(),
     });
-    this.logger.debug('SESAME: Relisted device', {
-      category: 'E2EE',
-      data: { operation: 'sesame-relist-device', userId, deviceId },
-    });
-    this.events.onDeviceAdded?.(userId, deviceId);
+    reportRelisted(this.logger, this.events, userId, deviceId);
     return true;
   }
 
@@ -1834,10 +1855,21 @@ export class DefaultSesameManager implements SesameManager {
       const comparison = current
         ? compareDeviceIdentityKeys(current.identityKey, incomingIdentityKey)
         : null;
-      const deviceRecord: DeviceRecord = current
+      // A new session from a removed device relists it, as a device list that
+      // names it again does. The identity decision below still applies.
+      let kept = current;
+      if (
+        current &&
+        isRemovedDevice(current) &&
+        startedNewSession(result.previousDeviceRecord?.session ?? null, session)
+      ) {
+        const { removedAt: _removedAt, ...listed } = current;
+        kept = listed;
+      }
+      const deviceRecord: DeviceRecord = kept
         ? {
-            ...current,
-            identityKey: comparison === 'same' ? current.identityKey : incomingIdentityKey,
+            ...kept,
+            identityKey: comparison === 'same' ? kept.identityKey : incomingIdentityKey,
             session,
             updatedAt: now,
             ...(comparison === 'changed' ? { pendingVerification: true } : {}),
@@ -1866,6 +1898,7 @@ export class DefaultSesameManager implements SesameManager {
       await this.storage.setDeviceRecord(userId, deviceId, deviceRecord, {
         senderKeyHandoffInvalidation: { userId, deviceId },
       });
+      if (kept !== current) reportRelisted(this.logger, this.events, userId, deviceId);
 
       // A store joins a device that has no pin with the identity of its
       // session, and the decrypt committed that session. A device that had no
@@ -1945,8 +1978,13 @@ export class DefaultSesameManager implements SesameManager {
    * sender device, so a session that the protocol committed after the
    * decrypt is not written back older.
    *
+   * A new session from a removed device relists it in the same write. A
+   * decrypt on a held session, such as a late message on an archived
+   * session, leaves the device removed.
+   *
    * @param senderAddress - Sender's protocol address
-   * @param fallback - The session record to update if the protocol has none
+   * @param fallback - The session record before the decrypt, and the record
+   *   to update if the protocol has none
    */
   private async persistSessionAfterReceive(
     senderAddress: ProtocolAddress,
@@ -1962,9 +2000,13 @@ export class DefaultSesameManager implements SesameManager {
         this.removeDeviceFromSessionIndex(userId, deviceId);
         this.indexSessionRecord(userId, deviceId, updatedSession);
 
+        const relisted =
+          isRemovedDevice(deviceRecord) && startedNewSession(fallback, updatedSession);
+        if (relisted) delete deviceRecord.removedAt;
         deviceRecord.session = updatedSession;
         deviceRecord.updatedAt = Date.now();
         await this.storage.setDeviceRecord(userId, deviceId, deviceRecord);
+        if (relisted) reportRelisted(this.logger, this.events, userId, deviceId);
       }
     });
   }
