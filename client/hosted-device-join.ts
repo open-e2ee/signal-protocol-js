@@ -33,10 +33,10 @@ import {
   type DeviceLinkIdentityKeyPair,
   type DeviceLinkPlaintext,
 } from "./device-link-envelope";
+import { createClientFromHostedResult } from "./hosted-client-composition";
+import { getOrCreateDeviceAuthentication } from "./hosted-device-authentication";
 import {
-  createClientFromHostedResult,
   createHostedClientWithFirstSync,
-  getOrCreateDeviceAuthentication,
   getOrCreateRegistrationSnapshot,
   type HostedSignalProtocolRelayDeviceAuthentication,
   type HostedSignalProtocolRelayIdentityProgressCallback,

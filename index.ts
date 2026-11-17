@@ -863,3 +863,12 @@ export { resumeHostedSignalProtocolClient, HostedSignalProtocolRelayResumeError,
 export type { HostedSignalProtocolResumeOptions, HostedSignalProtocolRelayResumeErrorCode, HostedRelayResumeErrorCode, HostedSignalProtocolRelayResumePhase, HostedRelayResumePhase,
   HostedSignalProtocolRelayResumeProgress,
   HostedRelayResumeProgress, HostedSignalProtocolRelayResumeProgressCallback, HostedRelayResumeProgressCallback } from './client';
+
+export {
+  deleteHostedSignalProtocolRelayAccount,
+  readHostedSignalProtocolRelayAccountDeletion,
+  HostedSignalProtocolRelayAccountDeletionError,
+  type HostedSignalProtocolRelayAccountDeletionOptions,
+  type HostedSignalProtocolRelayAccountDeletionReceipt,
+  type HostedSignalProtocolRelayAccountDeletionErrorCode,
+} from './client/hosted-account-deletion';

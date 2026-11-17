@@ -1,5 +1,46 @@
 # Changelog
 
+## 14.7.0
+
+### Added
+
+- `deleteHostedSignalProtocolRelayAccount({ storage, relayUrl })` requests account deletion.
+  `readHostedSignalProtocolRelayAccountDeletion({ storage, relayUrl })` reads its receipt.
+  Stop the client first and keep its encrypted local store.
+  The store retains the request and status capability across retries and restarts.
+  The helper requires a Relay with the versioned deletion receipt route.
+  A store without its retained device authentication and session gets a resume error and keeps no intent.
+
+  A deletion intent binds the store to its hosted account from the first attempt,
+  also before the request reaches the Relay.
+  It prevents silent identity bootstrap, recovery, and re-registration in that store.
+  Only `storage.clearAllKeys()` discards it.
+
+  Before the SDK submits the request, `createHostedSignalProtocolClient` runs a strict resume
+  of that account and reports the `bootstrap` progress of an ordinary resume.
+  A recovery, a re-registration, and a custom protocol manager then refuse with `DELETION_PREFLIGHT_PENDING`.
+  After submission, `createHostedSignalProtocolClient` and `resumeHostedSignalProtocolClient` refuse with `DELETION_ALREADY_REQUESTED`.
+  A Relay refusal of the deletion request, such as `404 NOT_FOUND`, keeps its `HostedSignalProtocolRelayHttpError`.
+  The receipt distinguishes logical deletion, account capacity release, and physical purge.
+  Clearing local storage or removing a device does not release an account slot.
+
+  Against a Relay without the versioned deletion receipt route, the call throws
+  `DELETION_UNSUPPORTED`. The intent stays. A recovery and a re-registration in that store
+  then refuse with `DELETION_PREFLIGHT_PENDING` until `storage.clearAllKeys()`.
+
+#### Store compatibility
+
+- This release changes no stored record format and no store schema. A store
+  that SDK 14.4.0, 14.5.0, or 14.6.0 wrote opens with this release.
+- A deletion request writes one new metadata key, with the prefix
+  `signalRelay.accountDeletion.v1:`. An earlier SDK does not read it.
+- A return to SDK 14.6.0 is supported for a store that never requested
+  deletion. Do not ship SDK 14.6.0 to a store after it requests deletion:
+  SDK 14.6.0 ignores the intent, and it can then recover or re-register that
+  store.
+- The 14.4.0 rollback rule still applies: do not ship SDK 14.1.0 or earlier
+  to a device after it runs SDK 14.4.0 or a later release.
+
 ## 14.6.0
 
 ### Added

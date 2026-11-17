@@ -317,3 +317,12 @@ export { resumeHostedSignalProtocolClient, type HostedSignalProtocolResumeOption
 export { HostedSignalProtocolRelayResumeError, HostedRelayResumeError, type HostedSignalProtocolRelayResumeErrorCode, type HostedRelayResumeErrorCode, type HostedSignalProtocolRelayResumePhase, type HostedRelayResumePhase,
   type HostedSignalProtocolRelayResumeProgress,
   type HostedRelayResumeProgress, type HostedSignalProtocolRelayResumeProgressCallback, type HostedRelayResumeProgressCallback } from './hosted-resume-error';
+
+export {
+  deleteHostedSignalProtocolRelayAccount,
+  readHostedSignalProtocolRelayAccountDeletion,
+  HostedSignalProtocolRelayAccountDeletionError,
+  type HostedSignalProtocolRelayAccountDeletionOptions,
+  type HostedSignalProtocolRelayAccountDeletionReceipt,
+  type HostedSignalProtocolRelayAccountDeletionErrorCode,
+} from './hosted-account-deletion';

@@ -1,5 +1,9 @@
 /** Resume existing hosted authority without an assertion or registration fallback. */
 import {
+  HostedSignalProtocolRelayAccountDeletionError,
+  readHostedSignalProtocolRelayAccountDeletionPhase,
+} from './hosted-account-deletion';
+import {
   readRetainedIdentities,
   RetainedIdentityError,
 } from '../internal/manager/retained-identity';
@@ -8,13 +12,10 @@ import {
   type DefaultSignalProtocolClient,
 } from './client';
 import { ClientStartupCleanupError } from './startup-cleanup';
-import {
-  createClientFromHostedResult,
-  getExistingDeviceAuthentication,
-  hostedSignalProtocolRelayUrl,
-  type HostedSignalProtocolClientOptions,
-} from './hosted';
-import { resolveHostedSignalProtocolRelayConnection } from './hosted-connection';
+import type { HostedSignalProtocolClientOptions } from './hosted';
+import { createClientFromHostedResult } from './hosted-client-composition';
+import { hostedSignalProtocolRelayUrl, resolveHostedSignalProtocolRelayConnection } from './hosted-connection';
+import { getExistingDeviceAuthentication } from './hosted-device-authentication';
 import { resumeHostedSignalProtocolRelayTransport } from './hosted-transport';
 import { assertHostedSignalProtocolRelayProfileKeys } from './hosted-profile-keys';
 import { watchHostedSignalProtocolRelayOwnDevices } from './hosted-device-management';
@@ -81,6 +82,10 @@ export async function resumeHostedSignalProtocolClient(
     const connection = await resolveHostedSignalProtocolRelayConnection(
       hostedSignalProtocolRelayUrl(hosted, 'resumeHostedSignalProtocolClient'),
     );
+    // A preflight intent proves that no deletion request was sent, so the account resumes.
+    if (await readHostedSignalProtocolRelayAccountDeletionPhase(adapters.storage, connection) === 'submitted') {
+      throw new HostedSignalProtocolRelayAccountDeletionError('DELETION_ALREADY_REQUESTED');
+    }
     const deviceAuthentication = await getExistingDeviceAuthentication(
       adapters.storage,
       connection.publishableKey,

@@ -232,6 +232,16 @@ export interface HostedSignalProtocolRelayTransportBootstrapRequest {
   readonly storage: SignalProtocolLocalStore;
 }
 
+/**
+ * @internal A deletion intent whose submitted phase the store holds. Only such
+ * an intent makes a deletion request, so a lost request stays readable by status.
+ */
+export interface HostedSignalProtocolRelayAccountDeletionSubmission {
+  readonly phase: "submitted";
+  readonly operationId: string;
+  readonly deletionStatusToken: string;
+}
+
 export interface HostedSignalProtocolRelayTransportResult {
   readonly canonicalAccountId: string;
   readonly deviceId: number;
@@ -377,20 +387,31 @@ async function registrationChallenge(
   );
 }
 
+/**
+ * @internal The digest of the hosted account scope of `connection`: its
+ * publishable key and Relay scope. It keys the hosted session and each other
+ * record of the same hosted account. The Relay origin is not part of it.
+ */
+export async function hostedSignalProtocolRelayAccountScopeDigest(
+  connection: HostedSignalProtocolRelayConnection,
+): Promise<string> {
+  return bytesToUrlSafeBase64(
+    await sha256(
+      concatBytes(
+        stringToBytes(connection.publishableKey),
+        new Uint8Array([0]),
+        connection.relayScopeId,
+      ),
+    ),
+  );
+}
+
 async function sessionMetadataKey(
   connection: HostedSignalProtocolRelayConnection,
 ): Promise<HostedStoreRecordKey> {
   return hostedStoreRecordKey(
     SESSION_METADATA_PREFIX,
-    bytesToUrlSafeBase64(
-      await sha256(
-        concatBytes(
-          stringToBytes(connection.publishableKey),
-          new Uint8Array([0]),
-          connection.relayScopeId,
-        ),
-      ),
-    ),
+    await hostedSignalProtocolRelayAccountScopeDigest(connection),
   );
 }
 
@@ -885,6 +906,18 @@ export class HostedSignalProtocolRelayHttpTransport
     });
     await this.refreshPromise;
     return this.session.deviceToken;
+  }
+
+  /** @internal Submit an exact deletion intent with the private device token. */
+  public async requestAccountDeletion(
+    submission: HostedSignalProtocolRelayAccountDeletionSubmission,
+  ): Promise<unknown> {
+    return this.authenticatedPost("/identity/delete", {
+      publishableKey: this.connection.publishableKey,
+      operationId: submission.operationId,
+      receiptVersion: 1,
+      deletionStatusToken: submission.deletionStatusToken,
+    });
   }
 
   /** Verify that the stored device authority can get a current token. */
@@ -2630,6 +2663,58 @@ export async function bootstrapHostedSignalProtocolRelayTransport(
   };
 }
 
+/**
+ * Read the retained session of `connection` from the store. It sends no
+ * request. A strict read throws a `HostedSignalProtocolRelayResumeError` for
+ * an absent, invalid, or unreadable session. Otherwise an absent session is
+ * `undefined`.
+ */
+async function readRetainedSession(
+  storage: SignalProtocolLocalStore,
+  connection: HostedSignalProtocolRelayConnection,
+  strict: boolean,
+): Promise<StoredHostedSignalProtocolRelaySession | undefined> {
+  let stored: string | null;
+  try {
+    stored = await readHostedStoreRecord(storage, await sessionMetadataKey(connection));
+  } catch (cause) {
+    if (strict) {
+      throw new HostedSignalProtocolRelayResumeError(
+        'RETAINED_STATE_UNREADABLE', 'reading-local-state', { cause }
+      );
+    }
+    throw cause;
+  }
+  if (!stored) {
+    if (strict) {
+      throw new HostedSignalProtocolRelayResumeError('RETAINED_SESSION_UNAVAILABLE', 'reading-local-state');
+    }
+    return undefined;
+  }
+  try {
+    return parseSession(stored, connection);
+  } catch (cause) {
+    if (strict) {
+      throw new HostedSignalProtocolRelayResumeError(
+        'RETAINED_SESSION_UNAVAILABLE', 'reading-local-state', { cause }
+      );
+    }
+    throw cause;
+  }
+}
+
+/**
+ * @internal Require the retained session of `connection` in the store. It
+ * reads only local state and sends no request. It throws the strict-resume
+ * error of `resumeHostedSignalProtocolRelayTransport` for each local failure.
+ */
+export async function assertRetainedHostedSignalProtocolRelaySession(
+  storage: SignalProtocolLocalStore,
+  connection: HostedSignalProtocolRelayConnection,
+): Promise<void> {
+  await readRetainedSession(storage, connection, true);
+}
+
 export async function resumeHostedSignalProtocolRelayTransport(options: {
   readonly connection: HostedSignalProtocolRelayConnection;
   readonly deviceAuthentication: HostedSignalProtocolRelayDeviceAuthentication;
@@ -2644,34 +2729,10 @@ export async function resumeHostedSignalProtocolRelayTransport(options: {
    */
   readonly persistRefreshedToken?: boolean;
 }): Promise<HostedSignalProtocolRelayTransportResult | undefined> {
-  let stored: string | null;
-  try {
-    stored = await readHostedStoreRecord(options.storage, await sessionMetadataKey(options.connection));
-  } catch (cause) {
-    if (options.requireExisting) {
-      throw new HostedSignalProtocolRelayResumeError(
-        'RETAINED_STATE_UNREADABLE', 'reading-local-state', { cause }
-      );
-    }
-    throw cause;
-  }
-  if (!stored) {
-    if (options.requireExisting) {
-      throw new HostedSignalProtocolRelayResumeError('RETAINED_SESSION_UNAVAILABLE', 'reading-local-state');
-    }
-    return undefined;
-  }
-  let session: StoredHostedSignalProtocolRelaySession;
-  try {
-    session = parseSession(stored, options.connection);
-  } catch (cause) {
-    if (options.requireExisting) {
-      throw new HostedSignalProtocolRelayResumeError(
-        'RETAINED_SESSION_UNAVAILABLE', 'reading-local-state', { cause }
-      );
-    }
-    throw cause;
-  }
+  const session = await readRetainedSession(
+    options.storage, options.connection, options.requireExisting === true,
+  );
+  if (session === undefined) return undefined;
   const transport = new HostedSignalProtocolRelayHttpTransport(
     options.connection,
     options.storage,
