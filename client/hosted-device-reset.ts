@@ -8,8 +8,8 @@
  * revoked.
  */
 import type { SignalProtocolLocalStore } from "../types";
-import { getExistingDeviceAuthentication, hostedSignalProtocolRelayUrl } from "./hosted";
-import { resolveHostedSignalProtocolRelayConnection } from "./hosted-connection";
+import { getExistingDeviceAuthentication } from "./hosted-device-authentication";
+import { hostedSignalProtocolRelayUrl, resolveHostedSignalProtocolRelayConnection } from "./hosted-connection";
 import { clearHostedDeviceLinkIntent } from "./hosted-device-link";
 import { HostedSignalProtocolRelayDeviceProvisioningError } from "./hosted-device-provisioning-error";
 import { HostedSignalProtocolRelayDeviceRevokedError } from "./hosted-device-standing";

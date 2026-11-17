@@ -85,6 +85,17 @@ export async function parseResponse(
 }
 
 /**
+ * Checks one Relay answer after the protocol handling of `parseResponse`.
+ * It gets the response and, for an error answer, the error that the answer
+ * throws. A protocol fall-back, an upgrade refusal, and a device revocation
+ * never reach it. It throws to refuse the answer.
+ */
+export type SignalRelayAnswerCheck = (
+  response: Response,
+  refusal?: HostedSignalProtocolRelayHttpError,
+) => void;
+
+/**
  * Send one request with the version that `offer` holds and read its answer.
  * A fetch failure throws an error whose cause is the fetch error.
  */
@@ -93,6 +104,7 @@ async function send(
   offer: SignalRelayProtocolOffer,
   path: string,
   request: (signalRelayProtocolVersion: number) => Promise<RequestInit>,
+  checkAnswer?: SignalRelayAnswerCheck,
 ): Promise<unknown> {
   return sendOnSignalRelayProtocol(offer, async (signalRelayProtocolVersion) => {
     const init = await request(signalRelayProtocolVersion);
@@ -108,7 +120,15 @@ async function send(
       } catch (cause) {
         throw signalProtocolRelayRequestNotCompleted(cause);
       }
-      return parseResponse(response, signalRelayProtocolVersion, offer);
+      let answer: unknown;
+      try {
+        answer = await parseResponse(response, signalRelayProtocolVersion, offer);
+      } catch (error) {
+        if (error instanceof HostedSignalProtocolRelayHttpError) checkAnswer?.(response, error);
+        throw error;
+      }
+      checkAnswer?.(response);
+      return answer;
     });
   });
 }
@@ -117,7 +137,8 @@ async function send(
  * Post a JSON body with the version that `offer` holds. A body that signs
  * a proof is a function of the version, because each version signs its own
  * labels. When the Relay refuses version 3, the post runs once more with
- * version 2.
+ * version 2. `checkAnswer` runs on each answer that the protocol handling
+ * does not consume.
  */
 export async function postJson(
   connection: HostedSignalProtocolRelayConnection,
@@ -125,6 +146,7 @@ export async function postJson(
   path: string,
   body: JsonRecord | ((signalRelayProtocolVersion: number) => Promise<JsonRecord>),
   token?: string,
+  checkAnswer?: SignalRelayAnswerCheck,
 ): Promise<unknown> {
   return send(connection, offer, path, async (signalRelayProtocolVersion) => {
     const headers = new Headers({
@@ -137,7 +159,7 @@ export async function postJson(
       typeof body === "function" ? await body(signalRelayProtocolVersion) : body,
     );
     return { body: json, headers, method: "POST" };
-  });
+  }, checkAnswer);
 }
 
 /** Get a JSON answer with the version that `offer` holds, with no credential. */
