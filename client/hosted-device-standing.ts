@@ -32,6 +32,8 @@ const DEVICE_REVOKED_MESSAGE =
  * `assertionPurpose` `reregister` after the user confirms it.
  */
 export class HostedSignalProtocolRelayDeviceUnknownError extends Error {
+  /** The optional reference of the HTTP response that refused this request. */
+  declare public readonly requestId?: string;
   public readonly code = "NOT_FOUND";
   /** The HTTP status of the refusal, 404 from a current Relay. */
   public readonly status: number;
@@ -40,7 +42,7 @@ export class HostedSignalProtocolRelayDeviceUnknownError extends Error {
 
   public constructor(status: number, message: string) {
     super(message);
-    this.name = "HostedRelayDeviceUnknownError";
+    this.name = "HostedSignalProtocolRelayDeviceUnknownError";
     this.status = status;
   }
 }
@@ -52,6 +54,8 @@ export class HostedSignalProtocolRelayDeviceUnknownError extends Error {
  * same way. The SDK does not retry the request.
  */
 export class HostedSignalProtocolRelayDeviceRevokedError extends Error {
+  /** The optional reference of the HTTP response that refused this request. */
+  declare public readonly requestId?: string;
   public readonly code = "DEVICE_REVOKED";
   /** The HTTP status of the refusal, 403 from a current Relay. */
   public readonly status: number;
@@ -60,7 +64,7 @@ export class HostedSignalProtocolRelayDeviceRevokedError extends Error {
 
   public constructor(status: number, message = DEVICE_REVOKED_MESSAGE) {
     super(message);
-    this.name = "HostedRelayDeviceRevokedError";
+    this.name = "HostedSignalProtocolRelayDeviceRevokedError";
     this.status = status;
   }
 }
@@ -87,13 +91,3 @@ export function throwIfDeviceRevoked(status: number, body: unknown): void {
       : undefined;
   throw new HostedSignalProtocolRelayDeviceRevokedError(status, message);
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `HostedSignalProtocolRelayDeviceRevokedError`. SDK 15.0.0 removes this name. */
-export const HostedRelayDeviceRevokedError = HostedSignalProtocolRelayDeviceRevokedError;
-/** @deprecated Use `HostedSignalProtocolRelayDeviceRevokedError`. SDK 15.0.0 removes this name. */
-export type HostedRelayDeviceRevokedError = HostedSignalProtocolRelayDeviceRevokedError;
-/** @deprecated Use `HostedSignalProtocolRelayDeviceUnknownError`. SDK 15.0.0 removes this name. */
-export const HostedRelayDeviceUnknownError = HostedSignalProtocolRelayDeviceUnknownError;
-/** @deprecated Use `HostedSignalProtocolRelayDeviceUnknownError`. SDK 15.0.0 removes this name. */
-export type HostedRelayDeviceUnknownError = HostedSignalProtocolRelayDeviceUnknownError;

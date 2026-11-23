@@ -201,7 +201,7 @@ export function bindHostedSignalProtocolRelayProfileKeys(
       registering !== undefined ||
       key.presenceKey === registered ||
       key.presenceKey === refused ||
-      runtime.signalProtocolRelayConnectionState.state !== "connected"
+      runtime.relayConnectionState.state !== "connected"
     )
       return;
     registering = presence
@@ -226,7 +226,7 @@ export function bindHostedSignalProtocolRelayProfileKeys(
     registerPresence(key);
   };
 
-  runtime.subscribeSignalProtocolRelayConnectionState((state) => {
+  runtime.subscribeRelayConnectionState((state) => {
     if (state.state !== "connected") return;
     own().then(
       (key) => {
@@ -301,7 +301,3 @@ export function bindHostedSignalProtocolRelayProfileKeys(
     },
   });
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `HostedSignalProtocolRelayProfileKeys`. SDK 15.0.0 removes this name. */
-export type HostedRelayProfileKeys = HostedSignalProtocolRelayProfileKeys;

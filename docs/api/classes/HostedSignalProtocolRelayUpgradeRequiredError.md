@@ -52,6 +52,14 @@ message names it. Without it, the message names version 1.
 
 ***
 
+### requestId?
+
+> `readonly` `optional` **requestId?**: `string`
+
+The optional reference of the HTTP response that refused this request.
+
+***
+
 ### retryable
 
 > `readonly` **retryable**: `false` = `false`

@@ -4,8 +4,8 @@
  *
  * The status of one message to one recipient device is monotonic: accepted
  * when the send resolves, then delivered. A delivered device carries each
- * source that reported it, once, in the order of arrival. A `'relay'` source
- * tells that the Relay handed the message to the device. An `'e2ee'` source
+ * source that reported it, once, in the order of arrival. A `'signal-relay'`
+ * source tells that the Relay handed the message to the device. An `'e2ee'` source
  * tells that the device decrypted it. A second report of the same source
  * changes nothing.
  *
@@ -162,7 +162,7 @@ export class DeliveryStatusTracker {
   /**
    * Run the `onDelivered` hook for each event in order, and mark each event
    * announced after its hook returns. The hook is called directly, not
-   * through `callHook`, so an error from the hook, or the RelayWorkStopped of
+   * through `callHook`, so an error from the hook, or the SignalProtocolRelayWorkStopped of
    * a stop, rejects the call. That event and each later event then stay
    * unannounced, and the next receipt for the message announces them again.
    * The caller lets the rejection fail the hand-off of the receipt, so the
@@ -194,10 +194,9 @@ export class DeliveryStatusTracker {
   }
 
   // The source is the stored value. This release stores 'signal-relay' for a
-  // Relay receipt, and reports it as 'relay'. The public DeliverySource also
-  // accepts 'signal-relay', the value that SDK 15.0.0 reports. A status that
-  // SDK 14.3.0 or earlier wrote holds 'relay'. It is the same source, and
-  // the client keeps the stored value.
+  // Relay receipt, and reports it as 'signal-relay'. A status that SDK 14.3.0
+  // or earlier wrote holds 'relay'. It is the same source, and the client
+  // keeps the stored value and reports it as 'signal-relay'.
   private async apply(
     clientMessageId: string,
     source: WrittenDeliverySource,

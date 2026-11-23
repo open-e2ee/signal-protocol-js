@@ -143,7 +143,7 @@ const signal = await createHostedSignalProtocolClient({
   },
   hosted: {
     // The environment-scoped connection URL from the OpenE2EE console.
-    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL!,
     // Returns a short-lived signed assertion for the signed-in user.
     getIdentityAssertion,
   },

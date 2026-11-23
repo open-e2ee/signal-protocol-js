@@ -19,7 +19,7 @@ Use the OpenE2EE Signal Protocol Relay through the hosted client factory:
 ```ts
 import { createHostedSignalProtocolClient } from "@open-e2ee/signal-protocol-sdk";
 
-const signalRelayUrl = process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!;
+const signalRelayUrl = process.env.OPEN_E2EE_SIGNAL_RELAY_URL!;
 const signal = await createHostedSignalProtocolClient({
   adapters: { storage },
   hosted: {
@@ -31,8 +31,7 @@ const signal = await createHostedSignalProtocolClient({
 
 `oe new` writes the connection URL to `.env.local` as `OPEN_E2EE_SIGNAL_RELAY_URL`,
 with the public prefix of the framework in a Next.js, Expo, or Vite
-application. An `oe` release before 5.0.0 wrote the earlier name,
-`OPEN_E2EE_RELAY_URL`. Read the new name first and the earlier name second.
+application.
 Supply `storage` for this device and `getIdentityAssertion`. In a Sandbox environment,
 pass `hostedSignalProtocolRelaySandboxIdentity(storage)`. In a production project in
 device-owned mode, pass `hostedSignalProtocolRelayDeviceOwnedIdentity(storage)`. In a
@@ -50,9 +49,6 @@ include a relay server implementation.
 
 The module entry is `@open-e2ee/signal-protocol-sdk/remote/signal-relay`, and
 its types are at `@open-e2ee/signal-protocol-sdk/remote/signal-relay/types`.
-The earlier subpaths `@open-e2ee/signal-protocol-sdk/remote/relay` and
-`@open-e2ee/signal-protocol-sdk/remote/relay/types` load the same modules. They
-are deprecated, and SDK 15.0.0 removes them.
 
 See the [remote guide](../README.md), [interface guide](../../docs/INTERFACES.md),
 and [API reference](../../docs/api/README.md).

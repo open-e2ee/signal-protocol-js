@@ -47,6 +47,14 @@ same way. The SDK does not retry the request.
 
 ***
 
+### requestId?
+
+> `readonly` `optional` **requestId?**: `string`
+
+The optional reference of the HTTP response that refused this request.
+
+***
+
 ### retryable
 
 > `readonly` **retryable**: `false` = `false`

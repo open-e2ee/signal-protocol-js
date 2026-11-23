@@ -1,5 +1,276 @@
 # Changelog
 
+## 15.0.0
+
+### Breaking
+
+- **The names without the Signal Protocol prefix are removed.** SDK 14.2.0
+  deprecated the 81 earlier names in the first table. Each new name is
+  exported from the same entry points as its earlier name. See step 1.
+- **`RelayPreKeyBundle` is removed from the package root.** Use
+  `PreKeyBundle`. The two names identified the same type. See step 2.
+- **The package subpaths without `signal-` are removed.** An import of an
+  earlier subpath in the second table fails to resolve. Node.js gives the code
+  `ERR_PACKAGE_PATH_NOT_EXPORTED`. See step 3.
+- **The `signalProtocolRelay*` members and options are removed.** SDK 14.3.0
+  deprecated the 24 names in the third table. Use the role name of each one,
+  such as `relay`. The SDK does not read a removed option name, and no SDK
+  object has a removed member. See step 4.
+- **Some role-name options are required again**, as in SDK 14.1.0. See step 5.
+  - `SealedSenderConfig.relayScopeId`
+  - `GroupAuthorityFields.relayScopeId`
+  - `hosted.relayUrl` in `HostedSignalProtocolClientOptions`,
+    `HostedSignalProtocolResumeOptions`, and
+    `HostedSignalProtocolRelayManagedDeviceLinkOptions`
+  - `HostedSignalProtocolRelayIdentityMigrationOptions.relayUrl`
+  - `relay` and `relayScopeId` in `HostedSignalProtocolRelayBootstrapResult`
+- **`registerHook('onSignalProtocolRelayProtocolError', ...)` throws.** The
+  error message is `Unknown Signal Protocol client hook`. The client does not
+  call a hook with this name in the `hooks` option. Use
+  `onRelayProtocolError`. See step 4.
+- **Only a stored receive record gives `SignalProtocolRelayNameConflictError`.**
+  A call does not give it, because no option has two names. A receive record
+  that an earlier SDK stored can hold the Relay receipt decision under two
+  names. When the two values are different, the receive of that record gives
+  the error. The public shape of the error does not change. The message names
+  the stored record, not an option: `A stored record holds relayOwnsReceipt
+  and signalProtocolRelayOwnsReceipt with different values. The two names
+  hold one value.`
+- **The SDK reports `'signal-relay'` for the Relay.** `DeliverySource`, the
+  `origin` of `ReceiveExpiredEvent`, and the `origin` of `PendingReceive` are
+  `'signal-relay'` where SDK 14 gave `'relay'`. This includes a record that
+  an earlier SDK stored with `'relay'`. The store keeps the stored value. The
+  three types still accept `'relay'`. Two error names and four device
+  transfer log operations also change. SDK 14.2.0 announced each change in
+  the fourth table. See step 6.
+- **Nine more errors have a new `name`.** The `name` of each error in the
+  fifth table is now the name of its class. SDK 14 did not announce these
+  changes. `instanceof` checks need no change. See step 7.
+- **The client speaks only Relay protocol version 3.** SDK 14 offered
+  version 3, and it changed to version 2 when the Relay refused version 3.
+  This release offers only version 3, on each HTTP request and on the mailbox
+  socket. It does not offer another version. When a Relay does not serve
+  version 3, the SDK sends each request once:
+  - An identified Relay route throws `HostedSignalProtocolRelayHttpError` with
+    the `code` `PROTOCOL_UNSUPPORTED`, the `status` 400, and `retryable` true.
+  - The managed group authority throws the same error. Other failed answers
+    of the group authority still throw an `Error` with the message `Managed
+    group authority is unavailable`.
+  - A sealed post throws `HostedAnonymousDeliveryError` with the `code`
+    `DELIVERY_FAILED` and the `status` 400.
+  - A group server request throws `HostedGroupError` whose `data.status` is
+    400.
+  - The mailbox socket reconnects with its usual backoff and offers version 3
+    again. The connection state is `reconnecting` with the new reason
+    `protocol-unsupported`, where SDK 14 gave `closed`.
+
+  A send keeps the device pending until its posting deadline.
+  `UPGRADE_REQUIRED` stays terminal. The OpenE2EE Signal Protocol Relay serves
+  version 3. See step 8.
+- **Each device proof signs the version 3 label.**
+  `HostedSignalProtocolRelayDeviceAuthentication.signChallenge(challenge)` and
+  `signCertificateRequest(tokenId, nonce)` have no `protocolVersion`
+  parameter. In SDK 14, a call without `protocolVersion` signed the version 2
+  label. Each call now signs the version 3 label, for example
+  `signal-relay-device-authentication-v2\0`. See step 9.
+- **The SDK reads only the version 3 names in a Relay answer.** It reads the
+  scope from `signalRelayScopeId` and the receipts capability from
+  `signalRelayReceipts`. It ignores the version 2 name of each field, so it
+  reads an answer that has only the version 2 name as an answer without the
+  field. A store that SDK 14 wrote still opens: the stored names do not
+  change, and the SDK accepts a stored device token with the earlier issuer
+  or the claim `relay_scope_id`. See step 10.
+
+The removal of an earlier name does not change the `name` property of an
+error. Only the errors in the fourth and fifth tables have a new `name`.
+
+| Earlier name | New name |
+| --- | --- |
+| `advanceHostedRelayIdentityMigration` | `advanceHostedSignalProtocolRelayIdentityMigration` |
+| `bindRelayLifecycle` | `bindSignalProtocolRelayLifecycle` |
+| `convexRelay` | `convexSignalProtocolRelay` |
+| `createRelayConnection` | `createSignalProtocolRelayConnection` |
+| `HostedRelayBootstrapAdapter` | `HostedSignalProtocolRelayBootstrapAdapter` |
+| `HostedRelayBootstrapRequest` | `HostedSignalProtocolRelayBootstrapRequest` |
+| `HostedRelayBootstrapResult` | `HostedSignalProtocolRelayBootstrapResult` |
+| `HostedRelayDeviceAuthentication` | `HostedSignalProtocolRelayDeviceAuthentication` |
+| `HostedRelayDeviceLinkError` | `HostedSignalProtocolRelayDeviceLinkError` |
+| `hostedRelayDeviceOwnedIdentity` | `hostedSignalProtocolRelayDeviceOwnedIdentity` |
+| `HostedRelayDeviceRevokedError` | `HostedSignalProtocolRelayDeviceRevokedError` |
+| `HostedRelayDeviceUnknownError` | `HostedSignalProtocolRelayDeviceUnknownError` |
+| `HostedRelayHttpError` | `HostedSignalProtocolRelayHttpError` |
+| `HostedRelayIdentityMigrationAction` | `HostedSignalProtocolRelayIdentityMigrationAction` |
+| `HostedRelayIdentityMigrationAdapter` | `HostedSignalProtocolRelayIdentityMigrationAdapter` |
+| `HostedRelayIdentityMigrationOptions` | `HostedSignalProtocolRelayIdentityMigrationOptions` |
+| `HostedRelayIdentityMigrationRequest` | `HostedSignalProtocolRelayIdentityMigrationRequest` |
+| `HostedRelayIdentityMigrationSnapshot` | `HostedSignalProtocolRelayIdentityMigrationSnapshot` |
+| `HostedRelayIdentityMigrationState` | `HostedSignalProtocolRelayIdentityMigrationState` |
+| `HostedRelayIdentityProgress` | `HostedSignalProtocolRelayIdentityProgress` |
+| `HostedRelayIdentityProgressCallback` | `HostedSignalProtocolRelayIdentityProgressCallback` |
+| `HostedRelayManagedDeviceLinkAdapter` | `HostedSignalProtocolRelayManagedDeviceLinkAdapter` |
+| `HostedRelayManagedDeviceLinkOptions` | `HostedSignalProtocolRelayManagedDeviceLinkOptions` |
+| `HostedRelayManagedDeviceLinkRequest` | `HostedSignalProtocolRelayManagedDeviceLinkRequest` |
+| `HostedRelayManagedDeviceLinkResult` | `HostedSignalProtocolRelayManagedDeviceLinkResult` |
+| `hostedRelayPresence` | `hostedSignalProtocolRelayPresence` |
+| `HostedRelayPresence` | `HostedSignalProtocolRelayPresence` |
+| `HostedRelayPresenceAccount` | `HostedSignalProtocolRelayPresenceAccount` |
+| `HostedRelayPresenceApproximateLastSeen` | `HostedSignalProtocolRelayPresenceApproximateLastSeen` |
+| `HostedRelayPresenceAudience` | `HostedSignalProtocolRelayPresenceAudience` |
+| `HostedRelayPresenceError` | `HostedSignalProtocolRelayPresenceError` |
+| `HostedRelayPresenceErrorCode` | `HostedSignalProtocolRelayPresenceErrorCode` |
+| `HostedRelayPresenceLastSeenPolicy` | `HostedSignalProtocolRelayPresenceLastSeenPolicy` |
+| `HostedRelayPresenceMode` | `HostedSignalProtocolRelayPresenceMode` |
+| `HostedRelayPresencePolicy` | `HostedSignalProtocolRelayPresencePolicy` |
+| `HostedRelayPresenceSetting` | `HostedSignalProtocolRelayPresenceSetting` |
+| `HostedRelayPresenceStatus` | `HostedSignalProtocolRelayPresenceStatus` |
+| `HostedRelayPresenceVisibility` | `HostedSignalProtocolRelayPresenceVisibility` |
+| `HostedRelayProfileKeys` | `HostedSignalProtocolRelayProfileKeys` |
+| `HostedRelayPushPlatform` | `HostedSignalProtocolRelayPushPlatform` |
+| `HostedRelayPushProfile` | `HostedSignalProtocolRelayPushProfile` |
+| `HostedRelayPushRegistration` | `HostedSignalProtocolRelayPushRegistration` |
+| `HostedRelayRegistrationPreKey` | `HostedSignalProtocolRelayRegistrationPreKey` |
+| `HostedRelayRegistrationPreKeys` | `HostedSignalProtocolRelayRegistrationPreKeys` |
+| `HostedRelayResumeError` | `HostedSignalProtocolRelayResumeError` |
+| `HostedRelayResumeErrorCode` | `HostedSignalProtocolRelayResumeErrorCode` |
+| `HostedRelayResumePhase` | `HostedSignalProtocolRelayResumePhase` |
+| `HostedRelayResumeProgress` | `HostedSignalProtocolRelayResumeProgress` |
+| `HostedRelayResumeProgressCallback` | `HostedSignalProtocolRelayResumeProgressCallback` |
+| `hostedRelaySandboxIdentity` | `hostedSignalProtocolRelaySandboxIdentity` |
+| `HostedRelayTokenPushRegistration` | `HostedSignalProtocolRelayTokenPushRegistration` |
+| `HostedRelayUpgradeRequiredError` | `HostedSignalProtocolRelayUpgradeRequiredError` |
+| `HostedRelayWakeClient` | `HostedSignalProtocolRelayWakeClient` |
+| `HostedRelayWakeOptions` | `HostedSignalProtocolRelayWakeOptions` |
+| `hostedRelayWakePresence` | `hostedSignalProtocolRelayWakePresence` |
+| `HostedRelayWakePresence` | `HostedSignalProtocolRelayWakePresence` |
+| `HostedRelayWakeResult` | `HostedSignalProtocolRelayWakeResult` |
+| `HostedRelayWebPushRegistration` | `HostedSignalProtocolRelayWebPushRegistration` |
+| `inMemoryRelay` | `inMemorySignalProtocolRelay` |
+| `isSendNeverAcceptedByRelayError` | `isSendNeverAcceptedBySignalProtocolRelayError` |
+| `linkHostedRelayDevice` | `linkHostedSignalProtocolRelayDevice` |
+| `pullHostedRelayAfterWake` | `pullHostedSignalProtocolRelayAfterWake` |
+| `registerHostedRelayPush` | `registerHostedSignalProtocolRelayPush` |
+| `RelayConfig` | `SignalProtocolRelayConfig` |
+| `RelayConnection` | `SignalProtocolRelayConnection` |
+| `RelayConnectionReason` | `SignalProtocolRelayConnectionReason` |
+| `RelayConnectionState` | `SignalProtocolRelayConnectionState` |
+| `RelayFailureController` | `SignalProtocolRelayFailureController` |
+| `RelayFailureOptions` | `SignalProtocolRelayFailureOptions` |
+| `RelayGroupServer` | `SignalProtocolRelayGroupServer` |
+| `RelayLifecycleAppState` | `SignalProtocolRelayLifecycleAppState` |
+| `RelayLifecycleOptions` | `SignalProtocolRelayLifecycleOptions` |
+| `RelayProtocolError` | `SignalProtocolRelayProtocolError` |
+| `RelayProtocolErrorCode` | `SignalProtocolRelayProtocolErrorCode` |
+| `RelayProtocolRoute` | `SignalProtocolRelayProtocolRoute` |
+| `removeHostedRelayPush` | `removeHostedSignalProtocolRelayPush` |
+| `SendNeverAcceptedByRelayError` | `SendNeverAcceptedBySignalProtocolRelayError` |
+| `useRelayConnectionState` | `useSignalProtocolRelayConnectionState` |
+| `UseRelayConnectionStateOptions` | `UseSignalProtocolRelayConnectionStateOptions` |
+| `useRelayLifecycle` | `useSignalProtocolRelayLifecycle` |
+| `UseRelayLifecycleOptions` | `UseSignalProtocolRelayLifecycleOptions` |
+
+| Earlier subpath | New subpath |
+| --- | --- |
+| `@open-e2ee/signal-protocol-sdk/remote/relay` | `@open-e2ee/signal-protocol-sdk/remote/signal-relay` |
+| `@open-e2ee/signal-protocol-sdk/remote/relay/types` | `@open-e2ee/signal-protocol-sdk/remote/signal-relay/types` |
+
+| Type | Removed name | Name to use |
+| --- | --- | --- |
+| `SignalProtocolClient`, `DefaultSignalProtocolClient` | `signalProtocolRelayConnectionState` | `relayConnectionState` |
+| `SignalProtocolClient`, `DefaultSignalProtocolClient` | `subscribeSignalProtocolRelayConnectionState` | `subscribeRelayConnectionState` |
+| `SignalProtocolClient`, `DefaultSignalProtocolClient` | `startSignalProtocolRelaySubscription` | `startRelaySubscription` |
+| `SignalProtocolClient`, `DefaultSignalProtocolClient` | `stopSignalProtocolRelaySubscription` | `stopRelaySubscription` |
+| `SignalProtocolRelayServer`, `InMemorySignalProtocolRelayServer`, `ConvexSignalProtocolRelayServer` | `signalProtocolRelayConnectionState` | `relayConnectionState` |
+| `SignalProtocolRelayServer`, `InMemorySignalProtocolRelayServer`, `ConvexSignalProtocolRelayServer` | `subscribeSignalProtocolRelayConnectionState` | `subscribeRelayConnectionState` |
+| `SignalProtocolClientConfig` | `signalProtocolRelay` | `relay` |
+| `SignalProtocolClientAdapterConfig` | `signalProtocolRelay` | `relay` |
+| `SignalProtocolClientContext` | `signalProtocolRelay` | `relay` |
+| `SealedSenderConfig` | `signalProtocolRelayScopeId` | `relayScopeId` |
+| `GroupAuthorityFields` | `signalProtocolRelayScopeId` | `relayScopeId` |
+| `SignalProtocolClientHooks` | `onSignalProtocolRelayProtocolError` | `onRelayProtocolError` |
+| `SignalProtocolContentAdapter` | `setSignalProtocolRelayBatching` | `setRelayBatching` |
+| `OutgoingMessageError` | `signalProtocolRelayRetryable` | `relayRetryable` |
+| `HostedSignalProtocolRelayBootstrapResult` | `signalProtocolRelay` | `relay` |
+| `HostedSignalProtocolRelayBootstrapResult` | `signalProtocolRelayScopeId` | `relayScopeId` |
+| `HostedSignalProtocolClientOptions` | `hosted.signalProtocolRelayUrl` | `hosted.relayUrl` |
+| `HostedSignalProtocolResumeOptions` | `hosted.signalProtocolRelayUrl` | `hosted.relayUrl` |
+| `HostedSignalProtocolRelayManagedDeviceLinkOptions` | `hosted.signalProtocolRelayUrl` | `hosted.relayUrl` |
+| `HostedSignalProtocolRelayIdentityMigrationOptions` | `signalProtocolRelayUrl` | `relayUrl` |
+| `CreateTestClientOptions` | `sharedSignalProtocolRelay` | `sharedRelay` |
+| `TestClientResult` | `signalProtocolRelay` | `relay` |
+| `SignalProtocolClientInternals` | `signalProtocolRelay` | `relay` |
+| `SignalProtocolServiceCipher` | `setSignalProtocolRelayProtocolErrorReporter` | `setRelayProtocolErrorReporter` |
+
+| Kind | SDK 14 value | Value in this release |
+| --- | --- | --- |
+| `DeliverySource` value | `'relay'` | `'signal-relay'` |
+| `ReceiveExpiredEvent.origin` value | `'relay'` | `'signal-relay'` |
+| `PendingReceive.origin` value | `'relay'` | `'signal-relay'` |
+| Error `name` | `RelayWorkStopped` | `SignalProtocolRelayWorkStopped` |
+| Error `name` | `InMemoryRelayRefusal` | `InMemorySignalProtocolRelayRefusal` |
+| Log operation | `relay-connect` | `signal-relay-connect` |
+| Log operation | `relay-disconnect` | `signal-relay-disconnect` |
+| Log operation | `relay-upload` | `signal-relay-upload` |
+| Log operation | `relay-download` | `signal-relay-download` |
+
+| Error class | SDK 14 `name` | `name` in this release |
+| --- | --- | --- |
+| `HostedSignalProtocolRelayDeviceLinkError` | `HostedRelayDeviceLinkError` | `HostedSignalProtocolRelayDeviceLinkError` |
+| `HostedSignalProtocolRelayDeviceUnknownError` | `HostedRelayDeviceUnknownError` | `HostedSignalProtocolRelayDeviceUnknownError` |
+| `HostedSignalProtocolRelayDeviceRevokedError` | `HostedRelayDeviceRevokedError` | `HostedSignalProtocolRelayDeviceRevokedError` |
+| `HostedSignalProtocolRelayHttpError` | `HostedRelayHttpError` | `HostedSignalProtocolRelayHttpError` |
+| `HostedSignalProtocolRelayPresenceError` | `HostedRelayPresenceError` | `HostedSignalProtocolRelayPresenceError` |
+| `HostedSignalProtocolRelayResumeError` | `HostedRelayResumeError` | `HostedSignalProtocolRelayResumeError` |
+| `HostedSignalProtocolRelayUpgradeRequiredError` | `HostedRelayUpgradeRequiredError` | `HostedSignalProtocolRelayUpgradeRequiredError` |
+| `SignalProtocolRelayProtocolError` | `RelayProtocolError` | `SignalProtocolRelayProtocolError` |
+| `SendNeverAcceptedBySignalProtocolRelayError` | `SendNeverAcceptedByRelayError` | `SendNeverAcceptedBySignalProtocolRelayError` |
+
+#### Upgrade steps
+
+1. Replace each earlier name in the first table with its new name. For an
+   error class, `instanceof` with the new name is true for each error that
+   the SDK throws.
+2. Replace `RelayPreKeyBundle` with `PreKeyBundle`.
+3. Replace each earlier subpath in the second table with its new subpath.
+4. Replace each removed name in the third table with its name to use. This
+   includes a hook that you register, and a member of a class or object that
+   implements `SignalProtocolRelayServer`, `SignalProtocolContentAdapter`, or
+   `HostedSignalProtocolRelayBootstrapResult`. TypeScript gives an error for
+   each removed name that it finds. JavaScript code that sets a removed option
+   name gets no error, and the SDK does not read that option. Code that kept
+   the role names for SDK 14.3.0 needs no change.
+5. Set each option that is required again. TypeScript gives an error when you
+   do not set one. A bootstrap adapter that returns no `relay` or no
+   `relayScopeId` makes the hosted client fail to start.
+6. Make each comparison with a value in the fourth table match the value in
+   this release. This includes an error `name` and a log query. Code that
+   followed the SDK 14.2.0 upgrade steps for the Relay values needs no
+   change. A `switch` on `DeliverySource` keeps its `case` for `'relay'`,
+   because the type still accepts that value.
+7. Match the new `name` of each error in the fifth table, in code or in a log
+   query. `instanceof` checks need no change.
+8. Use a Relay that serves protocol version 3. The OpenE2EE Signal Protocol
+   Relay serves it.
+   Read `PROTOCOL_UNSUPPORTED` as a retryable fault. Do not expect the SDK to
+   send a request again on another version. Add the connection reason
+   `protocol-unsupported` to each exhaustive `switch` on
+   `SignalProtocolRelayConnectionReason`.
+9. Make each adapter that verifies a proof from `signChallenge` or
+   `signCertificateRequest` verify the version 3 label. Remove the
+   `protocolVersion` argument from each call. TypeScript gives an error for a
+   call with that argument.
+10. Make a Relay or a test double that answers the SDK on the wire send
+    `signalRelayScopeId` and `signalRelayReceipts`. Code that uses only the
+    OpenE2EE Signal Protocol Relay needs no change.
+
+### Added
+
+- **Signal Protocol Relay response errors expose an optional readonly `requestId`.**
+  The SDK accepts one 32-character ASCII base64url value from the
+  `x-signal-relay-request-id` response header. Missing, repeated, or malformed
+  values leave the property absent. Registration validation and explicit error
+  wrappers retain the same response reference. Local network and storage
+  errors have no ID. The reference grants no diagnostic read access.
+
 ## 14.7.0
 
 ### Added

@@ -19,7 +19,7 @@ import {
   type HostedStoreRecordKey,
   type HostedStoreRecordPrefix,
 } from './hosted-store-records';
-import { signalRelayProofLabels } from './signal-relay-protocol';
+import { SIGNAL_RELAY_PROOF_LABELS } from './signal-relay-protocol';
 
 const DEVICE_AUTHENTICATION_METADATA_PREFIX: HostedStoreRecordPrefix = {
   current: 'signalRelay.deviceAuthentication.v2:',
@@ -123,14 +123,14 @@ function deviceAuthenticationSigner(
 ): HostedSignalProtocolRelayDeviceAuthentication {
   return {
     publicKey: base64ToBytes(keyPair.publicKey),
-    signCertificateRequest: async (tokenId, nonce, protocolVersion) => {
+    signCertificateRequest: async (tokenId, nonce) => {
       if (!tokenId || tokenId.includes('\0') || !nonce || nonce.length > 256)
         throw new Error('Signal Protocol Relay certificate request is invalid');
       return base64ToBytes(
         await sign(
           keyPair.privateKey,
           concatBytes(
-            signalRelayProofLabels(protocolVersion).senderCertificateRequest,
+            SIGNAL_RELAY_PROOF_LABELS.senderCertificateRequest,
             stringToBytes(tokenId),
             new Uint8Array([0]),
             stringToBytes(nonce),
@@ -138,12 +138,12 @@ function deviceAuthenticationSigner(
         ),
       );
     },
-    signChallenge: async (challenge, protocolVersion) => {
+    signChallenge: async (challenge) => {
       if (!(challenge instanceof Uint8Array) || challenge.length === 0) {
         throw new Error('Signal Protocol Relay device challenge must not be empty');
       }
       const payload = concatBytes(
-        signalRelayProofLabels(protocolVersion).deviceAuthentication,
+        SIGNAL_RELAY_PROOF_LABELS.deviceAuthentication,
         stringToBytes(publishableKey),
         new Uint8Array([0]),
         challenge,

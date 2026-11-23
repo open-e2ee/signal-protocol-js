@@ -300,7 +300,3 @@ export const TRANSFER_PROTOCOL_VERSION = 1;
  * Backup format version
  */
 export const BACKUP_FORMAT_VERSION = 2;
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `SignalProtocolRelayConfig`. SDK 15.0.0 removes this name. */
-export type RelayConfig = SignalProtocolRelayConfig;

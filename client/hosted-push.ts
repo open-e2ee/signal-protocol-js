@@ -361,27 +361,3 @@ export async function pullHostedSignalProtocolRelayAfterWake(
     ...(retainedWork === undefined ? {} : { retainedWork }),
   };
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `HostedSignalProtocolRelayPushPlatform`. SDK 15.0.0 removes this name. */
-export type HostedRelayPushPlatform = HostedSignalProtocolRelayPushPlatform;
-/** @deprecated Use `HostedSignalProtocolRelayPushProfile`. SDK 15.0.0 removes this name. */
-export type HostedRelayPushProfile = HostedSignalProtocolRelayPushProfile;
-/** @deprecated Use `HostedSignalProtocolRelayPushRegistration`. SDK 15.0.0 removes this name. */
-export type HostedRelayPushRegistration = HostedSignalProtocolRelayPushRegistration;
-/** @deprecated Use `HostedSignalProtocolRelayTokenPushRegistration`. SDK 15.0.0 removes this name. */
-export type HostedRelayTokenPushRegistration = HostedSignalProtocolRelayTokenPushRegistration;
-/** @deprecated Use `HostedSignalProtocolRelayWakeClient`. SDK 15.0.0 removes this name. */
-export type HostedRelayWakeClient = HostedSignalProtocolRelayWakeClient;
-/** @deprecated Use `HostedSignalProtocolRelayWakeOptions`. SDK 15.0.0 removes this name. */
-export type HostedRelayWakeOptions = HostedSignalProtocolRelayWakeOptions;
-/** @deprecated Use `HostedSignalProtocolRelayWakeResult`. SDK 15.0.0 removes this name. */
-export type HostedRelayWakeResult = HostedSignalProtocolRelayWakeResult;
-/** @deprecated Use `HostedSignalProtocolRelayWebPushRegistration`. SDK 15.0.0 removes this name. */
-export type HostedRelayWebPushRegistration = HostedSignalProtocolRelayWebPushRegistration;
-/** @deprecated Use `pullHostedSignalProtocolRelayAfterWake`. SDK 15.0.0 removes this name. */
-export const pullHostedRelayAfterWake = pullHostedSignalProtocolRelayAfterWake;
-/** @deprecated Use `registerHostedSignalProtocolRelayPush`. SDK 15.0.0 removes this name. */
-export const registerHostedRelayPush = registerHostedSignalProtocolRelayPush;
-/** @deprecated Use `removeHostedSignalProtocolRelayPush`. SDK 15.0.0 removes this name. */
-export const removeHostedRelayPush = removeHostedSignalProtocolRelayPush;

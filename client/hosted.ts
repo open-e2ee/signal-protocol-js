@@ -78,79 +78,49 @@ import {
 
 export {
   pullHostedSignalProtocolRelayAfterWake,
-  pullHostedRelayAfterWake,
   registerHostedSignalProtocolRelayPush,
-  registerHostedRelayPush,
   removeHostedSignalProtocolRelayPush,
-  removeHostedRelayPush,
 } from './hosted-push';
 export {
   HostedSignalProtocolRelayPresenceError,
-  HostedRelayPresenceError,
   hostedSignalProtocolRelayPresence,
-  hostedRelayPresence,
   hostedSignalProtocolRelayWakePresence,
-  hostedRelayWakePresence,
 } from './hosted-presence';
 export {
   HostedSignalProtocolRelayDeviceRevokedError,
-  HostedRelayDeviceRevokedError,
   HostedSignalProtocolRelayDeviceUnknownError,
-  HostedRelayDeviceUnknownError,
 } from './hosted-device-standing';
-export { HostedSignalProtocolRelayDeviceLinkError, HostedRelayDeviceLinkError } from './hosted-device-link';
-export { HostedSignalProtocolRelayHttpError, HostedRelayHttpError } from './hosted-http-error';
-export { HostedSignalProtocolRelayUpgradeRequiredError, HostedRelayUpgradeRequiredError } from './signal-relay-protocol';
+export { HostedSignalProtocolRelayDeviceLinkError } from './hosted-device-link';
+export { HostedSignalProtocolRelayHttpError } from './hosted-http-error';
+export { HostedSignalProtocolRelayUpgradeRequiredError } from './signal-relay-protocol';
 export type {
   HostedSignalProtocolRelayPresence,
-  HostedRelayPresence,
   HostedSignalProtocolRelayPresenceAccount,
-  HostedRelayPresenceAccount,
   HostedSignalProtocolRelayPresenceApproximateLastSeen,
-  HostedRelayPresenceApproximateLastSeen,
   HostedSignalProtocolRelayPresenceAudience,
-  HostedRelayPresenceAudience,
   HostedSignalProtocolRelayPresenceErrorCode,
-  HostedRelayPresenceErrorCode,
   HostedSignalProtocolRelayPresenceLastSeenPolicy,
-  HostedRelayPresenceLastSeenPolicy,
   HostedSignalProtocolRelayPresenceMode,
-  HostedRelayPresenceMode,
   HostedSignalProtocolRelayPresencePolicy,
-  HostedRelayPresencePolicy,
   HostedSignalProtocolRelayPresenceSetting,
-  HostedRelayPresenceSetting,
   HostedSignalProtocolRelayPresenceStatus,
-  HostedRelayPresenceStatus,
   HostedSignalProtocolRelayPresenceVisibility,
-  HostedRelayPresenceVisibility,
   HostedSignalProtocolRelayWakePresence,
-  HostedRelayWakePresence,
 } from './hosted-presence';
-export type { HostedSignalProtocolRelayProfileKeys, HostedRelayProfileKeys } from './hosted-profile-keys';
+export type { HostedSignalProtocolRelayProfileKeys } from './hosted-profile-keys';
 export {
   hostedSignalProtocolRelayDeviceOwnedIdentity,
-  hostedRelayDeviceOwnedIdentity,
   hostedSignalProtocolRelaySandboxIdentity,
-  hostedRelaySandboxIdentity,
 } from './hosted-sandbox-identity';
 export type {
   HostedSignalProtocolRelayPushPlatform,
-  HostedRelayPushPlatform,
   HostedSignalProtocolRelayPushProfile,
-  HostedRelayPushProfile,
   HostedSignalProtocolRelayPushRegistration,
-  HostedRelayPushRegistration,
   HostedSignalProtocolRelayTokenPushRegistration,
-  HostedRelayTokenPushRegistration,
   HostedSignalProtocolRelayWakeClient,
-  HostedRelayWakeClient,
   HostedSignalProtocolRelayWakeOptions,
-  HostedRelayWakeOptions,
   HostedSignalProtocolRelayWakeResult,
-  HostedRelayWakeResult,
   HostedSignalProtocolRelayWebPushRegistration,
-  HostedRelayWebPushRegistration,
 } from './hosted-push';
 
 const REGISTRATION_SNAPSHOT_METADATA_PREFIX: HostedStoreRecordPrefix = {
@@ -227,27 +197,17 @@ export type HostedSignalProtocolRelayIdentityProgressCallback = (
 /**
  * A device proof signer whose private key never leaves the SDK-owned local store.
  *
- * Each Relay protocol version signs its own label. A call without
- * `protocolVersion` signs the label of version 2.
+ * Each proof signs the label of Relay protocol version 3.
  */
 export interface HostedSignalProtocolRelayDeviceAuthentication {
   readonly publicKey: Uint8Array;
   /**
    * Sign a Relay challenge with domain separation and publishable-key binding.
    * The adapter verifies `label || publishableKey || 0x00 || challenge`.
-   * `protocolVersion` is the Relay protocol version of the request that
-   * carries the proof, and it selects the label.
    */
-  signChallenge(challenge: Uint8Array, protocolVersion?: number): Promise<Uint8Array>;
-  /**
-   * Sign the canonical certificate request with the SDK-owned device key.
-   * `protocolVersion` selects the label, as for `signChallenge`.
-   */
-  signCertificateRequest(
-    tokenId: string,
-    nonce: string,
-    protocolVersion?: number,
-  ): Promise<Uint8Array>;
+  signChallenge(challenge: Uint8Array): Promise<Uint8Array>;
+  /** Sign the canonical certificate request with the SDK-owned device key. */
+  signCertificateRequest(tokenId: string, nonce: string): Promise<Uint8Array>;
 }
 
 /** Public prekey material sent during one atomic Signal Protocol Relay registration. */
@@ -278,22 +238,11 @@ export interface HostedSignalProtocolRelayBootstrapRequest {
   readonly deviceAuthentication: HostedSignalProtocolRelayDeviceAuthentication;
 }
 
-/**
- * Canonical identity and authenticated Relay returned by hosted bootstrap.
- *
- * SDK 14 also accepts the deprecated `signalProtocolRelayScopeId` and
- * `signalProtocolRelay` names. When an adapter sets both names of a member,
- * two different values fail with `SignalProtocolRelayNameConflictError`.
- * SDK 15.0.0 removes the deprecated names.
- */
+/** Canonical identity and authenticated Relay returned by hosted bootstrap. */
 export interface HostedSignalProtocolRelayBootstrapResult {
   readonly canonicalAccountId: string;
   readonly deviceId: number;
-  /** @deprecated Use `relayScopeId`. SDK 15.0.0 removes this name. */
-  readonly signalProtocolRelayScopeId?: Uint8Array;
   readonly relayScopeId: Uint8Array;
-  /** @deprecated Use `relay`. SDK 15.0.0 removes this name. */
-  readonly signalProtocolRelay?: SignalProtocolRelayServer;
   readonly relay: SignalProtocolRelayServer;
 }
 
@@ -387,16 +336,11 @@ export interface HostedSignalProtocolClientOptions extends Omit<
   readonly groups?: HostedGroupOptions;
   readonly adapters: Omit<
     SignalProtocolClientCompositionOptions['adapters'],
-    'relay' | 'signalProtocolRelay' | 'remoteObjectStore'
+    'relay' | 'remoteObjectStore'
   >;
   readonly hosted: {
-    /**
-     * Public environment-scoped Signal Protocol Relay connection URL. Set this
-     * member or the deprecated `signalProtocolRelayUrl`.
-     */
-    readonly relayUrl?: string;
-    /** @deprecated Use `relayUrl`. SDK 15.0.0 removes this name. */
-    readonly signalProtocolRelayUrl?: string;
+    /** Public environment-scoped Signal Protocol Relay connection URL. */
+    readonly relayUrl: string;
     readonly getIdentityAssertion: GetIdentityAssertion;
     /**
      * `register` (the default) resumes the stored session or registers a new
@@ -452,13 +396,8 @@ export interface HostedSignalProtocolRelayIdentityMigrationOptions {
   readonly manifestVersion?: number;
   readonly operationId: string;
   readonly onProgress?: HostedSignalProtocolRelayIdentityProgressCallback;
-  /**
-   * Public environment-scoped Signal Protocol Relay connection URL. Set this
-   * member or the deprecated `signalProtocolRelayUrl`.
-   */
-  readonly relayUrl?: string;
-  /** @deprecated Use `relayUrl`. SDK 15.0.0 removes this name. */
-  readonly signalProtocolRelayUrl?: string;
+  /** Public environment-scoped Signal Protocol Relay connection URL. */
+  readonly relayUrl: string;
   readonly authorization:
     | {
         readonly kind: 'active-device';
@@ -477,7 +416,7 @@ export interface HostedSignalProtocolRelayManagedDeviceLinkOptions extends Omit<
   readonly groups?: HostedGroupOptions;
   readonly adapters: Omit<
     SignalProtocolClientCompositionOptions['adapters'],
-    'relay' | 'signalProtocolRelay'
+    'relay'
   >;
   readonly activeDeviceStorage: SignalProtocolLocalStore;
   /**
@@ -491,13 +430,8 @@ export interface HostedSignalProtocolRelayManagedDeviceLinkOptions extends Omit<
    */
   readonly activeGroupStore?: GroupStateStore;
   readonly hosted: {
-    /**
-     * Public environment-scoped Signal Protocol Relay connection URL. Set this
-     * member or the deprecated `signalProtocolRelayUrl`.
-     */
-    readonly relayUrl?: string;
-    /** @deprecated Use `relayUrl`. SDK 15.0.0 removes this name. */
-    readonly signalProtocolRelayUrl?: string;
+    /** Public environment-scoped Signal Protocol Relay connection URL. */
+    readonly relayUrl: string;
     /** Override the default authenticated device-link transport. */
     readonly adapter?: HostedSignalProtocolRelayManagedDeviceLinkAdapter;
     readonly onProgress?: HostedSignalProtocolRelayIdentityProgressCallback;
@@ -981,7 +915,7 @@ export async function advanceHostedSignalProtocolRelayIdentityMigration(
   options: HostedSignalProtocolRelayIdentityMigrationOptions,
 ): Promise<HostedSignalProtocolRelayIdentityMigrationSnapshot> {
   const connection = await resolveHostedSignalProtocolRelayConnection(
-    hostedSignalProtocolRelayUrl(options, 'advanceHostedSignalProtocolRelayIdentityMigration'),
+    hostedSignalProtocolRelayUrl(options),
   );
   const { protocolEndpoint, publishableKey } = connection;
   const operationId = assertOperationId(options.operationId);
@@ -1220,7 +1154,7 @@ export async function linkHostedSignalProtocolRelayDevice(
   } = options;
   const storage = adapters.storage;
   const connection = await resolveHostedSignalProtocolRelayConnection(
-    hostedSignalProtocolRelayUrl(hosted, 'linkHostedSignalProtocolRelayDevice'),
+    hostedSignalProtocolRelayUrl(hosted),
   );
   const { protocolEndpoint, publishableKey } = connection;
   // A custom adapter keeps the active session, so the SDK cannot read the
@@ -1393,7 +1327,7 @@ export async function linkHostedSignalProtocolRelayDevice(
  *   adapters: { storage },
  *   hosted: {
  *     getIdentityAssertion: hostedSignalProtocolRelaySandboxIdentity(storage),
- *     relayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
+ *     relayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL!,
  *   },
  * });
  * ```
@@ -1413,7 +1347,7 @@ export async function createHostedSignalProtocolClient(
     );
   }
   const connection = await resolveHostedSignalProtocolRelayConnection(
-    hostedSignalProtocolRelayUrl(hosted, 'createHostedSignalProtocolClient'),
+    hostedSignalProtocolRelayUrl(hosted),
   );
   const deletion = await readHostedSignalProtocolRelayAccountDeletionPhase(storage, connection);
   if (deletion === 'submitted') throw new HostedSignalProtocolRelayAccountDeletionError('DELETION_ALREADY_REQUESTED');
@@ -1538,45 +1472,3 @@ export async function createHostedSignalProtocolClient(
   hosted.onProgress?.({ operation, phase: 'complete' });
   return client;
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `advanceHostedSignalProtocolRelayIdentityMigration`. SDK 15.0.0 removes this name. */
-export const advanceHostedRelayIdentityMigration = advanceHostedSignalProtocolRelayIdentityMigration;
-/** @deprecated Use `HostedSignalProtocolRelayBootstrapAdapter`. SDK 15.0.0 removes this name. */
-export type HostedRelayBootstrapAdapter = HostedSignalProtocolRelayBootstrapAdapter;
-/** @deprecated Use `HostedSignalProtocolRelayBootstrapRequest`. SDK 15.0.0 removes this name. */
-export type HostedRelayBootstrapRequest = HostedSignalProtocolRelayBootstrapRequest;
-/** @deprecated Use `HostedSignalProtocolRelayBootstrapResult`. SDK 15.0.0 removes this name. */
-export type HostedRelayBootstrapResult = HostedSignalProtocolRelayBootstrapResult;
-/** @deprecated Use `HostedSignalProtocolRelayDeviceAuthentication`. SDK 15.0.0 removes this name. */
-export type HostedRelayDeviceAuthentication = HostedSignalProtocolRelayDeviceAuthentication;
-/** @deprecated Use `HostedSignalProtocolRelayIdentityMigrationAction`. SDK 15.0.0 removes this name. */
-export type HostedRelayIdentityMigrationAction = HostedSignalProtocolRelayIdentityMigrationAction;
-/** @deprecated Use `HostedSignalProtocolRelayIdentityMigrationAdapter`. SDK 15.0.0 removes this name. */
-export type HostedRelayIdentityMigrationAdapter = HostedSignalProtocolRelayIdentityMigrationAdapter;
-/** @deprecated Use `HostedSignalProtocolRelayIdentityMigrationOptions`. SDK 15.0.0 removes this name. */
-export type HostedRelayIdentityMigrationOptions = HostedSignalProtocolRelayIdentityMigrationOptions;
-/** @deprecated Use `HostedSignalProtocolRelayIdentityMigrationRequest`. SDK 15.0.0 removes this name. */
-export type HostedRelayIdentityMigrationRequest = HostedSignalProtocolRelayIdentityMigrationRequest;
-/** @deprecated Use `HostedSignalProtocolRelayIdentityMigrationSnapshot`. SDK 15.0.0 removes this name. */
-export type HostedRelayIdentityMigrationSnapshot = HostedSignalProtocolRelayIdentityMigrationSnapshot;
-/** @deprecated Use `HostedSignalProtocolRelayIdentityMigrationState`. SDK 15.0.0 removes this name. */
-export type HostedRelayIdentityMigrationState = HostedSignalProtocolRelayIdentityMigrationState;
-/** @deprecated Use `HostedSignalProtocolRelayIdentityProgress`. SDK 15.0.0 removes this name. */
-export type HostedRelayIdentityProgress = HostedSignalProtocolRelayIdentityProgress;
-/** @deprecated Use `HostedSignalProtocolRelayIdentityProgressCallback`. SDK 15.0.0 removes this name. */
-export type HostedRelayIdentityProgressCallback = HostedSignalProtocolRelayIdentityProgressCallback;
-/** @deprecated Use `HostedSignalProtocolRelayManagedDeviceLinkAdapter`. SDK 15.0.0 removes this name. */
-export type HostedRelayManagedDeviceLinkAdapter = HostedSignalProtocolRelayManagedDeviceLinkAdapter;
-/** @deprecated Use `HostedSignalProtocolRelayManagedDeviceLinkOptions`. SDK 15.0.0 removes this name. */
-export type HostedRelayManagedDeviceLinkOptions = HostedSignalProtocolRelayManagedDeviceLinkOptions;
-/** @deprecated Use `HostedSignalProtocolRelayManagedDeviceLinkRequest`. SDK 15.0.0 removes this name. */
-export type HostedRelayManagedDeviceLinkRequest = HostedSignalProtocolRelayManagedDeviceLinkRequest;
-/** @deprecated Use `HostedSignalProtocolRelayManagedDeviceLinkResult`. SDK 15.0.0 removes this name. */
-export type HostedRelayManagedDeviceLinkResult = HostedSignalProtocolRelayManagedDeviceLinkResult;
-/** @deprecated Use `HostedSignalProtocolRelayRegistrationPreKey`. SDK 15.0.0 removes this name. */
-export type HostedRelayRegistrationPreKey = HostedSignalProtocolRelayRegistrationPreKey;
-/** @deprecated Use `HostedSignalProtocolRelayRegistrationPreKeys`. SDK 15.0.0 removes this name. */
-export type HostedRelayRegistrationPreKeys = HostedSignalProtocolRelayRegistrationPreKeys;
-/** @deprecated Use `linkHostedSignalProtocolRelayDevice`. SDK 15.0.0 removes this name. */
-export const linkHostedRelayDevice = linkHostedSignalProtocolRelayDevice;

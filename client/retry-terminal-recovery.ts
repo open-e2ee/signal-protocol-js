@@ -96,7 +96,7 @@ export interface RetryTerminalResetContext {
  *    when no other request sent one to it in the last hour. The record
  *    stores the outcome.
  *
- * A RelayWorkStopped while the archive waits for the decrypt lock
+ * A SignalProtocolRelayWorkStopped while the archive waits for the decrypt lock
  * propagates, and the replay runs the reset again. A failure of steps 1 to
  * 3 also propagates. A crash between the archive and its stored marker
  * archives again at the replay. A failed null message is stored as

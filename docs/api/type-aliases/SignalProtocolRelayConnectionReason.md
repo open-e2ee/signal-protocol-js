@@ -6,7 +6,7 @@
 
 # Type Alias: SignalProtocolRelayConnectionReason
 
-> **SignalProtocolRelayConnectionReason** = `"handshake"` \| `"protocol"` \| `"closed"` \| `"error"` \| `"frame"` \| `"authentication"` \| `"silent"` \| `"upgrade-required"` \| `"authority-refused"` \| `"device-revoked"` \| `"device-unknown"`
+> **SignalProtocolRelayConnectionReason** = `"handshake"` \| `"protocol"` \| `"closed"` \| `"error"` \| `"frame"` \| `"authentication"` \| `"silent"` \| `"protocol-unsupported"` \| `"upgrade-required"` \| `"authority-refused"` \| `"device-revoked"` \| `"device-unknown"`
 
 The transition site that moved a relay connection to `reconnecting`, or to
 `stopped` without a call to stop it.
@@ -18,6 +18,9 @@ The transition site that moved a relay connection to `reconnecting`, or to
 - `frame`: the socket delivered a frame that the client refuses.
 - `authentication`: the device token for the socket could not be issued.
 - `silent`: the Relay did not answer a ping before the next one was due.
+- `protocol-unsupported`: the Relay closed the socket because it does not
+  serve the protocol version of this SDK yet. The state is `reconnecting`,
+  and the subscription retries with its usual backoff.
 - `upgrade-required`: the Relay no longer serves the protocol version of
   this SDK. The state is `stopped`, and the subscription does not retry.
   Only a newer SDK can connect again.

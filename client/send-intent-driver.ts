@@ -198,7 +198,7 @@ export class SendIntentDriver {
         do {
           this.again = false;
           if (this.stopped) return;
-          // A pass logs its own failures. RelayWorkStopped ends the run.
+          // A pass logs its own failures. SignalProtocolRelayWorkStopped ends the run.
           await this.signalRelayWork.run((work) => this.runPass(work)).catch(() => undefined);
         } while (this.again);
       } finally {

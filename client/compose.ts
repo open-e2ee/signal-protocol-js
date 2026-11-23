@@ -4,7 +4,6 @@ import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
 import type { SignalProtocolRelayServer } from '../remote/signal-relay/types';
 import type { SignalProtocolLocalStore, SignalProtocolManager } from '../types/api';
 import type { ServiceId } from '../internal/protocol/zk/groups/uid-struct';
-import { readRenamedOption } from '../types/renamed-member';
 
 /**
  * Stable identity inputs for one Signal Protocol client instance.
@@ -35,8 +34,6 @@ export interface SignalProtocolClientAdapterConfig {
   storage: SignalProtocolLocalStore;
   /** Optional relay for server sync, prekeys, fanout, and subscriptions. */
   relay?: SignalProtocolRelayServer;
-  /** @deprecated Use `relay`. SDK 15.0.0 removes this name. */
-  signalProtocolRelay?: SignalProtocolRelayServer;
   /** Optional brokered remote object store for encrypted attachments. */
   remoteObjectStore?: SignalProtocolRemoteObjectStore;
   /** Advanced protocol manager override for tests and specialized integrations. */
@@ -93,7 +90,6 @@ export interface SignalProtocolClientCompositionOptions extends Omit<
   | 'protocolManager'
   | 'protocolStrategy'
   | 'relay'
-  | 'signalProtocolRelay'
   | 'pni'
   | 'storage'
 > {
@@ -122,11 +118,7 @@ export function createSignalProtocolClientConfig(
     protocolManager: adapters.protocolManager,
     protocol,
     pni: identity.pni,
-    signalProtocolRelay: readRenamedOption(adapters.signalProtocolRelay, adapters.relay, {
-      newName: 'adapters.signalProtocolRelay',
-      earlierName: 'adapters.relay',
-      operation: 'createSignalProtocolClientConfig',
-    }),
+    relay: adapters.relay,
     storage: adapters.storage,
   };
 }

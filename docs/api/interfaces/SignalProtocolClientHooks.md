@@ -61,7 +61,7 @@ Runs when a recipient device gets one of this client's messages
 
 A message to one device goes from accepted (the send resolved) to
 delivered. The hook runs for each source that reports the delivery:
-`'relay'` when the Relay hands the message to the device, and `'e2ee'`
+`'signal-relay'` when the Relay hands the message to the device, and `'e2ee'`
 when the device decrypts it and sends an encrypted delivery receipt. A
 receipt that arrives before the send resolves runs the hook after the
 send resolves.
@@ -870,26 +870,6 @@ onSessionEstablished: (sessionId, remoteAddress) => {
   setSessionStatus(sessionId, 'active');
 }
 ```
-
-***
-
-### ~~onSignalProtocolRelayProtocolError?~~
-
-> `optional` **onSignalProtocolRelayProtocolError?**: (`error`) => `void` \| `Promise`\<`void`\>
-
-#### Parameters
-
-##### error
-
-[`SignalProtocolRelayProtocolError`](../classes/SignalProtocolRelayProtocolError.md)
-
-#### Returns
-
-`void` \| `Promise`\<`void`\>
-
-#### Deprecated
-
-Use `onRelayProtocolError`. SDK 15.0.0 removes this name.
 
 ***
 

@@ -49,9 +49,3 @@ export function useSignalProtocolRelayLifecycle({
     return bindSignalProtocolRelayLifecycle(signal, AppState, { keepOpenInBackground });
   }, [signal, keepOpenInBackground]);
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `useSignalProtocolRelayLifecycle`. SDK 15.0.0 removes this name. */
-export const useRelayLifecycle = useSignalProtocolRelayLifecycle;
-/** @deprecated Use `UseSignalProtocolRelayLifecycleOptions`. SDK 15.0.0 removes this name. */
-export type UseRelayLifecycleOptions = UseSignalProtocolRelayLifecycleOptions;

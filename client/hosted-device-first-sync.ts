@@ -16,7 +16,7 @@ import {
 import { assertHostedSignalProtocolRelayDeviceManagement } from "./hosted-device-management";
 import { HostedSignalProtocolRelayDeviceProvisioningError } from "./hosted-device-provisioning-error";
 import { encodeDeliveryWire } from "./hosted-transport";
-import { RelayWorkStopped } from "./signal-relay-work";
+import { SignalProtocolRelayWorkStopped } from "./signal-relay-work";
 
 export type {
   HostedSignalProtocolRelayFirstSyncBundle,
@@ -162,7 +162,7 @@ export async function sendHostedSignalProtocolRelayFirstSync(
       checkCopy: checkFirstSyncDeliveryWire,
     });
   } catch (error) {
-    if (error instanceof RelayWorkStopped) throw cancelled(options.signal?.reason);
+    if (error instanceof SignalProtocolRelayWorkStopped) throw cancelled(options.signal?.reason);
     throw error;
   }
   if (result !== "accepted") {

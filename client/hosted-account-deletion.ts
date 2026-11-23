@@ -9,7 +9,6 @@ import {
   resumeHostedSignalProtocolRelayTransport,
 } from './hosted-transport';
 import { postJson, record } from './signal-relay-http';
-import { signalRelayProtocolOffer } from './signal-relay-protocol';
 
 /** The exact deletion state that the Signal Protocol Relay confirms. */
 export interface HostedSignalProtocolRelayAccountDeletionReceipt {
@@ -226,8 +225,8 @@ async function readStatus(
   intent: DeletionIntent,
 ): Promise<HostedSignalProtocolRelayAccountDeletionReceipt> {
   const answer = await postJson(
-    connection, signalRelayProtocolOffer(), '/identity/deletion/status', requestBody(connection, intent), undefined,
-    requireReceiptVersion,
+    connection, '/identity/deletion/status', requestBody(connection, intent), undefined,
+    { checkAnswer: requireReceiptVersion },
   );
   return retainReceipt(options.storage, key, intent, receipt(answer, intent.operationId));
 }

@@ -343,16 +343,8 @@ export interface SignalProtocolContentAdapter {
   inspectContent(plaintext: string): InspectedSignalProtocolContent;
   areReadReceiptsEnabled(): Promise<boolean>;
   areTypingIndicatorsEnabled(): Promise<boolean>;
-  /**
-   * Tells the adapter that a relay batch starts or ends.
-   *
-   * SDK 14 also accepts the deprecated `setSignalProtocolRelayBatching`. When
-   * one level of an adapter supplies both names, SDK 14 calls the deprecated
-   * name. SDK 15.0.0 removes the deprecated name.
-   */
+  /** Tells the adapter that a relay batch starts or ends. */
   setRelayBatching(active: boolean): void;
-  /** @deprecated Use `setRelayBatching`. SDK 15.0.0 removes this name. */
-  setSignalProtocolRelayBatching?(active: boolean): void;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -1218,13 +1210,6 @@ export function createDefaultSignalProtocolContentAdapter(): SignalProtocolConte
 
     setRelayBatching() {
       // No-op for the protocol-default adapter.
-    },
-
-    // The deprecated name forwards to `setRelayBatching`, so an adapter spread
-    // from this one that overrides only `setRelayBatching` keeps its override.
-    /** @deprecated Use `setRelayBatching`. SDK 15.0.0 removes this name. */
-    setSignalProtocolRelayBatching(active: boolean) {
-      this.setRelayBatching(active);
     },
   };
 }

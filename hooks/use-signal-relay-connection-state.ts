@@ -17,30 +17,10 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import type { SignalProtocolRelayConnectionState } from '../remote/signal-relay/types';
 import type { SignalProtocolClient } from '../types/api';
-import { readRenamedImplementation } from '../types/renamed-member';
-
 export interface UseSignalProtocolRelayConnectionStateOptions {
-  /**
-   * Signal Protocol client that owns the relay subscription. An object with
-   * only the deprecated `signalProtocolRelay*` member names also works.
-   */
-  signal:
-    | Pick<SignalProtocolClient, 'relayConnectionState' | 'subscribeRelayConnectionState'>
-    | Pick<
-        SignalProtocolClient,
-        'signalProtocolRelayConnectionState' | 'subscribeSignalProtocolRelayConnectionState'
-      >;
+  /** Signal Protocol client that owns the relay subscription */
+  signal: Pick<SignalProtocolClient, 'relayConnectionState' | 'subscribeRelayConnectionState'>;
 }
-
-type ConnectionStateSource = Partial<
-  Pick<
-    SignalProtocolClient,
-    | 'signalProtocolRelayConnectionState'
-    | 'subscribeSignalProtocolRelayConnectionState'
-    | 'relayConnectionState'
-    | 'subscribeRelayConnectionState'
-  >
->;
 
 /**
  * Hook for the relay connection state
@@ -54,29 +34,10 @@ type ConnectionStateSource = Partial<
 export function useSignalProtocolRelayConnectionState({
   signal,
 }: UseSignalProtocolRelayConnectionStateOptions): SignalProtocolRelayConnectionState {
-  const subscribe = useCallback((onChange: () => void) => {
-    const subscribeState = readRenamedImplementation(
-      signal as ConnectionStateSource,
-      'subscribeSignalProtocolRelayConnectionState',
-      'subscribeRelayConnectionState'
-    );
-    if (!subscribeState) throw new TypeError('signal has no relay connection state');
-    return subscribeState(onChange);
-  }, [signal]);
-  const read = useCallback(() => {
-    const state = readRenamedImplementation(
-      signal as ConnectionStateSource,
-      'signalProtocolRelayConnectionState',
-      'relayConnectionState'
-    );
-    if (!state) throw new TypeError('signal has no relay connection state');
-    return state;
-  }, [signal]);
+  const subscribe = useCallback(
+    (onChange: () => void) => signal.subscribeRelayConnectionState(onChange),
+    [signal]
+  );
+  const read = useCallback(() => signal.relayConnectionState, [signal]);
   return useSyncExternalStore(subscribe, read, read);
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `useSignalProtocolRelayConnectionState`. SDK 15.0.0 removes this name. */
-export const useRelayConnectionState = useSignalProtocolRelayConnectionState;
-/** @deprecated Use `UseSignalProtocolRelayConnectionStateOptions`. SDK 15.0.0 removes this name. */
-export type UseRelayConnectionStateOptions = UseSignalProtocolRelayConnectionStateOptions;

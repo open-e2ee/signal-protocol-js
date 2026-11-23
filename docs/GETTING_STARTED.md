@@ -22,10 +22,7 @@ The [adapter guide](../ADAPTERS.md) lists the supported stores.
   directory, `oe new` creates the project and its Sandbox environment, and it
   writes the connection URL to `.env.local` as `OPEN_E2EE_SIGNAL_RELAY_URL`. In
   a Next.js, Expo, or Vite application, the name has the public prefix of the
-  framework, for example `EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL`. An `oe`
-  release before 5.0.0 wrote the earlier name, such as
-  `EXPO_PUBLIC_OPEN_E2EE_RELAY_URL`. The examples read the new name first and
-  the earlier name second.
+  framework, for example `EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL`.
 - A `getIdentityAssertion` callback that returns a short-lived signed assertion.
 - Device-local storage for private keys, sessions, and delivery state.
 - Application storage for decrypted messages and attachment bytes.
@@ -113,7 +110,7 @@ const storage = await expoStore();
 const signal = await createHostedSignalProtocolClient({
   adapters: { storage },
   hosted: {
-    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL!,
     // Sandbox only. Select the Production identity mode explicitly.
     getIdentityAssertion: hostedSignalProtocolRelaySandboxIdentity(storage),
   },

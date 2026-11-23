@@ -60,7 +60,7 @@ const signal = await createHostedSignalProtocolClient({
   },
   hosted: {
     // The environment-scoped connection URL from the OpenE2EE console.
-    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.EXPO_PUBLIC_OPEN_E2EE_RELAY_URL!,
+    relayUrl: process.env.EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL!,
     // Returns a short-lived signed assertion for the signed-in user.
     getIdentityAssertion,
   },
@@ -259,20 +259,19 @@ retry request follows the same rule. Read receipts are not affected.
 The sender gets each receipt through the `onDelivered` hook, once for each
 source and recipient device:
 
-| `source`  | Sender                    | `decryptionConfirmed` |
-| --------- | ------------------------- | --------------------- |
-| `'relay'` | The Signal Protocol Relay | `false`               |
-| `'e2ee'`  | The recipient device      | `true`                |
+| `source`         | Sender                    | `decryptionConfirmed` |
+| ---------------- | ------------------------- | --------------------- |
+| `'signal-relay'` | The Signal Protocol Relay | `false`               |
+| `'e2ee'`         | The recipient device      | `true`                |
 
-SDK 15.0.0 reports the Relay source as `'signal-relay'`. This release reports
-`'relay'`, and the `DeliverySource` type accepts both values. Code that
-compares the source must accept both values until it requires the new major
-release. In that release, the `origin` of `ReceiveExpiredEvent` and of a
-pending receive also changes from `'relay'` to `'signal-relay'`.
+SDK 14 reported the Relay source as `'relay'`. This release reports
+`'signal-relay'`, and the `origin` of `ReceiveExpiredEvent` and of a pending
+receive is also `'signal-relay'` for a Relay message. The types still accept
+`'relay'`, so code that compares with both values compiles.
 
 The status of a device only moves forward. `sources` holds each source that the
-device has given so far, so an `'e2ee'` event after a `'relay'` event carries
-both. A receipt for a send that has not resolved yet comes after the send
+device has given so far, so an `'e2ee'` event after a `'signal-relay'` event
+carries both. A receipt for a send that has not resolved yet comes after the send
 resolves.
 
 The hook runs at least once for each source. The client marks a source

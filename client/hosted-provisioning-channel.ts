@@ -23,12 +23,10 @@ import { canonicalBase64, decodeBase64Url, decodeCanonicalBase64 } from "./hoste
 import { getJson, identifiedEndpoint, record } from "./signal-relay-http";
 import {
   HostedSignalProtocolRelayUpgradeRequiredError,
-  SignalRelayProtocolOffer,
-  signalRelayProtocolToken,
+  SIGNAL_RELAY_PROTOCOL_TOKEN,
+  signalRelayUpgradeRequired,
 } from "./signal-relay-protocol";
 
-/** The device link routes exist only on protocol version 3. */
-export const DEVICE_LINK_PROTOCOL_VERSION = 3;
 /** The provisioning version that this SDK speaks. */
 const PROVISIONING_VERSION = 1;
 /** The largest Relay frame: an envelope frame of the largest body. */
@@ -115,7 +113,6 @@ export async function probeHostedSignalProtocolRelayProvisioning(
   try {
     answer = await getJson(
       connection,
-      new SignalRelayProtocolOffer(DEVICE_LINK_PROTOCOL_VERSION),
       `/provisioning/connect?publishableKey=${encodeURIComponent(connection.publishableKey)}`,
     );
   } catch (error) {
@@ -188,7 +185,7 @@ function closeError(code: number, reason: string): Error {
     case 4404:
       return deviceLinkUnsupported();
     case 4426:
-      return new HostedSignalProtocolRelayUpgradeRequiredError(426, DEVICE_LINK_PROTOCOL_VERSION);
+      return signalRelayUpgradeRequired(426);
     case 4429:
       return new HostedSignalProtocolRelayHttpError(
         429,
@@ -224,7 +221,7 @@ function openChannel(
 ): Promise<{ readonly envelope: Uint8Array; readonly address: Uint8Array } | undefined> {
   const { connection, onLinkCode, signal } = options;
   return new Promise((resolve, reject) => {
-    const protocolToken = signalRelayProtocolToken(DEVICE_LINK_PROTOCOL_VERSION);
+    const protocolToken = SIGNAL_RELAY_PROTOCOL_TOKEN;
     const url = websocketUrl(`${identifiedEndpoint(connection)}/provisioning/connect`, [
       ["publishableKey", connection.publishableKey],
     ]);

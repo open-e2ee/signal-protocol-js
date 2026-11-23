@@ -85,7 +85,7 @@ export function deliveryErrorDue(
  * application has gets no error.
  *
  * The hook is called directly, not through `callHook`, so a hook that
- * throws, and the RelayWorkStopped of a stop, propagate and leave the record
+ * throws, and the SignalProtocolRelayWorkStopped of a stop, propagate and leave the record
  * not shown. The rule is: mark only after the hook returns, and keep the
  * caller alive. The scheduler logs the error, keeps the next attempt time
  * of the record, and goes on with the next record. The receive path does
@@ -130,7 +130,7 @@ export async function reportDeliveryError(
  * mark.
  *
  * The hook is called directly, not through `callHook`, so a hook that
- * throws, and the RelayWorkStopped of a stop, propagate and leave the record
+ * throws, and the SignalProtocolRelayWorkStopped of a stop, propagate and leave the record
  * not recovered. The rule is: mark only after the hook returns. The record
  * stays until its retention ends, so the hook runs at least once.
  *

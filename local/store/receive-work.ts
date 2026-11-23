@@ -48,13 +48,14 @@ export function isSignalProtocolRelayOrigin(origin: ReceiveWorkRecord['origin'])
 }
 
 /**
- * The origin that this release reports for a receive record: `relay` or
- * `caller`. A stored `signal-relay` is reported as `relay`.
+ * The origin that this release reports for a receive record:
+ * `signal-relay` or `caller`. A stored `relay` is reported as
+ * `signal-relay`.
  */
 export function reportedReceiveWorkOrigin(
   origin: ReceiveWorkRecord['origin']
-): 'relay' | 'caller' {
-  return origin === 'caller' ? 'caller' : 'relay';
+): 'signal-relay' | 'caller' {
+  return origin === 'caller' ? 'caller' : 'signal-relay';
 }
 
 /**

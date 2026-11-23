@@ -39,10 +39,10 @@ The message ID.
 
 > **origin**: `"caller"` \| `"relay"` \| `"signal-relay"`
 
-`relay` for a Relay message, `caller` for a helper receive.
-`signal-relay` is the same origin as `relay`. SDK 15.0.0 reports a Relay
-message with `signal-relay`. This release reports `relay`, so code that
-compares the origin must accept both values.
+`signal-relay` for a Relay message, `caller` for a helper receive.
+`relay` is the same origin as `signal-relay`. SDK 14 reported a Relay
+message with `relay`. This release does not report it. The type keeps
+it, so code that compares the origin with both values compiles.
 
 ***
 

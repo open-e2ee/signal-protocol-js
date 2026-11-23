@@ -1,6 +1,5 @@
 import type { Unsubscribe } from '../remote/signal-relay/types';
 import type { SignalProtocolClient } from '../types/api';
-import { readRenamedImplementation } from '../types/renamed-member';
 
 /**
  * The part of an app state source that `bindSignalProtocolRelayLifecycle` reads.
@@ -46,9 +45,6 @@ export interface SignalProtocolRelayLifecycleOptions {
  * Call the returned function before `stop()` on the client. It removes the
  * listener and does not start or stop the subscription.
  *
- * An object that has only the deprecated member names, such as
- * `stopSignalProtocolRelaySubscription()`, also drives the binding.
- *
  * @param signal - The Signal Protocol client
  * @param appState - React Native's `AppState`, or an object of the same shape
  * @param options - Binding options
@@ -66,54 +62,23 @@ export interface SignalProtocolRelayLifecycleOptions {
  * ```
  */
 export function bindSignalProtocolRelayLifecycle(
-  signal:
-    | Pick<
-        SignalProtocolClient,
-        | 'signalProtocolRelayConnectionState'
-        | 'startSignalProtocolRelaySubscription'
-        | 'stopSignalProtocolRelaySubscription'
-      >
-    | Pick<
-        SignalProtocolClient,
-        'relayConnectionState' | 'startRelaySubscription' | 'stopRelaySubscription'
-      >,
+  signal: Pick<
+    SignalProtocolClient,
+    'relayConnectionState' | 'startRelaySubscription' | 'stopRelaySubscription'
+  >,
   appState: SignalProtocolRelayLifecycleAppState,
   { keepOpenInBackground = false }: SignalProtocolRelayLifecycleOptions = {}
 ): Unsubscribe {
   if (keepOpenInBackground) return () => undefined;
-  const client = signal as Partial<
-    Pick<
-      SignalProtocolClient,
-      | 'signalProtocolRelayConnectionState'
-      | 'startSignalProtocolRelaySubscription'
-      | 'stopSignalProtocolRelaySubscription'
-      | 'relayConnectionState'
-      | 'startRelaySubscription'
-      | 'stopRelaySubscription'
-    >
-  >;
   let stoppedByBinding = false;
   const apply = (state: string | null | undefined) => {
     if (state === 'background') {
-      const connectionState = readRenamedImplementation(
-        client,
-        'signalProtocolRelayConnectionState',
-        'relayConnectionState'
-      );
-      if (stoppedByBinding || connectionState?.state === 'stopped') return;
+      if (stoppedByBinding || signal.relayConnectionState.state === 'stopped') return;
       stoppedByBinding = true;
-      readRenamedImplementation(
-        client,
-        'stopSignalProtocolRelaySubscription',
-        'stopRelaySubscription'
-      )?.();
+      signal.stopRelaySubscription();
     } else if (state === 'active' && stoppedByBinding) {
       stoppedByBinding = false;
-      readRenamedImplementation(
-        client,
-        'startSignalProtocolRelaySubscription',
-        'startRelaySubscription'
-      )?.();
+      signal.startRelaySubscription();
     }
   };
   const subscription = appState.addEventListener('change', apply);
@@ -126,11 +91,3 @@ export function bindSignalProtocolRelayLifecycle(
     else subscription.remove();
   };
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `bindSignalProtocolRelayLifecycle`. SDK 15.0.0 removes this name. */
-export const bindRelayLifecycle = bindSignalProtocolRelayLifecycle;
-/** @deprecated Use `SignalProtocolRelayLifecycleAppState`. SDK 15.0.0 removes this name. */
-export type RelayLifecycleAppState = SignalProtocolRelayLifecycleAppState;
-/** @deprecated Use `SignalProtocolRelayLifecycleOptions`. SDK 15.0.0 removes this name. */
-export type RelayLifecycleOptions = SignalProtocolRelayLifecycleOptions;

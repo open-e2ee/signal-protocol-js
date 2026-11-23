@@ -46,7 +46,6 @@ import type { SendResult } from './types';
 export type { RetryTerminalClass };
 import { ReceiveHookTimeout } from './receive-hook-bound';
 import { rethrowSignalProtocolRelayWorkStopped } from './signal-relay-work';
-import { readRenamedOption } from '../types/renamed-member';
 
 /**
  * Decrypted envelope passed to onMessageDecrypted hook
@@ -59,11 +58,11 @@ export {};
 /**
  * A source that reports that a recipient device has a message.
  *
- * - `'relay'`: the Relay handed the message to the device. The device has not
- *   yet decrypted it.
- * - `'signal-relay'`: the same source as `'relay'`. SDK 15.0.0 reports the
- *   Relay source with this value. This release reports `'relay'`, so code
- *   that compares the source must accept both values.
+ * - `'signal-relay'`: the Relay handed the message to the device. The device
+ *   has not yet decrypted it.
+ * - `'relay'`: the same source as `'signal-relay'`. SDK 14 reported the Relay
+ *   source with this value. This release does not report it. The type keeps
+ *   it, so code that compares the source with both values compiles.
  * - `'e2ee'`: the device decrypted the message and sent an encrypted delivery
  *   receipt.
  */
@@ -247,10 +246,10 @@ export interface ReceiveExpiredEvent {
    */
   stage: 'decrypted' | 'awaiting-completion';
   /**
-   * `relay` for a Relay message, `caller` for a helper receive.
-   * `signal-relay` is the same origin as `relay`. SDK 15.0.0 reports a Relay
-   * message with `signal-relay`. This release reports `relay`, so code that
-   * compares the origin must accept both values.
+   * `signal-relay` for a Relay message, `caller` for a helper receive.
+   * `relay` is the same origin as `signal-relay`. SDK 14 reported a Relay
+   * message with `relay`. This release does not report it. The type keeps
+   * it, so code that compares the origin with both values compiles.
    */
   origin: 'relay' | 'signal-relay' | 'caller';
   /** The message ID. */
@@ -505,7 +504,7 @@ export interface SignalProtocolClientHooks {
    *
    * A message to one device goes from accepted (the send resolved) to
    * delivered. The hook runs for each source that reports the delivery:
-   * `'relay'` when the Relay hands the message to the device, and `'e2ee'`
+   * `'signal-relay'` when the Relay hands the message to the device, and `'e2ee'`
    * when the device decrypts it and sends an encrypted delivery receipt. A
    * receipt that arrives before the send resolves runs the hook after the
    * send resolves.
@@ -833,9 +832,6 @@ export interface SignalProtocolClientHooks {
    */
   onRelayProtocolError?: (error: SignalProtocolRelayProtocolError) => void | Promise<void>;
 
-  /** @deprecated Use `onRelayProtocolError`. SDK 15.0.0 removes this name. */
-  onSignalProtocolRelayProtocolError?: (error: SignalProtocolRelayProtocolError) => void | Promise<void>;
-
   /**
    * Runs when the client receives a read receipt
    *
@@ -928,52 +924,11 @@ const HOOK_NAMES = {
   onGroupInitStatus: true,
   onIdentityChanged: true,
   onKeyTransparencyFailure: true,
-  onSignalProtocolRelayProtocolError: true,
   onRelayProtocolError: true,
   onReadReceiptReceived: true,
   onViewedReceiptReceived: true,
   onTypingIndicatorReceived: true,
 } as const satisfies Record<HookName, true>;
-
-/**
- * The deprecated `signalProtocolRelay*` name of each hook that has two names,
- * keyed by its role name. The client keeps the hook under the deprecated name
- * until SDK 15.0.0 removes it.
- */
-const RENAMED_HOOKS = {
-  onRelayProtocolError: 'onSignalProtocolRelayProtocolError',
-} as const satisfies Partial<Record<HookName, HookName>>;
-
-/** The role name of each hook that has two names. */
-const EARLIER_HOOK_NAMES: Partial<Record<HookName, HookName>> = Object.fromEntries(
-  Object.entries(RENAMED_HOOKS).map(([earlier, current]) => [current, earlier])
-);
-
-/**
- * The name under which the client keeps a hook. A role name gives its
- * deprecated `signalProtocolRelay*` name.
- *
- * @internal
- */
-export function currentHookName(name: HookName): HookName {
-  return (RENAMED_HOOKS as Partial<Record<HookName, HookName>>)[name] ?? name;
-}
-
-/**
- * Throw when the two names of a hook hold different functions.
- *
- * @throws SignalProtocolRelayNameConflictError
- * @internal
- */
-export function assertRenamedHooks(hooks: SignalProtocolClientHooks, operation: string): void {
-  for (const [earlierName, newName] of Object.entries(RENAMED_HOOKS)) {
-    readRenamedOption(
-      hooks[newName as HookName],
-      hooks[earlierName as HookName],
-      { newName: `hooks.${newName}`, earlierName: `hooks.${earlierName}`, operation }
-    );
-  }
-}
 
 /**
  * Throw for a name that is not a client hook, so that a misspelled or removed
@@ -1000,10 +955,7 @@ export async function callHook<T extends HookName>(
   hookName: T,
   ...args: Parameters<NonNullable<SignalProtocolClientHooks[T]>>
 ): Promise<void> {
-  // A hook with two names runs under its deprecated name, or else under its
-  // role name. The conflict check makes the two the same function.
-  const earlierName = EARLIER_HOOK_NAMES[hookName];
-  const hook = hooks?.[hookName] ?? (earlierName === undefined ? undefined : hooks?.[earlierName]);
+  const hook = hooks?.[hookName];
   if (!hook) {
     return;
   }

@@ -6,7 +6,6 @@ import {
   urlSafeToBase64,
 } from '../internal/crypto';
 import type { Base64 } from '../types';
-import { readRenamedOption } from '../types/renamed-member';
 import { MANAGED_SIGNAL_RELAY_PROFILES } from './hosted-trust';
 import { withSignalProtocolRelayRequestDeadline } from './signal-relay-request-deadline';
 
@@ -285,22 +284,9 @@ export async function resolveHostedSignalProtocolRelayConnection(
 }
 
 /**
- * @internal The Relay URL of hosted options. The new name wins, and two
- * different values fail. A missing URL reads as empty, so the connection
- * parser refuses it.
+ * @internal The Relay URL of hosted options. A missing URL reads as empty,
+ * so the connection parser refuses it.
  */
-export function hostedSignalProtocolRelayUrl(
-  options: {
-    readonly signalProtocolRelayUrl?: string;
-    readonly relayUrl?: string;
-  },
-  operation: string,
-): string {
-  return (
-    readRenamedOption(options.signalProtocolRelayUrl, options.relayUrl, {
-      newName: 'signalProtocolRelayUrl',
-      earlierName: 'relayUrl',
-      operation,
-    }) ?? ''
-  );
+export function hostedSignalProtocolRelayUrl(options: { readonly relayUrl?: string }): string {
+  return options.relayUrl ?? '';
 }

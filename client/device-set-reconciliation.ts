@@ -7,7 +7,7 @@ import {
   signalRelayOperationRefusal,
   type SignalProtocolRelayPostAcceptance,
 } from './signal-relay-acceptance';
-import { RelayWorkStopped } from './signal-relay-work';
+import { SignalProtocolRelayWorkStopped } from './signal-relay-work';
 import { isPostingDeadlineReached } from './send-deadline';
 
 /**
@@ -152,7 +152,7 @@ export type SignalProtocolRelayProtocolErrorCode = 'DEVICE_SET_UNCHECKED';
  * `clientMessageId`.
  */
 export class SignalProtocolRelayProtocolError extends Error {
-  override readonly name = 'RelayProtocolError';
+  override readonly name = 'SignalProtocolRelayProtocolError';
 
   constructor(
     readonly code: SignalProtocolRelayProtocolErrorCode,
@@ -327,7 +327,7 @@ function deviceKey(device: DeviceSetDevice): string {
  * Run one phase of a declared send until every device post is accepted.
  *
  * After a pass, the first rule that applies decides:
- * 1. A stopped send throws `RelayWorkStopped`, and a send at its posting
+ * 1. A stopped send throws `SignalProtocolRelayWorkStopped`, and a send at its posting
  *    deadline throws the deadline error.
  * 2. A restart post that the Relay refused with `OPERATION_EXPIRED` ends the
  *    phase with `expired`. The restart count does not change.
@@ -390,7 +390,7 @@ export async function runDeviceSetPhase<T>(
 
     const stopped = failures.find(
       (failure) =>
-        failure.error instanceof RelayWorkStopped || isPostingDeadlineReached(failure.error)
+        failure.error instanceof SignalProtocolRelayWorkStopped || isPostingDeadlineReached(failure.error)
     );
     if (stopped) throw stopped.error;
     if (
@@ -444,15 +444,15 @@ export async function runDeviceSetPhase<T>(
 }
 
 /**
- * Wait for a time, or reject with `RelayWorkStopped` when the stop signal
+ * Wait for a time, or reject with `SignalProtocolRelayWorkStopped` when the stop signal
  * aborts first.
  */
 export function waitUnlessStopped(milliseconds: number, stopSignal?: AbortSignal): Promise<void> {
-  if (stopSignal?.aborted) return Promise.reject(new RelayWorkStopped());
+  if (stopSignal?.aborted) return Promise.reject(new SignalProtocolRelayWorkStopped());
   return new Promise((resolve, reject) => {
     const onAbort = () => {
       clearTimeout(timer);
-      reject(new RelayWorkStopped());
+      reject(new SignalProtocolRelayWorkStopped());
     };
     const timer = setTimeout(() => {
       stopSignal?.removeEventListener('abort', onAbort);
@@ -461,13 +461,3 @@ export function waitUnlessStopped(milliseconds: number, stopSignal?: AbortSignal
     stopSignal?.addEventListener('abort', onAbort, { once: true });
   });
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `SignalProtocolRelayProtocolError`. SDK 15.0.0 removes this name. */
-export const RelayProtocolError = SignalProtocolRelayProtocolError;
-/** @deprecated Use `SignalProtocolRelayProtocolError`. SDK 15.0.0 removes this name. */
-export type RelayProtocolError = SignalProtocolRelayProtocolError;
-/** @deprecated Use `SignalProtocolRelayProtocolErrorCode`. SDK 15.0.0 removes this name. */
-export type RelayProtocolErrorCode = SignalProtocolRelayProtocolErrorCode;
-/** @deprecated Use `SignalProtocolRelayProtocolRoute`. SDK 15.0.0 removes this name. */
-export type RelayProtocolRoute = SignalProtocolRelayProtocolRoute;

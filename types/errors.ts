@@ -16,7 +16,7 @@
  *         ├── PQXDHRequiredError        which post-quantum key the peer is missing
  *         ├── StorageQuotaExceededError the store that ran out of room
  *         ├── SecureRandomUnavailableError the runtime has no secure random source
- *         ├── SignalProtocolRelayNameConflictError the two names of a member with different values
+ *         ├── SignalProtocolRelayNameConflictError the two names of a stored value with different values
  *         ├── InvalidSendTimestampError the refused send timestamp and the accepted window
  *         ├── SendAcceptanceUnknownError the devices of an ended send whose acceptance is not known
  *         └── SendNeverAcceptedBySignalProtocolRelayError the devices of an ended send that the Relay never accepted and that have no refusal code
@@ -333,10 +333,9 @@ export enum EncryptionErrorCode {
   SECURE_RANDOM_UNAVAILABLE = 'SECURE_RANDOM_UNAVAILABLE',
 
   /**
-   * An object sets a member by its role name and by its deprecated
-   * `signalProtocolRelay*` name, with different values.
-   *
-   * Set only the role name, such as `relay`.
+   * A stored receive record holds its Relay receipt decision under the role
+   * name `relayOwnsReceipt` and under `signalProtocolRelayOwnsReceipt`, with
+   * different values.
    */
   SIGNAL_PROTOCOL_RELAY_NAME_CONFLICT = 'SIGNAL_PROTOCOL_RELAY_NAME_CONFLICT',
 
@@ -751,24 +750,24 @@ export class SecureRandomUnavailableError extends EncryptionError {
 }
 
 /**
- * Error thrown when an option or a member is set by its role name and by its
- * deprecated `signalProtocolRelay*` name, with different values.
+ * Error thrown when a stored receive record holds its Relay receipt decision
+ * under two names with different values.
  *
- * SDK 14 accepts both names, such as `relay` and `signalProtocolRelay`. When
- * an object sets both names, the SDK uses the value only if the two values
- * are the same. Set only the role name, which `earlierName` holds.
+ * A store that SDK 14.3.0 or earlier wrote holds the role name
+ * `relayOwnsReceipt`, and a later store also holds
+ * `signalProtocolRelayOwnsReceipt`. The SDK reads both names and uses the
+ * value only if the two values are the same.
  *
- * The two fields keep the order in which the names came: SDK 14.1.0 has the
- * role name, and SDK 14.2.0 added the `signalProtocolRelay*` name. SDK 14.3.0
- * deprecates the `signalProtocolRelay*` name, and SDK 15.0.0 removes it.
+ * SDK 15.0.0 removed the `signalProtocolRelay*` names of members and options,
+ * so an option or a member no longer causes this error.
  *
  * @example
  * ```typescript
  * try {
- *   signal = await createSignalProtocolClient(config);
+ *   await signal.listPendingReceives();
  * } catch (error) {
  *   if (isSignalProtocolRelayNameConflictError(error)) {
- *     reportSetupError(`Set only ${error.earlierName}`);
+ *     reportStoreError(`A stored record holds ${error.earlierName} and ${error.newName}`);
  *   }
  * }
  * ```
@@ -776,17 +775,14 @@ export class SecureRandomUnavailableError extends EncryptionError {
 export class SignalProtocolRelayNameConflictError extends EncryptionError {
   override readonly name = 'SignalProtocolRelayNameConflictError';
 
-  /**
-   * The deprecated `signalProtocolRelay*` name of the member, such as
-   * `signalProtocolRelay`. SDK 15.0.0 removes it.
-   */
+  /** The `signalProtocolRelay*` name, such as `signalProtocolRelayOwnsReceipt`. */
   public readonly newName: string;
-  /** The role name of the member, such as `relay`. Set only this name. */
+  /** The role name, such as `relayOwnsReceipt`. */
   public readonly earlierName: string;
 
   constructor(newName: string, earlierName: string, operation: string) {
     super(
-      `${earlierName} and ${newName} name the same option and hold different values. Set only ${earlierName}.`,
+      `A stored record holds ${earlierName} and ${newName} with different values. The two names hold one value.`,
       EncryptionErrorCode.SIGNAL_PROTOCOL_RELAY_NAME_CONFLICT,
       { operation }
     );
@@ -1041,7 +1037,7 @@ export function isSendAcceptanceUnknownError(error: unknown): error is SendAccep
  * ```
  */
 export class SendNeverAcceptedBySignalProtocolRelayError extends EncryptionError {
-  override readonly name = 'SendNeverAcceptedByRelayError';
+  override readonly name = 'SendNeverAcceptedBySignalProtocolRelayError';
 
   /** The logical-send identifier of the send. */
   public readonly clientMessageId: string;
@@ -1142,11 +1138,3 @@ export function isUntrustedIdentityError(error: unknown): error is UntrustedIden
 export function isEncryptionError(error: unknown): error is EncryptionError {
   return error instanceof EncryptionError;
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `isSendNeverAcceptedBySignalProtocolRelayError`. SDK 15.0.0 removes this name. */
-export const isSendNeverAcceptedByRelayError = isSendNeverAcceptedBySignalProtocolRelayError;
-/** @deprecated Use `SendNeverAcceptedBySignalProtocolRelayError`. SDK 15.0.0 removes this name. */
-export const SendNeverAcceptedByRelayError = SendNeverAcceptedBySignalProtocolRelayError;
-/** @deprecated Use `SendNeverAcceptedBySignalProtocolRelayError`. SDK 15.0.0 removes this name. */
-export type SendNeverAcceptedByRelayError = SendNeverAcceptedBySignalProtocolRelayError;

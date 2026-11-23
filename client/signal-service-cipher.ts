@@ -155,7 +155,7 @@ import { withRetry } from '../utils/retry';
 import {
   acquireUntilStopped,
   createSignalProtocolRelayFanOut,
-  RelayWorkStopped,
+  SignalProtocolRelayWorkStopped,
   signalRelaySendsSealedUnderItsBound,
   rethrowSignalProtocolRelayWorkStopped,
   type SignalProtocolRelayWork,
@@ -665,7 +665,7 @@ interface SyncPayloadTarget {
   readonly readOwnListWithoutRecord?: boolean;
   /**
    * The stop signal of the send. No post or wait starts after it aborts,
-   * and the send then rejects with RelayWorkStopped.
+   * and the send then rejects with SignalProtocolRelayWorkStopped.
    */
   readonly stopSignal?: AbortSignal;
   /**
@@ -1030,7 +1030,7 @@ export interface ReceiveCommit {
 export interface EnvelopeCommitOptions {
   /** The trust roots of an unidentified_sender envelope. */
   sealedSender?: import('./config').SealedSenderConfig | undefined;
-  /** When it aborts while the commit waits for a lock, the commit throws RelayWorkStopped. */
+  /** When it aborts while the commit waits for a lock, the commit throws SignalProtocolRelayWorkStopped. */
   stopSignal?: AbortSignal | undefined;
   /** The receive record to commit. Without it, the decrypt commits no record. */
   work?: ReceiveCommit | undefined;
@@ -1510,7 +1510,7 @@ export class SignalProtocolServiceCipher {
       return send();
     };
     if (sealed && signalRelaySendsSealedUnderItsBound(this.signalProtocolRelay!)) {
-      if (control.stopSignal?.aborted) return Promise.reject(new RelayWorkStopped());
+      if (control.stopSignal?.aborted) return Promise.reject(new SignalProtocolRelayWorkStopped());
       return new Promise<T>((resolve) => resolve(post()));
     }
     return this.fanOut.request(post, control.stopSignal);
@@ -1611,7 +1611,7 @@ export class SignalProtocolServiceCipher {
    * @returns `accepted` when the relay accepted the copy of the device,
    *   `unlisted` when the own list does not name the device, and
    *   `not-accepted` when the device got no accepted copy
-   * @throws RelayWorkStopped when the stop signal aborts before a request
+   * @throws SignalProtocolRelayWorkStopped when the stop signal aborts before a request
    * @throws The error of `checkCopy`, before the post that it refuses
    */
   async sendFirstSyncToOwnDevice(
@@ -1625,10 +1625,10 @@ export class SignalProtocolServiceCipher {
   ): Promise<'accepted' | 'unlisted' | 'not-accepted'> {
     const { stopSignal, checkCopy } = options;
     if (!this.signalProtocolRelay) return 'not-accepted';
-    if (stopSignal?.aborted) throw new RelayWorkStopped();
+    if (stopSignal?.aborted) throw new SignalProtocolRelayWorkStopped();
     const listed = await this.readOwnDeviceList(this.sessionCallbacks, stopSignal);
     if (!listed.some((device) => device.deviceId === deviceId)) return 'unlisted';
-    if (stopSignal?.aborted) throw new RelayWorkStopped();
+    if (stopSignal?.aborted) throw new SignalProtocolRelayWorkStopped();
     const acceptedDeviceIds: number[] = [];
     const target: SyncPayloadTarget = {
       deviceIds: [deviceId],
@@ -1760,11 +1760,6 @@ export class SignalProtocolServiceCipher {
    * send result, so the reporter gives its error to the app.
    */
   setRelayProtocolErrorReporter(report: (error: SignalProtocolRelayProtocolError) => Promise<void>): void {
-    this.setSignalProtocolRelayProtocolErrorReporter(report);
-  }
-
-  /** @deprecated Use `setRelayProtocolErrorReporter`. SDK 15.0.0 removes this name. */
-  setSignalProtocolRelayProtocolErrorReporter(report: (error: SignalProtocolRelayProtocolError) => Promise<void>): void {
     this.signalRelayProtocolErrorReporter = report;
   }
 
@@ -2145,7 +2140,7 @@ export class SignalProtocolServiceCipher {
    * @param envelope - Encrypted envelope from relay
    * @param sealedSenderConfig - The trust roots of an unidentified_sender envelope
    * @param stopSignal - When it aborts while the decrypt waits for a lock,
-   *   the decrypt throws RelayWorkStopped
+   *   the decrypt throws SignalProtocolRelayWorkStopped
    * @returns Decrypted envelope ready for ContentManager
    * @throws {EncryptionError} DECRYPTION_FAILED if decryption fails
    * @throws {SealedRetryRequestReceived} for a seal that holds a retry request
@@ -2646,7 +2641,7 @@ export class SignalProtocolServiceCipher {
    *   that setSessionCallbacks set
    * @param stopSignal - The stop signal of the relay work that sends. When it
    *   aborts while the send waits for the recipient's lock, the send throws
-   *   RelayWorkStopped. Default: none, and the send waits
+   *   SignalProtocolRelayWorkStopped. Default: none, and the send waits
    * @returns SendResult with messageId, timestamp, and device count
    *
    * @see https://signal.org/docs/specifications/sesame/
@@ -2736,7 +2731,7 @@ export class SignalProtocolServiceCipher {
    *   earlier encryption
    * @param stopSignal - The stop signal of the relay work that sends. When it
    *   aborts while the send waits for the recipient's lock, the send throws
-   *   RelayWorkStopped
+   *   SignalProtocolRelayWorkStopped
    * @returns False when the content is null and no stored bytes posted in
    *   this call. True when the stored bytes posted, or when content exists
    *   and the stored attempt has unknown acceptance. Then nothing posts
@@ -3073,7 +3068,7 @@ export class SignalProtocolServiceCipher {
    * and starts a new session with the device.
    *
    * @param stopSignal - When it aborts while the archive waits for the
-   *   decrypt lock, nothing is archived and the call throws RelayWorkStopped
+   *   decrypt lock, nothing is archived and the call throws SignalProtocolRelayWorkStopped
    */
   async archiveDeviceSession(
     userId: string,
@@ -3383,7 +3378,7 @@ export class SignalProtocolServiceCipher {
           operationName: 'establishSession',
           maxRetries: 2,
           baseDelay: 500,
-          shouldRetry: (error) => !(error instanceof RelayWorkStopped),
+          shouldRetry: (error) => !(error instanceof SignalProtocolRelayWorkStopped),
         }
       );
     } catch (error) {
@@ -7708,7 +7703,7 @@ export class SignalProtocolServiceCipher {
           deviceId
         );
       } catch (error) {
-        if (error instanceof RelayWorkStopped) throw error;
+        if (error instanceof SignalProtocolRelayWorkStopped) throw error;
         const reason = error instanceof Error ? error.message : String(error);
         failures.push(`${String(deviceId)}: ${reason}`);
         this.logger.warn('Skipped the sender-key distribution of a device', {

@@ -52,6 +52,14 @@ A strict-resume refusal. An unresolved cleanup remains owned by this error.
 
 > `readonly` **phase**: [`HostedSignalProtocolRelayResumePhase`](../type-aliases/HostedSignalProtocolRelayResumePhase.md)
 
+***
+
+### requestId?
+
+> `readonly` `optional` **requestId?**: `string`
+
+The optional reference of the response failure that this error wraps.
+
 ## Accessors
 
 ### cleanupPending

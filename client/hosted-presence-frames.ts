@@ -177,7 +177,7 @@ export class HostedSignalProtocolRelayPresenceError extends Error {
     retryable: boolean,
   ) {
     super(message);
-    this.name = "HostedRelayPresenceError";
+    this.name = "HostedSignalProtocolRelayPresenceError";
     this.code = code;
     this.retryable = retryable;
   }
@@ -498,29 +498,3 @@ export function decodePresenceResult<
       throw invalidResult();
   }
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `HostedSignalProtocolRelayPresenceAccount`. SDK 15.0.0 removes this name. */
-export type HostedRelayPresenceAccount = HostedSignalProtocolRelayPresenceAccount;
-/** @deprecated Use `HostedSignalProtocolRelayPresenceApproximateLastSeen`. SDK 15.0.0 removes this name. */
-export type HostedRelayPresenceApproximateLastSeen = HostedSignalProtocolRelayPresenceApproximateLastSeen;
-/** @deprecated Use `HostedSignalProtocolRelayPresenceAudience`. SDK 15.0.0 removes this name. */
-export type HostedRelayPresenceAudience = HostedSignalProtocolRelayPresenceAudience;
-/** @deprecated Use `HostedSignalProtocolRelayPresenceError`. SDK 15.0.0 removes this name. */
-export const HostedRelayPresenceError = HostedSignalProtocolRelayPresenceError;
-/** @deprecated Use `HostedSignalProtocolRelayPresenceError`. SDK 15.0.0 removes this name. */
-export type HostedRelayPresenceError = HostedSignalProtocolRelayPresenceError;
-/** @deprecated Use `HostedSignalProtocolRelayPresenceErrorCode`. SDK 15.0.0 removes this name. */
-export type HostedRelayPresenceErrorCode = HostedSignalProtocolRelayPresenceErrorCode;
-/** @deprecated Use `HostedSignalProtocolRelayPresenceLastSeenPolicy`. SDK 15.0.0 removes this name. */
-export type HostedRelayPresenceLastSeenPolicy = HostedSignalProtocolRelayPresenceLastSeenPolicy;
-/** @deprecated Use `HostedSignalProtocolRelayPresenceMode`. SDK 15.0.0 removes this name. */
-export type HostedRelayPresenceMode = HostedSignalProtocolRelayPresenceMode;
-/** @deprecated Use `HostedSignalProtocolRelayPresencePolicy`. SDK 15.0.0 removes this name. */
-export type HostedRelayPresencePolicy = HostedSignalProtocolRelayPresencePolicy;
-/** @deprecated Use `HostedSignalProtocolRelayPresenceSetting`. SDK 15.0.0 removes this name. */
-export type HostedRelayPresenceSetting = HostedSignalProtocolRelayPresenceSetting;
-/** @deprecated Use `HostedSignalProtocolRelayPresenceStatus`. SDK 15.0.0 removes this name. */
-export type HostedRelayPresenceStatus = HostedSignalProtocolRelayPresenceStatus;
-/** @deprecated Use `HostedSignalProtocolRelayPresenceVisibility`. SDK 15.0.0 removes this name. */
-export type HostedRelayPresenceVisibility = HostedSignalProtocolRelayPresenceVisibility;

@@ -59,20 +59,6 @@ The connection state of this device's envelope subscription.
 It reads `stopped` before `subscribe` and after its unsubscribe. The value
 is replaced on each transition and is stable between transitions.
 
-SDK 14 also accepts the deprecated `signalProtocolRelayConnectionState`.
-When one level of an implementation supplies both names, SDK 14 reads the
-deprecated name. SDK 15.0.0 removes the deprecated name.
-
-***
-
-### ~~signalProtocolRelayConnectionState?~~
-
-> `readonly` `optional` **signalProtocolRelayConnectionState?**: [`SignalProtocolRelayConnectionState`](SignalProtocolRelayConnectionState.md)
-
-#### Deprecated
-
-Use `relayConnectionState`. SDK 15.0.0 removes this name.
-
 ## Methods
 
 ### clearStaleKemPreKeys()
@@ -974,11 +960,6 @@ Subscribe to transitions of `relayConnectionState`.
 The listener receives each new state once. It does not receive the
 current state when it subscribes.
 
-SDK 14 also accepts the deprecated
-`subscribeSignalProtocolRelayConnectionState`. When one level of an
-implementation supplies both names, SDK 14 calls the deprecated name.
-SDK 15.0.0 removes the deprecated name.
-
 #### Parameters
 
 ##### listener
@@ -992,26 +973,6 @@ Callback for each transition
 [`Unsubscribe`](../type-aliases/Unsubscribe.md)
 
 Unsubscribe function
-
-***
-
-### ~~subscribeSignalProtocolRelayConnectionState()?~~
-
-> `optional` **subscribeSignalProtocolRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
-
-#### Parameters
-
-##### listener
-
-(`state`) => `void`
-
-#### Returns
-
-[`Unsubscribe`](../type-aliases/Unsubscribe.md)
-
-#### Deprecated
-
-Use `subscribeRelayConnectionState`. SDK 15.0.0 removes this name.
 
 ***
 

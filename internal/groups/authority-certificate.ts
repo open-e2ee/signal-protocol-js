@@ -13,7 +13,6 @@ import {
   decodeServerCertificateData,
 } from '../protocol/sealed-sender/proto';
 import { decodeGroupTrustRoot } from './trust-root';
-import { readRenamedOption } from '../../types/renamed-member';
 
 /**
  * The domain of the certificates that the Relay issues under protocol
@@ -33,14 +32,8 @@ const SIGNAL_RELAY_GROUP_AUTHORITY_DOMAINS: readonly string[] = [
 const MAXIMUM_CERTIFICATE_BYTES = 4096;
 
 export interface GroupAuthorityFields {
-  /**
-   * The 16-byte Relay project-environment scope. Set this member or the
-   * deprecated `signalProtocolRelayScopeId`. The encoder requires one of the
-   * two.
-   */
-  readonly relayScopeId?: Uint8Array;
-  /** @deprecated Use `relayScopeId`. SDK 15.0.0 removes this name. */
-  readonly signalProtocolRelayScopeId?: Uint8Array;
+  /** The 16-byte Relay project-environment scope. */
+  readonly relayScopeId: Uint8Array;
   readonly keyId: string;
   readonly notBeforeMilliseconds: number;
   readonly notAfterMilliseconds: number;
@@ -74,18 +67,9 @@ function encodeGroupAuthorityUnder(
   domain: string,
   fields: GroupAuthorityFields
 ): Uint8Array {
-  const signalProtocolRelayScopeId = readRenamedOption(
-    fields.signalProtocolRelayScopeId,
-    fields.relayScopeId,
-    {
-      newName: 'signalProtocolRelayScopeId',
-      earlierName: 'relayScopeId',
-      operation: 'encodeGroupAuthority',
-    },
-  );
   if (
-    !(signalProtocolRelayScopeId instanceof Uint8Array) ||
-    signalProtocolRelayScopeId.length !== 16 ||
+    !(fields.relayScopeId instanceof Uint8Array) ||
+    fields.relayScopeId.length !== 16 ||
     !/^[A-Za-z0-9_-]{1,128}$/.test(fields.keyId) ||
     !Number.isSafeInteger(fields.notBeforeMilliseconds) ||
     !Number.isSafeInteger(fields.notAfterMilliseconds) ||
@@ -97,7 +81,7 @@ function encodeGroupAuthorityUnder(
   return new TextEncoder().encode(
     JSON.stringify([
       domain,
-      bytesToBase64(signalProtocolRelayScopeId),
+      bytesToBase64(fields.relayScopeId),
       fields.keyId,
       fields.notBeforeMilliseconds,
       fields.notAfterMilliseconds,

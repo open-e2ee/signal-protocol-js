@@ -16,7 +16,7 @@ Compact, runtime-neutral Signal Protocol Relay client configuration.
 
 ### adapters
 
-> `readonly` **adapters**: `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md)\[`"adapters"`\], `"relay"` \| `"signalProtocolRelay"` \| `"remoteObjectStore"`\>
+> `readonly` **adapters**: `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md)\[`"adapters"`\], `"relay"` \| `"remoteObjectStore"`\>
 
 ***
 
@@ -230,24 +230,15 @@ and carry this account's profile key. The SDK also registers the access
 key that it derives from this account's profile key, so a contact that
 holds the profile key can send sealed messages to this account.
 
-#### relayUrl?
+#### relayUrl
 
-> `readonly` `optional` **relayUrl?**: `string`
+> `readonly` **relayUrl**: `string`
 
-Public environment-scoped Signal Protocol Relay connection URL. Set this
-member or the deprecated `signalProtocolRelayUrl`.
+Public environment-scoped Signal Protocol Relay connection URL.
 
 #### sealedSenderAccessMode?
 
 > `readonly` `optional` **sealedSenderAccessMode?**: `SealedSenderAccessMode`
-
-#### ~~signalProtocolRelayUrl?~~
-
-> `readonly` `optional` **signalProtocolRelayUrl?**: `string`
-
-##### Deprecated
-
-Use `relayUrl`. SDK 15.0.0 removes this name.
 
 ***
 

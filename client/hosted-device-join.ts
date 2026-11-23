@@ -62,7 +62,6 @@ import {
   type HostedSignalProtocolRelayProfileKeys,
 } from "./hosted-profile-keys";
 import {
-  DEVICE_LINK_PROTOCOL_VERSION,
   deviceLinkCancelled,
   probeHostedSignalProtocolRelayProvisioning,
   raceDeviceLinkCancel,
@@ -83,7 +82,6 @@ import {
 import { adoptRedeemedHostedSignalProtocolRelayDevice } from "./hosted-transport";
 import { type JsonRecord, postJson } from "./signal-relay-http";
 import { isSignalProtocolRelayRequestNotCompleted } from "./signal-relay-request-deadline";
-import { SignalRelayProtocolOffer } from "./signal-relay-protocol";
 
 /** The options of a join. The store of `adapters.storage` must be empty. */
 export interface HostedSignalProtocolRelayJoinOptions
@@ -420,7 +418,7 @@ async function postRedeem(
   for (let attempt = 0; ; attempt++) {
     try {
       return await raceDeviceLinkCancel(
-        postJson(connection, new SignalRelayProtocolOffer(DEVICE_LINK_PROTOCOL_VERSION), REDEEM_PATH, body),
+        postJson(connection, REDEEM_PATH, body),
         signal,
       );
     } catch (error) {
@@ -648,7 +646,7 @@ async function redeemJoin(options: {
       materialFingerprint,
       deviceAuthentication.publicKey,
     );
-    const proof = await deviceAuthentication.signChallenge(challenge, DEVICE_LINK_PROTOCOL_VERSION);
+    const proof = await deviceAuthentication.signChallenge(challenge);
     try {
       const value = await postRedeem(
         connection,

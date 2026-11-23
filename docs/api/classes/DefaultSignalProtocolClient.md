@@ -134,30 +134,6 @@ Use it for a local indicator of this device's connection.
 
 ***
 
-### ~~signalProtocolRelayConnectionState~~
-
-#### Get Signature
-
-> **get** **signalProtocolRelayConnectionState**(): [`SignalProtocolRelayConnectionState`](../interfaces/SignalProtocolRelayConnectionState.md)
-
-##### Deprecated
-
-Use `relayConnectionState`. SDK 15.0.0 removes this name.
-
-##### Returns
-
-[`SignalProtocolRelayConnectionState`](../interfaces/SignalProtocolRelayConnectionState.md)
-
-#### Deprecated
-
-Use `relayConnectionState`. SDK 15.0.0 removes this name.
-
-#### Implementation of
-
-[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`signalProtocolRelayConnectionState`](../interfaces/SignalProtocolClient.md#signalprotocolrelayconnectionstate)
-
-***
-
 ### syncStatus
 
 #### Get Signature
@@ -2540,24 +2516,6 @@ SignalProtocolClient.startRelaySubscription
 
 ***
 
-### ~~startSignalProtocolRelaySubscription()~~
-
-> **startSignalProtocolRelaySubscription**(): `void`
-
-#### Returns
-
-`void`
-
-#### Deprecated
-
-Use `startRelaySubscription`. SDK 15.0.0 removes this name.
-
-#### Implementation of
-
-[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`startSignalProtocolRelaySubscription`](../interfaces/SignalProtocolClient.md#startsignalprotocolrelaysubscription)
-
-***
-
 ### stop()
 
 > **stop**(): `Promise`\<`void`\>
@@ -2637,24 +2595,6 @@ SignalProtocolClient.stopRelaySubscription
 
 ***
 
-### ~~stopSignalProtocolRelaySubscription()~~
-
-> **stopSignalProtocolRelaySubscription**(): `void`
-
-#### Returns
-
-`void`
-
-#### Deprecated
-
-Use `stopRelaySubscription`. SDK 15.0.0 removes this name.
-
-#### Implementation of
-
-[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`stopSignalProtocolRelaySubscription`](../interfaces/SignalProtocolClient.md#stopsignalprotocolrelaysubscription)
-
-***
-
 ### subscribeRelayConnectionState()
 
 > **subscribeRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
@@ -2679,30 +2619,6 @@ SignalProtocolClient.subscribeRelayConnectionState
 #### Implementation of
 
 [`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`subscribeRelayConnectionState`](../interfaces/SignalProtocolClient.md#subscriberelayconnectionstate)
-
-***
-
-### ~~subscribeSignalProtocolRelayConnectionState()~~
-
-> **subscribeSignalProtocolRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
-
-#### Parameters
-
-##### listener
-
-(`state`) => `void`
-
-#### Returns
-
-[`Unsubscribe`](../type-aliases/Unsubscribe.md)
-
-#### Deprecated
-
-Use `subscribeRelayConnectionState`. SDK 15.0.0 removes this name.
-
-#### Implementation of
-
-[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md).[`subscribeSignalProtocolRelayConnectionState`](../interfaces/SignalProtocolClient.md#subscribesignalprotocolrelayconnectionstate)
 
 ***
 

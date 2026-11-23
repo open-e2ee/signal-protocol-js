@@ -51,7 +51,7 @@ signal.startRelaySubscription();
 
 ## Extends
 
-- `Omit`\<[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md), `"remoteObjectStore"` \| `"aci"` \| `"deviceId"` \| `"enablePniKeys"` \| `"protocol"` \| `"protocolManager"` \| `"protocolStrategy"` \| `"relay"` \| `"signalProtocolRelay"` \| `"pni"` \| `"storage"`\>
+- `Omit`\<[`SignalProtocolClientConfig`](SignalProtocolClientConfig.md), `"remoteObjectStore"` \| `"aci"` \| `"deviceId"` \| `"enablePniKeys"` \| `"protocol"` \| `"protocolManager"` \| `"protocolStrategy"` \| `"relay"` \| `"pni"` \| `"storage"`\>
 
 ## Properties
 

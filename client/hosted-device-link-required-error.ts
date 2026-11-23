@@ -1,4 +1,5 @@
 import { HostedSignalProtocolRelayHttpError } from './hosted-http-error';
+import { copySignalProtocolRelayResponseReference } from './signal-relay-response-reference';
 
 /** The Relay code of a registration on an account that already has a device. */
 export const DEVICE_LINK_REQUIRED_CODE = 'DEVICE_LINK_REQUIRED';
@@ -31,7 +32,9 @@ export function rethrowDeviceLinkRequired(error: unknown, registration: boolean)
     error instanceof HostedSignalProtocolRelayHttpError &&
     error.code === DEVICE_LINK_REQUIRED_CODE
   ) {
-    throw new HostedSignalProtocolRelayDeviceLinkRequiredError(error.status, error.message);
+    throw copySignalProtocolRelayResponseReference(
+      new HostedSignalProtocolRelayDeviceLinkRequiredError(error.status, error.message), error,
+    );
   }
   throw error;
 }

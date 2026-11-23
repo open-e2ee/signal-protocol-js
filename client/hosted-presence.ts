@@ -49,27 +49,16 @@ import {
 
 export {
   HostedSignalProtocolRelayPresenceError,
-  HostedRelayPresenceError,
   type HostedSignalProtocolRelayPresenceAccount,
-  type HostedRelayPresenceAccount,
   type HostedSignalProtocolRelayPresenceApproximateLastSeen,
-  type HostedRelayPresenceApproximateLastSeen,
   type HostedSignalProtocolRelayPresenceAudience,
-  type HostedRelayPresenceAudience,
   type HostedSignalProtocolRelayPresenceErrorCode,
-  type HostedRelayPresenceErrorCode,
   type HostedSignalProtocolRelayPresenceLastSeenPolicy,
-  type HostedRelayPresenceLastSeenPolicy,
   type HostedSignalProtocolRelayPresenceMode,
-  type HostedRelayPresenceMode,
   type HostedSignalProtocolRelayPresencePolicy,
-  type HostedRelayPresencePolicy,
   type HostedSignalProtocolRelayPresenceSetting,
-  type HostedRelayPresenceSetting,
   type HostedSignalProtocolRelayPresenceStatus,
-  type HostedRelayPresenceStatus,
   type HostedSignalProtocolRelayPresenceVisibility,
-  type HostedRelayPresenceVisibility,
 } from "./hosted-presence-frames";
 
 /**
@@ -172,8 +161,8 @@ export interface HostedSignalProtocolRelayPresenceRuntime {
     | undefined;
   /** Sends one request as an authenticated HTTP request. */
   postPresence(request: HostedSignalProtocolRelayPresenceRequest): Promise<unknown>;
-  readonly signalProtocolRelayConnectionState: SignalProtocolRelayConnectionState;
-  subscribeSignalProtocolRelayConnectionState(
+  readonly relayConnectionState: SignalProtocolRelayConnectionState;
+  subscribeRelayConnectionState(
     listener: (state: SignalProtocolRelayConnectionState) => void,
   ): Unsubscribe;
   /** Receives each new mailbox socket and each pushed presence edge. */
@@ -420,7 +409,7 @@ class PresenceWatch {
 
   private listen(): void {
     if (this.stopListeners !== undefined) return;
-    const stopState = this.runtime.subscribeSignalProtocolRelayConnectionState((state) => {
+    const stopState = this.runtime.subscribeRelayConnectionState((state) => {
       if (state.state === "connected") return;
       // A closed socket holds no watch. A new socket registers again.
       this.cancel();
@@ -468,7 +457,7 @@ class PresenceWatch {
   }
 
   private connected(): boolean {
-    return this.runtime.signalProtocolRelayConnectionState.state === "connected";
+    return this.runtime.relayConnectionState.state === "connected";
   }
 
   private cancel(): void {
@@ -691,13 +680,3 @@ export function hostedSignalProtocolRelayWakePresence(
     }
   });
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `hostedSignalProtocolRelayPresence`. SDK 15.0.0 removes this name. */
-export const hostedRelayPresence = hostedSignalProtocolRelayPresence;
-/** @deprecated Use `HostedSignalProtocolRelayPresence`. SDK 15.0.0 removes this name. */
-export type HostedRelayPresence = HostedSignalProtocolRelayPresence;
-/** @deprecated Use `hostedSignalProtocolRelayWakePresence`. SDK 15.0.0 removes this name. */
-export const hostedRelayWakePresence = hostedSignalProtocolRelayWakePresence;
-/** @deprecated Use `HostedSignalProtocolRelayWakePresence`. SDK 15.0.0 removes this name. */
-export type HostedRelayWakePresence = HostedSignalProtocolRelayWakePresence;
