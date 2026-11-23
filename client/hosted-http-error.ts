@@ -13,6 +13,8 @@
  * the link state for every other error.
  */
 export class HostedSignalProtocolRelayHttpError extends Error {
+  /** The optional response reference. It grants no diagnostic read access. */
+  declare public readonly requestId?: string;
   /** The Relay's error code, for example `KEY_PROOF_INVALID`. */
   public readonly code: string;
   /** More values of the refusal. A refused declared post keeps the Relay's `details` here. */
@@ -37,16 +39,10 @@ export class HostedSignalProtocolRelayHttpError extends Error {
     },
   ) {
     super(message);
-    this.name = "HostedRelayHttpError";
+    this.name = "HostedSignalProtocolRelayHttpError";
     this.status = status;
     this.code = code;
     this.data = options?.data;
     this.retryable = options?.retryable ?? false;
   }
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `HostedSignalProtocolRelayHttpError`. SDK 15.0.0 removes this name. */
-export const HostedRelayHttpError = HostedSignalProtocolRelayHttpError;
-/** @deprecated Use `HostedSignalProtocolRelayHttpError`. SDK 15.0.0 removes this name. */
-export type HostedRelayHttpError = HostedSignalProtocolRelayHttpError;

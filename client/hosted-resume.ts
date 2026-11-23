@@ -80,7 +80,7 @@ export async function resumeHostedSignalProtocolClient(
     // Hosted composition activates ACI. The manager checks all actual active types.
     const identities = await readRetainedIdentities(adapters.storage, ['aci']);
     const connection = await resolveHostedSignalProtocolRelayConnection(
-      hostedSignalProtocolRelayUrl(hosted, 'resumeHostedSignalProtocolClient'),
+      hostedSignalProtocolRelayUrl(hosted),
     );
     // A preflight intent proves that no deletion request was sent, so the account resumes.
     if (await readHostedSignalProtocolRelayAccountDeletionPhase(adapters.storage, connection) === 'submitted') {

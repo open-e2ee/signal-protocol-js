@@ -2,9 +2,7 @@
 import { base64ToBytes, bytesToUrlSafeBase64, urlSafeToBase64 } from '../internal/crypto';
 import { resolveSignalProtocolLogger } from '../logger';
 import type { SignalProtocolRemoteObjectStore } from '../remote/object-store';
-import type { SignalProtocolRelayServer } from '../remote/signal-relay/types';
 import type { Base64 } from '../types';
-import { readRenamedOption } from '../types/renamed-member';
 import { DefaultSignalProtocolClient } from './client';
 import type { SignalProtocolClientCompositionOptions } from './compose';
 import { createSignalProtocolClientConfig } from './compose';
@@ -30,41 +28,10 @@ import type { HostedSignalProtocolRelayTransportResult } from './hosted-transpor
 import { createKeyTransparencyRuntime } from './key-transparency/runtime';
 import { identityLogTrustOf } from './key-transparency/trust';
 
-/** A bootstrap result that holds each value under its new name. */
-interface HostedBootstrapBinding {
-  readonly canonicalAccountId: string;
-  readonly deviceId: number;
-  readonly signalProtocolRelayScopeId: Uint8Array | undefined;
-  readonly signalProtocolRelay: SignalProtocolRelayServer | undefined;
-}
-
-function hostedBootstrapBinding(
-  result: HostedSignalProtocolRelayBootstrapResult,
-): HostedBootstrapBinding {
-  const operation = 'hostedBootstrap';
-  return {
-    canonicalAccountId: result.canonicalAccountId,
-    deviceId: result.deviceId,
-    signalProtocolRelayScopeId: readRenamedOption(
-      result.signalProtocolRelayScopeId,
-      result.relayScopeId,
-      { newName: 'signalProtocolRelayScopeId', earlierName: 'relayScopeId', operation },
-    ),
-    signalProtocolRelay: readRenamedOption(result.signalProtocolRelay, result.relay, {
-      newName: 'signalProtocolRelay',
-      earlierName: 'relay',
-      operation,
-    }),
-  };
-}
-
 function assertHostedBootstrapResult(
-  result: HostedBootstrapBinding,
+  result: HostedSignalProtocolRelayBootstrapResult,
   certificateTrust: HostedSignalProtocolRelayCertificateTrust,
-): asserts result is HostedBootstrapBinding & {
-  readonly signalProtocolRelayScopeId: Uint8Array;
-  readonly signalProtocolRelay: SignalProtocolRelayServer;
-} {
+): void {
   if (!result.canonicalAccountId || result.canonicalAccountId.length > 512) {
     throw new Error(
       'Signal Protocol Relay returned an invalid canonical account binding',
@@ -74,14 +41,14 @@ function assertHostedBootstrapResult(
     throw new Error('Signal Protocol Relay returned an invalid device binding');
   }
   if (
-    !(result.signalProtocolRelayScopeId instanceof Uint8Array) ||
-    result.signalProtocolRelayScopeId.length !== 16
+    !(result.relayScopeId instanceof Uint8Array) ||
+    result.relayScopeId.length !== 16
   ) {
     throw new Error(
       'Signal Protocol Relay returned an invalid project-environment scope',
     );
   }
-  if (!result.signalProtocolRelay) {
+  if (!result.relay) {
     throw new Error(
       'Signal Protocol Relay bootstrap did not return an authenticated Relay',
     );
@@ -123,11 +90,11 @@ function hostedAccountAci(accountId: string) {
 
 /** @internal Shared hosted composition; caller retains failure cleanup custody. */
 export async function createClientFromHostedResult(
-  bootstrapResult: HostedSignalProtocolRelayBootstrapResult,
+  result: HostedSignalProtocolRelayBootstrapResult,
   connection: HostedSignalProtocolRelayConnection,
   adapters: Omit<
     SignalProtocolClientCompositionOptions['adapters'],
-    'relay' | 'signalProtocolRelay' | 'remoteObjectStore'
+    'relay' | 'remoteObjectStore'
   >,
   clientOptions: Omit<
     HostedSignalProtocolClientOptions,
@@ -140,7 +107,6 @@ export async function createClientFromHostedResult(
   createClient: typeof DefaultSignalProtocolClient.create = DefaultSignalProtocolClient.create,
 ): Promise<DefaultSignalProtocolClient> {
   const { certificateTrust } = connection;
-  const result = hostedBootstrapBinding(bootstrapResult);
   assertHostedBootstrapResult(result, certificateTrust);
   const { groups, ...rest } = clientOptions;
   const aci =
@@ -150,11 +116,7 @@ export async function createClientFromHostedResult(
   const resolvedGroups =
     groups === undefined
       ? undefined
-      : await resolveHostedGroupOptions(
-          connection,
-          groups,
-          hostedTransport?.signalRelayProtocol,
-        );
+      : await resolveHostedGroupOptions(connection, groups);
   const config = createSignalProtocolClientConfig({
     ...rest,
     ...(resolvedGroups
@@ -173,7 +135,7 @@ export async function createClientFromHostedResult(
       : {}),
     adapters: {
       ...adapters,
-      signalProtocolRelay: result.signalProtocolRelay,
+      relay: result.relay,
       ...(remoteObjectStore === undefined ? {} : { remoteObjectStore }),
     },
     identity: {
@@ -183,7 +145,7 @@ export async function createClientFromHostedResult(
     },
     sealedSender: {
       accessMode: sealedSenderAccessMode,
-      signalProtocolRelayScopeId: result.signalProtocolRelayScopeId,
+      relayScopeId: result.relayScopeId,
       revokedIssuerKeyIds: certificateTrust.revokedIssuerKeyIds,
       trustModel: 'hosted',
       trustRoots: certificateTrust.trustRoots.map(

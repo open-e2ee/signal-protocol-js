@@ -4,11 +4,8 @@
  * The mailbox socket offers the version as a subprotocol token, because a
  * browser `WebSocket` cannot set headers, and the Relay must echo it. Each
  * public HTTP route except the connection document carries the version in a
- * header. Version 2 uses the header `x-open-e2ee-relay-protocol`, the token
- * `open-e2ee-relay.v<N>`, and the device token entry
- * `open-e2ee-relay.auth.`. Version 3 and later use the header
- * `x-signal-relay-protocol`, the token `signal-relay.v<N>`, and the entry
- * `signal-relay.auth.`. Each version rides only on its own carrier.
+ * header. The header is `x-signal-relay-protocol`, the token is
+ * `signal-relay.v<N>`, and the device token entry is `signal-relay.auth.`.
  *
  * A Relay that no longer serves the version refuses it with
  * `UPGRADE_REQUIRED`: close code 4426 on the socket, and the body code on
@@ -18,22 +15,19 @@
  * refuses the version before it reads the request, so the refused request
  * had no effect.
  *
- * A client offers `RELAY_PROTOCOL_VERSION` first. When the Relay refuses a
- * version above 2 with `PROTOCOL_UNSUPPORTED`, the client offers the version
- * one below it from then on and sends the refused request again. Each refusal
- * moves the offer down one version, and the offer never goes below version
- * 2. A client whose version the caller selected never offers another version.
- * This SDK does not speak version 1, so a caller cannot select it.
+ * The SDK offers only `RELAY_PROTOCOL_VERSION`. It does not offer another
+ * version after a refusal.
  */
 import { stringToBytes } from "../internal/crypto";
+import { HostedSignalProtocolRelayHttpError } from "./hosted-http-error";
 
 /**
- * The Relay protocol version that this SDK speaks by default. Each client
- * holds its own version, which starts at this one.
+ * The Relay protocol version that this SDK speaks. Each request and each
+ * socket of a client offers it.
  *
- * Version 2 adds `DELIVERY_ALREADY_ACCEPTED`: the Relay refuses a post
+ * Version 2 added `DELIVERY_ALREADY_ACCEPTED`: the Relay refuses a post
  * before it stores anything, because it already holds an accepted post
- * under the message ID. Version 3 keeps the behavior of version 2 and uses the
+ * under the message ID. Version 3 keeps that behavior and uses the
  * signal prefix names: its carriers, the labels of its signed proofs, the
  * response fields `signalRelayScopeId` and `signalRelayReceipts`, and the
  * device token issuer and audience.
@@ -46,78 +40,23 @@ export const RELAY_PROTOCOL_VERSION = 3;
  */
 const FIRST_RELAY_PROTOCOL_VERSION = 1;
 
-/** The first version that uses the signal prefix names. */
-const SIGNAL_RELAY_PROTOCOL_V3 = 3;
+/** The subprotocol token that the socket offers and the Relay must echo. */
+export const SIGNAL_RELAY_PROTOCOL_TOKEN = `signal-relay.v${RELAY_PROTOCOL_VERSION}`;
 
-/**
- * The lowest version that this SDK speaks. An unselected offer moves down to
- * it, and a selected offer cannot be below it.
- */
-const SIGNAL_RELAY_PROTOCOL_FALLBACK = 2;
+/** The prefix of the subprotocol entry that carries the device token. */
+export const SIGNAL_RELAY_AUTH_PROTOCOL_PREFIX = "signal-relay.auth.";
 
-/** The prefix of a version 2 token. The version number follows it. */
-const RELAY_PROTOCOL_TOKEN_PREFIX = "open-e2ee-relay.v";
-
-/** The prefix of a version 3 or later token. The version number follows it. */
-const SIGNAL_RELAY_PROTOCOL_TOKEN_PREFIX = "signal-relay.v";
-
-/**
- * The prefix of the subprotocol entry that carries the device token on
- * version 2.
- */
-export const RELAY_AUTH_PROTOCOL_PREFIX = "open-e2ee-relay.auth.";
-
-/** The prefix of the device token entry on version 3 and later. */
-const SIGNAL_RELAY_AUTH_PROTOCOL_PREFIX = "signal-relay.auth.";
-
-/** The HTTP header that carries version 2. */
-export const RELAY_PROTOCOL_HEADER = "x-open-e2ee-relay-protocol";
-
-/** The HTTP header that carries version 3 and later. */
+/** The HTTP header that carries the version. */
 const SIGNAL_RELAY_PROTOCOL_HEADER = "x-signal-relay-protocol";
 
-/** True when a version uses the signal prefix names. */
-function usesSignalRelayNames(version: number): boolean {
-  return version >= SIGNAL_RELAY_PROTOCOL_V3;
-}
-
-/**
- * The subprotocol token of a protocol version, on the carrier of that
- * version: `open-e2ee-relay.v2` or `signal-relay.v3`.
- */
-export function signalRelayProtocolToken(version: number): string {
-  return `${
-    usesSignalRelayNames(version)
-      ? SIGNAL_RELAY_PROTOCOL_TOKEN_PREFIX
-      : RELAY_PROTOCOL_TOKEN_PREFIX
-  }${version}`;
-}
-
-/** The prefix of the subprotocol entry that carries the device token for a version. */
-export function signalRelayAuthProtocolPrefix(version: number): string {
-  return usesSignalRelayNames(version)
-    ? SIGNAL_RELAY_AUTH_PROTOCOL_PREFIX
-    : RELAY_AUTH_PROTOCOL_PREFIX;
-}
-
-/** The headers that put a protocol version on an HTTP request, on the carrier of that version. */
-export function signalRelayProtocolHeadersFor(version: number): Record<string, string> {
-  return {
-    [usesSignalRelayNames(version)
-      ? SIGNAL_RELAY_PROTOCOL_HEADER
-      : RELAY_PROTOCOL_HEADER]: String(version),
-  };
-}
-
-/** The headers that put this SDK's default protocol version on an HTTP request. */
+/** The headers that put the protocol version on an HTTP request. */
 export function signalRelayProtocolHeaders(): Record<string, string> {
-  return signalRelayProtocolHeadersFor(RELAY_PROTOCOL_VERSION);
+  return { [SIGNAL_RELAY_PROTOCOL_HEADER]: String(RELAY_PROTOCOL_VERSION) };
 }
 
 /**
- * The labels of the device proofs that a protocol version signs. Each label
- * ends in a NUL byte. Each version frames the payload after the label in the
- * same way.
+ * The labels of the device proofs that the SDK signs. Each label ends in a
+ * NUL byte.
  */
 export interface SignalRelayProofLabels {
   /** Prefixes each device challenge that the device key signs. */
@@ -134,25 +73,8 @@ export interface SignalRelayProofLabels {
   readonly senderCertificateRequest: Uint8Array;
 }
 
-/**
- * The labels of version 2. They are historical constants: a Relay verifies
- * their exact bytes until it retires version 2.
- */
-const SIGNAL_RELAY_V1_PROOF_LABELS: SignalRelayProofLabels = {
-  deviceAuthentication: stringToBytes("OpenE2EE Relay device authentication v1\0"),
-  deviceLinkChallenge: stringToBytes("OpenE2EE Relay device link challenge v1\0"),
-  deviceTokenRefreshChallenge: stringToBytes(
-    "OpenE2EE Relay device token refresh challenge v1\0",
-  ),
-  recoveryChallenge: stringToBytes("OpenE2EE Relay recovery challenge v1\0"),
-  registrationChallenge: stringToBytes("OpenE2EE Relay registration challenge v1\0"),
-  senderCertificateRequest: stringToBytes(
-    "OpenE2EE Relay sender certificate request v1\0",
-  ),
-};
-
-/** The labels of version 3 and later. */
-const SIGNAL_RELAY_V3_PROOF_LABELS: SignalRelayProofLabels = {
+/** The proof labels of `RELAY_PROTOCOL_VERSION`. */
+export const SIGNAL_RELAY_PROOF_LABELS: SignalRelayProofLabels = {
   deviceAuthentication: stringToBytes("signal-relay-device-authentication-v2\0"),
   deviceLinkChallenge: stringToBytes("signal-relay-device-link-challenge-v2\0"),
   deviceTokenRefreshChallenge: stringToBytes(
@@ -165,145 +87,6 @@ const SIGNAL_RELAY_V3_PROOF_LABELS: SignalRelayProofLabels = {
   ),
 };
 
-/** The proof labels of a protocol version. Without a version, the labels of version 2. */
-export function signalRelayProofLabels(
-  version: number = SIGNAL_RELAY_PROTOCOL_FALLBACK,
-): SignalRelayProofLabels {
-  return usesSignalRelayNames(version)
-    ? SIGNAL_RELAY_V3_PROOF_LABELS
-    : SIGNAL_RELAY_V1_PROOF_LABELS;
-}
-
-/**
- * The protocol version that one client offers. Every carrier of the client
- * reads it for each request. An unselected offer starts at
- * `RELAY_PROTOCOL_VERSION`. Each time the Relay refuses a version above 2
- * with `PROTOCOL_UNSUPPORTED`, the offer moves to the version one below the
- * refused one. It never moves up again in the life of the client. A selected
- * offer keeps its version, which must be 2 or later.
- */
-export class SignalRelayProtocolOffer {
-  #version: number;
-  readonly #selected: boolean;
-
-  /**
-   * @param version - The selected version. Without it, the offer can fall back.
-   * @param start - The first version of an unselected offer. Only tests set
-   *   it, to start above `RELAY_PROTOCOL_VERSION`.
-   * @throws RangeError when `version` is below 2.
-   */
-  public constructor(version?: number, start: number = RELAY_PROTOCOL_VERSION) {
-    if (version !== undefined && !(version >= SIGNAL_RELAY_PROTOCOL_FALLBACK))
-      throw new RangeError(
-        `Relay protocol version ${version} is not supported. Select version ${SIGNAL_RELAY_PROTOCOL_FALLBACK} or later.`,
-      );
-    this.#selected = version !== undefined;
-    this.#version = version ?? start;
-  }
-
-  /** The version that the next request offers. */
-  public get version(): number {
-    return this.#version;
-  }
-
-  /**
-   * Records that the Relay refused `sent` with `PROTOCOL_UNSUPPORTED`.
-   * Returns true when the client now offers a version below the refused
-   * one, so the caller sends the request again. The offer moves down one
-   * version. When a concurrent refusal already moved it below `sent`, it
-   * stays there.
-   */
-  public refused(sent: number): boolean {
-    if (this.#selected || sent <= SIGNAL_RELAY_PROTOCOL_FALLBACK) return false;
-    this.#version = Math.min(this.#version, sent - 1);
-    return true;
-  }
-}
-
-/** The offer of `value`, or a new unselected offer when `value` is undefined. */
-export function signalRelayProtocolOffer(
-  value?: number | SignalRelayProtocolOffer,
-): SignalRelayProtocolOffer {
-  return value instanceof SignalRelayProtocolOffer
-    ? value
-    : new SignalRelayProtocolOffer(value);
-}
-
-/** The request offered a version that the client no longer offers. */
-class SignalRelayProtocolFallBack extends Error {
-  public constructor() {
-    super("The Relay does not serve the offered protocol version.");
-    this.name = "SignalRelayProtocolFallBack";
-  }
-}
-
-/** True when a Relay error body has the code `PROTOCOL_UNSUPPORTED`. */
-function protocolUnsupported(body: unknown): boolean {
-  return (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "object" &&
-    body.error !== null &&
-    "code" in body.error &&
-    body.error.code === "PROTOCOL_UNSUPPORTED"
-  );
-}
-
-/**
- * Throws inside `sendOnSignalRelayProtocol` when a Relay error body refuses
- * `sent` with `PROTOCOL_UNSUPPORTED` and `offer` falls back. Otherwise the
- * caller handles the error body as before.
- */
-export function throwIfProtocolFallBack(
-  offer: SignalRelayProtocolOffer,
-  sent: number,
-  body: unknown,
-): void {
-  if (protocolUnsupported(body) && offer.refused(sent))
-    throw new SignalRelayProtocolFallBack();
-}
-
-/**
- * Sends one request with the version that `offer` holds. The request gets
- * the version and builds its headers and its signed fields from it. Each
- * time the Relay refuses the version and the offer falls back, the request
- * runs again with the lower version. The loop ends, because each fall-back
- * moves the offer below the refused version, and the offer does not fall
- * back below version 2.
- */
-export async function sendOnSignalRelayProtocol<T>(
-  offer: SignalRelayProtocolOffer,
-  send: (version: number) => Promise<T>,
-): Promise<T> {
-  for (;;) {
-    try {
-      return await send(offer.version);
-    } catch (error) {
-      if (!(error instanceof SignalRelayProtocolFallBack)) throw error;
-    }
-  }
-}
-
-/**
- * The value of a response field that version 3 renamed. Version 3 sends the
- * field under `current`, and version 2 sends it under `earlier`. The
- * result is undefined when neither name is present. Two different values
- * under the two names throw an error with the message `invalid`.
- */
-export function signalRelayRenamedField(
-  value: Readonly<Record<string, unknown>>,
-  current: string,
-  earlier: string,
-  invalid: string,
-): unknown {
-  const named = value[current];
-  const earlierNamed = value[earlier];
-  if (named !== undefined && earlierNamed !== undefined && named !== earlierNamed)
-    throw new Error(invalid);
-  return named ?? earlierNamed;
-}
-
 /**
  * The Relay no longer serves the protocol version of this SDK. The same
  * request fails again until the application ships a newer SDK, so the SDK
@@ -311,6 +94,8 @@ export function signalRelayRenamedField(
  * `upgrade-required` for the same refusal on its socket.
  */
 export class HostedSignalProtocolRelayUpgradeRequiredError extends Error {
+  /** The optional reference of the HTTP response that refused this request. */
+  declare public readonly requestId?: string;
   public readonly code = "UPGRADE_REQUIRED";
   /** The HTTP status of the refusal, 426 from a current Relay. */
   public readonly status: number;
@@ -326,22 +111,28 @@ export class HostedSignalProtocolRelayUpgradeRequiredError extends Error {
     super(
       `The Relay no longer accepts Relay protocol version ${version ?? FIRST_RELAY_PROTOCOL_VERSION}. Update the SDK.`,
     );
-    this.name = "HostedRelayUpgradeRequiredError";
+    this.name = "HostedSignalProtocolRelayUpgradeRequiredError";
     this.status = status;
   }
 }
 
 /**
+ * The refusal of `RELAY_PROTOCOL_VERSION`, the version that each request of
+ * this SDK sends, at the HTTP `status`.
+ */
+export function signalRelayUpgradeRequired(
+  status: number,
+): HostedSignalProtocolRelayUpgradeRequiredError {
+  return new HostedSignalProtocolRelayUpgradeRequiredError(status, RELAY_PROTOCOL_VERSION);
+}
+
+/**
  * Throws `HostedSignalProtocolRelayUpgradeRequiredError` when a Relay error body has the
  * code `UPGRADE_REQUIRED`, at any error status. The body code is the
- * contract, not the status. The error names `version`, the protocol version
- * that the request sent.
+ * contract, not the status. The error names `RELAY_PROTOCOL_VERSION`, the
+ * protocol version that the request sent.
  */
-export function throwIfUpgradeRequired(
-  status: number,
-  body: unknown,
-  version?: number,
-): void {
+export function throwIfUpgradeRequired(status: number, body: unknown): void {
   if (
     typeof body === "object" &&
     body !== null &&
@@ -351,7 +142,36 @@ export function throwIfUpgradeRequired(
     "code" in body.error &&
     body.error.code === "UPGRADE_REQUIRED"
   )
-    throw new HostedSignalProtocolRelayUpgradeRequiredError(status, version);
+    throw signalRelayUpgradeRequired(status);
+}
+
+/**
+ * Throws the retryable `HostedSignalProtocolRelayHttpError` with the code
+ * `PROTOCOL_UNSUPPORTED` when a Relay error body has that code. It is the
+ * error that an identified HTTP route gives for the same answer. The Relay
+ * sends it for a version above the newest one that it serves, and it can
+ * serve the version later, so the refusal is always retryable.
+ */
+export function throwIfProtocolUnsupported(status: number, body: unknown): void {
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    !("error" in body) ||
+    typeof body.error !== "object" ||
+    body.error === null ||
+    !("code" in body.error) ||
+    body.error.code !== "PROTOCOL_UNSUPPORTED"
+  )
+    return;
+  const message =
+    "message" in body.error && typeof body.error.message === "string"
+      ? body.error.message
+      : "Signal Protocol Relay request failed";
+  throw markSignalProtocolRelayAnswerVersion(
+    new HostedSignalProtocolRelayHttpError(status, "PROTOCOL_UNSUPPORTED", message, {
+      retryable: true,
+    }),
+  );
 }
 
 /** The protocol version of the request that each Relay error answers. */
@@ -359,10 +179,13 @@ const answerVersions = new WeakMap<object, number>();
 
 /**
  * Record that `error` is the Relay's answer to a request that sent protocol
- * `version`. The meaning of some codes depends on that version. Returns
- * the same error.
+ * `version`, which is `RELAY_PROTOCOL_VERSION` by default. The meaning of
+ * some codes depends on that version. Returns the same error.
  */
-export function markSignalProtocolRelayAnswerVersion<T extends object>(error: T, version: number): T {
+export function markSignalProtocolRelayAnswerVersion<T extends object>(
+  error: T,
+  version: number = RELAY_PROTOCOL_VERSION,
+): T {
   answerVersions.set(error, version);
   return error;
 }
@@ -377,9 +200,3 @@ export function signalRelayAnswerVersion(error: unknown): number | undefined {
     ? answerVersions.get(error)
     : undefined;
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `HostedSignalProtocolRelayUpgradeRequiredError`. SDK 15.0.0 removes this name. */
-export const HostedRelayUpgradeRequiredError = HostedSignalProtocolRelayUpgradeRequiredError;
-/** @deprecated Use `HostedSignalProtocolRelayUpgradeRequiredError`. SDK 15.0.0 removes this name. */
-export type HostedRelayUpgradeRequiredError = HostedSignalProtocolRelayUpgradeRequiredError;

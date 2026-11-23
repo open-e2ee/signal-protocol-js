@@ -65,16 +65,6 @@ Use it for a local indicator of this device's connection.
 
 ***
 
-### ~~signalProtocolRelayConnectionState~~
-
-> `readonly` **signalProtocolRelayConnectionState**: [`SignalProtocolRelayConnectionState`](SignalProtocolRelayConnectionState.md)
-
-#### Deprecated
-
-Use `relayConnectionState`. SDK 15.0.0 removes this name.
-
-***
-
 ### userId
 
 > `readonly` **userId**: `string`
@@ -1296,20 +1286,6 @@ after `stop()` resolves.
 
 ***
 
-### ~~startSignalProtocolRelaySubscription()~~
-
-> **startSignalProtocolRelaySubscription**(): `void`
-
-#### Returns
-
-`void`
-
-#### Deprecated
-
-Use `startRelaySubscription`. SDK 15.0.0 removes this name.
-
-***
-
 ### stop()
 
 > **stop**(): `Promise`\<`void`\>
@@ -1372,20 +1348,6 @@ from the app state.
 
 ***
 
-### ~~stopSignalProtocolRelaySubscription()~~
-
-> **stopSignalProtocolRelaySubscription**(): `void`
-
-#### Returns
-
-`void`
-
-#### Deprecated
-
-Use `stopRelaySubscription`. SDK 15.0.0 removes this name.
-
-***
-
 ### subscribeRelayConnectionState()
 
 > **subscribeRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
@@ -1408,26 +1370,6 @@ Callback for each transition
 [`Unsubscribe`](../type-aliases/Unsubscribe.md)
 
 Unsubscribe function
-
-***
-
-### ~~subscribeSignalProtocolRelayConnectionState()~~
-
-> **subscribeSignalProtocolRelayConnectionState**(`listener`): [`Unsubscribe`](../type-aliases/Unsubscribe.md)
-
-#### Parameters
-
-##### listener
-
-(`state`) => `void`
-
-#### Returns
-
-[`Unsubscribe`](../type-aliases/Unsubscribe.md)
-
-#### Deprecated
-
-Use `subscribeRelayConnectionState`. SDK 15.0.0 removes this name.
 
 ***
 

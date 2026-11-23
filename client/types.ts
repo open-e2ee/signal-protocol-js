@@ -53,9 +53,6 @@ export interface SignalProtocolClientContext {
   /** Optional relay server for server sync */
   readonly relay?: SignalProtocolRelayServer;
 
-  /** @deprecated Use `relay`. SDK 15.0.0 removes this name. */
-  readonly signalProtocolRelay?: SignalProtocolRelayServer;
-
   /** Optional brokered remote object store for encrypted attachments. */
   readonly remoteObjectStore?: SignalProtocolRemoteObjectStore;
 
@@ -497,8 +494,6 @@ export interface OutgoingMessageError extends Error {
   readonly retryable?: boolean;
   /** The Relay's own `retryable` hint, when the SDK set `retryable`. */
   readonly relayRetryable?: boolean;
-  /** @deprecated Use `relayRetryable`. SDK 15.0.0 removes this name. */
-  readonly signalProtocolRelayRetryable?: boolean;
   /** The devices that the Relay accepted, when the send ended at its deadline. */
   readonly acceptedDevices?: readonly { readonly userId: string; readonly deviceId: number }[];
   /** The devices that the Relay refused, when the send ended at its deadline. */
@@ -899,10 +894,11 @@ export interface PendingReceive {
    */
   stage: 'decrypted' | 'awaiting-completion';
   /**
-   * `relay` for a Relay message, `caller` for an envelope that the
-   * application gave. `signal-relay` is the same origin as `relay`. SDK
-   * 15.0.0 reports a Relay message with `signal-relay`. This release reports
-   * `relay`, so code that compares the origin must accept both values.
+   * `signal-relay` for a Relay message, `caller` for an envelope that the
+   * application gave. `relay` is the same origin as `signal-relay`. SDK 14
+   * reported a Relay message with `relay`. This release does not report it.
+   * The type keeps it, so code that compares the origin with both values
+   * compiles.
    */
   origin: 'relay' | 'signal-relay' | 'caller';
   /** The time of the first decrypt. */

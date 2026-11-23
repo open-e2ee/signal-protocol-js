@@ -21,10 +21,8 @@ import {
 } from "./signal-relay-receipt-intake";
 import {
   HostedSignalProtocolRelayUpgradeRequiredError,
-  signalRelayAuthProtocolPrefix,
-  signalRelayProtocolToken,
-  signalRelayRenamedField,
-  type SignalRelayProtocolOffer,
+  SIGNAL_RELAY_AUTH_PROTOCOL_PREFIX,
+  SIGNAL_RELAY_PROTOCOL_TOKEN,
 } from "./signal-relay-protocol";
 import {
   HostedSignalProtocolRelayDeviceRevokedError,
@@ -182,11 +180,6 @@ export interface MailboxAcknowledgment {
 }
 
 interface MailboxSubscription {
-  /**
-   * The Relay protocol version of the client that owns the subscription.
-   * Each socket offers the version that it holds when the socket opens.
-   */
-  signalRelayProtocol: SignalRelayProtocolOffer;
   /**
    * Gets the socket address and a device token. `refreshed` is true when the
    * call got a new device token from the Relay. The Relay reads the token
@@ -430,7 +423,7 @@ export function subscribeHostedMailbox(
    * True after the live socket advertised Relay receipts in its
    * `mailbox-capabilities` frame. Each new socket starts at false.
    */
-  let relayReceipts = false;
+  let signalRelayReceipts = false;
   /** The messages acknowledged on the live socket that wait for its reply. */
   const awaitingReply = new Set<string>();
   /**
@@ -526,7 +519,7 @@ export function subscribeHostedMailbox(
         // Only a socket that advertised Relay receipts replies with
         // `receipted`, so the reply of any other socket is known now.
         for (const messageId of messageIds)
-          if (relayReceipts) awaitingReply.add(messageId);
+          if (signalRelayReceipts) awaitingReply.add(messageId);
           else options.onAcknowledgmentReply(messageId, false);
         // A page that arrives after this frame owes a frame of its own.
         pageOwed = false;
@@ -544,7 +537,7 @@ export function subscribeHostedMailbox(
           0,
           MAXIMUM_ACKNOWLEDGMENT_IDS,
         );
-        if (relayReceipts && !beforePull)
+        if (signalRelayReceipts && !beforePull)
           live.send(
             JSON.stringify({ type: "acknowledge-receipts", receiptIds }),
           );
@@ -997,7 +990,7 @@ export function subscribeHostedMailbox(
     ephemeral.length = 0;
     durable.length = 0;
     pageOwed = false;
-    relayReceipts = false;
+    signalRelayReceipts = false;
     // A reply can arrive only on the socket that carried the acknowledgment.
     const unanswered = [...awaitingReply];
     awaitingReply.clear();
@@ -1132,12 +1125,10 @@ export function subscribeHostedMailbox(
       authenticating = false;
       // A new device token shows that the Relay serves this device again.
       if (authority.refreshed) endOutage();
-      const protocolVersion = options.signalRelayProtocol.version;
-      /** The subprotocol token that the socket offers and the Relay must echo. */
-      const protocolToken = signalRelayProtocolToken(protocolVersion);
+      const protocolToken = SIGNAL_RELAY_PROTOCOL_TOKEN;
       const candidate = new WebSocket(authority.url, [
         protocolToken,
-        `${signalRelayAuthProtocolPrefix(protocolVersion)}${authority.token}`,
+        `${SIGNAL_RELAY_AUTH_PROTOCOL_PREFIX}${authority.token}`,
       ]);
       socket = candidate;
       const current = () => active && socket === candidate;
@@ -1214,21 +1205,15 @@ export function subscribeHostedMailbox(
           )
             throw new Error("Invalid mailbox frame.");
           if (frame.type === "mailbox-capabilities") {
-            // Version 3 names the capability `signalRelayReceipts`.
-            const advertised = signalRelayRenamedField(
-              frame as Record<string, unknown>,
-              "signalRelayReceipts",
-              "relayReceipts",
-              "Invalid mailbox frame.",
-            );
+            const advertised = (frame as Record<string, unknown>).signalRelayReceipts;
             if (typeof advertised !== "boolean")
               throw new Error("Invalid mailbox frame.");
-            relayReceipts = advertised;
+            signalRelayReceipts = advertised;
           } else if (frame.type === "acknowledged")
             answerAcknowledgment(frame as Record<string, unknown>);
           else if (frame.type === "delivery-receipt") {
             // Only a socket that advertised Relay receipts sends them.
-            if (!relayReceipts || !("receipts" in frame))
+            if (!signalRelayReceipts || !("receipts" in frame))
               throw new Error("Invalid mailbox frame.");
             queueReceipts(candidate, frame.receipts);
           } else if (isPresenceAnswerType(frame.type))
@@ -1265,17 +1250,17 @@ export function subscribeHostedMailbox(
           stop("upgrade-required");
           return;
         }
-        // A close 4400 with the reason `PROTOCOL_UNSUPPORTED` takes the
-        // retry below. The Relay sends it for a version above the newest one
-        // that it serves. A refused version above 2 moves the offer one
-        // version down, so the next socket offers that version. A refused
-        // version 2 happens only after a Relay rollback. The version comes
-        // back when the newer Relay does, so the socket retries.
+        // The Relay sends a close 4400 with the reason `PROTOCOL_UNSUPPORTED`
+        // for a version above the newest one that it serves. The SDK offers
+        // no other version, so the socket offers version 3 again after the
+        // backoff, until the Relay serves it.
         if (
           event.code === PROTOCOL_UNSUPPORTED_CLOSE_CODE &&
           event.reason === PROTOCOL_UNSUPPORTED_CLOSE_REASON
-        )
-          options.signalRelayProtocol.refused(protocolVersion);
+        ) {
+          retryConnection("protocol-unsupported");
+          return;
+        }
         if (event.code === POLICY_VIOLATION_CLOSE_CODE)
           rejectPresence(
             new HostedSignalProtocolRelayPresenceError(

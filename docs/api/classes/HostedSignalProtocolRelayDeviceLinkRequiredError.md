@@ -69,6 +69,18 @@ More values of the refusal. A refused declared post keeps the Relay's `details` 
 
 ***
 
+### requestId?
+
+> `readonly` `optional` **requestId?**: `string`
+
+The optional response reference. It grants no diagnostic read access.
+
+#### Inherited from
+
+[`HostedSignalProtocolRelayHttpError`](HostedSignalProtocolRelayHttpError.md).[`requestId`](HostedSignalProtocolRelayHttpError.md#requestid)
+
+***
+
 ### retryable
 
 > `readonly` **retryable**: `boolean`

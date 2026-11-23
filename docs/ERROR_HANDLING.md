@@ -156,14 +156,14 @@ holds each member to a production construction site.
 
 ## Relay Protocol Errors
 
-The Relay serves a set of Relay protocol versions. This SDK speaks
-protocol version 3, with version 2 as its fallback. It does not speak
-version 1. Two errors come from that set. Neither is an `EncryptionError`.
+The Relay serves a set of Relay protocol versions. This SDK speaks only
+protocol version 3. It does not offer another version. Two errors come from
+that set. Neither is an `EncryptionError`.
 
 | Error | Cause | Application response |
 |---|---|---|
 | `HostedSignalProtocolRelayUpgradeRequiredError` | The Relay no longer serves the version that the client sent. The message names that version. `code` is `UPGRADE_REQUIRED`, `status` is the HTTP status (426), and `retryable` is false. | Ship a newer SDK. The same request fails again, so do not retry it. |
-| `PROTOCOL_UNSUPPORTED` | The Relay does not serve version 2. The request fails with status 400, the `code` `PROTOCOL_UNSUPPORTED`, and `retryable` true. A send keeps the device open until its posting deadline. | Retry later. The Relay never rolls back below a version that a published SDK sends, so this is a transient fault, not a planned state. |
+| `PROTOCOL_UNSUPPORTED` | The Relay does not serve version 3. The request fails with status 400, the `code` `PROTOCOL_UNSUPPORTED`, and `retryable` true. The SDK sends the request once and does not offer another version. An identified Relay route and the managed group authority throw `HostedSignalProtocolRelayHttpError` with this `code`. A send keeps the device open until its posting deadline. | Retry later, or use a Relay that serves version 3. The OpenE2EE Signal Protocol Relay serves version 3. |
 
 Versions 2 and 3 have the Relay code `DELIVERY_ALREADY_ACCEPTED`. The Relay
 gives it with HTTP status 409, `retryable` false and the `details` reason
@@ -192,7 +192,8 @@ with the code `download-failed` and the `status` 426.
 The mailbox subscription stops for the same refusal on its socket, with the
 state `stopped` and the reason `upgrade-required`. It does not reconnect and
 does not pull. For `PROTOCOL_UNSUPPORTED` on its socket, the subscription
-reconnects with its usual backoff. See [`SignalProtocolRelayConnectionReason`](./api/type-aliases/SignalProtocolRelayConnectionReason.md).
+moves to the state `reconnecting` with the reason `protocol-unsupported`, and
+it reconnects with its usual backoff. See [`SignalProtocolRelayConnectionReason`](./api/type-aliases/SignalProtocolRelayConnectionReason.md).
 
 The subscription also stops when the Relay refuses its socket token request or
 a pull conclusively. The refusal has `retryable` false and the code

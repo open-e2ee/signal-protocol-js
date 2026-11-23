@@ -22,14 +22,11 @@ If the app is in the background at bind time, the binding stops at once.
 Call the returned function before `stop()` on the client. It removes the
 listener and does not start or stop the subscription.
 
-An object that has only the deprecated member names, such as
-`stopSignalProtocolRelaySubscription()`, also drives the binding.
-
 ## Parameters
 
 ### signal
 
-`Pick`\<[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md), `"signalProtocolRelayConnectionState"` \| `"startSignalProtocolRelaySubscription"` \| `"stopSignalProtocolRelaySubscription"`\> \| `Pick`\<[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md), `"relayConnectionState"` \| `"startRelaySubscription"` \| `"stopRelaySubscription"`\>
+`Pick`\<[`SignalProtocolClient`](../interfaces/SignalProtocolClient.md), `"relayConnectionState"` \| `"startRelaySubscription"` \| `"stopRelaySubscription"`\>
 
 The Signal Protocol client
 

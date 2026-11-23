@@ -1,3 +1,5 @@
+import { copySignalProtocolRelayResponseReference } from './signal-relay-response-reference';
+
 /**
  * The reason a device link through the Signal Protocol Relay stopped. The
  * one-process `linkHostedSignalProtocolRelayDevice` gives only `NOT_PRIMARY`.
@@ -44,6 +46,8 @@ export type HostedSignalProtocolRelayDeviceProvisioningErrorCode =
  * `retryable` is always false.
  */
 export class HostedSignalProtocolRelayDeviceProvisioningError extends Error {
+  /** The optional reference of the response failure that this error wraps. */
+  declare public readonly requestId?: string;
   public readonly code: HostedSignalProtocolRelayDeviceProvisioningErrorCode;
   /** Always false: the same input is refused again. */
   public readonly retryable = false as const;
@@ -56,5 +60,6 @@ export class HostedSignalProtocolRelayDeviceProvisioningError extends Error {
     super(message, options?.cause === undefined ? undefined : { cause: options.cause });
     this.code = code;
     this.name = "HostedSignalProtocolRelayDeviceProvisioningError";
+    copySignalProtocolRelayResponseReference(this, options?.cause);
   }
 }

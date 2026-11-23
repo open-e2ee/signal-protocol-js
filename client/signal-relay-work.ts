@@ -11,12 +11,12 @@
  * the SDK cannot tell that call from a call outside the hook.
  *
  * A stopped item may not enter an app hook, and an item that leaves an app
- * hook after stop() starts throws RelayWorkStopped. So no SDK step after the
+ * hook after stop() starts throws SignalProtocolRelayWorkStopped. So no SDK step after the
  * hook runs, and the relay delivers the envelope again after the next start.
  *
  * An item can hold a lock while it waits in an app hook. So an item that
  * waits for a lock stops waiting when stop() stops it, and throws
- * RelayWorkStopped.
+ * SignalProtocolRelayWorkStopped.
  */
 
 import type AsyncLock from 'async-lock';
@@ -30,19 +30,19 @@ import type { SignalProtocolClientHooks } from './event-hooks';
  *
  * @internal
  */
-export class RelayWorkStopped extends Error {
+export class SignalProtocolRelayWorkStopped extends Error {
   constructor() {
     super('The client stopped during relay work');
-    this.name = 'RelayWorkStopped';
+    this.name = 'SignalProtocolRelayWorkStopped';
   }
 }
 
 /**
  * The relay request bound of one client. A request or a phase that a stop
- * signal ended rejects with RelayWorkStopped.
+ * signal ended rejects with SignalProtocolRelayWorkStopped.
  */
 export function createSignalProtocolRelayFanOut(): BoundedFanOut {
-  return new BoundedFanOut({ stopped: () => new RelayWorkStopped() });
+  return new BoundedFanOut({ stopped: () => new SignalProtocolRelayWorkStopped() });
 }
 
 const adapterFanOuts = new WeakMap<object, BoundedFanOut>();
@@ -78,9 +78,9 @@ export function clientSignalProtocolRelayFanOut(signalRelay: object | undefined)
   return (signalRelay === undefined ? undefined : adapterFanOuts.get(signalRelay)) ?? createSignalProtocolRelayFanOut();
 }
 
-/** Rethrow a RelayWorkStopped that a catch-all caught. */
+/** Rethrow a SignalProtocolRelayWorkStopped that a catch-all caught. */
 export function rethrowSignalProtocolRelayWorkStopped(error: unknown): void {
-  if (error instanceof RelayWorkStopped) throw error;
+  if (error instanceof SignalProtocolRelayWorkStopped) throw error;
 }
 
 /**
@@ -105,9 +105,9 @@ export class SignalProtocolRelayWork {
     return this.appCalls > 0;
   }
 
-  /** Throw RelayWorkStopped if stop() stopped this item. */
+  /** Throw SignalProtocolRelayWorkStopped if stop() stopped this item. */
   proceed(): void {
-    if (this.stopper.signal.aborted) throw new RelayWorkStopped();
+    if (this.stopper.signal.aborted) throw new SignalProtocolRelayWorkStopped();
   }
 
   /** Stop the item. Its next SDK step after an app hook throws. */
@@ -117,7 +117,7 @@ export class SignalProtocolRelayWork {
 
   /**
    * Call app code. The item counts as waiting in the app until the call
-   * settles. After a stop, the exit throws RelayWorkStopped in place of the
+   * settles. After a stop, the exit throws SignalProtocolRelayWorkStopped in place of the
    * result or the app error, so no SDK step after the call runs.
    */
   async callApp<T>(call: () => T | Promise<T>): Promise<T> {
@@ -147,7 +147,7 @@ export class SignalProtocolRelayWork {
 
 /**
  * Run a task under a lock. When the stop signal aborts while the task waits
- * for the lock, the wait ends with RelayWorkStopped, and the task never runs.
+ * for the lock, the wait ends with SignalProtocolRelayWorkStopped, and the task never runs.
  * A task that holds the lock runs on. A task that finds the lock free takes
  * it, also after the abort. Without a signal, this is lock.acquire().
  */
@@ -163,7 +163,7 @@ export function acquireUntilStopped<T>(
     const abandon = () => {
       if (!waiting) return;
       waiting = false;
-      reject(new RelayWorkStopped());
+      reject(new SignalProtocolRelayWorkStopped());
     };
     lock
       .acquire(key, async () => {
@@ -204,7 +204,7 @@ export class SignalProtocolRelayWorkTracker {
   /**
    * Run a task as a relay work item. The task starts at once, before run()
    * returns. While stop() settles, the item starts stopped. A
-   * RelayWorkStopped from the task resolves the returned promise. Other
+   * SignalProtocolRelayWorkStopped from the task resolves the returned promise. Other
    * errors reject it.
    */
   async run(task: (work: SignalProtocolRelayWork) => Promise<void>): Promise<void> {
@@ -214,7 +214,7 @@ export class SignalProtocolRelayWorkTracker {
     try {
       await task(work);
     } catch (error) {
-      if (!(error instanceof RelayWorkStopped)) throw error;
+      if (!(error instanceof SignalProtocolRelayWorkStopped)) throw error;
     } finally {
       this.items.delete(work);
       this.notify();
@@ -223,7 +223,7 @@ export class SignalProtocolRelayWorkTracker {
 
   /**
    * Stop every item except the given items, and do not wait. A stopped item
-   * that leaves an app hook throws RelayWorkStopped, so it writes nothing
+   * that leaves an app hook throws SignalProtocolRelayWorkStopped, so it writes nothing
    * more. Items that start later are not stopped. settle() stops them.
    */
   stopAllExcept(keep: ReadonlySet<SignalProtocolRelayWork>): void {

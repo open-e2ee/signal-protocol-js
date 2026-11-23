@@ -443,10 +443,6 @@ The group master key and the revision at the send
 
 Tells the adapter that a relay batch starts or ends.
 
-SDK 14 also accepts the deprecated `setSignalProtocolRelayBatching`. When
-one level of an adapter supplies both names, SDK 14 calls the deprecated
-name. SDK 15.0.0 removes the deprecated name.
-
 #### Parameters
 
 ##### active
@@ -456,26 +452,6 @@ name. SDK 15.0.0 removes the deprecated name.
 #### Returns
 
 `void`
-
-***
-
-### ~~setSignalProtocolRelayBatching()?~~
-
-> `optional` **setSignalProtocolRelayBatching**(`active`): `void`
-
-#### Parameters
-
-##### active
-
-`boolean`
-
-#### Returns
-
-`void`
-
-#### Deprecated
-
-Use `setRelayBatching`. SDK 15.0.0 removes this name.
 
 ***
 

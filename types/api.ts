@@ -346,9 +346,6 @@ export interface SignalProtocolClient {
    */
   startRelaySubscription(): void;
 
-  /** @deprecated Use `startRelaySubscription`. SDK 15.0.0 removes this name. */
-  startSignalProtocolRelaySubscription(): void;
-
   /**
    * Stop the relay subscription
    *
@@ -365,9 +362,6 @@ export interface SignalProtocolClient {
    */
   stopRelaySubscription(): void;
 
-  /** @deprecated Use `stopRelaySubscription`. SDK 15.0.0 removes this name. */
-  stopSignalProtocolRelaySubscription(): void;
-
   /**
    * The connection state of the relay subscription.
    *
@@ -376,9 +370,6 @@ export interface SignalProtocolClient {
    * Use it for a local indicator of this device's connection.
    */
   readonly relayConnectionState: SignalProtocolRelayConnectionState;
-
-  /** @deprecated Use `relayConnectionState`. SDK 15.0.0 removes this name. */
-  readonly signalProtocolRelayConnectionState: SignalProtocolRelayConnectionState;
 
   /**
    * Subscribe to relay connection transitions.
@@ -390,11 +381,6 @@ export interface SignalProtocolClient {
    * @returns Unsubscribe function
    */
   subscribeRelayConnectionState(
-    listener: (state: SignalProtocolRelayConnectionState) => void
-  ): Unsubscribe;
-
-  /** @deprecated Use `subscribeRelayConnectionState`. SDK 15.0.0 removes this name. */
-  subscribeSignalProtocolRelayConnectionState(
     listener: (state: SignalProtocolRelayConnectionState) => void
   ): Unsubscribe;
 

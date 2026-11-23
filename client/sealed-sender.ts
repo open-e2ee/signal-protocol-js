@@ -1,23 +1,15 @@
 /**
- * The Relay scope of a sealed sender configuration. The new name wins, and
- * two different values fail.
+ * The Relay scope of a sealed sender configuration.
  *
- * @throws SignalProtocolRelayNameConflictError when both names hold different
- *   values.
- * @throws Error when neither name holds a value.
+ * @throws Error when the configuration holds no scope.
  */
 export function sealedSenderSignalProtocolRelayScopeId(
-  config: Pick<SealedSenderConfig, 'signalProtocolRelayScopeId' | 'relayScopeId'>
+  config: Pick<SealedSenderConfig, 'relayScopeId'>
 ): Uint8Array {
-  const scopeId = readRenamedOption(config.signalProtocolRelayScopeId, config.relayScopeId, {
-    newName: 'signalProtocolRelayScopeId',
-    earlierName: 'relayScopeId',
-    operation: 'sealedSender',
-  });
-  if (scopeId === undefined) {
-    throw new Error('sealedSender.signalProtocolRelayScopeId is required');
+  if (config.relayScopeId === undefined) {
+    throw new Error('sealedSender.relayScopeId is required');
   }
-  return scopeId;
+  return config.relayScopeId;
 }
 
 /**
@@ -38,7 +30,6 @@ import type { Envelope, SealedSenderAuth } from '../remote/signal-relay/types';
 import { resolveSignalProtocolLogger, type Logger } from '../logger';
 import type { Base64, SignalProtocolLocalStore } from '../types';
 import { ContentHint } from '../types/messages';
-import { readRenamedOption } from '../types/renamed-member';
 import { ProtocolAddress } from '../types/address';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { base64ToBytes, bytesToBase64 } from '../internal/crypto';

@@ -69,7 +69,7 @@ export class HostedSignalProtocolRelayDeviceLinkError extends Error {
 
   public constructor(message: string) {
     super(message);
-    this.name = "HostedRelayDeviceLinkError";
+    this.name = "HostedSignalProtocolRelayDeviceLinkError";
   }
 }
 
@@ -227,9 +227,3 @@ export async function finishHostedDeviceLinkRollback(
   await clearHostedDeviceLinkIntent(groupStore, marker.intent);
   await deleteHostedDeviceLinkMarker(storage);
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `HostedSignalProtocolRelayDeviceLinkError`. SDK 15.0.0 removes this name. */
-export const HostedRelayDeviceLinkError = HostedSignalProtocolRelayDeviceLinkError;
-/** @deprecated Use `HostedSignalProtocolRelayDeviceLinkError`. SDK 15.0.0 removes this name. */
-export type HostedRelayDeviceLinkError = HostedSignalProtocolRelayDeviceLinkError;

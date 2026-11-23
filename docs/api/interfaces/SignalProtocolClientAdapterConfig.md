@@ -37,16 +37,6 @@ Optional brokered remote object store for encrypted attachments.
 
 ***
 
-### ~~signalProtocolRelay?~~
-
-> `optional` **signalProtocolRelay?**: [`SignalProtocolRelayServer`](SignalProtocolRelayServer.md)
-
-#### Deprecated
-
-Use `relay`. SDK 15.0.0 removes this name.
-
-***
-
 ### storage
 
 > **storage**: [`SignalProtocolLocalStore`](SignalProtocolLocalStore.md)

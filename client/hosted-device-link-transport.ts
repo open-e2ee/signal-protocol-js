@@ -1,6 +1,6 @@
 import { bytesToBase64, concatBytes, sha256, stringToBytes } from '../internal/crypto';
 import type { HostedSignalProtocolRelayManagedDeviceLinkRequest } from './hosted';
-import { signalRelayProofLabels } from './signal-relay-protocol';
+import { SIGNAL_RELAY_PROOF_LABELS } from './signal-relay-protocol';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -11,8 +11,7 @@ function lengthPrefixed(value: Uint8Array): Uint8Array {
 
 /**
  * Compose the existing link protocol under a private current-token
- * capability. `post` gives the body the token ID and the Relay protocol
- * version of the request, which selects the labels of the two proofs.
+ * capability. `post` gives the body the token ID of the request.
  */
 export async function submitHostedSignalProtocolRelayDeviceLink(
   request: HostedSignalProtocolRelayManagedDeviceLinkRequest,
@@ -20,19 +19,19 @@ export async function submitHostedSignalProtocolRelayDeviceLink(
     readonly relayScopeId: string;
     readonly materialFingerprint: string;
     readonly signalRegistration: JsonRecord;
-    readonly post: (body: (tokenId: string, protocolVersion: number) => Promise<JsonRecord>) => Promise<unknown>;
+    readonly post: (body: (tokenId: string) => Promise<JsonRecord>) => Promise<unknown>;
   },
 ): Promise<unknown> {
-  return protocol.post(async (tokenId, protocolVersion) => {
+  return protocol.post(async (tokenId) => {
     const challenge = await sha256(concatBytes(
-      signalRelayProofLabels(protocolVersion).deviceLinkChallenge,
+      SIGNAL_RELAY_PROOF_LABELS.deviceLinkChallenge,
       ...[protocol.relayScopeId, tokenId, request.operationId, protocol.materialFingerprint]
         .map((value) => lengthPrefixed(stringToBytes(value))),
       lengthPrefixed(request.newDeviceAuthentication.publicKey),
     ));
     const [activeDeviceProof, newDeviceProof] = await Promise.all([
-      request.activeDeviceAuthentication.signChallenge(challenge, protocolVersion),
-      request.newDeviceAuthentication.signChallenge(challenge, protocolVersion),
+      request.activeDeviceAuthentication.signChallenge(challenge),
+      request.newDeviceAuthentication.signChallenge(challenge),
     ]);
     return {
       publishableKey: request.publishableKey,

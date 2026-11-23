@@ -131,16 +131,6 @@ implementations are outside the published SDK.
 
 - `@open-e2ee/signal-protocol-sdk/local/store/memory`
 
-### Deprecated subpaths
-
-Each deprecated subpath loads the same module as its replacement. SDK 15.0.0
-removes the deprecated subpaths.
-
-| Deprecated subpath | Replacement |
-| --- | --- |
-| `@open-e2ee/signal-protocol-sdk/remote/relay` | `@open-e2ee/signal-protocol-sdk/remote/signal-relay` |
-| `@open-e2ee/signal-protocol-sdk/remote/relay/types` | `@open-e2ee/signal-protocol-sdk/remote/signal-relay/types` |
-
 `internal/**` is implementation-only and not part of the supported external API.
 
 ## Basic concepts

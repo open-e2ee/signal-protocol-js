@@ -51,6 +51,14 @@ A device link stopped. The same input gives the same refusal, so
 
 ***
 
+### requestId?
+
+> `readonly` `optional` **requestId?**: `string`
+
+The optional reference of the response failure that this error wraps.
+
+***
+
 ### retryable
 
 > `readonly` **retryable**: `false`

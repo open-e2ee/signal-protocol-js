@@ -79,10 +79,10 @@ export async function encryptMessage(
   const sessionId = ProtocolAddress.toString(remoteAddress);
   try {
     // Check prekey age and rotate before advancing any send state.
-    if (ctx.signalProtocolRelay) {
+    if (ctx.relay) {
       const maxAgeMs = ctx.config.maxPreKeyAgeMs;
       const preKeyCheck = await ensurePreKeysValid(
-        ctx.signalProtocolRelay,
+        ctx.relay,
         ctx.userId,
         ctx.deviceId,
         ctx.storage,
@@ -320,7 +320,7 @@ export async function sendTypingIndicator(
     },
   });
 
-  if (!ctx.signalProtocolRelay) {
+  if (!ctx.relay) {
     ctx.logger.debug('Cannot send typing indicator: relay not configured', {
       category: 'E2EE',
     });
@@ -357,7 +357,7 @@ export async function sendTypingIndicator(
 
     // Send as ciphertext. Typing indicators are encrypted Content inside
     // a ciphertext envelope. The relay contract carries only the outer type.
-    await ctx.signalProtocolRelay.send({
+    await ctx.relay.send({
       targetUserId: recipientUserId,
       targetDeviceId: recipientDeviceId,
       senderUserId: ctx.userId,
@@ -507,7 +507,7 @@ export async function sendReceipt(
     },
   });
 
-  if (!ctx.signalProtocolRelay) {
+  if (!ctx.relay) {
     ctx.logger.debug(`Cannot send ${receiptTypeName} receipt: relay not configured`, {
       category: 'E2EE',
     });
@@ -584,7 +584,7 @@ async function sendReceiptToDevice(
     const { envelope, sealed } = prepared;
     if (sealed) {
       try {
-        await ctx.signalProtocolRelay!.sendMultiRecipientUnidentified!(
+        await ctx.relay!.sendMultiRecipientUnidentified!(
           sealed.sentMessageBase64,
           sealed.auth,
           envelope.timestamp,
@@ -602,7 +602,7 @@ async function sendReceiptToDevice(
         prepared = { envelope };
       }
     }
-    await ctx.signalProtocolRelay!.send(envelope);
+    await ctx.relay!.send(envelope);
   };
   const sendOrRefresh = async () => {
     try {

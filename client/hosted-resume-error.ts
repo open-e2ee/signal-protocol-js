@@ -1,3 +1,5 @@
+import { copySignalProtocolRelayResponseReference } from './signal-relay-response-reference';
+
 /** Failures of strict hosted resume, without application or key payloads. */
 export type HostedSignalProtocolRelayResumePhase =
   'reading-local-state' | 'authenticating' | 'initializing' | 'complete';
@@ -21,6 +23,8 @@ let retainCleanup: (
 ) => void;
 /** A strict-resume refusal. An unresolved cleanup remains owned by this error. */
 export class HostedSignalProtocolRelayResumeError extends Error {
+  /** The optional reference of the response failure that this error wraps. */
+  declare public readonly requestId?: string;
   #cleanup?: () => Promise<void>;
   #settling?: Promise<void>;
   static #retainedCleanup = (retainCleanup = (error, cleanup) => {
@@ -32,7 +36,8 @@ export class HostedSignalProtocolRelayResumeError extends Error {
     options?: ErrorOptions,
   ) {
     super('The existing hosted device could not be resumed.', options);
-    this.name = 'HostedRelayResumeError';
+    this.name = 'HostedSignalProtocolRelayResumeError';
+    copySignalProtocolRelayResponseReference(this, options?.cause);
   }
   /** True while this error still owns a client whose stop has not completed. */
   get cleanupPending(): boolean {
@@ -61,17 +66,3 @@ export function retainHostedResumeCleanup(
 ): void {
   retainCleanup(error, cleanup);
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `HostedSignalProtocolRelayResumeError`. SDK 15.0.0 removes this name. */
-export const HostedRelayResumeError = HostedSignalProtocolRelayResumeError;
-/** @deprecated Use `HostedSignalProtocolRelayResumeError`. SDK 15.0.0 removes this name. */
-export type HostedRelayResumeError = HostedSignalProtocolRelayResumeError;
-/** @deprecated Use `HostedSignalProtocolRelayResumeErrorCode`. SDK 15.0.0 removes this name. */
-export type HostedRelayResumeErrorCode = HostedSignalProtocolRelayResumeErrorCode;
-/** @deprecated Use `HostedSignalProtocolRelayResumePhase`. SDK 15.0.0 removes this name. */
-export type HostedRelayResumePhase = HostedSignalProtocolRelayResumePhase;
-/** @deprecated Use `HostedSignalProtocolRelayResumeProgress`. SDK 15.0.0 removes this name. */
-export type HostedRelayResumeProgress = HostedSignalProtocolRelayResumeProgress;
-/** @deprecated Use `HostedSignalProtocolRelayResumeProgressCallback`. SDK 15.0.0 removes this name. */
-export type HostedRelayResumeProgressCallback = HostedSignalProtocolRelayResumeProgressCallback;

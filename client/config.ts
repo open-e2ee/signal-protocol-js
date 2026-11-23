@@ -103,14 +103,8 @@ interface SealedSenderConfigBase {
 
   /**
    * Opaque 16-byte Relay project-environment scope pinned by the application.
-   *
-   * Set this member or the deprecated `signalProtocolRelayScopeId`. The client requires one
-   * of the two.
    */
-  relayScopeId?: Uint8Array;
-
-  /** @deprecated Use `relayScopeId`. SDK 15.0.0 removes this name. */
-  signalProtocolRelayScopeId?: Uint8Array;
+  relayScopeId: Uint8Array;
 
   /** Issuer key IDs revoked by this deployment's operator. */
   revokedIssuerKeyIds: readonly number[];
@@ -360,9 +354,6 @@ export interface SignalProtocolClientConfig {
    * ```
    */
   relay?: SignalProtocolRelayServer;
-
-  /** @deprecated Use `relay`. SDK 15.0.0 removes this name. */
-  signalProtocolRelay?: SignalProtocolRelayServer;
 
   /**
    * Remote object store adapter for encrypted file uploads (two-layer encryption)

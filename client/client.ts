@@ -83,13 +83,10 @@ import {
 } from '../internal/protocol/sealed-sender';
 import {
   assertHookName,
-  assertRenamedHooks,
   callHook,
-  currentHookName,
   deferHooks,
   type SignalProtocolClientHooks,
 } from './event-hooks';
-import { readRenamedImplementation, readRenamedOption } from '../types/renamed-member';
 import type { KeyTransparencyFailureEvent } from './key-transparency/event';
 import type { KeyTransparencyRuntime } from './key-transparency/runtime';
 import type { KeyTransparencyCheckOutcome } from './key-transparency/verified-search';
@@ -248,7 +245,7 @@ import { SignalProtocolClientState, SIGNAL_PROTOCOL_CLIENT_CONSTANTS } from './s
 import {
   clientSignalProtocolRelayFanOut,
   rethrowSignalProtocolRelayWorkStopped,
-  RelayWorkStopped,
+  SignalProtocolRelayWorkStopped,
   type SignalProtocolRelayWork,
 } from './signal-relay-work';
 import { StaleSessionRefreshError } from './signal-relay-device-refusal';
@@ -285,70 +282,6 @@ const storageLock = new AsyncLock({
   timeout: 30000, // 30 second timeout for storage initialization
   maxPending: 100, // Limit pending operations
 });
-
-/**
- * The connection state of a relay, read through `readRenamedImplementation`.
- */
-function signalProtocolRelayConnectionStateOf(
-  signalProtocolRelay: SignalProtocolRelayServer
-): SignalProtocolRelayConnectionState | undefined {
-  return readRenamedImplementation(
-    signalProtocolRelay,
-    'signalProtocolRelayConnectionState',
-    'relayConnectionState'
-  );
-}
-
-/**
- * Subscribe to the connection transitions of a relay, through
- * `readRenamedImplementation`. A relay with neither member gives no
- * subscription.
- */
-function subscribeSignalProtocolRelayConnectionStateOf(
-  signalProtocolRelay: SignalProtocolRelayServer,
-  listener: (state: SignalProtocolRelayConnectionState) => void
-): Unsubscribe | undefined {
-  return readRenamedImplementation(
-    signalProtocolRelay,
-    'subscribeSignalProtocolRelayConnectionState',
-    'subscribeRelayConnectionState'
-  )?.(listener);
-}
-
-/**
- * Give each renamed option of a client configuration its new name.
- *
- * @throws SignalProtocolRelayNameConflictError when an option and its
- *   deprecated name hold different values.
- */
-function withSignalProtocolRelayNames(config: SignalProtocolClientConfig): SignalProtocolClientConfig {
-  const operation = 'DefaultSignalProtocolClient.create';
-  const { relay: earlierSignalProtocolRelay, ...rest } = config;
-  const signalProtocolRelay = readRenamedOption(config.signalProtocolRelay, earlierSignalProtocolRelay, {
-    newName: 'signalProtocolRelay',
-    earlierName: 'relay',
-    operation,
-  });
-  if (config.hooks) assertRenamedHooks(config.hooks, operation);
-  const sealedSender = config.sealedSender;
-  let resolvedSealedSender = sealedSender;
-  if (sealedSender && sealedSender.relayScopeId !== undefined) {
-    const { relayScopeId: earlierScopeId, ...sealedRest } = sealedSender;
-    resolvedSealedSender = {
-      ...sealedRest,
-      signalProtocolRelayScopeId: readRenamedOption(sealedSender.signalProtocolRelayScopeId, earlierScopeId, {
-        newName: 'sealedSender.signalProtocolRelayScopeId',
-        earlierName: 'sealedSender.relayScopeId',
-        operation,
-      }),
-    };
-  }
-  return {
-    ...rest,
-    ...(signalProtocolRelay === undefined ? {} : { signalProtocolRelay }),
-    ...(resolvedSealedSender === undefined ? {} : { sealedSender: resolvedSealedSender }),
-  };
-}
 
 /** The reason of a `denied` receive outcome. */
 function receiveDenialReason(error: Error): string {
@@ -531,15 +464,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * @see SignalProtocolClient.relayConnectionState
    */
   get relayConnectionState(): SignalProtocolRelayConnectionState {
-    return this.signalProtocolRelayConnectionState;
-  }
-
-  /** @deprecated Use `relayConnectionState`. SDK 15.0.0 removes this name. */
-  get signalProtocolRelayConnectionState(): SignalProtocolRelayConnectionState {
-    return (
-      (this.signalProtocolRelay && signalProtocolRelayConnectionStateOf(this.signalProtocolRelay)) ??
-      this.stoppedSignalProtocolRelayConnection
-    );
+    return this.signalProtocolRelay?.relayConnectionState ?? this.stoppedSignalProtocolRelayConnection;
   }
 
   /**
@@ -551,17 +476,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   public subscribeRelayConnectionState(
     listener: (state: SignalProtocolRelayConnectionState) => void
   ): Unsubscribe {
-    return this.subscribeSignalProtocolRelayConnectionState(listener);
-  }
-
-  /** @deprecated Use `subscribeRelayConnectionState`. SDK 15.0.0 removes this name. */
-  public subscribeSignalProtocolRelayConnectionState(
-    listener: (state: SignalProtocolRelayConnectionState) => void
-  ): Unsubscribe {
-    return (
-      (this.signalProtocolRelay && subscribeSignalProtocolRelayConnectionStateOf(this.signalProtocolRelay, listener)) ??
-      (() => undefined)
-    );
+    return this.signalProtocolRelay?.subscribeRelayConnectionState(listener) ?? (() => undefined);
   }
 
   private signalProtocolRelayUnsubscribe?: Unsubscribe;
@@ -710,9 +625,9 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     this.contentAdapter = config.contentAdapter ?? createDefaultSignalProtocolContentAdapter();
 
     // Dependency injection: use the provided relay adapter when configured.
-    this.signalProtocolRelay = config.signalProtocolRelay;
+    this.signalProtocolRelay = config.relay;
     // A relay adapter that sends relay requests itself shares its bound.
-    this.fanOut = clientSignalProtocolRelayFanOut(config.signalProtocolRelay);
+    this.fanOut = clientSignalProtocolRelayFanOut(config.relay);
 
     // Dependency injection: use the remote object store for encrypted attachments.
     this.remoteObjectStore = config.remoteObjectStore;
@@ -979,8 +894,8 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     const sessions = this.sendSessionCallbacks(() => this.ctx);
     if (sessions) this.cipher.setSessionCallbacks(sessions);
     // A sync payload has no send result, so the cipher reports its error.
-    this.cipher.setSignalProtocolRelayProtocolErrorReporter((error) =>
-      callHook(this.hooks, 'onSignalProtocolRelayProtocolError', error)
+    this.cipher.setRelayProtocolErrorReporter((error) =>
+      callHook(this.hooks, 'onRelayProtocolError', error)
     );
 
     if (config?.sealedSender) {
@@ -1213,7 +1128,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       deviceId: this.deviceId,
       manager: this.manager,
       storage: this._storage,
-      signalProtocolRelay: this.signalProtocolRelay,
       relay: this.signalProtocolRelay,
       remoteObjectStore: this.remoteObjectStore,
       config: this.config,
@@ -1252,7 +1166,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
       await this.deliveries.announce(work.wrapHooks(this.hooks), events);
       announced = true;
     });
-    if (!announced) throw new RelayWorkStopped();
+    if (!announced) throw new SignalProtocolRelayWorkStopped();
   }
 
   /**
@@ -1514,7 +1428,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * after the work ends, so a retry timer of the send sees that stop. The
    * send is in deliveryReceiptSends while it runs.
    *
-   * @throws RelayWorkStopped when a stop ended the send before it finished,
+   * @throws SignalProtocolRelayWorkStopped when a stop ended the send before it finished,
    *   so the receive queue keeps the receipt and sends it after the next
    *   start
    */
@@ -1536,7 +1450,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         this.deliveryReceiptSends.delete(work);
       }
     });
-    if (!sent) throw new RelayWorkStopped();
+    if (!sent) throw new SignalProtocolRelayWorkStopped();
   }
 
   /**
@@ -1883,7 +1797,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     retained?: RetainedIdentities,
     start?: SignalProtocolClientStart,
   ): Promise<DefaultSignalProtocolClient> {
-    config = withSignalProtocolRelayNames(config);
     const deviceId = config?.deviceId ?? 1; // Default to primary device
 
     // Use locking to prevent race conditions when multiple create() calls happen concurrently.
@@ -1966,7 +1879,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
         // Auto-sync to server if relay provided
         let syncFailed = false;
-        if (finalConfig?.signalProtocolRelay) {
+        if (finalConfig?.relay) {
           try {
             await client.syncToServer(finalConfig.onProgress);
           } catch (e) {
@@ -1977,12 +1890,12 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
             syncFailed = true;
           }
         }
-        client._syncStatus = finalConfig?.signalProtocolRelay ? (syncFailed ? 'failed' : 'synced') : 'none';
+        client._syncStatus = finalConfig?.relay ? (syncFailed ? 'failed' : 'synced') : 'none';
 
         // Start relay subscription if relay is configured with onMessageDecrypted hook
         // Only subscribe if sync succeeded - subscriptions require a valid server session
-        if (!syncFailed && finalConfig?.signalProtocolRelay && finalConfig?.hooks?.onMessageDecrypted) {
-          client.startSignalProtocolRelaySubscription();
+        if (!syncFailed && finalConfig?.relay && finalConfig?.hooks?.onMessageDecrypted) {
+          client.startRelaySubscription();
         }
 
         // Post the stored retry requests whose next attempt time has come, and
@@ -1990,7 +1903,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         // The passes run in the background.
         // The receive queue resumes the stored receive records first. With no
         // relay, it serves the helper receives alone.
-        if (finalConfig?.signalProtocolRelay) client.startRetryRequests();
+        if (finalConfig?.relay) client.startRetryRequests();
         else void client.receiveQueue.start();
 
         // Validate sender keys config and warn on extreme values
@@ -2090,7 +2003,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     expectedCurrentCommitment: Uint8Array,
     identityType: IdentityType = 'aci'
   ): Promise<void> {
-    if (!this.config.signalProtocolRelay) {
+    if (!this.config.relay) {
       throw new EncryptionError(
         'Relay server not configured',
         EncryptionErrorCode.INITIALIZATION_FAILED
@@ -2106,7 +2019,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
     this._syncStatus = 'failed';
     try {
-      await this.config.signalProtocolRelay.rotateIdentityKey({
+      await this.config.relay.rotateIdentityKey({
         userId: this.userId,
         deviceId: this.deviceId,
         identity: createCompositeIdentityV1(replacement),
@@ -3316,7 +3229,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
    * @internal Send serialized first-sync content to one listed own device as
    * relay work. See `SignalProtocolServiceCipher.sendFirstSyncToOwnDevice`.
    *
-   * @throws RelayWorkStopped when `signal` aborts or the client stops before
+   * @throws SignalProtocolRelayWorkStopped when `signal` aborts or the client stops before
    *   the send ends
    */
   async sendFirstSyncToOwnDevice(
@@ -3329,7 +3242,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     } = {}
   ): Promise<'accepted' | 'unlisted' | 'not-accepted'> {
     const { signal, checkCopy } = options;
-    if (signal?.aborted) throw new RelayWorkStopped();
+    if (signal?.aborted) throw new SignalProtocolRelayWorkStopped();
     let result: 'accepted' | 'unlisted' | 'not-accepted' | undefined;
     await this.state.signalRelayWork.run(async (work) => {
       // Either the stop of the client or the signal of the caller stops the send.
@@ -3349,7 +3262,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         for (const source of sources) source.removeEventListener('abort', abort);
       }
     });
-    if (result === undefined) throw new RelayWorkStopped();
+    if (result === undefined) throw new SignalProtocolRelayWorkStopped();
     return result;
   }
 
@@ -3769,7 +3682,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     const protocolError = signalRelayProtocolErrorOf(result);
     this.releaseDeliveries(clientMessageId);
     if (profileKey) await profileKeys?.delivered(recipientId, profileKey);
-    if (protocolError) await callHook(context.hooks, 'onSignalProtocolRelayProtocolError', protocolError);
+    if (protocolError) await callHook(context.hooks, 'onRelayProtocolError', protocolError);
     return result;
   }
 
@@ -3995,8 +3908,7 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     callback: NonNullable<import('./event-hooks').SignalProtocolClientHooks[K]>
   ): void {
     assertHookName(name);
-    // A deprecated hook name registers the hook under its new name.
-    (this.hooks as Record<keyof SignalProtocolClientHooks, unknown>)[currentHookName(name)] = callback;
+    (this.hooks as Record<keyof SignalProtocolClientHooks, unknown>)[name] = callback;
     // Received content waits for this hook, or failed in the hook before.
     if (name === 'onMessageDecrypted') this.receiveQueue.retryFailedHooks();
 
@@ -4010,8 +3922,26 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
   // SIGNAL PROTOCOL RELAY SUBSCRIPTION (Auto-decrypt and notify ContentManager via hook)
   // ============================================================================
 
-  /** @deprecated Use `startRelaySubscription`. SDK 15.0.0 removes this name. */
-  public startSignalProtocolRelaySubscription(): void {
+  /**
+   * Start relay subscription for automatic message decryption
+   *
+   * When configured with both `relay` and `onMessageDecrypted` hook, DefaultSignalProtocolClient will:
+   * 1. Subscribe to incoming envelopes from the relay
+   * 2. Decrypt messages appropriately (pairwise vs group/sender key)
+   * 3. Call onMessageDecrypted hook with DecryptedEnvelope (for ContentManager storage)
+   * 4. Mark messages as delivered on the relay
+   *
+   * This enables ContentManager to store decrypted content in an encrypted SQLite
+   * database without any knowledge of cryptography.
+   *
+   * Callers can run this manually after registering hooks via registerHook().
+   * Called automatically by create() when relay + hook configured.
+   * A call while stop() runs is refused and logged; start again after stop()
+   * resolves.
+   *
+   * @see SignalProtocolClient.startRelaySubscription
+   */
+  public startRelaySubscription(): void {
     if (!this.signalProtocolRelay) {
       this.logger.warn('Cannot start relay subscription: relay not configured', {
         category: 'E2EE',
@@ -4134,13 +4064,13 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
     void this.resendJobs.start();
     const signalProtocolRelay = this.signalProtocolRelay;
     if (this.resendJobsOnConnect === undefined && signalProtocolRelay) {
-      this.resendJobsOnConnect = subscribeSignalProtocolRelayConnectionStateOf(signalProtocolRelay, (connection) => {
+      this.resendJobsOnConnect = signalProtocolRelay.subscribeRelayConnectionState((connection) => {
         if (connection.state === 'connected') void this.resendJobs.start();
       });
     }
     void this.sendIntents.start();
     if (this.sendDriverOnConnect === undefined && signalProtocolRelay && this.sendIntents.enabled) {
-      this.sendDriverOnConnect = subscribeSignalProtocolRelayConnectionStateOf(signalProtocolRelay, (connection) => {
+      this.sendDriverOnConnect = signalProtocolRelay.subscribeRelayConnectionState((connection) => {
         if (connection.state === 'connected') void this.sendIntents.start();
       });
     }
@@ -4148,34 +4078,21 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
 
   /** Tell the content adapter that a relay batch starts or ends. */
   private setSignalProtocolRelayBatching(active: boolean): void {
-    readRenamedImplementation(this.contentAdapter, 'setSignalProtocolRelayBatching', 'setRelayBatching')?.(active);
+    this.contentAdapter.setRelayBatching?.(active);
   }
 
   /**
-   * Start relay subscription for automatic message decryption
+   * Stop the relay subscription
    *
-   * When configured with both `relay` and `onMessageDecrypted` hook, DefaultSignalProtocolClient will:
-   * 1. Subscribe to incoming envelopes from the relay
-   * 2. Decrypt messages appropriately (pairwise vs group/sender key)
-   * 3. Call onMessageDecrypted hook with DecryptedEnvelope (for ContentManager storage)
-   * 4. Mark messages as delivered on the relay
+   * Pauses message processing via the relay subscription without destroying
+   * DefaultSignalProtocolClient state. startRelaySubscription() restarts the subscription.
    *
-   * This enables ContentManager to store decrypted content in an encrypted SQLite
-   * database without any knowledge of cryptography.
+   * Use this when the app backgrounds to let the background task handle messages.
+   * Resume when the app foregrounds for real-time message delivery.
    *
-   * Callers can run this manually after registering hooks via registerHook().
-   * Called automatically by create() when relay + hook configured.
-   * A call while stop() runs is refused and logged; start again after stop()
-   * resolves.
-   *
-   * @see SignalProtocolClient.startRelaySubscription
+   * @see SignalProtocolClient.stopRelaySubscription
    */
-  public startRelaySubscription(): void {
-    this.startSignalProtocolRelaySubscription();
-  }
-
-  /** @deprecated Use `stopRelaySubscription`. SDK 15.0.0 removes this name. */
-  public stopSignalProtocolRelaySubscription(): void {
+  public stopRelaySubscription(): void {
     // Send the batched delivery receipts before unsubscribing. During the
     // hold, stop() sends the batches that wait at each of its flushes and
     // drops a batch made after its last flush.
@@ -4191,21 +4108,6 @@ export class DefaultSignalProtocolClient implements SignalProtocolClient {
         data: { userId: this.userId, deviceId: this.deviceId },
       });
     }
-  }
-
-  /**
-   * Stop the relay subscription
-   *
-   * Pauses message processing via the relay subscription without destroying
-   * DefaultSignalProtocolClient state. startRelaySubscription() restarts the subscription.
-   *
-   * Use this when the app backgrounds to let the background task handle messages.
-   * Resume when the app foregrounds for real-time message delivery.
-   *
-   * @see SignalProtocolClient.stopRelaySubscription
-   */
-  public stopRelaySubscription(): void {
-    this.stopSignalProtocolRelaySubscription();
   }
 
   /**

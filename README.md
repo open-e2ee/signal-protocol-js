@@ -35,7 +35,7 @@ The relay never needs message plaintext or device private keys.
 
 The OpenE2EE Signal Protocol SDK implements a versioned profile of the published Signal Protocol specifications. It is not affiliated with Signal Messenger and is **not wire-compatible with Signal Messenger or libsignal**. Messages, identities, and safety numbers do not interoperate. See the [notice](./NOTICE) and [documented deviations](./docs/DEVIATIONS.md).
 
-Version `14.7.x`. Public APIs and persisted formats follow semantic versioning.
+Version `15.0.x`. Public APIs and persisted formats follow semantic versioning.
 
 ## Install
 
@@ -52,9 +52,7 @@ In the application directory, `oe new` creates the Relay project and its Sandbox
 environment. It writes the connection URL to `.env.local` as
 `OPEN_E2EE_SIGNAL_RELAY_URL`. In a Next.js, Expo, or Vite application, the name
 has the public prefix of the framework, for example
-`EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL`. An `oe` release before 5.0.0 wrote the
-earlier name, such as `OPEN_E2EE_RELAY_URL`. The examples read the new name
-first and the earlier name second.
+`EXPO_PUBLIC_OPEN_E2EE_SIGNAL_RELAY_URL`.
 The URL is public configuration. It is not a credential.
 
 A new Sandbox environment defaults to device-owned identity.
@@ -73,7 +71,7 @@ import {
 const signal = await createHostedSignalProtocolClient({
   adapters: { storage },
   hosted: {
-    relayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
+    relayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL!,
     getIdentityAssertion: hostedSignalProtocolRelaySandboxIdentity(storage),
   },
 });

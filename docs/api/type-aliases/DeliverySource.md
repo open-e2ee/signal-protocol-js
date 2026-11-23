@@ -10,10 +10,10 @@
 
 A source that reports that a recipient device has a message.
 
-- `'relay'`: the Relay handed the message to the device. The device has not
-  yet decrypted it.
-- `'signal-relay'`: the same source as `'relay'`. SDK 15.0.0 reports the
-  Relay source with this value. This release reports `'relay'`, so code
-  that compares the source must accept both values.
+- `'signal-relay'`: the Relay handed the message to the device. The device
+  has not yet decrypted it.
+- `'relay'`: the same source as `'signal-relay'`. SDK 14 reported the Relay
+  source with this value. This release does not report it. The type keeps
+  it, so code that compares the source with both values compiles.
 - `'e2ee'`: the device decrypted the message and sent an encrypted delivery
   receipt.

@@ -50,6 +50,14 @@ this device, call `createHostedSignalProtocolClient` with the
 
 ***
 
+### requestId?
+
+> `readonly` `optional` **requestId?**: `string`
+
+The optional reference of the HTTP response that refused this request.
+
+***
+
 ### retryable
 
 > `readonly` **retryable**: `false` = `false`

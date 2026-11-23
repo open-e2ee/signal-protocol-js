@@ -1,17 +1,12 @@
 /**
- * Reads of a member that has a role name, such as `relay`, and a deprecated
- * `signalProtocolRelay*` name, such as `signalProtocolRelay`.
+ * Reads of a stored value that has a role name, such as `relayOwnsReceipt`,
+ * and a `signalProtocolRelay*` name, such as `signalProtocolRelayOwnsReceipt`.
  *
  * SDK 14.2.0 added the `signalProtocolRelay*` names after the role names, so
  * this module calls the `signalProtocolRelay*` name the new name and the role
- * name the earlier name. SDK 14.3.0 deprecates the new names, and the role
- * names are the names to use.
- *
- * SDK 14 accepts both names of each such option and member. An option read
- * takes the new name first and the earlier name second. A member read takes
- * the name that the nearest level of the object defines, so a subclass
- * override of either name wins. SDK 15.0.0 removes the new names and this
- * module.
+ * name the earlier name. SDK 15.0.0 removed these names from members and
+ * options. A stored receive record can still hold both names, so the store
+ * reads both.
  *
  * The module is not in a package entry point.
  */
@@ -20,7 +15,7 @@ import { SignalProtocolRelayNameConflictError } from './errors';
 
 /** The two names of one member, and the operation that reads it. */
 export interface RenamedMember {
-  /** The deprecated `signalProtocolRelay*` name. */
+  /** The `signalProtocolRelay*` name. */
   readonly newName: string;
   /** The role name. */
   readonly earlierName: string;
@@ -36,7 +31,7 @@ function sameValue(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Returns the value of an option that the caller sets by either name.
+ * Returns the value that a stored record holds under either name.
  *
  * The new name wins. Two values with the same identity, or two byte arrays
  * with the same bytes, are the same value. Undefined means not set.
@@ -57,51 +52,4 @@ export function readRenamedOption<T>(
     );
   }
   return newValue !== undefined ? newValue : earlierValue;
-}
-
-/**
- * Returns the name that the nearest level of an object defines, where a
- * level is the object itself or one of its prototypes. The new name wins
- * when one level defines both names.
- */
-function nearestRenamedName<T extends object>(
-  source: T,
-  newName: keyof T,
-  earlierName: keyof T
-): keyof T {
-  for (
-    let level: object | null = source;
-    level !== null && level !== Object.prototype;
-    level = Object.getPrototypeOf(level) as object | null
-  ) {
-    if (Object.prototype.hasOwnProperty.call(level, newName)) return newName;
-    if (Object.prototype.hasOwnProperty.call(level, earlierName)) return earlierName;
-  }
-  return newName;
-}
-
-/**
- * Returns the member of an object that the caller implements under either
- * name, such as a `SignalProtocolRelayServer`.
- *
- * The name that the nearest level of the object defines wins, and the new
- * name wins when one level defines both. An SDK class defines both names, so
- * a subclass that overrides only one name gives its override. When the
- * chosen name holds no value, the read takes the other name. A method comes
- * back bound to its object. The read does not compare the two members,
- * because an SDK class keeps one name as a forward to the other.
- */
-export function readRenamedImplementation<T extends object, K extends keyof T, E extends keyof T>(
-  source: T,
-  newName: K,
-  earlierName: E
-): NonNullable<T[K]> | NonNullable<T[E]> | undefined {
-  const first = nearestRenamedName(source, newName, earlierName);
-  const second = first === newName ? earlierName : newName;
-  const member = source[first] ?? source[second];
-  if (member === undefined || member === null) return undefined;
-  if (typeof member === 'function') {
-    return (member as (...args: unknown[]) => unknown).bind(source) as NonNullable<T[K]> | NonNullable<T[E]>;
-  }
-  return member as NonNullable<T[K]> | NonNullable<T[E]>;
 }

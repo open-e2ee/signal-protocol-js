@@ -143,7 +143,7 @@ export interface RetryRequestSource {
  * as emitted. The other classes, `request-expired` included, reset nothing.
  *
  * The hook is called directly, not through `callHook`, so a hook that
- * throws, and the RelayWorkStopped of a stop or of the reset, propagate and
+ * throws, and the SignalProtocolRelayWorkStopped of a stop or of the reset, propagate and
  * leave the state not emitted. The rule is: mark only after the hook
  * returns, and keep the caller alive. The scheduler logs the error and goes
  * on with the next record, and the receive path does not acknowledge the
@@ -434,7 +434,7 @@ export class RetryRequestScheduler {
       do {
         this.again = false;
         if (this.stopped) return;
-        // A pass logs its own failures. RelayWorkStopped ends the run.
+        // A pass logs its own failures. SignalProtocolRelayWorkStopped ends the run.
         await this.signalRelayWork.run((work) => this.runPass(work)).catch(() => undefined);
       } while (this.again);
     })().finally(() => {

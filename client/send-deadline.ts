@@ -997,27 +997,13 @@ function defineSendField(error: object, name: string, value: unknown): void {
   });
 }
 
-/**
- * Keep the Relay's own `retryable` hint in `relayRetryable`. The
- * deprecated `signalProtocolRelayRetryable` field holds the same value until
- * SDK 15.0.0.
- */
+/** Keep the Relay's own `retryable` hint in `relayRetryable`. */
 function keepSignalProtocolRelayRetryable(error: object): void {
-  const { retryable, signalProtocolRelayRetryable, relayRetryable } = error as {
+  const { retryable, relayRetryable } = error as {
     retryable?: unknown;
-    signalProtocolRelayRetryable?: unknown;
     relayRetryable?: unknown;
   };
-  const hint = signalProtocolRelayRetryable ?? relayRetryable;
-  if (hint !== undefined) {
-    if (signalProtocolRelayRetryable === undefined) {
-      defineSendField(error, 'signalProtocolRelayRetryable', hint);
-    }
-    if (relayRetryable === undefined) defineSendField(error, 'relayRetryable', hint);
-    return;
-  }
-  if (typeof retryable === 'boolean') {
-    defineSendField(error, 'signalProtocolRelayRetryable', retryable);
+  if (relayRetryable === undefined && typeof retryable === 'boolean') {
     defineSendField(error, 'relayRetryable', retryable);
   }
 }

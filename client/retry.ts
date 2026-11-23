@@ -327,7 +327,7 @@ async function endRetryResend(
 /**
  * Call the hook for a terminal answer that is not emitted, and then store it
  * as emitted. The hook is called directly, not through `callHook`, so a hook
- * that throws, and the RelayWorkStopped of a stop, propagate and leave the
+ * that throws, and the SignalProtocolRelayWorkStopped of a stop, propagate and leave the
  * answer not emitted. The rule is: mark only after the hook returns. The
  * error fails the handling of the request envelope, so the relay delivers it
  * again, and the redelivery calls the hook again.
@@ -478,7 +478,7 @@ export async function sendRetryRequestInternal(
         },
       });
 
-      await markMessageDeliveredSilently(envelope.id, ctx.signalProtocolRelay, ctx.logger, options);
+      await markMessageDeliveredSilently(envelope.id, ctx.relay, ctx.logger, options);
       return;
     }
 
@@ -511,7 +511,7 @@ export async function sendRetryRequestInternal(
     const retryReason = determineRetryReason(error);
 
     // Send via relay (foreground) or callback (background)
-    const signalProtocolRelay = ctx.signalProtocolRelay;
+    const signalProtocolRelay = ctx.relay;
     // The seal also applies to the background callback. With no relay it
     // has no anonymous delivery, so the request goes identified only when
     // the sealed sender delivery mode permits it.
@@ -542,7 +542,7 @@ export async function sendRetryRequestInternal(
 
         if (timeSinceLastRotation > config.keyRotationDebounceMs || timeSinceLastRotation < 0) {
           try {
-            if (ctx.signalProtocolRelay) {
+            if (ctx.relay) {
               await callbacks.forcePreKeyRotation();
               rateLimitState.lastPreKeyRotationTime = Date.now();
               ctx.logger.info('Forced prekey rotation before retry (relay)', {
@@ -641,8 +641,8 @@ export async function sendRetryRequestInternal(
     if (!acknowledgesRetryRequest(outcome, family.member !== undefined)) return;
 
     // Mark failed message as delivered so it does not reappear
-    if (ctx.signalProtocolRelay?.markDelivered) {
-      await ctx.signalProtocolRelay.markDelivered(envelope.id).catch((err) => {
+    if (ctx.relay?.markDelivered) {
+      await ctx.relay.markDelivered(envelope.id).catch((err) => {
         ctx.logger.warn('Failed to mark message delivered after retry request (relay)', {
           category: 'E2EE',
           data: { messageId: envelope.id, error: (err as Error).message },
@@ -1552,11 +1552,11 @@ async function startAnswerSession(
     retryRequest.requesterDeviceId
   );
   // Fetch prekey bundle and create new initiating session
-  if (!ctx.signalProtocolRelay) {
+  if (!ctx.relay) {
     throw new Error('Relay not configured - cannot fetch prekey bundle');
   }
 
-  const bundle = await ctx.signalProtocolRelay.fetchPreKeyBundle(
+  const bundle = await ctx.relay.fetchPreKeyBundle(
     retryRequest.requesterUserId,
     retryRequest.requesterDeviceId
   );

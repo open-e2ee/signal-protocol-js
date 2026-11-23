@@ -61,7 +61,7 @@ send through `onRelayProtocolError`. A sync payload of a method such as
 
 ### name
 
-> `readonly` **name**: `"RelayProtocolError"` = `'RelayProtocolError'`
+> `readonly` **name**: `"SignalProtocolRelayProtocolError"` = `'SignalProtocolRelayProtocolError'`
 
 #### Overrides
 

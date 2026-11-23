@@ -260,7 +260,7 @@ function deviceOwnedIdentity(
  * const client = await createHostedSignalProtocolClient({
  *   adapters: { storage },
  *   hosted: {
- *     relayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
+ *     relayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL!,
  *     getIdentityAssertion: hostedSignalProtocolRelaySandboxIdentity(storage),
  *   },
  * });
@@ -327,7 +327,7 @@ export function hostedSignalProtocolRelaySandboxIdentity(
  * const client = await createHostedSignalProtocolClient({
  *   adapters: { storage },
  *   hosted: {
- *     relayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL ?? process.env.OPEN_E2EE_RELAY_URL!,
+ *     relayUrl: process.env.OPEN_E2EE_SIGNAL_RELAY_URL!,
  *     getIdentityAssertion: hostedSignalProtocolRelayDeviceOwnedIdentity(storage),
  *   },
  * });
@@ -338,9 +338,3 @@ export function hostedSignalProtocolRelayDeviceOwnedIdentity(
 ): GetIdentityAssertion {
   return deviceOwnedIdentity(storage, DEVICE_OWNED_SCOPE);
 }
-
-// Names before the Signal Protocol Relay rename. SDK 15.0.0 removes them.
-/** @deprecated Use `hostedSignalProtocolRelayDeviceOwnedIdentity`. SDK 15.0.0 removes this name. */
-export const hostedRelayDeviceOwnedIdentity = hostedSignalProtocolRelayDeviceOwnedIdentity;
-/** @deprecated Use `hostedSignalProtocolRelaySandboxIdentity`. SDK 15.0.0 removes this name. */
-export const hostedRelaySandboxIdentity = hostedSignalProtocolRelaySandboxIdentity;

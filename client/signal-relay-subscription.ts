@@ -221,7 +221,7 @@ export async function handleSignalProtocolRelayMessage(
   );
   try {
     if (await processSignalProtocolRelayMessage(ctx, envelope, state, callbacks, config)) {
-      await markDeliveredSilently(ctx.signalProtocolRelay, envelope.id, ctx.logger);
+      await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
     }
   } finally {
     release();
@@ -302,7 +302,7 @@ async function handleSignalProtocolRelayMessageLocked(
 
   const receipts = ctx.config.deliveryReceipts ?? 'auto';
   const join =
-    receipts === 'auto' && ctx.signalProtocolRelay !== undefined ? signalRelayReceiptJoinOf(ctx.signalProtocolRelay) : undefined;
+    receipts === 'auto' && ctx.relay !== undefined ? signalRelayReceiptJoinOf(ctx.relay) : undefined;
   const handle = createReceiveCommit({
     storage: ctx.storage,
     policy: ctx.receiveQueue.policy,
@@ -677,7 +677,7 @@ async function handleDecryptionError(
     });
 
     if (config.acknowledgeFailures !== false) {
-      await markDeliveredSilently(ctx.signalProtocolRelay, envelope.id, ctx.logger);
+      await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
     }
     return;
   }
@@ -727,7 +727,7 @@ async function handleDecryptionError(
     });
 
     if (config.acknowledgeFailures !== false) {
-      await markDeliveredSilently(ctx.signalProtocolRelay, envelope.id, ctx.logger);
+      await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
     }
     return;
   }
@@ -773,7 +773,7 @@ async function sendRetryRequest(
         },
       });
       if (config.acknowledgeFailures !== false && family.member === undefined) {
-        await markDeliveredSilently(ctx.signalProtocolRelay, envelope.id, ctx.logger);
+        await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
       }
       return;
     }
@@ -789,7 +789,7 @@ async function sendRetryRequest(
         },
       });
       if (config.acknowledgeFailures !== false) {
-        await markDeliveredSilently(ctx.signalProtocolRelay, envelope.id, ctx.logger);
+        await markDeliveredSilently(ctx.relay, envelope.id, ctx.logger);
       }
       return;
     }
@@ -815,8 +815,8 @@ async function sendRetryRequest(
 
     const retryReason = determineRetryReason(error);
 
-    if (!ctx.signalProtocolRelay) throw new Error('Relay not configured - cannot send a retry request');
-    const signalProtocolRelay = ctx.signalProtocolRelay;
+    if (!ctx.relay) throw new Error('Relay not configured - cannot send a retry request');
+    const signalProtocolRelay = ctx.relay;
     const outcome = await requestRetryInFamily(family, receiveId, {
       storage: ctx.storage,
       logger: ctx.logger,

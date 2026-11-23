@@ -34,14 +34,11 @@ export type {
   PreKeyInventory,
   PreKeyMetadata,
   SignalProtocolRelayConnectionReason,
-  RelayConnectionReason,
   SignalProtocolRelayConnectionState,
-  RelayConnectionState,
   Unsubscribe,
   AccountIdentityProvisioning,
   AccountIdentityRotation,
   SignalProtocolRelayGroupServer,
-  RelayGroupServer,
 } from './types';
 
 // The in-memory adapter is exported here for convenient local composition.

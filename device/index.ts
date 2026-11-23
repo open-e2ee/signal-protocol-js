@@ -44,9 +44,7 @@ export type { BackupStorage, RestoreDeviceBackupResult } from './transfer';
 // Connection functions
 export {
   SignalProtocolRelayConnection,
-  RelayConnection,
   createSignalProtocolRelayConnection,
-  createRelayConnection,
   generateConnectionId,
 } from './connection';
 
@@ -71,7 +69,6 @@ export type {
   DetailedProgressCallback,
   RetryConfig,
   SignalProtocolRelayConfig,
-  RelayConfig,
 } from './types';
 
 // Constants

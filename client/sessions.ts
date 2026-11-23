@@ -349,14 +349,14 @@ export async function verify(
 
   // The pinned tuple is the trust object. The relay is checked for consistency,
   // but is never allowed to select which tuple the user sees.
-  if (!ctx.signalProtocolRelay) {
+  if (!ctx.relay) {
     throw new EncryptionError(
       'Relay server required to verify identity',
       EncryptionErrorCode.INITIALIZATION_FAILED
     );
   }
 
-  const signalRelayIdentity = await ctx.signalProtocolRelay.getIdentityKey(userId, identityType);
+  const signalRelayIdentity = await ctx.relay.getIdentityKey(userId, identityType);
   if (!signalRelayIdentity) {
     throw new EncryptionError(
       `Identity key not found for user ${userId}`,
@@ -448,13 +448,13 @@ export async function confirmSafetyNumber(
     );
   }
 
-  if (!ctx.signalProtocolRelay) {
+  if (!ctx.relay) {
     throw new EncryptionError(
       'Relay server required to confirm identity',
       EncryptionErrorCode.INITIALIZATION_FAILED
     );
   }
-  const signalRelayIdentity = await ctx.signalProtocolRelay.getIdentityKey(userId, identityType);
+  const signalRelayIdentity = await ctx.relay.getIdentityKey(userId, identityType);
   if (!signalRelayIdentity) {
     throw new EncryptionError(
       `Identity key not found for user ${userId}`,

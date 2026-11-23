@@ -2001,11 +2001,11 @@ export type StoredDeliverySource = 'relay' | 'signal-relay' | 'e2ee';
 export type WrittenDeliverySource = Exclude<StoredDeliverySource, 'relay'>;
 
 /** A source that this release reports to the application. */
-export type ReportedDeliverySource = Exclude<StoredDeliverySource, 'signal-relay'>;
+export type ReportedDeliverySource = Exclude<StoredDeliverySource, 'relay'>;
 
-/** The source that this release reports for a stored source: `signal-relay` reads as `relay`. */
+/** The source that this release reports for a stored source: `relay` reads as `signal-relay`. */
 export function reportedDeliverySource(source: StoredDeliverySource): ReportedDeliverySource {
-  return source === 'signal-relay' ? 'relay' : source;
+  return source === 'relay' ? 'signal-relay' : source;
 }
 
 /** The delivery of one message to one recipient device. */

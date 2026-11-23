@@ -2,7 +2,7 @@ import AsyncLock from 'async-lock';
 import type { SignalProtocolLocalStore } from '../types';
 import { extractGroupId } from '../internal/groups/group-id';
 import { originLockScope, withOriginLock } from '../utils/origin-lock';
-import { acquireUntilStopped, RelayWorkStopped } from './signal-relay-work';
+import { acquireUntilStopped, SignalProtocolRelayWorkStopped } from './signal-relay-work';
 
 const storageLocks = new WeakMap<SignalProtocolLocalStore, AsyncLock>();
 
@@ -35,7 +35,7 @@ export class GroupSenderKeyOperations {
 
   /**
    * Run `operation` under the lock of the group. A stop that ends the wait
-   * rejects with RelayWorkStopped, and the operation does not run. The
+   * rejects with SignalProtocolRelayWorkStopped, and the operation does not run. The
    * operation must not acquire this group's lock again.
    */
   run<T>(
@@ -50,7 +50,7 @@ export class GroupSenderKeyOperations {
     if (scope !== null) {
       return withOriginLock(`open-e2ee:group-send:${scope}:${key}`, task, {
         signal: stopSignal,
-        stopped: () => new RelayWorkStopped(),
+        stopped: () => new SignalProtocolRelayWorkStopped(),
       });
     }
     return acquireUntilStopped(this.lock, key, task, stopSignal);

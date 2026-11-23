@@ -34,7 +34,7 @@ store here, or stop that client before the link.
 
 ### adapters
 
-> `readonly` **adapters**: `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md)\[`"adapters"`\], `"relay"` \| `"signalProtocolRelay"`\>
+> `readonly` **adapters**: `Omit`\<[`SignalProtocolClientCompositionOptions`](SignalProtocolClientCompositionOptions.md)\[`"adapters"`\], `"relay"`\>
 
 ***
 
@@ -197,24 +197,15 @@ Override the default authenticated device-link transport.
 
 > `readonly` `optional` **onProgress?**: [`HostedSignalProtocolRelayIdentityProgressCallback`](../type-aliases/HostedSignalProtocolRelayIdentityProgressCallback.md)
 
-#### relayUrl?
+#### relayUrl
 
-> `readonly` `optional` **relayUrl?**: `string`
+> `readonly` **relayUrl**: `string`
 
-Public environment-scoped Signal Protocol Relay connection URL. Set this
-member or the deprecated `signalProtocolRelayUrl`.
+Public environment-scoped Signal Protocol Relay connection URL.
 
 #### sealedSenderAccessMode?
 
 > `readonly` `optional` **sealedSenderAccessMode?**: `SealedSenderAccessMode`
-
-#### ~~signalProtocolRelayUrl?~~
-
-> `readonly` `optional` **signalProtocolRelayUrl?**: `string`
-
-##### Deprecated
-
-Use `relayUrl`. SDK 15.0.0 removes this name.
 
 ***
 

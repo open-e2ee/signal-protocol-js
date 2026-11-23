@@ -265,7 +265,7 @@ import {
   type SignalProtocolRelaySubscriptionState,
 } from './signal-relay-subscription';
 import {
-  RelayWorkStopped,
+  SignalProtocolRelayWorkStopped,
   rethrowSignalProtocolRelayWorkStopped,
   type SignalProtocolRelayWork,
   type SignalProtocolRelayWorkTracker,
@@ -1090,7 +1090,7 @@ export class ReceiveQueue {
       if (this.stopped) return;
       const retryCapped = this.cappedRetryDue;
       this.cappedRetryDue = false;
-      // A pass logs its own failures. RelayWorkStopped ends the pass.
+      // A pass logs its own failures. SignalProtocolRelayWorkStopped ends the pass.
       await this.signalRelayWork
         .run((work) =>
           this.runPass(work, Infinity, retryCapped ? 'unoffered' : 'none').then(() => undefined)
@@ -1523,7 +1523,7 @@ export class ReceiveQueue {
     return {
       owesReceipt:
         inspected.shouldSendDeliveryReceipt &&
-        ctx.signalProtocolRelay !== undefined &&
+        ctx.relay !== undefined &&
         receipts !== 'off' &&
         Boolean(decrypted.timestamp),
       ...(received !== undefined && { received }),
@@ -1550,7 +1550,7 @@ export class ReceiveQueue {
     const { workId, senderUserId } = record;
     const receipts = ctx.config.deliveryReceipts ?? 'auto';
     const batchReceipt =
-      ctx.signalProtocolRelay !== undefined && receipts !== 'off'
+      ctx.relay !== undefined && receipts !== 'off'
         ? (): void => {
             accumulateDeliveryReceipt(
               state.receiptAccumulator,
@@ -1593,7 +1593,7 @@ export class ReceiveQueue {
   /** Complete a record whose receipt went out, or retry its send later. */
   private receiptSettled(workId: string, error: unknown): void {
     // A stopped send sends again after the next start.
-    if (error instanceof RelayWorkStopped) {
+    if (error instanceof SignalProtocolRelayWorkStopped) {
       this.receiptsInFlight.delete(workId);
       return;
     }

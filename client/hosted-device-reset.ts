@@ -67,7 +67,7 @@ export async function resetRemovedHostedSignalProtocolRelayDevice(
 ): Promise<void> {
   const storage = options.adapters.storage;
   const connection = await resolveHostedSignalProtocolRelayConnection(
-    hostedSignalProtocolRelayUrl(options.hosted, "resetRemovedHostedSignalProtocolRelayDevice"),
+    hostedSignalProtocolRelayUrl(options.hosted),
   );
   try {
     await resumeHostedSignalProtocolRelayTransport({
